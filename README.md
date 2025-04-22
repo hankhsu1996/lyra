@@ -3,7 +3,6 @@
 **Volans** is a clean, structured, and extensible SystemVerilog compiler and simulator.
 It features a modern multi-stage compilation pipeline, enabling accurate semantic analysis, flexible intermediate representations, and native execution through interpretation or LLVM.
 
----
 
 ## 🛠️ Build Instructions
 
@@ -17,7 +16,6 @@ Generate compile commands for IDE integration:
 bazel run @hedron_compile_commands//:refresh_all
 ```
 
----
 
 ## 📦 Project Structure
 
@@ -28,7 +26,6 @@ bazel run @hedron_compile_commands//:refresh_all
 - `core/`: Runtime and execution context
 - `codegen/`: LLVM code generation (planned)
 
----
 
 ## 🔍 Compilation Pipeline
 
@@ -41,7 +38,6 @@ SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
 - **LIR**: Linear SSA-style IR for simulation and codegen
 - **Backend**: Interpreter (available) or LLVM native compilation (planned)
 
----
 
 ## ✅ Current Features
 
@@ -51,7 +47,6 @@ SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
 - Signal management and runtime context
 - LIR-based interpreter for simulation
 
----
 
 ## 🚧 Roadmap
 
@@ -60,6 +55,6 @@ SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
 - Native binary generation via LLVM
 - Broader SystemVerilog language coverage
 
----
+## 💬 Get Involved
 
 Got feedback or ideas? We're building Volans to make SystemVerilog simulation **cleaner**, **clearer**, and **more scalable** — contributions are welcome!
