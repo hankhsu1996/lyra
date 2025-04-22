@@ -1,0 +1,16 @@
+Language: Cpp
+BasedOnStyle: Google
+
+# Regroup includes to improve readability and maintain consistent grouping.
+# Reference: https://clang.llvm.org/docs/ClangFormatStyleOptions.html#includeblocks
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"(volans)/.*"'
+    Priority: 3
+  - Regex: "^<(slang|fmt|spdlog|catch2|llvm|volans).*>"
+    Priority: 2
+  - Regex: "^<.*>"
+    Priority: 1
+
+AlignAfterOpenBracket: AlwaysBreak
+AllowShortFunctionsOnASingleLine: false

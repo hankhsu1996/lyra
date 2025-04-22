@@ -1,0 +1,24 @@
+"""
+Build file for Volans SystemVerilog simulator.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+cc_library(
+    name = "core",
+    srcs = glob(["src/**/*.cpp"]),
+    hdrs = glob(["include/**/*.hpp"]),
+    includes = ["include"],
+    deps = [
+        # Commenting out LLVM for now until we start using it
+        # "@llvm-project//llvm/include",
+        "@slang",
+    ],
+)
+
+cc_binary(
+    name = "volans",
+    srcs = ["src/main/main.cpp"],
+    includes = ["include"],
+    deps = ["//:core"],
+)

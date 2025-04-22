@@ -1,0 +1,16 @@
+#.bazelrc
+
+# Use clang as the compiler
+build --action_env=CC=clang
+build --action_env=CXX=clang++
+
+# C++ settings
+build --cxxopt='-std=c++23'
+build --cxxopt='-Wall'
+build --cxxopt='-Wextra'
+
+# Build settings
+build --incompatible_strict_action_env
+build --disk_cache=~/.cache/bazel-disk
+build --local_resources=cpu=HOST_CPUS*0.7
+build --verbose_failures

@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - "-std=c++23"
+    - "-Wall"
+    - "-Wextra"
+
+Diagnostics:
+  ClangTidy:
+    FastCheckFilter: Strict
+
+# Disable inlay hints for designators to avoid JSON key indexing.
+InlayHints:
+  Designators: No

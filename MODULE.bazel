@@ -1,0 +1,39 @@
+"""
+Bazel module file for Volans SystemVerilog simulator.
+"""
+
+module(
+    name = "volans",
+    version = "0.1.0",
+)
+
+# Bazel rules for C/C++
+bazel_dep(name = "rules_cc", version = "0.1.1")
+
+# Slang SystemVerilog Compiler Library
+bazel_dep(name = "slang", version = "8.0.0")
+git_override(
+    module_name = "slang",
+    remote = "https://github.com/hankhsu1996/slang-bazel.git",
+    commit = "9642fc21a07f3a58f00ea841ca0262871006683d",
+)
+
+# LLVM
+bazel_dep(name = "llvm-project", version = "17.0.3.bcr.2")
+
+# Formatting
+bazel_dep(name = "fmt", version = "11.1.3")
+
+# Logging Library
+bazel_dep(name = "spdlog", version = "1.15.1")
+
+# Testing framework
+bazel_dep(name = "catch2", version = "3.8.0")
+
+# Development tools
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "1e08f8e0507b6b6b1f4416a9a22cf5c28beaba93",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+)

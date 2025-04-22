@@ -1,0 +1,29 @@
+# Bazel directories
+/bazel-*
+/bazel-bin
+/bazel-out
+/bazel-slangd
+/bazel-testlogs
+/external
+
+# Build artifacts
+/compile_commands.json
+/.cache/
+/.clangd/
+
+# Editor files
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+*.log.*
+*tmp*
