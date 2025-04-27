@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace lyra::mir {
@@ -26,6 +27,7 @@ class Expression {
 
 class LiteralExpression : public Expression {
  public:
+  static constexpr Kind kKindValue = Kind::kLiteral;
   int value;
 
   explicit LiteralExpression(int v) : Expression(Kind::kLiteral), value(v) {
@@ -34,6 +36,7 @@ class LiteralExpression : public Expression {
 
 class IdentifierExpression : public Expression {
  public:
+  static constexpr Kind kKindValue = Kind::kIdentifier;
   std::string name;
 
   explicit IdentifierExpression(std::string n)
@@ -43,6 +46,7 @@ class IdentifierExpression : public Expression {
 
 class BinaryExpression : public Expression {
  public:
+  static constexpr Kind kKindValue = Kind::kBinary;
   enum class Operator { kAdd };
 
   Operator op;
@@ -58,5 +62,14 @@ class BinaryExpression : public Expression {
         right(std::move(right)) {
   }
 };
+
+// Helper function for safely casting expressions
+template <typename T>
+auto As(const Expression &expr) -> const T & {
+  if (expr.kind != T::kind_value) {
+    throw std::runtime_error("Expression kind mismatch in As<T>() cast");
+  }
+  return static_cast<const T &>(expr);
+}
 
 }  // namespace lyra::mir

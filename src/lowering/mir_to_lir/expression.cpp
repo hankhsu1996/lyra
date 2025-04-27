@@ -11,8 +11,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     -> lir::Value {
   switch (expression.kind) {
     case mir::Expression::Kind::kLiteral: {
-      const auto& literal =
-          static_cast<const mir::LiteralExpression&>(expression);
+      const auto& literal = mir::As<mir::LiteralExpression>(expression);
       auto tmp = builder.MakeTemp("lit");
       builder.AddInstruction(
           lir::InstructionKind::kLiteralInt, tmp,
@@ -21,8 +20,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     }
 
     case mir::Expression::Kind::kIdentifier: {
-      const auto& identifier =
-          static_cast<const mir::IdentifierExpression&>(expression);
+      const auto& identifier = mir::As<mir::IdentifierExpression>(expression);
       if (identifier.name.empty()) {
         throw std::runtime_error("Identifier has empty name");
       }
@@ -34,8 +32,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     }
 
     case mir::Expression::Kind::kBinary: {
-      const auto& binary =
-          static_cast<const mir::BinaryExpression&>(expression);
+      const auto& binary = mir::As<mir::BinaryExpression>(expression);
 
       if (binary.op != mir::BinaryExpression::Operator::kAdd) {
         throw std::runtime_error("Unsupported binary operator");
