@@ -8,14 +8,14 @@
 #include "lowering/ast_to_mir.hpp"
 #include "lowering/mir_to_lir.hpp"
 
-using volans::ExecutionContext;
-using volans::frontend::LoadCompilation;
-using volans::lir::Executor;
-using volans::lowering::AstToMir;
-using volans::lowering::MirToLir;
+using lyra::ExecutionContext;
+using lyra::frontend::LoadCompilation;
+using lyra::lir::Executor;
+using lyra::lowering::AstToMir;
+using lyra::lowering::MirToLir;
 
 auto main() -> int {
-  std::cout << "===== Volans Simulator Prototype =====\n";
+  std::cout << "===== Lyra Simulator Prototype =====\n";
 
   const std::string test_file_path = "src/main/test.sv";
   std::cout << "Parsing file: " << test_file_path << "\n";
@@ -41,13 +41,13 @@ auto main() -> int {
   for (const auto& proc : lir.processes) {
     std::cout << "  Process kind: ";
     switch (proc->kind) {
-      case volans::lir::ProcessKind::kInitial:
+      case lyra::lir::ProcessKind::kInitial:
         std::cout << "initial\n";
         break;
-      case volans::lir::ProcessKind::kAlwaysComb:
+      case lyra::lir::ProcessKind::kAlwaysComb:
         std::cout << "always_comb\n";
         break;
-      case volans::lir::ProcessKind::kAlwaysFF:
+      case lyra::lir::ProcessKind::kAlwaysFF:
         std::cout << "always_ff\n";
         break;
     }
@@ -55,12 +55,12 @@ auto main() -> int {
     for (const auto& instr : proc->instructions) {
       std::cout << "    ";
       switch (instr.kind) {
-        case volans::lir::InstructionKind::kLiteralInt:
-        case volans::lir::InstructionKind::kLiteralString:
-        case volans::lir::InstructionKind::kLoadSignal:
-        case volans::lir::InstructionKind::kBinaryAdd:
+        case lyra::lir::InstructionKind::kLiteralInt:
+        case lyra::lir::InstructionKind::kLiteralString:
+        case lyra::lir::InstructionKind::kLoadSignal:
+        case lyra::lir::InstructionKind::kBinaryAdd:
           std::cout << instr.result << " = ";
-          if (instr.kind == volans::lir::InstructionKind::kBinaryAdd) {
+          if (instr.kind == lyra::lir::InstructionKind::kBinaryAdd) {
             std::cout << "add " << instr.operands[0].ToString() << ", "
                       << instr.operands[1].ToString() << "\n";
           } else if (!instr.operands.empty()) {
@@ -70,7 +70,7 @@ auto main() -> int {
           }
           break;
 
-        case volans::lir::InstructionKind::kAssign:
+        case lyra::lir::InstructionKind::kAssign:
           if (instr.operands.size() == 2) {
             std::cout << instr.operands[0].ToString() << " = "
                       << instr.operands[1].ToString() << "\n";
@@ -79,7 +79,7 @@ auto main() -> int {
           }
           break;
 
-        case volans::lir::InstructionKind::kStoreSignal:
+        case lyra::lir::InstructionKind::kStoreSignal:
           if (instr.operands.size() >= 2) {
             std::cout << "store " << instr.operands[0].ToString() << " ← "
                       << instr.operands[1].ToString() << "\n";

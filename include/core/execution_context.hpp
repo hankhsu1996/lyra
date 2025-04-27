@@ -6,7 +6,7 @@
 #include "core/simulation_context.hpp"
 #include "core/value.hpp"
 
-namespace volans {
+namespace lyra {
 
 class ExecutionContext {
  public:
@@ -20,4 +20,4 @@ class ExecutionContext {
   void WriteSSA(const std::string& name, const RuntimeValue& value);
 };
 
-}  // namespace volans
+}  // namespace lyra

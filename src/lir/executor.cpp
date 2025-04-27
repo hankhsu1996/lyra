@@ -2,9 +2,9 @@
 
 #include <fmt/core.h>
 
-namespace volans::lir {
+namespace lyra::lir {
 
-Executor::Executor(const Module& module, volans::ExecutionContext& context)
+Executor::Executor(const Module& module, lyra::ExecutionContext& context)
     : module_(module), ctx_(context) {
 }
 
@@ -59,4 +59,4 @@ void Executor::RunInitial() {
   }
 }
 
-}  // namespace volans::lir
+}  // namespace lyra::lir

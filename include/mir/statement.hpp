@@ -5,7 +5,7 @@
 
 #include "mir/expression.hpp"
 
-namespace volans::mir {
+namespace lyra::mir {
 
 class Statement {
  public:
@@ -16,4 +16,4 @@ class Statement {
   std::shared_ptr<Expression> value;
 };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

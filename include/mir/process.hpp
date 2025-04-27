@@ -5,7 +5,7 @@
 
 #include "mir/statement.hpp"
 
-namespace volans::mir {
+namespace lyra::mir {
 
 enum class ProcessKind { kInitial, kAlwaysFF, kAlwaysComb };
 
@@ -15,4 +15,4 @@ class Process {
   std::vector<std::shared_ptr<Statement>> body;
 };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

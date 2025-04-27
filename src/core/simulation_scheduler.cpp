@@ -1,6 +1,6 @@
 #include "core/simulation_scheduler.hpp"
 
-namespace volans {
+namespace lyra {
 
 void SimulationScheduler::ScheduleAt(
     SimulationTime time, ScheduledProcess proc) {
@@ -33,4 +33,4 @@ void SimulationScheduler::RunScheduled() {
   }
 }
 
-}  // namespace volans
+}  // namespace lyra

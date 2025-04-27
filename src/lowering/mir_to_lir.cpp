@@ -2,7 +2,7 @@
 
 #include "lowering/lir_builder.hpp"
 
-namespace volans::lowering {
+namespace lyra::lowering {
 
 auto MirToLir(const mir::Module& mod) -> lir::Module {
   LirBuilder builder(mod.name);
@@ -85,4 +85,4 @@ auto MirToLir(const mir::Module& mod) -> lir::Module {
   return builder.Build();
 }
 
-}  // namespace volans::lowering
+}  // namespace lyra::lowering

@@ -6,7 +6,7 @@
 
 #include "lir/process.hpp"
 
-namespace volans::lir {
+namespace lyra::lir {
 
 struct Module {
   std::string name;
@@ -18,4 +18,4 @@ struct Module {
   std::vector<std::shared_ptr<Process>> processes;
 };
 
-}  // namespace volans::lir
+}  // namespace lyra::lir

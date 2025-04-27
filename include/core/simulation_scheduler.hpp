@@ -1,14 +1,15 @@
 #pragma once
 
-#include "simulation_context.hpp"
 #include <functional>
 #include <map>
 #include <queue>
 
-namespace volans {
+#include "simulation_context.hpp"
+
+namespace lyra {
 
 class SimulationScheduler {
-public:
+ public:
   using ScheduledProcess = std::function<void()>;
 
   void ScheduleAt(SimulationTime time, ScheduledProcess proc);
@@ -16,8 +17,8 @@ public:
 
   void RunScheduled();
 
-private:
+ private:
   std::map<SimulationTime, std::queue<ScheduledProcess>> schedule_;
 };
 
-} // namespace volans
+}  // namespace lyra

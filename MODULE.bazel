@@ -1,9 +1,9 @@
 """
-Bazel module file for Volans SystemVerilog simulator.
+Bazel module file for Lyra SystemVerilog simulator.
 """
 
 module(
-    name = "volans",
+    name = "lyra",
     version = "0.1.0",
 )
 

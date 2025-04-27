@@ -4,7 +4,7 @@
 #include <string>
 #include <variant>
 
-namespace volans::mir {
+namespace lyra::mir {
 
 class Expression {
  public:
@@ -19,4 +19,4 @@ class Expression {
       value;
 };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

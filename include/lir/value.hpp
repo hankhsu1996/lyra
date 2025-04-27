@@ -3,7 +3,7 @@
 #include <string>
 #include <variant>
 
-namespace volans::lir {
+namespace lyra::lir {
 
 struct Value {
   enum class Kind { kTemp, kSignal, kLiteralInt, kLiteralString };
@@ -40,4 +40,4 @@ struct Value {
   }
 };
 
-}  // namespace volans::lir
+}  // namespace lyra::lir

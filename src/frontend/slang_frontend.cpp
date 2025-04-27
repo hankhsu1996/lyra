@@ -6,7 +6,7 @@
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
 
-namespace volans::frontend {
+namespace lyra::frontend {
 
 auto LoadCompilation(std::vector<std::string> files)
     -> std::unique_ptr<slang::ast::Compilation> {
@@ -30,4 +30,4 @@ auto LoadCompilation(std::vector<std::string> files)
   return compilation;
 }
 
-}  // namespace volans::frontend
+}  // namespace lyra::frontend

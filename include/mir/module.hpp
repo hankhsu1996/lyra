@@ -7,7 +7,7 @@
 #include "mir/process.hpp"
 #include "mir/variable.hpp"
 
-namespace volans::mir {
+namespace lyra::mir {
 
 class Module {
  public:
@@ -16,4 +16,4 @@ class Module {
   std::vector<std::shared_ptr<Process>> processes;
 };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

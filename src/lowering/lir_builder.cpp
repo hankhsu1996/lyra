@@ -1,6 +1,6 @@
 #include "lowering/lir_builder.hpp"
 
-namespace volans::lowering {
+namespace lyra::lowering {
 
 LirBuilder::LirBuilder(std::string module_name)
     : module_name_(std::move(module_name)) {
@@ -43,4 +43,4 @@ auto LirBuilder::Build() -> lir::Module {
   return mod;
 }
 
-}  // namespace volans::lowering
+}  // namespace lyra::lowering

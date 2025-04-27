@@ -5,7 +5,7 @@
 
 #include "mir/module.hpp"
 
-namespace volans::lowering {
+namespace lyra::lowering {
 
 auto AstToMir(slang::ast::Compilation& comp) -> mir::Module;
 

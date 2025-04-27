@@ -9,7 +9,7 @@
 #include "lir/process.hpp"
 #include "lir/value.hpp"
 
-namespace volans::lowering {
+namespace lyra::lowering {
 
 class LirBuilder {
  public:
@@ -33,4 +33,4 @@ class LirBuilder {
   int temp_counter_ = 0;
 };
 
-}  // namespace volans::lowering
+}  // namespace lyra::lowering

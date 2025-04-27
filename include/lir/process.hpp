@@ -4,7 +4,7 @@
 
 #include "lir/instruction.hpp"
 
-namespace volans::lir {
+namespace lyra::lir {
 
 enum class ProcessKind { kInitial, kAlwaysComb, kAlwaysFF };
 
@@ -15,4 +15,4 @@ struct Process {
   std::vector<Instruction> instructions;
 };
 
-}  // namespace volans::lir
+}  // namespace lyra::lir

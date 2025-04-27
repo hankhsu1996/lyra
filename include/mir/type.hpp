@@ -1,7 +1,7 @@
 #pragma once
 
-namespace volans::mir {
+namespace lyra::mir {
 
 enum class Type { kInt, kString };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

@@ -4,7 +4,7 @@
 
 #include "mir/type.hpp"
 
-namespace volans::mir {
+namespace lyra::mir {
 
 class Variable {
  public:
@@ -12,4 +12,4 @@ class Variable {
   Type type;
 };
 
-}  // namespace volans::mir
+}  // namespace lyra::mir

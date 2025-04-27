@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-namespace volans {
+namespace lyra {
 
 struct Value {
   Value() = default;
@@ -42,4 +42,4 @@ class RuntimeValue {
   explicit RuntimeValue(std::shared_ptr<Value> ptr);
 };
 
-}  // namespace volans
+}  // namespace lyra

@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace volans {
+namespace lyra {
 
 void SignalTable::Write(const std::string &name, const RuntimeValue &value) {
   signals_[name] = value;
@@ -16,4 +16,4 @@ auto SignalTable::Read(const std::string &name) const -> RuntimeValue {
   return it->second;
 }
 
-}  // namespace volans
+}  // namespace lyra

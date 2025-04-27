@@ -7,7 +7,7 @@
 
 #include "lir/value.hpp"
 
-namespace volans::lir {
+namespace lyra::lir {
 
 enum class InstructionKind {
   kLiteralInt,
@@ -49,4 +49,4 @@ struct Instruction {
   }
 };
 
-}  // namespace volans::lir
+}  // namespace lyra::lir

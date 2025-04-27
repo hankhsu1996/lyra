@@ -2,17 +2,17 @@
 
 #include <cstdint>
 
-namespace volans {
+namespace lyra {
 
 using SimulationTime = uint64_t;
 
 class SimulationContext {
-public:
+ public:
   void AdvanceTime();
   [[nodiscard]] auto GetCurrentTime() const -> SimulationTime;
 
-private:
+ private:
   SimulationTime currentTime_ = 0;
 };
 
-} // namespace volans
+}  // namespace lyra

@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace volans {
+namespace lyra {
 
 auto RuntimeValue::FromInt(int value) -> RuntimeValue {
   return RuntimeValue(std::make_shared<IntValue>(value));
@@ -31,4 +31,4 @@ auto RuntimeValue::AsString() const -> const std::string & {
 RuntimeValue::RuntimeValue(std::shared_ptr<Value> ptr) : impl_(std::move(ptr)) {
 }
 
-}  // namespace volans
+}  // namespace lyra

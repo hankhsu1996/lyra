@@ -1,5 +1,5 @@
 """
-Build file for Volans SystemVerilog simulator.
+Build file for Lyra SystemVerilog simulator.
 """
 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
@@ -17,7 +17,7 @@ cc_library(
 )
 
 cc_binary(
-    name = "volans",
+    name = "lyra",
     srcs = ["src/main/main.cpp"],
     includes = ["include"],
     deps = ["//:core"],

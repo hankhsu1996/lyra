@@ -5,9 +5,9 @@ BasedOnStyle: Google
 # Reference: https://clang.llvm.org/docs/ClangFormatStyleOptions.html#includeblocks
 IncludeBlocks: Regroup
 IncludeCategories:
-  - Regex: '^"(volans)/.*"'
+  - Regex: '^"(lyra)/.*"'
     Priority: 3
-  - Regex: "^<(slang|fmt|spdlog|catch2|llvm|volans).*>"
+  - Regex: "^<(slang|fmt|spdlog|catch2|llvm|lyra).*>"
     Priority: 2
   - Regex: "^<.*>"
     Priority: 1

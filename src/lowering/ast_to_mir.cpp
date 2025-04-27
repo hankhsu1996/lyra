@@ -17,7 +17,7 @@
 #include "mir/module.hpp"
 #include "mir/statement.hpp"
 
-namespace volans::lowering {
+namespace lyra::lowering {
 
 namespace {
 
@@ -151,4 +151,4 @@ auto AstToMir(slang::ast::Compilation& compilation) -> mir::Module {
   return mod;
 }
 
-}  // namespace volans::lowering
+}  // namespace lyra::lowering

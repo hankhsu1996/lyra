@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace volans {
+namespace lyra {
 
 auto ExecutionContext::ReadSSA(const std::string& name) const -> RuntimeValue {
   auto it = ssa_table.find(name);
@@ -17,4 +17,4 @@ void ExecutionContext::WriteSSA(
   ssa_table[name] = value;
 }
 
-}  // namespace volans
+}  // namespace lyra
