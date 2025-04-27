@@ -1,7 +1,10 @@
 #pragma once
 
+#include <ostream>
 #include <string>
 #include <variant>
+
+#include <fmt/core.h>
 
 namespace lyra::lir {
 
@@ -27,17 +30,36 @@ struct Value {
     return Value{.kind = Kind::kLiteralString, .data = value};
   }
 
-  auto ToString() const -> std::string {
+  [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       case Kind::kTemp:
+        return fmt::format("{}", std::get<std::string>(data));
       case Kind::kSignal:
-      case Kind::kLiteralString:
         return std::get<std::string>(data);
       case Kind::kLiteralInt:
-        return std::to_string(std::get<int>(data));
+        return fmt::format("{}", std::get<int>(data));
+      case Kind::kLiteralString:
+        return fmt::format("\"{}\"", std::get<std::string>(data));
     }
     return "<invalid>";
   }
 };
 
+inline auto operator<<(std::ostream& os, const Value& value) -> std::ostream& {
+  return os << value.ToString();
+}
+
 }  // namespace lyra::lir
+
+template <>
+struct fmt::formatter<lyra::lir::Value> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const lyra::lir::Value& value, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", value.ToString());
+  }
+};
