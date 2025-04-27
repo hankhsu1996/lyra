@@ -1,5 +1,6 @@
 #include "lowering/ast_to_mir/process.hpp"
 
+#include <lowering/ast_to_mir/variable.hpp>
 #include <stdexcept>
 
 #include <fmt/format.h>
@@ -9,7 +10,6 @@
 #include <spdlog/spdlog.h>
 
 #include "lowering/ast_to_mir/collect_sensitivity.hpp"
-#include "lowering/ast_to_mir/expression.hpp"
 #include "lowering/ast_to_mir/statement.hpp"
 #include "mir/process.hpp"
 
@@ -37,12 +37,18 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       process->process_kind = mir::ProcessKind::kAlwaysComb;
 
       const auto& statement = procedural_block.getBody();
-      auto signals = CollectSensitivityList(statement);
+      auto symbols = CollectSensitivityList(statement);
 
-      for (const auto& signal_name : signals) {
-        auto trigger = mir::Trigger{
-            .edge_kind = mir::EdgeKind::kAnyEdge,
-            .expression = LowerExpressionFromName(signal_name)};
+      for (const auto* symbol : symbols) {
+        auto variable_opt = LowerVariable(*symbol);
+        if (!variable_opt) {
+          throw std::runtime_error(
+              "Unexpected non-variable in sensitivity list");
+        }
+
+        auto trigger = common::Trigger{
+            .edge_kind = common::EdgeKind::kAnyEdge,
+            .variable = std::make_shared<mir::Variable>(*variable_opt)};
 
         process->trigger_list.push_back(std::move(trigger));
       }

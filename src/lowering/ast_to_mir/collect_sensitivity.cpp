@@ -16,12 +16,12 @@
 namespace lyra::lowering {
 
 auto CollectSensitivityList(const slang::ast::Statement& statement)
-    -> std::vector<std::string> {
-  std::unordered_set<std::string> signals;
+    -> std::vector<const slang::ast::Symbol*> {
+  std::unordered_set<const slang::ast::Symbol*> signals;
 
   auto visitor = slang::ast::makeVisitor(
       [&](const slang::ast::NamedValueExpression& expr) {
-        signals.insert(std::string(expr.symbol.name));
+        signals.insert(&expr.symbol);
       });
 
   auto visit_expression = [&](const slang::ast::Expression& expr) {

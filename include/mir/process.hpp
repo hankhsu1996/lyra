@@ -3,17 +3,13 @@
 #include <memory>
 #include <vector>
 
-#include "mir/expression.hpp"
+#include "common/trigger.hpp"
 #include "mir/statement.hpp"
+#include "mir/variable.hpp"
 
 namespace lyra::mir {
 
-enum class EdgeKind { kPosedge, kNegedge, kAnyEdge };
-
-struct Trigger {
-  EdgeKind edge_kind;
-  std::shared_ptr<Expression> expression;
-};
+using Trigger = common::Trigger<Variable>;
 
 enum class ProcessKind { kInitial, kAlwaysFF, kAlwaysComb };
 
