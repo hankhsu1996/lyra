@@ -66,7 +66,7 @@ class BinaryExpression : public Expression {
 // Helper function for safely casting expressions
 template <typename T>
 auto As(const Expression &expr) -> const T & {
-  if (expr.kind != T::kind_value) {
+  if (expr.kind != T::kKindValue) {
     throw std::runtime_error("Expression kind mismatch in As<T>() cast");
   }
   return static_cast<const T &>(expr);

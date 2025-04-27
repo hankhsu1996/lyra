@@ -30,6 +30,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
       break;
     }
+
     case StatementKind::Block: {
       const auto& block_statement = statement.as<slang::ast::BlockStatement>();
       auto inner_statements = LowerStatement(block_statement.body);
@@ -37,6 +38,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
           result.end(), inner_statements.begin(), inner_statements.end());
       break;
     }
+
     case StatementKind::ExpressionStatement: {
       const auto& expression_statement =
           statement.as<slang::ast::ExpressionStatement>();
@@ -48,7 +50,6 @@ auto LowerStatement(const slang::ast::Statement& statement)
               expression.as<slang::ast::AssignmentExpression>();
 
           const auto& left_expression = assignment_expression.left();
-
           if (left_expression.kind != slang::ast::ExpressionKind::NamedValue) {
             throw std::runtime_error(fmt::format(
                 "Unsupported assignment target expression kind {} in "
@@ -60,14 +61,14 @@ auto LowerStatement(const slang::ast::Statement& statement)
               left_expression.as<slang::ast::NamedValueExpression>()
                   .symbol.name;
 
-          auto mir_statement = std::make_shared<mir::Statement>();
-          mir_statement->kind = mir::Statement::Kind::kAssign;
-          mir_statement->target = std::string(target_name);
-          mir_statement->value = LowerExpression(assignment_expression.right());
+          auto assign_statement = std::make_shared<mir::AssignStatement>(
+              std::string(target_name),
+              LowerExpression(assignment_expression.right()));
 
-          result.push_back(std::move(mir_statement));
+          result.push_back(std::move(assign_statement));
           break;
         }
+
         default:
           throw std::runtime_error(fmt::format(
               "Unsupported expression kind {} in LowerStatement",
@@ -75,6 +76,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
       break;
     }
+
     default:
       throw std::runtime_error(fmt::format(
           "Unsupported statement kind {} in LowerStatement",
