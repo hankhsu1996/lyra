@@ -13,6 +13,7 @@ cc_library(
         # Commenting out LLVM for now until we start using it
         # "@llvm-project//llvm/include",
         "@slang",
+        "@spdlog",
     ],
 )
 

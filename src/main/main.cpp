@@ -2,10 +2,13 @@
 #include <memory>
 #include <string>
 
+#include <slang/ast/Compilation.h>
+#include <spdlog/spdlog.h>
+
 #include "core/execution_context.hpp"
 #include "frontend/slang_frontend.hpp"
 #include "lir/executor.hpp"
-#include "lowering/ast_to_mir.hpp"
+#include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir.hpp"
 
 using lyra::ExecutionContext;
@@ -15,6 +18,9 @@ using lyra::lowering::AstToMir;
 using lyra::lowering::MirToLir;
 
 auto main() -> int {
+  spdlog::set_level(spdlog::level::debug);
+  spdlog::flush_on(spdlog::level::debug);
+
   std::cout << "===== Lyra Simulator Prototype =====\n";
 
   const std::string test_file_path = "src/main/test.sv";
@@ -26,8 +32,11 @@ auto main() -> int {
     return 1;
   }
 
+  // Convert AST to MIR
   auto mir = AstToMir(*compilation);
-  auto lir = MirToLir(mir);
+
+  // Convert MIR to LIR
+  auto lir = MirToLir(*mir);
 
   std::cout << "\n--- LIR Dump ---\n";
   std::cout << "Module: " << lir.name << "\n";
@@ -94,9 +103,7 @@ auto main() -> int {
     }
   }
 
-  // ===============================
-  // 🧪 Run interpreter on initial block
-  // ===============================
+  // Run interpreter
   std::cout << "\n--- Simulation Result ---\n";
 
   ExecutionContext ctx;
@@ -104,17 +111,9 @@ auto main() -> int {
   executor.RunInitial();
 
   for (const auto& sig : lir.signals) {
-    try {
-      const auto& val = ctx.signalTable.Read(sig);
-      std::cout << sig << " = ";
-      try {
-        std::cout << val.AsInt() << "\n";
-      } catch (...) {
-        std::cout << val.AsString() << "\n";
-      }
-    } catch (...) {
-      std::cout << sig << " (uninitialized)\n";
-    }
+    const auto& val = ctx.signalTable.Read(sig);
+    std::cout << sig << " = ";
+    std::cout << val.AsInt() << "\n";
   }
 
   return 0;
