@@ -17,16 +17,11 @@ namespace lyra::lowering {
 
 auto CollectSensitivityList(const slang::ast::Statement& statement)
     -> std::vector<std::string> {
-  spdlog::info("Collecting sensitivity list");
   std::unordered_set<std::string> signals;
 
   auto visitor = slang::ast::makeVisitor(
       [&](const slang::ast::NamedValueExpression& expr) {
-        if (!expr.symbol.name.empty()) {
-          signals.insert(std::string(expr.symbol.name));
-        } else {
-          spdlog::warn("Empty signal name found in sensitivity list");
-        }
+        signals.insert(std::string(expr.symbol.name));
       });
 
   auto visit_expression = [&](const slang::ast::Expression& expr) {
