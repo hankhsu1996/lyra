@@ -9,7 +9,7 @@
 #include "frontend/slang_frontend.hpp"
 #include "lir/executor.hpp"
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
-#include "lowering/mir_to_lir.hpp"
+#include "lowering/mir_to_lir/mir_to_lir.hpp"
 
 using lyra::ExecutionContext;
 using lyra::frontend::LoadCompilation;

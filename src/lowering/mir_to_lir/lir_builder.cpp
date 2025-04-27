@@ -1,4 +1,4 @@
-#include "lowering/lir_builder.hpp"
+#include "lowering/mir_to_lir/lir_builder.hpp"
 
 namespace lyra::lowering {
 
