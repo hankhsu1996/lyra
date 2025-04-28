@@ -14,6 +14,6 @@ namespace lyra::lowering {
 
 // Lowers a slang AST InstanceSymbol into a MIR Module.
 auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
-    -> std::shared_ptr<mir::Module>;
+    -> std::unique_ptr<mir::Module>;
 
 }  // namespace lyra::lowering

@@ -60,11 +60,11 @@ auto LirBuilder::MakeTemp(const std::string& hint) -> std::string {
   return "%" + hint + "_" + std::to_string(temp_counter_++);
 }
 
-auto LirBuilder::Build() -> lir::Module {
-  lir::Module mod;
-  mod.name = module_name_;
-  mod.signals = std::move(signals_);
-  mod.processes = std::move(processes_);
+auto LirBuilder::Build() -> std::unique_ptr<lir::Module> {
+  auto mod = std::make_unique<lir::Module>();
+  mod->name = module_name_;
+  mod->signals = std::move(signals_);
+  mod->processes = std::move(processes_);
   return mod;
 }
 

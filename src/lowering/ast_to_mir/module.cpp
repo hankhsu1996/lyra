@@ -12,8 +12,8 @@
 namespace lyra::lowering {
 
 auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
-    -> std::shared_ptr<mir::Module> {
-  auto module = std::make_shared<mir::Module>();
+    -> std::unique_ptr<mir::Module> {
+  auto module = std::make_unique<mir::Module>();
   module->name = std::string(instance_symbol.name);
 
   const auto& body = instance_symbol.body;

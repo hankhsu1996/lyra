@@ -13,7 +13,7 @@
 namespace lyra::lowering {
 
 auto AstToMir(slang::ast::Compilation& compilation)
-    -> std::shared_ptr<mir::Module> {
+    -> std::unique_ptr<mir::Module> {
   const auto& root = compilation.getRoot();
 
   for (const auto& member : root.members()) {

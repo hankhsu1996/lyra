@@ -3,25 +3,20 @@
 namespace lyra {
 
 SimulationScheduler::SimulationScheduler(
-    const lir::Module& module, ExecutionContext& ctx)
-    : module_(module), ctx_(ctx), executor_(module, ctx) {
+    const lir::Module& module, ExecutionContext& ctx,
+    VariableTriggerMap variable_triggers)
+    : module_(module),
+      ctx_(ctx),
+      executor_(module, ctx),
+      variable_to_triggers_(std::move(variable_triggers)) {
 }
 
 void SimulationScheduler::Run() {
-  BuildVariableToTriggerMap();
   ScheduleInitialProcesses();
   ScheduleAlwaysProcesses();
 
   while (!active_queue_.empty()) {
     ExecuteOneEvent();
-  }
-}
-
-void SimulationScheduler::BuildVariableToTriggerMap() {
-  for (const auto& process : module_.get().processes) {
-    for (const auto& trigger : process->trigger_list) {
-      variable_to_triggers_[trigger.variable].emplace_back(trigger, process);
-    }
   }
 }
 

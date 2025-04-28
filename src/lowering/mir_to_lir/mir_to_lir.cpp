@@ -6,7 +6,7 @@
 
 namespace lyra::lowering {
 
-auto MirToLir(const mir::Module& module) -> lir::Module {
+auto MirToLir(const mir::Module& module) -> std::unique_ptr<lir::Module> {
   return LowerModule(module);
 }
 

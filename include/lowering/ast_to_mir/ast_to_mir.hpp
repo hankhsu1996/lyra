@@ -14,6 +14,6 @@ namespace lyra::lowering {
 
 // Lowers a slang AST Compilation into a MIR Module.
 auto AstToMir(slang::ast::Compilation& compilation)
-    -> std::shared_ptr<mir::Module>;
+    -> std::unique_ptr<mir::Module>;
 
 }  // namespace lyra::lowering

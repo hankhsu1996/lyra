@@ -9,7 +9,7 @@
 
 namespace lyra::lowering {
 
-auto LowerModule(const mir::Module& module) -> lir::Module {
+auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
   if (module.name.empty()) {
     throw std::runtime_error("Module has empty name");
   }

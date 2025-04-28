@@ -24,7 +24,7 @@ class LirBuilder {
   void EndProcess();
 
   auto MakeTemp(const std::string& hint = "tmp") -> std::string;
-  auto Build() -> lir::Module;
+  auto Build() -> std::unique_ptr<lir::Module>;
 
  private:
   std::string module_name_;
