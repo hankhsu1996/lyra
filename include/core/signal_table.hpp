@@ -10,10 +10,13 @@ namespace lyra {
 class SignalTable {
  public:
   void Write(const std::string &name, const RuntimeValue &value);
-  [[nodiscard]] auto Read(const std::string &name) const -> RuntimeValue;
+  auto Read(const std::string &name) const -> RuntimeValue;
+  auto ReadPrevious(const std::string &name) const -> RuntimeValue;
+  void UpdatePrevious(const std::string &name, const RuntimeValue &value);
 
  private:
   std::unordered_map<std::string, RuntimeValue> signals_;
+  std::unordered_map<std::string, RuntimeValue> previous_signals_;
 };
 
 }  // namespace lyra

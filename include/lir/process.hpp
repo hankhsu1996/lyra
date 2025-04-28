@@ -1,16 +1,16 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "common/trigger.hpp"
 #include "fmt/format.h"
 #include "lir/instruction.hpp"
-#include "lir/value.hpp"
 
 namespace lyra::lir {
 
-// Use common::Trigger with Value directly
-using Trigger = common::Trigger<Value>;
+// Use string for variable names in triggers
+using Trigger = common::Trigger<std::string>;
 
 enum class ProcessKind { kInitial, kAlways };
 

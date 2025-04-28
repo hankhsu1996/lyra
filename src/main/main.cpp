@@ -6,14 +6,12 @@
 #include <spdlog/spdlog.h>
 
 #include "core/execution_context.hpp"
+#include "core/simulation_scheduler.hpp"
 #include "frontend/slang_frontend.hpp"
-#include "lir/executor.hpp"
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir/mir_to_lir.hpp"
 
-using lyra::ExecutionContext;
 using lyra::frontend::LoadCompilation;
-using lyra::lir::Executor;
 using lyra::lowering::AstToMir;
 using lyra::lowering::MirToLir;
 
@@ -45,9 +43,9 @@ auto main() -> int {
   // Run interpreter
   std::cout << "\n--- Simulation Result ---\n";
 
-  ExecutionContext ctx;
-  Executor executor(lir, ctx);
-  executor.RunInitial();
+  lyra::ExecutionContext ctx;
+  lyra::SimulationScheduler scheduler(lir, ctx);
+  scheduler.Run();
 
   for (const auto& sig : lir.signals) {
     const auto& val = ctx.signalTable.Read(sig);

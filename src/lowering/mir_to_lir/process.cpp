@@ -29,7 +29,7 @@ auto MapTrigger(const mir::Trigger& mir_trigger) -> lir::Trigger {
 
   return lir::Trigger{
       .edge_kind = mir_trigger.edge_kind,
-      .variable = lir::Value::MakeSignal(mir_trigger.variable.name)};
+      .variable = mir_trigger.variable.name};
 }
 
 auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
