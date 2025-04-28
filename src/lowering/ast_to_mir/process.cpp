@@ -48,7 +48,7 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
 
         auto trigger = common::Trigger{
             .edge_kind = common::EdgeKind::kAnyEdge,
-            .variable = std::make_shared<mir::Variable>(*variable_opt)};
+            .variable = variable_opt.value()};
 
         process->trigger_list.push_back(std::move(trigger));
       }

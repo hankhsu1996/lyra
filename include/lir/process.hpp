@@ -2,21 +2,24 @@
 
 #include <vector>
 
+#include "common/trigger.hpp"
 #include "fmt/format.h"
 #include "lir/instruction.hpp"
+#include "lir/value.hpp"
 
 namespace lyra::lir {
 
-enum class ProcessKind { kInitial, kAlwaysComb, kAlwaysFF };
+// Use common::Trigger with Value directly
+using Trigger = common::Trigger<Value>;
+
+enum class ProcessKind { kInitial, kAlways };
 
 inline auto ToString(ProcessKind kind) -> std::string {
   switch (kind) {
     case ProcessKind::kInitial:
       return "initial";
-    case ProcessKind::kAlwaysComb:
-      return "always_comb";
-    case ProcessKind::kAlwaysFF:
-      return "always_ff";
+    case ProcessKind::kAlways:
+      return "always";
     default:
       return "(unknown)";
   }
@@ -27,6 +30,9 @@ struct Process {
 
   // Flat list of executable instructions
   std::vector<Instruction> instructions;
+
+  // Sensitivity list for the process (empty for initial processes)
+  std::vector<Trigger> trigger_list;
 
   [[nodiscard]] auto ToString() const -> std::string {
     std::string out;

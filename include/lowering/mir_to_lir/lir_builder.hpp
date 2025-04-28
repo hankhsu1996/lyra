@@ -17,6 +17,7 @@ class LirBuilder {
 
   void AddSignal(const std::string& name);
   void BeginProcess(lir::ProcessKind kind);
+  void AddTrigger(lir::Trigger trigger);
   void AddInstruction(
       lir::InstructionKind kind, const std::string& result,
       std::vector<lir::Value> operands);

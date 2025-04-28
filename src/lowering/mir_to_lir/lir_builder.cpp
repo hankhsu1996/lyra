@@ -21,6 +21,14 @@ void LirBuilder::BeginProcess(lir::ProcessKind kind) {
   current_process_->kind = kind;
 }
 
+void LirBuilder::AddTrigger(lir::Trigger trigger) {
+  if (!current_process_) {
+    throw std::runtime_error("AddTrigger called with no active process");
+  }
+
+  current_process_->trigger_list.push_back(std::move(trigger));
+}
+
 void LirBuilder::AddInstruction(
     lir::InstructionKind kind, const std::string& result,
     std::vector<lir::Value> operands) {
