@@ -12,7 +12,7 @@ struct Value {
   enum class Kind { kTemp, kSignal, kLiteralInt, kLiteralString };
 
   Kind kind;
-  std::variant<std::string, int> data;
+  std::variant<std::string, int64_t> data;
 
   static auto MakeTemp(const std::string& name) -> Value {
     return Value{.kind = Kind::kTemp, .data = name};
@@ -22,7 +22,7 @@ struct Value {
     return Value{.kind = Kind::kSignal, .data = name};
   }
 
-  static auto MakeLiteralInt(int value) -> Value {
+  static auto MakeLiteralInt(int64_t value) -> Value {
     return Value{.kind = Kind::kLiteralInt, .data = value};
   }
 
@@ -37,7 +37,7 @@ struct Value {
       case Kind::kSignal:
         return std::get<std::string>(data);
       case Kind::kLiteralInt:
-        return fmt::format("{}", std::get<int>(data));
+        return fmt::format("{}", std::get<int64_t>(data));
       case Kind::kLiteralString:
         return fmt::format("\"{}\"", std::get<std::string>(data));
     }

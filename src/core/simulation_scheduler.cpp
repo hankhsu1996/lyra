@@ -3,11 +3,11 @@
 namespace lyra {
 
 SimulationScheduler::SimulationScheduler(
-    const lir::Module& module, ExecutionContext& ctx,
+    const lir::Module& module, ExecutionContext& context,
     VariableTriggerMap variable_triggers)
     : module_(module),
-      ctx_(ctx),
-      executor_(module, ctx),
+      context_(context),
+      executor_(module, context),
       variable_to_triggers_(std::move(variable_triggers)) {
 }
 
@@ -15,15 +15,25 @@ void SimulationScheduler::Run() {
   ScheduleInitialProcesses();
   ScheduleAlwaysProcesses();
 
-  while (!active_queue_.empty()) {
-    ExecuteOneEvent();
+  while (!active_queue_.empty() || !delay_queue_.empty()) {
+    if (active_queue_.empty() && !delay_queue_.empty()) {
+      // No ready processes, advance simulation time
+      const auto& next_event = delay_queue_.top();
+      simulation_time_ = next_event.ready_time;
+      active_queue_.push({next_event.process, next_event.program_counter});
+      delay_queue_.pop();
+    }
+
+    if (!active_queue_.empty()) {
+      ExecuteOneEvent();
+    }
   }
 }
 
 void SimulationScheduler::ScheduleInitialProcesses() {
   for (const auto& process : module_.get().processes) {
     if (process->kind == lir::ProcessKind::kInitial) {
-      active_queue_.push({process});
+      active_queue_.push({process, 0});
     }
   }
 }
@@ -31,7 +41,7 @@ void SimulationScheduler::ScheduleInitialProcesses() {
 void SimulationScheduler::ScheduleAlwaysProcesses() {
   for (const auto& process : module_.get().processes) {
     if (process->kind == lir::ProcessKind::kAlways) {
-      active_queue_.push({process});
+      active_queue_.push({process, 0});
     }
   }
 }
@@ -40,22 +50,38 @@ void SimulationScheduler::ExecuteOneEvent() {
   ScheduledEvent event = active_queue_.front();
   active_queue_.pop();
 
-  for (const auto& instr : event.process->instructions) {
-    executor_.ExecuteInstruction(instr);
+  auto& process = event.process;
+  size_t program_counter = event.program_counter;
+
+  const auto& instructions = process->instructions;
+
+  while (program_counter < instructions.size()) {
+    const auto& instr = instructions[program_counter];
+    auto result = executor_.ExecuteInstruction(instr);
+
+    ++program_counter;
+
+    if (result.action == lir::ExecuteResult::Action::kDelay) {
+      uint64_t resume_time = simulation_time_ + result.delay_amount;
+      delay_queue_.push({resume_time, process, program_counter});
+      return;  // Pause current process until delay expires
+    }
 
     if (instr.kind == lir::InstructionKind::kStoreSignal) {
-      const auto& dst_variable = std::get<std::string>(instr.operands[0].data);
+      const auto& destination_signal =
+          std::get<std::string>(instr.operands[0].data);
 
       RuntimeValue old_value =
-          ctx_.get().signalTable.ReadPrevious(dst_variable);
-      RuntimeValue new_value = ctx_.get().signalTable.Read(dst_variable);
+          context_.get().signalTable.ReadPrevious(destination_signal);
+      RuntimeValue new_value =
+          context_.get().signalTable.Read(destination_signal);
 
-      int old_int = old_value.AsInt();
-      int new_int = new_value.AsInt();
+      int64_t old_int = old_value.AsInt();
+      int64_t new_int = new_value.AsInt();
 
-      auto it = variable_to_triggers_.find(dst_variable);
+      auto it = variable_to_triggers_.find(destination_signal);
       if (it != variable_to_triggers_.end()) {
-        for (const auto& [trigger, proc] : it->second) {
+        for (const auto& [trigger, triggered_process] : it->second) {
           bool should_trigger = false;
 
           switch (trigger.edge_kind) {
@@ -71,12 +97,12 @@ void SimulationScheduler::ExecuteOneEvent() {
           }
 
           if (should_trigger) {
-            active_queue_.push({proc});
+            active_queue_.push({triggered_process, 0});
           }
         }
       }
 
-      ctx_.get().signalTable.UpdatePrevious(dst_variable, new_value);
+      context_.get().signalTable.UpdatePrevious(destination_signal, new_value);
     }
   }
 }

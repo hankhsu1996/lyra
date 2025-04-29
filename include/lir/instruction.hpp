@@ -15,7 +15,8 @@ enum class InstructionKind {
   kLoadSignal,
   kStoreSignal,
   kBinaryAdd,
-  kAssign
+  kAssign,
+  kDelay
 };
 
 struct Instruction {
@@ -49,6 +50,9 @@ struct Instruction {
         } else {
           return "(invalid assign)";
         }
+
+      case InstructionKind::kDelay:
+        return fmt::format("delay {}", operands[0].ToString());
 
       default:
         return "(unknown instruction)";

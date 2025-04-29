@@ -3,8 +3,10 @@
 #include <string>
 #include <vector>
 
+#include <fmt/core.h>
+#include <fmt/ranges.h>
+
 #include "common/trigger.hpp"
-#include "fmt/format.h"
 #include "lir/instruction.hpp"
 
 namespace lyra::lir {
@@ -37,7 +39,12 @@ struct Process {
   [[nodiscard]] auto ToString() const -> std::string {
     std::string out;
 
-    out += fmt::format("  Process {}\n", lyra::lir::ToString(kind));
+    out += fmt::format("  Process {}", lyra::lir::ToString(kind));
+    if (!trigger_list.empty()) {
+      out += fmt::format(" @({})", fmt::join(trigger_list, ", "));
+    }
+
+    out += "\n";
     for (const auto& instr : instructions) {
       out += fmt::format("    {}\n", instr);
     }

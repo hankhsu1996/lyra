@@ -10,6 +10,12 @@ namespace lyra::lowering {
 
 auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     -> void {
+  if (statement.timing_control) {
+    builder.AddInstruction(
+        lir::InstructionKind::kDelay, "",
+        {lir::Value::MakeLiteralInt(statement.timing_control->delay_amount)});
+  }
+
   switch (statement.kind) {
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(statement);

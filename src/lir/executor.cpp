@@ -9,34 +9,34 @@ Executor::Executor(const Module& module, lyra::ExecutionContext& context)
 }
 
 // Execute a single instruction in the given context
-void Executor::ExecuteInstruction(const Instruction& instr) {
+auto Executor::ExecuteInstruction(const Instruction& instr) -> ExecuteResult {
   switch (instr.kind) {
     case InstructionKind::kLiteralInt: {
-      int val = std::get<int>(instr.operands[0].data);
+      int64_t val = std::get<int64_t>(instr.operands[0].data);
       ctx_.get().ssaTable.Write(instr.result, RuntimeValue::FromInt(val));
-      break;
+      return ExecuteResult::Continue();
     }
 
     case InstructionKind::kLiteralString: {
       const auto& val = std::get<std::string>(instr.operands[0].data);
       ctx_.get().ssaTable.Write(instr.result, RuntimeValue::FromString(val));
-      break;
+      return ExecuteResult::Continue();
     }
 
     case InstructionKind::kBinaryAdd: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int v1 = ctx_.get().ssaTable.Read(lhs).AsInt();
-      int v2 = ctx_.get().ssaTable.Read(rhs).AsInt();
+      int64_t v1 = ctx_.get().ssaTable.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().ssaTable.Read(rhs).AsInt();
       ctx_.get().ssaTable.Write(instr.result, RuntimeValue::FromInt(v1 + v2));
-      break;
+      return ExecuteResult::Continue();
     }
 
     case InstructionKind::kLoadSignal: {
       auto src_signal = std::get<std::string>(instr.operands[0].data);
       RuntimeValue val = ctx_.get().signalTable.Read(src_signal);
       ctx_.get().ssaTable.Write(instr.result, val);
-      break;
+      return ExecuteResult::Continue();
     }
 
     case InstructionKind::kStoreSignal: {
@@ -44,7 +44,12 @@ void Executor::ExecuteInstruction(const Instruction& instr) {
       auto src_val = std::get<std::string>(instr.operands[1].data);
       ctx_.get().signalTable.Write(
           dst_signal, ctx_.get().ssaTable.Read(src_val));
-      break;
+      return ExecuteResult::Continue();
+    }
+
+    case InstructionKind::kDelay: {
+      auto delay_amount = std::get<int64_t>(instr.operands[0].data);
+      return ExecuteResult::Delay(delay_amount);
     }
 
     default:

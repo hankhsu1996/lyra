@@ -4,7 +4,7 @@
 
 namespace lyra {
 
-auto RuntimeValue::FromInt(int value) -> RuntimeValue {
+auto RuntimeValue::FromInt(int64_t value) -> RuntimeValue {
   return RuntimeValue(std::make_shared<IntValue>(value));
 }
 
@@ -12,7 +12,7 @@ auto RuntimeValue::FromString(std::string value) -> RuntimeValue {
   return RuntimeValue(std::make_shared<StringValue>(std::move(value)));
 }
 
-auto RuntimeValue::AsInt() const -> int {
+auto RuntimeValue::AsInt() const -> int64_t {
   auto *int_value = dynamic_cast<IntValue *>(impl_.get());
   if (int_value == nullptr) {
     throw std::runtime_error("Value is not an integer");

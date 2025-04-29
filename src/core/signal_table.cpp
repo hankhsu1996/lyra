@@ -29,4 +29,13 @@ void SignalTable::UpdatePrevious(
   previous_signals_[name] = value;
 }
 
+auto SignalTable::Exists(const std::string& name) const -> bool {
+  return signals_.find(name) != signals_.end();
+}
+
+void SignalTable::CreateSignal(
+    const std::string& name, RuntimeValue initial_value) {
+  signals_[name] = std::move(initial_value);
+}
+
 }  // namespace lyra

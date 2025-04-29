@@ -1,32 +1,10 @@
 #include "lowering/ast_to_mir/collect_sensitivity.hpp"
 
-#include <unordered_set>
-
-#include <fmt/format.h>
-#include <slang/ast/ASTVisitor.h>
-#include <slang/ast/Expression.h>
-#include <slang/ast/Statement.h>
-#include <slang/ast/expressions/AssignmentExpressions.h>
-#include <slang/ast/expressions/LiteralExpressions.h>
-#include <slang/ast/expressions/MiscExpressions.h>
-#include <slang/ast/expressions/OperatorExpressions.h>
-#include <slang/ast/statements/MiscStatements.h>
-#include <spdlog/spdlog.h>
-
 namespace lyra::lowering {
 
 auto CollectSensitivityList(const slang::ast::Statement& statement)
     -> std::vector<const slang::ast::Symbol*> {
   std::unordered_set<const slang::ast::Symbol*> signals;
-
-  auto visitor = slang::ast::makeVisitor(
-      [&](const slang::ast::NamedValueExpression& expr) {
-        signals.insert(&expr.symbol);
-      });
-
-  auto visit_expression = [&](const slang::ast::Expression& expr) {
-    visitor.visit(expr);
-  };
 
   auto visit_statement = [&](const slang::ast::Statement& statement,
                              auto&& self) -> void {
@@ -49,7 +27,8 @@ auto CollectSensitivityList(const slang::ast::Statement& statement)
       case Kind::ExpressionStatement: {
         const auto& expression_statement =
             statement.as<slang::ast::ExpressionStatement>();
-        visit_expression(expression_statement.expr);
+        SensitivityCollector collector(signals);
+        expression_statement.expr.visit(collector);
         break;
       }
       default:

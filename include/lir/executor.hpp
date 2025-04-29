@@ -5,12 +5,30 @@
 
 namespace lyra::lir {
 
+struct ExecuteResult {
+  enum class Action {
+    kContinue,
+    kDelay,
+  };
+
+  Action action{};
+  int64_t delay_amount = 0;
+
+  static auto Continue() -> ExecuteResult {
+    return ExecuteResult{.action = Action::kContinue};
+  }
+
+  static auto Delay(int64_t amount) -> ExecuteResult {
+    return ExecuteResult{.action = Action::kDelay, .delay_amount = amount};
+  }
+};
+
 class Executor {
  public:
   Executor(const Module& module, lyra::ExecutionContext& context);
 
   // Execute a single instruction
-  void ExecuteInstruction(const Instruction& instr);
+  auto ExecuteInstruction(const Instruction& instr) -> ExecuteResult;
 
  private:
   std::reference_wrapper<const Module> module_;

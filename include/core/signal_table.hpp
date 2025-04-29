@@ -13,6 +13,8 @@ class SignalTable {
   auto Read(const std::string &name) const -> RuntimeValue;
   auto ReadPrevious(const std::string &name) const -> RuntimeValue;
   void UpdatePrevious(const std::string &name, const RuntimeValue &value);
+  auto Exists(const std::string &name) const -> bool;
+  void CreateSignal(const std::string &name, RuntimeValue initial_value);
 
  private:
   std::unordered_map<std::string, RuntimeValue> signals_;

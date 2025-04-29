@@ -15,4 +15,13 @@ auto SimulationPreparation::BuildVariableTriggerMap(const lir::Module& module)
   return trigger_map;
 }
 
+void SimulationPreparation::InitializeSignals(
+    const lir::Module& module, ExecutionContext& context) {
+  for (const auto& signal_name : module.signals) {
+    if (!context.signalTable.Exists(signal_name)) {
+      context.signalTable.CreateSignal(signal_name, RuntimeValue::FromInt(0));
+    }
+  }
+}
+
 }  // namespace lyra

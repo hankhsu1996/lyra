@@ -15,8 +15,8 @@ struct Value {
 };
 
 struct IntValue : Value {
-  int value;
-  explicit IntValue(int v) : value(v) {
+  int64_t value;
+  explicit IntValue(int64_t v) : value(v) {
   }
 };
 
@@ -31,10 +31,10 @@ class RuntimeValue {
   RuntimeValue() : impl_(std::make_shared<IntValue>(0)) {
   }
 
-  static auto FromInt(int value) -> RuntimeValue;
+  static auto FromInt(int64_t value) -> RuntimeValue;
   static auto FromString(std::string value) -> RuntimeValue;
 
-  [[nodiscard]] auto AsInt() const -> int;
+  [[nodiscard]] auto AsInt() const -> int64_t;
   [[nodiscard]] auto AsString() const -> const std::string &;
 
  private:

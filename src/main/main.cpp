@@ -35,13 +35,14 @@ auto main() -> int {
 
   // Dump LIR
   std::cout << "\n--- LIR Dump ---\n";
-  std::cout << lir << "\n";
+  std::cout << *lir << "\n";
 
   // Run interpreter
   std::cout << "\n--- Simulation Result ---\n";
 
   // Prepare Simulation
   lyra::ExecutionContext ctx;
+  lyra::SimulationPreparation::InitializeSignals(*lir, ctx);
   lyra::VariableTriggerMap variable_triggers =
       lyra::SimulationPreparation::BuildVariableTriggerMap(*lir);
 

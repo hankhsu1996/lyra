@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/trigger.hpp"
+#include "core/execution_context.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
 
@@ -19,8 +20,13 @@ using VariableTriggerMap =
 
 class SimulationPreparation {
  public:
+  // Build a map from variable names to their triggers
   static auto BuildVariableTriggerMap(const lir::Module& module)
       -> VariableTriggerMap;
+
+  // Initialize all declared signals in the module into the execution context
+  static void InitializeSignals(
+      const lir::Module& module, ExecutionContext& context);
 };
 
 }  // namespace lyra

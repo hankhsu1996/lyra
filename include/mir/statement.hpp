@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "common/timing_control.hpp"
 #include "mir/expression.hpp"
 
 namespace lyra::mir {
@@ -18,13 +20,18 @@ class Statement {
   };
 
   Kind kind;
+  std::optional<common::TimingControl> timing_control;
 
-  Statement(const Statement &) = default;
-  Statement(Statement &&) = delete;
-  auto operator=(const Statement &) -> Statement & = default;
-  auto operator=(Statement &&) -> Statement & = delete;
-  explicit Statement(Kind kind) : kind(kind) {
+  Statement(const Statement&) = default;
+  Statement(Statement&&) = delete;
+  auto operator=(const Statement&) -> Statement& = default;
+  auto operator=(Statement&&) -> Statement& = delete;
+
+  explicit Statement(
+      Kind kind, std::optional<common::TimingControl> timing = std::nullopt)
+      : kind(kind), timing_control(std::move(timing)) {
   }
+
   virtual ~Statement() = default;
 };
 
@@ -34,8 +41,12 @@ class AssignStatement : public Statement {
   std::string target;
   std::shared_ptr<Expression> value;
 
-  AssignStatement(std::string t, std::shared_ptr<Expression> v)
-      : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
+  AssignStatement(
+      std::string t, std::shared_ptr<Expression> v,
+      std::optional<common::TimingControl> tc = std::nullopt)
+      : Statement(kKindValue, std::move(tc)),
+        target(std::move(t)),
+        value(std::move(v)) {
   }
 };
 
@@ -44,7 +55,9 @@ class BlockStatement : public Statement {
   static constexpr Kind kKindValue = Kind::kBlock;
   std::vector<std::shared_ptr<Statement>> statements;
 
-  BlockStatement() : Statement(kKindValue) {
+  explicit BlockStatement(
+      std::optional<common::TimingControl> tc = std::nullopt)
+      : Statement(kKindValue, std::move(tc)) {
   }
 };
 
@@ -57,8 +70,9 @@ class IfStatement : public Statement {
 
   IfStatement(
       std::shared_ptr<Expression> cond, std::shared_ptr<Statement> then_b,
-      std::shared_ptr<Statement> else_b)
-      : Statement(kKindValue),
+      std::shared_ptr<Statement> else_b,
+      std::optional<common::TimingControl> tc = std::nullopt)
+      : Statement(kKindValue, std::move(tc)),
         condition(std::move(cond)),
         then_branch(std::move(then_b)),
         else_branch(std::move(else_b)) {
@@ -67,11 +81,11 @@ class IfStatement : public Statement {
 
 // Helper function for safely casting statements
 template <typename T>
-auto As(const Statement &stmt) -> const T & {
+auto As(const Statement& stmt) -> const T& {
   if (stmt.kind != T::kKindValue) {
     throw std::runtime_error("Statement kind mismatch in As<T>() cast");
   }
-  return static_cast<const T &>(stmt);
+  return static_cast<const T&>(stmt);
 }
 
 }  // namespace lyra::mir
