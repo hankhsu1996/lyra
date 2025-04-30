@@ -1,6 +1,6 @@
 #include "frontend/slang_frontend.hpp"
 
-#include <memory>
+#include <stdexcept>
 
 #include <slang/ast/Compilation.h>
 #include <slang/syntax/SyntaxTree.h>
@@ -8,25 +8,39 @@
 
 namespace lyra::frontend {
 
-auto LoadCompilation(std::vector<std::string> files)
-    -> std::unique_ptr<slang::ast::Compilation> {
-  static std::shared_ptr<slang::SourceManager> source_manager =
-      std::make_shared<slang::SourceManager>();
-  static std::vector<std::shared_ptr<slang::syntax::SyntaxTree>> owned_trees;
+SlangFrontend::SlangFrontend()
+    : source_manager_(std::make_shared<slang::SourceManager>()) {
+}
 
+void SlangFrontend::AddTree(
+    const std::shared_ptr<slang::syntax::SyntaxTree>& tree,
+    slang::ast::Compilation& compilation) {
+  owned_trees_.push_back(tree);
+  compilation.addSyntaxTree(tree);
+}
+
+auto SlangFrontend::LoadFromFiles(const std::vector<std::string>& paths)
+    -> std::unique_ptr<slang::ast::Compilation> {
   auto compilation = std::make_unique<slang::ast::Compilation>();
 
-  for (const auto& file : files) {
-    auto result = slang::syntax::SyntaxTree::fromFile(file, *source_manager);
+  for (const auto& path : paths) {
+    auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager_);
     if (!result) {
-      throw std::runtime_error("Failed to parse file: " + file);
+      throw std::runtime_error("Failed to parse file: " + path);
     }
-
-    auto tree = result.value();
-    owned_trees.push_back(tree);
-    compilation->addSyntaxTree(tree);
+    AddTree(result.value(), *compilation);
   }
 
+  return compilation;
+}
+
+auto SlangFrontend::LoadFromString(
+    const std::string& code, const std::string& name)
+    -> std::unique_ptr<slang::ast::Compilation> {
+  auto compilation = std::make_unique<slang::ast::Compilation>();
+  auto buffer = source_manager_->assignText(name, code);
+  auto tree = slang::syntax::SyntaxTree::fromBuffer(buffer, *source_manager_);
+  AddTree(tree, *compilation);
   return compilation;
 }
 

@@ -12,10 +12,8 @@
 
 namespace lyra::lowering {
 
-auto AstToMir(slang::ast::Compilation& compilation)
+auto AstToMir(const slang::ast::RootSymbol& root)
     -> std::unique_ptr<mir::Module> {
-  const auto& root = compilation.getRoot();
-
   for (const auto& member : root.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
       const auto& instance_symbol = member.as<slang::ast::InstanceSymbol>();

@@ -9,9 +9,8 @@ cc_library(
     srcs = glob(["src/**/*.cpp"]),
     hdrs = glob(["include/**/*.hpp"]),
     includes = ["include"],
+    visibility = ["//visibility:public"],
     deps = [
-        # Commenting out LLVM for now until we start using it
-        # "@llvm-project//llvm/include",
         "@slang",
         "@spdlog",
     ],

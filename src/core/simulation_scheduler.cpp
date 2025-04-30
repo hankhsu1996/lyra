@@ -72,9 +72,9 @@ void SimulationScheduler::ExecuteOneEvent() {
           std::get<std::string>(instr.operands[0].data);
 
       RuntimeValue old_value =
-          context_.get().signalTable.ReadPrevious(destination_signal);
+          context_.get().signal_table.ReadPrevious(destination_signal);
       RuntimeValue new_value =
-          context_.get().signalTable.Read(destination_signal);
+          context_.get().signal_table.Read(destination_signal);
 
       int64_t old_int = old_value.AsInt();
       int64_t new_int = new_value.AsInt();
@@ -102,7 +102,7 @@ void SimulationScheduler::ExecuteOneEvent() {
         }
       }
 
-      context_.get().signalTable.UpdatePrevious(destination_signal, new_value);
+      context_.get().signal_table.UpdatePrevious(destination_signal, new_value);
     }
   }
 }

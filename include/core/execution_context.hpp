@@ -7,8 +7,8 @@ namespace lyra {
 
 class ExecutionContext {
  public:
-  SignalTable signalTable;
-  SsaTable ssaTable;
+  SignalTable signal_table;
+  SsaTable ssa_table;
 };
 
 }  // namespace lyra

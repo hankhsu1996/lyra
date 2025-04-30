@@ -18,8 +18,8 @@ auto SimulationPreparation::BuildVariableTriggerMap(const lir::Module& module)
 void SimulationPreparation::InitializeSignals(
     const lir::Module& module, ExecutionContext& context) {
   for (const auto& signal_name : module.signals) {
-    if (!context.signalTable.Exists(signal_name)) {
-      context.signalTable.CreateSignal(signal_name, RuntimeValue::FromInt(0));
+    if (!context.signal_table.Exists(signal_name)) {
+      context.signal_table.CreateSignal(signal_name, RuntimeValue::FromInt(0));
     }
   }
 }

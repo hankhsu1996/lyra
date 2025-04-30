@@ -1,8 +1,8 @@
 #include <iostream>
 #include <memory>
-#include <mir/module.hpp>
 #include <string>
 
+#include <mir/module.hpp>
 #include <slang/ast/Compilation.h>
 #include <spdlog/spdlog.h>
 
@@ -21,14 +21,12 @@ auto main() -> int {
   const std::string test_file_path = "src/main/test.sv";
   std::cout << "Parsing file: " << test_file_path << "\n";
 
-  auto compilation = lyra::frontend::LoadCompilation({test_file_path});
-  if (!compilation) {
-    std::cerr << "Failed to parse file.\n";
-    return 1;
-  }
+  lyra::frontend::SlangFrontend slang_frontend;
+  auto compilation = slang_frontend.LoadFromFiles({test_file_path});
+  const auto& root = compilation->getRoot();
 
   // Convert AST to MIR
-  auto mir = lyra::lowering::AstToMir(*compilation);
+  auto mir = lyra::lowering::AstToMir(root);
 
   // Convert MIR to LIR
   auto lir = lyra::lowering::MirToLir(*mir);
@@ -41,19 +39,20 @@ auto main() -> int {
   std::cout << "\n--- Simulation Result ---\n";
 
   // Prepare Simulation
-  lyra::ExecutionContext ctx;
-  lyra::SimulationPreparation::InitializeSignals(*lir, ctx);
+  lyra::ExecutionContext execution_context;
+  lyra::SimulationPreparation::InitializeSignals(*lir, execution_context);
   lyra::VariableTriggerMap variable_triggers =
       lyra::SimulationPreparation::BuildVariableTriggerMap(*lir);
 
   // Create and Run SimulationScheduler
-  lyra::SimulationScheduler scheduler(*lir, ctx, std::move(variable_triggers));
+  lyra::SimulationScheduler scheduler(
+      *lir, execution_context, std::move(variable_triggers));
   scheduler.Run();
 
   // Output final signal values
-  for (const auto& sig : lir->signals) {
-    const auto& val = ctx.signalTable.Read(sig);
-    std::cout << sig << " = " << val.AsInt() << "\n";
+  for (const auto& signal : lir->signals) {
+    const auto& val = execution_context.signal_table.Read(signal);
+    std::cout << signal << " = " << val.AsInt() << "\n";
   }
 
   return 0;
