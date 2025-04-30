@@ -1,0 +1,61 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.cpp"
+      - "**.hpp"
+      - "**/BUILD.bazel"
+      - "MODULE.bazel"
+      - ".bazelrc"
+      - ".bazelignore"
+      - ".bazelversion"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.cpp"
+      - "**.hpp"
+      - "**/BUILD.bazel"
+      - "MODULE.bazel"
+      - ".bazelrc"
+      - ".bazelignore"
+      - ".bazelversion"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    name: Bazel Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Install Clang 19
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --set clang++ /usr/bin/clang++-19
+          sudo update-alternatives --set clang /usr/bin/clang-19
+
+      - name: Verify Clang version
+        run: |
+          clang++ --version
+
+      - name: Build
+        run: |
+          bazel build //...
+
+      - name: Test
+        run: |
+          bazel test //... --test_output=all --test_timeout=5
