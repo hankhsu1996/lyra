@@ -23,6 +23,36 @@ TEST(InitialTest, AssignConstant) {
       initial a = 42;
     endmodule
   )"s;
-  auto ctx = lyra::test::Simulate(code);
-  EXPECT_EQ(ctx->signal_table.Read("a").AsInt(), 42);
+  auto context = lyra::test::Simulate(code);
+  EXPECT_EQ(context->signal_table.Read("a").AsInt(), 42);
+}
+
+TEST(InitialTest, TwoInitialBlocks) {
+  auto code = R"(
+    module Test;
+      int a, b;
+      initial a = 10;
+      initial b = 20;
+    endmodule
+  )"s;
+  auto context = lyra::test::Simulate(code);
+  EXPECT_EQ(context->signal_table.Read("a").AsInt(), 10);
+  EXPECT_EQ(context->signal_table.Read("b").AsInt(), 20);
+}
+
+TEST(InitialTest, AddAndAssignSequence) {
+  auto code = R"(
+    module Test;
+      int a, b, c;
+      initial begin
+        a = 5;
+        b = a + 3;
+        c = b + 4;
+      end
+    endmodule
+  )"s;
+  auto context = lyra::test::Simulate(code);
+  EXPECT_EQ(context->signal_table.Read("a").AsInt(), 5);
+  EXPECT_EQ(context->signal_table.Read("b").AsInt(), 8);
+  EXPECT_EQ(context->signal_table.Read("c").AsInt(), 12);
 }
