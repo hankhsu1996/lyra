@@ -11,6 +11,12 @@ Build the entire project:
 bazel build //...
 ```
 
+Run all tests:
+
+```bash
+bazel test //...
+```
+
 Generate compile commands for IDE integration:
 
 ```bash
