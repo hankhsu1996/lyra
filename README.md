@@ -25,11 +25,14 @@ bazel run @hedron_compile_commands//:refresh_all
 
 ## 📦 Project Structure
 
-- `frontend/`: Slang-based SystemVerilog parser
-- `mir/`: Middle-level IR preserving high-level structure
-- `lir/`: Low-level IR with SSA-style instructions and interpreter
-- `lowering/`: Transformations from AST to MIR to LIR
-- `core/`: Runtime and execution context
+- `frontend/`: Wrapper for Slang SystemVerilog parser
+- `mir/`: Middle-level IR preserving high-level language structure
+- `lir/`: Low-level IR with SSA-style instructions for simulation
+- `lowering/`: Transformations between AST, MIR, and LIR
+- `core/`: Simulation environment (symbol tables, scheduler, event queue)
+- `common/`: Shared utilities and data structures
+- `runtime/`: Runtime support for simulation (typing, system functions)
+- `simulation/`: Integration of the full compiler and simulator pipeline
 - `codegen/`: LLVM code generation (planned)
 
 ## 🔍 Compilation Pipeline
