@@ -10,12 +10,6 @@ namespace lyra::lowering {
 
 auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     -> void {
-  if (statement.timing_control) {
-    builder.AddInstruction(
-        lir::InstructionKind::kDelay, "",
-        {lir::Value::MakeLiteralInt(statement.timing_control->delay_amount)});
-  }
-
   switch (statement.kind) {
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(statement);
@@ -37,6 +31,29 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       builder.AddInstruction(
           lir::InstructionKind::kStoreSignal, "",
           {lir::Value::MakeSignal(target), result_value});
+      break;
+    }
+
+    case mir::Statement::Kind::kDelay: {
+      const auto& delay = mir::As<mir::DelayStatement>(statement);
+      builder.AddInstruction(
+          lir::InstructionKind::kDelay, "",
+          {lir::Value::MakeLiteralInt(delay.delay_amount)});
+      break;
+    }
+
+    case mir::Statement::Kind::kBlock: {
+      const auto& block = mir::As<mir::BlockStatement>(statement);
+      for (const auto& stmt : block.statements) {
+        if (stmt) {
+          LowerStatement(*stmt, builder);
+        }
+      }
+      break;
+    }
+
+    case mir::Statement::Kind::kIf: {
+      throw std::runtime_error("If statement lowering not implemented yet");
       break;
     }
 

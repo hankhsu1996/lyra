@@ -7,3 +7,13 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "timing_tests",
+    size = "small",
+    srcs = ["e2e/timing_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)

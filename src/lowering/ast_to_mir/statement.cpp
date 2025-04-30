@@ -21,39 +21,7 @@ using StatementKind = slang::ast::StatementKind;
 using ExpressionKind = slang::ast::ExpressionKind;
 using TimingControlKind = slang::ast::TimingControlKind;
 
-auto LowerTimingControl(const slang::ast::TimingControl& timing_control)
-    -> common::TimingControl {
-  switch (timing_control.kind) {
-    case TimingControlKind::Delay: {
-      const auto& delay_control = timing_control.as<slang::ast::DelayControl>();
-      const auto& expr = delay_control.expr;
-
-      if (expr.kind == slang::ast::ExpressionKind::IntegerLiteral) {
-        const auto& int_literal = expr.as<slang::ast::IntegerLiteral>();
-        auto delay_amount_opt = int_literal.getValue().as<int64_t>();
-        if (!delay_amount_opt) {
-          throw std::runtime_error(
-              "Only constant integer delay is supported in timing control "
-              "lowering");
-        }
-        return common::TimingControl::Delay(delay_amount_opt.value());
-      }
-
-      throw std::runtime_error(fmt::format(
-          "Unsupported timing control kind {} in LowerTimingControl",
-          slang::ast::toString(timing_control.kind)));
-    }
-
-    default:
-      throw std::runtime_error(fmt::format(
-          "Unsupported timing control kind {} in LowerTimingControl",
-          slang::ast::toString(timing_control.kind)));
-  }
-}
-
-auto LowerStatement(
-    const slang::ast::Statement& statement,
-    std::optional<common::TimingControl> timing)
+auto LowerStatement(const slang::ast::Statement& statement)
     -> std::vector<std::shared_ptr<mir::Statement>> {
   std::vector<std::shared_ptr<mir::Statement>> result;
 
@@ -61,7 +29,7 @@ auto LowerStatement(
     case StatementKind::List: {
       const auto& statement_list = statement.as<slang::ast::StatementList>();
       for (const auto* stmt : statement_list.list) {
-        auto lowered = LowerStatement(*stmt, timing);
+        auto lowered = LowerStatement(*stmt);
         result.insert(result.end(), lowered.begin(), lowered.end());
       }
       break;
@@ -69,7 +37,7 @@ auto LowerStatement(
 
     case StatementKind::Block: {
       const auto& block_statement = statement.as<slang::ast::BlockStatement>();
-      auto lowered = LowerStatement(block_statement.body, timing);
+      auto lowered = LowerStatement(block_statement.body);
       result.insert(result.end(), lowered.begin(), lowered.end());
       break;
     }
@@ -93,8 +61,7 @@ auto LowerStatement(
               left.as<slang::ast::NamedValueExpression>().symbol.name;
 
           auto assign_stmt = std::make_shared<mir::AssignStatement>(
-              std::string(target_name), LowerExpression(assignment.right()),
-              timing);
+              std::string(target_name), LowerExpression(assignment.right()));
 
           result.push_back(std::move(assign_stmt));
           break;
@@ -110,9 +77,47 @@ auto LowerStatement(
 
     case StatementKind::Timed: {
       const auto& timed_stmt = statement.as<slang::ast::TimedStatement>();
-      auto lowered_timing = LowerTimingControl(timed_stmt.timing);
-      auto inner = LowerStatement(timed_stmt.stmt, lowered_timing);
-      result.insert(result.end(), inner.begin(), inner.end());
+      const auto& timing_control = timed_stmt.timing;
+
+      // Extract delay amount directly
+      if (timing_control.kind == TimingControlKind::Delay) {
+        const auto& delay_control =
+            timing_control.as<slang::ast::DelayControl>();
+        const auto& expr = delay_control.expr;
+
+        if (expr.kind == slang::ast::ExpressionKind::IntegerLiteral) {
+          const auto& int_literal = expr.as<slang::ast::IntegerLiteral>();
+          auto delay_amount_opt = int_literal.getValue().as<int64_t>();
+
+          if (delay_amount_opt) {
+            // Create a delay statement with the extracted amount
+            auto delay_stmt =
+                std::make_shared<mir::DelayStatement>(delay_amount_opt.value());
+            result.push_back(delay_stmt);
+
+            // Process the inner statement
+            auto inner = LowerStatement(timed_stmt.stmt);
+            result.insert(result.end(), inner.begin(), inner.end());
+          } else {
+            throw std::runtime_error(
+                "Only constant integer delay is supported in timing control "
+                "lowering");
+          }
+        } else {
+          throw std::runtime_error(fmt::format(
+              "Unsupported expression kind in delay control: {}",
+              slang::ast::toString(expr.kind)));
+        }
+      } else {
+        throw std::runtime_error(fmt::format(
+            "Unsupported timing control kind: {}",
+            slang::ast::toString(timing_control.kind)));
+      }
+      break;
+    }
+
+    case StatementKind::Empty: {
+      // Empty statement - don't generate any MIR
       break;
     }
 

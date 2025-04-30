@@ -1,11 +1,9 @@
 #pragma once
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
-#include "common/timing_control.hpp"
 #include "mir/expression.hpp"
 
 namespace lyra::mir {
@@ -17,19 +15,17 @@ class Statement {
     kBlock,
     kIf,
     kExpr,
+    kDelay,
   };
 
   Kind kind;
-  std::optional<common::TimingControl> timing_control;
 
   Statement(const Statement&) = default;
   Statement(Statement&&) = delete;
   auto operator=(const Statement&) -> Statement& = default;
   auto operator=(Statement&&) -> Statement& = delete;
 
-  explicit Statement(
-      Kind kind, std::optional<common::TimingControl> timing = std::nullopt)
-      : kind(kind), timing_control(std::move(timing)) {
+  explicit Statement(Kind kind) : kind(kind) {
   }
 
   virtual ~Statement() = default;
@@ -41,12 +37,8 @@ class AssignStatement : public Statement {
   std::string target;
   std::shared_ptr<Expression> value;
 
-  AssignStatement(
-      std::string t, std::shared_ptr<Expression> v,
-      std::optional<common::TimingControl> tc = std::nullopt)
-      : Statement(kKindValue, std::move(tc)),
-        target(std::move(t)),
-        value(std::move(v)) {
+  AssignStatement(std::string t, std::shared_ptr<Expression> v)
+      : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
   }
 };
 
@@ -55,9 +47,7 @@ class BlockStatement : public Statement {
   static constexpr Kind kKindValue = Kind::kBlock;
   std::vector<std::shared_ptr<Statement>> statements;
 
-  explicit BlockStatement(
-      std::optional<common::TimingControl> tc = std::nullopt)
-      : Statement(kKindValue, std::move(tc)) {
+  BlockStatement() : Statement(kKindValue) {
   }
 };
 
@@ -70,12 +60,21 @@ class IfStatement : public Statement {
 
   IfStatement(
       std::shared_ptr<Expression> cond, std::shared_ptr<Statement> then_b,
-      std::shared_ptr<Statement> else_b,
-      std::optional<common::TimingControl> tc = std::nullopt)
-      : Statement(kKindValue, std::move(tc)),
+      std::shared_ptr<Statement> else_b)
+      : Statement(kKindValue),
         condition(std::move(cond)),
         then_branch(std::move(then_b)),
         else_branch(std::move(else_b)) {
+  }
+};
+
+class DelayStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kDelay;
+  int64_t delay_amount;
+
+  explicit DelayStatement(int64_t amount)
+      : Statement(kKindValue), delay_amount(amount) {
   }
 };
 
