@@ -2,12 +2,10 @@
 
 #include <memory>
 
+#include "mir/module.hpp"
+
 namespace slang::ast {
 class RootSymbol;
-}
-
-namespace lyra::mir {
-class Module;
 }
 
 namespace lyra::lowering {

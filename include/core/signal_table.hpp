@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "value.hpp"
 
@@ -15,9 +16,11 @@ class SignalTable {
   void UpdatePrevious(const std::string &name, const RuntimeValue &value);
   auto Exists(const std::string &name) const -> bool;
   void CreateSignal(const std::string &name, RuntimeValue initial_value);
+  auto DeclaredSignalNames() const -> std::vector<std::string>;
 
  private:
   std::unordered_map<std::string, RuntimeValue> signals_;
+  std::vector<std::string> declared_signal_names_;
   std::unordered_map<std::string, RuntimeValue> previous_signals_;
 };
 

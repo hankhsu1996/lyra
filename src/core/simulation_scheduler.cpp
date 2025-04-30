@@ -1,5 +1,7 @@
 #include "core/simulation_scheduler.hpp"
 
+#include <cstdint>
+
 namespace lyra {
 
 SimulationScheduler::SimulationScheduler(
@@ -11,7 +13,7 @@ SimulationScheduler::SimulationScheduler(
       variable_to_triggers_(std::move(variable_triggers)) {
 }
 
-void SimulationScheduler::Run() {
+auto SimulationScheduler::Run() -> uint64_t {
   ScheduleInitialProcesses();
   ScheduleAlwaysProcesses();
 
@@ -28,6 +30,8 @@ void SimulationScheduler::Run() {
       ExecuteOneEvent();
     }
   }
+
+  return simulation_time_;
 }
 
 void SimulationScheduler::ScheduleInitialProcesses() {

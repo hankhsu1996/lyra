@@ -34,7 +34,11 @@ class SimulationScheduler {
       const lir::Module& module, ExecutionContext& context,
       VariableTriggerMap variable_triggers);
 
-  void Run();
+  auto Run() -> uint64_t;
+
+  auto CurrentTime() const -> uint64_t {
+    return simulation_time_;
+  }
 
  private:
   void ScheduleInitialProcesses();

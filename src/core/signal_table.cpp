@@ -36,6 +36,10 @@ auto SignalTable::Exists(const std::string& name) const -> bool {
 void SignalTable::CreateSignal(
     const std::string& name, RuntimeValue initial_value) {
   signals_[name] = std::move(initial_value);
+  declared_signal_names_.push_back(name);
 }
 
+auto SignalTable::DeclaredSignalNames() const -> std::vector<std::string> {
+  return declared_signal_names_;
+}
 }  // namespace lyra
