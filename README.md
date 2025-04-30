@@ -1,7 +1,11 @@
 # **Lyra: Rethinking SystemVerilog Simulation**
 
+[![Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/build.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/build.yml)
+
 **Lyra** is a clean, structured, and extensible SystemVerilog compiler and simulator.
 It features a modern multi-stage compilation pipeline, enabling accurate semantic analysis, flexible intermediate representations, and native execution through interpretation or LLVM.
+
+> ⚠️ **Development Status**: This project is under active development. Features are incomplete, APIs are unstable, and rapid changes should be expected.
 
 ## 🛠️ Build Instructions
 
