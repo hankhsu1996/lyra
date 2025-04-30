@@ -7,19 +7,19 @@ It features a modern multi-stage compilation pipeline, enabling accurate semanti
 
 Build the entire project:
 
-```bash
+```
 bazel build //...
 ```
 
 Run all tests:
 
-```bash
+```
 bazel test //...
 ```
 
 Generate compile commands for IDE integration:
 
-```bash
+```
 bazel run @hedron_compile_commands//:refresh_all
 ```
 
