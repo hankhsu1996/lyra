@@ -37,6 +37,16 @@ struct SensitivityCollector
     visitDefault(expr);
   }
 
+  void handle(const slang::ast::CallExpression& expr) {
+    if (expr.isSystemCall()) {
+      visitDefault(expr);
+    } else {
+      throw std::runtime_error(fmt::format(
+          "Unsupported subroutine call {} in CollectSensitivityList",
+          expr.getSubroutineName()));
+    }
+  }
+
   static void handle(const slang::ast::Expression& expr) {
     throw std::runtime_error(fmt::format(
         "Unsupported expression kind {} in CollectSensitivityList",

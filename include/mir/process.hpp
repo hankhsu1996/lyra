@@ -16,7 +16,7 @@ enum class ProcessKind { kInitial, kAlwaysFF, kAlwaysComb };
 class Process {
  public:
   ProcessKind process_kind;
-  std::vector<std::shared_ptr<Statement>> body;
+  std::vector<std::unique_ptr<Statement>> body;
   std::vector<Trigger> trigger_list;
 };
 

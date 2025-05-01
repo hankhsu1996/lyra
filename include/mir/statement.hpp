@@ -35,9 +35,9 @@ class AssignStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kAssign;
   std::string target;
-  std::shared_ptr<Expression> value;
+  std::unique_ptr<Expression> value;
 
-  AssignStatement(std::string t, std::shared_ptr<Expression> v)
+  AssignStatement(std::string t, std::unique_ptr<Expression> v)
       : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
   }
 };
@@ -45,7 +45,7 @@ class AssignStatement : public Statement {
 class BlockStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kBlock;
-  std::vector<std::shared_ptr<Statement>> statements;
+  std::vector<std::unique_ptr<Statement>> statements;
 
   BlockStatement() : Statement(kKindValue) {
   }
@@ -54,13 +54,13 @@ class BlockStatement : public Statement {
 class IfStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kIf;
-  std::shared_ptr<Expression> condition;
-  std::shared_ptr<Statement> then_branch;
-  std::shared_ptr<Statement> else_branch;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Statement> then_branch;
+  std::unique_ptr<Statement> else_branch;
 
   IfStatement(
-      std::shared_ptr<Expression> cond, std::shared_ptr<Statement> then_b,
-      std::shared_ptr<Statement> else_b)
+      std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
+      std::unique_ptr<Statement> else_b)
       : Statement(kKindValue),
         condition(std::move(cond)),
         then_branch(std::move(then_b)),
@@ -81,10 +81,10 @@ class DelayStatement : public Statement {
 class ExpressionStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kExpression;
-  std::shared_ptr<Expression> expression;
+  std::unique_ptr<Expression> expression;
 
-  explicit ExpressionStatement(std::shared_ptr<Expression> expr)
-      : Statement(kKindValue), expression(std::move(expr)) {
+  explicit ExpressionStatement(std::unique_ptr<Expression> expression)
+      : Statement(kKindValue), expression(std::move(expression)) {
   }
 };
 

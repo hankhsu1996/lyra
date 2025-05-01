@@ -1,9 +1,9 @@
 #include "lowering/ast_to_mir/process.hpp"
 
-#include <lowering/ast_to_mir/variable.hpp>
 #include <stdexcept>
 
 #include <fmt/format.h>
+#include <lowering/ast_to_mir/variable.hpp>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -16,10 +16,10 @@
 namespace lyra::lowering {
 
 auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
-    -> std::shared_ptr<mir::Process> {
+    -> std::unique_ptr<mir::Process> {
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
 
-  auto process = std::make_shared<mir::Process>();
+  auto process = std::make_unique<mir::Process>();
 
   switch (procedural_block.procedureKind) {
     case ProceduralBlockKind::Initial: {
@@ -27,9 +27,9 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
 
       const auto& statement = procedural_block.getBody();
       auto statements = LowerStatement(statement);
-
-      process->body.insert(
-          process->body.end(), statements.begin(), statements.end());
+      for (auto& stmt : statements) {
+        process->body.push_back(std::move(stmt));
+      }
       break;
     }
 
@@ -54,9 +54,9 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       }
 
       auto statements = LowerStatement(statement);
-
-      process->body.insert(
-          process->body.end(), statements.begin(), statements.end());
+      for (auto& stmt : statements) {
+        process->body.push_back(std::move(stmt));
+      }
       break;
     }
 

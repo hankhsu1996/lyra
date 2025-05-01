@@ -83,7 +83,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     }
 
     default:
-      throw std::runtime_error("Unsupported expression kind");
+      throw std::runtime_error(fmt::format(
+          "Unsupported expression kind {} in LowerExpression",
+          expression.kind));
   }
 }
 }  // namespace lyra::lowering
