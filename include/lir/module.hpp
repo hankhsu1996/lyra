@@ -17,20 +17,36 @@ struct Module {
   std::vector<std::string> signals;
   std::vector<std::shared_ptr<Process>> processes;
 
-  [[nodiscard]] auto ToString(int indentation_level = 0) const -> std::string {
+  [[nodiscard]] auto ToString(
+      common::FormatMode mode = common::FormatMode::kPlain,
+      int indentation_level = 0) const -> std::string {
     std::string out;
-    out +=
-        fmt::format("{}Module {}\n", common::Indent(indentation_level), name);
 
-    out += fmt::format("{}Signals: ", common::Indent(indentation_level + 1));
+    // Module header
+    if (mode == common::FormatMode::kContextual) {
+      out +=
+          fmt::format("{}Module {}\n", common::Indent(indentation_level), name);
+    } else {
+      out += fmt::format("Module {}\n", name);
+    }
+
+    // Signals list
+    if (mode == common::FormatMode::kContextual) {
+      out += fmt::format("{}Signals: ", common::Indent(indentation_level + 1));
+    } else {
+      out += fmt::format("Signals: ");
+    }
+
     for (const auto& signal : signals) {
       out += fmt::format("{} ", signal);
     }
 
     out += "\n";
+
+    // Processes
     for (const auto& process : processes) {
       if (process) {
-        out += process->ToString(indentation_level + 1);
+        out += process->ToString(mode, indentation_level + 1);
       }
     }
 
@@ -40,7 +56,7 @@ struct Module {
 
 inline auto operator<<(std::ostream& os, const Module& module)
     -> std::ostream& {
-  return os << module.ToString();
+  return os << module.ToString(common::FormatMode::kContextual);
 }
 
 }  // namespace lyra::lir
@@ -54,6 +70,8 @@ struct fmt::formatter<lyra::lir::Module> {
 
   template <typename FormatContext>
   auto format(const lyra::lir::Module& module, FormatContext& ctx) const {
-    return fmt::format_to(ctx.out(), "{}", module.ToString());
+    return fmt::format_to(
+        ctx.out(), "{}",
+        module.ToString(lyra::common::FormatMode::kContextual));
   }
 };

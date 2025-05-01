@@ -17,12 +17,26 @@ struct BasicBlock {
   // Instructions contained in this basic block
   std::vector<Instruction> instructions;
 
-  [[nodiscard]] auto ToString(int indentation_level = 0) const -> std::string {
-    std::string result =
-        fmt::format("{}{}:\n", common::Indent(indentation_level), label);
+  [[nodiscard]] auto ToString(
+      common::FormatMode mode = common::FormatMode::kPlain,
+      int indentation_level = 0) const -> std::string {
+    std::string result;
+
+    // Format the block label
+    if (mode == common::FormatMode::kContextual) {
+      result = fmt::format("{}{}:\n", common::Indent(indentation_level), label);
+    } else {
+      result = fmt::format("{}:\n", label);
+    }
+
+    // Format each instruction
     for (const auto& instr : instructions) {
-      result += fmt::format(
-          "{}{}\n", common::Indent(indentation_level + 1), instr.ToString());
+      if (mode == common::FormatMode::kContextual) {
+        result += fmt::format(
+            "{}{}\n", common::Indent(indentation_level + 1), instr.ToString());
+      } else {
+        result += fmt::format("{}\n", instr.ToString());
+      }
     }
     return result;
   }
@@ -30,7 +44,7 @@ struct BasicBlock {
 
 inline auto operator<<(std::ostream& os, const BasicBlock& block)
     -> std::ostream& {
-  return os << block.ToString();
+  return os << block.ToString(common::FormatMode::kContextual);
 }
 
 }  // namespace lyra::lir
@@ -44,6 +58,7 @@ struct fmt::formatter<lyra::lir::BasicBlock> {
 
   template <typename FormatContext>
   auto format(const lyra::lir::BasicBlock& block, FormatContext& ctx) const {
-    return fmt::format_to(ctx.out(), "{}", block.ToString());
+    return fmt::format_to(
+        ctx.out(), "{}", block.ToString(lyra::common::FormatMode::kContextual));
   }
 };

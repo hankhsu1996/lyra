@@ -40,7 +40,8 @@ auto Simulator::RunWithCompilation(
   auto lir = lowering::MirToLir(*mir);
 
   if (options.dump_lir) {
-    std::cout << "[ Dumped LIR ]\n" << lir->ToString() << std::endl;
+    std::cout << "[ Dumped LIR ]\n"
+              << lir->ToString(common::FormatMode::kContextual) << std::endl;
   }
 
   auto context = std::make_unique<ExecutionContext>();

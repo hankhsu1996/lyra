@@ -42,12 +42,20 @@ struct Process {
   // Sensitivity list for the process (empty for initial processes)
   std::vector<Trigger> trigger_list;
 
-  [[nodiscard]] auto ToString(int indentation_level = 0) const -> std::string {
+  [[nodiscard]] auto ToString(
+      common::FormatMode mode = common::FormatMode::kPlain,
+      int indentation_level = 0) const -> std::string {
     std::string out;
 
-    out += fmt::format(
-        "{}Process {}", common::Indent(indentation_level),
-        lyra::lir::ToString(kind));
+    // Process header with kind and trigger list
+    if (mode == common::FormatMode::kContextual) {
+      out += fmt::format(
+          "{}Process {}", common::Indent(indentation_level),
+          lyra::lir::ToString(kind));
+    } else {
+      out += fmt::format("Process {}", lyra::lir::ToString(kind));
+    }
+
     if (!trigger_list.empty()) {
       out += fmt::format(" @({})", fmt::join(trigger_list, ", "));
     }
@@ -56,14 +64,18 @@ struct Process {
     // If using basic blocks
     if (!blocks.empty()) {
       for (const auto& block : blocks) {
-        out += fmt::format("{}", block->ToString(indentation_level + 1));
+        out += block->ToString(mode, indentation_level + 1);
       }
     }
     // Fallback to flat instruction list (legacy)
     else if (!instructions.empty()) {
       for (const auto& instr : instructions) {
-        out +=
-            fmt::format("{}{}\n", common::Indent(indentation_level + 1), instr);
+        if (mode == common::FormatMode::kContextual) {
+          out += fmt::format(
+              "{}{}\n", common::Indent(indentation_level + 1), instr);
+        } else {
+          out += fmt::format("{}\n", instr);
+        }
       }
     }
 
@@ -85,7 +97,7 @@ struct Process {
 
 inline auto operator<<(std::ostream& os, const Process& process)
     -> std::ostream& {
-  return os << process.ToString();
+  return os << process.ToString(common::FormatMode::kContextual);
 }
 
 }  // namespace lyra::lir
@@ -99,6 +111,8 @@ struct fmt::formatter<lyra::lir::Process> {
 
   template <typename FormatContext>
   auto format(const lyra::lir::Process& process, FormatContext& ctx) {
-    return fmt::format_to(ctx.out(), "{}", process.ToString());
+    return fmt::format_to(
+        ctx.out(), "{}",
+        process.ToString(lyra::common::FormatMode::kContextual));
   }
 };
