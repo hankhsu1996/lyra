@@ -13,13 +13,15 @@ namespace lyra {
 
 struct ScheduledEvent {
   std::shared_ptr<lir::Process> process;
-  size_t program_counter = 0;  // Current instruction index
+  size_t basic_block_index = 0;  // Current basic block index
+  size_t instruction_index = 0;  // Current instruction index within the block
 };
 
 struct DelayedEvent {
   uint64_t ready_time;
   std::shared_ptr<lir::Process> process;
-  size_t program_counter;
+  size_t basic_block_index;
+  size_t instruction_index;
 
   auto operator<(const DelayedEvent& rhs) const -> bool {
     // Note: priority_queue is a max-heap by default,

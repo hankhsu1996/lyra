@@ -46,6 +46,9 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
     builder.AddTrigger(MapTrigger(trigger));
   }
 
+  // Start with an "entry" block for the process
+  builder.StartBlock("entry");
+
   // Process each statement in the process
   for (const auto& statement : process.body) {
     if (!statement) {

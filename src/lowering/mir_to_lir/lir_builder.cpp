@@ -17,8 +17,8 @@ void LirBuilder::BeginProcess(lir::ProcessKind kind) {
   }
 
   current_process_ = std::make_shared<lir::Process>();
-
   current_process_->kind = kind;
+  current_blocks_.clear();
 }
 
 void LirBuilder::AddTrigger(lir::Trigger trigger) {
@@ -27,6 +27,37 @@ void LirBuilder::AddTrigger(lir::Trigger trigger) {
   }
 
   current_process_->trigger_list.push_back(std::move(trigger));
+}
+
+void LirBuilder::StartBlock(const std::string& label) {
+  if (!current_process_) {
+    throw std::runtime_error("StartBlock called with no active process");
+  }
+
+  // If we have an active block, end it before starting a new one
+  if (current_block_) {
+    EndBlock();
+  }
+
+  current_block_ = std::make_unique<lir::BasicBlock>();
+  current_block_->label = label;
+}
+
+void LirBuilder::EndBlock() {
+  if (!current_process_) {
+    throw std::runtime_error("EndBlock called with no active process");
+  }
+
+  if (!current_block_) {
+    throw std::runtime_error("EndBlock called with no active block");
+  }
+
+  current_blocks_.push_back(std::move(current_block_));
+  current_block_ = nullptr;
+}
+
+auto LirBuilder::NewLabel(const std::string& prefix) -> std::string {
+  return prefix + "_" + std::to_string(label_counter_++);
 }
 
 void LirBuilder::AddInstruction(
@@ -41,7 +72,14 @@ void LirBuilder::AddInstruction(
   instr.result = result;
   instr.operands = std::move(operands);
 
-  current_process_->instructions.push_back(std::move(instr));
+  // If we have an active basic block, add to it
+  if (current_block_) {
+    current_block_->instructions.push_back(std::move(instr));
+  }
+  // Otherwise, fall back to the legacy flat instruction list
+  else {
+    current_process_->instructions.push_back(std::move(instr));
+  }
 }
 
 void LirBuilder::AddInstruction(
@@ -57,12 +95,34 @@ void LirBuilder::AddInstruction(
   instr.operands = std::move(operands);
   instr.system_call_name = system_call_name;
 
-  current_process_->instructions.push_back(std::move(instr));
+  // If we have an active basic block, add to it
+  if (current_block_) {
+    current_block_->instructions.push_back(std::move(instr));
+  }
+  // Otherwise, fall back to the legacy flat instruction list
+  else {
+    current_process_->instructions.push_back(std::move(instr));
+  }
 }
 
 void LirBuilder::EndProcess() {
   if (!current_process_) {
     throw std::runtime_error("EndProcess called with no active process");
+  }
+
+  // If we have an active block, end it
+  if (current_block_) {
+    EndBlock();
+  }
+
+  // If we have blocks, move them to the process
+  if (!current_blocks_.empty()) {
+    // Convert vector of unique_ptr to vector of unique_ptr, moving ownership
+    current_process_->blocks.reserve(current_blocks_.size());
+    for (auto& block : current_blocks_) {
+      current_process_->blocks.push_back(std::move(block));
+    }
+    current_blocks_.clear();
   }
 
   processes_.push_back(std::move(current_process_));

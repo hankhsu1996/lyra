@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,7 @@
 #include <fmt/ranges.h>
 
 #include "common/trigger.hpp"
+#include "lir/basic_block.hpp"
 #include "lir/instruction.hpp"
 
 namespace lyra::lir {
@@ -30,7 +32,10 @@ inline auto ToString(ProcessKind kind) -> std::string {
 struct Process {
   ProcessKind kind;
 
-  // Flat list of executable instructions
+  // List of basic blocks
+  std::vector<std::unique_ptr<BasicBlock>> blocks;
+
+  // Flat list of executable instructions (legacy, for backward compatibility)
   std::vector<Instruction> instructions;
 
   // Sensitivity list for the process (empty for initial processes)
@@ -43,13 +48,34 @@ struct Process {
     if (!trigger_list.empty()) {
       out += fmt::format(" @({})", fmt::join(trigger_list, ", "));
     }
-
     out += "\n";
-    for (const auto& instr : instructions) {
-      out += fmt::format("    {}\n", instr);
+
+    // If using basic blocks
+    if (!blocks.empty()) {
+      for (const auto& block : blocks) {
+        out += fmt::format("    {}", block->ToString());
+      }
+    }
+    // Fallback to flat instruction list (legacy)
+    else if (!instructions.empty()) {
+      for (const auto& instr : instructions) {
+        out += fmt::format("    {}\n", instr);
+      }
     }
 
     return out;
+  }
+
+  // Find the index of a basic block by its label
+  [[nodiscard]] auto FindBlockIndexByLabel(const std::string& label) const
+      -> size_t {
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      if (blocks[i]->label == label) {
+        return i;
+      }
+    }
+    throw std::runtime_error(
+        fmt::format("Basic block with label '{}' not found", label));
   }
 };
 
