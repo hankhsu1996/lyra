@@ -43,41 +43,23 @@ auto LowerStatement(const slang::ast::Statement& statement)
     }
 
     case StatementKind::ExpressionStatement: {
-      const auto& expr_stmt = statement.as<slang::ast::ExpressionStatement>();
-      const auto& expr = expr_stmt.expr;
+      const auto& expression_statement =
+          statement.as<slang::ast::ExpressionStatement>();
+      const auto& expression = expression_statement.expr;
 
-      switch (expr.kind) {
-        case ExpressionKind::Assignment: {
-          const auto& assignment = expr.as<slang::ast::AssignmentExpression>();
-          const auto& left = assignment.left();
+      // Lower the expression
+      auto lowered_expression = LowerExpression(expression);
 
-          if (left.kind != ExpressionKind::NamedValue) {
-            throw std::runtime_error(fmt::format(
-                "Unsupported assignment target kind {} in LowerStatement",
-                slang::ast::toString(left.kind)));
-          }
-
-          auto target_name =
-              left.as<slang::ast::NamedValueExpression>().symbol.name;
-
-          auto assign_stmt = std::make_shared<mir::AssignStatement>(
-              std::string(target_name), LowerExpression(assignment.right()));
-
-          result.push_back(std::move(assign_stmt));
-          break;
-        }
-
-        default:
-          throw std::runtime_error(fmt::format(
-              "Unsupported expression kind {} in LowerStatement",
-              slang::ast::toString(expr.kind)));
-      }
+      // Create an expression statement with the lowered expression
+      auto lowered_expression_statement =
+          std::make_shared<mir::ExpressionStatement>(lowered_expression);
+      result.push_back(std::move(lowered_expression_statement));
       break;
     }
 
     case StatementKind::Timed: {
-      const auto& timed_stmt = statement.as<slang::ast::TimedStatement>();
-      const auto& timing_control = timed_stmt.timing;
+      const auto& timed_statement = statement.as<slang::ast::TimedStatement>();
+      const auto& timing_control = timed_statement.timing;
 
       // Extract delay amount directly
       if (timing_control.kind == TimingControlKind::Delay) {
@@ -91,12 +73,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
           if (delay_amount_opt) {
             // Create a delay statement with the extracted amount
-            auto delay_stmt =
+            auto delay_statement =
                 std::make_shared<mir::DelayStatement>(delay_amount_opt.value());
-            result.push_back(delay_stmt);
+            result.push_back(delay_statement);
 
             // Process the inner statement
-            auto inner = LowerStatement(timed_stmt.stmt);
+            auto inner = LowerStatement(timed_statement.stmt);
             result.insert(result.end(), inner.begin(), inner.end());
           } else {
             throw std::runtime_error(

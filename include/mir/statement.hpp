@@ -14,7 +14,7 @@ class Statement {
     kAssign,
     kBlock,
     kIf,
-    kExpr,
+    kExpression,
     kDelay,
   };
 
@@ -75,6 +75,16 @@ class DelayStatement : public Statement {
 
   explicit DelayStatement(int64_t amount)
       : Statement(kKindValue), delay_amount(amount) {
+  }
+};
+
+class ExpressionStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kExpression;
+  std::shared_ptr<Expression> expression;
+
+  explicit ExpressionStatement(std::shared_ptr<Expression> expr)
+      : Statement(kKindValue), expression(std::move(expr)) {
   }
 };
 

@@ -12,6 +12,7 @@ class Expression {
     kLiteral,
     kIdentifier,
     kBinary,
+    kAssignment,
   };
 
   Kind kind;
@@ -60,6 +61,19 @@ class BinaryExpression : public Expression {
         op(op),
         left(std::move(left)),
         right(std::move(right)) {
+  }
+};
+
+class AssignmentExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kAssignment;
+  std::string target;
+  std::shared_ptr<Expression> value;
+
+  AssignmentExpression(std::string t, std::shared_ptr<Expression> v)
+      : Expression(Kind::kAssignment),
+        target(std::move(t)),
+        value(std::move(v)) {
   }
 };
 

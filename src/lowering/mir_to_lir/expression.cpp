@@ -58,6 +58,30 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return lir::Value::MakeTemp(sum_tmp);
     }
 
+    case mir::Expression::Kind::kAssignment: {
+      const auto& assign = mir::As<mir::AssignmentExpression>(expression);
+
+      const auto& target = assign.target;
+      if (target.empty()) {
+        throw std::runtime_error("AssignmentExpression has empty target");
+      }
+
+      if (!assign.value) {
+        throw std::runtime_error("AssignmentExpression has null value");
+      }
+
+      // Lower the right-hand side expression
+      auto value_result = LowerExpression(*assign.value, builder);
+
+      // Store the result to the target signal
+      builder.AddInstruction(
+          lir::InstructionKind::kStoreSignal, "",
+          {lir::Value::MakeSignal(target), value_result});
+
+      // The result of an assignment is the assigned value
+      return value_result;
+    }
+
     default:
       throw std::runtime_error("Unsupported expression kind");
   }

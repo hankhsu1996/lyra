@@ -4,6 +4,7 @@
 
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -47,6 +48,25 @@ auto LowerExpression(const slang::ast::Expression& expression)
               "Unsupported binary operator {} in LowerExpression",
               slang::ast::toString(bin.op)));
       }
+    }
+
+    case slang::ast::ExpressionKind::Assignment: {
+      const auto& assignment =
+          expression.as<slang::ast::AssignmentExpression>();
+      const auto& left = assignment.left();
+
+      if (left.kind != slang::ast::ExpressionKind::NamedValue) {
+        throw std::runtime_error(fmt::format(
+            "Unsupported assignment target kind {} in LowerExpression",
+            slang::ast::toString(left.kind)));
+      }
+
+      auto target_name =
+          left.as<slang::ast::NamedValueExpression>().symbol.name;
+      auto value = LowerExpression(assignment.right());
+
+      return std::make_shared<mir::AssignmentExpression>(
+          std::string(target_name), std::move(value));
     }
 
     default:

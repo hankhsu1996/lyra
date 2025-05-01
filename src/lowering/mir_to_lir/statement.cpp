@@ -57,6 +57,18 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       break;
     }
 
+    case mir::Statement::Kind::kExpression: {
+      const auto& expression_statement =
+          mir::As<mir::ExpressionStatement>(statement);
+      if (!expression_statement.expression) {
+        throw std::runtime_error("ExpressionStatement has null expression");
+      }
+
+      // Lower the expression, which may produce instructions
+      LowerExpression(*expression_statement.expression, builder);
+      break;
+    }
+
     default:
       throw std::runtime_error("Unsupported statement kind");
   }
