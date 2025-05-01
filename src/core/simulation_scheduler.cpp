@@ -29,6 +29,11 @@ auto SimulationScheduler::Run() -> uint64_t {
     if (!active_queue_.empty()) {
       ExecuteOneEvent();
     }
+
+    // Only terminate after all instructions in current time slot are done
+    if (finish_requested_ && active_queue_.empty() && delay_queue_.empty()) {
+      break;
+    }
   }
 
   return simulation_time_;
@@ -56,19 +61,22 @@ void SimulationScheduler::ExecuteOneEvent() {
 
   auto& process = event.process;
   size_t program_counter = event.program_counter;
-
   const auto& instructions = process->instructions;
 
   while (program_counter < instructions.size()) {
     const auto& instr = instructions[program_counter];
     auto result = executor_.ExecuteInstruction(instr);
-
     ++program_counter;
 
     if (result.action == lir::ExecuteResult::Action::kDelay) {
       uint64_t resume_time = simulation_time_ + result.delay_amount;
       delay_queue_.push({resume_time, process, program_counter});
-      return;  // Pause current process until delay expires
+      return;
+    }
+
+    if (result.action == lir::ExecuteResult::Action::kFinish) {
+      finish_requested_ = true;
+      // Continue this time slot until queues are empty
     }
 
     if (instr.kind == lir::InstructionKind::kStoreSignal) {

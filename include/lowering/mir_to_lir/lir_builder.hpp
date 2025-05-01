@@ -21,6 +21,9 @@ class LirBuilder {
   void AddInstruction(
       lir::InstructionKind kind, const std::string& result,
       std::vector<lir::Value> operands);
+  void AddInstruction(
+      lir::InstructionKind kind, const std::string& result,
+      std::vector<lir::Value> operands, const std::string& system_call_name);
   void EndProcess();
 
   auto MakeTemp(const std::string& hint = "tmp") -> std::string;

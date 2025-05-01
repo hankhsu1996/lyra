@@ -52,6 +52,20 @@ auto Executor::ExecuteInstruction(const Instruction& instr) -> ExecuteResult {
       return ExecuteResult::Delay(delay_amount);
     }
 
+    case InstructionKind::kSystemCall: {
+      if (instr.system_call_name == "$finish") {
+        // If there's an argument, we could use it to determine
+        // the level of diagnostic info to print (future enhancement)
+        // 0 = no info, 1 = minimal info, 2 = full stats
+
+        // For now, we just terminate the simulation
+        return ExecuteResult::Finish();
+      }
+
+      throw std::runtime_error(
+          fmt::format("Unsupported system call: {}", instr.system_call_name));
+    }
+
     default:
       throw std::runtime_error(fmt::format(
           "Unhandled instruction {} in executor", instr.ToString()));

@@ -46,7 +46,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
         default:
           throw std::runtime_error(fmt::format(
-              "Unsupported binary operator {} in LowerExpression",
+              "Unsupported binary operator {} in AST to MIR LowerExpression",
               slang::ast::toString(bin.op)));
       }
     }
@@ -58,7 +58,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       if (left.kind != slang::ast::ExpressionKind::NamedValue) {
         throw std::runtime_error(fmt::format(
-            "Unsupported assignment target kind {} in LowerExpression",
+            "Unsupported assignment target kind {} in AST to MIR "
+            "LowerExpression",
             slang::ast::toString(left.kind)));
       }
 
@@ -83,13 +84,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       throw std::runtime_error(fmt::format(
-          "Unsupported subroutine call {} in LowerExpression",
+          "Unsupported subroutine call {} in AST to MIR LowerExpression",
           call_expression.getSubroutineName()));
     }
 
     default:
       throw std::runtime_error(fmt::format(
-          "Unsupported expression kind {} in LowerExpression",
+          "Unsupported expression kind {} in AST to MIR LowerExpression",
           slang::ast::toString(expression.kind)));
   }
 }

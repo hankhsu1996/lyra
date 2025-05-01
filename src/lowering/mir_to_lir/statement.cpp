@@ -70,7 +70,9 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     }
 
     default:
-      throw std::runtime_error("Unsupported statement kind");
+      throw std::runtime_error(fmt::format(
+          "Unsupported statement kind {} in MIR to LIR LowerStatement",
+          statement.kind));
   }
 }
 

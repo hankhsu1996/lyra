@@ -3,6 +3,7 @@ module Test;
   initial begin
     a = 1;
     #5 b = 2;
+    $finish();
   end
 
   always_comb begin

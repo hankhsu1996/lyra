@@ -16,7 +16,8 @@ enum class InstructionKind {
   kStoreSignal,
   kBinaryAdd,
   kAssign,
-  kDelay
+  kDelay,
+  kSystemCall
 };
 
 struct Instruction {
@@ -27,6 +28,10 @@ struct Instruction {
 
   // Operand values used by the instruction
   std::vector<Value> operands;
+
+  // System call name
+  std::string system_call_name;
+
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       case InstructionKind::kLiteralInt:
@@ -53,6 +58,20 @@ struct Instruction {
 
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());
+
+      case InstructionKind::kSystemCall:
+        if (operands.empty()) {
+          return fmt::format("{}", system_call_name);
+        } else {
+          std::string args;
+          for (size_t i = 0; i < operands.size(); ++i) {
+            if (i > 0) {
+              args += ", ";
+            }
+            args += operands[i].ToString();
+          }
+          return fmt::format("{}({})", system_call_name, args);
+        }
 
       default:
         return "(unknown instruction)";

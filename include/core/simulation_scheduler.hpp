@@ -51,6 +51,7 @@ class SimulationScheduler {
   EventQueue active_queue_;
   DelayQueue delay_queue_;
   uint64_t simulation_time_ = 0;
+  bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
   std::reference_wrapper<ExecutionContext> context_;

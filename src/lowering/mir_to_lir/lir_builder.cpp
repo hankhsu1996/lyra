@@ -44,6 +44,22 @@ void LirBuilder::AddInstruction(
   current_process_->instructions.push_back(std::move(instr));
 }
 
+void LirBuilder::AddInstruction(
+    lir::InstructionKind kind, const std::string& result,
+    std::vector<lir::Value> operands, const std::string& system_call_name) {
+  if (!current_process_) {
+    throw std::runtime_error("AddInstruction called with no active process");
+  }
+
+  lir::Instruction instr;
+  instr.kind = kind;
+  instr.result = result;
+  instr.operands = std::move(operands);
+  instr.system_call_name = system_call_name;
+
+  current_process_->instructions.push_back(std::move(instr));
+}
+
 void LirBuilder::EndProcess() {
   if (!current_process_) {
     throw std::runtime_error("EndProcess called with no active process");

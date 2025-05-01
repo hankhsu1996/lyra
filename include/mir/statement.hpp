@@ -1,8 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <ostream>
 #include <string>
 #include <vector>
+
+#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "mir/expression.hpp"
 
@@ -30,6 +34,29 @@ class Statement {
 
   virtual ~Statement() = default;
 };
+
+// Convert Statement::Kind to string
+inline auto ToString(Statement::Kind kind) -> std::string {
+  switch (kind) {
+    case Statement::Kind::kAssign:
+      return "Assign";
+    case Statement::Kind::kBlock:
+      return "Block";
+    case Statement::Kind::kIf:
+      return "If";
+    case Statement::Kind::kExpression:
+      return "Expression";
+    case Statement::Kind::kDelay:
+      return "Delay";
+  }
+  return "Unknown";  // Should never reach here, but needed for compiler
+}
+
+// Add operator<< for Statement::Kind
+inline auto operator<<(std::ostream& os, const Statement::Kind& kind)
+    -> std::ostream& {
+  return os << ToString(kind);
+}
 
 class AssignStatement : public Statement {
  public:
@@ -98,3 +125,18 @@ auto As(const Statement& stmt) -> const T& {
 }
 
 }  // namespace lyra::mir
+
+// Add formatter for Statement::Kind
+template <>
+struct fmt::formatter<lyra::mir::Statement::Kind> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(
+      const lyra::mir::Statement::Kind& kind, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", lyra::mir::ToString(kind));
+  }
+};

@@ -84,12 +84,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
           }
         } else {
           throw std::runtime_error(fmt::format(
-              "Unsupported expression kind in delay control: {}",
+              "Unsupported expression kind {} in AST to MIR LowerStatement",
               slang::ast::toString(expr.kind)));
         }
       } else {
         throw std::runtime_error(fmt::format(
-            "Unsupported timing control kind: {}",
+            "Unsupported timing control kind {} in AST to MIR LowerStatement",
             slang::ast::toString(timing_control.kind)));
       }
       break;
@@ -101,7 +101,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
     default:
       throw std::runtime_error(fmt::format(
-          "Unsupported statement kind {} in LowerStatement",
+          "Unsupported statement kind {} in AST to MIR LowerStatement",
           slang::ast::toString(statement.kind)));
   }
 

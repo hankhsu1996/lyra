@@ -9,6 +9,7 @@ struct ExecuteResult {
   enum class Action {
     kContinue,
     kDelay,
+    kFinish,
   };
 
   Action action{};
@@ -20,6 +21,10 @@ struct ExecuteResult {
 
   static auto Delay(int64_t amount) -> ExecuteResult {
     return ExecuteResult{.action = Action::kDelay, .delay_amount = amount};
+  }
+
+  static auto Finish() -> ExecuteResult {
+    return ExecuteResult{.action = Action::kFinish};
   }
 };
 

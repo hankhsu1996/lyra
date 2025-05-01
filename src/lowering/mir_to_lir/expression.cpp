@@ -35,7 +35,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& binary = mir::As<mir::BinaryExpression>(expression);
 
       if (binary.op != mir::BinaryExpression::Operator::kAdd) {
-        throw std::runtime_error("Unsupported binary operator");
+        throw std::runtime_error(fmt::format(
+            "Unsupported binary operator {} in MIR to LIR LowerExpression",
+            binary.op));
       }
 
       // Handle left operand
@@ -82,9 +84,39 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return value_result;
     }
 
+    case mir::Expression::Kind::kSystemCall: {
+      const auto& syscall = mir::As<mir::SystemCallExpression>(expression);
+
+      // Create a system call instruction
+      lir::Instruction instr;
+      instr.kind = lir::InstructionKind::kSystemCall;
+      instr.system_call_name = syscall.name;
+
+      // Add any arguments to the system call
+      std::vector<lir::Value> operands;
+      for (const auto& arg : syscall.arguments) {
+        if (arg) {
+          operands.push_back(LowerExpression(*arg, builder));
+        }
+      }
+
+      // If $finish with no arguments, add a default argument value of 1
+      if (syscall.name == "$finish" && operands.empty()) {
+        operands.push_back(lir::Value::MakeLiteralInt(1));
+      }
+
+      builder.AddInstruction(
+          lir::InstructionKind::kSystemCall, "", operands, syscall.name);
+
+      // System calls don't produce a value in our current implementation
+      // Return a dummy value (this could be improved in the future)
+      auto tmp = builder.MakeTemp("syscall_result");
+      return lir::Value::MakeTemp(tmp);
+    }
+
     default:
       throw std::runtime_error(fmt::format(
-          "Unsupported expression kind {} in LowerExpression",
+          "Unsupported expression kind {} in MIR to LIR LowerExpression",
           expression.kind));
   }
 }

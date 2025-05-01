@@ -90,12 +90,12 @@ class BinaryExpression : public Expression {
   enum class Operator { kAdd };
 
   Operator op;
-  std::shared_ptr<Expression> left;
-  std::shared_ptr<Expression> right;
+  std::unique_ptr<Expression> left;
+  std::unique_ptr<Expression> right;
 
   BinaryExpression(
-      Operator op, std::shared_ptr<Expression> left,
-      std::shared_ptr<Expression> right)
+      Operator op, std::unique_ptr<Expression> left,
+      std::unique_ptr<Expression> right)
       : Expression(Kind::kBinary),
         op(op),
         left(std::move(left)),
@@ -115,6 +115,20 @@ class BinaryExpression : public Expression {
     }
   }
 };
+
+// Convert BinaryExpression::Operator to string
+inline auto ToString(BinaryExpression::Operator op) -> std::string {
+  switch (op) {
+    case BinaryExpression::Operator::kAdd:
+      return "Add";
+  }
+}
+
+// Add operator<< for BinaryExpression::Operator
+inline auto operator<<(std::ostream& os, const BinaryExpression::Operator& op)
+    -> std::ostream& {
+  return os << ToString(op);
+}
 
 class AssignmentExpression : public Expression {
  public:
@@ -199,5 +213,21 @@ struct fmt::formatter<lyra::mir::Expression::Kind> {
   auto format(
       const lyra::mir::Expression::Kind& kind, FormatContext& ctx) const {
     return fmt::format_to(ctx.out(), "{}", lyra::mir::ToString(kind));
+  }
+};
+
+// Add formatter for BinaryExpression::Operator
+template <>
+struct fmt::formatter<lyra::mir::BinaryExpression::Operator> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(
+      const lyra::mir::BinaryExpression::Operator& op,
+      FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", lyra::mir::ToString(op));
   }
 };
