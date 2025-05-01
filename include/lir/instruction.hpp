@@ -17,7 +17,9 @@ enum class InstructionKind {
   kBinaryAdd,
   kAssign,
   kDelay,
-  kSystemCall
+  kSystemCall,
+  kJump,
+  kBranch
 };
 
 struct Instruction {
@@ -71,6 +73,22 @@ struct Instruction {
             args += operands[i].ToString();
           }
           return fmt::format("{}({})", system_call_name, args);
+        }
+
+      case InstructionKind::kJump:
+        if (operands.size() == 1) {
+          return fmt::format("jump {}", operands[0].ToString());
+        } else {
+          return "(invalid jump)";
+        }
+
+      case InstructionKind::kBranch:
+        if (operands.size() == 3) {
+          return fmt::format(
+              "branch {} ? {} : {}", operands[0].ToString(),
+              operands[1].ToString(), operands[2].ToString());
+        } else {
+          return "(invalid branch)";
         }
 
       default:

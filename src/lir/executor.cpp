@@ -66,6 +66,53 @@ auto Executor::ExecuteInstruction(const Instruction& instr) -> ExecuteResult {
           fmt::format("Unsupported system call: {}", instr.system_call_name));
     }
 
+    case InstructionKind::kJump: {
+      if (instr.operands.size() != 1) {
+        throw std::runtime_error(
+            "Jump instruction must have exactly one operand");
+      }
+
+      // The operand should be a string literal representing the target label
+      if (instr.operands[0].kind != Value::Kind::kLiteralString) {
+        throw std::runtime_error("Jump target must be a string literal");
+      }
+
+      std::string target = std::get<std::string>(instr.operands[0].data);
+      return ExecuteResult::Jump(target);
+    }
+
+    case InstructionKind::kBranch: {
+      if (instr.operands.size() != 3) {
+        throw std::runtime_error(
+            "Branch instruction must have exactly three operands");
+      }
+
+      // The first operand is the condition (a temporary value)
+      if (instr.operands[0].kind != Value::Kind::kTemp) {
+        throw std::runtime_error("Branch condition must be a temporary value");
+      }
+
+      // The second and third operands are the true and false target labels
+      if (instr.operands[1].kind != Value::Kind::kLiteralString ||
+          instr.operands[2].kind != Value::Kind::kLiteralString) {
+        throw std::runtime_error("Branch targets must be string literals");
+      }
+
+      std::string condition = std::get<std::string>(instr.operands[0].data);
+      std::string true_target = std::get<std::string>(instr.operands[1].data);
+      std::string false_target = std::get<std::string>(instr.operands[2].data);
+
+      // Evaluate the condition immediately in the executor
+      RuntimeValue condition_value = ctx_.get().ssa_table.Read(condition);
+      bool condition_result = condition_value.AsInt() != 0;
+
+      // Select the appropriate target based on condition result
+      std::string next_label = condition_result ? true_target : false_target;
+
+      // Return a simple jump with the decided target
+      return ExecuteResult::Jump(next_label);
+    }
+
     default:
       throw std::runtime_error(fmt::format(
           "Unhandled instruction {} in executor", instr.ToString()));

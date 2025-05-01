@@ -1,19 +1,18 @@
 #pragma once
 
+#include <string>
+
 #include "core/execution_context.hpp"
 #include "lir/module.hpp"
 
 namespace lyra::lir {
 
 struct ExecuteResult {
-  enum class Action {
-    kContinue,
-    kDelay,
-    kFinish,
-  };
+  enum class Action { kContinue, kDelay, kFinish, kJump };
 
   Action action{};
   int64_t delay_amount = 0;
+  std::string target_label{};
 
   static auto Continue() -> ExecuteResult {
     return ExecuteResult{.action = Action::kContinue};
@@ -25,6 +24,11 @@ struct ExecuteResult {
 
   static auto Finish() -> ExecuteResult {
     return ExecuteResult{.action = Action::kFinish};
+  }
+
+  static auto Jump(std::string label) -> ExecuteResult {
+    return ExecuteResult{
+        .action = Action::kJump, .target_label = std::move(label)};
   }
 };
 

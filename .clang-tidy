@@ -8,6 +8,7 @@ Checks: >
   -readability-identifier-length,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,
+  -readability-redundant-member-init,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
 

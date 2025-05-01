@@ -17,7 +17,7 @@ class Statement {
   enum class Kind {
     kAssign,
     kBlock,
-    kIf,
+    kConditional,
     kExpression,
     kDelay,
   };
@@ -42,8 +42,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Assign";
     case Statement::Kind::kBlock:
       return "Block";
-    case Statement::Kind::kIf:
-      return "If";
+    case Statement::Kind::kConditional:
+      return "Conditional";
     case Statement::Kind::kExpression:
       return "Expression";
     case Statement::Kind::kDelay:
@@ -78,14 +78,14 @@ class BlockStatement : public Statement {
   }
 };
 
-class IfStatement : public Statement {
+class ConditionalStatement : public Statement {
  public:
-  static constexpr Kind kKindValue = Kind::kIf;
+  static constexpr Kind kKindValue = Kind::kConditional;
   std::unique_ptr<Expression> condition;
   std::unique_ptr<Statement> then_branch;
   std::unique_ptr<Statement> else_branch;
 
-  IfStatement(
+  ConditionalStatement(
       std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
       std::unique_ptr<Statement> else_b)
       : Statement(kKindValue),
