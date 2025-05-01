@@ -7,6 +7,7 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 
+#include "common/formatting.hpp"
 #include "common/trigger.hpp"
 #include "lir/basic_block.hpp"
 #include "lir/instruction.hpp"
@@ -41,10 +42,12 @@ struct Process {
   // Sensitivity list for the process (empty for initial processes)
   std::vector<Trigger> trigger_list;
 
-  [[nodiscard]] auto ToString() const -> std::string {
+  [[nodiscard]] auto ToString(int indentation_level = 0) const -> std::string {
     std::string out;
 
-    out += fmt::format("  Process {}", lyra::lir::ToString(kind));
+    out += fmt::format(
+        "{}Process {}", common::Indent(indentation_level),
+        lyra::lir::ToString(kind));
     if (!trigger_list.empty()) {
       out += fmt::format(" @({})", fmt::join(trigger_list, ", "));
     }
@@ -53,13 +56,14 @@ struct Process {
     // If using basic blocks
     if (!blocks.empty()) {
       for (const auto& block : blocks) {
-        out += fmt::format("    {}", block->ToString());
+        out += fmt::format("{}", block->ToString(indentation_level + 1));
       }
     }
     // Fallback to flat instruction list (legacy)
     else if (!instructions.empty()) {
       for (const auto& instr : instructions) {
-        out += fmt::format("    {}\n", instr);
+        out +=
+            fmt::format("{}{}\n", common::Indent(indentation_level + 1), instr);
       }
     }
 

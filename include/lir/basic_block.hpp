@@ -5,6 +5,7 @@
 
 #include <fmt/format.h>
 
+#include "common/formatting.hpp"
 #include "lir/instruction.hpp"
 
 namespace lyra::lir {
@@ -16,10 +17,12 @@ struct BasicBlock {
   // Instructions contained in this basic block
   std::vector<Instruction> instructions;
 
-  [[nodiscard]] auto ToString() const -> std::string {
-    std::string result = fmt::format("{}:\n", label);
+  [[nodiscard]] auto ToString(int indentation_level = 0) const -> std::string {
+    std::string result =
+        fmt::format("{}{}:\n", common::Indent(indentation_level), label);
     for (const auto& instr : instructions) {
-      result += fmt::format("  {}\n", instr.ToString());
+      result += fmt::format(
+          "{}{}\n", common::Indent(indentation_level + 1), instr.ToString());
     }
     return result;
   }
