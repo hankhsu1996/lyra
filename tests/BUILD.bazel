@@ -1,4 +1,14 @@
 cc_test(
+    name = "control_flow_tests",
+    size = "small",
+    srcs = ["e2e/control_flow_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
     name = "initial_tests",
     size = "small",
     srcs = ["e2e/initial_tests.cpp"],

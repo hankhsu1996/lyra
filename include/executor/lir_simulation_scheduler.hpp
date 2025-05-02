@@ -2,10 +2,12 @@
 
 #include <memory>
 #include <queue>
+#include <string>
+#include <vector>
 
 #include "core/execution_context.hpp"
 #include "core/simulation_preparation.hpp"
-#include "lir/executor.hpp"
+#include "executor/lir_process_interpreter.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
 
@@ -30,9 +32,9 @@ struct DelayedEvent {
   }
 };
 
-class SimulationScheduler {
+class LIRSimulationScheduler {
  public:
-  SimulationScheduler(
+  LIRSimulationScheduler(
       const lir::Module& module, ExecutionContext& context,
       VariableTriggerMap variable_triggers);
 
@@ -47,6 +49,9 @@ class SimulationScheduler {
   void ScheduleAlwaysProcesses();
   void ExecuteOneEvent();
 
+  // Process triggers based on modified signals
+  void ProcessSignalTriggers(const std::vector<std::string>& modified_signals);
+
   using EventQueue = std::queue<ScheduledEvent>;
   using DelayQueue = std::priority_queue<DelayedEvent>;
 
@@ -57,7 +62,7 @@ class SimulationScheduler {
 
   std::reference_wrapper<const lir::Module> module_;
   std::reference_wrapper<ExecutionContext> context_;
-  lir::Executor executor_;
+  LIRProcessInterpreter process_interpreter_;
   VariableTriggerMap variable_to_triggers_;
 };
 

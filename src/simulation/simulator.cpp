@@ -8,7 +8,7 @@
 #include "core/execution_context.hpp"
 #include "core/simulation_preparation.hpp"
 #include "core/simulation_result.hpp"
-#include "core/simulation_scheduler.hpp"
+#include "executor/lir_simulation_scheduler.hpp"
 #include "frontend/slang_frontend.hpp"
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir/mir_to_lir.hpp"
@@ -48,7 +48,7 @@ auto Simulator::RunWithCompilation(
   SimulationPreparation::InitializeSignals(*lir, *context);
   auto triggers = SimulationPreparation::BuildVariableTriggerMap(*lir);
 
-  SimulationScheduler scheduler(*lir, *context, std::move(triggers));
+  LIRSimulationScheduler scheduler(*lir, *context, std::move(triggers));
   auto final_time = scheduler.Run();
 
   return SimulationResult{

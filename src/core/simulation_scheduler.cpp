@@ -24,7 +24,7 @@ auto SimulationScheduler::Run() -> uint64_t {
       const auto& next_event = delay_queue_.top();
       simulation_time_ = next_event.ready_time;
       active_queue_.push(
-          {next_event.process, next_event.basic_block_index,
+          {next_event.process, next_event.block_index,
            next_event.instruction_index});
       delay_queue_.pop();
     }
@@ -62,7 +62,7 @@ void SimulationScheduler::ExecuteOneEvent() {
   active_queue_.pop();
 
   auto& process = event.process;
-  size_t block_index = event.basic_block_index;
+  size_t block_index = event.block_index;
   size_t instr_index = event.instruction_index;
 
   while (true) {
