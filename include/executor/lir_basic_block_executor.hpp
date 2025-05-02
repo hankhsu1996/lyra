@@ -14,11 +14,12 @@ class LIRBasicBlockExecutor {
  public:
   explicit LIRBasicBlockExecutor(ExecutionContext& context);
 
-  auto RunBlock(const lir::BasicBlock& block, std::size_t start_instr_index)
+  auto RunBlock(
+      const lir::BasicBlock& block, std::size_t start_instruction_index)
       -> LIRBasicBlockResult;
 
  private:
-  lir::LIRInstructionExecutor instr_executor_;
+  lir::LIRInstructionExecutor instruction_executor_;
   std::reference_wrapper<ExecutionContext> ctx_;
 };
 

@@ -63,21 +63,21 @@ void SimulationScheduler::ExecuteOneEvent() {
 
   auto& process = event.process;
   size_t block_index = event.block_index;
-  size_t instr_index = event.instruction_index;
+  size_t instruction_index = event.instruction_index;
 
   while (true) {
     const auto& block = *process->blocks[block_index];
     const auto& instructions = block.instructions;
 
-    while (instr_index < instructions.size()) {
-      const auto& instr = instructions[instr_index];
+    while (instruction_index < instructions.size()) {
+      const auto& instr = instructions[instruction_index];
       auto result = executor_.ExecuteInstruction(instr);
-      ++instr_index;
+      ++instruction_index;
 
       if (result.action == lir::ExecuteResult::Action::kDelay) {
         delay_queue_.push(
             {simulation_time_ + result.delay_amount, process, block_index,
-             instr_index});
+             instruction_index});
         return;
       }
 
@@ -88,7 +88,7 @@ void SimulationScheduler::ExecuteOneEvent() {
 
       if (result.action == lir::ExecuteResult::Action::kJump) {
         block_index = process->FindBlockIndexByLabel(result.target_label);
-        instr_index = 0;
+        instruction_index = 0;
         break;
       }
 

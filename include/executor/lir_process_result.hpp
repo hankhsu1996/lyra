@@ -29,13 +29,13 @@ struct LIRProcessResult {
   }
 
   static auto Delay(
-      int64_t amount, std::size_t block_idx, std::size_t instr_idx,
+      int64_t amount, std::size_t block_index, std::size_t instruction_index,
       std::vector<std::string> modified_signals) -> LIRProcessResult {
     return LIRProcessResult{
         .kind = Kind::kDelay,
         .delay_amount = amount,
-        .block_index = block_idx,
-        .resume_instruction_index = instr_idx,
+        .block_index = block_index,
+        .resume_instruction_index = instruction_index,
         .modified_signals = std::move(modified_signals)};
   }
 
