@@ -25,37 +25,24 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     case ProceduralBlockKind::Initial: {
       process->process_kind = mir::ProcessKind::kInitial;
 
-      const auto& statement = procedural_block.getBody();
-      auto statements = LowerStatement(statement);
-      for (auto& stmt : statements) {
-        process->body.push_back(std::move(stmt));
-      }
+      const auto& slang_statement = procedural_block.getBody();
+      auto statement = LowerStatement(slang_statement);
+      process->body = std::move(statement);
       break;
     }
 
     case ProceduralBlockKind::AlwaysComb: {
       process->process_kind = mir::ProcessKind::kAlwaysComb;
 
-      const auto& statement = procedural_block.getBody();
-      auto symbols = CollectSensitivityList(statement);
+      const auto& slang_statement = procedural_block.getBody();
 
-      for (const auto* symbol : symbols) {
-        auto variable_opt = LowerVariable(*symbol);
-        if (!variable_opt) {
-          throw std::runtime_error(
-              "Unexpected non-variable in sensitivity list");
-        }
+      auto statement = LowerStatement(slang_statement);
+      auto variables = CollectSensitivityList(*statement);
+      process->body = std::move(statement);
 
-        auto trigger = common::Trigger{
-            .edge_kind = common::EdgeKind::kAnyEdge,
-            .variable = variable_opt.value()};
-
+      for (const auto& variable : variables) {
+        auto trigger = mir::Trigger::AnyEdge(variable);
         process->trigger_list.push_back(std::move(trigger));
-      }
-
-      auto statements = LowerStatement(statement);
-      for (auto& stmt : statements) {
-        process->body.push_back(std::move(stmt));
       }
       break;
     }

@@ -21,6 +21,10 @@ struct Trigger {
         return fmt::format("{}", variable);
     }
   }
+
+  static auto AnyEdge(const VariableType& variable) -> Trigger {
+    return Trigger{EdgeKind::kAnyEdge, variable};
+  }
 };
 
 template <typename VariableType>

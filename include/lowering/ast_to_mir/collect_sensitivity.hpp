@@ -1,63 +1,80 @@
 #pragma once
 
+#include <string>
 #include <unordered_set>
-#include <vector>
 
-#include <fmt/format.h>
-#include <slang/ast/ASTVisitor.h>
-#include <slang/ast/Symbol.h>
-
-namespace slang::ast {
-class Statement;
-}
+#include "mir/statement.hpp"
+#include "mir/visitor.hpp"
 
 namespace lyra::lowering {
 
-struct SensitivityCollector
-    : public slang::ast::ASTVisitor<SensitivityCollector, true, true> {
-  std::reference_wrapper<std::unordered_set<const slang::ast::Symbol*>>
-      variables;
+// Collects all variable names used in the right-hand side of MIR statements.
+class SensitivityCollector : public mir::MirVisitor {
+ public:
+  SensitivityCollector() = default;
 
-  explicit SensitivityCollector(
-      std::unordered_set<const slang::ast::Symbol*>& variables)
-      : variables(variables) {
+  void Visit(const mir::LiteralExpression& /*unused*/) override {
+    // No variable involved
   }
 
-  void handle(const slang::ast::NamedValueExpression& expr) const {
-    variables.get().insert(&expr.symbol);
+  void Visit(const mir::IdentifierExpression& expression) override {
+    variable_names_.insert(expression.name);
   }
 
-  void handle(const slang::ast::AssignmentExpression& expr) {
-    if (expr.kind == slang::ast::ExpressionKind::Assignment) {
-      const auto& assignment_expr = expr.as<slang::ast::AssignmentExpression>();
-      assignment_expr.right().visit(*this);
+  void Visit(const mir::BinaryExpression& expression) override {
+    expression.left->Accept(*this);
+    expression.right->Accept(*this);
+  }
+
+  void Visit(const mir::AssignmentExpression& expression) override {
+    expression.value->Accept(*this);
+  }
+
+  void Visit(const mir::SystemCallExpression& expression) override {
+    for (const auto& argument : expression.arguments) {
+      argument->Accept(*this);
     }
   }
 
-  void handle(const slang::ast::BinaryExpression& expr) {
-    visitDefault(expr);
+  void Visit(const mir::AssignStatement& statement) override {
+    statement.value->Accept(*this);
   }
 
-  void handle(const slang::ast::CallExpression& expr) {
-    if (expr.isSystemCall()) {
-      visitDefault(expr);
-    } else {
-      throw std::runtime_error(fmt::format(
-          "Unsupported subroutine call {} in CollectSensitivityList",
-          expr.getSubroutineName()));
+  void Visit(const mir::ExpressionStatement& statement) override {
+    statement.expression->Accept(*this);
+  }
+
+  void Visit(const mir::DelayStatement& /*unused*/) override {
+  }
+
+  void Visit(const mir::ConditionalStatement& statement) override {
+    statement.condition->Accept(*this);
+    statement.then_branch->Accept(*this);
+    if (statement.else_branch) {
+      statement.else_branch->Accept(*this);
     }
   }
 
-  static void handle(const slang::ast::Expression& expr) {
-    throw std::runtime_error(fmt::format(
-        "Unsupported expression kind {} in CollectSensitivityList",
-        slang::ast::toString(expr.kind)));
+  void Visit(const mir::BlockStatement& statement) override {
+    for (const auto& inner_statement : statement.statements) {
+      inner_statement->Accept(*this);
+    }
   }
+
+  [[nodiscard]] auto TakeVariableNames() && -> std::unordered_set<std::string> {
+    return std::move(variable_names_);
+  }
+
+ private:
+  std::unordered_set<std::string> variable_names_;
 };
 
-// Collects all named variables (identifiers) that appear on the RHS
-// of the given statement's expressions.
-auto CollectSensitivityList(const slang::ast::Statement& statement)
-    -> std::vector<const slang::ast::Symbol*>;
+// Entry point
+inline auto CollectSensitivityList(const mir::Statement& statement)
+    -> std::unordered_set<std::string> {
+  SensitivityCollector collector;
+  statement.Accept(collector);
+  return std::move(collector).TakeVariableNames();
+}
 
 }  // namespace lyra::lowering

@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include "mir/expression.hpp"
+#include "mir/visitor.hpp"
 
 namespace lyra::mir {
 
@@ -33,6 +34,7 @@ class Statement {
   }
 
   virtual ~Statement() = default;
+  virtual void Accept(MirVisitor& visitor) const = 0;
 };
 
 // Convert Statement::Kind to string
@@ -67,6 +69,10 @@ class AssignStatement : public Statement {
   AssignStatement(std::string t, std::unique_ptr<Expression> v)
       : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
   }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
 };
 
 class BlockStatement : public Statement {
@@ -75,6 +81,10 @@ class BlockStatement : public Statement {
   std::vector<std::unique_ptr<Statement>> statements;
 
   BlockStatement() : Statement(kKindValue) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
   }
 };
 
@@ -93,6 +103,10 @@ class ConditionalStatement : public Statement {
         then_branch(std::move(then_b)),
         else_branch(std::move(else_b)) {
   }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
 };
 
 class DelayStatement : public Statement {
@@ -103,6 +117,10 @@ class DelayStatement : public Statement {
   explicit DelayStatement(int64_t amount)
       : Statement(kKindValue), delay_amount(amount) {
   }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
 };
 
 class ExpressionStatement : public Statement {
@@ -112,6 +130,10 @@ class ExpressionStatement : public Statement {
 
   explicit ExpressionStatement(std::unique_ptr<Expression> expression)
       : Statement(kKindValue), expression(std::move(expression)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
   }
 };
 

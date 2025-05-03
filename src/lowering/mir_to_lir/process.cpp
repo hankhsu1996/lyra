@@ -23,17 +23,16 @@ auto MapProcessKind(mir::ProcessKind kind) -> lir::ProcessKind {
 
 // Map MIR trigger to LIR trigger
 auto MapTrigger(const mir::Trigger& mir_trigger) -> lir::Trigger {
-  if (mir_trigger.variable.name.empty()) {
+  if (mir_trigger.variable.empty()) {
     throw std::runtime_error("Trigger variable has empty name");
   }
 
   return lir::Trigger{
-      .edge_kind = mir_trigger.edge_kind,
-      .variable = mir_trigger.variable.name};
+      .edge_kind = mir_trigger.edge_kind, .variable = mir_trigger.variable};
 }
 
 auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
-  if (process.body.empty()) {
+  if (!process.body) {
     // Skip empty processes
     return;
   }
@@ -49,14 +48,8 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
   // Start with an "entry" block for the process
   builder.StartBlock("entry");
 
-  // Process each statement in the process
-  for (const auto& statement : process.body) {
-    if (!statement) {
-      throw std::runtime_error("Null statement in process body");
-    }
-
-    LowerStatement(*statement, builder);
-  }
+  // Process the body statement in the process
+  LowerStatement(*process.body, builder);
 
   builder.EndProcess();
 }

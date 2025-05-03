@@ -10,6 +10,8 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "mir/visitor.hpp"
+
 namespace lyra::mir {
 
 class Expression {
@@ -33,6 +35,7 @@ class Expression {
   virtual ~Expression() = default;
 
   [[nodiscard]] virtual auto ToString() const -> std::string = 0;
+  virtual void Accept(MirVisitor& visitor) const = 0;
 };
 
 // Convert Expression::Kind to string
@@ -68,6 +71,10 @@ class LiteralExpression : public Expression {
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}", value);
   }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
 };
 
 class IdentifierExpression : public Expression {
@@ -81,6 +88,10 @@ class IdentifierExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return name;
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
   }
 };
 
@@ -113,6 +124,10 @@ class BinaryExpression : public Expression {
       default:
         return "(unknown operator)";
     }
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
   }
 };
 
@@ -148,6 +163,10 @@ class AssignmentExpression : public Expression {
     }
     return fmt::format("({} = {})", target, value->ToString());
   }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
 };
 
 class SystemCallExpression : public Expression {
@@ -169,6 +188,10 @@ class SystemCallExpression : public Expression {
       arg_strs.push_back(arg ? arg->ToString() : "<null>");
     }
     return fmt::format("({} {})", name, fmt::join(arg_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
   }
 };
 

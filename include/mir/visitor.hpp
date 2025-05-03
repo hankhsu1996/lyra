@@ -1,0 +1,41 @@
+#pragma once
+
+namespace lyra::mir {
+
+class Expression;
+class LiteralExpression;
+class IdentifierExpression;
+class BinaryExpression;
+class AssignmentExpression;
+class SystemCallExpression;
+
+class Statement;
+class AssignStatement;
+class BlockStatement;
+class ConditionalStatement;
+class DelayStatement;
+class ExpressionStatement;
+
+class MirVisitor {
+ public:
+  MirVisitor() = default;
+  MirVisitor(const MirVisitor&) = default;
+  MirVisitor(MirVisitor&&) = delete;
+  auto operator=(const MirVisitor&) -> MirVisitor& = default;
+  auto operator=(MirVisitor&&) -> MirVisitor& = delete;
+  virtual ~MirVisitor() = default;
+
+  virtual void Visit(const LiteralExpression&) = 0;
+  virtual void Visit(const IdentifierExpression&) = 0;
+  virtual void Visit(const BinaryExpression&) = 0;
+  virtual void Visit(const AssignmentExpression&) = 0;
+  virtual void Visit(const SystemCallExpression&) = 0;
+
+  virtual void Visit(const AssignStatement&) = 0;
+  virtual void Visit(const BlockStatement&) = 0;
+  virtual void Visit(const ConditionalStatement&) = 0;
+  virtual void Visit(const DelayStatement&) = 0;
+  virtual void Visit(const ExpressionStatement&) = 0;
+};
+
+}  // namespace lyra::mir
