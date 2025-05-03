@@ -10,6 +10,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "mir/operators.hpp"
 #include "mir/visitor.hpp"
 
 namespace lyra::mir {
@@ -98,14 +99,13 @@ class IdentifierExpression : public Expression {
 class BinaryExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kBinary;
-  enum class Operator { kAdd };
 
-  Operator op;
+  lyra::mir::Operator op;
   std::unique_ptr<Expression> left;
   std::unique_ptr<Expression> right;
 
   BinaryExpression(
-      Operator op, std::unique_ptr<Expression> left,
+      lyra::mir::Operator op, std::unique_ptr<Expression> left,
       std::unique_ptr<Expression> right)
       : Expression(Kind::kBinary),
         op(op),
@@ -117,33 +117,13 @@ class BinaryExpression : public Expression {
     if (!left || !right) {
       return "(invalid binary expression)";
     }
-
-    switch (op) {
-      case Operator::kAdd:
-        return fmt::format("({} + {})", left->ToString(), right->ToString());
-      default:
-        return "(unknown operator)";
-    }
+    return fmt::format("({} {} {})", left->ToString(), op, right->ToString());
   }
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
 };
-
-// Convert BinaryExpression::Operator to string
-inline auto ToString(BinaryExpression::Operator op) -> std::string {
-  switch (op) {
-    case BinaryExpression::Operator::kAdd:
-      return "Add";
-  }
-}
-
-// Add operator<< for BinaryExpression::Operator
-inline auto operator<<(std::ostream& os, const BinaryExpression::Operator& op)
-    -> std::ostream& {
-  return os << ToString(op);
-}
 
 class AssignmentExpression : public Expression {
  public:
@@ -236,21 +216,5 @@ struct fmt::formatter<lyra::mir::Expression::Kind> {
   auto format(
       const lyra::mir::Expression::Kind& kind, FormatContext& ctx) const {
     return fmt::format_to(ctx.out(), "{}", lyra::mir::ToString(kind));
-  }
-};
-
-// Add formatter for BinaryExpression::Operator
-template <>
-struct fmt::formatter<lyra::mir::BinaryExpression::Operator> {
-  template <typename ParseContext>
-  constexpr auto parse(ParseContext& ctx) {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(
-      const lyra::mir::BinaryExpression::Operator& op,
-      FormatContext& ctx) const {
-    return fmt::format_to(ctx.out(), "{}", lyra::mir::ToString(op));
   }
 };

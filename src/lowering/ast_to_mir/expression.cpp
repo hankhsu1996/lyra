@@ -34,21 +34,17 @@ auto LowerExpression(const slang::ast::Expression& expression)
     }
 
     case slang::ast::ExpressionKind::BinaryOp: {
-      const auto& bin = expression.as<slang::ast::BinaryExpression>();
-      switch (bin.op) {
-        case slang::ast::BinaryOperator::Add: {
-          auto left = LowerExpression(bin.left());
-          auto right = LowerExpression(bin.right());
-          return std::make_unique<mir::BinaryExpression>(
-              mir::BinaryExpression::Operator::kAdd, std::move(left),
-              std::move(right));
-        }
+      const auto& binary_expression =
+          expression.as<slang::ast::BinaryExpression>();
 
-        default:
-          throw std::runtime_error(fmt::format(
-              "Unsupported binary operator {} in AST to MIR LowerExpression",
-              slang::ast::toString(bin.op)));
-      }
+      auto left = LowerExpression(binary_expression.left());
+      auto right = LowerExpression(binary_expression.right());
+
+      auto mir_operator =
+          mir::ConvertSlangBinaryOperatorToMir(binary_expression.op);
+
+      return std::make_unique<mir::BinaryExpression>(
+          mir_operator, std::move(left), std::move(right));
     }
 
     case slang::ast::ExpressionKind::Assignment: {

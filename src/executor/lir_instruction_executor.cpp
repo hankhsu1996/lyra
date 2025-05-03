@@ -33,6 +33,122 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       return LIRInstructionResult::Continue();
     }
 
+    case InstructionKind::kBinarySubtract: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 - v2));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryMultiply: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 * v2));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryDivide: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 / v2));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryModulo: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 % v2));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryEqualInt: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 == v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryEqualString: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      std::string v1 = ctx_.get().temp_table.Read(lhs).AsString();
+      std::string v2 = ctx_.get().temp_table.Read(rhs).AsString();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 == v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryNotEqualInt: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 != v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryNotEqualString: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      std::string v1 = ctx_.get().temp_table.Read(lhs).AsString();
+      std::string v2 = ctx_.get().temp_table.Read(rhs).AsString();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 != v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryLessThan: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 < v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryLessThanEqual: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 <= v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryGreaterThan: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 > v2)));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kBinaryGreaterThanEqual: {
+      auto lhs = std::get<std::string>(instr.operands[0].data);
+      auto rhs = std::get<std::string>(instr.operands[1].data);
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(
+          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 >= v2)));
+      return LIRInstructionResult::Continue();
+    }
+
     case InstructionKind::kLoadVariable: {
       auto src_variable = std::get<std::string>(instr.operands[0].data);
       auto value = ctx_.get().variable_table.Read(src_variable);

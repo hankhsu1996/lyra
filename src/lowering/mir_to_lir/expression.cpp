@@ -1,5 +1,6 @@
 #include "lowering/mir_to_lir/expression.hpp"
 
+#include <cassert>
 #include <stdexcept>
 
 #include "lowering/mir_to_lir/lir_builder.hpp"
@@ -34,30 +35,14 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     case mir::Expression::Kind::kBinary: {
       const auto& binary = mir::As<mir::BinaryExpression>(expression);
 
-      if (binary.op != mir::BinaryExpression::Operator::kAdd) {
-        throw std::runtime_error(fmt::format(
-            "Unsupported binary operator {} in MIR to LIR LowerExpression",
-            binary.op));
+      if (!binary.left || !binary.right) {
+        throw std::runtime_error("Binary expression operands cannot be null");
       }
 
-      // Handle left operand
-      if (!binary.left) {
-        throw std::runtime_error("Binary left operand is null");
-      }
       auto lhs_value = LowerExpression(*binary.left, builder);
-
-      // Handle right operand
-      if (!binary.right) {
-        throw std::runtime_error("Binary right operand is null");
-      }
       auto rhs_value = LowerExpression(*binary.right, builder);
 
-      // Perform the addition
-      auto result = builder.MakeTemp("add");
-      builder.AddInstruction(
-          lir::InstructionKind::kBinaryAdd, result, {lhs_value, rhs_value});
-
-      return lir::Value::MakeTemp(result);
+      return LowerBinaryExpression(binary, lhs_value, rhs_value, builder);
     }
 
     case mir::Expression::Kind::kAssignment: {
@@ -120,4 +105,92 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           expression.kind));
   }
 }
+auto LowerBinaryExpression(
+    const mir::BinaryExpression& expression, lir::Value lhs, lir::Value rhs,
+    LirBuilder& builder) -> lir::Value {
+  using lir::InstructionKind;
+  using mir::Operator;
+
+  const bool is_lhs_string = lhs.kind == lir::Value::Kind::kLiteralString;
+  const bool is_rhs_string = rhs.kind == lir::Value::Kind::kLiteralString;
+  const bool is_string = is_lhs_string || is_rhs_string;
+
+  InstructionKind kind = InstructionKind::kBinaryAdd;
+
+  // Special case handling: equality/inequality with string
+  if (is_string) {
+    switch (expression.op) {
+      case Operator::kEquality:
+        kind = InstructionKind::kBinaryEqualString;
+        break;
+      case Operator::kInequality:
+        kind = InstructionKind::kBinaryNotEqualString;
+        break;
+      default:
+        throw std::runtime_error(fmt::format(
+            "Operator {} is not supported for string operands", expression.op));
+    }
+  } else {
+    switch (expression.op) {
+      case Operator::kAddition:
+        kind = InstructionKind::kBinaryAdd;
+        break;
+      case Operator::kSubtraction:
+        kind = InstructionKind::kBinarySubtract;
+        break;
+      case Operator::kMultiplication:
+        kind = InstructionKind::kBinaryMultiply;
+        break;
+      case Operator::kDivision:
+        kind = InstructionKind::kBinaryDivide;
+        break;
+      case Operator::kModulo:
+        kind = InstructionKind::kBinaryModulo;
+        break;
+      case Operator::kEquality:
+        kind = InstructionKind::kBinaryEqualInt;
+        break;
+      case Operator::kInequality:
+        kind = InstructionKind::kBinaryNotEqualInt;
+        break;
+      case Operator::kLessThan:
+        kind = InstructionKind::kBinaryLessThan;
+        break;
+      case Operator::kLessThanEqual:
+        kind = InstructionKind::kBinaryLessThanEqual;
+        break;
+      case Operator::kGreaterThan:
+        kind = InstructionKind::kBinaryGreaterThan;
+        break;
+      case Operator::kGreaterThanEqual:
+        kind = InstructionKind::kBinaryGreaterThanEqual;
+        break;
+      case Operator::kPower:
+      case Operator::kBitwiseAnd:
+      case Operator::kBitwiseOr:
+      case Operator::kBitwiseXor:
+      case Operator::kBitwiseXnor:
+      case Operator::kLogicalAnd:
+      case Operator::kLogicalOr:
+      case Operator::kLogicalImplication:
+      case Operator::kLogicalEquivalence:
+      case Operator::kCaseEquality:
+      case Operator::kCaseInequality:
+      case Operator::kWildcardEquality:
+      case Operator::kWildcardInequality:
+      case Operator::kLogicalShiftLeft:
+      case Operator::kLogicalShiftRight:
+      case Operator::kArithmeticShiftLeft:
+      case Operator::kArithmeticShiftRight:
+        throw std::runtime_error(fmt::format(
+            "Operator {} is not supported (yet) in LowerBinaryExpression",
+            expression.op));
+    }
+  }
+
+  auto result = builder.MakeTemp("bin");
+  builder.AddInstruction(kind, result, {lhs, rhs});
+  return lir::Value::MakeTemp(result);
+}
+
 }  // namespace lyra::lowering

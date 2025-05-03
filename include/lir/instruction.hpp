@@ -15,6 +15,18 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kBinaryAdd,
+  kBinarySubtract,
+  kBinaryMultiply,
+  kBinaryDivide,
+  kBinaryModulo,
+  kBinaryEqualInt,
+  kBinaryEqualString,
+  kBinaryNotEqualInt,
+  kBinaryNotEqualString,
+  kBinaryLessThan,
+  kBinaryLessThanEqual,
+  kBinaryGreaterThan,
+  kBinaryGreaterThanEqual,
   kDelay,
   kSystemCall,
   kJump,
@@ -48,6 +60,66 @@ struct Instruction {
       case InstructionKind::kBinaryAdd:
         return fmt::format(
             "add {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinarySubtract:
+        return fmt::format(
+            "sub {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryMultiply:
+        return fmt::format(
+            "mul {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryDivide:
+        return fmt::format(
+            "div {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryModulo:
+        return fmt::format(
+            "mod {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryEqualInt:
+        return fmt::format(
+            "eq {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryEqualString:
+        return fmt::format(
+            "eq {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryNotEqualInt:
+        return fmt::format(
+            "neq {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryNotEqualString:
+        return fmt::format(
+            "neq {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLessThan:
+        return fmt::format(
+            "lt {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLessThanEqual:
+        return fmt::format(
+            "lteq {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryGreaterThan:
+        return fmt::format(
+            "gt {}, {}, {}", result, operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryGreaterThanEqual:
+        return fmt::format(
+            "gteq {}, {}, {}", result, operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kDelay:
