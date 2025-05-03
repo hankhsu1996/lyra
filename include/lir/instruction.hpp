@@ -10,7 +10,9 @@
 namespace lyra::lir {
 
 enum class InstructionKind {
+  kLiteralBit,
   kLiteralInt,
+  kLiteralLongInt,
   kLiteralString,
   kLoadVariable,
   kStoreVariable,
@@ -46,7 +48,9 @@ struct Instruction {
   std::string system_call_name;
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
+      case InstructionKind::kLiteralBit:
       case InstructionKind::kLiteralInt:
+      case InstructionKind::kLiteralLongInt:
       case InstructionKind::kLiteralString:
         return fmt::format("mov {}, {}", result, operands[0].ToString());
 

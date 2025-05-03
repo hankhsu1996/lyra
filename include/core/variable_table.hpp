@@ -3,7 +3,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "value.hpp"
+#include "core/runtime_value.hpp"
 
 namespace lyra {
 

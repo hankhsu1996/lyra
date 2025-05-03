@@ -2,6 +2,8 @@
 
 #include <fmt/core.h>
 
+#include "core/arithmetic_ops.hpp"
+
 namespace lyra::lir {
 
 LIRInstructionExecutor::LIRInstructionExecutor(ExecutionContext& context)
@@ -12,9 +14,21 @@ LIRInstructionExecutor::LIRInstructionExecutor(ExecutionContext& context)
 auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
     -> LIRInstructionResult {
   switch (instr.kind) {
+    case InstructionKind::kLiteralBit: {
+      bool val = std::get<bool>(instr.operands[0].data);
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromBit(val));
+      return LIRInstructionResult::Continue();
+    }
+
     case InstructionKind::kLiteralInt: {
-      int64_t val = std::get<int64_t>(instr.operands[0].data);
+      int32_t val = std::get<int32_t>(instr.operands[0].data);
       ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(val));
+      return LIRInstructionResult::Continue();
+    }
+
+    case InstructionKind::kLiteralLongInt: {
+      int64_t val = std::get<int64_t>(instr.operands[0].data);
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromLongInt(val));
       return LIRInstructionResult::Continue();
     }
 
@@ -25,47 +39,62 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
     }
 
     case InstructionKind::kBinaryAdd: {
-      auto lhs = std::get<std::string>(instr.operands[0].data);
-      auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 + v2));
+      auto lhs_name = std::get<std::string>(instr.operands[0].data);
+      auto rhs_name = std::get<std::string>(instr.operands[1].data);
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs_name);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs_name);
+
+      auto result = lyra::kAddOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinarySubtract: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 - v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kSubOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryMultiply: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 * v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kMulOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryDivide: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 / v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kDivOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryModulo: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 % v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kModOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
@@ -75,7 +104,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 == v2)));
+          instr.result, RuntimeValue::FromBit(v1 == v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -85,7 +114,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       std::string v1 = ctx_.get().temp_table.Read(lhs).AsString();
       std::string v2 = ctx_.get().temp_table.Read(rhs).AsString();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 == v2)));
+          instr.result, RuntimeValue::FromBit(v1 == v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -95,7 +124,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 != v2)));
+          instr.result, RuntimeValue::FromBit(v1 != v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -105,7 +134,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       std::string v1 = ctx_.get().temp_table.Read(lhs).AsString();
       std::string v2 = ctx_.get().temp_table.Read(rhs).AsString();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 != v2)));
+          instr.result, RuntimeValue::FromBit(v1 != v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -114,8 +143,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       auto rhs = std::get<std::string>(instr.operands[1].data);
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 < v2)));
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromBit(v1 < v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -125,7 +153,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 <= v2)));
+          instr.result, RuntimeValue::FromBit(v1 <= v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -134,8 +162,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       auto rhs = std::get<std::string>(instr.operands[1].data);
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 > v2)));
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromBit(v1 > v2));
       return LIRInstructionResult::Continue();
     }
 
@@ -145,7 +172,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
       int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
       ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromInt(static_cast<int64_t>(v1 >= v2)));
+          instr.result, RuntimeValue::FromBit(v1 >= v2));
       return LIRInstructionResult::Continue();
     }
 

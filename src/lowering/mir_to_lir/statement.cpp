@@ -38,7 +38,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       const auto& delay = mir::As<mir::DelayStatement>(statement);
       builder.AddInstruction(
           lir::InstructionKind::kDelay, "",
-          {lir::Value::MakeLiteralInt(delay.delay_amount)});
+          {lir::Value::MakeLiteralLongInt(delay.delay_amount)});
       break;
     }
 

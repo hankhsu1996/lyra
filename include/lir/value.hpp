@@ -9,10 +9,17 @@
 namespace lyra::lir {
 
 struct Value {
-  enum class Kind { kTemp, kVariable, kLiteralInt, kLiteralString };
+  enum class Kind {
+    kTemp,
+    kVariable,
+    kLiteralBit,
+    kLiteralInt,
+    kLiteralLongInt,
+    kLiteralString
+  };
 
   Kind kind;
-  std::variant<std::string, int64_t> data;
+  std::variant<std::string, bool, int32_t, int64_t> data;
 
   static auto MakeTemp(const std::string& name) -> Value {
     return Value{.kind = Kind::kTemp, .data = name};
@@ -22,8 +29,16 @@ struct Value {
     return Value{.kind = Kind::kVariable, .data = name};
   }
 
-  static auto MakeLiteralInt(int64_t value) -> Value {
+  static auto MakeLiteralBit(bool value) -> Value {
+    return Value{.kind = Kind::kLiteralBit, .data = value};
+  }
+
+  static auto MakeLiteralInt(int32_t value) -> Value {
     return Value{.kind = Kind::kLiteralInt, .data = value};
+  }
+
+  static auto MakeLiteralLongInt(int64_t value) -> Value {
+    return Value{.kind = Kind::kLiteralLongInt, .data = value};
   }
 
   static auto MakeLiteralString(const std::string& value) -> Value {
@@ -36,7 +51,11 @@ struct Value {
         return fmt::format("{}", std::get<std::string>(data));
       case Kind::kVariable:
         return std::get<std::string>(data);
+      case Kind::kLiteralBit:
+        return fmt::format("{}", std::get<bool>(data));
       case Kind::kLiteralInt:
+        return fmt::format("{}", std::get<int32_t>(data));
+      case Kind::kLiteralLongInt:
         return fmt::format("{}", std::get<int64_t>(data));
       case Kind::kLiteralString:
         return fmt::format("\"{}\"", std::get<std::string>(data));
