@@ -2,7 +2,7 @@
 
 #include <fmt/core.h>
 
-#include "core/arithmetic_ops.hpp"
+#include "core/value_operations.hpp"
 
 namespace lyra::lir {
 
@@ -101,10 +101,12 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
     case InstructionKind::kBinaryEqualInt: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromBit(v1 == v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kEqOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
@@ -121,10 +123,12 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
     case InstructionKind::kBinaryNotEqualInt: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromBit(v1 != v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kNeOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
@@ -141,38 +145,48 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
     case InstructionKind::kBinaryLessThan: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromBit(v1 < v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kLtOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryLessThanEqual: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromBit(v1 <= v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kLeOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryGreaterThan: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromBit(v1 > v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kGtOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 
     case InstructionKind::kBinaryGreaterThanEqual: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
-      ctx_.get().temp_table.Write(
-          instr.result, RuntimeValue::FromBit(v1 >= v2));
+      const auto& lhs_val = ctx_.get().temp_table.Read(lhs);
+      const auto& rhs_val = ctx_.get().temp_table.Read(rhs);
+
+      auto result = lyra::kGeOp(lhs_val, rhs_val);
+      ctx_.get().temp_table.Write(instr.result, result);
+
       return LIRInstructionResult::Continue();
     }
 

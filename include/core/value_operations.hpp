@@ -1,15 +1,20 @@
 #pragma once
 
+#include <algorithm>
+#include <functional>
+
 #include <core/runtime_value.hpp>
 
 namespace lyra {
 
+// Represents promotion order for arithmetic-compatible types
 enum class ValueRank {
   kBit = 0,
   kInt32 = 1,
   kInt64 = 2,
 };
 
+// Maps RuntimeValue to its promotion rank
 inline auto GetRank(const RuntimeValue& value) -> ValueRank {
   switch (value.Kind()) {
     case ValueKind::kBit:
@@ -23,12 +28,14 @@ inline auto GetRank(const RuntimeValue& value) -> ValueRank {
   }
 }
 
+// A pair of promoted values and their common rank
 struct PromotedPair {
   RuntimeValue lhs;
   RuntimeValue rhs;
   ValueRank rank{};
 };
 
+// Promotes two RuntimeValues to a common type
 inline auto Promote(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> PromotedPair {
   ValueRank lhs_rank = GetRank(lhs);
@@ -51,6 +58,7 @@ inline auto Promote(const RuntimeValue& lhs, const RuntimeValue& rhs)
         }
         return RuntimeValue::FromLongInt(val.AsInt());
     }
+    std::abort();
   };
 
   return PromotedPair{
@@ -59,6 +67,7 @@ inline auto Promote(const RuntimeValue& lhs, const RuntimeValue& rhs)
       .rank = rank};
 }
 
+// Generates a binary arithmetic operation that handles promotion
 template <typename Op>
 auto MakeArithmeticOp(Op op) {
   return [=](const RuntimeValue& lhs, const RuntimeValue& rhs) -> RuntimeValue {
@@ -74,15 +83,19 @@ auto MakeArithmeticOp(Op op) {
   };
 }
 
-inline const auto kAddOp =
-    MakeArithmeticOp([](auto a, auto b) { return a + b; });
-inline const auto kSubOp =
-    MakeArithmeticOp([](auto a, auto b) { return a - b; });
-inline const auto kMulOp =
-    MakeArithmeticOp([](auto a, auto b) { return a * b; });
-inline const auto kDivOp =
-    MakeArithmeticOp([](auto a, auto b) { return a / b; });
-inline const auto kModOp =
-    MakeArithmeticOp([](auto a, auto b) { return a % b; });
+// Arithmetic operators
+inline const auto kAddOp = MakeArithmeticOp(std::plus<>{});
+inline const auto kSubOp = MakeArithmeticOp(std::minus<>{});
+inline const auto kMulOp = MakeArithmeticOp(std::multiplies<>{});
+inline const auto kDivOp = MakeArithmeticOp(std::divides<>{});
+inline const auto kModOp = MakeArithmeticOp(std::modulus<>{});
+
+// Comparison operators
+inline const auto kEqOp = MakeArithmeticOp(std::equal_to<>{});
+inline const auto kNeOp = MakeArithmeticOp(std::not_equal_to<>{});
+inline const auto kLtOp = MakeArithmeticOp(std::less<>{});
+inline const auto kLeOp = MakeArithmeticOp(std::less_equal<>{});
+inline const auto kGtOp = MakeArithmeticOp(std::greater<>{});
+inline const auto kGeOp = MakeArithmeticOp(std::greater_equal<>{});
 
 }  // namespace lyra
