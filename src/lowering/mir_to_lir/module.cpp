@@ -16,12 +16,12 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
 
   LirBuilder builder(module.name);
 
-  // Add signals
+  // Add variables
   for (const auto& variable : module.variables) {
     if (variable.name.empty()) {
       throw std::runtime_error("Variable has empty name");
     }
-    builder.AddSignal(variable.name);
+    builder.AddVariable(variable.name);
   }
 
   // Process each process

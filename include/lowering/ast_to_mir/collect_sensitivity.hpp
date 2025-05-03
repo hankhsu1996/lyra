@@ -15,15 +15,16 @@ namespace lyra::lowering {
 
 struct SensitivityCollector
     : public slang::ast::ASTVisitor<SensitivityCollector, true, true> {
-  std::reference_wrapper<std::unordered_set<const slang::ast::Symbol*>> signals;
+  std::reference_wrapper<std::unordered_set<const slang::ast::Symbol*>>
+      variables;
 
   explicit SensitivityCollector(
-      std::unordered_set<const slang::ast::Symbol*>& signals)
-      : signals(signals) {
+      std::unordered_set<const slang::ast::Symbol*>& variables)
+      : variables(variables) {
   }
 
   void handle(const slang::ast::NamedValueExpression& expr) const {
-    signals.get().insert(&expr.symbol);
+    variables.get().insert(&expr.symbol);
   }
 
   void handle(const slang::ast::AssignmentExpression& expr) {
@@ -54,7 +55,7 @@ struct SensitivityCollector
   }
 };
 
-// Collects all named signals (identifiers) that appear on the RHS
+// Collects all named variables (identifiers) that appear on the RHS
 // of the given statement's expressions.
 auto CollectSensitivityList(const slang::ast::Statement& statement)
     -> std::vector<const slang::ast::Symbol*>;

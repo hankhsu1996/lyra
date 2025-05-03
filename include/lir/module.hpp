@@ -14,7 +14,7 @@ namespace lyra::lir {
 
 struct Module {
   std::string name;
-  std::vector<std::string> signals;
+  std::vector<std::string> variables;
   std::vector<std::shared_ptr<Process>> processes;
 
   [[nodiscard]] auto ToString(
@@ -30,15 +30,16 @@ struct Module {
       out += fmt::format("Module {}\n", name);
     }
 
-    // Signals list
+    // Variables list
     if (mode == common::FormatMode::kContextual) {
-      out += fmt::format("{}Signals: ", common::Indent(indentation_level + 1));
+      out +=
+          fmt::format("{}Variables: ", common::Indent(indentation_level + 1));
     } else {
-      out += fmt::format("Signals: ");
+      out += fmt::format("Variables: ");
     }
 
-    for (const auto& signal : signals) {
-      out += fmt::format("{} ", signal);
+    for (const auto& variable : variables) {
+      out += fmt::format("{} ", variable);
     }
 
     out += "\n";

@@ -12,8 +12,8 @@ namespace lyra::lir {
 enum class InstructionKind {
   kLiteralInt,
   kLiteralString,
-  kLoadSignal,
-  kStoreSignal,
+  kLoadVariable,
+  kStoreVariable,
   kBinaryAdd,
   kDelay,
   kSystemCall,
@@ -38,10 +38,10 @@ struct Instruction {
       case InstructionKind::kLiteralString:
         return fmt::format("mov {}, {}", result, operands[0].ToString());
 
-      case InstructionKind::kLoadSignal:
+      case InstructionKind::kLoadVariable:
         return fmt::format("load {}, {}", result, operands[0].ToString());
 
-      case InstructionKind::kStoreSignal:
+      case InstructionKind::kStoreVariable:
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 

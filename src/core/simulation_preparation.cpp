@@ -15,11 +15,12 @@ auto SimulationPreparation::BuildVariableTriggerMap(const lir::Module& module)
   return trigger_map;
 }
 
-void SimulationPreparation::InitializeSignals(
+void SimulationPreparation::InitializeVariables(
     const lir::Module& module, ExecutionContext& context) {
-  for (const auto& signal_name : module.signals) {
-    if (!context.signal_table.Exists(signal_name)) {
-      context.signal_table.CreateSignal(signal_name, RuntimeValue::FromInt(0));
+  for (const auto& variable_name : module.variables) {
+    if (!context.variable_table.Exists(variable_name)) {
+      context.variable_table.CreateVariable(
+          variable_name, RuntimeValue::FromInt(0));
     }
   }
 }

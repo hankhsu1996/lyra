@@ -68,8 +68,8 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
   auto result =
       process_interpreter_.RunProcess(process, block_index, instruction_index);
 
-  // Process any signal triggers from this execution
-  ProcessSignalTriggers(result.modified_signals);
+  // Process any variable triggers from this execution
+  ProcessVariableTriggers(result.modified_variables);
 
   if (result.kind == LIRProcessResult::Kind::kDelay) {
     DelayedEvent delayed_event{
@@ -87,18 +87,18 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
   }
 }
 
-void LIRSimulationScheduler::ProcessSignalTriggers(
-    const std::vector<std::string>& modified_signals) {
-  for (const auto& signal_name : modified_signals) {
-    auto it = variable_to_triggers_.find(signal_name);
+void LIRSimulationScheduler::ProcessVariableTriggers(
+    const std::vector<std::string>& modified_variables) {
+  for (const auto& variable_name : modified_variables) {
+    auto it = variable_to_triggers_.find(variable_name);
     if (it == variable_to_triggers_.end()) {
-      continue;  // No triggers for this signal
+      continue;  // No triggers for this variable
     }
 
     // Get the current and previous values for edge detection
     RuntimeValue old_val =
-        context_.get().signal_table.ReadPrevious(signal_name);
-    RuntimeValue new_val = context_.get().signal_table.Read(signal_name);
+        context_.get().variable_table.ReadPrevious(variable_name);
+    RuntimeValue new_val = context_.get().variable_table.Read(variable_name);
 
     int64_t old_int = old_val.AsInt();
     int64_t new_int = new_val.AsInt();
@@ -124,7 +124,7 @@ void LIRSimulationScheduler::ProcessSignalTriggers(
     }
 
     // Update the previous value for future edge detection
-    context_.get().signal_table.UpdatePrevious(signal_name, new_val);
+    context_.get().variable_table.UpdatePrevious(variable_name, new_val);
   }
 }
 

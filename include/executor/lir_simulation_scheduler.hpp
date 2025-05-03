@@ -49,8 +49,9 @@ class LIRSimulationScheduler {
   void ScheduleAlwaysProcesses();
   void ExecuteOneEvent();
 
-  // Process triggers based on modified signals
-  void ProcessSignalTriggers(const std::vector<std::string>& modified_signals);
+  // Process triggers based on modified variables
+  void ProcessVariableTriggers(
+      const std::vector<std::string>& modified_variables);
 
   using EventQueue = std::queue<ScheduledEvent>;
   using DelayQueue = std::priority_queue<DelayedEvent>;

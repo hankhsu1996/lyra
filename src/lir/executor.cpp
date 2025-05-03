@@ -13,37 +13,37 @@ auto Executor::ExecuteInstruction(const Instruction& instr) -> ExecuteResult {
   switch (instr.kind) {
     case InstructionKind::kLiteralInt: {
       int64_t val = std::get<int64_t>(instr.operands[0].data);
-      ctx_.get().ssa_table.Write(instr.result, RuntimeValue::FromInt(val));
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(val));
       return ExecuteResult::Continue();
     }
 
     case InstructionKind::kLiteralString: {
       const auto& val = std::get<std::string>(instr.operands[0].data);
-      ctx_.get().ssa_table.Write(instr.result, RuntimeValue::FromString(val));
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromString(val));
       return ExecuteResult::Continue();
     }
 
     case InstructionKind::kBinaryAdd: {
       auto lhs = std::get<std::string>(instr.operands[0].data);
       auto rhs = std::get<std::string>(instr.operands[1].data);
-      int64_t v1 = ctx_.get().ssa_table.Read(lhs).AsInt();
-      int64_t v2 = ctx_.get().ssa_table.Read(rhs).AsInt();
-      ctx_.get().ssa_table.Write(instr.result, RuntimeValue::FromInt(v1 + v2));
+      int64_t v1 = ctx_.get().temp_table.Read(lhs).AsInt();
+      int64_t v2 = ctx_.get().temp_table.Read(rhs).AsInt();
+      ctx_.get().temp_table.Write(instr.result, RuntimeValue::FromInt(v1 + v2));
       return ExecuteResult::Continue();
     }
 
-    case InstructionKind::kLoadSignal: {
-      auto src_signal = std::get<std::string>(instr.operands[0].data);
-      RuntimeValue val = ctx_.get().signal_table.Read(src_signal);
-      ctx_.get().ssa_table.Write(instr.result, val);
+    case InstructionKind::kLoadVariable: {
+      auto src_variable = std::get<std::string>(instr.operands[0].data);
+      RuntimeValue val = ctx_.get().variable_table.Read(src_variable);
+      ctx_.get().temp_table.Write(instr.result, val);
       return ExecuteResult::Continue();
     }
 
-    case InstructionKind::kStoreSignal: {
-      auto dst_signal = std::get<std::string>(instr.operands[0].data);
+    case InstructionKind::kStoreVariable: {
+      auto dst_variable = std::get<std::string>(instr.operands[0].data);
       auto src_val = std::get<std::string>(instr.operands[1].data);
-      ctx_.get().signal_table.Write(
-          dst_signal, ctx_.get().ssa_table.Read(src_val));
+      ctx_.get().variable_table.Write(
+          dst_variable, ctx_.get().temp_table.Read(src_val));
       return ExecuteResult::Continue();
     }
 
@@ -103,7 +103,7 @@ auto Executor::ExecuteInstruction(const Instruction& instr) -> ExecuteResult {
       std::string false_target = std::get<std::string>(instr.operands[2].data);
 
       // Evaluate the condition immediately in the executor
-      RuntimeValue condition_value = ctx_.get().ssa_table.Read(condition);
+      RuntimeValue condition_value = ctx_.get().temp_table.Read(condition);
       bool condition_result = condition_value.AsInt() != 0;
 
       // Select the appropriate target based on condition result

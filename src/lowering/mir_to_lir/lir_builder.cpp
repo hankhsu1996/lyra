@@ -6,8 +6,8 @@ LirBuilder::LirBuilder(std::string module_name)
     : module_name_(std::move(module_name)) {
 }
 
-void LirBuilder::AddSignal(const std::string& name) {
-  signals_.push_back(name);
+void LirBuilder::AddVariable(const std::string& name) {
+  variables_.push_back(name);
 }
 
 void LirBuilder::BeginProcess(lir::ProcessKind kind) {
@@ -139,7 +139,7 @@ auto LirBuilder::MakeTemp(const std::string& hint) -> std::string {
 auto LirBuilder::Build() -> std::unique_ptr<lir::Module> {
   auto mod = std::make_unique<lir::Module>();
   mod->name = module_name_;
-  mod->signals = std::move(signals_);
+  mod->variables = std::move(variables_);
   mod->processes = std::move(processes_);
   return mod;
 }

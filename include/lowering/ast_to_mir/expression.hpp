@@ -16,7 +16,7 @@ namespace lyra::lowering {
 auto LowerExpression(const slang::ast::Expression& expression)
     -> std::unique_ptr<mir::Expression>;
 
-// Helper to create an Identifier Expression from a signal name.
+// Helper to create an Identifier Expression from a variable name.
 auto LowerExpressionFromName(const std::string& name)
     -> std::unique_ptr<mir::Expression>;
 

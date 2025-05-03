@@ -27,10 +27,10 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       // Lower the expression and get its result value
       auto result_value = LowerExpression(*expression, builder);
 
-      // Store the result to the target signal
+      // Store the result to the target variable
       builder.AddInstruction(
-          lir::InstructionKind::kStoreSignal, "",
-          {lir::Value::MakeSignal(target), result_value});
+          lir::InstructionKind::kStoreVariable, "",
+          {lir::Value::MakeVariable(target), result_value});
       break;
     }
 

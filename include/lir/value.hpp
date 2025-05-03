@@ -9,7 +9,7 @@
 namespace lyra::lir {
 
 struct Value {
-  enum class Kind { kTemp, kSignal, kLiteralInt, kLiteralString };
+  enum class Kind { kTemp, kVariable, kLiteralInt, kLiteralString };
 
   Kind kind;
   std::variant<std::string, int64_t> data;
@@ -18,8 +18,8 @@ struct Value {
     return Value{.kind = Kind::kTemp, .data = name};
   }
 
-  static auto MakeSignal(const std::string& name) -> Value {
-    return Value{.kind = Kind::kSignal, .data = name};
+  static auto MakeVariable(const std::string& name) -> Value {
+    return Value{.kind = Kind::kVariable, .data = name};
   }
 
   static auto MakeLiteralInt(int64_t value) -> Value {
@@ -34,7 +34,7 @@ struct Value {
     switch (kind) {
       case Kind::kTemp:
         return fmt::format("{}", std::get<std::string>(data));
-      case Kind::kSignal:
+      case Kind::kVariable:
         return std::get<std::string>(data);
       case Kind::kLiteralInt:
         return fmt::format("{}", std::get<int64_t>(data));

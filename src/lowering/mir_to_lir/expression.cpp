@@ -26,8 +26,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
       auto result = builder.MakeTemp("load");
       builder.AddInstruction(
-          lir::InstructionKind::kLoadSignal, result,
-          {lir::Value::MakeSignal(identifier.name)});
+          lir::InstructionKind::kLoadVariable, result,
+          {lir::Value::MakeVariable(identifier.name)});
       return lir::Value::MakeTemp(result);
     }
 
@@ -75,10 +75,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Lower the right-hand side expression
       auto value_result = LowerExpression(*assign.value, builder);
 
-      // Store the result to the target signal
+      // Store the result to the target variable
       builder.AddInstruction(
-          lir::InstructionKind::kStoreSignal, "",
-          {lir::Value::MakeSignal(target), value_result});
+          lir::InstructionKind::kStoreVariable, "",
+          {lir::Value::MakeVariable(target), value_result});
 
       // The result of an assignment is the assigned value
       return value_result;

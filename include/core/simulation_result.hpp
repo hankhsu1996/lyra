@@ -14,8 +14,9 @@ struct SimulationResult {
   std::unique_ptr<ExecutionContext> context;
   uint64_t final_time;
 
-  [[nodiscard]] auto ReadSignal(const std::string& name) const -> RuntimeValue {
-    return context->signal_table.Read(name);
+  [[nodiscard]] auto ReadVariable(const std::string& name) const
+      -> RuntimeValue {
+    return context->variable_table.Read(name);
   }
 };
 

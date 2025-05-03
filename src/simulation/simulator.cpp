@@ -45,7 +45,7 @@ auto Simulator::RunWithCompilation(
   }
 
   auto context = std::make_unique<ExecutionContext>();
-  SimulationPreparation::InitializeSignals(*lir, *context);
+  SimulationPreparation::InitializeVariables(*lir, *context);
   auto triggers = SimulationPreparation::BuildVariableTriggerMap(*lir);
 
   LIRSimulationScheduler scheduler(*lir, *context, std::move(triggers));

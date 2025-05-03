@@ -24,8 +24,8 @@ class SimulationPreparation {
   static auto BuildVariableTriggerMap(const lir::Module& module)
       -> VariableTriggerMap;
 
-  // Initialize all declared signals in the module into the execution context
-  static void InitializeSignals(
+  // Initialize all declared variables in the module into the execution context
+  static void InitializeVariables(
       const lir::Module& module, ExecutionContext& context);
 };
 

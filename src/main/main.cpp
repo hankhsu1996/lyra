@@ -11,11 +11,11 @@ auto main() -> int {
   auto result = lyra::RunFromFiles(test_file_paths, options);
 
   std::cout << "[ Simulation Result ]\n";
-  const auto& val = result.ReadSignal("a");
+  const auto& val = result.ReadVariable("a");
   std::cout << "a = " << val.AsInt() << "\n";
-  const auto& val2 = result.ReadSignal("b");
+  const auto& val2 = result.ReadVariable("b");
   std::cout << "b = " << val2.AsInt() << "\n";
-  const auto& val3 = result.ReadSignal("c");
+  const auto& val3 = result.ReadVariable("c");
   std::cout << "c = " << val3.AsInt() << "\n";
 
   return 0;

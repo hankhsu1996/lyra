@@ -92,11 +92,11 @@ void SimulationScheduler::ExecuteOneEvent() {
         break;
       }
 
-      if (instr.kind == lir::InstructionKind::kStoreSignal) {
+      if (instr.kind == lir::InstructionKind::kStoreVariable) {
         const auto& dst = std::get<std::string>(instr.operands[0].data);
 
-        RuntimeValue old_val = context_.get().signal_table.ReadPrevious(dst);
-        RuntimeValue new_val = context_.get().signal_table.Read(dst);
+        RuntimeValue old_val = context_.get().variable_table.ReadPrevious(dst);
+        RuntimeValue new_val = context_.get().variable_table.Read(dst);
 
         int64_t old_int = old_val.AsInt();
         int64_t new_int = new_val.AsInt();
@@ -123,7 +123,7 @@ void SimulationScheduler::ExecuteOneEvent() {
           }
         }
 
-        context_.get().signal_table.UpdatePrevious(dst, new_val);
+        context_.get().variable_table.UpdatePrevious(dst, new_val);
       }
     }
 

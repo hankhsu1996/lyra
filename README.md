@@ -50,13 +50,6 @@ SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
 - **LIR**: Linear SSA-style IR for simulation and codegen
 - **Backend**: Interpreter (available) or LLVM native compilation (planned)
 
-## ✅ Current Features
-
-- SystemVerilog `module` support with variable declarations
-- `initial` blocks and sequential execution
-- Arithmetic operations (`+`) and assignments
-- Signal management and runtime context
-- LIR-based interpreter for simulation
 
 ## 🚧 Roadmap
 

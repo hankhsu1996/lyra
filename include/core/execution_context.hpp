@@ -1,14 +1,14 @@
 #pragma once
 
-#include "core/signal_table.hpp"
 #include "core/temp_table.hpp"
+#include "core/variable_table.hpp"
 
 namespace lyra {
 
 class ExecutionContext {
  public:
-  SignalTable signal_table;
-  TempTable ssa_table;
+  VariableTable variable_table;
+  TempTable temp_table;
 };
 
 }  // namespace lyra

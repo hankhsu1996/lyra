@@ -4,7 +4,7 @@ namespace lyra::lowering {
 
 auto CollectSensitivityList(const slang::ast::Statement& statement)
     -> std::vector<const slang::ast::Symbol*> {
-  std::unordered_set<const slang::ast::Symbol*> signals;
+  std::unordered_set<const slang::ast::Symbol*> variables;
 
   auto visit_statement = [&](const slang::ast::Statement& statement,
                              auto&& self) -> void {
@@ -27,7 +27,7 @@ auto CollectSensitivityList(const slang::ast::Statement& statement)
       case Kind::ExpressionStatement: {
         const auto& expression_statement =
             statement.as<slang::ast::ExpressionStatement>();
-        SensitivityCollector collector(signals);
+        SensitivityCollector collector(variables);
         expression_statement.expr.visit(collector);
         break;
       }
@@ -40,7 +40,7 @@ auto CollectSensitivityList(const slang::ast::Statement& statement)
 
   visit_statement(statement, visit_statement);
 
-  return {signals.begin(), signals.end()};
+  return {variables.begin(), variables.end()};
 }
 
 }  // namespace lyra::lowering
