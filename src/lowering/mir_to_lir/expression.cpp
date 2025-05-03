@@ -12,11 +12,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
   switch (expression.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& literal = mir::As<mir::LiteralExpression>(expression);
-      auto tmp = builder.MakeTemp("lit");
+      auto result = builder.MakeTemp("lit");
       builder.AddInstruction(
-          lir::InstructionKind::kLiteralInt, tmp,
+          lir::InstructionKind::kLiteralInt, result,
           {lir::Value::MakeLiteralInt(literal.value)});
-      return lir::Value::MakeTemp(tmp);
+      return lir::Value::MakeTemp(result);
     }
 
     case mir::Expression::Kind::kIdentifier: {
@@ -24,11 +24,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (identifier.name.empty()) {
         throw std::runtime_error("Identifier has empty name");
       }
-      auto tmp = builder.MakeTemp("load");
+      auto result = builder.MakeTemp("load");
       builder.AddInstruction(
-          lir::InstructionKind::kLoadSignal, tmp,
+          lir::InstructionKind::kLoadSignal, result,
           {lir::Value::MakeSignal(identifier.name)});
-      return lir::Value::MakeTemp(tmp);
+      return lir::Value::MakeTemp(result);
     }
 
     case mir::Expression::Kind::kBinary: {
@@ -53,11 +53,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto rhs_value = LowerExpression(*binary.right, builder);
 
       // Perform the addition
-      auto sum_tmp = builder.MakeTemp("add");
+      auto result = builder.MakeTemp("add");
       builder.AddInstruction(
-          lir::InstructionKind::kBinaryAdd, sum_tmp, {lhs_value, rhs_value});
+          lir::InstructionKind::kBinaryAdd, result, {lhs_value, rhs_value});
 
-      return lir::Value::MakeTemp(sum_tmp);
+      return lir::Value::MakeTemp(result);
     }
 
     case mir::Expression::Kind::kAssignment: {
@@ -110,8 +110,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       // System calls don't produce a value in our current implementation
       // Return a dummy value (this could be improved in the future)
-      auto tmp = builder.MakeTemp("syscall_result");
-      return lir::Value::MakeTemp(tmp);
+      auto result = builder.MakeTemp("syscall_result");
+      return lir::Value::MakeTemp(result);
     }
 
     default:

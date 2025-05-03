@@ -113,10 +113,6 @@ auto LIRInstructionExecutor::ExecuteInstruction(const Instruction& instr)
       // Return a simple jump with the decided target
       return LIRInstructionResult::Jump(next_label);
     }
-
-    default:
-      throw std::runtime_error(fmt::format(
-          "Unhandled instruction {} in executor", instr.ToString()));
   }
 }
 

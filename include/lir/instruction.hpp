@@ -15,7 +15,6 @@ enum class InstructionKind {
   kLoadSignal,
   kStoreSignal,
   kBinaryAdd,
-  kAssign,
   kDelay,
   kSystemCall,
   kJump,
@@ -33,13 +32,14 @@ struct Instruction {
 
   // System call name
   std::string system_call_name;
-
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       case InstructionKind::kLiteralInt:
       case InstructionKind::kLiteralString:
+        return fmt::format("mov {}, {}", result, operands[0].ToString());
+
       case InstructionKind::kLoadSignal:
-        return fmt::format("{} = {}", result, operands[0].ToString());
+        return fmt::format("load {}, {}", result, operands[0].ToString());
 
       case InstructionKind::kStoreSignal:
         return fmt::format(
@@ -47,23 +47,15 @@ struct Instruction {
 
       case InstructionKind::kBinaryAdd:
         return fmt::format(
-            "{} = add {}, {}", result, operands[0].ToString(),
+            "add {}, {}, {}", result, operands[0].ToString(),
             operands[1].ToString());
-
-      case InstructionKind::kAssign:
-        if (operands.size() == 2) {
-          return fmt::format(
-              "{} = {}", operands[0].ToString(), operands[1].ToString());
-        } else {
-          return "(invalid assign)";
-        }
 
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());
 
       case InstructionKind::kSystemCall:
         if (operands.empty()) {
-          return fmt::format("{}", system_call_name);
+          return fmt::format("syscall {}", system_call_name);
         } else {
           std::string args;
           for (size_t i = 0; i < operands.size(); ++i) {
@@ -72,7 +64,7 @@ struct Instruction {
             }
             args += operands[i].ToString();
           }
-          return fmt::format("{}({})", system_call_name, args);
+          return fmt::format("syscall {} {}", system_call_name, args);
         }
 
       case InstructionKind::kJump:
@@ -85,14 +77,11 @@ struct Instruction {
       case InstructionKind::kBranch:
         if (operands.size() == 3) {
           return fmt::format(
-              "branch {} ? {} : {}", operands[0].ToString(),
+              "branch {}, {}, {}", operands[0].ToString(),
               operands[1].ToString(), operands[2].ToString());
         } else {
           return "(invalid branch)";
         }
-
-      default:
-        return "(unknown instruction)";
     }
   }
 };

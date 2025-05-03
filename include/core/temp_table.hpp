@@ -7,7 +7,7 @@
 
 namespace lyra {
 
-class SsaTable {
+class TempTable {
  public:
   void Write(const std::string& name, const RuntimeValue& value);
   auto Read(const std::string& name) const -> RuntimeValue;
