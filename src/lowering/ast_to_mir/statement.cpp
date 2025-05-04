@@ -117,6 +117,15 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(condition), std::move(body));
     }
 
+    case StatementKind::DoWhileLoop: {
+      const auto& do_while_loop =
+          statement.as<slang::ast::DoWhileLoopStatement>();
+      auto condition = LowerExpression(do_while_loop.cond);
+      auto body = LowerStatement(do_while_loop.body);
+      return std::make_unique<mir::DoWhileStatement>(
+          std::move(condition), std::move(body));
+    }
+
     case StatementKind::Empty: {
       return std::make_unique<mir::BlockStatement>();  // No-op
     }

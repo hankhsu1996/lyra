@@ -170,6 +170,56 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       break;
     }
 
+    case mir::Statement::Kind::kDoWhile: {
+      const auto& do_while_statement =
+          mir::As<mir::DoWhileStatement>(statement);
+
+      // Use assertions for internal consistency checks
+      assert(do_while_statement.condition);
+      assert(do_while_statement.body);
+
+      // Generate unique labels for the various blocks
+      static int do_while_counter = 0;
+      std::string do_while_id = std::to_string(do_while_counter++);
+
+      std::string body_label = "do_while." + do_while_id + ".body";
+      std::string cond_label = "do_while." + do_while_id + ".cond";
+      std::string end_label = "do_while." + do_while_id + ".end";
+
+      // Jump to body block first (do-while executes body at least once)
+      auto jump_to_body = lir::Instruction::Basic(
+          lir::InstructionKind::kJump, "", {lir::Operand::Label(body_label)});
+      builder.AddInstruction(std::move(jump_to_body));
+
+      // Create body block
+      builder.StartBlock(body_label);
+      LowerStatement(*do_while_statement.body, builder);
+
+      // Jump to condition after executing body
+      auto jump_to_cond = lir::Instruction::Basic(
+          lir::InstructionKind::kJump, "", {lir::Operand::Label(cond_label)});
+      builder.AddInstruction(std::move(jump_to_cond));
+      builder.EndBlock();
+
+      // Create condition block (evaluated after body execution)
+      builder.StartBlock(cond_label);
+      auto condition_value =
+          LowerExpression(*do_while_statement.condition, builder);
+
+      // Branch back to body if condition is true, otherwise go to end
+      auto branch = lir::Instruction::Basic(
+          lir::InstructionKind::kBranch, "",
+          {condition_value, lir::Operand::Label(body_label),
+           lir::Operand::Label(end_label)});
+      builder.AddInstruction(std::move(branch));
+      builder.EndBlock();
+
+      // Create end block - control continues here when loop is done
+      builder.StartBlock(end_label);
+
+      break;
+    }
+
     case mir::Statement::Kind::kExpression: {
       const auto& expression_statement =
           mir::As<mir::ExpressionStatement>(statement);

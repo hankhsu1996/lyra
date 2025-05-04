@@ -22,6 +22,7 @@ class Statement {
     kExpression,
     kDelay,
     kWhile,
+    kDoWhile,
   };
 
   Kind kind;
@@ -53,6 +54,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Delay";
     case Statement::Kind::kWhile:
       return "While";
+    case Statement::Kind::kDoWhile:
+      return "DoWhile";
   }
   return "Unknown";  // Should never reach here, but needed for compiler
 }
@@ -147,6 +150,24 @@ class WhileStatement : public Statement {
   std::unique_ptr<Statement> body;
 
   WhileStatement(
+      std::unique_ptr<Expression> condition, std::unique_ptr<Statement> body)
+      : Statement(kKindValue),
+        condition(std::move(condition)),
+        body(std::move(body)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class DoWhileStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kDoWhile;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Statement> body;
+
+  DoWhileStatement(
       std::unique_ptr<Expression> condition, std::unique_ptr<Statement> body)
       : Statement(kKindValue),
         condition(std::move(condition)),

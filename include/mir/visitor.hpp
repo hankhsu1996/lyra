@@ -17,6 +17,7 @@ class ConditionalStatement;
 class DelayStatement;
 class ExpressionStatement;
 class WhileStatement;
+class DoWhileStatement;
 
 class MirVisitor {
  public:
@@ -40,6 +41,7 @@ class MirVisitor {
   virtual void Visit(const DelayStatement&) = 0;
   virtual void Visit(const ExpressionStatement&) = 0;
   virtual void Visit(const WhileStatement&) = 0;
+  virtual void Visit(const DoWhileStatement&) = 0;
 };
 
 }  // namespace lyra::mir
