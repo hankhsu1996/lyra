@@ -10,7 +10,6 @@
 #include "common/formatting.hpp"
 #include "common/trigger.hpp"
 #include "lir/basic_block.hpp"
-#include "lir/instruction.hpp"
 
 namespace lyra::lir {
 
@@ -35,9 +34,6 @@ struct Process {
 
   // List of basic blocks
   std::vector<std::unique_ptr<BasicBlock>> blocks;
-
-  // Flat list of executable instructions (legacy, for backward compatibility)
-  std::vector<Instruction> instructions;
 
   // Sensitivity list for the process (empty for initial processes)
   std::vector<Trigger> trigger_list;
@@ -65,17 +61,6 @@ struct Process {
     if (!blocks.empty()) {
       for (const auto& block : blocks) {
         out += block->ToString(mode, indentation_level + 1);
-      }
-    }
-    // Fallback to flat instruction list (legacy)
-    else if (!instructions.empty()) {
-      for (const auto& instr : instructions) {
-        if (mode == common::FormatMode::kContextual) {
-          out += fmt::format(
-              "{}{}\n", common::Indent(indentation_level + 1), instr);
-        } else {
-          out += fmt::format("{}\n", instr);
-        }
       }
     }
 

@@ -17,10 +17,29 @@ auto SimulationPreparation::BuildVariableTriggerMap(const lir::Module& module)
 
 void SimulationPreparation::InitializeVariables(
     const lir::Module& module, ExecutionContext& context) {
-  for (const auto& variable_name : module.variables) {
-    if (!context.variable_table.Exists(variable_name)) {
-      context.variable_table.CreateVariable(
-          variable_name, RuntimeValue::FromInt(0));
+  for (const auto& variable : module.variables) {
+    if (!context.variable_table.Exists(variable.name)) {
+      switch (variable.type.kind) {
+        case common::Type::Kind::kVoid:
+          break;
+        case common::Type::Kind::kTwoState: {
+          auto two_state_data =
+              std::get<common::TwoStateData>(variable.type.data);
+          if (two_state_data.is_signed) {
+            context.variable_table.CreateVariable(
+                variable.name,
+                RuntimeValue::TwoStateSigned(0, two_state_data.bit_width));
+          } else {
+            context.variable_table.CreateVariable(
+                variable.name,
+                RuntimeValue::TwoStateUnsigned(0, two_state_data.bit_width));
+          }
+          break;
+        }
+        case common::Type::Kind::kString:
+          context.variable_table.CreateVariable(
+              variable.name, RuntimeValue::String(""));
+      }
     }
   }
 }

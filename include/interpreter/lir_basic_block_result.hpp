@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace lyra {
+namespace lyra::interpreter {
 
 struct LIRBasicBlockResult {
   enum class Kind { kFallthrough, kDelay, kFinish, kJump };
@@ -16,7 +16,7 @@ struct LIRBasicBlockResult {
   std::string target_label{};
 
   // For Delay
-  int64_t delay_amount = 0;
+  uint64_t delay_amount = 0;
   std::size_t resume_instruction_index = 0;
 
   // Variables modified during block execution
@@ -30,7 +30,7 @@ struct LIRBasicBlockResult {
   }
 
   static auto Delay(
-      int64_t amount, std::size_t resume_at,
+      uint64_t amount, std::size_t resume_at,
       std::vector<std::string> modified_variables) -> LIRBasicBlockResult {
     return {
         .kind = Kind::kDelay,
@@ -56,4 +56,4 @@ struct LIRBasicBlockResult {
   }
 };
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

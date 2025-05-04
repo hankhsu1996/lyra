@@ -1,10 +1,10 @@
-#include "executor/lir_simulation_scheduler.hpp"
+#include "interpreter/lir_simulation_scheduler.hpp"
 
 #include <cstdint>
 
 #include <fmt/core.h>
 
-namespace lyra {
+namespace lyra::interpreter {
 
 LIRSimulationScheduler::LIRSimulationScheduler(
     const lir::Module& module, ExecutionContext& context,
@@ -100,8 +100,8 @@ void LIRSimulationScheduler::ProcessVariableTriggers(
         context_.get().variable_table.ReadPrevious(variable_name);
     RuntimeValue new_val = context_.get().variable_table.Read(variable_name);
 
-    int64_t old_int = old_val.AsInt();
-    int64_t new_int = new_val.AsInt();
+    int64_t old_int = old_val.AsInt64();
+    int64_t new_int = new_val.AsInt64();
 
     // Check each trigger condition
     for (const auto& [trigger, triggered_process] : it->second) {
@@ -128,4 +128,4 @@ void LIRSimulationScheduler::ProcessVariableTriggers(
   }
 }
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

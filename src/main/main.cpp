@@ -12,11 +12,11 @@ auto main() -> int {
 
   std::cout << "[ Simulation Result ]\n";
   const auto& val = result.ReadVariable("a");
-  std::cout << "a = " << val.AsInt() << "\n";
+  std::cout << "a = " << val << "\n";
   const auto& val2 = result.ReadVariable("b");
-  std::cout << "b = " << val2.AsInt() << "\n";
+  std::cout << "b = " << val2 << "\n";
   const auto& val3 = result.ReadVariable("c");
-  std::cout << "c = " << val3.AsInt() << "\n";
+  std::cout << "c = " << val3 << "\n";
 
   return 0;
 }

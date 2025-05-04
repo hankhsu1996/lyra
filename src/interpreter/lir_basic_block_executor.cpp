@@ -1,6 +1,6 @@
-#include "executor/lir_basic_block_executor.hpp"
+#include "interpreter/lir_basic_block_executor.hpp"
 
-namespace lyra {
+namespace lyra::interpreter {
 
 LIRBasicBlockExecutor::LIRBasicBlockExecutor(ExecutionContext& context)
     : instruction_executor_(context), ctx_(context) {
@@ -24,15 +24,15 @@ auto LIRBasicBlockExecutor::RunBlock(
     }
 
     switch (instruction_result.kind) {
-      case lir::LIRInstructionResult::Kind::kContinue:
+      case LIRInstructionResult::Kind::kContinue:
         break;
-      case lir::LIRInstructionResult::Kind::kDelay:
+      case LIRInstructionResult::Kind::kDelay:
         return LIRBasicBlockResult::Delay(
             instruction_result.delay_amount, i + 1,
             std::move(modified_variables));
-      case lir::LIRInstructionResult::Kind::kFinish:
+      case LIRInstructionResult::Kind::kFinish:
         return LIRBasicBlockResult::Finish(std::move(modified_variables));
-      case lir::LIRInstructionResult::Kind::kJump:
+      case LIRInstructionResult::Kind::kJump:
         return LIRBasicBlockResult::Jump(
             instruction_result.target_label, std::move(modified_variables));
     }
@@ -41,4 +41,4 @@ auto LIRBasicBlockExecutor::RunBlock(
   return LIRBasicBlockResult::Fallthrough(std::move(modified_variables));
 }
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

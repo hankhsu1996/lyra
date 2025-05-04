@@ -21,5 +21,5 @@ TEST(ControlFlowTest, IfElseWithLiteralCondition) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 42);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
 }

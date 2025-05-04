@@ -1,79 +1,94 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
-#include <stdexcept>
 #include <string>
-#include <variant>
+#include <utility>
+
+#include <fmt/core.h>
+
+#include "common/literal.hpp"
+#include "common/type.hpp"
 
 namespace lyra {
 
-enum class ValueKind {
-  kBit,
-  kInt,
-  kLongInt,
-  kString,
-};
-
-class RuntimeValue {
+struct RuntimeValue {
  public:
-  using Storage = std::variant<bool, int32_t, int64_t, std::string>;
+  common::Type type;
+  common::ValueStorage value;
 
-  RuntimeValue() : kind_(ValueKind::kInt), storage_(int32_t{0}) {
+  static auto FromLiteral(const common::Literal& literal) -> RuntimeValue {
+    return RuntimeValue{.type = literal.type, .value = literal.value};
   }
 
-  static auto FromBit(bool value) -> RuntimeValue {
-    return {ValueKind::kBit, value};
+  static auto TwoStateSigned(int64_t value, size_t bit_width) -> RuntimeValue {
+    return RuntimeValue{
+        .type = common::Type::TwoStateSigned(bit_width),
+        .value = common::ValueStorage(value)};
   }
 
-  static auto FromInt(int32_t value) -> RuntimeValue {
-    return {ValueKind::kInt, value};
+  static auto TwoStateUnsigned(uint64_t value, size_t bit_width)
+      -> RuntimeValue {
+    return RuntimeValue{
+        .type = common::Type::TwoStateUnsigned(bit_width),
+        .value = common::ValueStorage(static_cast<int64_t>(value))};
   }
 
-  static auto FromLongInt(int64_t value) -> RuntimeValue {
-    return {ValueKind::kLongInt, value};
+  static auto Bool(bool value) -> RuntimeValue {
+    return TwoStateUnsigned(value ? 1 : 0, 1);
   }
 
-  static auto FromString(std::string value) -> RuntimeValue {
-    return {ValueKind::kString, std::move(value)};
+  static auto String(std::string value) -> RuntimeValue {
+    return RuntimeValue{
+        .type = common::Type::String(),
+        .value = common::ValueStorage(std::move(value))};
   }
 
-  [[nodiscard]] auto Kind() const -> ValueKind {
-    return kind_;
+  [[nodiscard]] auto AsInt64() const -> int64_t {
+    return value.AsInt64();
   }
 
-  [[nodiscard]] auto AsBit() const -> bool {
-    CheckKind(ValueKind::kBit);
-    return std::get<bool>(storage_);
+  [[nodiscard]] auto AsUInt64() const -> uint64_t {
+    return static_cast<uint64_t>(value.AsInt64());
   }
 
-  [[nodiscard]] auto AsInt() const -> int32_t {
-    CheckKind(ValueKind::kInt);
-    return std::get<int32_t>(storage_);
-  }
-
-  [[nodiscard]] auto AsLongInt() const -> int64_t {
-    CheckKind(ValueKind::kLongInt);
-    return std::get<int64_t>(storage_);
+  [[nodiscard]] auto AsBool() const -> bool {
+    return value.AsInt64() != 0;
   }
 
   [[nodiscard]] auto AsString() const -> const std::string& {
-    CheckKind(ValueKind::kString);
-    return std::get<std::string>(storage_);
+    return value.AsString();
   }
 
- private:
-  ValueKind kind_;
-  Storage storage_;
-
-  RuntimeValue(ValueKind kind, Storage value)
-      : kind_(kind), storage_(std::move(value)) {
+  [[nodiscard]] auto IsTwoState() const -> bool {
+    return type.kind == common::Type::Kind::kTwoState;
   }
 
-  void CheckKind(ValueKind expected) const {
-    if (kind_ != expected) {
-      throw std::runtime_error("RuntimeValue kind mismatch");
-    }
+  [[nodiscard]] auto IsString() const -> bool {
+    return type.kind == common::Type::Kind::kString;
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string {
+    return fmt::format("{}", value.ToString());
   }
 };
 
+inline auto operator<<(std::ostream& os, const RuntimeValue& value)
+    -> std::ostream& {
+  return os << value.ToString();
+}
+
 }  // namespace lyra
+
+template <>
+struct fmt::formatter<lyra::RuntimeValue> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const lyra::RuntimeValue& value, FormatContext& ctx) {
+    return fmt::format_to(ctx.out(), "{}", value.ToString());
+  }
+};

@@ -10,10 +10,15 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "common/literal.hpp"
+#include "common/type.hpp"
 #include "mir/operators.hpp"
 #include "mir/visitor.hpp"
 
 namespace lyra::mir {
+
+using Type = common::Type;
+using Literal = common::Literal;
 
 class Expression {
  public:
@@ -22,16 +27,18 @@ class Expression {
     kIdentifier,
     kBinary,
     kAssignment,
+    kConversion,
     kSystemCall,
   };
 
   Kind kind;
+  Type type;
 
   Expression(const Expression&) = default;
   Expression(Expression&&) = delete;
   auto operator=(const Expression&) -> Expression& = default;
   auto operator=(Expression&&) -> Expression& = delete;
-  explicit Expression(Kind kind) : kind(kind) {
+  explicit Expression(Kind kind, Type type) : kind(kind), type(type) {
   }
   virtual ~Expression() = default;
 
@@ -39,7 +46,6 @@ class Expression {
   virtual void Accept(MirVisitor& visitor) const = 0;
 };
 
-// Convert Expression::Kind to string
 inline auto ToString(Expression::Kind kind) -> std::string {
   switch (kind) {
     case Expression::Kind::kLiteral:
@@ -50,12 +56,14 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Binary";
     case Expression::Kind::kAssignment:
       return "Assignment";
+    case Expression::Kind::kConversion:
+      return "Conversion";
     case Expression::Kind::kSystemCall:
       return "SystemCall";
   }
+  std::abort();
 }
 
-// Add operator<< for Expression::Kind
 inline auto operator<<(std::ostream& os, const Expression::Kind& kind)
     -> std::ostream& {
   return os << ToString(kind);
@@ -64,13 +72,15 @@ inline auto operator<<(std::ostream& os, const Expression::Kind& kind)
 class LiteralExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kLiteral;
-  int value;
 
-  explicit LiteralExpression(int v) : Expression(Kind::kLiteral), value(v) {
+  Literal literal;
+
+  explicit LiteralExpression(Literal literal)
+      : Expression(kKindValue, literal.type), literal(std::move(literal)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("{}", value);
+    return literal.ToString();
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -83,12 +93,12 @@ class IdentifierExpression : public Expression {
   static constexpr Kind kKindValue = Kind::kIdentifier;
   std::string name;
 
-  explicit IdentifierExpression(std::string n)
-      : Expression(Kind::kIdentifier), name(std::move(n)) {
+  IdentifierExpression(std::string n, Type t)
+      : Expression(kKindValue, t), name(std::move(n)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return name;
+    return fmt::format("{}:{}", name, type);
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -99,7 +109,6 @@ class IdentifierExpression : public Expression {
 class BinaryExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kBinary;
-
   lyra::mir::Operator op;
   std::unique_ptr<Expression> left;
   std::unique_ptr<Expression> right;
@@ -107,16 +116,13 @@ class BinaryExpression : public Expression {
   BinaryExpression(
       lyra::mir::Operator op, std::unique_ptr<Expression> left,
       std::unique_ptr<Expression> right)
-      : Expression(Kind::kBinary),
+      : Expression(kKindValue, left->type),
         op(op),
         left(std::move(left)),
         right(std::move(right)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    if (!left || !right) {
-      return "(invalid binary expression)";
-    }
     return fmt::format("({} {} {})", left->ToString(), op, right->ToString());
   }
 
@@ -132,16 +138,35 @@ class AssignmentExpression : public Expression {
   std::shared_ptr<Expression> value;
 
   AssignmentExpression(std::string t, std::shared_ptr<Expression> v)
-      : Expression(Kind::kAssignment),
+      : Expression(kKindValue, v->type),
         target(std::move(t)),
         value(std::move(v)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    if (!value) {
-      return fmt::format("({} = <null>)", target);
-    }
-    return fmt::format("({} = {})", target, value->ToString());
+    return fmt::format(
+        "({} = {})", target, value ? value->ToString() : "<null>");
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class ConversionExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kConversion;
+  std::unique_ptr<Expression> value;
+  Type target_type;
+
+  ConversionExpression(std::unique_ptr<Expression> v, Type target_type)
+      : Expression(kKindValue, target_type),
+        value(std::move(v)),
+        target_type(target_type) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("({} as {})", value->ToString(), target_type);
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -152,14 +177,17 @@ class AssignmentExpression : public Expression {
 class SystemCallExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kSystemCall;
+
   std::string name;
   std::vector<std::unique_ptr<Expression>> arguments;
 
   SystemCallExpression(
-      std::string name, std::vector<std::unique_ptr<Expression>> args)
-      : Expression(Kind::kSystemCall),
+      std::string name, std::vector<std::unique_ptr<Expression>> args,
+      Type return_type)
+      : Expression(kKindValue, std::move(return_type)),
         name(std::move(name)),
-        arguments(std::move(args)) {};
+        arguments(std::move(args)) {
+  }
 
   [[nodiscard]] auto ToString() const -> std::string override {
     std::vector<std::string> arg_strs;
@@ -175,7 +203,6 @@ class SystemCallExpression : public Expression {
   }
 };
 
-// Helper function for safely casting expressions
 template <typename T>
 auto As(const Expression& expr) -> const T& {
   if (expr.kind != T::kKindValue) {
@@ -204,7 +231,6 @@ struct fmt::formatter<lyra::mir::Expression> {
   }
 };
 
-// Add formatter for Expression::Kind enum
 template <>
 struct fmt::formatter<lyra::mir::Expression::Kind> {
   template <typename ParseContext>

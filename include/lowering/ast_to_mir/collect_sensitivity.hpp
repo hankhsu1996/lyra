@@ -30,6 +30,10 @@ class SensitivityCollector : public mir::MirVisitor {
     expression.value->Accept(*this);
   }
 
+  void Visit(const mir::ConversionExpression& expression) override {
+    expression.value->Accept(*this);
+  }
+
   void Visit(const mir::SystemCallExpression& expression) override {
     for (const auto& argument : expression.arguments) {
       argument->Accept(*this);

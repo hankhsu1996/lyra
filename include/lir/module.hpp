@@ -8,13 +8,14 @@
 #include <fmt/core.h>
 
 #include "common/formatting.hpp"
+#include "common/variable.hpp"
 #include "lir/process.hpp"
 
 namespace lyra::lir {
 
 struct Module {
   std::string name;
-  std::vector<std::string> variables;
+  std::vector<common::Variable> variables;
   std::vector<std::shared_ptr<Process>> processes;
 
   [[nodiscard]] auto ToString(
@@ -39,7 +40,7 @@ struct Module {
     }
 
     for (const auto& variable : variables) {
-      out += fmt::format("{} ", variable);
+      out += fmt::format("{} ", variable.name);
     }
 
     out += "\n";

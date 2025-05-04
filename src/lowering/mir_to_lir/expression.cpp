@@ -1,130 +1,127 @@
 #include "lowering/mir_to_lir/expression.hpp"
 
 #include <cassert>
-#include <stdexcept>
 
 #include "lowering/mir_to_lir/lir_builder.hpp"
 #include "mir/expression.hpp"
 
 namespace lyra::lowering {
 
+using Type = common::Type;
+using Literal = common::Literal;
+
 auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
-    -> lir::Value {
+    -> lir::Operand {
+  using lir::Instruction;
+  using lir::InstructionKind;
+
   switch (expression.kind) {
     case mir::Expression::Kind::kLiteral: {
-      const auto& literal = mir::As<mir::LiteralExpression>(expression);
-      auto result = builder.MakeTemp("lit");
-      builder.AddInstruction(
-          lir::InstructionKind::kLiteralInt, result,
-          {lir::Value::MakeLiteralInt(literal.value)});
-      return lir::Value::MakeTemp(result);
+      const auto& literal_expression =
+          mir::As<mir::LiteralExpression>(expression);
+      std::string result_name = builder.MakeTemp("lit");
+      Instruction instruction = Instruction::Basic(
+          InstructionKind::kLiteral, result_name,
+          {lir::Operand::Literal(literal_expression.literal)});
+      builder.AddInstruction(std::move(instruction));
+      return lir::Operand::Temp(result_name);
     }
 
     case mir::Expression::Kind::kIdentifier: {
       const auto& identifier = mir::As<mir::IdentifierExpression>(expression);
-      if (identifier.name.empty()) {
-        throw std::runtime_error("Identifier has empty name");
+      assert(!identifier.name.empty());
+      std::string result_name = builder.MakeTemp("load");
+      Instruction instruction = Instruction::Basic(
+          InstructionKind::kLoadVariable, result_name,
+          {lir::Operand::Variable(identifier.name)});
+      builder.AddInstruction(std::move(instruction));
+      return lir::Operand::Temp(result_name);
+    }
+
+    case mir::Expression::Kind::kAssignment: {
+      const auto& assignment = mir::As<mir::AssignmentExpression>(expression);
+      assert(!assignment.target.empty());
+      assert(assignment.value);
+      lir::Operand value = LowerExpression(*assignment.value, builder);
+      Instruction instruction = Instruction::Basic(
+          InstructionKind::kStoreVariable, "",
+          {lir::Operand::Variable(assignment.target), value});
+      builder.AddInstruction(std::move(instruction));
+      return value;
+    }
+
+    case mir::Expression::Kind::kConversion: {
+      const auto& conversion = mir::As<mir::ConversionExpression>(expression);
+      lir::Operand input = LowerExpression(*conversion.value, builder);
+      std::string result_name = builder.MakeTemp("cvt");
+      Instruction instruction = Instruction::WithType(
+          InstructionKind::kConversion, result_name, {input},
+          conversion.target_type);
+      builder.AddInstruction(std::move(instruction));
+      return lir::Operand::Temp(result_name);
+    }
+
+    case mir::Expression::Kind::kSystemCall: {
+      const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
+
+      if (system_call.name != "$finish") {
+        throw std::runtime_error(
+            fmt::format("Unsupported system call: {}", system_call.name));
       }
-      auto result = builder.MakeTemp("load");
-      builder.AddInstruction(
-          lir::InstructionKind::kLoadVariable, result,
-          {lir::Value::MakeVariable(identifier.name)});
-      return lir::Value::MakeTemp(result);
+
+      std::vector<lir::Operand> arguments;
+      for (const auto& argument : system_call.arguments) {
+        if (argument) {
+          arguments.push_back(LowerExpression(*argument, builder));
+        }
+      }
+
+      // Add default argument for `$finish` if empty
+      if (arguments.empty()) {
+        arguments.push_back(lir::Operand::Literal(Literal::Int(1)));
+      }
+
+      Instruction instruction =
+          Instruction::SystemCall(system_call.name, std::move(arguments));
+      builder.AddInstruction(std::move(instruction));
+
+      std::string result_name = builder.MakeTemp("sys");
+      return lir::Operand::Temp(result_name);
     }
 
     case mir::Expression::Kind::kBinary: {
       const auto& binary = mir::As<mir::BinaryExpression>(expression);
-
-      if (!binary.left || !binary.right) {
-        throw std::runtime_error("Binary expression operands cannot be null");
-      }
-
-      auto lhs_value = LowerExpression(*binary.left, builder);
-      auto rhs_value = LowerExpression(*binary.right, builder);
-
-      return LowerBinaryExpression(binary, lhs_value, rhs_value, builder);
-    }
-
-    case mir::Expression::Kind::kAssignment: {
-      const auto& assign = mir::As<mir::AssignmentExpression>(expression);
-
-      const auto& target = assign.target;
-      if (target.empty()) {
-        throw std::runtime_error("AssignmentExpression has empty target");
-      }
-
-      if (!assign.value) {
-        throw std::runtime_error("AssignmentExpression has null value");
-      }
-
-      // Lower the right-hand side expression
-      auto value_result = LowerExpression(*assign.value, builder);
-
-      // Store the result to the target variable
-      builder.AddInstruction(
-          lir::InstructionKind::kStoreVariable, "",
-          {lir::Value::MakeVariable(target), value_result});
-
-      // The result of an assignment is the assigned value
-      return value_result;
-    }
-
-    case mir::Expression::Kind::kSystemCall: {
-      const auto& syscall = mir::As<mir::SystemCallExpression>(expression);
-
-      // Create a system call instruction
-      lir::Instruction instr;
-      instr.kind = lir::InstructionKind::kSystemCall;
-      instr.system_call_name = syscall.name;
-
-      // Add any arguments to the system call
-      std::vector<lir::Value> operands;
-      for (const auto& arg : syscall.arguments) {
-        if (arg) {
-          operands.push_back(LowerExpression(*arg, builder));
-        }
-      }
-
-      // If $finish with no arguments, add a default argument value of 1
-      if (syscall.name == "$finish" && operands.empty()) {
-        operands.push_back(lir::Value::MakeLiteralInt(1));
-      }
-
-      builder.AddInstruction(
-          lir::InstructionKind::kSystemCall, "", operands, syscall.name);
-
-      // System calls don't produce a value in our current implementation
-      // Return a dummy value (this could be improved in the future)
-      auto result = builder.MakeTemp("syscall_result");
-      return lir::Value::MakeTemp(result);
+      assert(binary.left && binary.right);
+      lir::Operand lhs = LowerExpression(*binary.left, builder);
+      lir::Operand rhs = LowerExpression(*binary.right, builder);
+      return LowerBinaryExpression(binary, lhs, rhs, builder);
     }
 
     default:
-      throw std::runtime_error(fmt::format(
-          "Unsupported expression kind {} in MIR to LIR LowerExpression",
-          expression.kind));
+      assert(false && "Unsupported MIR expression kind in LowerExpression");
+      return lir::Operand::Temp("invalid");
   }
 }
+
 auto LowerBinaryExpression(
-    const mir::BinaryExpression& expression, lir::Value lhs, lir::Value rhs,
-    LirBuilder& builder) -> lir::Value {
+    const mir::BinaryExpression& expression, lir::Operand lhs, lir::Operand rhs,
+    LirBuilder& builder) -> lir::Operand {
   using lir::InstructionKind;
   using mir::Operator;
 
-  const bool is_lhs_string = lhs.kind == lir::Value::Kind::kLiteralString;
-  const bool is_rhs_string = rhs.kind == lir::Value::Kind::kLiteralString;
-  const bool is_string = is_lhs_string || is_rhs_string;
-
   InstructionKind kind = InstructionKind::kBinaryAdd;
 
-  // Special case handling: equality/inequality with string
+  const bool is_lhs_string = lhs.literal.type == Type::String();
+  const bool is_rhs_string = rhs.literal.type == Type::String();
+  const bool is_string = is_lhs_string || is_rhs_string;
+
   if (is_string) {
     switch (expression.op) {
       case Operator::kEquality:
-        kind = InstructionKind::kBinaryEqualString;
+        kind = InstructionKind::kBinaryEqual;
         break;
       case Operator::kInequality:
-        kind = InstructionKind::kBinaryNotEqualString;
+        kind = InstructionKind::kBinaryNotEqual;
         break;
       default:
         throw std::runtime_error(fmt::format(
@@ -148,10 +145,10 @@ auto LowerBinaryExpression(
         kind = InstructionKind::kBinaryModulo;
         break;
       case Operator::kEquality:
-        kind = InstructionKind::kBinaryEqualInt;
+        kind = InstructionKind::kBinaryEqual;
         break;
       case Operator::kInequality:
-        kind = InstructionKind::kBinaryNotEqualInt;
+        kind = InstructionKind::kBinaryNotEqual;
         break;
       case Operator::kLessThan:
         kind = InstructionKind::kBinaryLessThan;
@@ -188,9 +185,11 @@ auto LowerBinaryExpression(
     }
   }
 
-  auto result = builder.MakeTemp("bin");
-  builder.AddInstruction(kind, result, {lhs, rhs});
-  return lir::Value::MakeTemp(result);
+  std::string result_name = builder.MakeTemp("bin");
+  lir::Instruction instruction =
+      lir::Instruction::Basic(kind, result_name, {lhs, rhs});
+  builder.AddInstruction(std::move(instruction));
+  return lir::Operand::Temp(result_name);
 }
 
 }  // namespace lyra::lowering

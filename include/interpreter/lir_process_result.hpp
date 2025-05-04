@@ -1,18 +1,18 @@
 #pragma once
 
-#include <cstddef>  // For std::size_t
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace lyra {
+namespace lyra::interpreter {
 
 // Result of running a Process execution
 struct LIRProcessResult {
   enum class Kind { kComplete, kDelay, kFinish };
 
   Kind kind = Kind::kComplete;
-  int64_t delay_amount = 0;
+  uint64_t delay_amount = 0;
 
   // For resuming after a delay
   std::size_t block_index = 0;
@@ -29,7 +29,7 @@ struct LIRProcessResult {
   }
 
   static auto Delay(
-      int64_t amount, std::size_t block_index, std::size_t instruction_index,
+      uint64_t amount, std::size_t block_index, std::size_t instruction_index,
       std::vector<std::string> modified_variables) -> LIRProcessResult {
     return LIRProcessResult{
         .kind = Kind::kDelay,
@@ -47,4 +47,4 @@ struct LIRProcessResult {
   }
 };
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

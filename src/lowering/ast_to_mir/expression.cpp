@@ -6,11 +6,14 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <spdlog/spdlog.h>
 
+#include "lowering/ast_to_mir/literal.hpp"
+#include "lowering/ast_to_mir/type.hpp"
 #include "mir/expression.hpp"
 
 namespace lyra::lowering {
@@ -19,18 +22,23 @@ auto LowerExpression(const slang::ast::Expression& expression)
     -> std::unique_ptr<mir::Expression> {
   switch (expression.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      int value = expression.as<slang::ast::IntegerLiteral>()
-                      .getValue()
-                      .as<int>()
-                      .value();
-      return std::make_unique<mir::LiteralExpression>(value);
+      const auto& literal = expression.as<slang::ast::IntegerLiteral>();
+      auto mir_literal = LowerLiteral(literal);
+      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+    }
+
+    case slang::ast::ExpressionKind::StringLiteral: {
+      const auto& literal = expression.as<slang::ast::StringLiteral>();
+      auto mir_literal = LowerLiteral(literal);
+      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
     }
 
     case slang::ast::ExpressionKind::NamedValue: {
       const auto& named_value =
           expression.as<slang::ast::NamedValueExpression>();
+      auto type = LowerType(named_value.symbol.getType());
       return std::make_unique<mir::IdentifierExpression>(
-          std::string(named_value.symbol.name));
+          std::string(named_value.symbol.name), type);
     }
 
     case slang::ast::ExpressionKind::BinaryOp: {
@@ -39,6 +47,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       auto left = LowerExpression(binary_expression.left());
       auto right = LowerExpression(binary_expression.right());
+      assert(left->type == right->type);
 
       auto mir_operator =
           mir::ConvertSlangBinaryOperatorToMir(binary_expression.op);
@@ -75,8 +84,9 @@ auto LowerExpression(const slang::ast::Expression& expression)
         for (const auto& arg : call_expression.arguments()) {
           arguments.push_back(LowerExpression(*arg));
         }
+        auto return_type = LowerType(*call_expression.type);
         return std::make_unique<mir::SystemCallExpression>(
-            std::string(name), std::move(arguments));
+            std::string(name), std::move(arguments), return_type);
       }
 
       throw std::runtime_error(fmt::format(
@@ -84,16 +94,20 @@ auto LowerExpression(const slang::ast::Expression& expression)
           call_expression.getSubroutineName()));
     }
 
+    case slang::ast::ExpressionKind::Conversion: {
+      const auto& conversion =
+          expression.as<slang::ast::ConversionExpression>();
+      auto value = LowerExpression(conversion.operand());
+      auto type = LowerType(*conversion.type);
+      return std::make_unique<mir::ConversionExpression>(
+          std::move(value), type);
+    }
+
     default:
       throw std::runtime_error(fmt::format(
           "Unsupported expression kind {} in AST to MIR LowerExpression",
           slang::ast::toString(expression.kind)));
   }
-}
-
-auto LowerExpressionFromName(const std::string& name)
-    -> std::unique_ptr<mir::Expression> {
-  return std::make_unique<mir::IdentifierExpression>(name);
 }
 
 }  // namespace lyra::lowering

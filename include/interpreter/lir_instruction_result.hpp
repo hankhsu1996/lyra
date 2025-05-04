@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-namespace lyra::lir {
+namespace lyra::interpreter {
 
 // Represents the result of executing a single LIR instruction
 struct LIRInstructionResult {
@@ -16,7 +16,7 @@ struct LIRInstructionResult {
   std::string target_label{};
 
   // For Delay
-  int64_t delay_amount = 0;
+  uint64_t delay_amount = 0;
 
   // The variable that was modified by this instruction (if any)
   std::optional<std::string> modified_variable{};
@@ -30,7 +30,7 @@ struct LIRInstructionResult {
   }
 
   static auto Delay(
-      int64_t amount,
+      uint64_t amount,
       std::optional<std::string> modified_variable = std::nullopt)
       -> LIRInstructionResult {
     return LIRInstructionResult{
@@ -58,4 +58,4 @@ struct LIRInstructionResult {
   }
 };
 
-}  // namespace lyra::lir
+}  // namespace lyra::interpreter

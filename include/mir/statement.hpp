@@ -112,9 +112,9 @@ class ConditionalStatement : public Statement {
 class DelayStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kDelay;
-  int64_t delay_amount;
+  uint64_t delay_amount;
 
-  explicit DelayStatement(int64_t amount)
+  explicit DelayStatement(uint64_t amount)
       : Statement(kKindValue), delay_amount(amount) {
   }
 

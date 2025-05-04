@@ -26,7 +26,7 @@ TEST(TimingTest, DelayWithInlineAssign) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 1);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
 
@@ -41,7 +41,7 @@ TEST(TimingTest, DelayThenAssign) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 2);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 2);
   EXPECT_EQ(result.final_time, 5);
 }
 
@@ -57,7 +57,7 @@ TEST(TimingTest, MultipleDelaysThenAssign) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 3);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 3);
   EXPECT_EQ(result.final_time, 5);
 }
 
@@ -74,7 +74,7 @@ TEST(TimingTest, MixedDelayForms) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 12);  // 10+1+1
-  EXPECT_EQ(result.ReadVariable("b").AsInt(), 11);  // 10+1
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 12);  // 10+1+1
+  EXPECT_EQ(result.ReadVariable("b").AsInt64(), 11);  // 10+1
   EXPECT_EQ(result.final_time, 5);
 }

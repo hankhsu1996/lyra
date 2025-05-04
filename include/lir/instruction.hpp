@@ -1,19 +1,18 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <fmt/core.h>
 
-#include "lir/value.hpp"
+#include "common/type.hpp"
+#include "lir/operand.hpp"
 
 namespace lyra::lir {
 
 enum class InstructionKind {
-  kLiteralBit,
-  kLiteralInt,
-  kLiteralLongInt,
-  kLiteralString,
+  kLiteral,
   kLoadVariable,
   kStoreVariable,
   kBinaryAdd,
@@ -21,14 +20,13 @@ enum class InstructionKind {
   kBinaryMultiply,
   kBinaryDivide,
   kBinaryModulo,
-  kBinaryEqualInt,
-  kBinaryEqualString,
-  kBinaryNotEqualInt,
-  kBinaryNotEqualString,
+  kBinaryEqual,
+  kBinaryNotEqual,
   kBinaryLessThan,
   kBinaryLessThanEqual,
   kBinaryGreaterThan,
   kBinaryGreaterThanEqual,
+  kConversion,
   kDelay,
   kSystemCall,
   kJump,
@@ -36,26 +34,56 @@ enum class InstructionKind {
 };
 
 struct Instruction {
-  InstructionKind kind;
+  InstructionKind kind{};
 
   // Destination temporary name, or empty if not applicable
-  std::string result;
+  std::optional<std::string> result{};
+  std::optional<common::Type> result_type{};
 
   // Operand values used by the instruction
-  std::vector<Value> operands;
+  std::vector<Operand> operands;
 
   // System call name
-  std::string system_call_name;
+  std::string system_call_name{};
+
+  static auto Basic(
+      InstructionKind kind, std::string result, std::vector<Operand> operands)
+      -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .operands = std::move(operands)};
+  }
+
+  static auto WithType(
+      InstructionKind kind, std::string result, std::vector<Operand> operands,
+      common::Type result_type) -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .result_type = std::move(result_type),
+        .operands = std::move(operands)};
+  }
+
+  static auto SystemCall(std::string name, std::vector<Operand> args)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kSystemCall,
+        .result = std::nullopt,
+        .result_type = std::nullopt,
+        .operands = std::move(args),
+        .system_call_name = std::move(name)};
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
-      case InstructionKind::kLiteralBit:
-      case InstructionKind::kLiteralInt:
-      case InstructionKind::kLiteralLongInt:
-      case InstructionKind::kLiteralString:
-        return fmt::format("mov {}, {}", result, operands[0].ToString());
+      case InstructionKind::kLiteral:
+        return fmt::format(
+            "lit   {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kLoadVariable:
-        return fmt::format("load {}, {}", result, operands[0].ToString());
+        return fmt::format(
+            "load  {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kStoreVariable:
         return fmt::format(
@@ -63,75 +91,69 @@ struct Instruction {
 
       case InstructionKind::kBinaryAdd:
         return fmt::format(
-            "add {}, {}, {}", result, operands[0].ToString(),
+            "add   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinarySubtract:
         return fmt::format(
-            "sub {}, {}, {}", result, operands[0].ToString(),
+            "sub   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryMultiply:
         return fmt::format(
-            "mul {}, {}, {}", result, operands[0].ToString(),
+            "mul   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryDivide:
         return fmt::format(
-            "div {}, {}, {}", result, operands[0].ToString(),
+            "div   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryModulo:
         return fmt::format(
-            "mod {}, {}, {}", result, operands[0].ToString(),
+            "mod   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
-      case InstructionKind::kBinaryEqualInt:
+      case InstructionKind::kBinaryEqual:
         return fmt::format(
-            "eq {}, {}, {}", result, operands[0].ToString(),
+            "eq    {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
-      case InstructionKind::kBinaryEqualString:
+      case InstructionKind::kBinaryNotEqual:
         return fmt::format(
-            "eq {}, {}, {}", result, operands[0].ToString(),
-            operands[1].ToString());
-
-      case InstructionKind::kBinaryNotEqualInt:
-        return fmt::format(
-            "neq {}, {}, {}", result, operands[0].ToString(),
-            operands[1].ToString());
-
-      case InstructionKind::kBinaryNotEqualString:
-        return fmt::format(
-            "neq {}, {}, {}", result, operands[0].ToString(),
+            "neq   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryLessThan:
         return fmt::format(
-            "lt {}, {}, {}", result, operands[0].ToString(),
+            "lt    {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryLessThanEqual:
         return fmt::format(
-            "lteq {}, {}, {}", result, operands[0].ToString(),
+            "lteq  {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryGreaterThan:
         return fmt::format(
-            "gt {}, {}, {}", result, operands[0].ToString(),
+            "gt    {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kBinaryGreaterThanEqual:
         return fmt::format(
-            "gteq {}, {}, {}", result, operands[0].ToString(),
+            "gteq  {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
+
+      case InstructionKind::kConversion:
+        return fmt::format(
+            "cvt   {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());
 
       case InstructionKind::kSystemCall:
         if (operands.empty()) {
-          return fmt::format("syscall {}", system_call_name);
+          return fmt::format("call  {}", system_call_name);
         } else {
           std::string args;
           for (size_t i = 0; i < operands.size(); ++i) {
@@ -140,12 +162,12 @@ struct Instruction {
             }
             args += operands[i].ToString();
           }
-          return fmt::format("syscall {} {}", system_call_name, args);
+          return fmt::format("call  {} {}", system_call_name, args);
         }
 
       case InstructionKind::kJump:
         if (operands.size() == 1) {
-          return fmt::format("jump {}", operands[0].ToString());
+          return fmt::format("jump  {}", operands[0].ToString());
         } else {
           return "(invalid jump)";
         }
@@ -153,7 +175,7 @@ struct Instruction {
       case InstructionKind::kBranch:
         if (operands.size() == 3) {
           return fmt::format(
-              "branch {}, {}, {}", operands[0].ToString(),
+              "br    {}, {}, {}", operands[0].ToString(),
               operands[1].ToString(), operands[2].ToString());
         } else {
           return "(invalid branch)";

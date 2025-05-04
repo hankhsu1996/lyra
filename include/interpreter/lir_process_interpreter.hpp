@@ -4,11 +4,11 @@
 #include <memory>
 
 #include "core/execution_context.hpp"
-#include "executor/lir_basic_block_executor.hpp"
-#include "executor/lir_process_result.hpp"
+#include "interpreter/lir_basic_block_executor.hpp"
+#include "interpreter/lir_process_result.hpp"
 #include "lir/process.hpp"
 
-namespace lyra {
+namespace lyra::interpreter {
 
 class LIRProcessInterpreter {
  public:
@@ -24,4 +24,4 @@ class LIRProcessInterpreter {
   std::reference_wrapper<ExecutionContext> ctx_;
 };
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

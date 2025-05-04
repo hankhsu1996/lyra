@@ -1,6 +1,6 @@
-#include "executor/lir_process_interpreter.hpp"
+#include "interpreter/lir_process_interpreter.hpp"
 
-namespace lyra {
+namespace lyra::interpreter {
 
 LIRProcessInterpreter::LIRProcessInterpreter(ExecutionContext& context)
     : block_executor_(context), ctx_(context) {
@@ -51,4 +51,4 @@ auto LIRProcessInterpreter::RunProcess(
   }
 }
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

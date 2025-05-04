@@ -2,11 +2,16 @@
 
 #include <stdexcept>
 
+#include "common/value_storage.hpp"
 #include "lowering/mir_to_lir/expression.hpp"
 #include "lowering/mir_to_lir/lir_builder.hpp"
 #include "mir/statement.hpp"
 
 namespace lyra::lowering {
+
+using Type = common::Type;
+using Literal = common::Literal;
+using ValueStorage = common::ValueStorage;
 
 auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     -> void {
@@ -28,17 +33,19 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       auto result_value = LowerExpression(*expression, builder);
 
       // Store the result to the target variable
-      builder.AddInstruction(
+      auto instruction = lir::Instruction::Basic(
           lir::InstructionKind::kStoreVariable, "",
-          {lir::Value::MakeVariable(target), result_value});
+          {lir::Operand::Variable(target), result_value});
+      builder.AddInstruction(std::move(instruction));
       break;
     }
 
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(statement);
-      builder.AddInstruction(
+      auto instruction = lir::Instruction::Basic(
           lir::InstructionKind::kDelay, "",
-          {lir::Value::MakeLiteralLongInt(delay.delay_amount)});
+          {lir::Operand::Literal(Literal::ULongInt(delay.delay_amount))});
+      builder.AddInstruction(std::move(instruction));
       break;
     }
 
@@ -77,41 +84,42 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       // Create a branch instruction
       if (if_stmt.else_branch) {
         // Branch to either then or else based on condition
-        builder.AddInstruction(
+        auto branch = lir::Instruction::Basic(
             lir::InstructionKind::kBranch, "",
-            {condition_value, lir::Value::MakeLiteralString(then_label),
-             lir::Value::MakeLiteralString(else_label)});
+            {condition_value, lir::Operand::Label(then_label),
+             lir::Operand::Label(else_label)});
+        builder.AddInstruction(std::move(branch));
 
         // Create then block
         builder.StartBlock(then_label);
         LowerStatement(*if_stmt.then_branch, builder);
-        builder.AddInstruction(
-            lir::InstructionKind::kJump, "",
-            {lir::Value::MakeLiteralString(end_label)});
+        auto jump_to_end = lir::Instruction::Basic(
+            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        builder.AddInstruction(std::move(jump_to_end));
         builder.EndBlock();
 
         // Create else block
         builder.StartBlock(else_label);
         LowerStatement(*if_stmt.else_branch, builder);
         // Fall through to end block
-        builder.AddInstruction(
-            lir::InstructionKind::kJump, "",
-            {lir::Value::MakeLiteralString(end_label)});
+        auto fall_through_to_end = lir::Instruction::Basic(
+            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        builder.AddInstruction(std::move(fall_through_to_end));
         builder.EndBlock();
       } else {
         // No else branch - create a simpler branch structure
-        builder.AddInstruction(
+        auto branch = lir::Instruction::Basic(
             lir::InstructionKind::kBranch, "",
-            {condition_value, lir::Value::MakeLiteralString(then_label),
-             lir::Value::MakeLiteralString(end_label)});
+            {condition_value, lir::Operand::Label(then_label),
+             lir::Operand::Label(end_label)});
 
         // Create then block
         builder.StartBlock(then_label);
         LowerStatement(*if_stmt.then_branch, builder);
         // Fall through to end block
-        builder.AddInstruction(
-            lir::InstructionKind::kJump, "",
-            {lir::Value::MakeLiteralString(end_label)});
+        auto fall_through_to_end = lir::Instruction::Basic(
+            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        builder.AddInstruction(std::move(fall_through_to_end));
         builder.EndBlock();
       }
 

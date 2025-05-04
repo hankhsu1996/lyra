@@ -16,7 +16,7 @@ TEST(InitialTest, AssignConstant) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 42);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
 }
 
 TEST(InitialTest, TwoInitialBlocks) {
@@ -28,8 +28,8 @@ TEST(InitialTest, TwoInitialBlocks) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 10);
-  EXPECT_EQ(result.ReadVariable("b").AsInt(), 20);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 10);
+  EXPECT_EQ(result.ReadVariable("b").AsInt64(), 20);
 }
 
 TEST(InitialTest, AddAndAssignSequence) {
@@ -44,7 +44,7 @@ TEST(InitialTest, AddAndAssignSequence) {
     endmodule
   )";
   auto result = lyra::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("a").AsInt(), 5);
-  EXPECT_EQ(result.ReadVariable("b").AsInt(), 8);
-  EXPECT_EQ(result.ReadVariable("c").AsInt(), 12);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 5);
+  EXPECT_EQ(result.ReadVariable("b").AsInt64(), 8);
+  EXPECT_EQ(result.ReadVariable("c").AsInt64(), 12);
 }

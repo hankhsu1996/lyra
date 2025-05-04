@@ -4,15 +4,15 @@
 #include <string>
 #include <vector>
 
+#include "common/variable.hpp"
 #include "mir/process.hpp"
-#include "mir/variable.hpp"
 
 namespace lyra::mir {
 
 class Module {
  public:
   std::string name;
-  std::vector<Variable> variables;
+  std::vector<common::Variable> variables;
   std::vector<std::shared_ptr<Process>> processes;
 };
 

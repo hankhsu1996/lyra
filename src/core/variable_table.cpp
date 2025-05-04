@@ -19,10 +19,11 @@ auto VariableTable::Read(const std::string& name) const -> RuntimeValue {
 auto VariableTable::ReadPrevious(const std::string& name) const
     -> RuntimeValue {
   auto it = previous_variables_.find(name);
-  if (it != previous_variables_.end()) {
-    return it->second;
+  if (it == previous_variables_.end()) {
+    throw std::runtime_error(
+        fmt::format("Cannot read from previous variables: {}", name));
   }
-  return RuntimeValue::FromInt(0);
+  return it->second;
 }
 
 void VariableTable::UpdatePrevious(

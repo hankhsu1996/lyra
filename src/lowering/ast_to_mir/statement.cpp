@@ -66,7 +66,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
 
       const auto& int_literal = expr.as<slang::ast::IntegerLiteral>();
-      auto delay_amount_opt = int_literal.getValue().as<int64_t>();
+      auto delay_amount_opt = int_literal.getValue().as<uint64_t>();
       if (!delay_amount_opt) {
         throw std::runtime_error(
             "Only constant integer delay is supported in timing control "

@@ -4,14 +4,16 @@
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 #include <spdlog/spdlog.h>
 
-#include "mir/variable.hpp"
+#include "common/type.hpp"
+#include "common/variable.hpp"
 
 namespace lyra::lowering {
 
 auto LowerVariable(const slang::ast::Symbol& symbol)
-    -> std::optional<mir::Variable> {
+    -> std::optional<common::Variable> {
   using SymbolKind = slang::ast::SymbolKind;
 
   if (symbol.kind != SymbolKind::Variable) {
@@ -20,11 +22,22 @@ auto LowerVariable(const slang::ast::Symbol& symbol)
 
   const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
 
-  mir::Variable variable;
+  common::Variable variable;
   variable.name = std::string(variable_symbol.name);
 
-  // Temporary: always treat as int type
-  variable.type = mir::Type::kInt;
+  const auto& slang_type = variable_symbol.getType();
+  if (slang_type.isString()) {
+    variable.type = common::Type::String();
+  } else if (slang_type.isIntegral()) {
+    if (slang_type.isSigned()) {
+      variable.type = common::Type::TwoState(slang_type.getBitWidth(), true);
+    } else {
+      variable.type = common::Type::TwoState(slang_type.getBitWidth(), false);
+    }
+  } else {
+    throw std::runtime_error(
+        fmt::format("Unsupported type: {}", slang_type.toString()));
+  }
 
   return variable;
 }

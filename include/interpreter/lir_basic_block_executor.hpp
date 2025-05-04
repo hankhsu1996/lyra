@@ -5,10 +5,10 @@
 #include <lir/basic_block.hpp>
 
 #include "core/execution_context.hpp"
-#include "executor/lir_basic_block_result.hpp"
-#include "executor/lir_instruction_executor.hpp"
+#include "interpreter/lir_basic_block_result.hpp"
+#include "interpreter/lir_instruction_executor.hpp"
 
-namespace lyra {
+namespace lyra::interpreter {
 
 class LIRBasicBlockExecutor {
  public:
@@ -19,8 +19,8 @@ class LIRBasicBlockExecutor {
       -> LIRBasicBlockResult;
 
  private:
-  lir::LIRInstructionExecutor instruction_executor_;
+  LIRInstructionExecutor instruction_executor_;
   std::reference_wrapper<ExecutionContext> ctx_;
 };
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

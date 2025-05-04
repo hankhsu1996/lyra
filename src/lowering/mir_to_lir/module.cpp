@@ -21,7 +21,7 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
     if (variable.name.empty()) {
       throw std::runtime_error("Variable has empty name");
     }
-    builder.AddVariable(variable.name);
+    builder.AddVariable(variable);
   }
 
   // Process each process

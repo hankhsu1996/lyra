@@ -8,7 +8,6 @@
 #include "lir/instruction.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
-#include "lir/value.hpp"
 
 namespace lyra::lowering {
 
@@ -16,7 +15,7 @@ class LirBuilder {
  public:
   explicit LirBuilder(std::string module_name);
 
-  void AddVariable(const std::string& name);
+  void AddVariable(const common::Variable& variable);
   void BeginProcess(lir::ProcessKind kind);
   void AddTrigger(lir::Trigger trigger);
 
@@ -25,13 +24,7 @@ class LirBuilder {
   void EndBlock();
   auto NewLabel(const std::string& prefix = "label") -> std::string;
 
-  // Instruction addition
-  void AddInstruction(
-      lir::InstructionKind kind, const std::string& result,
-      std::vector<lir::Value> operands);
-  void AddInstruction(
-      lir::InstructionKind kind, const std::string& result,
-      std::vector<lir::Value> operands, const std::string& system_call_name);
+  void AddInstruction(lir::Instruction instruction);
 
   void EndProcess();
 
@@ -40,7 +33,7 @@ class LirBuilder {
 
  private:
   std::string module_name_;
-  std::vector<std::string> variables_;
+  std::vector<common::Variable> variables_;
   std::vector<std::shared_ptr<lir::Process>> processes_;
   std::shared_ptr<lir::Process> current_process_;
 
