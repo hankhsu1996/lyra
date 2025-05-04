@@ -9,6 +9,16 @@ cc_test(
 )
 
 cc_test(
+    name = "loop_tests",
+    size = "small",
+    srcs = ["e2e/loop_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
     name = "initial_tests",
     size = "small",
     srcs = ["e2e/initial_tests.cpp"],

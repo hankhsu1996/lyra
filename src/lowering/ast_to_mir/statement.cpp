@@ -10,6 +10,7 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
+#include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 
 #include "lowering/ast_to_mir/expression.hpp"
@@ -27,8 +28,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::List: {
       const auto& statement_list = statement.as<slang::ast::StatementList>();
       auto block = std::make_unique<mir::BlockStatement>();
-      for (const auto* stmt : statement_list.list) {
-        block->statements.push_back(LowerStatement(*stmt));
+      for (const auto* statement : statement_list.list) {
+        block->statements.push_back(LowerStatement(*statement));
       }
       return block;
     }
@@ -57,15 +58,15 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
 
       const auto& delay_control = timing_control.as<slang::ast::DelayControl>();
-      const auto& expr = delay_control.expr;
+      const auto& expression = delay_control.expr;
 
-      if (expr.kind != ExpressionKind::IntegerLiteral) {
+      if (expression.kind != ExpressionKind::IntegerLiteral) {
         throw std::runtime_error(fmt::format(
             "Unsupported delay expression kind {}",
-            slang::ast::toString(expr.kind)));
+            slang::ast::toString(expression.kind)));
       }
 
-      const auto& int_literal = expr.as<slang::ast::IntegerLiteral>();
+      const auto& int_literal = expression.as<slang::ast::IntegerLiteral>();
       auto delay_amount_opt = int_literal.getValue().as<uint64_t>();
       if (!delay_amount_opt) {
         throw std::runtime_error(
@@ -73,13 +74,13 @@ auto LowerStatement(const slang::ast::Statement& statement)
             "lowering");
       }
 
-      auto delay_stmt =
+      auto delay_statement =
           std::make_unique<mir::DelayStatement>(delay_amount_opt.value());
-      auto inner_stmt = LowerStatement(timed_statement.stmt);
+      auto inner_statement = LowerStatement(timed_statement.stmt);
 
       auto block = std::make_unique<mir::BlockStatement>();
-      block->statements.push_back(std::move(delay_stmt));
-      block->statements.push_back(std::move(inner_stmt));
+      block->statements.push_back(std::move(delay_statement));
+      block->statements.push_back(std::move(inner_statement));
       return block;
     }
 
@@ -106,6 +107,14 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
       return std::make_unique<mir::ConditionalStatement>(
           std::move(condition), std::move(then_branch), std::move(else_branch));
+    }
+
+    case StatementKind::WhileLoop: {
+      const auto& while_loop = statement.as<slang::ast::WhileLoopStatement>();
+      auto condition = LowerExpression(while_loop.cond);
+      auto body = LowerStatement(while_loop.body);
+      return std::make_unique<mir::WhileStatement>(
+          std::move(condition), std::move(body));
     }
 
     case StatementKind::Empty: {
