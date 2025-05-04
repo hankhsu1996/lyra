@@ -126,6 +126,20 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(condition), std::move(body));
     }
 
+    case StatementKind::ForeverLoop: {
+      const auto& forever_loop =
+          statement.as<slang::ast::ForeverLoopStatement>();
+      auto body = LowerStatement(forever_loop.body);
+
+      // Create a constant true condition for the while loop
+      auto true_condition =
+          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+
+      // Create a while statement with the true condition
+      return std::make_unique<mir::WhileStatement>(
+          std::move(true_condition), std::move(body));
+    }
+
     case StatementKind::Empty: {
       return std::make_unique<mir::BlockStatement>();  // No-op
     }

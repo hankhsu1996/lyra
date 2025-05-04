@@ -173,3 +173,20 @@ TEST(LoopTest, NestedDoWhileLoops) {
   // 3 outer loops × 2 inner loops
   EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 6);
 }
+
+TEST(LoopTest, ForeverLoop) {
+  std::string code = R"(
+    module Test;
+      int counter;
+      initial begin
+        counter = 0;
+        forever begin
+          counter = counter + 1;
+          if (counter >= 5) $finish;
+        end
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("counter").AsInt64(), 5);
+}
