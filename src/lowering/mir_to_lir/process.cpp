@@ -13,11 +13,8 @@ auto MapProcessKind(mir::ProcessKind kind) -> lir::ProcessKind {
   switch (kind) {
     case mir::ProcessKind::kInitial:
       return lir::ProcessKind::kInitial;
-    case mir::ProcessKind::kAlwaysComb:
-    case mir::ProcessKind::kAlwaysFF:
+    case mir::ProcessKind::kAlways:
       return lir::ProcessKind::kAlways;
-    default:
-      throw std::runtime_error("Unknown process kind");
   }
 }
 

@@ -6,6 +6,7 @@
 #include <lowering/ast_to_mir/variable.hpp>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <spdlog/spdlog.h>
 
@@ -32,7 +33,7 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     }
 
     case ProceduralBlockKind::AlwaysComb: {
-      process->process_kind = mir::ProcessKind::kAlwaysComb;
+      process->process_kind = mir::ProcessKind::kAlways;
 
       const auto& slang_statement = procedural_block.getBody();
 

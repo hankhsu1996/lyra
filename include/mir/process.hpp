@@ -10,7 +10,7 @@ namespace lyra::mir {
 
 using Trigger = common::Trigger<std::string>;
 
-enum class ProcessKind { kInitial, kAlwaysFF, kAlwaysComb };
+enum class ProcessKind { kInitial, kAlways };
 
 class Process {
  public:
