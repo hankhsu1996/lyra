@@ -17,12 +17,12 @@ class Statement {
  public:
   enum class Kind {
     kAssign,
-    kBlock,
-    kConditional,
     kExpression,
     kDelay,
+    kConditional,
     kWhile,
     kDoWhile,
+    kBlock,
   };
 
   Kind kind;
@@ -44,20 +44,19 @@ inline auto ToString(Statement::Kind kind) -> std::string {
   switch (kind) {
     case Statement::Kind::kAssign:
       return "Assign";
-    case Statement::Kind::kBlock:
-      return "Block";
-    case Statement::Kind::kConditional:
-      return "Conditional";
     case Statement::Kind::kExpression:
       return "Expression";
     case Statement::Kind::kDelay:
       return "Delay";
+    case Statement::Kind::kConditional:
+      return "Conditional";
     case Statement::Kind::kWhile:
       return "While";
     case Statement::Kind::kDoWhile:
       return "DoWhile";
+    case Statement::Kind::kBlock:
+      return "Block";
   }
-  return "Unknown";  // Should never reach here, but needed for compiler
 }
 
 // Add operator<< for Statement::Kind
@@ -81,33 +80,13 @@ class AssignStatement : public Statement {
   }
 };
 
-class BlockStatement : public Statement {
+class ExpressionStatement : public Statement {
  public:
-  static constexpr Kind kKindValue = Kind::kBlock;
-  std::vector<std::unique_ptr<Statement>> statements;
+  static constexpr Kind kKindValue = Kind::kExpression;
+  std::unique_ptr<Expression> expression;
 
-  BlockStatement() : Statement(kKindValue) {
-  }
-
-  void Accept(MirVisitor& visitor) const override {
-    visitor.Visit(*this);
-  }
-};
-
-class ConditionalStatement : public Statement {
- public:
-  static constexpr Kind kKindValue = Kind::kConditional;
-  std::unique_ptr<Expression> condition;
-  std::unique_ptr<Statement> then_branch;
-  std::unique_ptr<Statement> else_branch;
-
-  ConditionalStatement(
-      std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
-      std::unique_ptr<Statement> else_b)
-      : Statement(kKindValue),
-        condition(std::move(cond)),
-        then_branch(std::move(then_b)),
-        else_branch(std::move(else_b)) {
+  explicit ExpressionStatement(std::unique_ptr<Expression> expression)
+      : Statement(kKindValue), expression(std::move(expression)) {
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -129,13 +108,20 @@ class DelayStatement : public Statement {
   }
 };
 
-class ExpressionStatement : public Statement {
+class ConditionalStatement : public Statement {
  public:
-  static constexpr Kind kKindValue = Kind::kExpression;
-  std::unique_ptr<Expression> expression;
+  static constexpr Kind kKindValue = Kind::kConditional;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Statement> then_branch;
+  std::unique_ptr<Statement> else_branch;
 
-  explicit ExpressionStatement(std::unique_ptr<Expression> expression)
-      : Statement(kKindValue), expression(std::move(expression)) {
+  ConditionalStatement(
+      std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
+      std::unique_ptr<Statement> else_b)
+      : Statement(kKindValue),
+        condition(std::move(cond)),
+        then_branch(std::move(then_b)),
+        else_branch(std::move(else_b)) {
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -172,6 +158,19 @@ class DoWhileStatement : public Statement {
       : Statement(kKindValue),
         condition(std::move(condition)),
         body(std::move(body)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class BlockStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kBlock;
+  std::vector<std::unique_ptr<Statement>> statements;
+
+  BlockStatement() : Statement(kKindValue) {
   }
 
   void Accept(MirVisitor& visitor) const override {
