@@ -21,6 +21,22 @@ struct RuntimeValue {
     return RuntimeValue{.type = literal.type, .value = literal.value};
   }
 
+  static auto DefaultValueForType(const common::Type& type) -> RuntimeValue {
+    switch (type.kind) {
+      case common::Type::Kind::kVoid:
+        return {};
+      case common::Type::Kind::kTwoState: {
+        auto data = std::get<common::TwoStateData>(type.data);
+        if (data.is_signed) {
+          return TwoStateSigned(0, data.bit_width);
+        }
+        return TwoStateUnsigned(0, data.bit_width);
+      }
+      case common::Type::Kind::kString:
+        return String("");
+    }
+  }
+
   static auto TwoStateSigned(int64_t value, size_t bit_width) -> RuntimeValue {
     return RuntimeValue{
         .type = common::Type::TwoStateSigned(bit_width),

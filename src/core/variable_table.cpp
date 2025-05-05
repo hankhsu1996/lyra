@@ -40,4 +40,13 @@ void VariableTable::CreateVariable(
   variables_[name] = std::move(initial_value);
 }
 
+void VariableTable::InitializeVariable(
+    const std::string& name, const common::Type& type) {
+  if (!Exists(name)) {
+    auto initial_value = RuntimeValue::DefaultValueForType(type);
+    CreateVariable(name, initial_value);
+    UpdatePrevious(name, initial_value);
+  }
+}
+
 }  // namespace lyra

@@ -45,35 +45,8 @@ auto LIRSimulationScheduler::Run() -> uint64_t {
 
 void LIRSimulationScheduler::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
-    if (!context_.get().variable_table.Exists(variable.name)) {
-      RuntimeValue initial_value;
-
-      switch (variable.type.kind) {
-        case common::Type::Kind::kVoid:
-          break;
-        case common::Type::Kind::kTwoState: {
-          auto two_state_data =
-              std::get<common::TwoStateData>(variable.type.data);
-          if (two_state_data.is_signed) {
-            initial_value =
-                RuntimeValue::TwoStateSigned(0, two_state_data.bit_width);
-          } else {
-            initial_value =
-                RuntimeValue::TwoStateUnsigned(0, two_state_data.bit_width);
-          }
-          break;
-        }
-        case common::Type::Kind::kString:
-          initial_value = RuntimeValue::String("");
-          break;
-      }
-
-      // Initialize both current and previous value
-      context_.get().variable_table.CreateVariable(
-          variable.name, initial_value);
-      context_.get().variable_table.UpdatePrevious(
-          variable.name, initial_value);
-    }
+    context_.get().variable_table.InitializeVariable(
+        variable.name, variable.type);
   }
 }
 

@@ -15,6 +15,7 @@ class VariableTable {
   void UpdatePrevious(const std::string &name, const RuntimeValue &value);
   auto Exists(const std::string &name) const -> bool;
   void CreateVariable(const std::string &name, RuntimeValue initial_value);
+  void InitializeVariable(const std::string &name, const common::Type &type);
 
  private:
   std::unordered_map<std::string, RuntimeValue> variables_;
