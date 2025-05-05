@@ -9,7 +9,7 @@
 
 namespace lyra::interpreter {
 
-struct LIRBasicBlockResult {
+struct BasicBlockResult {
   enum class Kind { kFallthrough, kDelay, kWaitEvent, kFinish, kJump };
 
   Kind kind = Kind::kFallthrough;
@@ -28,7 +28,7 @@ struct LIRBasicBlockResult {
   std::vector<std::string> modified_variables;
 
   static auto Fallthrough(std::vector<std::string> modified_variables)
-      -> LIRBasicBlockResult {
+      -> BasicBlockResult {
     return {
         .kind = Kind::kFallthrough,
         .modified_variables = std::move(modified_variables)};
@@ -36,7 +36,7 @@ struct LIRBasicBlockResult {
 
   static auto Delay(
       uint64_t amount, std::size_t resume_at,
-      std::vector<std::string> modified_variables) -> LIRBasicBlockResult {
+      std::vector<std::string> modified_variables) -> BasicBlockResult {
     return {
         .kind = Kind::kDelay,
         .delay_amount = amount,
@@ -46,7 +46,7 @@ struct LIRBasicBlockResult {
 
   static auto WaitEvent(
       std::vector<common::Trigger<std::string>> triggers, std::size_t resume_at,
-      std::vector<std::string> modified_variables) -> LIRBasicBlockResult {
+      std::vector<std::string> modified_variables) -> BasicBlockResult {
     return {
         .kind = Kind::kWaitEvent,
         .resume_instruction_index = resume_at,
@@ -55,7 +55,7 @@ struct LIRBasicBlockResult {
   }
 
   static auto Finish(std::vector<std::string> modified_variables)
-      -> LIRBasicBlockResult {
+      -> BasicBlockResult {
     return {
         .kind = Kind::kFinish,
         .modified_variables = std::move(modified_variables)};
@@ -63,7 +63,7 @@ struct LIRBasicBlockResult {
 
   static auto Jump(
       std::string label, std::vector<std::string> modified_variables)
-      -> LIRBasicBlockResult {
+      -> BasicBlockResult {
     return {
         .kind = Kind::kJump,
         .target_label = std::move(label),

@@ -4,17 +4,16 @@
 
 #include <lir/instruction.hpp>
 
-#include "core/execution_context.hpp"
-#include "interpreter/lir_instruction_result.hpp"
+#include "interpreter/instruction_result.hpp"
+#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 
-class LIRInstructionExecutor {
+class InstructionRunner {
  public:
-  explicit LIRInstructionExecutor(ExecutionContext& context);
+  explicit InstructionRunner(ExecutionContext& context);
 
-  auto ExecuteInstruction(const lir::Instruction& instr)
-      -> LIRInstructionResult;
+  auto ExecuteInstruction(const lir::Instruction& instr) -> InstructionResult;
 
  private:
   std::reference_wrapper<ExecutionContext> ctx_;

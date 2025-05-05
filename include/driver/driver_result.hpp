@@ -4,13 +4,13 @@
 #include <memory>
 #include <string>
 
-#include "core/execution_context.hpp"
+#include "runtime/execution_context.hpp"
 
-namespace lyra {
+namespace lyra::driver {
 
 // A wrapper that represents the result of running a simulation.
 // Includes the final execution state and the total simulation time.
-struct SimulationResult {
+struct DriverResult {
   std::unique_ptr<ExecutionContext> context;
   uint64_t final_time;
 
@@ -20,4 +20,4 @@ struct SimulationResult {
   }
 };
 
-}  // namespace lyra
+}  // namespace lyra::driver

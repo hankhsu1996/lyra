@@ -9,10 +9,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "core/execution_context.hpp"
-#include "interpreter/lir_process_interpreter.hpp"
+#include "interpreter/process_runner.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
+#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 
@@ -54,9 +54,9 @@ struct ProcessPtrEqual {
   }
 };
 
-class LIRSimulationScheduler {
+class SimulationRunner {
  public:
-  LIRSimulationScheduler(const lir::Module& module, ExecutionContext& context);
+  SimulationRunner(const lir::Module& module, ExecutionContext& context);
 
   auto Run() -> uint64_t;
   auto CurrentTime() const -> uint64_t {
@@ -90,7 +90,7 @@ class LIRSimulationScheduler {
 
   std::reference_wrapper<const lir::Module> module_;
   std::reference_wrapper<ExecutionContext> context_;
-  LIRProcessInterpreter process_interpreter_;
+  ProcessRunner process_runner_;
 };
 
 }  // namespace lyra::interpreter

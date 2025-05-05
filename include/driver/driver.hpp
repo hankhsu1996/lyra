@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_result.hpp"
 #include "driver/driver_options.hpp"
+#include "driver/driver_result.hpp"
 
 namespace slang {
 class SourceManager;
@@ -22,16 +22,16 @@ class Driver {
 
   static auto RunFromSource(
       const std::string& code, const DriverOptions& options = {})
-      -> SimulationResult;
+      -> DriverResult;
 
   static auto RunFromFiles(
       const std::vector<std::string>& paths, const DriverOptions& options = {})
-      -> SimulationResult;
+      -> DriverResult;
 
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,
-      const DriverOptions& options) -> SimulationResult;
+      const DriverOptions& options) -> DriverResult;
 };
 
 }  // namespace lyra::driver

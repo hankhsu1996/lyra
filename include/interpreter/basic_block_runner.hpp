@@ -4,22 +4,22 @@
 
 #include <lir/basic_block.hpp>
 
-#include "core/execution_context.hpp"
-#include "interpreter/lir_basic_block_result.hpp"
-#include "interpreter/lir_instruction_executor.hpp"
+#include "interpreter/basic_block_result.hpp"
+#include "interpreter/instruction_runner.hpp"
+#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 
-class LIRBasicBlockExecutor {
+class BasicBlockRunner {
  public:
-  explicit LIRBasicBlockExecutor(ExecutionContext& context);
+  explicit BasicBlockRunner(ExecutionContext& context);
 
   auto RunBlock(
       const lir::BasicBlock& block, std::size_t start_instruction_index)
-      -> LIRBasicBlockResult;
+      -> BasicBlockResult;
 
  private:
-  LIRInstructionExecutor instruction_executor_;
+  InstructionRunner instruction_runner_;
   std::reference_wrapper<ExecutionContext> ctx_;
 };
 

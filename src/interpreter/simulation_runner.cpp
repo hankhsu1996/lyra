@@ -1,20 +1,20 @@
-#include "interpreter/lir_simulation_scheduler.hpp"
+#include "interpreter/simulation_runner.hpp"
 
 #include <cstdint>
 #include <unordered_set>
 
 #include <fmt/core.h>
 
-#include "core/runtime_value.hpp"
+#include "runtime/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
-LIRSimulationScheduler::LIRSimulationScheduler(
+SimulationRunner::SimulationRunner(
     const lir::Module& module, ExecutionContext& context)
-    : module_(module), context_(context), process_interpreter_(context) {
+    : module_(module), context_(context), process_runner_(context) {
 }
 
-auto LIRSimulationScheduler::Run() -> uint64_t {
+auto SimulationRunner::Run() -> uint64_t {
   // Initialize variables before starting simulation
   InitializeVariables();
 
@@ -43,14 +43,14 @@ auto LIRSimulationScheduler::Run() -> uint64_t {
   return simulation_time_;
 }
 
-void LIRSimulationScheduler::InitializeVariables() {
+void SimulationRunner::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
     context_.get().variable_table.InitializeVariable(
         variable.name, variable.type);
   }
 }
 
-void LIRSimulationScheduler::ScheduleInitialProcesses() {
+void SimulationRunner::ScheduleInitialProcesses() {
   for (const auto& process : module_.get().processes) {
     if (process->kind == lir::ProcessKind::kInitial) {
       active_queue_.push({process, 0, 0});
@@ -58,7 +58,7 @@ void LIRSimulationScheduler::ScheduleInitialProcesses() {
   }
 }
 
-void LIRSimulationScheduler::ScheduleAlwaysProcesses() {
+void SimulationRunner::ScheduleAlwaysProcesses() {
   for (const auto& process : module_.get().processes) {
     if (process->kind == lir::ProcessKind::kAlways) {
       active_queue_.push({process, 0, 0});
@@ -66,7 +66,7 @@ void LIRSimulationScheduler::ScheduleAlwaysProcesses() {
   }
 }
 
-void LIRSimulationScheduler::ExecuteOneEvent() {
+void SimulationRunner::ExecuteOneEvent() {
   ScheduledEvent event = active_queue_.front();
   active_queue_.pop();
 
@@ -75,12 +75,12 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
   std::size_t instruction_index = event.instruction_index;
 
   auto result =
-      process_interpreter_.RunProcess(process, block_index, instruction_index);
+      process_runner_.RunProcess(process, block_index, instruction_index);
 
   WakeWaitingProcesses(result.modified_variables);
 
   switch (result.kind) {
-    case LIRProcessResult::Kind::kDelay: {
+    case ProcessResult::Kind::kDelay: {
       DelayedEvent delayed_event{
           .ready_time = simulation_time_ + result.delay_amount,
           .process = process,
@@ -90,7 +90,7 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
       break;
     }
 
-    case LIRProcessResult::Kind::kWaitEvent: {
+    case ProcessResult::Kind::kWaitEvent: {
       for (const auto& trigger : result.triggers) {
         wait_map_[trigger.variable].insert(process);
         wait_set_[process] = {
@@ -100,18 +100,18 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
       }
       break;
     }
-    case LIRProcessResult::Kind::kFinish: {
+    case ProcessResult::Kind::kFinish: {
       finish_requested_ = true;
       break;
     }
 
-    case LIRProcessResult::Kind::kComplete: {
+    case ProcessResult::Kind::kComplete: {
       break;
     }
   }
 }
 
-void LIRSimulationScheduler::WakeWaitingProcesses(
+void SimulationRunner::WakeWaitingProcesses(
     const std::vector<std::string>& modified_variables) {
   std::unordered_set<std::shared_ptr<lir::Process>> resumed;
 

@@ -5,17 +5,17 @@
 
 #include <slang/ast/Compilation.h>
 
-#include "core/execution_context.hpp"
-#include "core/simulation_result.hpp"
+#include "driver/driver_result.hpp"
 #include "frontend/slang_frontend.hpp"
-#include "interpreter/lir_simulation_scheduler.hpp"
+#include "interpreter/simulation_runner.hpp"
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir/mir_to_lir.hpp"
+#include "runtime/execution_context.hpp"
 
 namespace lyra::driver {
 
 auto Driver::RunFromSource(
-    const std::string& code, const DriverOptions& options) -> SimulationResult {
+    const std::string& code, const DriverOptions& options) -> DriverResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
   return RunWithCompilation(std::move(compilation), options);
@@ -23,7 +23,7 @@ auto Driver::RunFromSource(
 
 auto Driver::RunFromFiles(
     const std::vector<std::string>& paths, const DriverOptions& options)
-    -> SimulationResult {
+    -> DriverResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
   return RunWithCompilation(std::move(compilation), options);
@@ -31,7 +31,7 @@ auto Driver::RunFromFiles(
 
 auto Driver::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
-    const DriverOptions& options) -> SimulationResult {
+    const DriverOptions& options) -> DriverResult {
   const auto& root = compilation->getRoot();
 
   auto mir = lowering::AstToMir(root);
@@ -44,11 +44,10 @@ auto Driver::RunWithCompilation(
 
   auto context = std::make_unique<ExecutionContext>();
 
-  interpreter::LIRSimulationScheduler scheduler(*lir, *context);
-  auto final_time = scheduler.Run();
+  interpreter::SimulationRunner runner(*lir, *context);
+  auto final_time = runner.Run();
 
-  return SimulationResult{
-      .context = std::move(context), .final_time = final_time};
+  return DriverResult{.context = std::move(context), .final_time = final_time};
 }
 
 }  // namespace lyra::driver

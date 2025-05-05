@@ -1,4 +1,4 @@
-#include "core/variable_table.hpp"
+#include "runtime/variable_table.hpp"
 
 #include <stdexcept>
 

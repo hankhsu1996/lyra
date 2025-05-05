@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/temp_table.hpp"
-#include "core/variable_table.hpp"
+#include "runtime/temp_table.hpp"
+#include "runtime/variable_table.hpp"
 
 namespace lyra {
 

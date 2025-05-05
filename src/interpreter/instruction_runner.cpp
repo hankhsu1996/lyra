@@ -1,21 +1,21 @@
-#include "interpreter/lir_instruction_executor.hpp"
+#include "interpreter/instruction_runner.hpp"
 
 #include <cassert>
 
 #include <fmt/core.h>
 
-#include "core/runtime_value.hpp"
 #include "interpreter/builtin_ops.hpp"
+#include "runtime/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
-LIRInstructionExecutor::LIRInstructionExecutor(ExecutionContext& context)
+InstructionRunner::InstructionRunner(ExecutionContext& context)
     : ctx_(context) {
 }
 
 // Execute a single instruction in the given context
-auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
-    -> LIRInstructionResult {
+auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
+    -> InstructionResult {
   auto& temp_table = ctx_.get().temp_table;
   auto& variable_table = ctx_.get().variable_table;
 
@@ -30,10 +30,10 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
   auto eval_binary_op =
       [&](const lir::Operand& lhs, const lir::Operand& rhs,
           const std::function<RuntimeValue(RuntimeValue, RuntimeValue)>& op)
-      -> LIRInstructionResult {
+      -> InstructionResult {
     const auto result = op(get_temp(lhs), get_temp(rhs));
     temp_table.Write(instr.result.value(), result);
-    return LIRInstructionResult::Continue();
+    return InstructionResult::Continue();
   };
 
   switch (instr.kind) {
@@ -45,20 +45,20 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       const auto& literal = instr.operands[0].literal;
       RuntimeValue value = RuntimeValue::FromLiteral(literal);
       temp_table.Write(instr.result.value(), value);
-      return LIRInstructionResult::Continue();
+      return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kLoadVariable: {
       const auto& src_variable = get_variable(instr.operands[0]);
       temp_table.Write(instr.result.value(), src_variable);
-      return LIRInstructionResult::Continue();
+      return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariable: {
       const auto variable_name = instr.operands[0].name;
       const auto value = get_temp(instr.operands[1]);
       variable_table.Write(variable_name, value);
-      return LIRInstructionResult::Continue(variable_name);
+      return InstructionResult::Continue(variable_name);
     }
 
     case lir::InstructionKind::kBinaryAdd: {
@@ -121,7 +121,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       if (src.type == common::Type::String() &&
           target_type == common::Type::String()) {
         temp_table.Write(instr.result.value(), src);
-        return LIRInstructionResult::Continue();
+        return InstructionResult::Continue();
       }
 
       // Ensure both source and target types are two-state
@@ -153,18 +153,18 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
 
       // Write result to destination temp
       temp_table.Write(instr.result.value(), result);
-      return LIRInstructionResult::Continue();
+      return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kWaitEvent: {
-      return LIRInstructionResult::WaitEvent(instr.wait_triggers);
+      return InstructionResult::WaitEvent(instr.wait_triggers);
     }
 
     case lir::InstructionKind::kDelay: {
       assert(instr.operands[0].IsLiteral());
       const auto& literal = instr.operands[0].literal;
       const auto delay_amount = RuntimeValue::FromLiteral(literal).AsUInt64();
-      return LIRInstructionResult::Delay(delay_amount);
+      return InstructionResult::Delay(delay_amount);
     }
 
     case lir::InstructionKind::kSystemCall: {
@@ -174,7 +174,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
         // 0 = no info, 1 = minimal info, 2 = full stats
 
         // For now, we just terminate the simulation
-        return LIRInstructionResult::Finish();
+        return InstructionResult::Finish();
       }
 
       throw std::runtime_error(
@@ -185,7 +185,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLabel());
       const auto& target = instr.operands[0].name;
-      return LIRInstructionResult::Jump(target);
+      return InstructionResult::Jump(target);
     }
 
     case lir::InstructionKind::kBranch: {
@@ -202,7 +202,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       bool condition_result = condition.AsInt64() != 0;
 
       const auto& next_label = condition_result ? true_target : false_target;
-      return LIRInstructionResult::Jump(next_label);
+      return InstructionResult::Jump(next_label);
     }
   }
 }

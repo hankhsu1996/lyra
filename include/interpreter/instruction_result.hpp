@@ -10,7 +10,7 @@
 namespace lyra::interpreter {
 
 // Represents the result of executing a single LIR instruction
-struct LIRInstructionResult {
+struct InstructionResult {
   enum class Kind { kContinue, kDelay, kWaitEvent, kFinish, kJump };
 
   Kind kind{};
@@ -29,8 +29,8 @@ struct LIRInstructionResult {
 
   static auto Continue(
       std::optional<std::string> modified_variable = std::nullopt)
-      -> LIRInstructionResult {
-    return LIRInstructionResult{
+      -> InstructionResult {
+    return InstructionResult{
         .kind = Kind::kContinue,
         .modified_variable = std::move(modified_variable)};
   }
@@ -38,8 +38,8 @@ struct LIRInstructionResult {
   static auto Delay(
       uint64_t amount,
       std::optional<std::string> modified_variable = std::nullopt)
-      -> LIRInstructionResult {
-    return LIRInstructionResult{
+      -> InstructionResult {
+    return InstructionResult{
         .kind = Kind::kDelay,
         .delay_amount = amount,
         .modified_variable = std::move(modified_variable)};
@@ -48,8 +48,8 @@ struct LIRInstructionResult {
   static auto WaitEvent(
       std::vector<common::Trigger<std::string>> triggers,
       std::optional<std::string> modified_variable = std::nullopt)
-      -> LIRInstructionResult {
-    return LIRInstructionResult{
+      -> InstructionResult {
+    return InstructionResult{
         .kind = Kind::kWaitEvent,
         .triggers = std::move(triggers),
         .modified_variable = std::move(modified_variable)};
@@ -57,8 +57,8 @@ struct LIRInstructionResult {
 
   static auto Finish(
       std::optional<std::string> modified_variable = std::nullopt)
-      -> LIRInstructionResult {
-    return LIRInstructionResult{
+      -> InstructionResult {
+    return InstructionResult{
         .kind = Kind::kFinish,
         .modified_variable = std::move(modified_variable)};
   }
@@ -66,8 +66,8 @@ struct LIRInstructionResult {
   static auto Jump(
       std::string label,
       std::optional<std::string> modified_variable = std::nullopt)
-      -> LIRInstructionResult {
-    return LIRInstructionResult{
+      -> InstructionResult {
+    return InstructionResult{
         .kind = Kind::kJump,
         .target_label = std::move(label),
         .modified_variable = std::move(modified_variable)};

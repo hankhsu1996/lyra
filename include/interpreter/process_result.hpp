@@ -10,7 +10,7 @@
 namespace lyra::interpreter {
 
 // Result of running a Process execution
-struct LIRProcessResult {
+struct ProcessResult {
   enum class Kind { kComplete, kDelay, kWaitEvent, kFinish };
 
   Kind kind = Kind::kComplete;
@@ -27,16 +27,16 @@ struct LIRProcessResult {
   std::vector<std::string> modified_variables;
 
   static auto Complete(std::vector<std::string> modified_variables)
-      -> LIRProcessResult {
-    return LIRProcessResult{
+      -> ProcessResult {
+    return ProcessResult{
         .kind = Kind::kComplete,
         .modified_variables = std::move(modified_variables)};
   }
 
   static auto Delay(
       uint64_t amount, std::size_t block_index, std::size_t instruction_index,
-      std::vector<std::string> modified_variables) -> LIRProcessResult {
-    return LIRProcessResult{
+      std::vector<std::string> modified_variables) -> ProcessResult {
+    return ProcessResult{
         .kind = Kind::kDelay,
         .delay_amount = amount,
         .block_index = block_index,
@@ -47,8 +47,8 @@ struct LIRProcessResult {
   static auto WaitEvent(
       std::vector<common::Trigger<std::string>> triggers,
       std::size_t block_index, std::size_t instruction_index,
-      std::vector<std::string> modified_variables) -> LIRProcessResult {
-    return LIRProcessResult{
+      std::vector<std::string> modified_variables) -> ProcessResult {
+    return ProcessResult{
         .kind = Kind::kWaitEvent,
         .block_index = block_index,
         .resume_instruction_index = instruction_index,
@@ -57,8 +57,8 @@ struct LIRProcessResult {
   }
 
   static auto Finish(std::vector<std::string> modified_variables)
-      -> LIRProcessResult {
-    return LIRProcessResult{
+      -> ProcessResult {
+    return ProcessResult{
         .kind = Kind::kFinish,
         .modified_variables = std::move(modified_variables)};
   }
