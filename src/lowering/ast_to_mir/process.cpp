@@ -32,6 +32,7 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       break;
     }
 
+    case ProceduralBlockKind::AlwaysLatch:
     case ProceduralBlockKind::AlwaysComb: {
       process->process_kind = mir::ProcessKind::kInitial;
 
@@ -52,9 +53,10 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       loop_block->statements.push_back(LowerStatement(slang_statement));
 
       // while (true) { wait_event; body; }
+      auto condition =
+          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
       auto loop = std::make_unique<mir::WhileStatement>(
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true)),
-          std::move(loop_block));
+          std::move(condition), std::move(loop_block));
 
       // Insert an initial execution of the body before entering the loop.
       // This models the SystemVerilog always_comb behavior that executes once
@@ -68,8 +70,22 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     }
 
     case ProceduralBlockKind::Always:
-    case ProceduralBlockKind::AlwaysLatch:
-    case ProceduralBlockKind::AlwaysFF:
+    case ProceduralBlockKind::AlwaysFF: {
+      process->process_kind = mir::ProcessKind::kInitial;
+
+      // Lower the user's body, which should contain WaitEventStatement itself
+      auto loop_block = LowerStatement(procedural_block.getBody());
+
+      // Simply wrap in while (true) { ... }
+      auto condition =
+          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto loop = std::make_unique<mir::WhileStatement>(
+          std::move(condition), std::move(loop_block));
+
+      process->body = std::move(loop);
+      break;
+    }
+
     case ProceduralBlockKind::Final:
       throw std::runtime_error(fmt::format(
           "Unsupported procedural block kind {} in AST to MIR LowerProcess",

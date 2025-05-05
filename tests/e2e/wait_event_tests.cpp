@@ -75,3 +75,124 @@ TEST(WaitEventTest, WaitThenDelay) {
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 7);
 }
+
+TEST(WaitEventTest, PosedgeTrigger) {
+  std::string code = R"(
+    module Test;
+      int clk, seen;
+      initial begin
+        @(posedge clk);
+        seen = 1;
+      end
+
+      initial begin
+        clk = 0;
+        #5 clk = 1;
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
+  EXPECT_EQ(result.final_time, 5);
+}
+
+TEST(WaitEventTest, NegedgeTrigger) {
+  std::string code = R"(
+    module Test;
+      int clk, seen;
+      initial begin
+        @(negedge clk);
+        seen = 1;
+      end
+
+      initial begin
+        clk = 1;
+        #5 clk = 0;
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
+  EXPECT_EQ(result.final_time, 5);
+}
+
+TEST(WaitEventTest, StrictEdgeTrigger) {
+  std::string code = R"(
+    module Test;
+      int clk, seen;
+      initial begin
+        @(edge clk);
+        seen = 1;
+      end
+
+      initial begin
+        clk = 0;
+        #5 clk = 1;
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
+  EXPECT_EQ(result.final_time, 5);
+}
+
+TEST(WaitEventTest, AnyChangeStringTrigger) {
+  std::string code = R"(
+    module Test;
+      string s;
+      int seen;
+      initial begin
+        @(s);
+        seen = 1;
+      end
+
+      initial begin
+        s = "abc";
+        #3 s = "def";
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
+  EXPECT_EQ(result.final_time, 3);
+}
+
+TEST(WaitEventTest, AlwaysFFPosedge) {
+  std::string code = R"(
+    module Test;
+      int clk, q;
+      initial clk = 0;
+
+      always_ff @(posedge clk) q = 42;
+
+      initial begin
+        #2 clk = 1;  // posedge
+        #2 clk = 0;
+        #2 clk = 1;  // posedge
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("q").AsInt64(), 42);
+  EXPECT_EQ(result.final_time, 6);
+}
+
+TEST(WaitEventTest, AlwaysLatchBehavior) {
+  std::string code = R"(
+    module Test;
+      int a, b, q;
+      always_latch begin
+        if (a > 0)
+          q = a + b;
+      end
+
+      initial begin
+        a = 1; b = 2;
+        #5 a = 0;
+      end
+    endmodule
+  )";
+  auto result = lyra::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("q").AsInt64(), 3);
+  EXPECT_EQ(result.final_time, 5);
+}
