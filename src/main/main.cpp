@@ -5,10 +5,13 @@
 #include "driver/driver.hpp"
 #include "driver/driver_options.hpp"
 
+using Driver = lyra::driver::Driver;
+using DriverOptions = lyra::driver::DriverOptions;
+
 auto main() -> int {
   const std::vector<std::string> test_file_paths = {"src/main/test.sv"};
-  lyra::driver::DriverOptions options = {.dump_lir = true};
-  auto result = lyra::driver::Driver::RunFromFiles(test_file_paths, options);
+  DriverOptions options = {.dump_lir = true};
+  auto result = Driver::RunFromFiles(test_file_paths, options);
 
   std::cout << "[ Simulation Result ]\n";
   const auto& val = result.ReadVariable("a");
