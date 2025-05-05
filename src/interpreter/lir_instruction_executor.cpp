@@ -58,7 +58,7 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       const auto variable_name = instr.operands[0].name;
       const auto value = get_temp(instr.operands[1]);
       variable_table.Write(variable_name, value);
-      return LIRInstructionResult::Continue();
+      return LIRInstructionResult::Continue(variable_name);
     }
 
     case lir::InstructionKind::kBinaryAdd: {

@@ -24,8 +24,8 @@ struct Trigger {
     }
   }
 
-  static auto AnyEdge(const VariableType& variable) -> Trigger {
-    return Trigger{EdgeKind::kBothEdge, variable};
+  static auto AnyChange(const VariableType& variable) -> Trigger {
+    return Trigger{EdgeKind::kAnyChange, variable};
   }
 };
 

@@ -41,7 +41,8 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
 
       std::vector<common::Trigger<std::string>> triggers;
       for (const auto& variable : variables) {
-        triggers.emplace_back(common::Trigger<std::string>::AnyEdge(variable));
+        triggers.emplace_back(
+            common::Trigger<std::string>::AnyChange(variable));
       }
 
       // Build the body for the loop: wait for triggers, then execute the logic

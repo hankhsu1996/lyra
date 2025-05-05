@@ -71,6 +71,9 @@ struct RuntimeValue {
   [[nodiscard]] auto ToString() const -> std::string {
     return fmt::format("{}", value.ToString());
   }
+
+  [[nodiscard]] auto operator==(const RuntimeValue& rhs) const
+      -> bool = default;
 };
 
 inline auto operator<<(std::ostream& os, const RuntimeValue& value)

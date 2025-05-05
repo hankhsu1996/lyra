@@ -46,6 +46,8 @@ auto LIRSimulationScheduler::Run() -> uint64_t {
 void LIRSimulationScheduler::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
     if (!context_.get().variable_table.Exists(variable.name)) {
+      RuntimeValue initial_value;
+
       switch (variable.type.kind) {
         case common::Type::Kind::kVoid:
           break;
@@ -53,20 +55,24 @@ void LIRSimulationScheduler::InitializeVariables() {
           auto two_state_data =
               std::get<common::TwoStateData>(variable.type.data);
           if (two_state_data.is_signed) {
-            context_.get().variable_table.CreateVariable(
-                variable.name,
-                RuntimeValue::TwoStateSigned(0, two_state_data.bit_width));
+            initial_value =
+                RuntimeValue::TwoStateSigned(0, two_state_data.bit_width);
           } else {
-            context_.get().variable_table.CreateVariable(
-                variable.name,
-                RuntimeValue::TwoStateUnsigned(0, two_state_data.bit_width));
+            initial_value =
+                RuntimeValue::TwoStateUnsigned(0, two_state_data.bit_width);
           }
           break;
         }
         case common::Type::Kind::kString:
-          context_.get().variable_table.CreateVariable(
-              variable.name, RuntimeValue::String(""));
+          initial_value = RuntimeValue::String("");
+          break;
       }
+
+      // Initialize both current and previous value
+      context_.get().variable_table.CreateVariable(
+          variable.name, initial_value);
+      context_.get().variable_table.UpdatePrevious(
+          variable.name, initial_value);
     }
   }
 }
@@ -141,9 +147,6 @@ void LIRSimulationScheduler::WakeWaitingProcesses(
         context_.get().variable_table.ReadPrevious(variable);
     RuntimeValue new_value = context_.get().variable_table.Read(variable);
 
-    int64_t old_int = old_value.AsInt64();
-    int64_t new_int = new_value.AsInt64();
-
     auto map_it = wait_map_.find(variable);
     if (map_it == wait_map_.end()) {
       continue;
@@ -166,18 +169,33 @@ void LIRSimulationScheduler::WakeWaitingProcesses(
 
       switch (wait_info.edge_kind) {
         case common::EdgeKind::kAnyChange:
-          should_trigger = old_int != new_int;
+          should_trigger = (old_value != new_value);
           break;
+
         case common::EdgeKind::kPosedge:
-          should_trigger = (old_int == 0 && new_int == 1);
-          break;
         case common::EdgeKind::kNegedge:
-          should_trigger = (old_int == 1 && new_int == 0);
+        case common::EdgeKind::kBothEdge: {
+          assert(old_value.IsTwoState() && new_value.IsTwoState());
+
+          int64_t old_int = old_value.AsInt64();
+          int64_t new_int = new_value.AsInt64();
+
+          switch (wait_info.edge_kind) {
+            case common::EdgeKind::kPosedge:
+              should_trigger = (old_int == 0 && new_int == 1);
+              break;
+            case common::EdgeKind::kNegedge:
+              should_trigger = (old_int == 1 && new_int == 0);
+              break;
+            case common::EdgeKind::kBothEdge:
+              should_trigger = (old_int == 0 && new_int == 1) ||
+                               (old_int == 1 && new_int == 0);
+              break;
+            default:
+              break;
+          }
           break;
-        case common::EdgeKind::kBothEdge:
-          should_trigger =
-              (old_int == 0 && new_int == 1) || (old_int == 1 && new_int == 0);
-          break;
+        }
       }
 
       if (should_trigger) {

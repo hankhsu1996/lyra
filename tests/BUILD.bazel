@@ -47,3 +47,13 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "wait_event_tests",
+    size = "small",
+    srcs = ["e2e/wait_event_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)

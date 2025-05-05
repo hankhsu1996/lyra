@@ -11,9 +11,7 @@ struct TwoStateData {
   size_t bit_width;
   bool is_signed;
 
-  auto operator==(const TwoStateData& other) const -> bool {
-    return bit_width == other.bit_width && is_signed == other.is_signed;
-  }
+  auto operator==(const TwoStateData& other) const -> bool = default;
 };
 
 struct Type {
@@ -64,13 +62,7 @@ struct Type {
     return Type{.kind = Kind::kString};
   }
 
-  [[nodiscard]] auto operator==(const Type& other) const -> bool {
-    return kind == other.kind && data == other.data;
-  }
-
-  [[nodiscard]] auto operator!=(const Type& other) const -> bool {
-    return !(*this == other);
-  }
+  auto operator==(const Type& other) const -> bool = default;
 
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
