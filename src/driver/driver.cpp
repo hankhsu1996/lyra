@@ -1,4 +1,4 @@
-#include "simulation/simulator.hpp"
+#include "driver/driver.hpp"
 
 #include <iostream>
 #include <memory>
@@ -12,27 +12,26 @@
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir/mir_to_lir.hpp"
 
-namespace lyra {
+namespace lyra::driver {
 
-auto Simulator::RunFromSource(
-    const std::string& code, const SimulationOptions& options)
-    -> SimulationResult {
+auto Driver::RunFromSource(
+    const std::string& code, const DriverOptions& options) -> SimulationResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
   return RunWithCompilation(std::move(compilation), options);
 }
 
-auto Simulator::RunFromFiles(
-    const std::vector<std::string>& paths, const SimulationOptions& options)
+auto Driver::RunFromFiles(
+    const std::vector<std::string>& paths, const DriverOptions& options)
     -> SimulationResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
   return RunWithCompilation(std::move(compilation), options);
 }
 
-auto Simulator::RunWithCompilation(
+auto Driver::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
-    const SimulationOptions& options) -> SimulationResult {
+    const DriverOptions& options) -> SimulationResult {
   const auto& root = compilation->getRoot();
 
   auto mir = lowering::AstToMir(root);
@@ -52,4 +51,4 @@ auto Simulator::RunWithCompilation(
       .context = std::move(context), .final_time = final_time};
 }
 
-}  // namespace lyra
+}  // namespace lyra::driver

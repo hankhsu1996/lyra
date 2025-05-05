@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -20,7 +22,7 @@ TEST(WaitEventTest, AlwaysCombRunsOnceAtTimeZero) {
       always_comb c = a + b;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 3);
   EXPECT_EQ(result.final_time, 0);
 }
@@ -38,7 +40,7 @@ TEST(WaitEventTest, AlwaysCombReactsToInputChange) {
       always_comb c = a + b;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 5);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -54,7 +56,7 @@ TEST(WaitEventTest, WaitUntilChange) {
       initial #5 a = 1;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -71,7 +73,7 @@ TEST(WaitEventTest, WaitThenDelay) {
       initial #5 a = 1;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 7);
 }
@@ -91,7 +93,7 @@ TEST(WaitEventTest, PosedgeTrigger) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -111,7 +113,7 @@ TEST(WaitEventTest, NegedgeTrigger) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -131,7 +133,7 @@ TEST(WaitEventTest, StrictEdgeTrigger) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -152,7 +154,7 @@ TEST(WaitEventTest, AnyChangeStringTrigger) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 3);
 }
@@ -172,7 +174,7 @@ TEST(WaitEventTest, AlwaysFFPosedge) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 42);
   EXPECT_EQ(result.final_time, 6);
 }
@@ -192,7 +194,7 @@ TEST(WaitEventTest, AlwaysLatchBehavior) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 3);
   EXPECT_EQ(result.final_time, 5);
 }

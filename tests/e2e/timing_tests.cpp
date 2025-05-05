@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -14,7 +16,7 @@ TEST(TimingTest, OnlyDelay) {
       initial #5;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.final_time, 5);
 }
 
@@ -25,7 +27,7 @@ TEST(TimingTest, DelayWithInlineAssign) {
       initial #5 a = 1;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -40,7 +42,7 @@ TEST(TimingTest, DelayThenAssign) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 2);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -56,7 +58,7 @@ TEST(TimingTest, MultipleDelaysThenAssign) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 3);
   EXPECT_EQ(result.final_time, 5);
 }
@@ -73,7 +75,7 @@ TEST(TimingTest, MixedDelayForms) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 12);  // 10+1+1
   EXPECT_EQ(result.ReadVariable("b").AsInt64(), 11);  // 10+1
   EXPECT_EQ(result.final_time, 5);

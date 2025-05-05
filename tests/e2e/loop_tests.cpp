@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -23,7 +25,7 @@ TEST(LoopTest, BasicWhileCounter) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("counter").AsInt64(), 5);
   EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 10);  // 0+1+2+3+4 = 10
 }
@@ -40,7 +42,7 @@ TEST(LoopTest, WhileWithFalseCondition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("x").AsInt64(), 10);  // Should remain unchanged
 }
 
@@ -59,7 +61,7 @@ TEST(LoopTest, WhileWithVariableCondition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("i").AsInt64(), 0);
   EXPECT_EQ(result.ReadVariable("result").AsInt64(), 6);  // 3+2+1 = 6
 }
@@ -84,7 +86,7 @@ TEST(LoopTest, NestedWhileLoops) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("i").AsInt64(), 3);
   EXPECT_EQ(result.ReadVariable("j").AsInt64(), 2);
   // 3 outer loops × 2 inner loops
@@ -106,7 +108,7 @@ TEST(LoopTest, BasicDoWhileCounter) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("counter").AsInt64(), 5);
   EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 10);  // 0+1+2+3+4 = 10
 }
@@ -123,7 +125,7 @@ TEST(LoopTest, DoWhileWithFalseCondition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("x").AsInt64(), 20);  // Should execute once
 }
 
@@ -142,7 +144,7 @@ TEST(LoopTest, DoWhileWithVariableCondition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("i").AsInt64(), 0);
   EXPECT_EQ(result.ReadVariable("result").AsInt64(), 6);  // 3+2+1 = 6
 }
@@ -167,7 +169,7 @@ TEST(LoopTest, NestedDoWhileLoops) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("i").AsInt64(), 3);
   EXPECT_EQ(result.ReadVariable("j").AsInt64(), 2);
   // 3 outer loops × 2 inner loops
@@ -187,6 +189,6 @@ TEST(LoopTest, ForeverLoop) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("counter").AsInt64(), 5);
 }

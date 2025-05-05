@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -20,7 +22,7 @@ TEST(BinaryOpsTest, ArithmeticAddition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 30);
 }
 
@@ -35,7 +37,7 @@ TEST(BinaryOpsTest, ArithmeticSubtraction) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 18);
 }
 
@@ -50,7 +52,7 @@ TEST(BinaryOpsTest, ArithmeticMultiplication) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 35);
 }
 
@@ -67,7 +69,7 @@ TEST(BinaryOpsTest, TypePromotionBitToInt) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 11);
 }
 
@@ -83,7 +85,7 @@ TEST(BinaryOpsTest, TypePromotionIntToLongInt) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 1100);
 }
 
@@ -99,7 +101,7 @@ TEST(BinaryOpsTest, TypePromotionBitToLongInt) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 1001);
 }
 
@@ -117,7 +119,7 @@ TEST(BinaryOpsTest, ComparisonEqual) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), false);
 }
@@ -135,7 +137,7 @@ TEST(BinaryOpsTest, ComparisonNotEqual) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), false);
 }
@@ -153,7 +155,7 @@ TEST(BinaryOpsTest, ComparisonLessThan) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), false);
 }
@@ -173,7 +175,7 @@ TEST(BinaryOpsTest, ComparisonLessThanEqual) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("e").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("f").AsBool(), false);
@@ -192,7 +194,7 @@ TEST(BinaryOpsTest, ComparisonGreaterThan) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), false);
 }
@@ -212,7 +214,7 @@ TEST(BinaryOpsTest, ComparisonGreaterThanEqual) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("d").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("e").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("f").AsBool(), false);
@@ -233,7 +235,7 @@ TEST(BinaryOpsTest, StringEqualComparison) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("r1").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("r2").AsBool(), false);
 }
@@ -252,7 +254,7 @@ TEST(BinaryOpsTest, StringNotEqualComparison) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("r1").AsBool(), true);
   EXPECT_EQ(result.ReadVariable("r2").AsBool(), false);
 }
@@ -270,6 +272,6 @@ TEST(BinaryOpsTest, ComplexExpression) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("d").AsInt64(), 35);
 }

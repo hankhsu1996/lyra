@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "core/simulation_result.hpp"
-#include "simulation/simulation_options.hpp"
+#include "driver/driver_options.hpp"
 
 namespace slang {
 class SourceManager;
@@ -14,24 +14,24 @@ namespace slang::ast {
 class Compilation;
 }
 
-namespace lyra {
+namespace lyra::driver {
 
-class Simulator {
+class Driver {
  public:
-  Simulator() = default;
+  Driver() = default;
 
   static auto RunFromSource(
-      const std::string& code, const SimulationOptions& options)
+      const std::string& code, const DriverOptions& options = {})
       -> SimulationResult;
 
   static auto RunFromFiles(
-      const std::vector<std::string>& paths, const SimulationOptions& options)
+      const std::vector<std::string>& paths, const DriverOptions& options = {})
       -> SimulationResult;
 
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,
-      const SimulationOptions& options) -> SimulationResult;
+      const DriverOptions& options) -> SimulationResult;
 };
 
-}  // namespace lyra
+}  // namespace lyra::driver

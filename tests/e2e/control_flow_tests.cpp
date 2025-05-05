@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -20,6 +22,6 @@ TEST(ControlFlowTest, IfElseWithLiteralCondition) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
 }

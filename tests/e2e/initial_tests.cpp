@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "simulation/simulate.hpp"
+#include "driver/driver.hpp"
+
+using Driver = lyra::driver::Driver;
 
 auto main(int argc, char** argv) -> int {
   testing::InitGoogleTest(&argc, argv);
@@ -15,7 +17,7 @@ TEST(InitialTest, AssignConstant) {
       initial a = 42;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
 }
 
@@ -27,7 +29,7 @@ TEST(InitialTest, TwoInitialBlocks) {
       initial b = 20;
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 10);
   EXPECT_EQ(result.ReadVariable("b").AsInt64(), 20);
 }
@@ -43,7 +45,7 @@ TEST(InitialTest, AddAndAssignSequence) {
       end
     endmodule
   )";
-  auto result = lyra::RunFromSource(code);
+  auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 5);
   EXPECT_EQ(result.ReadVariable("b").AsInt64(), 8);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 12);
