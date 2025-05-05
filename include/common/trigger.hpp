@@ -4,7 +4,7 @@
 
 namespace lyra::common {
 
-enum class EdgeKind { kPosedge, kNegedge, kAnyEdge };
+enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
 
 template <typename VariableType>
 struct Trigger {
@@ -13,17 +13,19 @@ struct Trigger {
 
   [[nodiscard]] auto ToString() const -> std::string {
     switch (edge_kind) {
+      case EdgeKind::kAnyChange:
+        return fmt::format("{}", variable);
       case EdgeKind::kPosedge:
         return fmt::format("posedge {}", variable);
       case EdgeKind::kNegedge:
         return fmt::format("negedge {}", variable);
-      case EdgeKind::kAnyEdge:
+      case EdgeKind::kBothEdge:
         return fmt::format("{}", variable);
     }
   }
 
   static auto AnyEdge(const VariableType& variable) -> Trigger {
-    return Trigger{EdgeKind::kAnyEdge, variable};
+    return Trigger{EdgeKind::kBothEdge, variable};
   }
 };
 

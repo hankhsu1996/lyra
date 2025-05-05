@@ -1,21 +1,23 @@
 #include "interpreter/lir_simulation_scheduler.hpp"
 
 #include <cstdint>
+#include <unordered_set>
 
 #include <fmt/core.h>
+
+#include "core/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
 LIRSimulationScheduler::LIRSimulationScheduler(
-    const lir::Module& module, ExecutionContext& context,
-    VariableTriggerMap variable_triggers)
-    : module_(module),
-      context_(context),
-      process_interpreter_(context),
-      variable_to_triggers_(std::move(variable_triggers)) {
+    const lir::Module& module, ExecutionContext& context)
+    : module_(module), context_(context), process_interpreter_(context) {
 }
 
 auto LIRSimulationScheduler::Run() -> uint64_t {
+  // Initialize variables before starting simulation
+  InitializeVariables();
+
   ScheduleInitialProcesses();
   ScheduleAlwaysProcesses();
 
@@ -39,6 +41,34 @@ auto LIRSimulationScheduler::Run() -> uint64_t {
   }
 
   return simulation_time_;
+}
+
+void LIRSimulationScheduler::InitializeVariables() {
+  for (const auto& variable : module_.get().variables) {
+    if (!context_.get().variable_table.Exists(variable.name)) {
+      switch (variable.type.kind) {
+        case common::Type::Kind::kVoid:
+          break;
+        case common::Type::Kind::kTwoState: {
+          auto two_state_data =
+              std::get<common::TwoStateData>(variable.type.data);
+          if (two_state_data.is_signed) {
+            context_.get().variable_table.CreateVariable(
+                variable.name,
+                RuntimeValue::TwoStateSigned(0, two_state_data.bit_width));
+          } else {
+            context_.get().variable_table.CreateVariable(
+                variable.name,
+                RuntimeValue::TwoStateUnsigned(0, two_state_data.bit_width));
+          }
+          break;
+        }
+        case common::Type::Kind::kString:
+          context_.get().variable_table.CreateVariable(
+              variable.name, RuntimeValue::String(""));
+      }
+    }
+  }
 }
 
 void LIRSimulationScheduler::ScheduleInitialProcesses() {
@@ -68,47 +98,75 @@ void LIRSimulationScheduler::ExecuteOneEvent() {
   auto result =
       process_interpreter_.RunProcess(process, block_index, instruction_index);
 
-  // Process any variable triggers from this execution
-  ProcessVariableTriggers(result.modified_variables);
+  WakeWaitingProcesses(result.modified_variables);
 
-  if (result.kind == LIRProcessResult::Kind::kDelay) {
-    DelayedEvent delayed_event{
-        .ready_time = simulation_time_ + result.delay_amount,
-        .process = process,
-        .block_index = result.block_index,
-        .instruction_index = result.resume_instruction_index};
-    delay_queue_.push(delayed_event);
-    return;
-  }
+  switch (result.kind) {
+    case LIRProcessResult::Kind::kDelay: {
+      DelayedEvent delayed_event{
+          .ready_time = simulation_time_ + result.delay_amount,
+          .process = process,
+          .block_index = result.block_index,
+          .instruction_index = result.resume_instruction_index};
+      delay_queue_.push(delayed_event);
+      break;
+    }
 
-  if (result.kind == LIRProcessResult::Kind::kFinish) {
-    finish_requested_ = true;
-    return;
+    case LIRProcessResult::Kind::kWaitEvent: {
+      for (const auto& trigger : result.triggers) {
+        wait_map_[trigger.variable].insert(process);
+        wait_set_[process] = {
+            .block_index = result.block_index,
+            .instruction_index = result.resume_instruction_index,
+            .edge_kind = trigger.edge_kind};
+      }
+      break;
+    }
+    case LIRProcessResult::Kind::kFinish: {
+      finish_requested_ = true;
+      break;
+    }
+
+    case LIRProcessResult::Kind::kComplete: {
+      break;
+    }
   }
 }
 
-void LIRSimulationScheduler::ProcessVariableTriggers(
+void LIRSimulationScheduler::WakeWaitingProcesses(
     const std::vector<std::string>& modified_variables) {
-  for (const auto& variable_name : modified_variables) {
-    auto it = variable_to_triggers_.find(variable_name);
-    if (it == variable_to_triggers_.end()) {
-      continue;  // No triggers for this variable
+  std::unordered_set<std::shared_ptr<lir::Process>> resumed;
+
+  for (const auto& variable : modified_variables) {
+    RuntimeValue old_value =
+        context_.get().variable_table.ReadPrevious(variable);
+    RuntimeValue new_value = context_.get().variable_table.Read(variable);
+
+    int64_t old_int = old_value.AsInt64();
+    int64_t new_int = new_value.AsInt64();
+
+    auto map_it = wait_map_.find(variable);
+    if (map_it == wait_map_.end()) {
+      continue;
     }
 
-    // Get the current and previous values for edge detection
-    RuntimeValue old_val =
-        context_.get().variable_table.ReadPrevious(variable_name);
-    RuntimeValue new_val = context_.get().variable_table.Read(variable_name);
+    std::unordered_set<std::shared_ptr<lir::Process>> to_remove;
 
-    int64_t old_int = old_val.AsInt64();
-    int64_t new_int = new_val.AsInt64();
+    for (const auto& process : map_it->second) {
+      if (resumed.contains(process)) {
+        continue;
+      }
 
-    // Check each trigger condition
-    for (const auto& [trigger, triggered_process] : it->second) {
+      auto info_it = wait_set_.find(process);
+      if (info_it == wait_set_.end()) {
+        continue;  // Should not happen, but safety check
+      }
+
+      const auto& wait_info = info_it->second;
       bool should_trigger = false;
-      switch (trigger.edge_kind) {
-        case common::EdgeKind::kAnyEdge:
-          should_trigger = (old_int != new_int);
+
+      switch (wait_info.edge_kind) {
+        case common::EdgeKind::kAnyChange:
+          should_trigger = old_int != new_int;
           break;
         case common::EdgeKind::kPosedge:
           should_trigger = (old_int == 0 && new_int == 1);
@@ -116,15 +174,32 @@ void LIRSimulationScheduler::ProcessVariableTriggers(
         case common::EdgeKind::kNegedge:
           should_trigger = (old_int == 1 && new_int == 0);
           break;
+        case common::EdgeKind::kBothEdge:
+          should_trigger =
+              (old_int == 0 && new_int == 1) || (old_int == 1 && new_int == 0);
+          break;
       }
 
       if (should_trigger) {
-        active_queue_.push({triggered_process, 0, 0});
+        active_queue_.push(ScheduledEvent{
+            .process = process,
+            .block_index = wait_info.block_index,
+            .instruction_index = wait_info.instruction_index});
+        resumed.insert(process);
+        to_remove.insert(process);
+        wait_set_.erase(process);  // Cleanup from wait_set_
       }
     }
 
-    // Update the previous value for future edge detection
-    context_.get().variable_table.UpdatePrevious(variable_name, new_val);
+    for (const auto& proc : to_remove) {
+      map_it->second.erase(proc);
+    }
+
+    if (map_it->second.empty()) {
+      wait_map_.erase(map_it);
+    }
+
+    context_.get().variable_table.UpdatePrevious(variable, new_value);
   }
 }
 

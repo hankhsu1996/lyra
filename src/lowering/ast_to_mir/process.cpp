@@ -33,18 +33,36 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     }
 
     case ProceduralBlockKind::AlwaysComb: {
-      process->process_kind = mir::ProcessKind::kAlways;
+      process->process_kind = mir::ProcessKind::kInitial;
 
       const auto& slang_statement = procedural_block.getBody();
+      auto main_body = LowerStatement(slang_statement);
+      auto variables = CollectSensitivityList(*main_body);
 
-      auto statement = LowerStatement(slang_statement);
-      auto variables = CollectSensitivityList(*statement);
-      process->body = std::move(statement);
-
+      std::vector<common::Trigger<std::string>> triggers;
       for (const auto& variable : variables) {
-        auto trigger = mir::Trigger::AnyEdge(variable);
-        process->trigger_list.push_back(std::move(trigger));
+        triggers.emplace_back(common::Trigger<std::string>::AnyEdge(variable));
       }
+
+      // Build the body for the loop: wait for triggers, then execute the logic
+      auto loop_block = std::make_unique<mir::BlockStatement>();
+      loop_block->statements.push_back(
+          std::make_unique<mir::WaitEventStatement>(std::move(triggers)));
+      loop_block->statements.push_back(LowerStatement(slang_statement));
+
+      // while (true) { wait_event; body; }
+      auto loop = std::make_unique<mir::WhileStatement>(
+          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true)),
+          std::move(loop_block));
+
+      // Insert an initial execution of the body before entering the loop.
+      // This models the SystemVerilog always_comb behavior that executes once
+      // at time 0.
+      auto full_block = std::make_unique<mir::BlockStatement>();
+      full_block->statements.push_back(std::move(main_body));
+      full_block->statements.push_back(std::move(loop));
+
+      process->body = std::move(full_block);
       break;
     }
 

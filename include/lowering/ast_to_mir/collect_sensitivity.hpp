@@ -48,6 +48,10 @@ class SensitivityCollector : public mir::MirVisitor {
     statement.expression->Accept(*this);
   }
 
+  void Visit(const mir::WaitEventStatement& /*unused*/) override {
+    // No variable involved in triggers
+  }
+
   void Visit(const mir::DelayStatement& /*unused*/) override {
   }
 

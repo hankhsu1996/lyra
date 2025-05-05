@@ -156,6 +156,10 @@ auto LIRInstructionExecutor::ExecuteInstruction(const lir::Instruction& instr)
       return LIRInstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kWaitEvent: {
+      return LIRInstructionResult::WaitEvent(instr.wait_triggers);
+    }
+
     case lir::InstructionKind::kDelay: {
       assert(instr.operands[0].IsLiteral());
       const auto& literal = instr.operands[0].literal;

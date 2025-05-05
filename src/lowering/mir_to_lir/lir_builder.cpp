@@ -17,11 +17,6 @@ void LirBuilder::BeginProcess(lir::ProcessKind kind) {
   current_blocks_.clear();
 }
 
-void LirBuilder::AddTrigger(lir::Trigger trigger) {
-  assert(current_process_);
-  current_process_->trigger_list.push_back(std::move(trigger));
-}
-
 void LirBuilder::StartBlock(const std::string& label) {
   assert(current_process_);
 

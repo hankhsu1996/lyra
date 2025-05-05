@@ -8,6 +8,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include "common/trigger.hpp"
 #include "mir/expression.hpp"
 #include "mir/visitor.hpp"
 
@@ -18,6 +19,7 @@ class Statement {
   enum class Kind {
     kAssign,
     kExpression,
+    kWaitEvent,
     kDelay,
     kConditional,
     kWhile,
@@ -46,6 +48,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Assign";
     case Statement::Kind::kExpression:
       return "Expression";
+    case Statement::Kind::kWaitEvent:
+      return "WaitEvent";
     case Statement::Kind::kDelay:
       return "Delay";
     case Statement::Kind::kConditional:
@@ -87,6 +91,22 @@ class ExpressionStatement : public Statement {
 
   explicit ExpressionStatement(std::unique_ptr<Expression> expression)
       : Statement(kKindValue), expression(std::move(expression)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class WaitEventStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kWaitEvent;
+
+  std::vector<common::Trigger<std::string>> triggers;
+
+  explicit WaitEventStatement(
+      std::vector<common::Trigger<std::string>> trigger_list)
+      : Statement(kKindValue), triggers(std::move(trigger_list)) {
   }
 
   void Accept(MirVisitor& visitor) const override {

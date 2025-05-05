@@ -36,6 +36,28 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       break;
     }
 
+    case mir::Statement::Kind::kExpression: {
+      const auto& expression_statement =
+          mir::As<mir::ExpressionStatement>(statement);
+
+      // Use assertion for internal consistency check
+      assert(expression_statement.expression);
+
+      // Lower the expression, which may produce instructions
+      LowerExpression(*expression_statement.expression, builder);
+      break;
+    }
+
+    case mir::Statement::Kind::kWaitEvent: {
+      const auto& wait = mir::As<mir::WaitEventStatement>(statement);
+
+      // Lower to a LIR wait-event instruction using the trigger list
+      auto instruction = lir::Instruction::WaitEvent(wait.triggers);
+      builder.AddInstruction(std::move(instruction));
+
+      break;
+    }
+
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(statement);
       auto delay_amount = Literal::ULongInt(delay.delay_amount);
@@ -43,16 +65,6 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
           lir::InstructionKind::kDelay, "",
           {lir::Operand::Literal(delay_amount)});
       builder.AddInstruction(std::move(instruction));
-      break;
-    }
-
-    case mir::Statement::Kind::kBlock: {
-      const auto& block = mir::As<mir::BlockStatement>(statement);
-      for (const auto& statement : block.statements) {
-        if (statement) {
-          LowerStatement(*statement, builder);
-        }
-      }
       break;
     }
 
@@ -220,15 +232,13 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       break;
     }
 
-    case mir::Statement::Kind::kExpression: {
-      const auto& expression_statement =
-          mir::As<mir::ExpressionStatement>(statement);
-
-      // Use assertion for internal consistency check
-      assert(expression_statement.expression);
-
-      // Lower the expression, which may produce instructions
-      LowerExpression(*expression_statement.expression, builder);
+    case mir::Statement::Kind::kBlock: {
+      const auto& block = mir::As<mir::BlockStatement>(statement);
+      for (const auto& statement : block.statements) {
+        if (statement) {
+          LowerStatement(*statement, builder);
+        }
+      }
       break;
     }
   }

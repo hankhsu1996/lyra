@@ -33,6 +33,11 @@ auto LIRProcessInterpreter::RunProcess(
         }
         return LIRProcessResult::Complete(std::move(modified_variables));
 
+      case LIRBasicBlockResult::Kind::kWaitEvent:
+        return LIRProcessResult::WaitEvent(
+            block_result.triggers, block_index, instruction_index,
+            std::move(modified_variables));
+
       case LIRBasicBlockResult::Kind::kDelay:
         // Store where to resume (current block, instruction index from result)
         return LIRProcessResult::Delay(

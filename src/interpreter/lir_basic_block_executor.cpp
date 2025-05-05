@@ -26,6 +26,9 @@ auto LIRBasicBlockExecutor::RunBlock(
     switch (instruction_result.kind) {
       case LIRInstructionResult::Kind::kContinue:
         break;
+      case LIRInstructionResult::Kind::kWaitEvent:
+        return LIRBasicBlockResult::WaitEvent(
+            instruction_result.triggers, i + 1, std::move(modified_variables));
       case LIRInstructionResult::Kind::kDelay:
         return LIRBasicBlockResult::Delay(
             instruction_result.delay_amount, i + 1,

@@ -12,12 +12,13 @@ class SystemCallExpression;
 
 class Statement;
 class AssignStatement;
-class BlockStatement;
-class ConditionalStatement;
-class DelayStatement;
 class ExpressionStatement;
+class WaitEventStatement;
+class DelayStatement;
+class ConditionalStatement;
 class WhileStatement;
 class DoWhileStatement;
+class BlockStatement;
 
 class MirVisitor {
  public:
@@ -36,12 +37,13 @@ class MirVisitor {
   virtual void Visit(const SystemCallExpression&) = 0;
 
   virtual void Visit(const AssignStatement&) = 0;
-  virtual void Visit(const BlockStatement&) = 0;
-  virtual void Visit(const ConditionalStatement&) = 0;
-  virtual void Visit(const DelayStatement&) = 0;
   virtual void Visit(const ExpressionStatement&) = 0;
+  virtual void Visit(const WaitEventStatement&) = 0;
+  virtual void Visit(const DelayStatement&) = 0;
+  virtual void Visit(const ConditionalStatement&) = 0;
   virtual void Visit(const WhileStatement&) = 0;
   virtual void Visit(const DoWhileStatement&) = 0;
+  virtual void Visit(const BlockStatement&) = 0;
 };
 
 }  // namespace lyra::mir

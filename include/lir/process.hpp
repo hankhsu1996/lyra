@@ -35,9 +35,6 @@ struct Process {
   // List of basic blocks
   std::vector<std::unique_ptr<BasicBlock>> blocks;
 
-  // Sensitivity list for the process (empty for initial processes)
-  std::vector<Trigger> trigger_list;
-
   [[nodiscard]] auto ToString(
       common::FormatMode mode = common::FormatMode::kPlain,
       int indentation_level = 0) const -> std::string {
@@ -52,9 +49,6 @@ struct Process {
       out += fmt::format("Process {}", lyra::lir::ToString(kind));
     }
 
-    if (!trigger_list.empty()) {
-      out += fmt::format(" @({})", fmt::join(trigger_list, ", "));
-    }
     out += "\n";
 
     // If using basic blocks

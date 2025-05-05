@@ -4,6 +4,7 @@
 
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -51,37 +52,93 @@ auto LowerStatement(const slang::ast::Statement& statement)
       const auto& timed_statement = statement.as<slang::ast::TimedStatement>();
       const auto& timing_control = timed_statement.timing;
 
-      if (timing_control.kind != TimingControlKind::Delay) {
-        throw std::runtime_error(fmt::format(
-            "Unsupported timing control kind {} in AST to MIR LowerStatement",
-            slang::ast::toString(timing_control.kind)));
+      switch (timing_control.kind) {
+        case slang::ast::TimingControlKind::Invalid: {
+          throw std::runtime_error(fmt::format(
+              "Unsupported timing control kind {} in AST to MIR LowerStatement",
+              slang::ast::toString(timing_control.kind)));
+        }
+        case slang::ast::TimingControlKind::Delay: {
+          const auto& delay_control =
+              timing_control.as<slang::ast::DelayControl>();
+          const auto& expression = delay_control.expr;
+
+          if (expression.kind != ExpressionKind::IntegerLiteral) {
+            throw std::runtime_error(fmt::format(
+                "Unsupported delay expression kind {}",
+                slang::ast::toString(expression.kind)));
+          }
+
+          const auto& int_literal = expression.as<slang::ast::IntegerLiteral>();
+          auto delay_amount_opt = int_literal.getValue().as<uint64_t>();
+          if (!delay_amount_opt) {
+            throw std::runtime_error(
+                "Only constant integer delay is supported in timing control "
+                "lowering");
+          }
+
+          auto delay_statement =
+              std::make_unique<mir::DelayStatement>(delay_amount_opt.value());
+          auto inner_statement = LowerStatement(timed_statement.stmt);
+
+          auto block = std::make_unique<mir::BlockStatement>();
+          block->statements.push_back(std::move(delay_statement));
+          block->statements.push_back(std::move(inner_statement));
+          return block;
+        }
+
+        case slang::ast::TimingControlKind::SignalEvent: {
+          const auto& signal_event_control =
+              timing_control.as<slang::ast::SignalEventControl>();
+          const auto& expr = signal_event_control.expr;
+
+          if (expr.kind != ExpressionKind::NamedValue) {
+            throw std::runtime_error(
+                "Only simple identifier supported in signal event expression");
+          }
+
+          const auto& named_expr = expr.as<slang::ast::NamedValueExpression>();
+          std::string variable = std::string(named_expr.symbol.name);
+
+          common::EdgeKind edge_kind{};
+          switch (signal_event_control.edge) {
+            case slang::ast::EdgeKind::None:
+              edge_kind = common::EdgeKind::kAnyChange;
+              break;
+            case slang::ast::EdgeKind::PosEdge:
+              edge_kind = common::EdgeKind::kPosedge;
+              break;
+            case slang::ast::EdgeKind::NegEdge:
+              edge_kind = common::EdgeKind::kNegedge;
+              break;
+            case slang::ast::EdgeKind::BothEdges:
+              edge_kind = common::EdgeKind::kBothEdge;
+              break;
+          }
+
+          std::vector<common::Trigger<std::string>> triggers = {
+              {.edge_kind = edge_kind, .variable = std::move(variable)}};
+
+          auto wait_statement =
+              std::make_unique<mir::WaitEventStatement>(std::move(triggers));
+          auto inner_statement = LowerStatement(timed_statement.stmt);
+
+          auto block = std::make_unique<mir::BlockStatement>();
+          block->statements.push_back(std::move(wait_statement));
+          block->statements.push_back(std::move(inner_statement));
+          return block;
+        }
+        case slang::ast::TimingControlKind::EventList:
+        case slang::ast::TimingControlKind::ImplicitEvent:
+        case slang::ast::TimingControlKind::RepeatedEvent:
+        case slang::ast::TimingControlKind::Delay3:
+        case slang::ast::TimingControlKind::OneStepDelay:
+        case slang::ast::TimingControlKind::CycleDelay:
+        case slang::ast::TimingControlKind::BlockEventList:
+          throw std::runtime_error(fmt::format(
+              "Unsupported timing control kind {} in AST to MIR LowerStatement",
+              slang::ast::toString(timing_control.kind)));
       }
-
-      const auto& delay_control = timing_control.as<slang::ast::DelayControl>();
-      const auto& expression = delay_control.expr;
-
-      if (expression.kind != ExpressionKind::IntegerLiteral) {
-        throw std::runtime_error(fmt::format(
-            "Unsupported delay expression kind {}",
-            slang::ast::toString(expression.kind)));
-      }
-
-      const auto& int_literal = expression.as<slang::ast::IntegerLiteral>();
-      auto delay_amount_opt = int_literal.getValue().as<uint64_t>();
-      if (!delay_amount_opt) {
-        throw std::runtime_error(
-            "Only constant integer delay is supported in timing control "
-            "lowering");
-      }
-
-      auto delay_statement =
-          std::make_unique<mir::DelayStatement>(delay_amount_opt.value());
-      auto inner_statement = LowerStatement(timed_statement.stmt);
-
-      auto block = std::make_unique<mir::BlockStatement>();
-      block->statements.push_back(std::move(delay_statement));
-      block->statements.push_back(std::move(inner_statement));
-      return block;
     }
 
     case StatementKind::Conditional: {
@@ -94,10 +151,6 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
 
       auto condition = LowerExpression(*conditional.conditions[0].expr);
-      if (!condition) {
-        throw std::runtime_error("Failed to lower condition expression");
-      }
-
       auto then_branch = LowerStatement(conditional.ifTrue);
 
       std::unique_ptr<mir::Statement> else_branch;

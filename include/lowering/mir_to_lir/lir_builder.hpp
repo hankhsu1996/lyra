@@ -17,7 +17,6 @@ class LirBuilder {
 
   void AddVariable(const common::Variable& variable);
   void BeginProcess(lir::ProcessKind kind);
-  void AddTrigger(lir::Trigger trigger);
 
   // Basic block management
   void StartBlock(const std::string& label);

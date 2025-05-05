@@ -6,7 +6,6 @@
 #include <slang/ast/Compilation.h>
 
 #include "core/execution_context.hpp"
-#include "core/simulation_preparation.hpp"
 #include "core/simulation_result.hpp"
 #include "frontend/slang_frontend.hpp"
 #include "interpreter/lir_simulation_scheduler.hpp"
@@ -45,11 +44,8 @@ auto Simulator::RunWithCompilation(
   }
 
   auto context = std::make_unique<ExecutionContext>();
-  SimulationPreparation::InitializeVariables(*lir, *context);
-  auto triggers = SimulationPreparation::BuildVariableTriggerMap(*lir);
 
-  interpreter::LIRSimulationScheduler scheduler(
-      *lir, *context, std::move(triggers));
+  interpreter::LIRSimulationScheduler scheduler(*lir, *context);
   auto final_time = scheduler.Run();
 
   return SimulationResult{

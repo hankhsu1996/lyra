@@ -5,18 +5,23 @@
 #include <string>
 #include <vector>
 
+#include "common/trigger.hpp"
+
 namespace lyra::interpreter {
 
 // Result of running a Process execution
 struct LIRProcessResult {
-  enum class Kind { kComplete, kDelay, kFinish };
+  enum class Kind { kComplete, kDelay, kWaitEvent, kFinish };
 
   Kind kind = Kind::kComplete;
   uint64_t delay_amount = 0;
 
-  // For resuming after a delay
+  // For resuming after a delay or waiting for event
   std::size_t block_index = 0;
   std::size_t resume_instruction_index = 0;
+
+  // For WaitEvent
+  std::vector<common::Trigger<std::string>> triggers{};
 
   // Variables modified during process execution
   std::vector<std::string> modified_variables;
@@ -36,6 +41,18 @@ struct LIRProcessResult {
         .delay_amount = amount,
         .block_index = block_index,
         .resume_instruction_index = instruction_index,
+        .modified_variables = std::move(modified_variables)};
+  }
+
+  static auto WaitEvent(
+      std::vector<common::Trigger<std::string>> triggers,
+      std::size_t block_index, std::size_t instruction_index,
+      std::vector<std::string> modified_variables) -> LIRProcessResult {
+    return LIRProcessResult{
+        .kind = Kind::kWaitEvent,
+        .block_index = block_index,
+        .resume_instruction_index = instruction_index,
+        .triggers = std::move(triggers),
         .modified_variables = std::move(modified_variables)};
   }
 

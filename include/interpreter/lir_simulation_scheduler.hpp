@@ -1,12 +1,15 @@
 #pragma once
 
+#include <common/trigger.hpp>
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/execution_context.hpp"
-#include "core/simulation_preparation.hpp"
 #include "interpreter/lir_process_interpreter.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
@@ -15,56 +18,79 @@ namespace lyra::interpreter {
 
 struct ScheduledEvent {
   std::shared_ptr<lir::Process> process;
-  size_t block_index = 0;        // Current basic block index
-  size_t instruction_index = 0;  // Current instruction index within the block
+  std::size_t block_index = 0;
+  std::size_t instruction_index = 0;
 };
 
 struct DelayedEvent {
   uint64_t ready_time;
   std::shared_ptr<lir::Process> process;
-  size_t block_index;
-  size_t instruction_index;
+  std::size_t block_index = 0;
+  std::size_t instruction_index = 0;
 
   auto operator<(const DelayedEvent& rhs) const -> bool {
-    // Note: priority_queue is a max-heap by default,
-    // so we reverse the comparison to make it a min-heap.
-    return ready_time > rhs.ready_time;
+    return ready_time > rhs.ready_time;  // min-heap
+  }
+};
+
+struct WaitingProcessInfo {
+  std::size_t block_index;
+  std::size_t instruction_index;
+  common::EdgeKind edge_kind;
+};
+
+struct ProcessPtrHash {
+  auto operator()(const std::shared_ptr<lir::Process>& ptr) const
+      -> std::size_t {
+    return std::hash<lir::Process*>{}(ptr.get());
+  }
+};
+
+struct ProcessPtrEqual {
+  auto operator()(
+      const std::shared_ptr<lir::Process>& lhs,
+      const std::shared_ptr<lir::Process>& rhs) const -> bool {
+    return lhs.get() == rhs.get();
   }
 };
 
 class LIRSimulationScheduler {
  public:
-  LIRSimulationScheduler(
-      const lir::Module& module, ExecutionContext& context,
-      VariableTriggerMap variable_triggers);
+  LIRSimulationScheduler(const lir::Module& module, ExecutionContext& context);
 
   auto Run() -> uint64_t;
-
   auto CurrentTime() const -> uint64_t {
     return simulation_time_;
   }
 
  private:
+  void InitializeVariables();
   void ScheduleInitialProcesses();
   void ScheduleAlwaysProcesses();
   void ExecuteOneEvent();
-
-  // Process triggers based on modified variables
-  void ProcessVariableTriggers(
-      const std::vector<std::string>& modified_variables);
+  void WakeWaitingProcesses(const std::vector<std::string>& modified_variables);
 
   using EventQueue = std::queue<ScheduledEvent>;
   using DelayQueue = std::priority_queue<DelayedEvent>;
+  using WaitMap = std::unordered_map<
+      std::string,
+      std::unordered_set<
+          std::shared_ptr<lir::Process>, ProcessPtrHash, ProcessPtrEqual>>;
+  using WaitSet = std::unordered_map<
+      std::shared_ptr<lir::Process>, WaitingProcessInfo, ProcessPtrHash,
+      ProcessPtrEqual>;
 
   EventQueue active_queue_;
   DelayQueue delay_queue_;
+  WaitMap wait_map_;
+  WaitSet wait_set_;
+
   uint64_t simulation_time_ = 0;
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
   std::reference_wrapper<ExecutionContext> context_;
   LIRProcessInterpreter process_interpreter_;
-  VariableTriggerMap variable_to_triggers_;
 };
 
 }  // namespace lyra::interpreter

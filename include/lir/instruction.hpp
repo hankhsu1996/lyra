@@ -6,6 +6,7 @@
 
 #include <fmt/core.h>
 
+#include "common/trigger.hpp"
 #include "common/type.hpp"
 #include "lir/operand.hpp"
 
@@ -27,6 +28,7 @@ enum class InstructionKind {
   kBinaryGreaterThan,
   kBinaryGreaterThanEqual,
   kConversion,
+  kWaitEvent,
   kDelay,
   kSystemCall,
   kJump,
@@ -41,10 +43,13 @@ struct Instruction {
   std::optional<common::Type> result_type{};
 
   // Operand values used by the instruction
-  std::vector<Operand> operands;
+  std::vector<Operand> operands{};
 
   // System call name
   std::string system_call_name{};
+
+  // Event name
+  std::vector<common::Trigger<std::string>> wait_triggers{};
 
   static auto Basic(
       InstructionKind kind, std::string result, std::vector<Operand> operands)
@@ -63,6 +68,13 @@ struct Instruction {
         .result = std::move(result),
         .result_type = std::move(result_type),
         .operands = std::move(operands)};
+  }
+
+  static auto WaitEvent(std::vector<common::Trigger<std::string>> triggers)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kWaitEvent,
+        .wait_triggers = std::move(triggers)};
   }
 
   static auto SystemCall(std::string name, std::vector<Operand> args)
@@ -147,6 +159,17 @@ struct Instruction {
       case InstructionKind::kConversion:
         return fmt::format(
             "cvt   {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kWaitEvent: {
+        std::string result = "wait  ";
+        for (size_t i = 0; i < wait_triggers.size(); ++i) {
+          if (i > 0) {
+            result += " or ";
+          }
+          result += wait_triggers[i].ToString();
+        }
+        return result;
+      }
 
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());
