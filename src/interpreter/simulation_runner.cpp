@@ -15,27 +15,61 @@ SimulationRunner::SimulationRunner(
 }
 
 auto SimulationRunner::Run() -> uint64_t {
-  // Initialize variables before starting simulation
+  // Initialize simulation state
   InitializeVariables();
-
   ScheduleInitialProcesses();
   ScheduleAlwaysProcesses();
 
+  // Main simulation loop: continue until all queues are empty
   while (!active_queue_.empty() || !delay_queue_.empty()) {
-    if (active_queue_.empty() && !delay_queue_.empty()) {
-      const auto& next_event = delay_queue_.top();
-      simulation_time_ = next_event.ready_time;
-      active_queue_.push(
-          {next_event.process, next_event.block_index,
-           next_event.instruction_index});
-      delay_queue_.pop();
+    // Advance simulation time if no active events
+    if (active_queue_.empty()) {
+      auto it = delay_queue_.begin();
+      simulation_time_ = it->first;
+
+      // Move delayed events scheduled for this time into the active queue
+      for (const auto& event : it->second) {
+        active_queue_.push(event);
+      }
+      delay_queue_.erase(it);
     }
 
-    if (!active_queue_.empty()) {
+    // Run active queue
+    while (!active_queue_.empty()) {
       ExecuteOneEvent();
     }
 
-    if (finish_requested_ && active_queue_.empty() && delay_queue_.empty()) {
+    // Run inactive queue (handle #0 delays)
+    while (!inactive_queue_.empty()) {
+      std::queue<ScheduledEvent> current;
+      std::swap(current, inactive_queue_);
+
+      while (!current.empty()) {
+        active_queue_.push(current.front());
+        current.pop();
+      }
+
+      while (!active_queue_.empty()) {
+        ExecuteOneEvent();
+      }
+    }
+
+    // Execute all non-blocking assignments
+    while (!nba_queue_.empty()) {
+      const auto& action = nba_queue_.front();
+      context_.get().variable_table.Write(action.variable, action.value);
+      nba_queue_.pop();
+    }
+
+    // Execute all postponed actions (e.g., $strobe, $monitor)
+    while (!postponed_queue_.empty()) {
+      const auto& action = postponed_queue_.front();
+      action.action();
+      postponed_queue_.pop();
+    }
+
+    // Stop simulation if $finish was requested
+    if (finish_requested_) {
       break;
     }
   }
@@ -79,14 +113,21 @@ void SimulationRunner::ExecuteOneEvent() {
 
   WakeWaitingProcesses(result.modified_variables);
 
+  for (const auto& action : result.nba_actions) {
+    nba_queue_.push(action);
+  }
+  for (const auto& action : result.postponed_actions) {
+    postponed_queue_.push(action);
+  }
+
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
-      DelayedEvent delayed_event{
-          .ready_time = simulation_time_ + result.delay_amount,
+      SimulationTime delay_time = simulation_time_ + result.delay_amount;
+      ScheduledEvent event{
           .process = process,
           .block_index = result.block_index,
           .instruction_index = result.resume_instruction_index};
-      delay_queue_.push(delayed_event);
+      delay_queue_[delay_time].push_back(std::move(event));
       break;
     }
 

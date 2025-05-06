@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/trigger.hpp"
+#include "interpreter/actions.hpp"
 
 namespace lyra::interpreter {
 
@@ -24,8 +25,9 @@ struct InstructionResult {
   // For WaitEvent
   std::vector<common::Trigger<std::string>> triggers{};
 
-  // The variable that was modified by this instruction (if any)
-  std::optional<std::string> modified_variable{};
+  std::optional<std::string> modified_variable = std::nullopt;
+  std::optional<NbaAction> nba_action = std::nullopt;
+  std::optional<PostponedAction> postponed_action = std::nullopt;
 
   static auto Continue(
       std::optional<std::string> modified_variable = std::nullopt)
@@ -33,6 +35,18 @@ struct InstructionResult {
     return InstructionResult{
         .kind = Kind::kContinue,
         .modified_variable = std::move(modified_variable)};
+  }
+
+  static auto NbaAction(NbaAction nba_action) -> InstructionResult {
+    return InstructionResult{
+        .kind = Kind::kContinue, .nba_action = std::move(nba_action)};
+  }
+
+  static auto PostponedAction(PostponedAction postponed_action)
+      -> InstructionResult {
+    return InstructionResult{
+        .kind = Kind::kContinue,
+        .postponed_action = std::move(postponed_action)};
   }
 
   static auto Delay(

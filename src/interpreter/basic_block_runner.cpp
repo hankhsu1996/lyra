@@ -13,6 +13,8 @@ auto BasicBlockRunner::RunBlock(
 
   // Track modified variables during execution
   std::vector<std::string> modified_variables;
+  std::vector<NbaAction> nba_actions;
+  std::vector<PostponedAction> postponed_actions;
 
   for (std::size_t i = start_instruction_index; i < instructions.size(); ++i) {
     const auto& instr = instructions[i];
@@ -23,25 +25,40 @@ auto BasicBlockRunner::RunBlock(
       modified_variables.push_back(*instruction_result.modified_variable);
     }
 
+    if (instruction_result.nba_action) {
+      nba_actions.push_back(*instruction_result.nba_action);
+    }
+
+    if (instruction_result.postponed_action) {
+      postponed_actions.push_back(*instruction_result.postponed_action);
+    }
+
     switch (instruction_result.kind) {
       case InstructionResult::Kind::kContinue:
         break;
       case InstructionResult::Kind::kWaitEvent:
         return BasicBlockResult::WaitEvent(
-            instruction_result.triggers, i + 1, std::move(modified_variables));
+            instruction_result.triggers, i + 1, std::move(modified_variables),
+            std::move(nba_actions), std::move(postponed_actions));
       case InstructionResult::Kind::kDelay:
         return BasicBlockResult::Delay(
             instruction_result.delay_amount, i + 1,
-            std::move(modified_variables));
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
       case InstructionResult::Kind::kFinish:
-        return BasicBlockResult::Finish(std::move(modified_variables));
+        return BasicBlockResult::Finish(
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
       case InstructionResult::Kind::kJump:
         return BasicBlockResult::Jump(
-            instruction_result.target_label, std::move(modified_variables));
+            instruction_result.target_label, std::move(modified_variables),
+            std::move(nba_actions), std::move(postponed_actions));
     }
   }
 
-  return BasicBlockResult::Fallthrough(std::move(modified_variables));
+  return BasicBlockResult::Fallthrough(
+      std::move(modified_variables), std::move(nba_actions),
+      std::move(postponed_actions));
 }
 
 }  // namespace lyra::interpreter

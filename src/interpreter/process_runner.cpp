@@ -11,6 +11,8 @@ auto ProcessRunner::RunProcess(
     std::size_t instruction_index) -> ProcessResult {
   // Track modified variables during execution
   std::vector<std::string> modified_variables;
+  std::vector<NbaAction> nba_actions;
+  std::vector<PostponedAction> postponed_actions;
 
   while (true) {
     // get the basic block
@@ -21,6 +23,12 @@ auto ProcessRunner::RunProcess(
     modified_variables.insert(
         modified_variables.end(), block_result.modified_variables.begin(),
         block_result.modified_variables.end());
+    nba_actions.insert(
+        nba_actions.end(), block_result.nba_actions.begin(),
+        block_result.nba_actions.end());
+    postponed_actions.insert(
+        postponed_actions.end(), block_result.postponed_actions.begin(),
+        block_result.postponed_actions.end());
 
     switch (block_result.kind) {
       case BasicBlockResult::Kind::kFallthrough:
@@ -31,23 +39,29 @@ auto ProcessRunner::RunProcess(
           instruction_index = 0;
           continue;
         }
-        return ProcessResult::Complete(std::move(modified_variables));
+        return ProcessResult::Complete(
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
 
       case BasicBlockResult::Kind::kWaitEvent:
         return ProcessResult::WaitEvent(
             block_result.triggers, block_index,
             block_result.resume_instruction_index,
-            std::move(modified_variables));
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
 
       case BasicBlockResult::Kind::kDelay:
         // Store where to resume (current block, instruction index from result)
         return ProcessResult::Delay(
             block_result.delay_amount, block_index,
             block_result.resume_instruction_index,
-            std::move(modified_variables));
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
 
       case BasicBlockResult::Kind::kFinish:
-        return ProcessResult::Finish(std::move(modified_variables));
+        return ProcessResult::Finish(
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
 
       case BasicBlockResult::Kind::kJump:
         block_index = process->FindBlockIndexByLabel(block_result.target_label);

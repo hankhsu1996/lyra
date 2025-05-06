@@ -70,6 +70,13 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
       return InstructionResult::Continue(variable_name);
     }
 
+    case lir::InstructionKind::kStoreVariableNonBlocking: {
+      const auto variable_name = instr.operands[0].name;
+      const auto value = get_temp(instr.operands[1]);
+      return InstructionResult::NbaAction(
+          NbaAction{.variable = variable_name, .value = value});
+    }
+
     // Unary operations
     case lir::InstructionKind::kUnaryPlus: {
       return eval_unary_op(instr.operands[0], UnaryPlus);

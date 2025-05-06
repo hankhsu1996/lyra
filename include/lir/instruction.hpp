@@ -17,6 +17,7 @@ enum class InstructionKind {
   kLiteral,
   kLoadVariable,
   kStoreVariable,
+  kStoreVariableNonBlocking,
 
   // Unary operations
   kUnaryPlus,
@@ -120,6 +121,10 @@ struct Instruction {
             "load  {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kStoreVariable:
+        return fmt::format(
+            "store {}, {}", operands[0].ToString(), operands[1].ToString());
+
+      case InstructionKind::kStoreVariableNonBlocking:
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 

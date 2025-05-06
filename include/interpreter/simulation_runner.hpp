@@ -2,6 +2,7 @@
 
 #include <common/trigger.hpp>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <queue>
 #include <string>
@@ -9,6 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "interpreter/actions.hpp"
 #include "interpreter/process_runner.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
@@ -16,22 +18,20 @@
 
 namespace lyra::interpreter {
 
+using SimulationTime = uint64_t;
+using ProcessPtr = std::shared_ptr<lir::Process>;
+
 struct ScheduledEvent {
-  std::shared_ptr<lir::Process> process;
+  ProcessPtr process;
   std::size_t block_index = 0;
   std::size_t instruction_index = 0;
 };
 
-struct DelayedEvent {
-  uint64_t ready_time;
-  std::shared_ptr<lir::Process> process;
-  std::size_t block_index = 0;
-  std::size_t instruction_index = 0;
-
-  auto operator<(const DelayedEvent& rhs) const -> bool {
-    return ready_time > rhs.ready_time;  // min-heap
-  }
-};
+using DelayQueue = std::map<SimulationTime, std::vector<ScheduledEvent>>;
+using ActiveQueue = std::queue<ScheduledEvent>;
+using InactiveQueue = std::queue<ScheduledEvent>;
+using NbaQueue = std::queue<NbaAction>;
+using PostponedQueue = std::queue<PostponedAction>;
 
 struct WaitingProcessInfo {
   std::size_t block_index;
@@ -70,8 +70,6 @@ class SimulationRunner {
   void ExecuteOneEvent();
   void WakeWaitingProcesses(const std::vector<std::string>& modified_variables);
 
-  using EventQueue = std::queue<ScheduledEvent>;
-  using DelayQueue = std::priority_queue<DelayedEvent>;
   using WaitMap = std::unordered_map<
       std::string,
       std::unordered_set<
@@ -80,12 +78,20 @@ class SimulationRunner {
       std::shared_ptr<lir::Process>, WaitingProcessInfo, ProcessPtrHash,
       ProcessPtrEqual>;
 
-  EventQueue active_queue_;
+  // Global queues
   DelayQueue delay_queue_;
+
+  // Region-specific queues
+  ActiveQueue active_queue_;
+  InactiveQueue inactive_queue_;
+  NbaQueue nba_queue_;
+  PostponedQueue postponed_queue_;
+
+  // Trigger maps
   WaitMap wait_map_;
   WaitSet wait_set_;
 
-  uint64_t simulation_time_ = 0;
+  SimulationTime simulation_time_ = 0;
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
