@@ -31,14 +31,7 @@ auto ProcessRunner::RunProcess(
         block_result.postponed_actions.end());
 
     switch (block_result.kind) {
-      case BasicBlockResult::Kind::kFallthrough:
-        // Move to the next block if available, otherwise we're done with the
-        // process
-        if (block_index + 1 < process->blocks.size()) {
-          ++block_index;
-          instruction_index = 0;
-          continue;
-        }
+      case BasicBlockResult::Kind::kComplete:
         return ProcessResult::Complete(
             std::move(modified_variables), std::move(nba_actions),
             std::move(postponed_actions));

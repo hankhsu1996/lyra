@@ -50,6 +50,7 @@ enum class InstructionKind {
   kConversion,
 
   // Control flow
+  kComplete,
   kWaitEvent,
   kDelay,
   kSystemCall,
@@ -107,6 +108,14 @@ struct Instruction {
         .result_type = std::nullopt,
         .operands = std::move(args),
         .system_call_name = std::move(name)};
+  }
+
+  static auto Complete() -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kComplete,
+        .result = std::nullopt,
+        .result_type = std::nullopt,
+        .operands = {}};
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
@@ -240,6 +249,9 @@ struct Instruction {
         }
         return result;
       }
+
+      case InstructionKind::kComplete:
+        return "complete";
 
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());

@@ -34,6 +34,10 @@ auto BasicBlockRunner::RunBlock(
     }
 
     switch (instruction_result.kind) {
+      case InstructionResult::Kind::kComplete:
+        return BasicBlockResult::Complete(
+            std::move(modified_variables), std::move(nba_actions),
+            std::move(postponed_actions));
       case InstructionResult::Kind::kContinue:
         break;
       case InstructionResult::Kind::kWaitEvent:
@@ -55,10 +59,7 @@ auto BasicBlockRunner::RunBlock(
             std::move(nba_actions), std::move(postponed_actions));
     }
   }
-
-  return BasicBlockResult::Fallthrough(
-      std::move(modified_variables), std::move(nba_actions),
-      std::move(postponed_actions));
+  throw std::runtime_error("Unreachable code in basic block runner");
 }
 
 }  // namespace lyra::interpreter

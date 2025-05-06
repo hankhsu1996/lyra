@@ -217,6 +217,10 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
     }
 
     // Control flow
+    case lir::InstructionKind::kComplete: {
+      return InstructionResult::Complete();
+    }
+
     case lir::InstructionKind::kWaitEvent: {
       return InstructionResult::WaitEvent(instr.wait_triggers);
     }

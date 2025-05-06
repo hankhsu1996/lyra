@@ -49,6 +49,11 @@ void LirBuilder::AddInstruction(lir::Instruction instr) {
 void LirBuilder::EndProcess() {
   assert(current_process_);
 
+  // Insert 'complete' instruction for initial process
+  if (current_process_->kind == lir::ProcessKind::kInitial) {
+    AddInstruction(lir::Instruction::Complete());
+  }
+
   // If we have an active block, end it
   if (current_block_) {
     EndBlock();

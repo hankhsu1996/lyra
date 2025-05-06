@@ -11,9 +11,9 @@
 namespace lyra::interpreter {
 
 struct BasicBlockResult {
-  enum class Kind { kFallthrough, kDelay, kWaitEvent, kFinish, kJump };
+  enum class Kind { kComplete, kDelay, kWaitEvent, kFinish, kJump };
 
-  Kind kind = Kind::kFallthrough;
+  Kind kind{};
 
   // For Jump
   std::string target_label{};
@@ -32,12 +32,12 @@ struct BasicBlockResult {
   std::vector<NbaAction> nba_actions{};
   std::vector<PostponedAction> postponed_actions{};
 
-  static auto Fallthrough(
+  static auto Complete(
       std::vector<std::string> modified_variables,
       std::vector<NbaAction> nba_actions,
       std::vector<PostponedAction> postponed_actions) -> BasicBlockResult {
     return {
-        .kind = Kind::kFallthrough,
+        .kind = Kind::kComplete,
         .modified_variables = std::move(modified_variables),
         .nba_actions = std::move(nba_actions),
         .postponed_actions = std::move(postponed_actions)};

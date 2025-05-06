@@ -157,80 +157,85 @@ void SimulationRunner::WakeWaitingProcesses(
   std::unordered_set<std::shared_ptr<lir::Process>> resumed;
 
   for (const auto& variable : modified_variables) {
+    // Read previous and current values of the variable
     RuntimeValue old_value =
         context_.get().variable_table.ReadPrevious(variable);
     RuntimeValue new_value = context_.get().variable_table.Read(variable);
 
+    // Check if any process is waiting on this variable
     auto map_it = wait_map_.find(variable);
-    if (map_it == wait_map_.end()) {
-      continue;
-    }
+    if (map_it != wait_map_.end()) {
+      std::unordered_set<std::shared_ptr<lir::Process>> to_remove;
 
-    std::unordered_set<std::shared_ptr<lir::Process>> to_remove;
+      for (const auto& process : map_it->second) {
+        // Skip if this process is already resumed in this loop
+        if (resumed.contains(process)) {
+          continue;
+        }
 
-    for (const auto& process : map_it->second) {
-      if (resumed.contains(process)) {
-        continue;
-      }
+        auto info_it = wait_set_.find(process);
+        if (info_it == wait_set_.end()) {
+          continue;
+        }
 
-      auto info_it = wait_set_.find(process);
-      if (info_it == wait_set_.end()) {
-        continue;  // Should not happen, but safety check
-      }
+        const auto& wait_info = info_it->second;
+        bool should_trigger = false;
 
-      const auto& wait_info = info_it->second;
-      bool should_trigger = false;
+        switch (wait_info.edge_kind) {
+          case common::EdgeKind::kAnyChange:
+            should_trigger = (old_value != new_value);
+            break;
 
-      switch (wait_info.edge_kind) {
-        case common::EdgeKind::kAnyChange:
-          should_trigger = (old_value != new_value);
-          break;
+          case common::EdgeKind::kPosedge:
+          case common::EdgeKind::kNegedge:
+          case common::EdgeKind::kBothEdge: {
+            // Ensure the value types are suitable for edge detection
+            assert(old_value.IsTwoState() && new_value.IsTwoState());
 
-        case common::EdgeKind::kPosedge:
-        case common::EdgeKind::kNegedge:
-        case common::EdgeKind::kBothEdge: {
-          assert(old_value.IsTwoState() && new_value.IsTwoState());
+            int64_t old_int = old_value.AsInt64();
+            int64_t new_int = new_value.AsInt64();
 
-          int64_t old_int = old_value.AsInt64();
-          int64_t new_int = new_value.AsInt64();
-
-          switch (wait_info.edge_kind) {
-            case common::EdgeKind::kPosedge:
-              should_trigger = (old_int == 0 && new_int == 1);
-              break;
-            case common::EdgeKind::kNegedge:
-              should_trigger = (old_int == 1 && new_int == 0);
-              break;
-            case common::EdgeKind::kBothEdge:
-              should_trigger = (old_int == 0 && new_int == 1) ||
-                               (old_int == 1 && new_int == 0);
-              break;
-            default:
-              break;
+            switch (wait_info.edge_kind) {
+              case common::EdgeKind::kPosedge:
+                should_trigger = (old_int == 0 && new_int == 1);
+                break;
+              case common::EdgeKind::kNegedge:
+                should_trigger = (old_int == 1 && new_int == 0);
+                break;
+              case common::EdgeKind::kBothEdge:
+                should_trigger = (old_int == 0 && new_int == 1) ||
+                                 (old_int == 1 && new_int == 0);
+                break;
+              default:
+                break;
+            }
+            break;
           }
-          break;
+        }
+
+        // Resume the process if the trigger condition is met
+        if (should_trigger) {
+          active_queue_.push(ScheduledEvent{
+              .process = process,
+              .block_index = wait_info.block_index,
+              .instruction_index = wait_info.instruction_index});
+          resumed.insert(process);
+          to_remove.insert(process);
+          wait_set_.erase(process);
         }
       }
 
-      if (should_trigger) {
-        active_queue_.push(ScheduledEvent{
-            .process = process,
-            .block_index = wait_info.block_index,
-            .instruction_index = wait_info.instruction_index});
-        resumed.insert(process);
-        to_remove.insert(process);
-        wait_set_.erase(process);  // Cleanup from wait_set_
+      // Remove resumed processes from wait map
+      for (const auto& proc : to_remove) {
+        map_it->second.erase(proc);
+      }
+
+      if (map_it->second.empty()) {
+        wait_map_.erase(map_it);
       }
     }
 
-    for (const auto& proc : to_remove) {
-      map_it->second.erase(proc);
-    }
-
-    if (map_it->second.empty()) {
-      wait_map_.erase(map_it);
-    }
-
+    // Update previous value for this variable
     context_.get().variable_table.UpdatePrevious(variable, new_value);
   }
 }

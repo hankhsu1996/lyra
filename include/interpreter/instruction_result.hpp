@@ -12,7 +12,7 @@ namespace lyra::interpreter {
 
 // Represents the result of executing a single LIR instruction
 struct InstructionResult {
-  enum class Kind { kContinue, kDelay, kWaitEvent, kFinish, kJump };
+  enum class Kind { kComplete, kContinue, kDelay, kWaitEvent, kFinish, kJump };
 
   Kind kind{};
 
@@ -28,6 +28,10 @@ struct InstructionResult {
   std::optional<std::string> modified_variable = std::nullopt;
   std::optional<NbaAction> nba_action = std::nullopt;
   std::optional<PostponedAction> postponed_action = std::nullopt;
+
+  static auto Complete() -> InstructionResult {
+    return InstructionResult{.kind = Kind::kComplete};
+  }
 
   static auto Continue(
       std::optional<std::string> modified_variable = std::nullopt)

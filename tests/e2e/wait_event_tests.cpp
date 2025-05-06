@@ -198,3 +198,28 @@ TEST(WaitEventTest, AlwaysLatchBehavior) {
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 3);
   EXPECT_EQ(result.final_time, 5);
 }
+
+TEST(WaitEventTest, CorrectPosedgeCount) {
+  std::string code = R"(
+    module Test;
+      bit a;
+      int count;
+
+      always_ff @(posedge a) begin
+        count = count + 1;
+      end
+
+      initial begin
+        a = 0;
+        count = 0;
+        #5 a = 1;  // posedge 1
+        #5 a = 0;
+        #5 a = 1;  // posedge 2
+        #5 a = 0;
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("count").AsInt64(), 2);  // Expect 2 posedges
+  EXPECT_EQ(result.final_time, 20);
+}
