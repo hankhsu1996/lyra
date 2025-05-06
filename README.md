@@ -41,20 +41,19 @@ bazel run @hedron_compile_commands//:refresh_all
 ## 🔍 Compilation Pipeline
 
 ```
-SystemVerilog → AST → MIR → LIR → Interpreter → Results
+SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
 ```
 
 - **AST**: Generated using [Slang](https://github.com/MikePopoloski/slang)
 - **MIR**: High-level, structure-preserving intermediate representation
 - **LIR**: Linear SSA-style IR for simulation and codegen
-- **Backend**: Interpreter execution engine
-
+- **Backend**: Interpreter execution engine (current) with LLVM compilation planned
 
 ## 🚧 Roadmap
 
 - Complete SystemVerilog language coverage
 - Performance optimizations for large-scale designs
-- Native code generation capabilities
+- Native code generation via LLVM
 - Multi-threading support for parallel simulation
 - Advanced debugging and visualization tools
 
