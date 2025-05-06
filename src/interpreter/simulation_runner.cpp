@@ -1,17 +1,17 @@
 #include "interpreter/simulation_runner.hpp"
 
 #include <cstdint>
-#include <unordered_set>
 
 #include <fmt/core.h>
-
-#include "runtime/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
 SimulationRunner::SimulationRunner(
     const lir::Module& module, ExecutionContext& context)
-    : module_(module), context_(context), process_runner_(context) {
+    : module_(module),
+      context_(context),
+      process_runner_(context),
+      trigger_manager_(context) {
 }
 
 auto SimulationRunner::Run() -> uint64_t {
@@ -133,11 +133,9 @@ void SimulationRunner::ExecuteOneEvent() {
 
     case ProcessResult::Kind::kWaitEvent: {
       for (const auto& trigger : result.triggers) {
-        wait_map_[trigger.variable].insert(process);
-        wait_set_[process] = {
-            .block_index = result.block_index,
-            .instruction_index = result.resume_instruction_index,
-            .edge_kind = trigger.edge_kind};
+        trigger_manager_.RegisterWaitingProcess(
+            process, trigger.variable, trigger.edge_kind, result.block_index,
+            result.resume_instruction_index);
       }
       break;
     }
@@ -154,89 +152,12 @@ void SimulationRunner::ExecuteOneEvent() {
 
 void SimulationRunner::WakeWaitingProcesses(
     const std::vector<std::string>& modified_variables) {
-  std::unordered_set<std::shared_ptr<lir::Process>> resumed;
+  // Delegate to trigger manager
+  auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 
-  for (const auto& variable : modified_variables) {
-    // Read previous and current values of the variable
-    RuntimeValue old_value =
-        context_.get().variable_table.ReadPrevious(variable);
-    RuntimeValue new_value = context_.get().variable_table.Read(variable);
-
-    // Check if any process is waiting on this variable
-    auto map_it = wait_map_.find(variable);
-    if (map_it != wait_map_.end()) {
-      std::unordered_set<std::shared_ptr<lir::Process>> to_remove;
-
-      for (const auto& process : map_it->second) {
-        // Skip if this process is already resumed in this loop
-        if (resumed.contains(process)) {
-          continue;
-        }
-
-        auto info_it = wait_set_.find(process);
-        if (info_it == wait_set_.end()) {
-          continue;
-        }
-
-        const auto& wait_info = info_it->second;
-        bool should_trigger = false;
-
-        switch (wait_info.edge_kind) {
-          case common::EdgeKind::kAnyChange:
-            should_trigger = (old_value != new_value);
-            break;
-
-          case common::EdgeKind::kPosedge:
-          case common::EdgeKind::kNegedge:
-          case common::EdgeKind::kBothEdge: {
-            // Ensure the value types are suitable for edge detection
-            assert(old_value.IsTwoState() && new_value.IsTwoState());
-
-            int64_t old_int = old_value.AsInt64();
-            int64_t new_int = new_value.AsInt64();
-
-            switch (wait_info.edge_kind) {
-              case common::EdgeKind::kPosedge:
-                should_trigger = (old_int == 0 && new_int == 1);
-                break;
-              case common::EdgeKind::kNegedge:
-                should_trigger = (old_int == 1 && new_int == 0);
-                break;
-              case common::EdgeKind::kBothEdge:
-                should_trigger = (old_int == 0 && new_int == 1) ||
-                                 (old_int == 1 && new_int == 0);
-                break;
-              default:
-                break;
-            }
-            break;
-          }
-        }
-
-        // Resume the process if the trigger condition is met
-        if (should_trigger) {
-          active_queue_.push(ScheduledEvent{
-              .process = process,
-              .block_index = wait_info.block_index,
-              .instruction_index = wait_info.instruction_index});
-          resumed.insert(process);
-          to_remove.insert(process);
-          wait_set_.erase(process);
-        }
-      }
-
-      // Remove resumed processes from wait map
-      for (const auto& proc : to_remove) {
-        map_it->second.erase(proc);
-      }
-
-      if (map_it->second.empty()) {
-        wait_map_.erase(map_it);
-      }
-    }
-
-    // Update previous value for this variable
-    context_.get().variable_table.UpdatePrevious(variable, new_value);
+  // Schedule all triggered events
+  for (const auto& event : events_to_schedule) {
+    active_queue_.push(event);
   }
 }
 

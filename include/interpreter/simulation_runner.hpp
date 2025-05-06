@@ -6,12 +6,11 @@
 #include <memory>
 #include <queue>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "interpreter/actions.hpp"
 #include "interpreter/process_runner.hpp"
+#include "interpreter/trigger_manager.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
 #include "runtime/execution_context.hpp"
@@ -39,21 +38,6 @@ struct WaitingProcessInfo {
   common::EdgeKind edge_kind;
 };
 
-struct ProcessPtrHash {
-  auto operator()(const std::shared_ptr<lir::Process>& ptr) const
-      -> std::size_t {
-    return std::hash<lir::Process*>{}(ptr.get());
-  }
-};
-
-struct ProcessPtrEqual {
-  auto operator()(
-      const std::shared_ptr<lir::Process>& lhs,
-      const std::shared_ptr<lir::Process>& rhs) const -> bool {
-    return lhs.get() == rhs.get();
-  }
-};
-
 class SimulationRunner {
  public:
   SimulationRunner(const lir::Module& module, ExecutionContext& context);
@@ -70,14 +54,6 @@ class SimulationRunner {
   void ExecuteOneEvent();
   void WakeWaitingProcesses(const std::vector<std::string>& modified_variables);
 
-  using WaitMap = std::unordered_map<
-      std::string,
-      std::unordered_set<
-          std::shared_ptr<lir::Process>, ProcessPtrHash, ProcessPtrEqual>>;
-  using WaitSet = std::unordered_map<
-      std::shared_ptr<lir::Process>, WaitingProcessInfo, ProcessPtrHash,
-      ProcessPtrEqual>;
-
   // Global queues
   DelayQueue delay_queue_;
 
@@ -87,16 +63,13 @@ class SimulationRunner {
   NbaQueue nba_queue_;
   PostponedQueue postponed_queue_;
 
-  // Trigger maps
-  WaitMap wait_map_;
-  WaitSet wait_set_;
-
   SimulationTime simulation_time_ = 0;
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
   std::reference_wrapper<ExecutionContext> context_;
   ProcessRunner process_runner_;
+  TriggerManager trigger_manager_;
 };
 
 }  // namespace lyra::interpreter
