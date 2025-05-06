@@ -33,30 +33,30 @@ bazel run @hedron_compile_commands//:refresh_all
 - `mir/`: Middle-level IR preserving high-level language structure
 - `lir/`: Low-level IR with SSA-style instructions for simulation
 - `lowering/`: Transformations between AST, MIR, and LIR
-- `core/`: Simulation environment (symbol tables, scheduler, event queue)
+- `runtime/`: Simulation environment (symbol tables, scheduler, event queue) and runtime support
 - `common/`: Shared utilities and data structures
-- `runtime/`: Runtime support for simulation (typing, system functions)
-- `simulation/`: Integration of the full compiler and simulator pipeline
-- `codegen/`: LLVM code generation (planned)
+- `interpreter/`: Execution engine for running LIR instructions
+- `driver/`: Integration of the full compiler and simulator pipeline
 
 ## 🔍 Compilation Pipeline
 
 ```
-SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
+SystemVerilog → AST → MIR → LIR → Interpreter → Results
 ```
 
 - **AST**: Generated using [Slang](https://github.com/MikePopoloski/slang)
 - **MIR**: High-level, structure-preserving intermediate representation
 - **LIR**: Linear SSA-style IR for simulation and codegen
-- **Backend**: Interpreter (available) or LLVM native compilation (planned)
+- **Backend**: Interpreter execution engine
 
 
 ## 🚧 Roadmap
 
-- Event-driven scheduling system
-- `always_ff` support with clock/event semantics
-- Native binary generation via LLVM
-- Broader SystemVerilog language coverage
+- Complete SystemVerilog language coverage
+- Performance optimizations for large-scale designs
+- Native code generation capabilities
+- Multi-threading support for parallel simulation
+- Advanced debugging and visualization tools
 
 ## 💬 Get Involved
 
