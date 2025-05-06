@@ -67,3 +67,13 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "non_blocking_tests",
+    size = "small",
+    srcs = ["e2e/non_blocking_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)

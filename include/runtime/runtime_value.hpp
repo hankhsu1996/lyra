@@ -7,6 +7,7 @@
 
 #include <fmt/core.h>
 
+#include "common/bit_utils.hpp"
 #include "common/literal.hpp"
 #include "common/type.hpp"
 
@@ -38,16 +39,22 @@ struct RuntimeValue {
   }
 
   static auto TwoStateSigned(int64_t value, size_t bit_width) -> RuntimeValue {
+    uint64_t mask = (bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1);
+    uint64_t truncated = static_cast<uint64_t>(value) & mask;
+    int64_t sign_extended = common::SignExtend(truncated, bit_width);
+
     return RuntimeValue{
         .type = common::Type::TwoStateSigned(bit_width),
-        .value = common::ValueStorage(value)};
+        .value = common::ValueStorage(sign_extended)};
   }
 
   static auto TwoStateUnsigned(uint64_t value, size_t bit_width)
       -> RuntimeValue {
+    uint64_t mask = (bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1);
+    auto truncated_value = static_cast<int64_t>(value & mask);
     return RuntimeValue{
         .type = common::Type::TwoStateUnsigned(bit_width),
-        .value = common::ValueStorage(static_cast<int64_t>(value))};
+        .value = common::ValueStorage(truncated_value)};
   }
 
   static auto Bool(bool value) -> RuntimeValue {

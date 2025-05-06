@@ -93,6 +93,14 @@ struct Instruction {
         .operands = std::move(operands)};
   }
 
+  static auto StoreVariable(
+      Operand variable, Operand value, bool is_non_blocking) -> Instruction {
+    return Instruction{
+        .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
+                                : InstructionKind::kStoreVariable,
+        .operands = {std::move(variable), std::move(value)}};
+  }
+
   static auto WaitEvent(std::vector<common::Trigger<std::string>> triggers)
       -> Instruction {
     return Instruction{

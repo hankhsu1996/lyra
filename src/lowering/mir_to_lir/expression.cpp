@@ -57,10 +57,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& assignment = mir::As<mir::AssignmentExpression>(expression);
       assert(!assignment.target.empty());
       assert(assignment.value);
-      lir::Operand value = LowerExpression(*assignment.value, builder);
-      Instruction instruction = Instruction::Basic(
-          InstructionKind::kStoreVariable, "",
-          {lir::Operand::Variable(assignment.target), value});
+      auto value = LowerExpression(*assignment.value, builder);
+      auto variable = lir::Operand::Variable(assignment.target);
+
+      auto instruction = Instruction::StoreVariable(
+          variable, value, assignment.is_non_blocking);
       builder.AddInstruction(std::move(instruction));
       return value;
     }

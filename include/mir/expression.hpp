@@ -160,11 +160,14 @@ class AssignmentExpression : public Expression {
   static constexpr Kind kKindValue = Kind::kAssignment;
   std::string target;
   std::shared_ptr<Expression> value;
+  bool is_non_blocking;
 
-  AssignmentExpression(std::string t, std::shared_ptr<Expression> v)
+  AssignmentExpression(
+      std::string t, std::shared_ptr<Expression> v, bool is_non_blocking)
       : Expression(kKindValue, v->type),
         target(std::move(t)),
-        value(std::move(v)) {
+        value(std::move(v)),
+        is_non_blocking(is_non_blocking) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {

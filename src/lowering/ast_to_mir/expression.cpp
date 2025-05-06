@@ -83,9 +83,9 @@ auto LowerExpression(const slang::ast::Expression& expression)
       auto target_name =
           left.as<slang::ast::NamedValueExpression>().symbol.name;
       auto value = LowerExpression(assignment.right());
-
+      auto is_non_blocking = assignment.isNonBlocking();
       return std::make_unique<mir::AssignmentExpression>(
-          std::string(target_name), std::move(value));
+          std::string(target_name), std::move(value), is_non_blocking);
     }
 
     case slang::ast::ExpressionKind::Call: {
