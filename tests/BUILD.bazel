@@ -57,3 +57,13 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "unary_ops_tests",
+    size = "small",
+    srcs = ["e2e/unary_ops_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)

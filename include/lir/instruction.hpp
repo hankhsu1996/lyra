@@ -13,9 +13,26 @@
 namespace lyra::lir {
 
 enum class InstructionKind {
+  // Memory operations
   kLiteral,
   kLoadVariable,
   kStoreVariable,
+
+  // Unary operations
+  kUnaryPlus,
+  kUnaryMinus,
+  kUnaryLogicalNot,
+  kUnaryBitwiseNot,
+
+  // Reduction operations
+  kReductionAnd,
+  kReductionNand,
+  kReductionOr,
+  kReductionNor,
+  kReductionXor,
+  kReductionXnor,
+
+  // Binary operations
   kBinaryAdd,
   kBinarySubtract,
   kBinaryMultiply,
@@ -27,7 +44,11 @@ enum class InstructionKind {
   kBinaryLessThanEqual,
   kBinaryGreaterThan,
   kBinaryGreaterThanEqual,
+
+  // Type operations
   kConversion,
+
+  // Control flow
   kWaitEvent,
   kDelay,
   kSystemCall,
@@ -89,6 +110,7 @@ struct Instruction {
 
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
+      // Memory operations
       case InstructionKind::kLiteral:
         return fmt::format(
             "lit   {}, {}", result.value(), operands[0].ToString());
@@ -101,6 +123,49 @@ struct Instruction {
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 
+      // Unary operations
+      case InstructionKind::kUnaryPlus:
+        return fmt::format(
+            "plus  {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kUnaryMinus:
+        return fmt::format(
+            "minus {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kUnaryLogicalNot:
+        return fmt::format(
+            "not.l {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kUnaryBitwiseNot:
+        return fmt::format(
+            "not.b {}, {}", result.value(), operands[0].ToString());
+
+      // Reduction operations
+      case InstructionKind::kReductionAnd:
+        return fmt::format(
+            "and.r {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kReductionNand:
+        return fmt::format(
+            "nand.r {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kReductionOr:
+        return fmt::format(
+            "or.r  {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kReductionNor:
+        return fmt::format(
+            "nor.r {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kReductionXor:
+        return fmt::format(
+            "xor.r {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kReductionXnor:
+        return fmt::format(
+            "xnor.r {}, {}", result.value(), operands[0].ToString());
+
+      // Binary operations
       case InstructionKind::kBinaryAdd:
         return fmt::format(
             "add   {}, {}, {}", result.value(), operands[0].ToString(),

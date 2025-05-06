@@ -8,7 +8,79 @@
 
 namespace lyra::mir {
 
-enum class Operator {
+enum class UnaryOperator {
+  // Arithmetic
+  kPlus,
+  kMinus,
+  kPreincrement,   // ++a
+  kPostincrement,  // a++
+  kPredecrement,   // --a
+  kPostdecrement,  // a--
+
+  // Logical
+  kLogicalNot,
+
+  // Bitwise
+  kBitwiseNot,
+
+  // Reduction
+  kReductionAnd,
+  kReductionNand,
+  kReductionOr,
+  kReductionNor,
+  kReductionXor,
+  kReductionXnor
+};
+
+// Convert UnaryOperator enum to string
+inline auto ToString(UnaryOperator operator_kind) -> std::string {
+  switch (operator_kind) {
+    // Arithmetic
+    case UnaryOperator::kPlus:
+      return "Plus";
+    case UnaryOperator::kMinus:
+      return "Minus";
+    case UnaryOperator::kPreincrement:
+      return "Preincrement";
+    case UnaryOperator::kPostincrement:
+      return "Postincrement";
+    case UnaryOperator::kPredecrement:
+      return "Predecrement";
+    case UnaryOperator::kPostdecrement:
+      return "Postdecrement";
+
+    // Logical
+    case UnaryOperator::kLogicalNot:
+      return "LogicalNot";
+
+    // Bitwise
+    case UnaryOperator::kBitwiseNot:
+      return "BitwiseNot";
+
+    // Reduction
+    case UnaryOperator::kReductionAnd:
+      return "ReductionAnd";
+    case UnaryOperator::kReductionNand:
+      return "ReductionNand";
+    case UnaryOperator::kReductionOr:
+      return "ReductionOr";
+    case UnaryOperator::kReductionNor:
+      return "ReductionNor";
+    case UnaryOperator::kReductionXor:
+      return "ReductionXor";
+    case UnaryOperator::kReductionXnor:
+      return "ReductionXnor";
+  }
+  return "Unknown";
+}
+
+// Stream operator for UnaryOperator enum
+inline auto operator<<(std::ostream& os, UnaryOperator operator_kind)
+    -> std::ostream& {
+  return os << ToString(operator_kind);
+}
+
+enum class BinaryOperator {
   // Arithmetic
   kAddition,
   kSubtraction,
@@ -48,89 +120,88 @@ enum class Operator {
   kArithmeticShiftRight
 };
 
-// Convert Operator enum to string
-inline auto ToString(Operator operator_kind) -> std::string {
+// Convert BinaryOperator enum to string
+inline auto ToString(BinaryOperator operator_kind) -> std::string {
   switch (operator_kind) {
     // Arithmetic
-    case Operator::kAddition:
+    case BinaryOperator::kAddition:
       return "Addition";
-    case Operator::kSubtraction:
+    case BinaryOperator::kSubtraction:
       return "Subtraction";
-    case Operator::kMultiplication:
+    case BinaryOperator::kMultiplication:
       return "Multiplication";
-    case Operator::kDivision:
+    case BinaryOperator::kDivision:
       return "Division";
-    case Operator::kModulo:
+    case BinaryOperator::kModulo:
       return "Modulo";
-    case Operator::kPower:
+    case BinaryOperator::kPower:
       return "Power";
 
     // Bitwise
-    case Operator::kBitwiseAnd:
+    case BinaryOperator::kBitwiseAnd:
       return "BitwiseAnd";
-    case Operator::kBitwiseOr:
+    case BinaryOperator::kBitwiseOr:
       return "BitwiseOr";
-    case Operator::kBitwiseXor:
+    case BinaryOperator::kBitwiseXor:
       return "BitwiseXor";
-    case Operator::kBitwiseXnor:
+    case BinaryOperator::kBitwiseXnor:
       return "BitwiseXnor";
 
     // Logical
-    case Operator::kLogicalAnd:
+    case BinaryOperator::kLogicalAnd:
       return "LogicalAnd";
-    case Operator::kLogicalOr:
+    case BinaryOperator::kLogicalOr:
       return "LogicalOr";
-    case Operator::kLogicalImplication:
+    case BinaryOperator::kLogicalImplication:
       return "LogicalImplication";
-    case Operator::kLogicalEquivalence:
+    case BinaryOperator::kLogicalEquivalence:
       return "LogicalEquivalence";
 
     // Comparison
-    case Operator::kEquality:
+    case BinaryOperator::kEquality:
       return "Equality";
-    case Operator::kInequality:
+    case BinaryOperator::kInequality:
       return "Inequality";
-    case Operator::kCaseEquality:
+    case BinaryOperator::kCaseEquality:
       return "CaseEquality";
-    case Operator::kCaseInequality:
+    case BinaryOperator::kCaseInequality:
       return "CaseInequality";
-    case Operator::kWildcardEquality:
+    case BinaryOperator::kWildcardEquality:
       return "WildcardEquality";
-    case Operator::kWildcardInequality:
+    case BinaryOperator::kWildcardInequality:
       return "WildcardInequality";
-    case Operator::kGreaterThan:
+    case BinaryOperator::kGreaterThan:
       return "GreaterThan";
-    case Operator::kGreaterThanEqual:
+    case BinaryOperator::kGreaterThanEqual:
       return "GreaterThanEqual";
-    case Operator::kLessThan:
+    case BinaryOperator::kLessThan:
       return "LessThan";
-    case Operator::kLessThanEqual:
+    case BinaryOperator::kLessThanEqual:
       return "LessThanEqual";
 
     // Shift
-    case Operator::kLogicalShiftLeft:
+    case BinaryOperator::kLogicalShiftLeft:
       return "LogicalShiftLeft";
-    case Operator::kLogicalShiftRight:
+    case BinaryOperator::kLogicalShiftRight:
       return "LogicalShiftRight";
-    case Operator::kArithmeticShiftLeft:
+    case BinaryOperator::kArithmeticShiftLeft:
       return "ArithmeticShiftLeft";
-    case Operator::kArithmeticShiftRight:
+    case BinaryOperator::kArithmeticShiftRight:
       return "ArithmeticShiftRight";
   }
-  return "Unknown";
 }
 
-// Stream operator for Operator enum
-inline auto operator<<(std::ostream& os, Operator operator_kind)
+// Stream operator for BinaryOperator enum
+inline auto operator<<(std::ostream& os, BinaryOperator operator_kind)
     -> std::ostream& {
   return os << ToString(operator_kind);
 }
 
 }  // namespace lyra::mir
 
-// Formatter for fmt::format
+// Formatter for fmt::format for UnaryOperator
 template <>
-struct fmt::formatter<lyra::mir::Operator> {
+struct fmt::formatter<lyra::mir::UnaryOperator> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& context) {
     return context.begin();
@@ -138,7 +209,25 @@ struct fmt::formatter<lyra::mir::Operator> {
 
   template <typename FormatContext>
   auto format(
-      const lyra::mir::Operator& operator_kind, FormatContext& context) const {
+      const lyra::mir::UnaryOperator& operator_kind,
+      FormatContext& context) const {
+    return fmt::format_to(
+        context.out(), "{}", lyra::mir::ToString(operator_kind));
+  }
+};
+
+// Formatter for fmt::format for BinaryOperator
+template <>
+struct fmt::formatter<lyra::mir::BinaryOperator> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& context) {
+    return context.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(
+      const lyra::mir::BinaryOperator& operator_kind,
+      FormatContext& context) const {
     return fmt::format_to(
         context.out(), "{}", lyra::mir::ToString(operator_kind));
   }
@@ -146,10 +235,49 @@ struct fmt::formatter<lyra::mir::Operator> {
 
 namespace lyra::mir {
 
-// Convert slang::ast::BinaryOperator to mir::Operator
+// Convert slang::ast::UnaryOperator to mir::UnaryOperator
+inline auto ConvertSlangUnaryOperatorToMir(
+    slang::ast::UnaryOperator slang_operator) -> UnaryOperator {
+  using SlangOp = slang::ast::UnaryOperator;
+  using Operator = UnaryOperator;
+
+  switch (slang_operator) {
+    case SlangOp::Plus:
+      return Operator::kPlus;
+    case SlangOp::Minus:
+      return Operator::kMinus;
+    case SlangOp::BitwiseNot:
+      return Operator::kBitwiseNot;
+    case SlangOp::BitwiseAnd:
+      return Operator::kReductionAnd;
+    case SlangOp::BitwiseOr:
+      return Operator::kReductionOr;
+    case SlangOp::BitwiseXor:
+      return Operator::kReductionXor;
+    case SlangOp::BitwiseNand:
+      return Operator::kReductionNand;
+    case SlangOp::BitwiseNor:
+      return Operator::kReductionNor;
+    case SlangOp::BitwiseXnor:
+      return Operator::kReductionXnor;
+    case SlangOp::LogicalNot:
+      return Operator::kLogicalNot;
+    case SlangOp::Preincrement:
+      return Operator::kPreincrement;
+    case SlangOp::Predecrement:
+      return Operator::kPredecrement;
+    case SlangOp::Postincrement:
+      return Operator::kPostincrement;
+    case SlangOp::Postdecrement:
+      return Operator::kPostdecrement;
+  }
+}
+
+// Convert slang::ast::BinaryOperator to mir::BinaryOperator
 inline auto ConvertSlangBinaryOperatorToMir(
-    slang::ast::BinaryOperator slang_operator) -> Operator {
+    slang::ast::BinaryOperator slang_operator) -> BinaryOperator {
   using SlangOp = slang::ast::BinaryOperator;
+  using Operator = BinaryOperator;
 
   switch (slang_operator) {
     case SlangOp::Add:

@@ -27,6 +27,14 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
     return variable_table.Read(operand.name);
   };
 
+  auto eval_unary_op = [&](const lir::Operand& operand,
+                           const std::function<RuntimeValue(RuntimeValue)>& op)
+      -> InstructionResult {
+    const auto result = op(get_temp(operand));
+    temp_table.Write(instr.result.value(), result);
+    return InstructionResult::Continue();
+  };
+
   auto eval_binary_op =
       [&](const lir::Operand& lhs, const lir::Operand& rhs,
           const std::function<RuntimeValue(RuntimeValue, RuntimeValue)>& op)
@@ -37,6 +45,7 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
   };
 
   switch (instr.kind) {
+    // Memory operations
     case lir::InstructionKind::kLiteral: {
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLiteral());
@@ -61,6 +70,49 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
       return InstructionResult::Continue(variable_name);
     }
 
+    // Unary operations
+    case lir::InstructionKind::kUnaryPlus: {
+      return eval_unary_op(instr.operands[0], UnaryPlus);
+    }
+
+    case lir::InstructionKind::kUnaryMinus: {
+      return eval_unary_op(instr.operands[0], UnaryMinus);
+    }
+
+    case lir::InstructionKind::kUnaryLogicalNot: {
+      return eval_unary_op(instr.operands[0], UnaryLogicalNot);
+    }
+
+    case lir::InstructionKind::kUnaryBitwiseNot: {
+      return eval_unary_op(instr.operands[0], UnaryBitwiseNot);
+    }
+
+    // Reduction operations
+    case lir::InstructionKind::kReductionAnd: {
+      return eval_unary_op(instr.operands[0], ReductionAnd);
+    }
+
+    case lir::InstructionKind::kReductionNand: {
+      return eval_unary_op(instr.operands[0], ReductionNand);
+    }
+
+    case lir::InstructionKind::kReductionOr: {
+      return eval_unary_op(instr.operands[0], ReductionOr);
+    }
+
+    case lir::InstructionKind::kReductionNor: {
+      return eval_unary_op(instr.operands[0], ReductionNor);
+    }
+
+    case lir::InstructionKind::kReductionXor: {
+      return eval_unary_op(instr.operands[0], ReductionXor);
+    }
+
+    case lir::InstructionKind::kReductionXnor: {
+      return eval_unary_op(instr.operands[0], ReductionXnor);
+    }
+
+    // Binary operations
     case lir::InstructionKind::kBinaryAdd: {
       return eval_binary_op(instr.operands[0], instr.operands[1], BinaryAdd);
     }
@@ -112,6 +164,7 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
           instr.operands[0], instr.operands[1], BinaryGreaterThanEqual);
     }
 
+    // Type operations
     case lir::InstructionKind::kConversion: {
       // Read the source value from temp table
       const auto& src = get_temp(instr.operands[0]);
@@ -156,6 +209,7 @@ auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
       return InstructionResult::Continue();
     }
 
+    // Control flow
     case lir::InstructionKind::kWaitEvent: {
       return InstructionResult::WaitEvent(instr.wait_triggers);
     }

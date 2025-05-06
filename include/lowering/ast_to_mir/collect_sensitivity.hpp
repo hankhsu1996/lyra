@@ -21,6 +21,10 @@ class SensitivityCollector : public mir::MirVisitor {
     variable_names_.insert(expression.name);
   }
 
+  void Visit(const mir::UnaryExpression& expression) override {
+    expression.operand->Accept(*this);
+  }
+
   void Visit(const mir::BinaryExpression& expression) override {
     expression.left->Accept(*this);
     expression.right->Accept(*this);

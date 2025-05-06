@@ -25,6 +25,7 @@ class Expression {
   enum class Kind {
     kLiteral,
     kIdentifier,
+    kUnary,
     kBinary,
     kAssignment,
     kConversion,
@@ -52,6 +53,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Literal";
     case Expression::Kind::kIdentifier:
       return "Identifier";
+    case Expression::Kind::kUnary:
+      return "Unary";
     case Expression::Kind::kBinary:
       return "Binary";
     case Expression::Kind::kAssignment:
@@ -106,15 +109,36 @@ class IdentifierExpression : public Expression {
   }
 };
 
+class UnaryExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kUnary;
+  UnaryOperator op;
+  std::unique_ptr<Expression> operand;
+
+  UnaryExpression(UnaryOperator op, std::unique_ptr<Expression> operand)
+      : Expression(kKindValue, operand->type),
+        op(op),
+        operand(std::move(operand)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("({} {})", op, operand->ToString());
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
 class BinaryExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kBinary;
-  lyra::mir::Operator op;
+  BinaryOperator op;
   std::unique_ptr<Expression> left;
   std::unique_ptr<Expression> right;
 
   BinaryExpression(
-      lyra::mir::Operator op, std::unique_ptr<Expression> left,
+      BinaryOperator op, std::unique_ptr<Expression> left,
       std::unique_ptr<Expression> right)
       : Expression(kKindValue, left->type),
         op(op),

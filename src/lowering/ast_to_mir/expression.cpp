@@ -41,6 +41,18 @@ auto LowerExpression(const slang::ast::Expression& expression)
           std::string(named_value.symbol.name), type);
     }
 
+    case slang::ast::ExpressionKind::UnaryOp: {
+      const auto& unary_expression =
+          expression.as<slang::ast::UnaryExpression>();
+
+      auto operand = LowerExpression(unary_expression.operand());
+      auto mir_operator =
+          mir::ConvertSlangUnaryOperatorToMir(unary_expression.op);
+
+      return std::make_unique<mir::UnaryExpression>(
+          mir_operator, std::move(operand));
+    }
+
     case slang::ast::ExpressionKind::BinaryOp: {
       const auto& binary_expression =
           expression.as<slang::ast::BinaryExpression>();

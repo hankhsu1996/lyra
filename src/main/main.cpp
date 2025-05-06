@@ -20,6 +20,10 @@ auto main() -> int {
   std::cout << "b = " << val2 << "\n";
   const auto& val3 = result.ReadVariable("c");
   std::cout << "c = " << val3 << "\n";
+  const auto& val4 = result.ReadVariable("d");
+  std::cout << "d = " << val4 << "\n";
+  const auto& val5 = result.ReadVariable("counter");
+  std::cout << "counter = " << val5 << "\n";
 
   return 0;
 }

@@ -1,22 +1,45 @@
 module Test;
-  int a, b, sel, c;
+  int a, b, c, d;
+  bit clk, reset;
+  longint counter;
+
   initial begin
-    a = 1;
-    b = 2;
-    sel = 0;
-    #5 sel = 1;
-    #5 sel = 0;
-    #5 sel = 1;
-    #5 sel = 0;
+    a = 10;
+    b = 20;
+    c = 0;
+    clk = 0;
+    reset = 1;
+    counter = 0;
+
+    c = a + b;
+    c = -a;
+    a++;
+
+    #5 reset = 0;
+
+    #5 clk = 1;
+    #5 clk = 0;
+    #5 clk = 1;
+    #5 clk = 0;
 
     $finish();
   end
 
   always_comb begin
-    if (sel == 0) begin
-      c = a;
-    end else begin
-      c = b;
+    if (reset) begin
+      d = 0;
+    end
+    else begin
+      d = a + b;
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      counter = 0;
+    end
+    else begin
+      counter = counter + 1;
     end
   end
 

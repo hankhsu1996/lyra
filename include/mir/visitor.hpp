@@ -5,6 +5,7 @@ namespace lyra::mir {
 class Expression;
 class LiteralExpression;
 class IdentifierExpression;
+class UnaryExpression;
 class BinaryExpression;
 class AssignmentExpression;
 class ConversionExpression;
@@ -31,6 +32,7 @@ class MirVisitor {
 
   virtual void Visit(const LiteralExpression&) = 0;
   virtual void Visit(const IdentifierExpression&) = 0;
+  virtual void Visit(const UnaryExpression&) = 0;
   virtual void Visit(const BinaryExpression&) = 0;
   virtual void Visit(const AssignmentExpression&) = 0;
   virtual void Visit(const ConversionExpression&) = 0;
