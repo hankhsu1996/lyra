@@ -90,6 +90,32 @@ struct InstructionResult {
         .target_label = std::move(label),
         .modified_variable = std::move(modified_variable)};
   }
+
+  [[nodiscard]] auto Summary() const -> std::string {
+    if (modified_variable) {
+      return fmt::format("modified {}", *modified_variable);
+    }
+
+    switch (kind) {
+      case Kind::kDelay:
+        return fmt::format("Delay {}", delay_amount);
+
+      case Kind::kWaitEvent:
+        return "WaitEvent";
+
+      case Kind::kFinish:
+        return "Finish";
+
+      case Kind::kJump:
+        return fmt::format("Jump -> {}", target_label);
+
+      case Kind::kComplete:
+      case Kind::kContinue:
+        return "";
+    }
+
+    return "";
+  }
 };
 
 }  // namespace lyra::interpreter

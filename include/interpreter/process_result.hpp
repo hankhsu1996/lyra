@@ -85,4 +85,17 @@ struct ProcessResult {
   }
 };
 
+inline auto ToString(ProcessResult::Kind kind) -> std::string {
+  switch (kind) {
+    case ProcessResult::Kind::kComplete:
+      return "Complete";
+    case ProcessResult::Kind::kDelay:
+      return "Delay";
+    case ProcessResult::Kind::kWaitEvent:
+      return "WaitEvent";
+    case ProcessResult::Kind::kFinish:
+      return "Finish";
+  }
+}
+
 }  // namespace lyra::interpreter

@@ -4,9 +4,9 @@
 #include <memory>
 
 #include "interpreter/basic_block_runner.hpp"
+#include "interpreter/execution_context.hpp"
 #include "interpreter/process_result.hpp"
 #include "lir/process.hpp"
-#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 
@@ -21,7 +21,7 @@ class ProcessRunner {
 
  private:
   BasicBlockRunner block_runner_;
-  std::reference_wrapper<ExecutionContext> ctx_;
+  std::reference_wrapper<ExecutionContext> context_;
 };
 
 }  // namespace lyra::interpreter

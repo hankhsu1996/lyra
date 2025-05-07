@@ -13,7 +13,6 @@
 #include "interpreter/trigger_manager.hpp"
 #include "lir/module.hpp"
 #include "lir/process.hpp"
-#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 

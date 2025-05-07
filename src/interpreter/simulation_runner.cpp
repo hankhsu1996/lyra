@@ -108,6 +108,13 @@ void SimulationRunner::ExecuteOneEvent() {
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
+  context_.get().tracer.AddEvent(
+      {.name = process->name,
+       .time = simulation_time_,
+       .detail = fmt::format(
+           "Start at block {} instruction {}", block_index,
+           instruction_index)});
+
   auto result =
       process_runner_.RunProcess(process, block_index, instruction_index);
 

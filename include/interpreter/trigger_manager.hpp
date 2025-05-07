@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "common/trigger.hpp"
+#include "interpreter/execution_context.hpp"
+#include "interpreter/runtime_value.hpp"
 #include "lir/process.hpp"
-#include "runtime/execution_context.hpp"
-#include "runtime/runtime_value.hpp"
 
 namespace lyra::interpreter {
 

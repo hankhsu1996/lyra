@@ -1,8 +1,8 @@
-#include "runtime/variable_table.hpp"
+#include "interpreter/variable_table.hpp"
 
 #include <stdexcept>
 
-namespace lyra {
+namespace lyra::interpreter {
 
 void VariableTable::Write(const std::string& name, const RuntimeValue& value) {
   variables_[name] = value;
@@ -49,4 +49,4 @@ void VariableTable::InitializeVariable(
   }
 }
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

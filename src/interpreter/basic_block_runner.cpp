@@ -3,7 +3,7 @@
 namespace lyra::interpreter {
 
 BasicBlockRunner::BasicBlockRunner(ExecutionContext& context)
-    : instruction_runner_(context), ctx_(context) {
+    : instruction_runner_(context), context_(context) {
 }
 
 auto BasicBlockRunner::RunBlock(
@@ -18,7 +18,8 @@ auto BasicBlockRunner::RunBlock(
 
   for (std::size_t i = start_instruction_index; i < instructions.size(); ++i) {
     const auto& instr = instructions[i];
-    auto instruction_result = instruction_runner_.ExecuteInstruction(instr);
+
+    auto instruction_result = instruction_runner_.RunInstruction(instr);
 
     // If a variable was modified, add it to our list
     if (instruction_result.modified_variable) {

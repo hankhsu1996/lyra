@@ -23,7 +23,7 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
   }
 
   // Begin a new process with the mapped kind
-  builder.BeginProcess(MapProcessKind(process.process_kind));
+  builder.BeginProcess(MapProcessKind(process.process_kind), process.name);
 
   // Start with an "entry" block for the process
   builder.StartBlock("entry");

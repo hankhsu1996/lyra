@@ -16,7 +16,7 @@ class LirBuilder {
   explicit LirBuilder(std::string module_name);
 
   void AddVariable(const common::Variable& variable);
-  void BeginProcess(lir::ProcessKind kind);
+  void BeginProcess(lir::ProcessKind kind, const std::string& name);
 
   // Basic block management
   void StartBlock(const std::string& label);

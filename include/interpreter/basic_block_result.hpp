@@ -95,4 +95,19 @@ struct BasicBlockResult {
   }
 };
 
+inline auto ToString(BasicBlockResult::Kind kind) -> std::string {
+  switch (kind) {
+    case BasicBlockResult::Kind::kComplete:
+      return "Complete";
+    case BasicBlockResult::Kind::kDelay:
+      return "Delay";
+    case BasicBlockResult::Kind::kWaitEvent:
+      return "WaitEvent";
+    case BasicBlockResult::Kind::kFinish:
+      return "Finish";
+    case BasicBlockResult::Kind::kJump:
+      return "Jump";
+  }
+}
+
 }  // namespace lyra::interpreter

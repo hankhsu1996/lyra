@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/runtime_value.hpp"
+#include "interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 

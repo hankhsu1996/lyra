@@ -10,7 +10,6 @@
 #include "interpreter/simulation_runner.hpp"
 #include "lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lowering/mir_to_lir/mir_to_lir.hpp"
-#include "runtime/execution_context.hpp"
 
 namespace lyra::driver {
 
@@ -42,7 +41,7 @@ auto Driver::RunWithCompilation(
               << lir->ToString(common::FormatMode::kContextual) << std::endl;
   }
 
-  auto context = std::make_unique<ExecutionContext>();
+  auto context = std::make_unique<interpreter::ExecutionContext>();
 
   interpreter::SimulationRunner runner(*lir, *context);
   auto final_time = runner.Run();

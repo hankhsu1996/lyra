@@ -10,10 +10,11 @@ void LirBuilder::AddVariable(const common::Variable& variable) {
   variables_.push_back(variable);
 }
 
-void LirBuilder::BeginProcess(lir::ProcessKind kind) {
+void LirBuilder::BeginProcess(lir::ProcessKind kind, const std::string& name) {
   assert(!current_process_);
   current_process_ = std::make_shared<lir::Process>();
   current_process_->kind = kind;
+  current_process_->name = name;
   current_blocks_.clear();
 }
 

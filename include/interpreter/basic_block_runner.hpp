@@ -5,8 +5,8 @@
 #include <lir/basic_block.hpp>
 
 #include "interpreter/basic_block_result.hpp"
+#include "interpreter/execution_context.hpp"
 #include "interpreter/instruction_runner.hpp"
-#include "runtime/execution_context.hpp"
 
 namespace lyra::interpreter {
 
@@ -20,7 +20,7 @@ class BasicBlockRunner {
 
  private:
   InstructionRunner instruction_runner_;
-  std::reference_wrapper<ExecutionContext> ctx_;
+  std::reference_wrapper<ExecutionContext> context_;
 };
 
 }  // namespace lyra::interpreter

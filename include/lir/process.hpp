@@ -30,6 +30,7 @@ inline auto ToString(ProcessKind kind) -> std::string {
 }
 
 struct Process {
+  std::string name;
   ProcessKind kind;
 
   // List of basic blocks
@@ -43,10 +44,10 @@ struct Process {
     // Process header with kind and trigger list
     if (mode == common::FormatMode::kContextual) {
       out += fmt::format(
-          "{}Process {}", common::Indent(indentation_level),
+          "{}Process {} {}", common::Indent(indentation_level), name,
           lyra::lir::ToString(kind));
     } else {
-      out += fmt::format("Process {}", lyra::lir::ToString(kind));
+      out += fmt::format("Process {} {}", name, lyra::lir::ToString(kind));
     }
 
     out += "\n";

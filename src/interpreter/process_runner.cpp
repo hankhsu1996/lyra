@@ -3,7 +3,7 @@
 namespace lyra::interpreter {
 
 ProcessRunner::ProcessRunner(ExecutionContext& context)
-    : block_runner_(context), ctx_(context) {
+    : block_runner_(context), context_(context) {
 }
 
 auto ProcessRunner::RunProcess(

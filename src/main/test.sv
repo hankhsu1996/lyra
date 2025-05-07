@@ -1,46 +1,56 @@
-module Test;
-  int a, b, c, d;
+module TinyCPU;
   bit clk, reset;
-  longint counter;
+  int pc, pc_next;
+  int reg0, reg1;
+  int reg0_next, reg1_next;
+  bit halted, halted_next;
 
+  // Clock generator
+  initial forever #5 clk = ~clk;
+
+  // Stimulus
   initial begin
-    a = 10;
-    b = 20;
-    c = 0;
     clk = 0;
     reset = 1;
-    counter = 0;
+    #7 reset = 0;
 
-    c = a + b;
-    c = -a;
-    a++;
-
-    #5 reset = 0;
-
-    #5 clk = 1;
-    #5 clk = 0;
-    #5 clk = 1;
-    #5 clk = 0;
-
-    $finish();
+    @(posedge halted);
+    $finish;
   end
 
+  // Next-state logic
   always_comb begin
-    if (reset) begin
-      d = 0;
-    end
-    else begin
-      d = a + b;
+    pc_next = pc;
+    reg0_next = reg0;
+    reg1_next = reg1;
+    halted_next = halted;
+
+    if (pc == 0) begin
+      reg0_next = 3;
+      pc_next = 1;
+    end else if (pc == 1) begin
+      reg1_next = 5;
+      pc_next = 2;
+    end else if (pc == 2) begin
+      reg0_next = reg0 + reg1;
+      pc_next = 3;
+    end else if (pc == 3) begin
+      halted_next = 1;
     end
   end
 
+  // State update
   always_ff @(posedge clk) begin
     if (reset) begin
-      counter = 0;
-    end
-    else begin
-      counter = counter + 1;
+      pc <= 0;
+      reg0 <= 0;
+      reg1 <= 0;
+      halted <= 0;
+    end else begin
+      pc <= pc_next;
+      reg0 <= reg0_next;
+      reg1 <= reg1_next;
+      halted <= halted_next;
     end
   end
-
 endmodule

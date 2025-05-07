@@ -1,8 +1,8 @@
-#include "runtime/temp_table.hpp"
+#include "interpreter/temp_table.hpp"
 
 #include <fmt/core.h>
 
-namespace lyra {
+namespace lyra::interpreter {
 
 void TempTable::Write(const std::string& name, const RuntimeValue& value) {
   registers_[name] = value;
@@ -17,4 +17,4 @@ auto TempTable::Read(const std::string& name) const -> RuntimeValue {
   return it->second;
 }
 
-}  // namespace lyra
+}  // namespace lyra::interpreter

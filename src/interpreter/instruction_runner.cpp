@@ -5,7 +5,7 @@
 #include <fmt/core.h>
 
 #include "interpreter/builtin_ops.hpp"
-#include "runtime/runtime_value.hpp"
+#include "interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
@@ -14,7 +14,7 @@ InstructionRunner::InstructionRunner(ExecutionContext& context)
 }
 
 // Execute a single instruction in the given context
-auto InstructionRunner::ExecuteInstruction(const lir::Instruction& instr)
+auto InstructionRunner::RunInstruction(const lir::Instruction& instr)
     -> InstructionResult {
   auto& temp_table = ctx_.get().temp_table;
   auto& variable_table = ctx_.get().variable_table;

@@ -3,9 +3,9 @@
 #include <string>
 #include <unordered_map>
 
-#include "runtime/runtime_value.hpp"
+#include "interpreter/runtime_value.hpp"
 
-namespace lyra {
+namespace lyra::interpreter {
 
 class TempTable {
  public:
@@ -16,4 +16,4 @@ class TempTable {
   std::unordered_map<std::string, RuntimeValue> registers_;
 };
 
-}  // namespace lyra
+}  // namespace lyra::interpreter
