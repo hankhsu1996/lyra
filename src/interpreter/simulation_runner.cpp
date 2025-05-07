@@ -1,7 +1,5 @@
 #include "interpreter/simulation_runner.hpp"
 
-#include <cstdint>
-
 #include <fmt/core.h>
 
 namespace lyra::interpreter {
@@ -14,7 +12,7 @@ SimulationRunner::SimulationRunner(
       trigger_manager_(context) {
 }
 
-auto SimulationRunner::Run() -> uint64_t {
+void SimulationRunner::Run() {
   // Initialize simulation state
   InitializeVariables();
   ScheduleInitialProcesses();
@@ -25,7 +23,11 @@ auto SimulationRunner::Run() -> uint64_t {
     // Advance simulation time if no active events
     if (active_queue_.empty()) {
       auto it = delay_queue_.begin();
-      simulation_time_ = it->first;
+      context_.get().current_time = it->first;
+
+      if (context_.get().current_time > kMaxSimulationTime) {
+        throw std::runtime_error("Simulation time exceeded max limit");
+      }
 
       // Move delayed events scheduled for this time into the active queue
       for (const auto& event : it->second) {
@@ -34,47 +36,118 @@ auto SimulationRunner::Run() -> uint64_t {
       delay_queue_.erase(it);
     }
 
-    // Run active queue
-    while (!active_queue_.empty()) {
-      ExecuteOneEvent();
-    }
-
-    // Run inactive queue (handle #0 delays)
-    while (!inactive_queue_.empty()) {
-      std::queue<ScheduledEvent> current;
-      std::swap(current, inactive_queue_);
-
-      while (!current.empty()) {
-        active_queue_.push(current.front());
-        current.pop();
-      }
-
-      while (!active_queue_.empty()) {
-        ExecuteOneEvent();
-      }
-    }
-
-    // Execute all non-blocking assignments
-    while (!nba_queue_.empty()) {
-      const auto& action = nba_queue_.front();
-      context_.get().variable_table.Write(action.variable, action.value);
-      nba_queue_.pop();
-    }
-
-    // Execute all postponed actions (e.g., $strobe, $monitor)
-    while (!postponed_queue_.empty()) {
-      const auto& action = postponed_queue_.front();
-      action.action();
-      postponed_queue_.pop();
-    }
+    ExecuteTimeSlot();
 
     // Stop simulation if $finish was requested
     if (finish_requested_) {
       break;
     }
   }
+}
 
-  return simulation_time_;
+void SimulationRunner::ExecuteTimeSlot() {
+  ExecuteRegion(RegionType::kPreponed);
+  ExecuteRegion(RegionType::kPreActive);
+
+  while (HasPendingActivity()) {
+    // Phase 1: Active phase group
+    while (HasActivityInActiveGroup()) {
+      ExecuteRegion(RegionType::kActive);
+
+      if (!inactive_queue_.empty()) {
+        MoveToActive(inactive_queue_);
+      } else if (!nba_queue_.empty()) {
+        ExecuteRegion(RegionType::kNba);
+        // NBA commits might trigger more Active events
+      }
+    }
+
+    // Phase 2: Reactive phase group
+    while (HasActivityInReactiveGroup()) {
+      ExecuteRegion(RegionType::kReactive);
+
+      if (!inactive_queue_.empty()) {
+        MoveToActive(inactive_queue_);
+      }
+    }
+
+    // Phase 3: Pre-Postponed region (optional)
+    if (IsAllRegionEmpty()) {
+      ExecuteRegion(RegionType::kPrePostponed);
+    }
+  }
+
+  // Final Phase: Postponed
+  ExecuteRegion(RegionType::kPostponed);
+}
+
+auto SimulationRunner::HasPendingActivity() const -> bool {
+  return !active_queue_.empty() || !inactive_queue_.empty() ||
+         !nba_queue_.empty();
+}
+
+auto SimulationRunner::HasActivityInActiveGroup() const -> bool {
+  return !active_queue_.empty() || !inactive_queue_.empty() ||
+         !nba_queue_.empty();
+}
+
+auto SimulationRunner::HasActivityInReactiveGroup() const -> bool {
+  return !active_queue_.empty() || !inactive_queue_.empty();
+}
+
+auto SimulationRunner::IsAllRegionEmpty() const -> bool {
+  return active_queue_.empty() && inactive_queue_.empty() && nba_queue_.empty();
+}
+
+void SimulationRunner::MoveToActive(std::queue<ScheduledEvent>& source) {
+  std::queue<ScheduledEvent> tmp;
+  std::swap(tmp, source);
+  while (!tmp.empty()) {
+    active_queue_.push(tmp.front());
+    tmp.pop();
+  }
+}
+
+void SimulationRunner::ExecuteRegion(RegionType region) {
+  switch (region) {
+    case RegionType::kActive:
+      while (!active_queue_.empty()) {
+        ExecuteOneEvent();
+      }
+      break;
+
+    case RegionType::kReactive:
+      while (!active_queue_.empty()) {
+        ExecuteOneEvent();
+      }
+      break;
+
+    case RegionType::kNba: {
+      std::vector<std::string> modified_variables;
+
+      while (!nba_queue_.empty()) {
+        const auto& action = nba_queue_.front();
+        context_.get().variable_table.Write(action.variable, action.value);
+        modified_variables.push_back(action.variable);
+        nba_queue_.pop();
+      }
+
+      WakeWaitingProcesses(modified_variables);
+      break;
+    }
+
+    case RegionType::kPostponed:
+      while (!postponed_queue_.empty()) {
+        const auto& action = postponed_queue_.front();
+        action.action();
+        postponed_queue_.pop();
+      }
+      break;
+
+    default:
+      // Other regions not implemented yet
+      break;
+  }
 }
 
 void SimulationRunner::InitializeVariables() {
@@ -108,15 +181,15 @@ void SimulationRunner::ExecuteOneEvent() {
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
-  context_.get().tracer.AddEvent(
-      {.name = process->name,
-       .time = simulation_time_,
-       .detail = fmt::format(
-           "Start at block {} instruction {}", block_index,
-           instruction_index)});
+  context_.get().tracer.Record(fmt::format(
+      "{} | Start at block {} instruction {}", process->name,
+      process->blocks[block_index]->label, instruction_index));
 
   auto result =
       process_runner_.RunProcess(process, block_index, instruction_index);
+
+  context_.get().tracer.Record(
+      fmt::format("{} | {}", process->name, result.Summary()));
 
   WakeWaitingProcesses(result.modified_variables);
 
@@ -129,7 +202,8 @@ void SimulationRunner::ExecuteOneEvent() {
 
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
-      SimulationTime delay_time = simulation_time_ + result.delay_amount;
+      SimulationTime delay_time =
+          context_.get().current_time + result.delay_amount;
       ScheduledEvent event{
           .process = process,
           .block_index = result.block_index,

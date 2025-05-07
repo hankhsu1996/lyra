@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+#include <fmt/core.h>
+#include <fmt/ranges.h>
+
 #include "common/trigger.hpp"
 #include "interpreter/actions.hpp"
 
@@ -83,19 +86,49 @@ struct ProcessResult {
         .nba_actions = std::move(nba_actions),
         .postponed_actions = std::move(postponed_actions)};
   }
-};
 
-inline auto ToString(ProcessResult::Kind kind) -> std::string {
-  switch (kind) {
-    case ProcessResult::Kind::kComplete:
-      return "Complete";
-    case ProcessResult::Kind::kDelay:
-      return "Delay";
-    case ProcessResult::Kind::kWaitEvent:
-      return "WaitEvent";
-    case ProcessResult::Kind::kFinish:
-      return "Finish";
+  [[nodiscard]] auto Summary() const -> std::string {
+    std::string base;
+
+    switch (kind) {
+      case Kind::kDelay:
+        base = fmt::format("Delay for {} time units", delay_amount);
+        break;
+
+      case Kind::kWaitEvent: {
+        std::vector<std::string> trigger_strs;
+        for (const auto& trig : triggers) {
+          trigger_strs.push_back(trig.ToString());
+        }
+        base =
+            fmt::format("Wait for event(s): {}", fmt::join(trigger_strs, ", "));
+        break;
+      }
+
+      case Kind::kComplete:
+        base = "Complete";
+        break;
+
+      case Kind::kFinish:
+        base = "Finish";
+        break;
+    }
+
+    if (!modified_variables.empty()) {
+      base +=
+          fmt::format(", modified: {}", fmt::join(modified_variables, ", "));
+    }
+
+    if (!nba_actions.empty()) {
+      std::vector<std::string> nba_actions_str;
+      for (const auto& action : nba_actions) {
+        nba_actions_str.push_back(action.ToString());
+      }
+      base += fmt::format(", nba: {}", fmt::join(nba_actions_str, ", "));
+    }
+
+    return base;
   }
-}
+};
 
 }  // namespace lyra::interpreter

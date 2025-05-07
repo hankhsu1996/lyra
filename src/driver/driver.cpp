@@ -44,9 +44,9 @@ auto Driver::RunWithCompilation(
   auto context = std::make_unique<interpreter::ExecutionContext>();
 
   interpreter::SimulationRunner runner(*lir, *context);
-  auto final_time = runner.Run();
+  runner.Run();
 
-  return DriverResult{.context = std::move(context), .final_time = final_time};
+  return DriverResult{.context = std::move(context)};
 }
 
 }  // namespace lyra::driver

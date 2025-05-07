@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -12,11 +11,14 @@ namespace lyra::driver {
 // Includes the final execution state and the total simulation time.
 struct DriverResult {
   std::unique_ptr<interpreter::ExecutionContext> context;
-  uint64_t final_time;
 
   [[nodiscard]] auto ReadVariable(const std::string& name) const
       -> RuntimeValue {
     return context->variable_table.Read(name);
+  }
+
+  [[nodiscard]] auto FinalTime() const -> uint64_t {
+    return context->current_time;
   }
 };
 

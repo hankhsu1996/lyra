@@ -17,7 +17,7 @@ TEST(TimingTest, OnlyDelay) {
     endmodule
   )";
   auto result = Driver::RunFromSource(code);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(TimingTest, DelayWithInlineAssign) {
@@ -29,7 +29,7 @@ TEST(TimingTest, DelayWithInlineAssign) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(TimingTest, DelayThenAssign) {
@@ -44,7 +44,7 @@ TEST(TimingTest, DelayThenAssign) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 2);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(TimingTest, MultipleDelaysThenAssign) {
@@ -60,7 +60,7 @@ TEST(TimingTest, MultipleDelaysThenAssign) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 3);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(TimingTest, MixedDelayForms) {
@@ -78,5 +78,5 @@ TEST(TimingTest, MixedDelayForms) {
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 12);  // 10+1+1
   EXPECT_EQ(result.ReadVariable("b").AsInt64(), 11);  // 10+1
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }

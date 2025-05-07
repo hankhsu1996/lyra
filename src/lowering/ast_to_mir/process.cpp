@@ -21,7 +21,13 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
 
   auto process = std::make_unique<mir::Process>();
-  process->name = procedural_block.name;
+
+  static std::size_t process_counter = 0;
+  if (procedural_block.name.empty()) {
+    process->name = fmt::format("proc_{}", process_counter++);
+  } else {
+    process->name = procedural_block.name;
+  }
 
   switch (procedural_block.procedureKind) {
     case ProceduralBlockKind::Initial: {

@@ -14,10 +14,10 @@ auto main() -> int {
   auto result = Driver::RunFromFiles(test_file_paths, options);
 
   std::cout << "[ Simulation Result ]\n";
-  const auto& val = result.ReadVariable("money");
-  std::cout << "money = " << val << "\n";
-  const auto& val2 = result.ReadVariable("vend");
-  std::cout << "vend = " << val2 << "\n";
+  std::cout << "pc      = " << result.ReadVariable("pc") << "\n";
+  std::cout << "reg0    = " << result.ReadVariable("reg0") << "\n";
+  std::cout << "reg1    = " << result.ReadVariable("reg1") << "\n";
+  std::cout << "halted  = " << result.ReadVariable("halted") << "\n";
 
   return 0;
 }

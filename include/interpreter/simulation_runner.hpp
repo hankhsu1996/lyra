@@ -17,6 +17,9 @@
 namespace lyra::interpreter {
 
 using SimulationTime = uint64_t;
+
+constexpr SimulationTime kMaxSimulationTime = 10000;
+
 using ProcessPtr = std::shared_ptr<lir::Process>;
 
 struct ScheduledEvent {
@@ -37,14 +40,31 @@ struct WaitingProcessInfo {
   common::EdgeKind edge_kind;
 };
 
+enum class RegionType {
+  kPreponed,      // Not implemented yet
+  kPreActive,     // Not implemented yet
+  kActive,        // Main always blocks, schedules NBA
+  kInactive,      // #0 delays
+  kPreNba,        // Not implemented yet
+  kNba,           // Commit NBA updates
+  kPostNba,       // Not implemented yet
+  kPreObserved,   // Not implemented yet
+  kObserved,      // Not implemented yet
+  kPostObserved,  // Not implemented yet
+  kReactive,      // Testbench execution
+  kReInactive,    // Not implemented yet
+  kPreReNba,      // Not implemented yet
+  kReNba,         // Not implemented yet
+  kPostReNba,     // Not implemented yet
+  kPrePostponed,  // Not implemented yet
+  kPostponed      // Final observation ($strobe, $monitor)
+};
+
 class SimulationRunner {
  public:
   SimulationRunner(const lir::Module& module, ExecutionContext& context);
 
-  auto Run() -> uint64_t;
-  auto CurrentTime() const -> uint64_t {
-    return simulation_time_;
-  }
+  void Run();
 
  private:
   void InitializeVariables();
@@ -52,6 +72,15 @@ class SimulationRunner {
   void ScheduleAlwaysProcesses();
   void ExecuteOneEvent();
   void WakeWaitingProcesses(const std::vector<std::string>& modified_variables);
+  void ExecuteTimeSlot();
+  void ExecuteRegion(RegionType region);
+
+  // Helper functions for ExecuteTimeSlot
+  auto HasPendingActivity() const -> bool;
+  auto HasActivityInActiveGroup() const -> bool;
+  auto HasActivityInReactiveGroup() const -> bool;
+  auto IsAllRegionEmpty() const -> bool;
+  void MoveToActive(std::queue<ScheduledEvent>& source);
 
   // Global queues
   DelayQueue delay_queue_;
@@ -62,7 +91,6 @@ class SimulationRunner {
   NbaQueue nba_queue_;
   PostponedQueue postponed_queue_;
 
-  SimulationTime simulation_time_ = 0;
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;

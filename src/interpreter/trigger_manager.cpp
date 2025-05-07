@@ -59,6 +59,21 @@ auto TriggerManager::CheckTriggers(
         triggered_processes.insert(process);
         to_remove.insert(process);
       }
+
+      if (!to_remove.empty()) {
+        std::vector<std::string> proc_names;
+        for (const auto& proc : to_remove) {
+          proc_names.push_back(proc->name);
+        }
+
+        std::string trace_detail = fmt::format(
+            "Trigger on variable '{}': old = {}, new = {}, triggered "
+            "process(es) = {}",
+            variable, old_value.ToString(), new_value.ToString(),
+            fmt::join(proc_names, ", "));
+
+        context_.get().tracer.Record(trace_detail);
+      }
     }
 
     // Remove triggered processes from wait map for this variable

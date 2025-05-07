@@ -10,6 +10,10 @@ namespace lyra::interpreter {
 struct NbaAction {
   std::string variable;
   RuntimeValue value;
+
+  [[nodiscard]] auto ToString() const -> std::string {
+    return fmt::format("{} <= {}", variable, value.ToString());
+  }
 };
 
 struct PostponedAction {

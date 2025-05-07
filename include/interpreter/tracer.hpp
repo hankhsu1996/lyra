@@ -1,33 +1,33 @@
 #pragma once
 
-#include <optional>
+#include <iostream>
 #include <ostream>
 #include <string>
 #include <vector>
 
-#include <fmt/format.h>
+#include <fmt/core.h>
 
 namespace lyra::interpreter {
 
 using SimulationTime = uint64_t;
 
-struct TraceEvent {
-  std::string name;
-  std::optional<SimulationTime> time{};
-  std::string detail;
+struct TraceRecord {
+  SimulationTime time;
+  std::string message;
 
   [[nodiscard]] auto ToString() const -> std::string {
-    std::string time_str = time.has_value() ? std::to_string(*time) : "-";
-    return fmt::format("[{}] {} | {}", time_str, name, detail);
+    return fmt::format("[{}] {}", time, message);
   }
 };
 
 class Tracer {
  public:
-  Tracer() = default;
+  explicit Tracer(SimulationTime& current_time) : current_time_(current_time) {
+  }
 
-  void AddEvent(TraceEvent event) {
-    events_.emplace_back(std::move(event));
+  void Record(std::string message) {
+    TraceRecord record{.time = current_time_, .message = std::move(message)};
+    events_.emplace_back(std::move(record));
   }
 
   void Clear() {
@@ -35,13 +35,14 @@ class Tracer {
   }
 
   void Dump(std::ostream& os) const {
-    for (const auto& event : events_) {
-      os << event.ToString() << '\n';
+    for (const auto& record : events_) {
+      os << record.ToString() << '\n';
     }
   }
 
  private:
-  std::vector<TraceEvent> events_;
+  std::reference_wrapper<SimulationTime> current_time_;
+  std::vector<TraceRecord> events_;
 };
 
 }  // namespace lyra::interpreter

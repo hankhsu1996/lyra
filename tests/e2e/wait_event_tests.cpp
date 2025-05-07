@@ -24,7 +24,7 @@ TEST(WaitEventTest, AlwaysCombRunsOnceAtTimeZero) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 3);
-  EXPECT_EQ(result.final_time, 0);
+  EXPECT_EQ(result.FinalTime(), 0);
 }
 
 TEST(WaitEventTest, AlwaysCombReactsToInputChange) {
@@ -42,7 +42,7 @@ TEST(WaitEventTest, AlwaysCombReactsToInputChange) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("c").AsInt64(), 5);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, WaitUntilChange) {
@@ -58,7 +58,7 @@ TEST(WaitEventTest, WaitUntilChange) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, WaitThenDelay) {
@@ -75,7 +75,7 @@ TEST(WaitEventTest, WaitThenDelay) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 7);
+  EXPECT_EQ(result.FinalTime(), 7);
 }
 
 TEST(WaitEventTest, PosedgeTrigger) {
@@ -95,7 +95,7 @@ TEST(WaitEventTest, PosedgeTrigger) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, NegedgeTrigger) {
@@ -115,7 +115,7 @@ TEST(WaitEventTest, NegedgeTrigger) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, StrictEdgeTrigger) {
@@ -135,7 +135,7 @@ TEST(WaitEventTest, StrictEdgeTrigger) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, AnyChangeStringTrigger) {
@@ -156,7 +156,7 @@ TEST(WaitEventTest, AnyChangeStringTrigger) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("seen").AsInt64(), 1);
-  EXPECT_EQ(result.final_time, 3);
+  EXPECT_EQ(result.FinalTime(), 3);
 }
 
 TEST(WaitEventTest, AlwaysFFPosedge) {
@@ -176,7 +176,7 @@ TEST(WaitEventTest, AlwaysFFPosedge) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 42);
-  EXPECT_EQ(result.final_time, 6);
+  EXPECT_EQ(result.FinalTime(), 6);
 }
 
 TEST(WaitEventTest, AlwaysLatchBehavior) {
@@ -196,7 +196,7 @@ TEST(WaitEventTest, AlwaysLatchBehavior) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 3);
-  EXPECT_EQ(result.final_time, 5);
+  EXPECT_EQ(result.FinalTime(), 5);
 }
 
 TEST(WaitEventTest, CorrectPosedgeCount) {
@@ -221,5 +221,5 @@ TEST(WaitEventTest, CorrectPosedgeCount) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("count").AsInt64(), 2);  // Expect 2 posedges
-  EXPECT_EQ(result.final_time, 20);
+  EXPECT_EQ(result.FinalTime(), 20);
 }

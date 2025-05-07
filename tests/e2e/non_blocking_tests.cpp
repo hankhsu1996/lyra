@@ -25,7 +25,7 @@ TEST(NonBlockingTest, SimpleNonBlockingAssignment) {
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 5);
   EXPECT_EQ(result.ReadVariable("b").AsInt64(), 2);
-  EXPECT_EQ(result.final_time, 0);
+  EXPECT_EQ(result.FinalTime(), 0);
 }
 
 TEST(NonBlockingTest, RegisterBehaviorWithClock) {
@@ -55,7 +55,7 @@ TEST(NonBlockingTest, RegisterBehaviorWithClock) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 99);
-  EXPECT_EQ(result.final_time, 22);
+  EXPECT_EQ(result.FinalTime(), 22);
 }
 
 TEST(NonBlockingTest, RegisterWithEnable) {
@@ -94,7 +94,7 @@ TEST(NonBlockingTest, RegisterWithEnable) {
   )";
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q").AsInt64(), 99);
-  EXPECT_EQ(result.final_time, 30);
+  EXPECT_EQ(result.FinalTime(), 30);
 }
 
 TEST(NonBlockingTest, BlockingThenNonBlocking) {
@@ -152,5 +152,5 @@ TEST(NonBlockingTest, PipelinedNonBlocking) {
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("q1").AsInt64(), 10);
   EXPECT_EQ(result.ReadVariable("q2").AsInt64(), 10);
-  EXPECT_EQ(result.final_time, 20);
+  EXPECT_EQ(result.FinalTime(), 20);
 }
