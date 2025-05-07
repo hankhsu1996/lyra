@@ -33,7 +33,6 @@ bazel run @hedron_compile_commands//:refresh_all
 - `mir/`: Middle-level IR preserving high-level language structure
 - `lir/`: Low-level IR with SSA-style instructions for simulation
 - `lowering/`: Transformations between AST, MIR, and LIR
-- `runtime/`: Simulation environment (symbol tables, scheduler, event queue) and runtime support
 - `common/`: Shared utilities and data structures
 - `interpreter/`: Execution engine for running LIR instructions
 - `driver/`: Integration of the full compiler and simulator pipeline
