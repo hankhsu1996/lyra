@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "driver/driver.hpp"
+#include "lyra/driver/driver.hpp"
 
 using Driver = lyra::driver::Driver;
 

@@ -1,9 +1,8 @@
 #include <iostream>
+#include <lyra/driver/driver.hpp>
+#include <lyra/driver/driver_options.hpp>
 #include <string>
 #include <vector>
-
-#include "driver/driver.hpp"
-#include "driver/driver_options.hpp"
 
 using Driver = lyra::driver::Driver;
 using DriverOptions = lyra::driver::DriverOptions;
