@@ -2,7 +2,7 @@
 
 namespace lyra::interpreter {
 
-ProcessRunner::ProcessRunner(ExecutionContext& context)
+ProcessRunner::ProcessRunner(SimulationContext& context)
     : block_runner_(context), context_(context) {
 }
 

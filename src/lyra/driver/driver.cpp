@@ -41,7 +41,7 @@ auto Driver::RunWithCompilation(
               << lir->ToString(common::FormatMode::kContextual) << std::endl;
   }
 
-  auto context = std::make_unique<interpreter::ExecutionContext>();
+  auto context = std::make_unique<interpreter::SimulationContext>();
 
   interpreter::SimulationRunner runner(*lir, *context);
   runner.Run();

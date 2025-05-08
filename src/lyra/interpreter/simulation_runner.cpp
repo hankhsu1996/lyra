@@ -5,7 +5,7 @@
 namespace lyra::interpreter {
 
 SimulationRunner::SimulationRunner(
-    const lir::Module& module, ExecutionContext& context)
+    const lir::Module& module, SimulationContext& context)
     : module_(module),
       context_(context),
       process_runner_(context),

@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
-#include "lyra/interpreter/execution_context.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -36,7 +36,7 @@ struct ProcessPtrEqual {
 // Manages process waiting and triggering based on variable changes
 class TriggerManager {
  public:
-  explicit TriggerManager(ExecutionContext& context) : context_(context) {
+  explicit TriggerManager(SimulationContext& context) : context_(context) {
   }
 
   // Register a process to wait on variable changes
@@ -67,7 +67,7 @@ class TriggerManager {
   WaitMap wait_map_;
   WaitSet wait_set_;
   std::vector<std::string> vars_to_remove_;
-  std::reference_wrapper<ExecutionContext> context_;
+  std::reference_wrapper<SimulationContext> context_;
 };
 
 }  // namespace lyra::interpreter

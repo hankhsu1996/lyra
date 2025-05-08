@@ -8,9 +8,9 @@ namespace lyra::interpreter {
 
 using SimulationTime = uint64_t;
 
-class ExecutionContext {
+class SimulationContext {
  public:
-  ExecutionContext() : tracer(current_time) {
+  SimulationContext() : tracer(current_time) {
   }
 
   VariableTable variable_table;

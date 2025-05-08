@@ -4,15 +4,15 @@
 #include <memory>
 
 #include "lyra/interpreter/basic_block_runner.hpp"
-#include "lyra/interpreter/execution_context.hpp"
 #include "lyra/interpreter/process_result.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
 
 class ProcessRunner {
  public:
-  explicit ProcessRunner(ExecutionContext& context);
+  explicit ProcessRunner(SimulationContext& context);
 
   // Execute an entire process, or until a delay/finish
   auto RunProcess(
@@ -21,7 +21,7 @@ class ProcessRunner {
 
  private:
   BasicBlockRunner block_runner_;
-  std::reference_wrapper<ExecutionContext> context_;
+  std::reference_wrapper<SimulationContext> context_;
 };
 
 }  // namespace lyra::interpreter

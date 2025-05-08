@@ -3,14 +3,14 @@
 #include <memory>
 #include <string>
 
-#include "lyra/interpreter/execution_context.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
 
 namespace lyra::driver {
 
 // A wrapper that represents the result of running a simulation.
 // Includes the final execution state and the total simulation time.
 struct DriverResult {
-  std::unique_ptr<interpreter::ExecutionContext> context;
+  std::unique_ptr<interpreter::SimulationContext> context;
 
   [[nodiscard]] auto ReadVariable(const std::string& name) const
       -> RuntimeValue {

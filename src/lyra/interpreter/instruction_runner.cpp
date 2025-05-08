@@ -9,7 +9,7 @@
 
 namespace lyra::interpreter {
 
-InstructionRunner::InstructionRunner(ExecutionContext& context)
+InstructionRunner::InstructionRunner(SimulationContext& context)
     : ctx_(context) {
 }
 

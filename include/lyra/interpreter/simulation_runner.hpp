@@ -62,7 +62,7 @@ enum class RegionType {
 
 class SimulationRunner {
  public:
-  SimulationRunner(const lir::Module& module, ExecutionContext& context);
+  SimulationRunner(const lir::Module& module, SimulationContext& context);
 
   void Run();
 
@@ -94,7 +94,7 @@ class SimulationRunner {
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
-  std::reference_wrapper<ExecutionContext> context_;
+  std::reference_wrapper<SimulationContext> context_;
   ProcessRunner process_runner_;
   TriggerManager trigger_manager_;
 };

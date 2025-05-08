@@ -2,7 +2,7 @@
 
 namespace lyra::interpreter {
 
-BasicBlockRunner::BasicBlockRunner(ExecutionContext& context)
+BasicBlockRunner::BasicBlockRunner(SimulationContext& context)
     : instruction_runner_(context), context_(context) {
 }
 
