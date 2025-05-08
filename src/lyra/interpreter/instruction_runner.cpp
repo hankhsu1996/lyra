@@ -9,13 +9,9 @@
 
 namespace lyra::interpreter {
 
-InstructionRunner::InstructionRunner(SimulationContext& context)
-    : ctx_(context) {
-}
-
 // Execute a single instruction in the given context
-auto InstructionRunner::RunInstruction(const lir::Instruction& instr)
-    -> InstructionResult {
+auto InstructionRunner::RunInstruction(
+    const lir::Instruction& instr, ProcessEffect& effect) -> InstructionResult {
   auto& temp_table = ctx_.get().temp_table;
   auto& variable_table = ctx_.get().variable_table;
 
@@ -67,14 +63,16 @@ auto InstructionRunner::RunInstruction(const lir::Instruction& instr)
       const auto variable_name = instr.operands[0].name;
       const auto value = get_temp(instr.operands[1]);
       variable_table.Write(variable_name, value);
-      return InstructionResult::Continue(variable_name);
+      effect.RecordVariableModification(variable_name);
+      return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
       const auto variable_name = instr.operands[0].name;
       const auto value = get_temp(instr.operands[1]);
-      return InstructionResult::NbaAction(
+      effect.RecordNbaAction(
           NbaAction{.variable = variable_name, .value = value});
+      return InstructionResult::Continue();
     }
 
     // Unary operations

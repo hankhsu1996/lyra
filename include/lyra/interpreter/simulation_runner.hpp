@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
-#include "lyra/interpreter/actions.hpp"
+#include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_runner.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/module.hpp"

@@ -185,18 +185,19 @@ void SimulationRunner::ExecuteOneEvent() {
       "{} | Start at block {} instruction {}", process->name,
       process->blocks[block_index]->label, instruction_index));
 
-  auto result =
-      process_runner_.RunProcess(process, block_index, instruction_index);
+  auto effect = ProcessEffect();
+  auto result = process_runner_.RunProcess(
+      process, block_index, instruction_index, effect);
 
   context_.get().tracer.Record(
       fmt::format("{} | {}", process->name, result.Summary()));
 
-  WakeWaitingProcesses(result.modified_variables);
+  WakeWaitingProcesses(effect.GetModifiedVariables());
 
-  for (const auto& action : result.nba_actions) {
+  for (const auto& action : effect.GetNbaActions()) {
     nba_queue_.push(action);
   }
-  for (const auto& action : result.postponed_actions) {
+  for (const auto& action : effect.GetPostponedActions()) {
     postponed_queue_.push(action);
   }
 
