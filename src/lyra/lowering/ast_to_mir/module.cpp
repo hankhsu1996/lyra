@@ -6,7 +6,6 @@
 #include <spdlog/spdlog.h>
 
 #include "lyra/lowering/ast_to_mir/process.hpp"
-#include "lyra/lowering/ast_to_mir/variable.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering {
@@ -19,19 +18,18 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   const auto& body = instance_symbol.body;
 
   for (const auto& symbol : body.members()) {
-    // First attempt to lower as a variable
+    // Lower variables
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
-      if (auto variable = LowerVariable(symbol)) {
-        module->variables.push_back(std::move(*variable));
-        continue;
-      }
+      const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
+      auto variable = common::Variable::FromSlang(variable_symbol);
+      module->variables.push_back(std::move(variable));
+      continue;
     }
 
-    // Process procedural blocks (initial, always, etc.)
+    // Lower procedural blocks (initial, always, etc.)
     if (symbol.kind == slang::ast::SymbolKind::ProceduralBlock) {
       const auto& procedural_block =
           symbol.as<slang::ast::ProceduralBlockSymbol>();
-
       auto process = LowerProcess(procedural_block);
       module->processes.push_back(std::move(process));
       continue;
