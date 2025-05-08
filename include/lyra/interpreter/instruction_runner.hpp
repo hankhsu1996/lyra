@@ -9,14 +9,14 @@ namespace lyra::interpreter {
 
 class InstructionRunner {
  public:
-  explicit InstructionRunner(SimulationContext& context) : ctx_(context) {
+  explicit InstructionRunner(SimulationContext& context) : context_(context) {
   }
 
   auto RunInstruction(const lir::Instruction& instr, ProcessEffect& effect)
       -> InstructionResult;
 
  private:
-  std::reference_wrapper<SimulationContext> ctx_;
+  std::reference_wrapper<SimulationContext> context_;
 };
 
 }  // namespace lyra::interpreter

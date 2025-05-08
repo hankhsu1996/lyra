@@ -12,8 +12,8 @@ namespace lyra::interpreter {
 // Execute a single instruction in the given context
 auto InstructionRunner::RunInstruction(
     const lir::Instruction& instr, ProcessEffect& effect) -> InstructionResult {
-  auto& temp_table = ctx_.get().temp_table;
-  auto& variable_table = ctx_.get().variable_table;
+  auto& temp_table = context_.get().temp_table;
+  auto& variable_table = context_.get().variable_table;
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
     return temp_table.Read(operand.name);
