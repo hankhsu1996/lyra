@@ -4,10 +4,6 @@
 
 #include "common/variable.hpp"
 
-namespace slang::ast {
-class Symbol;
-}
-
 namespace lyra::mir {
 class Variable;
 }

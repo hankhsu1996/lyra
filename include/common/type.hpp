@@ -4,6 +4,7 @@
 #include <variant>
 
 #include <fmt/core.h>
+#include <slang/ast/types/Type.h>
 
 namespace lyra::common {
 
@@ -19,6 +20,20 @@ struct Type {
 
   Kind kind{};
   std::variant<std::monostate, TwoStateData> data{};
+
+  static auto FromSlang(const slang::ast::Type& type) -> Type {
+    if (type.isString()) {
+      return Type{.kind = Kind::kString};
+    }
+    if (type.isIntegral()) {
+      if (type.isSigned()) {
+        return Type::TwoStateSigned(type.getBitWidth());
+      }
+      return Type::TwoStateUnsigned(type.getBitWidth());
+    }
+    throw std::runtime_error(
+        fmt::format("Unsupported type: {}", type.toString()));
+  }
 
   static auto Void() -> Type {
     return Type{.kind = Kind::kVoid};

@@ -37,8 +37,9 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& named_value =
           expression.as<slang::ast::NamedValueExpression>();
       auto type = LowerType(named_value.symbol.getType());
+      auto symbol = std::cref(named_value.symbol);
       return std::make_unique<mir::IdentifierExpression>(
-          std::string(named_value.symbol.name), type);
+          std::string(named_value.symbol.name), type, symbol);
     }
 
     case slang::ast::ExpressionKind::UnaryOp: {

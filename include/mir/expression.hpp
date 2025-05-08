@@ -11,6 +11,7 @@
 #include <fmt/ranges.h>
 
 #include "common/literal.hpp"
+#include "common/symbol.hpp"
 #include "common/type.hpp"
 #include "mir/operators.hpp"
 #include "mir/visitor.hpp"
@@ -19,6 +20,7 @@ namespace lyra::mir {
 
 using Type = common::Type;
 using Literal = common::Literal;
+using SymbolRef = common::SymbolRef;
 
 class Expression {
  public:
@@ -95,9 +97,10 @@ class IdentifierExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kIdentifier;
   std::string name;
+  SymbolRef symbol;
 
-  IdentifierExpression(std::string n, Type t)
-      : Expression(kKindValue, t), name(std::move(n)) {
+  IdentifierExpression(std::string n, Type t, SymbolRef s)
+      : Expression(kKindValue, t), name(std::move(n)), symbol(s) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {

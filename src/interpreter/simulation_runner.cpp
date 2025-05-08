@@ -153,7 +153,7 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
 void SimulationRunner::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
     context_.get().variable_table.InitializeVariable(
-        variable.name, variable.type);
+        std::string(variable.symbol.get().name), variable.type);
   }
 }
 
