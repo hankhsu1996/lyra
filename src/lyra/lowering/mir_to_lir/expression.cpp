@@ -29,11 +29,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
     case mir::Expression::Kind::kIdentifier: {
       const auto& identifier = mir::As<mir::IdentifierExpression>(expression);
-      assert(!identifier.name.empty());
       std::string result_name = builder.MakeTemp("load");
       Instruction instruction = Instruction::Basic(
           InstructionKind::kLoadVariable, result_name,
-          {lir::Operand::Variable(identifier.name)});
+          {lir::Operand::Variable(identifier.symbol)});
       builder.AddInstruction(std::move(instruction));
       return lir::Operand::Temp(result_name);
     }
@@ -55,7 +54,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
     case mir::Expression::Kind::kAssignment: {
       const auto& assignment = mir::As<mir::AssignmentExpression>(expression);
-      assert(!assignment.target.empty());
+      assert(assignment.target);
       assert(assignment.value);
       auto value = LowerExpression(*assignment.value, builder);
       auto variable = lir::Operand::Variable(assignment.target);
@@ -282,13 +281,12 @@ auto LowerIncrementDecrementExpression(
 
   const auto& identifier =
       mir::As<mir::IdentifierExpression>(*expression.operand);
-  std::string variable_name = identifier.name;
 
   // Load the current value
   std::string load_temp = builder.MakeTemp("load");
   Instruction load_instruction = Instruction::Basic(
       InstructionKind::kLoadVariable, load_temp,
-      {lir::Operand::Variable(variable_name)});
+      {lir::Operand::Variable(identifier.symbol)});
   builder.AddInstruction(std::move(load_instruction));
 
   // Create a literal instruction for the constant 1
@@ -317,7 +315,7 @@ auto LowerIncrementDecrementExpression(
   // Store the updated value
   Instruction store_instruction = Instruction::Basic(
       InstructionKind::kStoreVariable, "",
-      {lir::Operand::Variable(variable_name),
+      {lir::Operand::Variable(identifier.symbol),
        lir::Operand::Temp(operation_temp)});
   builder.AddInstruction(std::move(store_instruction));
 

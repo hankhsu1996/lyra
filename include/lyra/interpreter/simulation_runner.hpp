@@ -4,7 +4,6 @@
 #include <map>
 #include <memory>
 #include <queue>
-#include <string>
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
@@ -71,7 +70,7 @@ class SimulationRunner {
   void ScheduleInitialProcesses();
   void ScheduleAlwaysProcesses();
   void ExecuteOneEvent();
-  void WakeWaitingProcesses(const std::vector<std::string>& modified_variables);
+  void WakeWaitingProcesses(const std::vector<SymbolRef>& modified_variables);
   void ExecuteTimeSlot();
   void ExecuteRegion(RegionType region);
 

@@ -98,7 +98,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
           }
 
           const auto& named_expr = expr.as<slang::ast::NamedValueExpression>();
-          std::string variable = std::string(named_expr.symbol.name);
+          const auto& variable = named_expr.symbol;
 
           common::EdgeKind edge_kind{};
           switch (signal_event_control.edge) {
@@ -116,8 +116,9 @@ auto LowerStatement(const slang::ast::Statement& statement)
               break;
           }
 
-          std::vector<common::Trigger<std::string>> triggers = {
-              {.edge_kind = edge_kind, .variable = std::move(variable)}};
+          auto trigger =
+              common::Trigger{.edge_kind = edge_kind, .variable = &variable};
+          std::vector<common::Trigger> triggers = {trigger};
 
           auto wait_statement =
               std::make_unique<mir::WaitEventStatement>(std::move(triggers));

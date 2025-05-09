@@ -8,9 +8,12 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 
 namespace lyra::interpreter {
+
+using SymbolRef = common::SymbolRef;
 
 // Result of running a Process execution
 struct ProcessResult {
@@ -24,7 +27,7 @@ struct ProcessResult {
   std::size_t resume_instruction_index = 0;
 
   // For WaitEvent
-  std::vector<common::Trigger<std::string>> triggers{};
+  std::vector<common::Trigger> triggers{};
 
   static auto Complete() -> ProcessResult {
     return ProcessResult{
@@ -44,8 +47,8 @@ struct ProcessResult {
   }
 
   static auto WaitEvent(
-      std::vector<common::Trigger<std::string>> triggers,
-      std::size_t block_index, std::size_t instruction_index) -> ProcessResult {
+      std::vector<common::Trigger> triggers, std::size_t block_index,
+      std::size_t instruction_index) -> ProcessResult {
     return ProcessResult{
         .kind = Kind::kWaitEvent,
         .block_index = block_index,

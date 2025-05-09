@@ -14,7 +14,7 @@
 namespace lyra::lir {
 
 // Use string for variable names in triggers
-using Trigger = common::Trigger<std::string>;
+using Trigger = common::Trigger;
 
 enum class ProcessKind { kInitial, kAlways };
 

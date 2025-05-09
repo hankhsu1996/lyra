@@ -96,15 +96,14 @@ class LiteralExpression : public Expression {
 class IdentifierExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kIdentifier;
-  std::string name;
   SymbolRef symbol;
 
-  IdentifierExpression(std::string n, Type t, SymbolRef s)
-      : Expression(kKindValue, t), name(std::move(n)), symbol(s) {
+  IdentifierExpression(Type type, SymbolRef symbol)
+      : Expression(kKindValue, type), symbol(symbol) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("{}:{}", name, type);
+    return fmt::format("{}:{}", symbol->name, type);
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -161,21 +160,21 @@ class BinaryExpression : public Expression {
 class AssignmentExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kAssignment;
-  std::string target;
+  SymbolRef target;
   std::shared_ptr<Expression> value;
   bool is_non_blocking;
 
   AssignmentExpression(
-      std::string t, std::shared_ptr<Expression> v, bool is_non_blocking)
+      SymbolRef target, std::shared_ptr<Expression> v, bool is_non_blocking)
       : Expression(kKindValue, v->type),
-        target(std::move(t)),
+        target(target),
         value(std::move(v)),
         is_non_blocking(is_non_blocking) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format(
-        "({} = {})", target, value ? value->ToString() : "<null>");
+        "({} = {})", target->name, value ? value->ToString() : "<null>");
   }
 
   void Accept(MirVisitor& visitor) const override {

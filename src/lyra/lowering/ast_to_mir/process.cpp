@@ -46,10 +46,9 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       auto main_body = LowerStatement(slang_statement);
       auto variables = CollectSensitivityList(*main_body);
 
-      std::vector<common::Trigger<std::string>> triggers;
+      std::vector<common::Trigger> triggers;
       for (const auto& variable : variables) {
-        triggers.emplace_back(
-            common::Trigger<std::string>::AnyChange(variable));
+        triggers.emplace_back(common::Trigger::AnyChange(variable));
       }
 
       // Build the body for the loop: wait for triggers, then execute the logic

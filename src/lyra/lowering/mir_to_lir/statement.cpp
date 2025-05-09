@@ -20,7 +20,6 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       const auto& assign = mir::As<mir::AssignStatement>(statement);
 
       const auto& target = assign.target;
-      assert(!target.empty());
 
       const auto& expression = assign.value;
       assert(expression);

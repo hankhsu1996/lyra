@@ -1,15 +1,16 @@
 #pragma once
 
-#include <string>
-#include <string_view>
 #include <vector>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
+using SymbolRef = common::SymbolRef;
+
 struct NbaAction {
-  std::string variable;
+  SymbolRef variable;
   RuntimeValue value;
 };
 
@@ -22,8 +23,8 @@ class ProcessEffect {
   ProcessEffect() = default;
 
   // Core effect recording methods
-  void RecordVariableModification(std::string_view variable) {
-    modified_variables_.emplace_back(variable);
+  void RecordVariableModification(const SymbolRef& symbol) {
+    modified_variables_.emplace_back(symbol);
   }
 
   void RecordNbaAction(NbaAction action) {
@@ -36,19 +37,21 @@ class ProcessEffect {
 
   // Accessors for simulation runner
   [[nodiscard]] auto GetModifiedVariables() const
-      -> const std::vector<std::string>& {
+      -> const std::vector<SymbolRef>& {
     return modified_variables_;
   }
+
   [[nodiscard]] auto GetNbaActions() const -> const std::vector<NbaAction>& {
     return nba_actions_;
   }
+
   [[nodiscard]] auto GetPostponedActions() const
       -> const std::vector<PostponedAction>& {
     return postponed_actions_;
   }
 
  private:
-  std::vector<std::string> modified_variables_;
+  std::vector<SymbolRef> modified_variables_;
   std::vector<NbaAction> nba_actions_;
   std::vector<PostponedAction> postponed_actions_;
 };

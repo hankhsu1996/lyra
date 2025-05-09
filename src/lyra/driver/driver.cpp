@@ -46,7 +46,8 @@ auto Driver::RunWithCompilation(
   interpreter::SimulationRunner runner(*lir, *context);
   runner.Run();
 
-  return DriverResult{.context = std::move(context)};
+  return DriverResult{
+      .compilation = std::move(compilation), .context = std::move(context)};
 }
 
 }  // namespace lyra::driver

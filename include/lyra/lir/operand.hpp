@@ -6,22 +6,31 @@
 #include <fmt/core.h>
 
 #include "lyra/common/literal.hpp"
+#include "lyra/common/symbol.hpp"
 
 namespace lyra::lir {
+
+struct TempSymbol {
+  std::string name;
+};
+
+using SymbolRef = common::SymbolRef;
+using TempRef = TempSymbol*;
 
 struct Operand {
   enum class Kind { kTemp, kVariable, kLiteral, kLabel };
 
   Kind kind;
   common::Literal literal{};
+  SymbolRef symbol{};
   std::string name{};
 
-  static auto Temp(const std::string& name) -> Operand {
-    return Operand{.kind = Kind::kTemp, .name = name};
+  static auto Temp(std::string name) -> Operand {
+    return Operand{.kind = Kind::kTemp, .name = std::move(name)};
   }
 
-  static auto Variable(const std::string& name) -> Operand {
-    return Operand{.kind = Kind::kVariable, .name = name};
+  static auto Variable(SymbolRef symbol) -> Operand {
+    return Operand{.kind = Kind::kVariable, .symbol = symbol};
   }
 
   static auto Literal(common::Literal literal) -> Operand {

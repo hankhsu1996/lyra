@@ -20,7 +20,7 @@ auto InstructionRunner::RunInstruction(
   };
 
   auto get_variable = [&](const lir::Operand& operand) -> RuntimeValue {
-    return variable_table.Read(operand.name);
+    return variable_table.Read(operand.symbol);
   };
 
   auto eval_unary_op = [&](const lir::Operand& operand,
@@ -60,18 +60,18 @@ auto InstructionRunner::RunInstruction(
     }
 
     case lir::InstructionKind::kStoreVariable: {
-      const auto variable_name = instr.operands[0].name;
+      const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
-      variable_table.Write(variable_name, value);
-      effect.RecordVariableModification(variable_name);
+      variable_table.Write(variable.symbol, value);
+      effect.RecordVariableModification(variable.symbol);
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
-      const auto variable_name = instr.operands[0].name;
+      const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
       effect.RecordNbaAction(
-          NbaAction{.variable = variable_name, .value = value});
+          NbaAction{.variable = variable.symbol, .value = value});
       return InstructionResult::Continue();
     }
 

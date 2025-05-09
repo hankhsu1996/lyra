@@ -72,10 +72,10 @@ inline auto operator<<(std::ostream& os, const Statement::Kind& kind)
 class AssignStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kAssign;
-  std::string target;
+  SymbolRef target;
   std::unique_ptr<Expression> value;
 
-  AssignStatement(std::string t, std::unique_ptr<Expression> v)
+  AssignStatement(SymbolRef t, std::unique_ptr<Expression> v)
       : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
   }
 
@@ -102,10 +102,9 @@ class WaitEventStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kWaitEvent;
 
-  std::vector<common::Trigger<std::string>> triggers;
+  std::vector<common::Trigger> triggers;
 
-  explicit WaitEventStatement(
-      std::vector<common::Trigger<std::string>> trigger_list)
+  explicit WaitEventStatement(std::vector<common::Trigger> trigger_list)
       : Statement(kKindValue), triggers(std::move(trigger_list)) {
   }
 

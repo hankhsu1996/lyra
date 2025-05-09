@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -41,12 +40,12 @@ class TriggerManager {
 
   // Register a process to wait on variable changes
   void RegisterWaitingProcess(
-      const std::shared_ptr<lir::Process>& process, const std::string& variable,
+      const std::shared_ptr<lir::Process>& process, const SymbolRef& variable,
       common::EdgeKind edge_kind, std::size_t block_index,
       std::size_t instruction_index);
 
   // Process variable changes and return processes that should be triggered
-  auto CheckTriggers(const std::vector<std::string>& modified_variables)
+  auto CheckTriggers(const std::vector<SymbolRef>& modified_variables)
       -> std::vector<ScheduledEvent>;
 
  private:
@@ -57,7 +56,7 @@ class TriggerManager {
 
   // Using the same typedefs from SimulationRunner
   using WaitMap = std::unordered_map<
-      std::string,
+      SymbolRef,
       std::unordered_set<
           std::shared_ptr<lir::Process>, ProcessPtrHash, ProcessPtrEqual>>;
   using WaitSet = std::unordered_map<
@@ -66,7 +65,7 @@ class TriggerManager {
 
   WaitMap wait_map_;
   WaitSet wait_set_;
-  std::vector<std::string> vars_to_remove_;
+  std::vector<SymbolRef> vars_to_remove_;
   std::reference_wrapper<SimulationContext> context_;
 };
 

@@ -1,12 +1,14 @@
 #pragma once
 
-#include <string>
 #include <unordered_set>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/visitor.hpp"
 
 namespace lyra::lowering {
+
+using SymbolRef = common::SymbolRef;
 
 // Collects all variable names used in the right-hand side of MIR statements.
 class SensitivityCollector : public mir::MirVisitor {
@@ -18,7 +20,7 @@ class SensitivityCollector : public mir::MirVisitor {
   }
 
   void Visit(const mir::IdentifierExpression& expression) override {
-    variable_names_.insert(expression.name);
+    variable_names_.insert(expression.symbol);
   }
 
   void Visit(const mir::UnaryExpression& expression) override {
@@ -83,17 +85,17 @@ class SensitivityCollector : public mir::MirVisitor {
     }
   }
 
-  [[nodiscard]] auto TakeVariableNames() && -> std::unordered_set<std::string> {
+  [[nodiscard]] auto TakeVariableNames() && -> std::unordered_set<SymbolRef> {
     return std::move(variable_names_);
   }
 
  private:
-  std::unordered_set<std::string> variable_names_;
+  std::unordered_set<SymbolRef> variable_names_;
 };
 
 // Entry point
 inline auto CollectSensitivityList(const mir::Statement& statement)
-    -> std::unordered_set<std::string> {
+    -> std::unordered_set<SymbolRef> {
   SensitivityCollector collector;
   statement.Accept(collector);
   return std::move(collector).TakeVariableNames();

@@ -18,9 +18,6 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
 
   // Add variables
   for (const auto& variable : module.variables) {
-    if (variable.symbol.get().name.empty()) {
-      throw std::runtime_error("Variable has empty name");
-    }
     builder.AddVariable(variable);
   }
 

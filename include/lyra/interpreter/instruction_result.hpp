@@ -21,7 +21,7 @@ struct InstructionResult {
   uint64_t delay_amount = 0;
 
   // For WaitEvent
-  std::vector<common::Trigger<std::string>> triggers{};
+  std::vector<common::Trigger> triggers{};
 
   static auto Complete() -> InstructionResult {
     return InstructionResult{.kind = Kind::kComplete};
@@ -38,7 +38,7 @@ struct InstructionResult {
     };
   }
 
-  static auto WaitEvent(std::vector<common::Trigger<std::string>> triggers)
+  static auto WaitEvent(std::vector<common::Trigger> triggers)
       -> InstructionResult {
     return InstructionResult{
         .kind = Kind::kWaitEvent,

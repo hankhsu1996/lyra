@@ -10,6 +10,7 @@ enum class FormatMode {
 };
 
 inline auto Indent(int level, int spaces_per_level = 2) -> std::string {
+  // NOLINTNEXTLINE(modernize-return-braced-init-list)
   return std::string(level * spaces_per_level, ' ');
 }
 

@@ -123,7 +123,7 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
       break;
 
     case RegionType::kNba: {
-      std::vector<std::string> modified_variables;
+      std::vector<SymbolRef> modified_variables;
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
@@ -153,7 +153,7 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
 void SimulationRunner::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
     context_.get().variable_table.InitializeVariable(
-        std::string(variable.symbol.get().name), variable.type);
+        variable.symbol, variable.type);
   }
 }
 
@@ -233,7 +233,7 @@ void SimulationRunner::ExecuteOneEvent() {
 }
 
 void SimulationRunner::WakeWaitingProcesses(
-    const std::vector<std::string>& modified_variables) {
+    const std::vector<SymbolRef>& modified_variables) {
   // Delegate to trigger manager
   auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 

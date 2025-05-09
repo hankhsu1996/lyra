@@ -22,7 +22,7 @@ struct BasicBlockResult {
   std::size_t resume_instruction_index = 0;
 
   // For WaitEvent
-  std::vector<common::Trigger<std::string>> triggers{};
+  std::vector<common::Trigger> triggers{};
 
   static auto Complete() -> BasicBlockResult {
     return {.kind = Kind::kComplete};
@@ -38,7 +38,7 @@ struct BasicBlockResult {
   }
 
   static auto WaitEvent(
-      std::vector<common::Trigger<std::string>> triggers, std::size_t resume_at)
+      std::vector<common::Trigger> triggers, std::size_t resume_at)
       -> BasicBlockResult {
     return {
         .kind = Kind::kWaitEvent,

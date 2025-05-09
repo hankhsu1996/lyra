@@ -72,7 +72,7 @@ struct Instruction {
   std::string system_call_name{};
 
   // Event name
-  std::vector<common::Trigger<std::string>> wait_triggers{};
+  std::vector<common::Trigger> wait_triggers{};
 
   static auto Basic(
       InstructionKind kind, std::string result, std::vector<Operand> operands)
@@ -101,8 +101,7 @@ struct Instruction {
         .operands = {std::move(variable), std::move(value)}};
   }
 
-  static auto WaitEvent(std::vector<common::Trigger<std::string>> triggers)
-      -> Instruction {
+  static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
         .wait_triggers = std::move(triggers)};

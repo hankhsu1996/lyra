@@ -4,48 +4,59 @@
 
 namespace lyra::interpreter {
 
-void VariableTable::Write(const std::string& name, const RuntimeValue& value) {
-  variables_[name] = value;
+void VariableTable::Write(const SymbolRef& symbol, const RuntimeValue& value) {
+  variables_[symbol] = value;
 }
 
-auto VariableTable::Read(const std::string& name) const -> RuntimeValue {
-  auto it = variables_.find(name);
+auto VariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
+  auto it = variables_.find(symbol);
   if (it == variables_.end()) {
-    throw std::runtime_error("Variable not found: " + name);
+    throw std::runtime_error(
+        "Variable not found: " + std::string(symbol->name));
   }
   return it->second;
 }
 
-auto VariableTable::ReadPrevious(const std::string& name) const
+auto VariableTable::ReadFromName(const std::string& name) const
     -> RuntimeValue {
-  auto it = previous_variables_.find(name);
+  for (const auto& [symbol, value] : variables_) {
+    if (std::string(symbol->name) == name) {
+      return value;
+    }
+  }
+  throw std::runtime_error("Variable not found: " + name);
+}
+
+auto VariableTable::ReadPrevious(const SymbolRef& symbol) const
+    -> RuntimeValue {
+  auto it = previous_variables_.find(symbol);
   if (it == previous_variables_.end()) {
     throw std::runtime_error(
-        fmt::format("Cannot read from previous variables: {}", name));
+        fmt::format("Cannot read from previous variables: {}", symbol->name));
   }
   return it->second;
 }
 
 void VariableTable::UpdatePrevious(
-    const std::string& name, const RuntimeValue& value) {
-  previous_variables_[name] = value;
+    const SymbolRef& symbol, const RuntimeValue& value) {
+  previous_variables_[symbol] = value;
 }
 
-auto VariableTable::Exists(const std::string& name) const -> bool {
-  return variables_.find(name) != variables_.end();
+auto VariableTable::Exists(const SymbolRef& symbol) const -> bool {
+  return variables_.find(symbol) != variables_.end();
 }
 
 void VariableTable::CreateVariable(
-    const std::string& name, RuntimeValue initial_value) {
-  variables_[name] = std::move(initial_value);
+    const SymbolRef& symbol, RuntimeValue initial_value) {
+  variables_[symbol] = std::move(initial_value);
 }
 
 void VariableTable::InitializeVariable(
-    const std::string& name, const common::Type& type) {
-  if (!Exists(name)) {
+    const SymbolRef& symbol, const common::Type& type) {
+  if (!Exists(symbol)) {
     auto initial_value = RuntimeValue::DefaultValueForType(type);
-    CreateVariable(name, initial_value);
-    UpdatePrevious(name, initial_value);
+    CreateVariable(symbol, initial_value);
+    UpdatePrevious(symbol, initial_value);
   }
 }
 

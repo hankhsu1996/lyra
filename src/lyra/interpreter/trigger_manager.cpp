@@ -5,7 +5,7 @@
 namespace lyra::interpreter {
 
 void TriggerManager::RegisterWaitingProcess(
-    const std::shared_ptr<lir::Process>& process, const std::string& variable,
+    const std::shared_ptr<lir::Process>& process, const SymbolRef& variable,
     common::EdgeKind edge_kind, std::size_t block_index,
     std::size_t instruction_index) {
   wait_map_[variable].insert(process);
@@ -16,7 +16,7 @@ void TriggerManager::RegisterWaitingProcess(
 }
 
 auto TriggerManager::CheckTriggers(
-    const std::vector<std::string>& modified_variables)
+    const std::vector<SymbolRef>& modified_variables)
     -> std::vector<ScheduledEvent> {
   std::vector<ScheduledEvent> events_to_trigger;
   std::unordered_set<std::shared_ptr<lir::Process>> triggered_processes;
@@ -69,7 +69,7 @@ auto TriggerManager::CheckTriggers(
         std::string trace_detail = fmt::format(
             "Trigger on variable '{}': old = {}, new = {}, triggered "
             "process(es) = {}",
-            variable, old_value.ToString(), new_value.ToString(),
+            variable->name, old_value.ToString(), new_value.ToString(),
             fmt::join(proc_names, ", "));
 
         context_.get().tracer.Record(trace_detail);

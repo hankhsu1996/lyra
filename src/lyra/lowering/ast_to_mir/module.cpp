@@ -10,6 +10,8 @@
 
 namespace lyra::lowering {
 
+using SymbolRef = slang::ast::Symbol*;
+
 auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     -> std::unique_ptr<mir::Module> {
   auto module = std::make_unique<mir::Module>();
@@ -21,7 +23,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     // Lower variables
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
       const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
-      auto variable = common::Variable::FromSlang(variable_symbol);
+      auto variable = common::Variable::FromSlang(&variable_symbol);
       module->variables.push_back(std::move(variable));
       continue;
     }

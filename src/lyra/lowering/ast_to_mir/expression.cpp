@@ -37,9 +37,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& named_value =
           expression.as<slang::ast::NamedValueExpression>();
       auto type = LowerType(named_value.symbol.getType());
-      auto symbol = std::cref(named_value.symbol);
       return std::make_unique<mir::IdentifierExpression>(
-          std::string(named_value.symbol.name), type, symbol);
+          type, &named_value.symbol);
     }
 
     case slang::ast::ExpressionKind::UnaryOp: {
@@ -81,12 +80,11 @@ auto LowerExpression(const slang::ast::Expression& expression)
             slang::ast::toString(left.kind)));
       }
 
-      auto target_name =
-          left.as<slang::ast::NamedValueExpression>().symbol.name;
+      const auto& target = left.as<slang::ast::NamedValueExpression>().symbol;
       auto value = LowerExpression(assignment.right());
       auto is_non_blocking = assignment.isNonBlocking();
       return std::make_unique<mir::AssignmentExpression>(
-          std::string(target_name), std::move(value), is_non_blocking);
+          &target, std::move(value), is_non_blocking);
     }
 
     case slang::ast::ExpressionKind::Call: {
