@@ -60,8 +60,22 @@ struct Literal {
     return {common::Type::String(), ValueStorage(std::move(v))};
   }
 
+  auto operator==(const Literal& other) const -> bool = default;
+
   [[nodiscard]] auto ToString() const -> std::string {
     return value.ToString();
+  }
+
+  [[nodiscard]] auto Hash() const -> std::size_t {
+    std::size_t h = 0;
+
+    std::size_t type_hash = type.Hash();
+    h ^= type_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+    std::size_t value_hash = value.Hash();
+    h ^= value_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+    return h;
   }
 };
 

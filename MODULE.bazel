@@ -18,9 +18,6 @@ git_override(
     commit = "09b6e50d8747604b6958af52d423823fb79bc6f1",
 )
 
-# LLVM
-bazel_dep(name = "llvm-project", version = "17.0.3.bcr.2")
-
 # Formatting
 bazel_dep(name = "fmt", version = "11.1.3")
 

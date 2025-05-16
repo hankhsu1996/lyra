@@ -1,10 +1,14 @@
 #pragma once
 
+#include <functional>
+#include <ostream>
 #include <string>
 #include <variant>
 
 #include <fmt/core.h>
 #include <slang/ast/types/Type.h>
+
+#include "lyra/common/meta_util.hpp"
 
 namespace lyra::common {
 
@@ -13,6 +17,13 @@ struct TwoStateData {
   bool is_signed;
 
   auto operator==(const TwoStateData& other) const -> bool = default;
+
+  [[nodiscard]] auto Hash() const -> std::size_t {
+    std::size_t h = 0;
+    h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<bool>{}(is_signed) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    return h;
+  }
 };
 
 struct Type {
@@ -78,6 +89,32 @@ struct Type {
   }
 
   auto operator==(const Type& other) const -> bool = default;
+
+  [[nodiscard]] auto Hash() const -> std::size_t {
+    std::size_t h = 0;
+
+    std::size_t kind_hash = std::hash<int>{}(static_cast<int>(kind));
+    h ^= kind_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+    std::size_t data_hash = std::visit(
+        [](const auto& val) -> std::size_t {
+          using T = std::decay_t<decltype(val)>;
+          if constexpr (std::is_same_v<T, std::monostate>) {
+            return 0;
+          } else if constexpr (requires { val.Hash(); }) {
+            return val.Hash();
+          } else {
+            static_assert(
+                kAlwaysFalse<T>, "Unhandled variant type in Type::Hash()");
+            return 0;
+          }
+        },
+        data);
+
+    h ^= data_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+    return h;
+  }
 
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {

@@ -8,6 +8,8 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/meta_util.hpp"
+
 namespace lyra::common {
 
 template <typename... Ts>
@@ -87,6 +89,24 @@ class ValueStorage {
   }
 
   auto operator==(const ValueStorage& other) const -> bool = default;
+
+  [[nodiscard]] auto Hash() const -> std::size_t {
+    return std::visit(
+        [](const auto& val) -> std::size_t {
+          using T = std::decay_t<decltype(val)>;
+          if constexpr (std::is_same_v<T, std::monostate>) {
+            return 0;
+          } else if constexpr (std::is_same_v<T, int64_t>) {
+            return std::hash<int64_t>{}(val);
+          } else if constexpr (std::is_same_v<T, std::string>) {
+            return std::hash<std::string>{}(val);
+          } else {
+            static_assert(
+                kAlwaysFalse<T>, "Unhandled type in ValueStorage::Hash()");
+          }
+        },
+        value_);
+  }
 
  private:
   Storage value_;
