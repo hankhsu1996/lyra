@@ -17,6 +17,7 @@ struct Module {
   std::string name;
   std::vector<common::Variable> variables;
   std::vector<std::shared_ptr<Process>> processes;
+  std::shared_ptr<LirContext> context;
 
   [[nodiscard]] auto ToString(
       common::FormatMode mode = common::FormatMode::kPlain,

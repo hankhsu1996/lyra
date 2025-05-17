@@ -63,7 +63,7 @@ struct Process {
   }
 
   // Find the index of a basic block by its label
-  [[nodiscard]] auto FindBlockIndexByLabel(const std::string& label) const
+  [[nodiscard]] auto FindBlockIndexByLabel(const LabelRef& label) const
       -> size_t {
     for (size_t i = 0; i < blocks.size(); ++i) {
       if (blocks[i]->label == label) {

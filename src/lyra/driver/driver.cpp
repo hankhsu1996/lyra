@@ -47,7 +47,9 @@ auto Driver::RunWithCompilation(
   runner.Run();
 
   return DriverResult{
-      .compilation = std::move(compilation), .context = std::move(context)};
+      .compilation = std::move(compilation),
+      .context = std::move(context),
+      .lir_context = lir->context};
 }
 
 }  // namespace lyra::driver

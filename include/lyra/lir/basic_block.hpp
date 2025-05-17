@@ -6,13 +6,14 @@
 #include <fmt/format.h>
 
 #include "lyra/common/formatting.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 
 namespace lyra::lir {
 
 struct BasicBlock {
   // Label for this basic block, used for branch targets
-  std::string label;
+  LabelRef label;
 
   // Instructions contained in this basic block
   std::vector<Instruction> instructions;

@@ -65,7 +65,7 @@ struct Instruction {
   InstructionKind kind{};
 
   // Destination temporary name, or empty if not applicable
-  std::optional<std::string> result{};
+  std::optional<TempRef> result{};
   std::optional<common::Type> result_type{};
 
   // Operand values used by the instruction
@@ -78,7 +78,7 @@ struct Instruction {
   std::vector<common::Trigger> wait_triggers{};
 
   static auto Basic(
-      InstructionKind kind, std::string result, std::vector<Operand> operands)
+      InstructionKind kind, TempRef result, std::vector<Operand> operands)
       -> Instruction {
     return Instruction{
         .kind = kind,
@@ -86,14 +86,22 @@ struct Instruction {
         .operands = std::move(operands)};
   }
 
+  static auto Basic(InstructionKind kind, TempRef result, Operand operand)
+      -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .operands = {std::move(operand)}};
+  }
+
   static auto WithType(
-      InstructionKind kind, std::string result, std::vector<Operand> operands,
+      InstructionKind kind, TempRef result, Operand operand,
       common::Type result_type) -> Instruction {
     return Instruction{
         .kind = kind,
         .result = std::move(result),
         .result_type = std::move(result_type),
-        .operands = std::move(operands)};
+        .operands = {std::move(operand)}};
   }
 
   static auto StoreVariable(
@@ -108,6 +116,11 @@ struct Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
         .wait_triggers = std::move(triggers)};
+  }
+
+  static auto Delay(Operand delay) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kDelay, .operands = {std::move(delay)}};
   }
 
   static auto SystemCall(std::string name, std::vector<Operand> args)
@@ -126,6 +139,21 @@ struct Instruction {
         .result = std::nullopt,
         .result_type = std::nullopt,
         .operands = {}};
+  }
+
+  static auto Jump(LabelRef label) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kJump, .operands = {Operand::Label(label)}};
+  }
+
+  static auto Branch(
+      Operand condition, LabelRef true_label, LabelRef false_label)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kBranch,
+        .operands = {
+            condition, Operand::Label(true_label),
+            Operand::Label(false_label)}};
   }
 
   [[nodiscard]] auto ToString() const -> std::string {

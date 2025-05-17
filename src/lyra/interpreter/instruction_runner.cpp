@@ -16,17 +16,20 @@ auto InstructionRunner::RunInstruction(
   auto& variable_table = context_.get().variable_table;
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
-    return temp_table.Read(operand.name);
+    assert(operand.IsTemp());
+    return temp_table.Read(std::get<lir::TempRef>(operand.value));
   };
 
   auto get_variable = [&](const lir::Operand& operand) -> RuntimeValue {
-    return variable_table.Read(operand.symbol);
+    assert(operand.IsVariable());
+    return variable_table.Read(std::get<lir::SymbolRef>(operand.value));
   };
 
   auto eval_unary_op = [&](const lir::Operand& operand,
                            const std::function<RuntimeValue(RuntimeValue)>& op)
       -> InstructionResult {
     const auto result = op(get_temp(operand));
+    assert(instr.result.has_value());
     temp_table.Write(instr.result.value(), result);
     return InstructionResult::Continue();
   };
@@ -36,6 +39,7 @@ auto InstructionRunner::RunInstruction(
           const std::function<RuntimeValue(RuntimeValue, RuntimeValue)>& op)
       -> InstructionResult {
     const auto result = op(get_temp(lhs), get_temp(rhs));
+    assert(instr.result.has_value());
     temp_table.Write(instr.result.value(), result);
     return InstructionResult::Continue();
   };
@@ -47,7 +51,7 @@ auto InstructionRunner::RunInstruction(
       assert(instr.operands[0].IsLiteral());
       assert(instr.result.has_value());
 
-      const auto& literal = instr.operands[0].literal;
+      const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
       RuntimeValue value = RuntimeValue::FromLiteral(literal);
       temp_table.Write(instr.result.value(), value);
       return InstructionResult::Continue();
@@ -62,16 +66,19 @@ auto InstructionRunner::RunInstruction(
     case lir::InstructionKind::kStoreVariable: {
       const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
-      variable_table.Write(variable.symbol, value);
-      effect.RecordVariableModification(variable.symbol);
+      assert(variable.IsVariable());
+      const auto* symbol = std::get<lir::SymbolRef>(variable.value);
+      variable_table.Write(symbol, value);
+      effect.RecordVariableModification(symbol);
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
       const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
-      effect.RecordNbaAction(
-          NbaAction{.variable = variable.symbol, .value = value});
+      assert(variable.IsVariable());
+      const auto* symbol = std::get<lir::SymbolRef>(variable.value);
+      effect.RecordNbaAction(NbaAction{.variable = symbol, .value = value});
       return InstructionResult::Continue();
     }
 
@@ -234,7 +241,7 @@ auto InstructionRunner::RunInstruction(
 
     case lir::InstructionKind::kDelay: {
       assert(instr.operands[0].IsLiteral());
-      const auto& literal = instr.operands[0].literal;
+      const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
       const auto delay_amount = RuntimeValue::FromLiteral(literal).AsUInt64();
       return InstructionResult::Delay(delay_amount);
     }
@@ -256,7 +263,7 @@ auto InstructionRunner::RunInstruction(
     case lir::InstructionKind::kJump: {
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLabel());
-      const auto& target = instr.operands[0].name;
+      const auto& target = std::get<lir::LabelRef>(instr.operands[0].value);
       return InstructionResult::Jump(target);
     }
 
@@ -267,8 +274,10 @@ auto InstructionRunner::RunInstruction(
       assert(instr.operands[2].IsLabel());
 
       const auto& condition = get_temp(instr.operands[0]);
-      const auto& true_target = instr.operands[1].name;
-      const auto& false_target = instr.operands[2].name;
+      const auto& true_target =
+          std::get<lir::LabelRef>(instr.operands[1].value);
+      const auto& false_target =
+          std::get<lir::LabelRef>(instr.operands[2].value);
 
       assert(condition.IsTwoState());
       bool condition_result = condition.AsInt64() != 0;

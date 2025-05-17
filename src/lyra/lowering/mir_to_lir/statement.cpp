@@ -12,6 +12,9 @@ namespace lyra::lowering {
 using Type = common::Type;
 using Literal = common::Literal;
 using ValueStorage = common::ValueStorage;
+using Operand = lir::Operand;
+using Instruction = lir::Instruction;
+using IK = lir::InstructionKind;
 
 auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     -> void {
@@ -28,9 +31,8 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       auto result_value = LowerExpression(*expression, builder);
 
       // Store the result to the target variable
-      auto instruction = lir::Instruction::Basic(
-          lir::InstructionKind::kStoreVariable, "",
-          {lir::Operand::Variable(target), result_value});
+      auto instruction = Instruction::StoreVariable(
+          Operand::Variable(target), result_value, false);
       builder.AddInstruction(std::move(instruction));
       break;
     }
@@ -51,7 +53,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       const auto& wait = mir::As<mir::WaitEventStatement>(statement);
 
       // Lower to a LIR wait-event instruction using the trigger list
-      auto instruction = lir::Instruction::WaitEvent(wait.triggers);
+      auto instruction = Instruction::WaitEvent(wait.triggers);
       builder.AddInstruction(std::move(instruction));
 
       break;
@@ -60,9 +62,8 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(statement);
       auto delay_amount = Literal::ULongInt(delay.delay_amount);
-      auto instruction = lir::Instruction::Basic(
-          lir::InstructionKind::kDelay, "",
-          {lir::Operand::Literal(delay_amount)});
+      auto delay_interned = builder.InternLiteral(delay_amount);
+      auto instruction = Instruction::Delay(Operand::Literal(delay_interned));
       builder.AddInstruction(std::move(instruction));
       break;
     }
@@ -73,12 +74,9 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       assert(if_statement.then_branch);
 
       // Generate unique labels for the various blocks
-      static int if_counter = 0;
-      std::string if_id = std::to_string(if_counter++);
-
-      std::string then_label = "if." + if_id + ".then";
-      std::string else_label = "if." + if_id + ".else";
-      std::string end_label = "if." + if_id + ".end";
+      auto then_label = builder.MakeLabel("if.then");
+      auto else_label = builder.MakeLabel("if.else");
+      auto end_label = builder.MakeLabel("if.end");
 
       // Evaluate the condition
       auto condition_value = LowerExpression(*if_statement.condition, builder);
@@ -86,17 +84,14 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       // Create a branch instruction
       if (if_statement.else_branch) {
         // Branch to either then or else based on condition
-        auto branch = lir::Instruction::Basic(
-            lir::InstructionKind::kBranch, "",
-            {condition_value, lir::Operand::Label(then_label),
-             lir::Operand::Label(else_label)});
+        auto branch =
+            Instruction::Branch(condition_value, then_label, else_label);
         builder.AddInstruction(std::move(branch));
 
         // Create then block
         builder.StartBlock(then_label);
         LowerStatement(*if_statement.then_branch, builder);
-        auto jump_to_end = lir::Instruction::Basic(
-            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        auto jump_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(jump_to_end));
         builder.EndBlock();
 
@@ -104,24 +99,20 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
         builder.StartBlock(else_label);
         LowerStatement(*if_statement.else_branch, builder);
         // Fall through to end block
-        auto fall_through_to_end = lir::Instruction::Basic(
-            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        auto fall_through_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(fall_through_to_end));
         builder.EndBlock();
       } else {
         // No else branch - create a simpler branch structure
-        auto branch = lir::Instruction::Basic(
-            lir::InstructionKind::kBranch, "",
-            {condition_value, lir::Operand::Label(then_label),
-             lir::Operand::Label(end_label)});
+        auto branch =
+            Instruction::Branch(condition_value, then_label, end_label);
         builder.AddInstruction(std::move(branch));
 
         // Create then block
         builder.StartBlock(then_label);
         LowerStatement(*if_statement.then_branch, builder);
         // Fall through to end block
-        auto fall_through_to_end = lir::Instruction::Basic(
-            lir::InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+        auto fall_through_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(fall_through_to_end));
         builder.EndBlock();
       }
@@ -140,16 +131,12 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       assert(while_statement.body);
 
       // Generate unique labels for the various blocks
-      static int while_counter = 0;
-      std::string while_id = std::to_string(while_counter++);
-
-      std::string cond_label = "while." + while_id + ".cond";
-      std::string body_label = "while." + while_id + ".body";
-      std::string end_label = "while." + while_id + ".end";
+      auto cond_label = builder.MakeLabel("while.cond");
+      auto body_label = builder.MakeLabel("while.body");
+      auto end_label = builder.MakeLabel("while.end");
 
       // Jump to condition block first
-      auto jump_to_cond = lir::Instruction::Basic(
-          lir::InstructionKind::kJump, "", {lir::Operand::Label(cond_label)});
+      auto jump_to_cond = Instruction::Jump(cond_label);
       builder.AddInstruction(std::move(jump_to_cond));
 
       // Create condition block
@@ -158,10 +145,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
           LowerExpression(*while_statement.condition, builder);
 
       // Branch to either body or end based on condition
-      auto branch = lir::Instruction::Basic(
-          lir::InstructionKind::kBranch, "",
-          {condition_value, lir::Operand::Label(body_label),
-           lir::Operand::Label(end_label)});
+      auto branch = Instruction::Branch(condition_value, body_label, end_label);
       builder.AddInstruction(std::move(branch));
       builder.EndBlock();
 
@@ -170,8 +154,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       LowerStatement(*while_statement.body, builder);
 
       // Jump back to condition after executing body
-      auto jump_back_to_cond = lir::Instruction::Basic(
-          lir::InstructionKind::kJump, "", {lir::Operand::Label(cond_label)});
+      auto jump_back_to_cond = Instruction::Jump(cond_label);
       builder.AddInstruction(std::move(jump_back_to_cond));
       builder.EndBlock();
 
@@ -190,16 +173,12 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       assert(do_while_statement.body);
 
       // Generate unique labels for the various blocks
-      static int do_while_counter = 0;
-      std::string do_while_id = std::to_string(do_while_counter++);
-
-      std::string body_label = "do_while." + do_while_id + ".body";
-      std::string cond_label = "do_while." + do_while_id + ".cond";
-      std::string end_label = "do_while." + do_while_id + ".end";
+      auto body_label = builder.MakeLabel("do_while.body");
+      auto cond_label = builder.MakeLabel("do_while.cond");
+      auto end_label = builder.MakeLabel("do_while.end");
 
       // Jump to body block first (do-while executes body at least once)
-      auto jump_to_body = lir::Instruction::Basic(
-          lir::InstructionKind::kJump, "", {lir::Operand::Label(body_label)});
+      auto jump_to_body = Instruction::Jump(body_label);
       builder.AddInstruction(std::move(jump_to_body));
 
       // Create body block
@@ -207,8 +186,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       LowerStatement(*do_while_statement.body, builder);
 
       // Jump to condition after executing body
-      auto jump_to_cond = lir::Instruction::Basic(
-          lir::InstructionKind::kJump, "", {lir::Operand::Label(cond_label)});
+      auto jump_to_cond = Instruction::Jump(cond_label);
       builder.AddInstruction(std::move(jump_to_cond));
       builder.EndBlock();
 
@@ -218,10 +196,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
           LowerExpression(*do_while_statement.condition, builder);
 
       // Branch back to body if condition is true, otherwise go to end
-      auto branch = lir::Instruction::Basic(
-          lir::InstructionKind::kBranch, "",
-          {condition_value, lir::Operand::Label(body_label),
-           lir::Operand::Label(end_label)});
+      auto branch = Instruction::Branch(condition_value, body_label, end_label);
       builder.AddInstruction(std::move(branch));
       builder.EndBlock();
 

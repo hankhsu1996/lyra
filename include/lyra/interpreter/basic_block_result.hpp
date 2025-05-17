@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra::interpreter {
 
@@ -15,7 +16,7 @@ struct BasicBlockResult {
   Kind kind{};
 
   // For Jump
-  std::string target_label{};
+  lir::LabelRef target_label{};
 
   // For Delay
   uint64_t delay_amount = 0;
@@ -51,10 +52,10 @@ struct BasicBlockResult {
     return {.kind = Kind::kFinish};
   }
 
-  static auto Jump(std::string label) -> BasicBlockResult {
+  static auto Jump(lir::LabelRef label) -> BasicBlockResult {
     return {
         .kind = Kind::kJump,
-        .target_label = std::move(label),
+        .target_label = label,
     };
   }
 };

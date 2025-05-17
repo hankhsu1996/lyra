@@ -16,6 +16,7 @@ using SymbolRef = common::SymbolRef;
 struct DriverResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
   std::unique_ptr<interpreter::SimulationContext> context;
+  std::shared_ptr<lir::LirContext> lir_context;
 
   [[nodiscard]] auto ReadVariable(const std::string& name) const
       -> RuntimeValue {

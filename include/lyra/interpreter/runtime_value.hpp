@@ -10,6 +10,7 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra {
 
@@ -17,6 +18,10 @@ struct RuntimeValue {
  public:
   common::Type type;
   common::ValueStorage value;
+
+  static auto FromLiteral(lir::LiteralRef literal) -> RuntimeValue {
+    return FromLiteral(*literal.ptr);
+  }
 
   static auto FromLiteral(const common::Literal& literal) -> RuntimeValue {
     return RuntimeValue{.type = literal.type, .value = literal.value};

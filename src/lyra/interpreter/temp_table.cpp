@@ -4,15 +4,15 @@
 
 namespace lyra::interpreter {
 
-void TempTable::Write(const std::string& name, const RuntimeValue& value) {
-  registers_[name] = value;
+void TempTable::Write(const lir::TempRef& temp, const RuntimeValue& value) {
+  registers_[temp] = value;
 }
 
-auto TempTable::Read(const std::string& name) const -> RuntimeValue {
-  auto it = registers_.find(name);
+auto TempTable::Read(const lir::TempRef& temp) const -> RuntimeValue {
+  auto it = registers_.find(temp);
   if (it == registers_.end()) {
     throw std::runtime_error(
-        fmt::format("Cannot read from temp table: {}", name));
+        fmt::format("Cannot read from temp table: {}", temp->name));
   }
   return it->second;
 }

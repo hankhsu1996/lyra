@@ -26,7 +26,7 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
   builder.BeginProcess(MapProcessKind(process.process_kind), process.name);
 
   // Start with an "entry" block for the process
-  builder.StartBlock("entry");
+  builder.StartBlock(builder.MakeLabel("entry"));
 
   // Process the body statement in the process
   LowerStatement(*process.body, builder);

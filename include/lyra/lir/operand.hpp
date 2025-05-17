@@ -2,43 +2,43 @@
 
 #include <ostream>
 #include <string>
+#include <variant>
 
 #include <fmt/core.h>
 
-#include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra::lir {
 
-struct TempSymbol {
-  std::string name;
-};
-
 using SymbolRef = common::SymbolRef;
-using TempRef = TempSymbol*;
+using OperandValue = std::variant<TempRef, SymbolRef, LiteralRef, LabelRef>;
 
 struct Operand {
   enum class Kind { kTemp, kVariable, kLiteral, kLabel };
 
   Kind kind;
-  common::Literal literal{};
-  SymbolRef symbol{};
-  std::string name{};
+  OperandValue value{};
 
-  static auto Temp(std::string name) -> Operand {
-    return Operand{.kind = Kind::kTemp, .name = std::move(name)};
+  template <typename T>
+  static auto Make(Kind kind, T&& val) -> Operand {
+    return Operand{.kind = kind, .value = std::forward<T>(val)};
+  }
+
+  static auto Temp(TempRef temp) -> Operand {
+    return Make(Kind::kTemp, temp);
   }
 
   static auto Variable(SymbolRef symbol) -> Operand {
-    return Operand{.kind = Kind::kVariable, .symbol = symbol};
+    return Make(Kind::kVariable, symbol);
   }
 
-  static auto Literal(common::Literal literal) -> Operand {
-    return Operand{.kind = Kind::kLiteral, .literal = std::move(literal)};
+  static auto Literal(LiteralRef literal) -> Operand {
+    return Make(Kind::kLiteral, literal);
   }
 
-  static auto Label(const std::string& name) -> Operand {
-    return Operand{.kind = Kind::kLabel, .name = name};
+  static auto Label(LabelRef label) -> Operand {
+    return Make(Kind::kLabel, label);
   }
 
   [[nodiscard]] auto IsTemp() const -> bool {
@@ -58,16 +58,20 @@ struct Operand {
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
-    switch (kind) {
-      case Kind::kTemp:
-        return name;
-      case Kind::kVariable:
-        return name;
-      case Kind::kLiteral:
-        return literal.ToString();
-      case Kind::kLabel:
-        return name;
-    }
+    return std::visit(
+        [](const auto& v) -> std::string {
+          using T = std::decay_t<decltype(v)>;
+          if constexpr (std::is_same_v<T, TempRef>) {
+            return v->name;
+          } else if constexpr (std::is_same_v<T, SymbolRef>) {
+            return std::string(v->name);
+          } else if constexpr (std::is_same_v<T, LiteralRef>) {
+            return v->ToString();
+          } else if constexpr (std::is_same_v<T, LabelRef>) {
+            return *v;
+          }
+        },
+        value);
   }
 };
 

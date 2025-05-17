@@ -14,7 +14,8 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
     throw std::runtime_error("Module has empty name");
   }
 
-  LirBuilder builder(module.name);
+  auto context = std::make_shared<lir::LirContext>();
+  LirBuilder builder(module.name, context);
 
   // Add variables
   for (const auto& variable : module.variables) {

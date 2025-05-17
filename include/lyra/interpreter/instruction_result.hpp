@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra::interpreter {
 
@@ -15,7 +16,7 @@ struct InstructionResult {
   Kind kind{};
 
   // For Jump
-  std::string target_label{};
+  lir::LabelRef target_label{};
 
   // For Delay
   uint64_t delay_amount = 0;
@@ -50,10 +51,10 @@ struct InstructionResult {
     return InstructionResult{.kind = Kind::kFinish};
   }
 
-  static auto Jump(std::string label) -> InstructionResult {
+  static auto Jump(lir::LabelRef label) -> InstructionResult {
     return InstructionResult{
         .kind = Kind::kJump,
-        .target_label = std::move(label),
+        .target_label = label,
     };
   }
 
@@ -69,7 +70,7 @@ struct InstructionResult {
         return "Finish";
 
       case Kind::kJump:
-        return fmt::format("Jump -> {}", target_label);
+        return fmt::format("Jump -> {}", *target_label);
 
       case Kind::kComplete:
       case Kind::kContinue:
