@@ -6,6 +6,7 @@ namespace lyra::mir {
 class Expression;
 class UnaryExpression;
 class BinaryExpression;
+class TernaryExpression;
 }  // namespace lyra::mir
 
 namespace lyra::lowering {
@@ -27,6 +28,12 @@ auto LowerUnaryExpression(
 auto LowerBinaryExpression(
     const mir::BinaryExpression& expression, lir::Operand lhs, lir::Operand rhs,
     LirBuilder& builder) -> lir::Operand;
+
+// Lower a ternary expression into LIR instructions and returns a value
+// that holds the result.
+auto LowerTernaryExpression(
+    const mir::TernaryExpression& expression, LirBuilder& builder)
+    -> lir::Operand;
 
 // Helper function to handle increment/decrement operations
 auto LowerIncrementDecrementExpression(

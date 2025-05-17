@@ -68,6 +68,25 @@ auto LowerExpression(const slang::ast::Expression& expression)
           mir_operator, std::move(left), std::move(right));
     }
 
+    case slang::ast::ExpressionKind::ConditionalOp: {
+      const auto& conditional_expression =
+          expression.as<slang::ast::ConditionalExpression>();
+
+      if (conditional_expression.conditions.size() != 1) {
+        throw std::runtime_error(fmt::format(
+            "Unsupported conditional expression with {} conditions in AST to MIR "
+            "LowerExpression",
+            conditional_expression.conditions.size()));
+      }
+
+      auto condition = LowerExpression(*conditional_expression.conditions[0].expr);
+      auto true_expression = LowerExpression(conditional_expression.left());
+      auto false_expression = LowerExpression(conditional_expression.right());
+      return std::make_unique<mir::TernaryExpression>(
+          std::move(condition), std::move(true_expression),
+          std::move(false_expression));
+    }
+
     case slang::ast::ExpressionKind::Assignment: {
       const auto& assignment =
           expression.as<slang::ast::AssignmentExpression>();

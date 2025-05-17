@@ -29,6 +29,7 @@ class Expression {
     kIdentifier,
     kUnary,
     kBinary,
+    kTernary,
     kAssignment,
     kConversion,
     kSystemCall,
@@ -59,6 +60,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Unary";
     case Expression::Kind::kBinary:
       return "Binary";
+    case Expression::Kind::kTernary:
+      return "Ternary";
     case Expression::Kind::kAssignment:
       return "Assignment";
     case Expression::Kind::kConversion:
@@ -156,6 +159,35 @@ class BinaryExpression : public Expression {
     visitor.Visit(*this);
   }
 };
+
+class TernaryExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kTernary;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Expression> true_expression;
+  std::unique_ptr<Expression> false_expression;
+
+  TernaryExpression(
+      std::unique_ptr<Expression> condition,
+      std::unique_ptr<Expression> true_expression,
+      std::unique_ptr<Expression> false_expression)
+      : Expression(kKindValue, true_expression->type),
+        condition(std::move(condition)),
+        true_expression(std::move(true_expression)),
+        false_expression(std::move(false_expression)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("({} ? {} : {})", condition->ToString(),
+                       true_expression->ToString(),
+                       false_expression->ToString());
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
 
 class AssignmentExpression : public Expression {
  public:

@@ -75,6 +75,15 @@ auto InstructionRunner::RunInstruction(
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kMove: {
+      assert(instr.operands.size() == 1);
+      assert(instr.result.has_value());
+
+      const auto value = get_temp(instr.operands[0]);
+      temp_table.Write(instr.result.value(), value);
+      return InstructionResult::Continue();
+    }
+
     // Unary operations
     case lir::InstructionKind::kUnaryPlus: {
       return eval_unary_op(instr.operands[0], UnaryPlus);

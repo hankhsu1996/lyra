@@ -7,6 +7,7 @@ class LiteralExpression;
 class IdentifierExpression;
 class UnaryExpression;
 class BinaryExpression;
+class TernaryExpression;
 class AssignmentExpression;
 class ConversionExpression;
 class SystemCallExpression;
@@ -34,6 +35,7 @@ class MirVisitor {
   virtual void Visit(const IdentifierExpression&) = 0;
   virtual void Visit(const UnaryExpression&) = 0;
   virtual void Visit(const BinaryExpression&) = 0;
+  virtual void Visit(const TernaryExpression&) = 0;
   virtual void Visit(const AssignmentExpression&) = 0;
   virtual void Visit(const ConversionExpression&) = 0;
   virtual void Visit(const SystemCallExpression&) = 0;

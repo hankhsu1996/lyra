@@ -24,3 +24,59 @@ TEST(ControlFlowTest, IfElseWithLiteralCondition) {
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
 }
+
+TEST(ControlFlowTest, TernaryWithLiteralCondition) {
+  std::string code = R"(
+    module Test;
+      int a;
+      initial begin
+        a = 1 ? 42 : 0;
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
+}
+
+TEST(ControlFlowTest, TernaryWithVariableCondition) {
+  std::string code = R"(
+    module Test;
+      int a, b;
+      initial begin
+        b = 1;
+        a = b ? 42 : 0;
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
+}
+
+TEST(ControlFlowTest, NestedTernary) {
+  std::string code = R"(
+    module Test;
+      int a, b;
+      initial begin
+        b = 2;
+        a = b == 1 ? 1 : (b == 2 ? 2 : 0);
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 2);
+}
+
+TEST(ControlFlowTest, TernaryWithComplexExpression) {
+  std::string code = R"(
+    module Test;
+      int a, b, c;
+      initial begin
+        b = 1;
+        c = 1;
+        a = (b * c == 1) ? 42 : 0;
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("a").AsInt64(), 42);
+}

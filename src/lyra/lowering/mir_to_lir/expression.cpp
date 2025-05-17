@@ -52,6 +52,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return LowerBinaryExpression(binary, lhs, rhs, builder);
     }
 
+    case mir::Expression::Kind::kTernary: {
+      const auto& ternary = mir::As<mir::TernaryExpression>(expression);
+      assert(ternary.condition && ternary.true_expression &&
+             ternary.false_expression);
+      return LowerTernaryExpression(ternary, builder);
+    }
+
     case mir::Expression::Kind::kAssignment: {
       const auto& assignment = mir::As<mir::AssignmentExpression>(expression);
       assert(assignment.target);
@@ -264,6 +271,63 @@ auto LowerBinaryExpression(
       lir::Instruction::Basic(kind, result_name, {lhs, rhs});
   builder.AddInstruction(std::move(instruction));
   return lir::Operand::Temp(result_name);
+}
+
+auto LowerTernaryExpression(
+    const mir::TernaryExpression& expression, LirBuilder& builder)
+    -> lir::Operand {
+  using lir::Instruction;
+  using lir::InstructionKind;
+
+  auto condition = LowerExpression(*expression.condition, builder);
+
+  // Generate unique labels for the various blocks
+  static int ternary_counter = 0;
+  std::string ternary_id = std::to_string(ternary_counter++);
+
+  std::string true_label = "ternary." + ternary_id + ".true";
+  std::string false_label = "ternary." + ternary_id + ".false";
+  std::string end_label = "ternary." + ternary_id + ".end";
+
+  // Create a temporary variable to hold the result
+  std::string result_temp = builder.MakeTemp("ternary");
+
+  // Branch based on condition
+  auto branch = Instruction::Basic(
+      InstructionKind::kBranch, "",
+      {condition, lir::Operand::Label(true_label),
+       lir::Operand::Label(false_label)});
+  builder.AddInstruction(std::move(branch));
+
+  // True branch
+  builder.StartBlock(true_label);
+  auto true_value = LowerExpression(*expression.true_expression, builder);
+  // Copy the true value to the result temp
+  auto copy_true = Instruction::Basic(
+      InstructionKind::kMove, result_temp, {true_value});
+  builder.AddInstruction(std::move(copy_true));
+  auto jump_to_end = Instruction::Basic(
+      InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+  builder.AddInstruction(std::move(jump_to_end));
+  builder.EndBlock();
+
+  // False branch
+  builder.StartBlock(false_label);
+  auto false_value = LowerExpression(*expression.false_expression, builder);
+  // Copy the false value to the result temp
+  auto copy_false = Instruction::Basic(
+      InstructionKind::kMove, result_temp, {false_value});
+  builder.AddInstruction(std::move(copy_false));
+  auto jump_to_end_from_false = Instruction::Basic(
+      InstructionKind::kJump, "", {lir::Operand::Label(end_label)});
+  builder.AddInstruction(std::move(jump_to_end_from_false));
+  builder.EndBlock();
+
+  // End block - control rejoins here
+  builder.StartBlock(end_label);
+
+  // Return the result temporary
+  return lir::Operand::Temp(result_temp);
 }
 
 auto LowerIncrementDecrementExpression(

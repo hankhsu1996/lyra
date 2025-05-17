@@ -46,6 +46,12 @@ class SensitivityCollector : public mir::MirVisitor {
     }
   }
 
+  void Visit(const mir::TernaryExpression& expression) override {
+    expression.condition->Accept(*this);
+    expression.true_expression->Accept(*this);
+    expression.false_expression->Accept(*this);
+  }
+
   void Visit(const mir::AssignStatement& statement) override {
     statement.value->Accept(*this);
   }

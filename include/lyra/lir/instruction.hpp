@@ -19,6 +19,9 @@ enum class InstructionKind {
   kStoreVariable,
   kStoreVariableNonBlocking,
 
+  // Move operation
+  kMove,
+
   // Unary operations
   kUnaryPlus,
   kUnaryMinus,
@@ -143,6 +146,10 @@ struct Instruction {
       case InstructionKind::kStoreVariableNonBlocking:
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
+
+      case InstructionKind::kMove:
+        return fmt::format(
+            "move  {}, {}", result.value(), operands[0].ToString());
 
       // Unary operations
       case InstructionKind::kUnaryPlus:
