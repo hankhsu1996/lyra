@@ -2,6 +2,8 @@
 
 namespace lyra::interpreter {
 
+using ResultKind = InstructionResult::Kind;
+
 auto BasicBlockRunner::RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
     ProcessEffect& effect) -> BasicBlockResult {
@@ -13,17 +15,17 @@ auto BasicBlockRunner::RunBlock(
     auto instruction_result = instruction_runner_.RunInstruction(instr, effect);
 
     switch (instruction_result.kind) {
-      case InstructionResult::Kind::kComplete:
+      case ResultKind::kComplete:
         return BasicBlockResult::Complete();
-      case InstructionResult::Kind::kContinue:
+      case ResultKind::kContinue:
         break;
-      case InstructionResult::Kind::kWaitEvent:
+      case ResultKind::kWaitEvent:
         return BasicBlockResult::WaitEvent(instruction_result.triggers, i + 1);
-      case InstructionResult::Kind::kDelay:
+      case ResultKind::kDelay:
         return BasicBlockResult::Delay(instruction_result.delay_amount, i + 1);
-      case InstructionResult::Kind::kFinish:
+      case ResultKind::kFinish:
         return BasicBlockResult::Finish();
-      case InstructionResult::Kind::kJump:
+      case ResultKind::kJump:
         return BasicBlockResult::Jump(instruction_result.target_label);
     }
   }

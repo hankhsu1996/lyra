@@ -10,30 +10,31 @@ namespace lyra::lowering {
 using Type = common::Type;
 using Literal = common::Literal;
 using Operand = lir::Operand;
+using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
 auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
-    -> Operand {
+    -> lir::TempRef {
   switch (expression.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& literal_expression =
           mir::As<mir::LiteralExpression>(expression);
-      auto result = builder.AllocateTemp("lit");
+      auto result =
+          builder.AllocateTemp("lit", literal_expression.literal.type);
       auto literal = builder.InternLiteral(literal_expression.literal);
-      Instruction instruction =
-          Instruction::Basic(IK::kLiteral, result, Operand::Literal(literal));
+      auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
       builder.AddInstruction(std::move(instruction));
-      return lir::Operand::Temp(result);
+      return result;
     }
 
     case mir::Expression::Kind::kIdentifier: {
       const auto& identifier = mir::As<mir::IdentifierExpression>(expression);
-      auto result = builder.AllocateTemp("load");
-      Instruction instruction = Instruction::Basic(
-          IK::kLoadVariable, result, Operand::Variable(identifier.symbol));
+      auto result = builder.AllocateTemp("load", identifier.type);
+      auto instruction =
+          Instruction::Basic(IK::kLoadVariable, result, identifier.symbol);
       builder.AddInstruction(std::move(instruction));
-      return lir::Operand::Temp(result);
+      return result;
     }
 
     case mir::Expression::Kind::kUnary: {
@@ -64,10 +65,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       assert(assignment.target);
       assert(assignment.value);
       auto value = LowerExpression(*assignment.value, builder);
-      auto variable = lir::Operand::Variable(assignment.target);
-
       auto instruction = Instruction::StoreVariable(
-          variable, value, assignment.is_non_blocking);
+          assignment.target, value, assignment.is_non_blocking);
       builder.AddInstruction(std::move(instruction));
       return value;
     }
@@ -75,11 +74,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     case mir::Expression::Kind::kConversion: {
       const auto& conversion = mir::As<mir::ConversionExpression>(expression);
       auto input = LowerExpression(*conversion.value, builder);
-      auto result = builder.AllocateTemp("cvt");
+      auto result = builder.AllocateTemp("cvt", conversion.target_type);
       auto instruction = Instruction::WithType(
           IK::kConversion, result, input, conversion.target_type);
       builder.AddInstruction(std::move(instruction));
-      return Operand::Temp(result);
+      return result;
     }
 
     case mir::Expression::Kind::kSystemCall: {
@@ -90,7 +89,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
             fmt::format("Unsupported system call: {}", system_call.name));
       }
 
-      std::vector<Operand> arguments;
+      std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
         if (argument) {
           arguments.push_back(LowerExpression(*argument, builder));
@@ -99,27 +98,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       // Add default argument for `$finish` if empty
       if (arguments.empty()) {
-        auto literal = builder.InternLiteral(Literal::Int(1));
-        arguments.push_back(Operand::Literal(literal));
+        // create a inctruction to load 1 to temp
+        auto temp = builder.AllocateTemp("sys", system_call.type);
+        auto const_one = builder.InternLiteral(Literal::Int(1));
+        auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);
+        builder.AddInstruction(std::move(instruction));
+        arguments.push_back(temp);
       }
 
-      Instruction instruction =
+      auto instruction =
           Instruction::SystemCall(system_call.name, std::move(arguments));
       builder.AddInstruction(std::move(instruction));
 
-      auto result = builder.AllocateTemp("sys");
-      return Operand::Temp(result);
+      auto result = builder.AllocateTemp("sys", system_call.type);
+      return result;
     }
-
-    default:
-      assert(false && "Unsupported MIR expression kind in LowerExpression");
-      return Operand::Temp(builder.AllocateTemp("invalid"));
   }
 }
 
 auto LowerUnaryExpression(
-    const mir::UnaryExpression& expression, Operand operand,
-    LirBuilder& builder) -> Operand {
+    const mir::UnaryExpression& expression, lir::TempRef operand,
+    LirBuilder& builder) -> lir::TempRef {
   using Operator = mir::UnaryOperator;
 
   // Handle unary operations
@@ -175,25 +174,21 @@ auto LowerUnaryExpression(
       return LowerIncrementDecrementExpression(expression, builder);
   }
 
-  auto result = builder.AllocateTemp("una");
-  Instruction instruction = Instruction::Basic(kind, result, operand);
+  auto result = builder.AllocateTemp("una", expression.type);
+  auto instruction = Instruction::Basic(kind, result, operand);
   builder.AddInstruction(std::move(instruction));
-  return Operand::Temp(result);
+  return result;
 }
 
 auto LowerBinaryExpression(
-    const mir::BinaryExpression& expression, Operand lhs, Operand rhs,
-    LirBuilder& builder) -> Operand {
+    const mir::BinaryExpression& expression, TempRef lhs, TempRef rhs,
+    LirBuilder& builder) -> TempRef {
   using Operator = mir::BinaryOperator;
 
   IK kind{};
 
-  const bool is_lhs_string =
-      lhs.IsLiteral() &&
-      std::get<lir::LiteralRef>(lhs.value)->type == Type::String();
-  const bool is_rhs_string =
-      rhs.IsLiteral() &&
-      std::get<lir::LiteralRef>(rhs.value)->type == Type::String();
+  const bool is_lhs_string = lhs->type == Type::String();
+  const bool is_rhs_string = rhs->type == Type::String();
   const bool is_string = is_lhs_string || is_rhs_string;
 
   if (is_string) {
@@ -266,14 +261,15 @@ auto LowerBinaryExpression(
     }
   }
 
-  auto result = builder.AllocateTemp("bin");
-  Instruction instruction = Instruction::Basic(kind, result, {lhs, rhs});
+  auto result = builder.AllocateTemp("bin", expression.type);
+  auto instruction = Instruction::Basic(
+      kind, result, {Operand::Temp(lhs), Operand::Temp(rhs)});
   builder.AddInstruction(std::move(instruction));
-  return Operand::Temp(result);
+  return result;
 }
 
 auto LowerTernaryExpression(
-    const mir::TernaryExpression& expression, LirBuilder& builder) -> Operand {
+    const mir::TernaryExpression& expression, LirBuilder& builder) -> TempRef {
   auto condition = LowerExpression(*expression.condition, builder);
 
   // Generate unique labels for the various blocks
@@ -282,7 +278,7 @@ auto LowerTernaryExpression(
   auto end_label = builder.MakeLabel("ternary.end");
 
   // Create a temporary variable to hold the result
-  auto result = builder.AllocateTemp("ternary");
+  auto result = builder.AllocateTemp("ternary", expression.type);
 
   // Branch based on condition
   auto branch = Instruction::Branch(condition, true_label, false_label);
@@ -291,9 +287,11 @@ auto LowerTernaryExpression(
   // True branch
   builder.StartBlock(true_label);
   auto true_value = LowerExpression(*expression.true_expression, builder);
+
   // Copy the true value to the result temp
-  auto copy_true = Instruction::Basic(IK::kMove, result, {true_value});
+  auto copy_true = Instruction::Basic(IK::kMove, result, true_value);
   builder.AddInstruction(std::move(copy_true));
+
   auto jump_to_end = Instruction::Jump(end_label);
   builder.AddInstruction(std::move(jump_to_end));
   builder.EndBlock();
@@ -301,9 +299,11 @@ auto LowerTernaryExpression(
   // False branch
   builder.StartBlock(false_label);
   auto false_value = LowerExpression(*expression.false_expression, builder);
+
   // Copy the false value to the result temp
-  auto copy_false = Instruction::Basic(IK::kMove, result, {false_value});
+  auto copy_false = Instruction::Basic(IK::kMove, result, false_value);
   builder.AddInstruction(std::move(copy_false));
+
   auto jump_to_end_from_false = Instruction::Jump(end_label);
   builder.AddInstruction(std::move(jump_to_end_from_false));
   builder.EndBlock();
@@ -312,12 +312,11 @@ auto LowerTernaryExpression(
   builder.StartBlock(end_label);
 
   // Return the result temporary
-  return Operand::Temp(result);
+  return result;
 }
 
 auto LowerIncrementDecrementExpression(
-    const mir::UnaryExpression& expression, LirBuilder& builder)
-    -> lir::Operand {
+    const mir::UnaryExpression& expression, LirBuilder& builder) -> TempRef {
   using lir::Instruction;
   using lir::InstructionKind;
   using Operator = mir::UnaryOperator;
@@ -332,20 +331,20 @@ auto LowerIncrementDecrementExpression(
       mir::As<mir::IdentifierExpression>(*expression.operand);
 
   // Load the current value
-  auto load_temp = builder.AllocateTemp("load");
-  Instruction load_instruction = Instruction::Basic(
-      IK::kLoadVariable, load_temp, Operand::Variable(identifier.symbol));
+  auto load_temp = builder.AllocateTemp("load", identifier.type);
+  auto load_instruction =
+      Instruction::Basic(IK::kLoadVariable, load_temp, identifier.symbol);
   builder.AddInstruction(std::move(load_instruction));
 
   // Create a literal instruction for the constant 1
-  auto const_one_temp = builder.AllocateTemp("const");
+  auto const_one_temp = builder.AllocateTemp("const", identifier.type);
   auto const_one = builder.InternLiteral(Literal::Int(1));
-  Instruction const_instruction = Instruction::Basic(
-      IK::kLiteral, const_one_temp, Operand::Literal(const_one));
+  auto const_instruction =
+      Instruction::Basic(IK::kLiteral, const_one_temp, const_one);
   builder.AddInstruction(std::move(const_instruction));
 
   // Compute the new value (add/subtract 1)
-  auto operation_temp = builder.AllocateTemp("op");
+  auto operation_temp = builder.AllocateTemp("op", identifier.type);
   IK operation_kind{};
 
   if (expression.op == Operator::kPreincrement ||
@@ -355,25 +354,24 @@ auto LowerIncrementDecrementExpression(
     operation_kind = IK::kBinarySubtract;
   }
 
-  Instruction operation_instruction = Instruction::Basic(
+  auto operation_instruction = Instruction::Basic(
       operation_kind, operation_temp,
       {Operand::Temp(load_temp), Operand::Temp(const_one_temp)});
   builder.AddInstruction(std::move(operation_instruction));
 
   // Store the updated value
-  Instruction store_instruction = Instruction::StoreVariable(
-      Operand::Variable(identifier.symbol), Operand::Temp(operation_temp),
-      false);
+  auto store_instruction =
+      Instruction::StoreVariable(identifier.symbol, operation_temp, false);
   builder.AddInstruction(std::move(store_instruction));
 
   // Return either the old or new value based on pre/post operation
   if (expression.op == Operator::kPreincrement ||
       expression.op == Operator::kPredecrement) {
     // Pre-operations return the new value
-    return lir::Operand::Temp(operation_temp);
+    return operation_temp;
   }
   // Post-operations return the original value
-  return lir::Operand::Temp(load_temp);
+  return load_temp;
 }
 
 }  // namespace lyra::lowering

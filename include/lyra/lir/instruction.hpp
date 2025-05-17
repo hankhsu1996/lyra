@@ -94,22 +94,46 @@ struct Instruction {
         .operands = {std::move(operand)}};
   }
 
+  static auto Basic(InstructionKind kind, TempRef result, TempRef operand)
+      -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .operands = {Operand::Temp(operand)}};
+  }
+
+  static auto Basic(InstructionKind kind, TempRef result, SymbolRef operand)
+      -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .operands = {Operand::Variable(operand)}};
+  }
+
+  static auto Basic(InstructionKind kind, TempRef result, LiteralRef operand)
+      -> Instruction {
+    return Instruction{
+        .kind = kind,
+        .result = std::move(result),
+        .operands = {Operand::Literal(operand)}};
+  }
+
   static auto WithType(
-      InstructionKind kind, TempRef result, Operand operand,
+      InstructionKind kind, TempRef result, TempRef operand,
       common::Type result_type) -> Instruction {
     return Instruction{
         .kind = kind,
         .result = std::move(result),
         .result_type = std::move(result_type),
-        .operands = {std::move(operand)}};
+        .operands = {Operand::Temp(operand)}};
   }
 
   static auto StoreVariable(
-      Operand variable, Operand value, bool is_non_blocking) -> Instruction {
+      SymbolRef variable, TempRef value, bool is_non_blocking) -> Instruction {
     return Instruction{
         .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
                                 : InstructionKind::kStoreVariable,
-        .operands = {std::move(variable), std::move(value)}};
+        .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
@@ -123,13 +147,17 @@ struct Instruction {
         .kind = InstructionKind::kDelay, .operands = {std::move(delay)}};
   }
 
-  static auto SystemCall(std::string name, std::vector<Operand> args)
+  static auto SystemCall(std::string name, std::vector<TempRef> args)
       -> Instruction {
+    std::vector<Operand> operands;
+    for (auto& arg : args) {
+      operands.push_back(Operand::Temp(arg));
+    }
     return Instruction{
         .kind = InstructionKind::kSystemCall,
         .result = std::nullopt,
         .result_type = std::nullopt,
-        .operands = std::move(args),
+        .operands = std::move(operands),
         .system_call_name = std::move(name)};
   }
 
@@ -147,12 +175,12 @@ struct Instruction {
   }
 
   static auto Branch(
-      Operand condition, LabelRef true_label, LabelRef false_label)
+      TempRef condition, LabelRef true_label, LabelRef false_label)
       -> Instruction {
     return Instruction{
         .kind = InstructionKind::kBranch,
         .operands = {
-            condition, Operand::Label(true_label),
+            Operand::Temp(condition), Operand::Label(true_label),
             Operand::Label(false_label)}};
   }
 

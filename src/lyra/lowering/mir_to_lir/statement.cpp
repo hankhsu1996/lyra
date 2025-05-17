@@ -31,8 +31,8 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       auto result_value = LowerExpression(*expression, builder);
 
       // Store the result to the target variable
-      auto instruction = Instruction::StoreVariable(
-          Operand::Variable(target), result_value, false);
+      auto instruction =
+          Instruction::StoreVariable(target, result_value, false);
       builder.AddInstruction(std::move(instruction));
       break;
     }

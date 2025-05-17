@@ -14,6 +14,7 @@ namespace lyra::lir {
 
 struct TempSymbol {
   std::string name;
+  common::Type type;
 };
 
 struct TempRef {
@@ -81,7 +82,7 @@ struct LiteralRef {
 
 class LirContext {
  public:
-  auto AllocateTemp(std::string name) -> TempRef;
+  auto AllocateTemp(std::string name, common::Type type) -> TempRef;
   auto InternLabel(std::string_view name) -> LabelRef;
   auto InternLiteral(const common::Literal& literal) -> LiteralRef;
 

@@ -80,9 +80,10 @@ void LirBuilder::AddInstruction(lir::Instruction instr) {
   current_block_->instructions.push_back(std::move(instr));
 }
 
-auto LirBuilder::AllocateTemp(const std::string& hint) -> lir::TempRef {
+auto LirBuilder::AllocateTemp(const std::string& hint, common::Type type)
+    -> lir::TempRef {
   std::string name = fmt::format("%{}_{}", hint, temp_counter_++);
-  return context_->AllocateTemp(name);
+  return context_->AllocateTemp(name, type);
 }
 
 auto LirBuilder::MakeLabel(const std::string& hint) -> lir::LabelRef {

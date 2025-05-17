@@ -33,8 +33,8 @@ class LirBuilder {
   void AddInstruction(lir::Instruction instruction);
 
   // Allocation helpers
-  auto AllocateTemp(const std::string& hint = "tmp") -> lir::TempRef;
-  auto MakeLabel(const std::string& hint = "label") -> lir::LabelRef;
+  auto AllocateTemp(const std::string& hint, common::Type type) -> lir::TempRef;
+  auto MakeLabel(const std::string& hint) -> lir::LabelRef;
   auto InternLiteral(const common::Literal& literal) -> lir::LiteralRef;
 
  private:

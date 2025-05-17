@@ -2,8 +2,8 @@
 
 namespace lyra::lir {
 
-auto LirContext::AllocateTemp(std::string name) -> TempRef {
-  temp_storage_.push_back(TempSymbol{std::move(name)});
+auto LirContext::AllocateTemp(std::string name, common::Type type) -> TempRef {
+  temp_storage_.push_back(TempSymbol{.name = std::move(name), .type = type});
   return TempRef{.ptr = &temp_storage_.back()};
 }
 
