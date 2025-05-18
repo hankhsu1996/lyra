@@ -16,7 +16,7 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 auto LowerExpression(const slang::ast::Expression& expression)
     -> std::unique_ptr<mir::Expression> {
@@ -74,12 +74,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       if (conditional_expression.conditions.size() != 1) {
         throw std::runtime_error(fmt::format(
-            "Unsupported conditional expression with {} conditions in AST to MIR "
+            "Unsupported conditional expression with {} conditions in AST to "
+            "MIR "
             "LowerExpression",
             conditional_expression.conditions.size()));
       }
 
-      auto condition = LowerExpression(*conditional_expression.conditions[0].expr);
+      auto condition =
+          LowerExpression(*conditional_expression.conditions[0].expr);
       auto true_expression = LowerExpression(conditional_expression.left());
       auto false_expression = LowerExpression(conditional_expression.right());
       return std::make_unique<mir::TernaryExpression>(
@@ -140,4 +142,4 @@ auto LowerExpression(const slang::ast::Expression& expression)
   }
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

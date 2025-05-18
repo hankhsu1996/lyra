@@ -9,7 +9,7 @@ class BinaryExpression;
 class TernaryExpression;
 }  // namespace lyra::mir
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 class LirBuilder;
 
 // Lowers a MIR Expression into LIR instructions and returns a value
@@ -40,4 +40,4 @@ auto LowerIncrementDecrementExpression(
     const mir::UnaryExpression& expression, LirBuilder& builder)
     -> lir::TempRef;
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

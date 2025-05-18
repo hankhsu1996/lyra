@@ -5,7 +5,7 @@
 
 #include <fmt/core.h>
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 LirBuilder::LirBuilder(
     std::string module_name, std::shared_ptr<lir::LirContext> context)
@@ -109,4 +109,4 @@ auto LirBuilder::InternLiteral(const common::Literal& literal)
   return context_->InternLiteral(literal);
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

@@ -8,7 +8,7 @@
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/mir/module.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 using SymbolRef = slang::ast::Symbol*;
 
@@ -41,4 +41,4 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   return module;
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

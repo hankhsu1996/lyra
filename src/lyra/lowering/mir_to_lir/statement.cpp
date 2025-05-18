@@ -7,7 +7,7 @@
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/statement.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
 using Literal = common::Literal;
@@ -231,4 +231,4 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
   }
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

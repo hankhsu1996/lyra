@@ -7,7 +7,7 @@
 #include "lyra/lowering/mir_to_lir/process.hpp"
 #include "lyra/mir/module.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
   if (module.name.empty()) {
@@ -30,4 +30,4 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
   return builder.EndModule();
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

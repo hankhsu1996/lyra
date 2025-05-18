@@ -10,7 +10,7 @@
 #include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 class LirBuilder {
  public:
@@ -56,4 +56,4 @@ class LirBuilder {
   int temp_counter_ = 0;
 };
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

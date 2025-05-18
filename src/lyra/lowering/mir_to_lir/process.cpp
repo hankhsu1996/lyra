@@ -4,7 +4,7 @@
 #include "lyra/lowering/mir_to_lir/statement.hpp"
 #include "lyra/mir/process.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 // Map MIR process kind to LIR process kind
 auto MapProcessKind(mir::ProcessKind kind) -> lir::ProcessKind {
@@ -33,4 +33,4 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
 
   builder.EndProcess();
 }
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

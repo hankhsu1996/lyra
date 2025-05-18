@@ -5,7 +5,7 @@
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
 using Literal = common::Literal;
@@ -374,4 +374,4 @@ auto LowerIncrementDecrementExpression(
   return load_temp;
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::mir_to_lir

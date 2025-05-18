@@ -18,7 +18,7 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 using StatementKind = slang::ast::StatementKind;
 using ExpressionKind = slang::ast::ExpressionKind;
@@ -265,4 +265,4 @@ auto LowerExpressionStatement(const slang::ast::Expression& expr)
   return std::make_unique<mir::ExpressionStatement>(std::move(lowered_expr));
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

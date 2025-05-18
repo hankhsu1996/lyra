@@ -10,7 +10,7 @@
 #include "lyra/lowering/ast_to_mir/module.hpp"
 #include "lyra/mir/module.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 auto AstToMir(const slang::ast::RootSymbol& root)
     -> std::unique_ptr<mir::Module> {
@@ -30,4 +30,4 @@ auto AstToMir(const slang::ast::RootSymbol& root)
   throw std::runtime_error("no top-level instance found in AstToMir");
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

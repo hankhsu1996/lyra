@@ -13,6 +13,9 @@
 
 namespace lyra::driver {
 
+using lyra::lowering::ast_to_mir::AstToMir;
+using lyra::lowering::mir_to_lir::MirToLir;
+
 auto Driver::RunFromSource(
     const std::string& code, const DriverOptions& options) -> DriverResult {
   frontend::SlangFrontend slang_frontend;
@@ -33,8 +36,8 @@ auto Driver::RunWithCompilation(
     const DriverOptions& options) -> DriverResult {
   const auto& root = compilation->getRoot();
 
-  auto mir = lowering::AstToMir(root);
-  auto lir = lowering::MirToLir(*mir);
+  auto mir = AstToMir(root);
+  auto lir = MirToLir(*mir);
 
   if (options.dump_lir) {
     std::cout << "[ Dumped LIR ]\n"

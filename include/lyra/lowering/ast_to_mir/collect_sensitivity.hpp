@@ -6,7 +6,7 @@
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/visitor.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 using SymbolRef = common::SymbolRef;
 
@@ -113,4 +113,4 @@ inline auto CollectSensitivityList(const mir::Statement& statement)
   return std::move(collector).TakeVariableNames();
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

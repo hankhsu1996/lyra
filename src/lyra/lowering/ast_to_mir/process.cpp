@@ -13,7 +13,7 @@
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 #include "lyra/mir/process.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     -> std::unique_ptr<mir::Process> {
@@ -100,4 +100,4 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
   return process;
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

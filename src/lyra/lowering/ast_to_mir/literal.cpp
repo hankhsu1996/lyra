@@ -4,7 +4,7 @@
 
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
     -> common::Literal {
@@ -19,4 +19,4 @@ auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
   return {type, common::ValueStorage(std::move(value))};
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

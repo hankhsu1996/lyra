@@ -1,6 +1,6 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 using Type = common::Type;
 
@@ -35,4 +35,4 @@ auto LowerType(const slang::ast::Type& type) -> Type {
       "Unsupported type {} in AST to MIR LowerType", type.toString())};
 }
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir

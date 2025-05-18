@@ -10,10 +10,10 @@ namespace lyra::mir {
 class Process;
 }
 
-namespace lyra::lowering {
+namespace lyra::lowering::ast_to_mir {
 
 // Lowers a slang AST ProceduralBlockSymbol into a MIR Process.
 auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     -> std::unique_ptr<mir::Process>;
 
-}  // namespace lyra::lowering
+}  // namespace lyra::lowering::ast_to_mir
