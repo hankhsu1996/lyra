@@ -4,11 +4,12 @@
 
 namespace lyra::interpreter {
 
-void VariableTable::Write(const SymbolRef& symbol, const RuntimeValue& value) {
+void ModuleVariableTable::Write(
+    const SymbolRef& symbol, const RuntimeValue& value) {
   variables_[symbol] = value;
 }
 
-auto VariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
+auto ModuleVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
   auto it = variables_.find(symbol);
   if (it == variables_.end()) {
     throw std::runtime_error(
@@ -17,7 +18,7 @@ auto VariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
   return it->second;
 }
 
-auto VariableTable::ReadFromName(const std::string& name) const
+auto ModuleVariableTable::ReadFromName(const std::string& name) const
     -> RuntimeValue {
   for (const auto& [symbol, value] : variables_) {
     if (std::string(symbol->name) == name) {
@@ -27,7 +28,7 @@ auto VariableTable::ReadFromName(const std::string& name) const
   throw std::runtime_error("Variable not found: " + name);
 }
 
-auto VariableTable::ReadPrevious(const SymbolRef& symbol) const
+auto ModuleVariableTable::ReadPrevious(const SymbolRef& symbol) const
     -> RuntimeValue {
   auto it = previous_variables_.find(symbol);
   if (it == previous_variables_.end()) {
@@ -37,26 +38,66 @@ auto VariableTable::ReadPrevious(const SymbolRef& symbol) const
   return it->second;
 }
 
-void VariableTable::UpdatePrevious(
+void ModuleVariableTable::UpdatePrevious(
     const SymbolRef& symbol, const RuntimeValue& value) {
   previous_variables_[symbol] = value;
 }
 
-auto VariableTable::Exists(const SymbolRef& symbol) const -> bool {
+auto ModuleVariableTable::Exists(const SymbolRef& symbol) const -> bool {
   return variables_.find(symbol) != variables_.end();
 }
 
-void VariableTable::CreateVariable(
+void ModuleVariableTable::CreateVariable(
     const SymbolRef& symbol, RuntimeValue initial_value) {
   variables_[symbol] = std::move(initial_value);
 }
 
-void VariableTable::InitializeVariable(
-    const SymbolRef& symbol, const common::Type& type) {
-  if (!Exists(symbol)) {
-    auto initial_value = RuntimeValue::DefaultValueForType(type);
-    CreateVariable(symbol, initial_value);
-    UpdatePrevious(symbol, initial_value);
+void ModuleVariableTable::InitializeVariable(const common::Variable& variable) {
+  if (!Exists(variable.symbol)) {
+    auto initial_value = RuntimeValue::DefaultValueForType(variable.type);
+    CreateVariable(variable.symbol, initial_value);
+    UpdatePrevious(variable.symbol, initial_value);
+  }
+}
+
+void ProcessVariableTable::Write(
+    const SymbolRef& symbol, const RuntimeValue& value) {
+  variables_[symbol] = value;
+}
+
+auto ProcessVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
+  auto it = variables_.find(symbol);
+  if (it == variables_.end()) {
+    throw std::runtime_error(
+        "Variable not found: " + std::string(symbol->name));
+  }
+  return it->second;
+}
+
+auto ProcessVariableTable::ReadFromName(const std::string& name) const
+    -> RuntimeValue {
+  for (const auto& [symbol, value] : variables_) {
+    if (std::string(symbol->name) == name) {
+      return value;
+    }
+  }
+  throw std::runtime_error("Variable not found: " + name);
+}
+
+auto ProcessVariableTable::Exists(const SymbolRef& symbol) const -> bool {
+  return variables_.find(symbol) != variables_.end();
+}
+
+void ProcessVariableTable::CreateVariable(
+    const SymbolRef& symbol, RuntimeValue initial_value) {
+  variables_[symbol] = std::move(initial_value);
+}
+
+void ProcessVariableTable::InitializeVariable(
+    const common::Variable& variable) {
+  if (!Exists(variable.symbol)) {
+    auto initial_value = RuntimeValue::DefaultValueForType(variable.type);
+    CreateVariable(variable.symbol, initial_value);
   }
 }
 

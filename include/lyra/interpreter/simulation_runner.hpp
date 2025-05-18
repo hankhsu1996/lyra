@@ -8,7 +8,6 @@
 
 #include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/process_effect.hpp"
-#include "lyra/interpreter/process_runner.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
@@ -93,8 +92,7 @@ class SimulationRunner {
   bool finish_requested_ = false;
 
   std::reference_wrapper<const lir::Module> module_;
-  std::reference_wrapper<SimulationContext> context_;
-  ProcessRunner process_runner_;
+  std::reference_wrapper<SimulationContext> simulation_context_;
   TriggerManager trigger_manager_;
 };
 

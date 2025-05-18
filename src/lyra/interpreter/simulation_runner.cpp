@@ -2,14 +2,14 @@
 
 #include <fmt/core.h>
 
+#include "lyra/interpreter/process_context.hpp"
+#include "lyra/interpreter/process_runner.hpp"
+
 namespace lyra::interpreter {
 
 SimulationRunner::SimulationRunner(
     const lir::Module& module, SimulationContext& context)
-    : module_(module),
-      context_(context),
-      process_runner_(context),
-      trigger_manager_(context) {
+    : module_(module), simulation_context_(context), trigger_manager_(context) {
 }
 
 void SimulationRunner::Run() {
@@ -23,9 +23,9 @@ void SimulationRunner::Run() {
     // Advance simulation time if no active events
     if (active_queue_.empty()) {
       auto it = delay_queue_.begin();
-      context_.get().current_time = it->first;
+      simulation_context_.get().current_time = it->first;
 
-      if (context_.get().current_time > kMaxSimulationTime) {
+      if (simulation_context_.get().current_time > kMaxSimulationTime) {
         throw std::runtime_error("Simulation time exceeded max limit");
       }
 
@@ -127,7 +127,8 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
-        context_.get().variable_table.Write(action.variable, action.value);
+        simulation_context_.get().variable_table.Write(
+            action.variable, action.value);
         modified_variables.push_back(action.variable);
         nba_queue_.pop();
       }
@@ -152,8 +153,7 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
 
 void SimulationRunner::InitializeVariables() {
   for (const auto& variable : module_.get().variables) {
-    context_.get().variable_table.InitializeVariable(
-        variable.symbol, variable.type);
+    simulation_context_.get().variable_table.InitializeVariable(variable);
   }
 }
 
@@ -181,30 +181,33 @@ void SimulationRunner::ExecuteOneEvent() {
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
-  context_.get().tracer.Record(fmt::format(
+  simulation_context_.get().tracer.Record(fmt::format(
       "{} | Start at block {} instruction {}", process->name,
       process->blocks[block_index]->label, instruction_index));
 
-  auto effect = ProcessEffect();
-  auto result = process_runner_.RunProcess(
-      process, block_index, instruction_index, effect);
+  ProcessContext process_context;
+  ProcessEffect process_effect;
 
-  context_.get().tracer.Record(
+  auto result = RunProcess(
+      process, block_index, instruction_index, simulation_context_.get(),
+      process_context, process_effect);
+
+  simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", process->name, result.Summary()));
 
-  WakeWaitingProcesses(effect.GetModifiedVariables());
+  WakeWaitingProcesses(process_effect.GetModifiedVariables());
 
-  for (const auto& action : effect.GetNbaActions()) {
+  for (const auto& action : process_effect.GetNbaActions()) {
     nba_queue_.push(action);
   }
-  for (const auto& action : effect.GetPostponedActions()) {
+  for (const auto& action : process_effect.GetPostponedActions()) {
     postponed_queue_.push(action);
   }
 
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
       SimulationTime delay_time =
-          context_.get().current_time + result.delay_amount;
+          simulation_context_.get().current_time + result.delay_amount;
       ScheduledEvent event{
           .process = process,
           .block_index = result.block_index,

@@ -1,7 +1,7 @@
 cc_test(
-    name = "control_flow_tests",
+    name = "binary_ops_tests",
     size = "small",
-    srcs = ["e2e/control_flow_tests.cpp"],
+    srcs = ["e2e/binary_ops_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",
@@ -9,9 +9,9 @@ cc_test(
 )
 
 cc_test(
-    name = "loop_tests",
+    name = "control_flow_tests",
     size = "small",
-    srcs = ["e2e/loop_tests.cpp"],
+    srcs = ["e2e/control_flow_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",
@@ -29,9 +29,19 @@ cc_test(
 )
 
 cc_test(
-    name = "binary_ops_tests",
+    name = "loop_tests",
     size = "small",
-    srcs = ["e2e/binary_ops_tests.cpp"],
+    srcs = ["e2e/loop_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "non_blocking_tests",
+    size = "small",
+    srcs = ["e2e/non_blocking_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",
@@ -49,16 +59,6 @@ cc_test(
 )
 
 cc_test(
-    name = "wait_event_tests",
-    size = "small",
-    srcs = ["e2e/wait_event_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
     name = "unary_ops_tests",
     size = "small",
     srcs = ["e2e/unary_ops_tests.cpp"],
@@ -69,9 +69,19 @@ cc_test(
 )
 
 cc_test(
-    name = "non_blocking_tests",
+    name = "variable_declaration_tests",
     size = "small",
-    srcs = ["e2e/non_blocking_tests.cpp"],
+    srcs = ["e2e/variable_declaration_tests.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "wait_event_tests",
+    size = "small",
+    srcs = ["e2e/wait_event_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",

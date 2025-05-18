@@ -10,19 +10,44 @@
 namespace lyra::interpreter {
 
 // Execute a single instruction in the given context
-auto InstructionRunner::RunInstruction(
-    const lir::Instruction& instr, ProcessEffect& effect) -> InstructionResult {
-  auto& temp_table = context_.get().temp_table;
-  auto& variable_table = context_.get().variable_table;
+auto RunInstruction(
+    const lir::Instruction& instr, SimulationContext& simulation_context,
+    ProcessContext& process_context, ProcessEffect& effect)
+    -> InstructionResult {
+  auto& temp_table = process_context.temp_table;
+  auto& module_variable_table = simulation_context.variable_table;
+  auto& process_variable_table = process_context.variable_table;
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsTemp());
     return temp_table.Read(std::get<lir::TempRef>(operand.value));
   };
 
-  auto get_variable = [&](const lir::Operand& operand) -> RuntimeValue {
+  auto read_variable = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsVariable());
-    return variable_table.Read(std::get<lir::SymbolRef>(operand.value));
+    const auto* symbol = std::get<lir::SymbolRef>(operand.value);
+
+    if (process_variable_table.Exists(symbol)) {
+      return process_variable_table.Read(symbol);
+    }
+    return module_variable_table.Read(symbol);
+  };
+
+  auto store_variable = [&](const lir::Operand& operand,
+                            const RuntimeValue& value, bool is_non_blocking) {
+    assert(operand.IsVariable());
+    const auto* symbol = std::get<lir::SymbolRef>(operand.value);
+
+    if (process_variable_table.Exists(symbol)) {
+      process_variable_table.Write(symbol, value);
+    } else {
+      module_variable_table.Write(symbol, value);
+      if (!is_non_blocking) {
+        effect.RecordVariableModification(symbol);
+      } else {
+        effect.RecordNbaAction(NbaAction{.variable = symbol, .value = value});
+      }
+    }
   };
 
   auto eval_unary_op = [&](const lir::Operand& operand,
@@ -58,7 +83,7 @@ auto InstructionRunner::RunInstruction(
     }
 
     case lir::InstructionKind::kLoadVariable: {
-      const auto& src_variable = get_variable(instr.operands[0]);
+      const auto& src_variable = read_variable(instr.operands[0]);
       temp_table.Write(instr.result.value(), src_variable);
       return InstructionResult::Continue();
     }
@@ -67,9 +92,7 @@ auto InstructionRunner::RunInstruction(
       const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
       assert(variable.IsVariable());
-      const auto* symbol = std::get<lir::SymbolRef>(variable.value);
-      variable_table.Write(symbol, value);
-      effect.RecordVariableModification(symbol);
+      store_variable(variable, value, false);
       return InstructionResult::Continue();
     }
 
@@ -77,8 +100,7 @@ auto InstructionRunner::RunInstruction(
       const auto variable = instr.operands[0];
       const auto value = get_temp(instr.operands[1]);
       assert(variable.IsVariable());
-      const auto* symbol = std::get<lir::SymbolRef>(variable.value);
-      effect.RecordNbaAction(NbaAction{.variable = symbol, .value = value});
+      store_variable(variable, value, true);
       return InstructionResult::Continue();
     }
 

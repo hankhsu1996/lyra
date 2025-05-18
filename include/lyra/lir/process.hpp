@@ -9,6 +9,7 @@
 
 #include "lyra/common/formatting.hpp"
 #include "lyra/common/trigger.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/lir/basic_block.hpp"
 
 namespace lyra::lir {
@@ -32,6 +33,7 @@ inline auto ToString(ProcessKind kind) -> std::string {
 struct Process {
   std::string name;
   ProcessKind kind;
+  std::vector<common::Variable> variables;
 
   // List of basic blocks
   std::vector<std::unique_ptr<BasicBlock>> blocks;

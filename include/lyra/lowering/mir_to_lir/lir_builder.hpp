@@ -18,12 +18,14 @@ class LirBuilder {
       std::string module_name, std::shared_ptr<lir::LirContext> context);
 
   // Module interface
-  auto Build() -> std::unique_ptr<lir::Module>;
-  void AddVariable(const common::Variable& variable);
+  void BeginModule();
+  void AddModuleVariable(const common::Variable& variable);
+  auto EndModule() -> std::unique_ptr<lir::Module>;
 
   // Process interface
   void BeginProcess(lir::ProcessKind kind, const std::string& name);
   void EndProcess();
+  void AddProcessVariable(const common::Variable& variable);
 
   // Basic block interface
   void StartBlock(lir::LabelRef label);
@@ -41,7 +43,9 @@ class LirBuilder {
   auto InternLabel(const std::string& name) -> lir::LabelRef;
 
   std::string module_name_;
-  std::vector<common::Variable> variables_;
+  std::unique_ptr<lir::Module> module_;
+  std::shared_ptr<lir::LirContext> context_;
+
   std::vector<std::shared_ptr<lir::Process>> processes_;
   std::shared_ptr<lir::Process> current_process_;
 
@@ -50,8 +54,6 @@ class LirBuilder {
 
   int label_counter_ = 0;
   int temp_counter_ = 0;
-
-  std::shared_ptr<lir::LirContext> context_;
 };
 
 }  // namespace lyra::lowering

@@ -1,17 +1,24 @@
 #include "lyra/interpreter/process_runner.hpp"
 
+#include "lyra/interpreter/basic_block_runner.hpp"
+#include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 
 namespace lyra::interpreter {
 
-auto ProcessRunner::RunProcess(
+auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
-    std::size_t instruction_index, ProcessEffect& effect) -> ProcessResult {
+    std::size_t instruction_index, SimulationContext& simulation_context,
+    ProcessContext& process_context, ProcessEffect& effect) -> ProcessResult {
+  for (const auto& variable : process->variables) {
+    process_context.variable_table.InitializeVariable(variable);
+  }
+
   while (true) {
     // get the basic block
     const auto& block = *process->blocks[block_index];
-    auto block_result =
-        block_runner_.RunBlock(block, instruction_index, effect);
+    auto block_result = RunBlock(
+        block, instruction_index, simulation_context, process_context, effect);
 
     switch (block_result.kind) {
       case BasicBlockResult::Kind::kComplete:

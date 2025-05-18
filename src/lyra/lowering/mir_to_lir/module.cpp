@@ -16,21 +16,18 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
 
   auto context = std::make_shared<lir::LirContext>();
   LirBuilder builder(module.name, context);
+  builder.BeginModule();
 
-  // Add variables
   for (const auto& variable : module.variables) {
-    builder.AddVariable(variable);
+    builder.AddModuleVariable(variable);
   }
 
-  // Process each process
   for (const auto& process : module.processes) {
-    if (!process) {
-      throw std::runtime_error("Null process pointer");
-    }
-
+    assert(process);
     LowerProcess(*process, builder);
   }
 
-  return builder.Build();
+  return builder.EndModule();
 }
+
 }  // namespace lyra::lowering

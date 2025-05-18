@@ -13,6 +13,7 @@
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
@@ -38,6 +39,22 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::Block: {
       const auto& block_statement = statement.as<slang::ast::BlockStatement>();
       return LowerStatement(block_statement.body);
+    }
+
+    case StatementKind::VariableDeclaration: {
+      const auto& declaration =
+          statement.as<slang::ast::VariableDeclStatement>();
+      auto variable = common::Variable::FromSlang(&declaration.symbol);
+      const auto* initializer = declaration.symbol.getInitializer();
+
+      if (initializer != nullptr) {
+        auto lowered_initializer = LowerExpression(*initializer);
+        return std::make_unique<mir::VariableDeclarationStatement>(
+            std::move(variable), std::move(lowered_initializer));
+      }
+
+      return std::make_unique<mir::VariableDeclarationStatement>(
+          std::move(variable), nullptr);
     }
 
     case StatementKind::ExpressionStatement: {

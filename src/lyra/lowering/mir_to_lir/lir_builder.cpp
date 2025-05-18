@@ -12,17 +12,21 @@ LirBuilder::LirBuilder(
     : module_name_(std::move(module_name)), context_(std::move(context)) {
 }
 
-auto LirBuilder::Build() -> std::unique_ptr<lir::Module> {
-  auto module = std::make_unique<lir::Module>();
-  module->name = module_name_;
-  module->variables = std::move(variables_);
-  module->processes = std::move(processes_);
-  module->context = context_;
-  return module;
+void LirBuilder::BeginModule() {
+  module_ = std::make_unique<lir::Module>();
+  module_->name = module_name_;
+  module_->context = context_;
 }
 
-void LirBuilder::AddVariable(const common::Variable& variable) {
-  variables_.push_back(variable);
+auto LirBuilder::EndModule() -> std::unique_ptr<lir::Module> {
+  assert(module_);
+  module_->processes = std::move(processes_);
+  return std::move(module_);
+}
+
+void LirBuilder::AddModuleVariable(const common::Variable& variable) {
+  assert(module_);
+  module_->variables.push_back(variable);
 }
 
 void LirBuilder::BeginProcess(lir::ProcessKind kind, const std::string& name) {
@@ -54,6 +58,11 @@ void LirBuilder::EndProcess() {
 
   processes_.push_back(std::move(current_process_));
   current_process_ = nullptr;
+}
+
+void LirBuilder::AddProcessVariable(const common::Variable& variable) {
+  assert(current_process_);
+  current_process_->variables.push_back(variable);
 }
 
 void LirBuilder::StartBlock(lir::LabelRef label) {

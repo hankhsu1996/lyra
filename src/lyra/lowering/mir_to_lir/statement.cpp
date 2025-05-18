@@ -19,11 +19,24 @@ using IK = lir::InstructionKind;
 auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
     -> void {
   switch (statement.kind) {
+    case mir::Statement::Kind::kVariableDeclaration: {
+      const auto& declaration =
+          mir::As<mir::VariableDeclarationStatement>(statement);
+
+      builder.AddProcessVariable(declaration.variable);
+
+      if (declaration.initializer) {
+        auto result = LowerExpression(*declaration.initializer, builder);
+        auto instruction = Instruction::StoreVariable(
+            declaration.variable.symbol, result, false);
+        builder.AddInstruction(std::move(instruction));
+      }
+      break;
+    }
+
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(statement);
-
       const auto& target = assign.target;
-
       const auto& expression = assign.value;
       assert(expression);
 

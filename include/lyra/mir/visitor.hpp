@@ -13,6 +13,7 @@ class ConversionExpression;
 class SystemCallExpression;
 
 class Statement;
+class VariableDeclarationStatement;
 class AssignStatement;
 class ExpressionStatement;
 class WaitEventStatement;
@@ -40,6 +41,7 @@ class MirVisitor {
   virtual void Visit(const ConversionExpression&) = 0;
   virtual void Visit(const SystemCallExpression&) = 0;
 
+  virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;
   virtual void Visit(const ExpressionStatement&) = 0;
   virtual void Visit(const WaitEventStatement&) = 0;

@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include "lyra/common/trigger.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/visitor.hpp"
 
@@ -17,6 +18,7 @@ namespace lyra::mir {
 class Statement {
  public:
   enum class Kind {
+    kVariableDeclaration,
     kAssign,
     kExpression,
     kWaitEvent,
@@ -44,6 +46,8 @@ class Statement {
 // Convert Statement::Kind to string
 inline auto ToString(Statement::Kind kind) -> std::string {
   switch (kind) {
+    case Statement::Kind::kVariableDeclaration:
+      return "VariableDeclaration";
     case Statement::Kind::kAssign:
       return "Assign";
     case Statement::Kind::kExpression:
@@ -68,6 +72,25 @@ inline auto operator<<(std::ostream& os, const Statement::Kind& kind)
     -> std::ostream& {
   return os << ToString(kind);
 }
+
+class VariableDeclarationStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kVariableDeclaration;
+
+  common::Variable variable;
+  std::unique_ptr<Expression> initializer;
+
+  VariableDeclarationStatement(
+      common::Variable v, std::unique_ptr<Expression> i)
+      : Statement(kKindValue),
+        variable(std::move(v)),
+        initializer(std::move(i)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
 
 class AssignStatement : public Statement {
  public:
