@@ -44,25 +44,13 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::VariableDeclaration: {
       const auto& declaration =
           statement.as<slang::ast::VariableDeclStatement>();
-      auto variable = common::Variable::FromSlang(&declaration.symbol);
-      const auto* initializer = declaration.symbol.getInitializer();
-
-      if (initializer != nullptr) {
-        auto lowered_initializer = LowerExpression(*initializer);
-        return std::make_unique<mir::VariableDeclarationStatement>(
-            std::move(variable), std::move(lowered_initializer));
-      }
-
-      return std::make_unique<mir::VariableDeclarationStatement>(
-          std::move(variable), nullptr);
+      return LowerVariableDeclaration(declaration.symbol);
     }
 
     case StatementKind::ExpressionStatement: {
       const auto& expression_statement =
           statement.as<slang::ast::ExpressionStatement>();
-      auto lowered_expression = LowerExpression(expression_statement.expr);
-      return std::make_unique<mir::ExpressionStatement>(
-          std::move(lowered_expression));
+      return LowerExpressionStatement(expression_statement.expr);
     }
 
     case StatementKind::Timed: {
@@ -197,6 +185,40 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(condition), std::move(body));
     }
 
+    case StatementKind::ForLoop: {
+      const auto& for_loop = statement.as<slang::ast::ForLoopStatement>();
+      auto block = std::make_unique<mir::BlockStatement>();
+
+      // loopVars → VariableDeclarationStatement
+      for (const auto* var : for_loop.loopVars) {
+        block->statements.push_back(LowerVariableDeclaration(*var));
+      }
+
+      // initializers → ExpressionStatement
+      for (const auto* expr : for_loop.initializers) {
+        block->statements.push_back(LowerExpressionStatement(*expr));
+      }
+
+      // body + steps → while body
+      auto while_body = std::make_unique<mir::BlockStatement>();
+      while_body->statements.push_back(LowerStatement(for_loop.body));
+      for (const auto* step : for_loop.steps) {
+        while_body->statements.push_back(LowerExpressionStatement(*step));
+      }
+
+      // stopExpr → while condition
+      auto condition = (for_loop.stopExpr != nullptr)
+                           ? LowerExpression(*for_loop.stopExpr)
+                           : std::make_unique<mir::LiteralExpression>(
+                                 common::Literal::Bool(true));
+
+      auto while_stmt = std::make_unique<mir::WhileStatement>(
+          std::move(condition), std::move(while_body));
+
+      block->statements.push_back(std::move(while_stmt));
+      return block;
+    }
+
     case StatementKind::ForeverLoop: {
       const auto& forever_loop =
           statement.as<slang::ast::ForeverLoopStatement>();
@@ -220,6 +242,27 @@ auto LowerStatement(const slang::ast::Statement& statement)
           "Unsupported statement kind {} in AST to MIR LowerStatement",
           slang::ast::toString(statement.kind)));
   }
+}
+
+auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
+    -> std::unique_ptr<mir::VariableDeclarationStatement> {
+  auto variable = common::Variable::FromSlang(&symbol);
+  const auto* initializer = symbol.getInitializer();
+
+  if (initializer != nullptr) {
+    auto lowered_initializer = LowerExpression(*initializer);
+    return std::make_unique<mir::VariableDeclarationStatement>(
+        std::move(variable), std::move(lowered_initializer));
+  }
+
+  return std::make_unique<mir::VariableDeclarationStatement>(
+      std::move(variable), nullptr);
+}
+
+auto LowerExpressionStatement(const slang::ast::Expression& expr)
+    -> std::unique_ptr<mir::ExpressionStatement> {
+  auto lowered_expr = LowerExpression(expr);
+  return std::make_unique<mir::ExpressionStatement>(std::move(lowered_expr));
 }
 
 }  // namespace lyra::lowering

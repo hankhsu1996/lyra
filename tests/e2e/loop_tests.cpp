@@ -191,3 +191,126 @@ TEST(LoopTest, ForeverLoop) {
   auto result = Driver::RunFromSource(code);
   EXPECT_EQ(result.ReadVariable("counter").AsInt64(), 5);
 }
+
+TEST(LoopTest, BasicForCounter) {
+  std::string code = R"(
+    module Test;
+      int i;
+      int sum;
+      initial begin
+        sum = 0;
+        for (i = 0; i < 5; i = i + 1) begin
+          sum = sum + i;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 5);
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 10);  // 0+1+2+3+4
+}
+
+TEST(LoopTest, ForWithLoopVarDeclaration) {
+  std::string code = R"(
+    module Test;
+      int sum;
+      initial begin
+        sum = 0;
+        for (int i = 0; i < 4; i = i + 1) begin
+          sum = sum + i;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 6);  // 0+1+2+3
+}
+
+TEST(LoopTest, ForWithMultipleInitializers) {
+  std::string code = R"(
+    module Test;
+      int i, j, sum;
+      initial begin
+        sum = 0;
+        for (i = 0, j = 3; i < 3; i = i + 1, j = j + 1) begin
+          sum = sum + i + j;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  // i=0..2, j=3..5 → sum = (0+3)+(1+4)+(2+5) = 15
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 15);
+}
+
+TEST(LoopTest, ForWithoutCondition) {
+  std::string code = R"(
+    module Test;
+      int i;
+      initial begin
+        for (i = 0; ; i = i + 1) begin
+          if (i == 3) $finish;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 3);
+}
+
+TEST(LoopTest, ForWithoutInitializer) {
+  std::string code = R"(
+    module Test;
+      int i;
+      int sum;
+      initial begin
+        i = 1;
+        sum = 0;
+        for (; i <= 3; i = i + 1) begin
+          sum = sum + i;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 4);
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 6);  // 1+2+3
+}
+
+TEST(LoopTest, ForWithoutStep) {
+  std::string code = R"(
+    module Test;
+      int i;
+      int x;
+      initial begin
+        x = 0;
+        for (i = 0; i < 1;) begin
+          x = x + 1;
+          i = i + 1;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("x").AsInt64(), 1);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 1);
+}
+
+TEST(LoopTest, NestedForLoops) {
+  std::string code = R"(
+    module Test;
+      int i, j, product;
+      initial begin
+        product = 1;
+        for (i = 1; i <= 2; i = i + 1) begin
+          for (j = 1; j <= 2; j = j + 1) begin
+            product = product * j;
+          end
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  // j = 1×2 in both outer loops → 2×2 = 4
+  EXPECT_EQ(result.ReadVariable("product").AsInt64(), 4);
+}
