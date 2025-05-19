@@ -66,6 +66,14 @@ class SensitivityCollector : public mir::MirVisitor {
     statement.expression->Accept(*this);
   }
 
+  void Visit(const mir::BreakStatement& /*unused*/) override {
+    // No variable involved in break
+  }
+
+  void Visit(const mir::ContinueStatement& /*unused*/) override {
+    // No variable involved in continue
+  }
+
   void Visit(const mir::WaitEventStatement& /*unused*/) override {
     // No variable involved in triggers
   }

@@ -11,7 +11,6 @@
 
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
-#include "lyra/mir/process.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 

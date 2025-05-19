@@ -16,7 +16,9 @@ auto MapProcessKind(mir::ProcessKind kind) -> lir::ProcessKind {
   }
 }
 
-auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
+auto LowerProcess(
+    const mir::Process& process, LirBuilder& builder,
+    LoweringContext& lowering_context) -> void {
   if (!process.body) {
     // Skip empty processes
     return;
@@ -29,7 +31,7 @@ auto LowerProcess(const mir::Process& process, LirBuilder& builder) -> void {
   builder.StartBlock(builder.MakeLabel("entry"));
 
   // Process the body statement in the process
-  LowerStatement(*process.body, builder);
+  LowerStatement(*process.body, builder, lowering_context);
 
   builder.EndProcess();
 }

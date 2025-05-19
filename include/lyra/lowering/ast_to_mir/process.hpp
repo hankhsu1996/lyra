@@ -2,12 +2,10 @@
 
 #include <memory>
 
+#include "lyra/mir/process.hpp"
+
 namespace slang::ast {
 class ProceduralBlockSymbol;
-}
-
-namespace lyra::mir {
-class Process;
 }
 
 namespace lyra::lowering::ast_to_mir {

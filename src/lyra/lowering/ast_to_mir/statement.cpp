@@ -233,6 +233,14 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(true_condition), std::move(body));
     }
 
+    case StatementKind::Break: {
+      return std::make_unique<mir::BreakStatement>();
+    }
+
+    case StatementKind::Continue: {
+      return std::make_unique<mir::ContinueStatement>();
+    }
+
     case StatementKind::Empty: {
       return std::make_unique<mir::BlockStatement>();  // No-op
     }

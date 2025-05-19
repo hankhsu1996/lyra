@@ -4,8 +4,6 @@
 
 #include "lyra/common/value_storage.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
-#include "lyra/lowering/mir_to_lir/lir_builder.hpp"
-#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -16,8 +14,9 @@ using Operand = lir::Operand;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
-auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
-    -> void {
+auto LowerStatement(
+    const mir::Statement& statement, LirBuilder& builder,
+    LoweringContext& lowering_context) -> void {
   switch (statement.kind) {
     case mir::Statement::Kind::kVariableDeclaration: {
       const auto& declaration =
@@ -103,14 +102,14 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
 
         // Create then block
         builder.StartBlock(then_label);
-        LowerStatement(*if_statement.then_branch, builder);
+        LowerStatement(*if_statement.then_branch, builder, lowering_context);
         auto jump_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(jump_to_end));
         builder.EndBlock();
 
         // Create else block
         builder.StartBlock(else_label);
-        LowerStatement(*if_statement.else_branch, builder);
+        LowerStatement(*if_statement.else_branch, builder, lowering_context);
         // Fall through to end block
         auto fall_through_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(fall_through_to_end));
@@ -123,7 +122,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
 
         // Create then block
         builder.StartBlock(then_label);
-        LowerStatement(*if_statement.then_branch, builder);
+        LowerStatement(*if_statement.then_branch, builder, lowering_context);
         // Fall through to end block
         auto fall_through_to_end = Instruction::Jump(end_label);
         builder.AddInstruction(std::move(fall_through_to_end));
@@ -135,87 +134,86 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
 
       break;
     }
-
     case mir::Statement::Kind::kWhile: {
       const auto& while_statement = mir::As<mir::WhileStatement>(statement);
-
-      // Use assertions for internal consistency checks
       assert(while_statement.condition);
       assert(while_statement.body);
 
-      // Generate unique labels for the various blocks
       auto cond_label = builder.MakeLabel("while.cond");
       auto body_label = builder.MakeLabel("while.body");
       auto end_label = builder.MakeLabel("while.end");
 
-      // Jump to condition block first
-      auto jump_to_cond = Instruction::Jump(cond_label);
-      builder.AddInstruction(std::move(jump_to_cond));
+      builder.AddInstruction(Instruction::Jump(cond_label));
 
-      // Create condition block
+      lowering_context.PushLoop({
+          .continue_label = cond_label,
+          .break_label = end_label,
+      });
+
       builder.StartBlock(cond_label);
       auto condition_value =
           LowerExpression(*while_statement.condition, builder);
-
-      // Branch to either body or end based on condition
-      auto branch = Instruction::Branch(condition_value, body_label, end_label);
-      builder.AddInstruction(std::move(branch));
+      builder.AddInstruction(
+          Instruction::Branch(condition_value, body_label, end_label));
       builder.EndBlock();
 
-      // Create body block
       builder.StartBlock(body_label);
-      LowerStatement(*while_statement.body, builder);
-
-      // Jump back to condition after executing body
-      auto jump_back_to_cond = Instruction::Jump(cond_label);
-      builder.AddInstruction(std::move(jump_back_to_cond));
+      LowerStatement(*while_statement.body, builder, lowering_context);
+      builder.AddInstruction(Instruction::Jump(cond_label));
       builder.EndBlock();
 
-      // Create end block - control continues here when loop is done
-      builder.StartBlock(end_label);
+      lowering_context.PopLoop();
 
+      builder.StartBlock(end_label);
       break;
     }
 
     case mir::Statement::Kind::kDoWhile: {
       const auto& do_while_statement =
           mir::As<mir::DoWhileStatement>(statement);
-
-      // Use assertions for internal consistency checks
       assert(do_while_statement.condition);
       assert(do_while_statement.body);
 
-      // Generate unique labels for the various blocks
       auto body_label = builder.MakeLabel("do_while.body");
       auto cond_label = builder.MakeLabel("do_while.cond");
       auto end_label = builder.MakeLabel("do_while.end");
 
-      // Jump to body block first (do-while executes body at least once)
-      auto jump_to_body = Instruction::Jump(body_label);
-      builder.AddInstruction(std::move(jump_to_body));
+      builder.AddInstruction(Instruction::Jump(body_label));
 
-      // Create body block
+      lowering_context.PushLoop({
+          .continue_label = cond_label,
+          .break_label = end_label,
+      });
+
       builder.StartBlock(body_label);
-      LowerStatement(*do_while_statement.body, builder);
-
-      // Jump to condition after executing body
-      auto jump_to_cond = Instruction::Jump(cond_label);
-      builder.AddInstruction(std::move(jump_to_cond));
+      LowerStatement(*do_while_statement.body, builder, lowering_context);
+      builder.AddInstruction(Instruction::Jump(cond_label));
       builder.EndBlock();
 
-      // Create condition block (evaluated after body execution)
+      lowering_context.PopLoop();
+
       builder.StartBlock(cond_label);
       auto condition_value =
           LowerExpression(*do_while_statement.condition, builder);
-
-      // Branch back to body if condition is true, otherwise go to end
-      auto branch = Instruction::Branch(condition_value, body_label, end_label);
-      builder.AddInstruction(std::move(branch));
+      builder.AddInstruction(
+          Instruction::Branch(condition_value, body_label, end_label));
       builder.EndBlock();
 
-      // Create end block - control continues here when loop is done
       builder.StartBlock(end_label);
+      break;
+    }
 
+    case mir::Statement::Kind::kBreak: {
+      assert(lowering_context.HasLoop());
+      auto target = lowering_context.CurrentLoop().break_label;
+      builder.AddInstruction(Instruction::Jump(target));
+      break;
+    }
+
+    case mir::Statement::Kind::kContinue: {
+      assert(lowering_context.HasLoop());
+      auto target = lowering_context.CurrentLoop().continue_label;
+      builder.AddInstruction(Instruction::Jump(target));
       break;
     }
 
@@ -223,7 +221,7 @@ auto LowerStatement(const mir::Statement& statement, LirBuilder& builder)
       const auto& block = mir::As<mir::BlockStatement>(statement);
       for (const auto& statement : block.statements) {
         if (statement) {
-          LowerStatement(*statement, builder);
+          LowerStatement(*statement, builder, lowering_context);
         }
       }
       break;

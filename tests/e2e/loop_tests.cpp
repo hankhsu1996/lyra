@@ -314,3 +314,117 @@ TEST(LoopTest, NestedForLoops) {
   // j = 1×2 in both outer loops → 2×2 = 4
   EXPECT_EQ(result.ReadVariable("product").AsInt64(), 4);
 }
+
+TEST(LoopTest, BreakInWhile) {
+  std::string code = R"(
+    module Test;
+      int i;
+      initial begin
+        i = 0;
+        while (1) begin
+          if (i == 3) break;
+          i = i + 1;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 3);
+}
+
+TEST(LoopTest, ContinueInWhileWithoutModOrLogicalOr) {
+  std::string code = R"(
+    module Test;
+      int i, sum;
+      initial begin
+        i = 0;
+        sum = 0;
+        while (i < 5) begin
+          i = i + 1;
+          if (i == 2)
+            continue;
+          if (i == 4)
+            continue;
+          sum = sum + i;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 9);  // 1 + 3 + 5
+}
+
+TEST(LoopTest, BreakInDoWhile) {
+  std::string code = R"(
+    module Test;
+      int x;
+      initial begin
+        x = 0;
+        do begin
+          x = x + 1;
+          if (x == 2) break;
+        end while (1);
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("x").AsInt64(), 2);
+}
+
+TEST(LoopTest, ContinueInDoWhileWithoutModOrLogicalOr) {
+  std::string code = R"(
+    module Test;
+      int i, sum;
+      initial begin
+        i = 0;
+        sum = 0;
+        do begin
+          i = i + 1;
+          if (i == 2)
+            continue;
+          if (i == 4)
+            continue;
+          sum = sum + i;
+        end while (i < 5);
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("sum").AsInt64(), 9);  // 1 + 3 + 5
+}
+
+TEST(LoopTest, BreakInFor) {
+  std::string code = R"(
+    module Test;
+      int i;
+      initial begin
+        for (i = 0; i < 10; i = i + 1) begin
+          if (i == 4) break;
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("i").AsInt64(), 4);
+}
+
+TEST(LoopTest, BreakInnerWhileLoop) {
+  std::string code = R"(
+    module Test;
+      int i, j, count;
+      initial begin
+        count = 0;
+        for (i = 0; i < 2; i = i + 1) begin
+          j = 0;
+          while (j < 3) begin
+            if (j == 1) break;
+            count = count + 1;
+            j = j + 1;
+          end
+        end
+      end
+    endmodule
+  )";
+  auto result = Driver::RunFromSource(code);
+  EXPECT_EQ(result.ReadVariable("count").AsInt64(), 2);
+}

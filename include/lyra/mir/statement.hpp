@@ -18,14 +18,23 @@ namespace lyra::mir {
 class Statement {
  public:
   enum class Kind {
+    // Core statements
     kVariableDeclaration,
     kAssign,
     kExpression,
+
+    // Timing control statements
     kWaitEvent,
     kDelay,
+
+    // Control flow statements
     kConditional,
     kWhile,
     kDoWhile,
+    kBreak,
+    kContinue,
+
+    // Statement blocks
     kBlock,
   };
 
@@ -62,6 +71,10 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "While";
     case Statement::Kind::kDoWhile:
       return "DoWhile";
+    case Statement::Kind::kBreak:
+      return "Break";
+    case Statement::Kind::kContinue:
+      return "Continue";
     case Statement::Kind::kBlock:
       return "Block";
   }
@@ -200,6 +213,30 @@ class DoWhileStatement : public Statement {
       : Statement(kKindValue),
         condition(std::move(condition)),
         body(std::move(body)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class BreakStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kBreak;
+
+  BreakStatement() : Statement(kKindValue) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class ContinueStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kContinue;
+
+  ContinueStatement() : Statement(kKindValue) {
   }
 
   void Accept(MirVisitor& visitor) const override {
