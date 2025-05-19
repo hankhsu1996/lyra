@@ -2,14 +2,12 @@
 
 #include <cassert>
 
-#include "lyra/common/value_storage.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
 using Literal = common::Literal;
-using ValueStorage = common::ValueStorage;
 using Operand = lir::Operand;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;

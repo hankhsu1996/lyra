@@ -239,22 +239,47 @@ auto LowerBinaryExpression(
         kind = IK::kBinaryGreaterThanEqual;
         break;
       case Operator::kPower:
+        kind = IK::kBinaryPower;
+        break;
       case Operator::kBitwiseAnd:
+        kind = IK::kBinaryBitwiseAnd;
+        break;
       case Operator::kBitwiseOr:
+        kind = IK::kBinaryBitwiseOr;
+        break;
       case Operator::kBitwiseXor:
+        kind = IK::kBinaryBitwiseXor;
+        break;
       case Operator::kBitwiseXnor:
+        kind = IK::kBinaryBitwiseXnor;
+        break;
       case Operator::kLogicalAnd:
+        kind = IK::kBinaryLogicalAnd;
+        break;
       case Operator::kLogicalOr:
+        kind = IK::kBinaryLogicalOr;
+        break;
       case Operator::kLogicalImplication:
       case Operator::kLogicalEquivalence:
+        throw std::runtime_error(fmt::format(
+            "Operator {} is not supported in LowerBinaryExpression",
+            expression.op));
+      case Operator::kLogicalShiftLeft:
+        kind = IK::kBinaryLogicalShiftLeft;
+        break;
+      case Operator::kLogicalShiftRight:
+        kind = IK::kBinaryLogicalShiftRight;
+        break;
+      case Operator::kArithmeticShiftLeft:
+        kind = IK::kBinaryArithmeticShiftLeft;
+        break;
+      case Operator::kArithmeticShiftRight:
+        kind = IK::kBinaryArithmeticShiftRight;
+        break;
       case Operator::kCaseEquality:
       case Operator::kCaseInequality:
       case Operator::kWildcardEquality:
       case Operator::kWildcardInequality:
-      case Operator::kLogicalShiftLeft:
-      case Operator::kLogicalShiftRight:
-      case Operator::kArithmeticShiftLeft:
-      case Operator::kArithmeticShiftRight:
         throw std::runtime_error(fmt::format(
             "Operator {} is not supported (yet) in LowerBinaryExpression",
             expression.op));

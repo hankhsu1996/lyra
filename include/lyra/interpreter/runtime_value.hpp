@@ -44,7 +44,7 @@ struct RuntimeValue {
   }
 
   static auto TwoStateSigned(int64_t value, size_t bit_width) -> RuntimeValue {
-    uint64_t mask = (bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1);
+    uint64_t mask = common::MakeBitMask(bit_width);
     uint64_t truncated = static_cast<uint64_t>(value) & mask;
     int64_t sign_extended = common::SignExtend(truncated, bit_width);
 
@@ -55,11 +55,10 @@ struct RuntimeValue {
 
   static auto TwoStateUnsigned(uint64_t value, size_t bit_width)
       -> RuntimeValue {
-    uint64_t mask = (bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1);
-    auto truncated_value = static_cast<int64_t>(value & mask);
+    uint64_t masked = value & common::MakeBitMask(bit_width);
     return RuntimeValue{
         .type = common::Type::TwoStateUnsigned(bit_width),
-        .value = common::ValueStorage(truncated_value)};
+        .value = common::ValueStorage(static_cast<int64_t>(masked))};
   }
 
   static auto Bool(bool value) -> RuntimeValue {
@@ -77,7 +76,8 @@ struct RuntimeValue {
   }
 
   [[nodiscard]] auto AsUInt64() const -> uint64_t {
-    return static_cast<uint64_t>(value.AsInt64());
+    return static_cast<uint64_t>(value.AsInt64()) &
+           common::MakeBitMask(GetBitWidth());
   }
 
   [[nodiscard]] auto AsBool() const -> bool {
@@ -88,6 +88,10 @@ struct RuntimeValue {
     return value.AsString();
   }
 
+  [[nodiscard]] auto ToString() const -> std::string {
+    return fmt::format("{}", value.ToString());
+  }
+
   [[nodiscard]] auto IsTwoState() const -> bool {
     return type.kind == common::Type::Kind::kTwoState;
   }
@@ -96,8 +100,11 @@ struct RuntimeValue {
     return type.kind == common::Type::Kind::kString;
   }
 
-  [[nodiscard]] auto ToString() const -> std::string {
-    return fmt::format("{}", value.ToString());
+  [[nodiscard]] auto GetBitWidth() const -> uint32_t {
+    if (type.kind != common::Type::Kind::kTwoState) {
+      return 0;
+    }
+    return std::get<common::TwoStateData>(type.data).bit_width;
   }
 
   [[nodiscard]] auto operator==(const RuntimeValue& rhs) const

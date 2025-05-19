@@ -81,7 +81,7 @@ struct Type {
   }
 
   static auto Bool() -> Type {
-    return TwoStateSigned(1);
+    return TwoStateUnsigned(1);
   }
 
   static auto String() -> Type {

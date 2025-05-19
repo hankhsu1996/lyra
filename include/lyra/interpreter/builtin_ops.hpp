@@ -44,4 +44,34 @@ auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
 auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue;
 
+// Power operation
+auto BinaryPower(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+
+// Bitwise operations
+auto BinaryBitwiseAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryBitwiseOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryBitwiseXor(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryBitwiseXnor(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+
+// Logical operations
+auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryLogicalOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+
+// Shift operations
+auto BinaryLogicalShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryLogicalShiftRight(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryArithmeticShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue;
+auto BinaryArithmeticShiftRight(
+    const RuntimeValue& lhs, const RuntimeValue& rhs) -> RuntimeValue;
+
 }  // namespace lyra::interpreter

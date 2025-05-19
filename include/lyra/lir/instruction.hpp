@@ -49,6 +49,25 @@ enum class InstructionKind {
   kBinaryGreaterThan,
   kBinaryGreaterThanEqual,
 
+  // Power operation
+  kBinaryPower,
+
+  // Bitwise operations
+  kBinaryBitwiseAnd,
+  kBinaryBitwiseOr,
+  kBinaryBitwiseXor,
+  kBinaryBitwiseXnor,
+
+  // Logical operations
+  kBinaryLogicalAnd,
+  kBinaryLogicalOr,
+
+  // Shift operations
+  kBinaryLogicalShiftLeft,
+  kBinaryLogicalShiftRight,
+  kBinaryArithmeticShiftLeft,
+  kBinaryArithmeticShiftRight,
+
   // Type operations
   kConversion,
 
@@ -303,6 +322,61 @@ struct Instruction {
       case InstructionKind::kBinaryGreaterThanEqual:
         return fmt::format(
             "gteq  {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryPower:
+        return fmt::format(
+            "pow   {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryBitwiseAnd:
+        return fmt::format(
+            "and.b {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryBitwiseOr:
+        return fmt::format(
+            "or.b  {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryBitwiseXor:
+        return fmt::format(
+            "xor.b {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryBitwiseXnor:
+        return fmt::format(
+            "xnor.b {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLogicalAnd:
+        return fmt::format(
+            "and.l {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLogicalOr:
+        return fmt::format(
+            "or.l  {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLogicalShiftLeft:
+        return fmt::format(
+            "shl   {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryLogicalShiftRight:
+        return fmt::format(
+            "shr   {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryArithmeticShiftLeft:
+        return fmt::format(
+            "sal   {}, {}, {}", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kBinaryArithmeticShiftRight:
+        return fmt::format(
+            "sar   {}, {}, {}", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
       case InstructionKind::kConversion:

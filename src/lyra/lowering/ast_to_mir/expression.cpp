@@ -59,7 +59,6 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       auto left = LowerExpression(binary_expression.left());
       auto right = LowerExpression(binary_expression.right());
-      assert(left->type == right->type);
 
       auto mir_operator =
           mir::ConvertSlangBinaryOperatorToMir(binary_expression.op);

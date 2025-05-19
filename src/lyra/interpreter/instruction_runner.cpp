@@ -6,6 +6,7 @@
 
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/lir/instruction.hpp"
 
 namespace lyra::interpreter {
 
@@ -205,6 +206,60 @@ auto RunInstruction(
     case lir::InstructionKind::kBinaryGreaterThanEqual: {
       return eval_binary_op(
           instr.operands[0], instr.operands[1], BinaryGreaterThanEqual);
+    }
+
+    case lir::InstructionKind::kBinaryPower: {
+      return eval_binary_op(instr.operands[0], instr.operands[1], BinaryPower);
+    }
+
+    case lir::InstructionKind::kBinaryBitwiseAnd: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryBitwiseAnd);
+    }
+
+    case lir::InstructionKind::kBinaryBitwiseOr: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryBitwiseOr);
+    }
+
+    case lir::InstructionKind::kBinaryBitwiseXor: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryBitwiseXor);
+    }
+
+    case lir::InstructionKind::kBinaryBitwiseXnor: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryBitwiseXnor);
+    }
+
+    case lir::InstructionKind::kBinaryLogicalAnd: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryLogicalAnd);
+    }
+
+    case lir::InstructionKind::kBinaryLogicalOr: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryLogicalOr);
+    }
+
+    case lir::InstructionKind::kBinaryLogicalShiftLeft: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryLogicalShiftLeft);
+    }
+
+    case lir::InstructionKind::kBinaryLogicalShiftRight: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryLogicalShiftRight);
+    }
+
+    case lir::InstructionKind::kBinaryArithmeticShiftLeft: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryArithmeticShiftLeft);
+    }
+
+    case lir::InstructionKind::kBinaryArithmeticShiftRight: {
+      return eval_binary_op(
+          instr.operands[0], instr.operands[1], BinaryArithmeticShiftRight);
     }
 
     // Type operations

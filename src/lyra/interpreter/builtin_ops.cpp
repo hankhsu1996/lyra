@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cassert>
+#include <cmath>
 
 namespace lyra::interpreter {
 
@@ -317,6 +318,221 @@ auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   return RuntimeValue::Bool(lhs.AsUInt64() >= rhs.AsUInt64());
+}
+
+auto BinaryPower(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+  assert(lhs.type == rhs.type);
+
+  auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(two_state_data.bit_width <= 64);
+
+  if (two_state_data.is_signed) {
+    return RuntimeValue::TwoStateSigned(
+        static_cast<int64_t>(std::pow(lhs.AsInt64(), rhs.AsInt64())),
+        two_state_data.bit_width);
+  }
+
+  return RuntimeValue::TwoStateUnsigned(
+      static_cast<uint64_t>(std::pow(lhs.AsUInt64(), rhs.AsUInt64())),
+      two_state_data.bit_width);
+}
+
+auto BinaryBitwiseAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+  assert(lhs.type == rhs.type);
+
+  auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(two_state_data.bit_width <= 64);
+
+  if (two_state_data.is_signed) {
+    return RuntimeValue::TwoStateSigned(
+        lhs.AsInt64() & rhs.AsInt64(), two_state_data.bit_width);
+  }
+
+  return RuntimeValue::TwoStateUnsigned(
+      lhs.AsUInt64() & rhs.AsUInt64(), two_state_data.bit_width);
+}
+
+auto BinaryBitwiseOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+  assert(lhs.type == rhs.type);
+
+  auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(two_state_data.bit_width <= 64);
+
+  if (two_state_data.is_signed) {
+    return RuntimeValue::TwoStateSigned(
+        lhs.AsInt64() | rhs.AsInt64(), two_state_data.bit_width);
+  }
+
+  return RuntimeValue::TwoStateUnsigned(
+      lhs.AsUInt64() | rhs.AsUInt64(), two_state_data.bit_width);
+}
+
+auto BinaryBitwiseXor(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+  assert(lhs.type == rhs.type);
+
+  auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(two_state_data.bit_width <= 64);
+
+  if (two_state_data.is_signed) {
+    return RuntimeValue::TwoStateSigned(
+        lhs.AsInt64() ^ rhs.AsInt64(), two_state_data.bit_width);
+  }
+
+  return RuntimeValue::TwoStateUnsigned(
+      lhs.AsUInt64() ^ rhs.AsUInt64(), two_state_data.bit_width);
+}
+
+auto BinaryBitwiseXnor(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+  assert(lhs.type == rhs.type);
+
+  auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(two_state_data.bit_width <= 64);
+
+  if (two_state_data.is_signed) {
+    // XNOR is ~(a ^ b)
+    return RuntimeValue::TwoStateSigned(
+        ~(lhs.AsInt64() ^ rhs.AsInt64()), two_state_data.bit_width);
+  }
+
+  // XNOR is ~(a ^ b)
+  return RuntimeValue::TwoStateUnsigned(
+      ~(lhs.AsUInt64() ^ rhs.AsUInt64()), two_state_data.bit_width);
+}
+
+auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+
+  auto lhs_two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  auto rhs_two_state_data = std::get<common::TwoStateData>(rhs.type.data);
+
+  assert(lhs_two_state_data.bit_width <= 64);
+  assert(rhs_two_state_data.bit_width <= 64);
+
+  // For checking if non-zero, we can use AsUInt64() regardless of signedness
+  bool lhs_bool = (lhs.AsUInt64() != 0);
+  bool rhs_bool = (rhs.AsUInt64() != 0);
+
+  // Perform logical AND and return 1-bit result
+  return RuntimeValue::Bool(lhs_bool && rhs_bool);
+}
+
+auto BinaryLogicalOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+
+  auto lhs_two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  auto rhs_two_state_data = std::get<common::TwoStateData>(rhs.type.data);
+
+  assert(lhs_two_state_data.bit_width <= 64);
+  assert(rhs_two_state_data.bit_width <= 64);
+
+  // For checking if non-zero, we can use AsUInt64() regardless of signedness
+  bool lhs_bool = (lhs.AsUInt64() != 0);
+  bool rhs_bool = (rhs.AsUInt64() != 0);
+
+  // Perform logical OR and return 1-bit result
+  return RuntimeValue::Bool(lhs_bool || rhs_bool);
+}
+
+auto BinaryLogicalShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+
+  auto lhs_two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(lhs_two_state_data.bit_width <= 64);
+
+  // Right operand (shift amount) is always treated as unsigned
+  uint64_t shift_amount = rhs.AsUInt64();
+
+  // Create bit mask based on bit width
+  uint64_t mask = (1ULL << lhs_two_state_data.bit_width) - 1;
+
+  if (lhs_two_state_data.is_signed) {
+    int64_t value = lhs.AsInt64();
+    // Perform shift and apply mask to maintain bit width
+    // Cast to uint64_t for the mask operation, then back to int64_t
+    auto result = static_cast<int64_t>(
+        (static_cast<uint64_t>(value) << shift_amount) & mask);
+    return RuntimeValue::TwoStateSigned(result, lhs_two_state_data.bit_width);
+  }
+
+  uint64_t value = lhs.AsUInt64();
+  // Perform shift and apply mask to maintain bit width
+  uint64_t result = (value << shift_amount) & mask;
+  return RuntimeValue::TwoStateUnsigned(result, lhs_two_state_data.bit_width);
+}
+
+auto BinaryLogicalShiftRight(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+
+  auto lhs_two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(lhs_two_state_data.bit_width <= 64);
+
+  uint64_t shift_amount = rhs.AsUInt64();
+
+  // Mask to ensure the result stays within bit-width
+  uint64_t mask = (1ULL << lhs_two_state_data.bit_width) - 1;
+
+  // Always treat the value as unsigned for logical shift
+  uint64_t value = lhs.AsUInt64();
+  uint64_t result = (value >> shift_amount) & mask;
+
+  if (lhs_two_state_data.is_signed) {
+    return RuntimeValue::TwoStateSigned(
+        static_cast<int64_t>(result), lhs_two_state_data.bit_width);
+  }
+
+  return RuntimeValue::TwoStateUnsigned(result, lhs_two_state_data.bit_width);
+}
+
+auto BinaryArithmeticShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
+    -> RuntimeValue {
+  // Arithmetic left shift is identical to logical left shift in behavior
+  // Both fill with zeros on the right
+  return BinaryLogicalShiftLeft(lhs, rhs);
+}
+
+auto BinaryArithmeticShiftRight(
+    const RuntimeValue& lhs, const RuntimeValue& rhs) -> RuntimeValue {
+  assert(lhs.type.kind == common::Type::Kind::kTwoState);
+  assert(rhs.type.kind == common::Type::Kind::kTwoState);
+
+  auto lhs_two_state_data = std::get<common::TwoStateData>(lhs.type.data);
+  assert(lhs_two_state_data.bit_width <= 64);
+
+  uint64_t shift_amount = rhs.AsUInt64();
+
+  if (lhs_two_state_data.is_signed) {
+    int64_t value = lhs.AsInt64();
+    int64_t shifted = value >> shift_amount;
+    // Mask off upper bits to match declared bit width
+    return RuntimeValue::TwoStateSigned(shifted, lhs_two_state_data.bit_width);
+  }
+
+  uint64_t value = lhs.AsUInt64();
+  uint64_t shifted = value >> shift_amount;
+  return RuntimeValue::TwoStateUnsigned(shifted, lhs_two_state_data.bit_width);
 }
 
 }  // namespace lyra::interpreter

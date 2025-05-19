@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iostream>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -7,6 +8,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include "lyra/common/bit_utils.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/value_storage.hpp"
 
@@ -15,12 +17,6 @@ namespace lyra::common {
 struct Literal {
   common::Type type{};
   common::ValueStorage value{};
-
-  Literal() = default;
-
-  Literal(common::Type t, ValueStorage v)
-      : type(std::move(t)), value(std::move(v)) {
-  }
 
   static auto Void() -> Literal {
     return {common::Type::Void(), ValueStorage::Void()};
@@ -31,7 +27,8 @@ struct Literal {
   }
 
   static auto Int(int32_t v) -> Literal {
-    return {common::Type::Int(), ValueStorage(static_cast<int64_t>(v))};
+    int64_t extended = common::SignExtend(static_cast<uint64_t>(v), 32);
+    return {common::Type::Int(), ValueStorage(extended)};
   }
 
   static auto UInt(uint32_t v) -> Literal {
@@ -76,6 +73,11 @@ struct Literal {
     h ^= value_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
 
     return h;
+  }
+
+ private:
+  Literal(common::Type t, ValueStorage v)
+      : type(std::move(t)), value(std::move(v)) {
   }
 };
 
