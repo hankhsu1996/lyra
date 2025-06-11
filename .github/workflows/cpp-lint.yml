@@ -35,7 +35,6 @@ jobs:
           style: 'file'        # Use .clang-format config file
           tidy-checks: ''      # Use .clang-tidy config file
           extensions: 'hpp,cpp'
-          exclude-regex: '(external|third_party)'
           step-summary: true
           file-annotations: true
           thread-comments: ${{ github.event_name == 'pull_request' && 'update' }}
