@@ -43,9 +43,9 @@ jobs:
             echo "### ❌ Formatting issues detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Run the following command locally to fix formatting:" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "buildifier -r ." >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             exit 1
           else
             echo "### ✅ Formatting check passed" >> $GITHUB_STEP_SUMMARY
@@ -61,9 +61,9 @@ jobs:
           if [ $EXIT_CODE -ne 0 ]; then
             echo "### ❌ Lint warnings detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "$LINT_OUTPUT" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
             # Also print to console
             echo "$LINT_OUTPUT"
