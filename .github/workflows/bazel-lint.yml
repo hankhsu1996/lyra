@@ -1,0 +1,37 @@
+name: Bazel File Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/BUILD.bazel"
+      - "MODULE.bazel"
+      - ".bazelrc"
+      - ".bazelignore"
+      - ".bazelversion"
+      - ".github/workflows/bazel-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/BUILD.bazel"
+      - "MODULE.bazel"
+      - ".bazelrc"
+      - ".bazelignore"
+      - ".bazelversion"
+      - ".github/workflows/bazel-lint.yml"
+
+jobs:
+  lint:
+    name: Buildifier Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup buildifier
+        uses: jbajic/setup-buildifier@v1
+        with:
+          version: "8.1.1"
+
+      - name: Run buildifier check
+        run: buildifier -mode=check -r .
