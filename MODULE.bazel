@@ -14,8 +14,8 @@ bazel_dep(name = "rules_cc", version = "0.1.1")
 bazel_dep(name = "slang", version = "8.0.0")
 git_override(
     module_name = "slang",
-    remote = "https://github.com/hankhsu1996/slang-bazel.git",
     commit = "09b6e50d8747604b6958af52d423823fb79bc6f1",
+    remote = "https://github.com/hankhsu1996/slang-bazel.git",
 )
 
 # Formatting
