@@ -35,13 +35,39 @@ jobs:
           sudo mv buildifier-linux-amd64 /usr/local/bin/buildifier
           buildifier --version
 
-      - name: Run buildifier
-        id: buildifier
+      - name: Check formatting
+        id: format
         run: |
-          if ! buildifier -mode=check -lint=warn -r .; then
-            echo "Buildifier found issues" >> $GITHUB_STEP_SUMMARY
-            echo "Run 'buildifier -r .' locally to fix formatting issues" >> $GITHUB_STEP_SUMMARY
+          # Check formatting only
+          if ! buildifier -mode=check -r .; then
+            echo "### ❌ Formatting issues detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Run the following command locally to fix formatting:" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "buildifier -r ." >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
             exit 1
           else
-            echo "No issues found by buildifier" >> $GITHUB_STEP_SUMMARY
+            echo "### ✅ Formatting check passed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check lint warnings
+        id: lint
+        run: |
+          # Check for lint warnings
+          LINT_OUTPUT=$(buildifier -mode=check -lint=warn -r . 2>&1)
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "### ❌ Lint warnings detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "$LINT_OUTPUT" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+
+            # Also print to console
+            echo "$LINT_OUTPUT"
+            exit 1
+          else
+            echo "### ✅ Lint check passed" >> $GITHUB_STEP_SUMMARY
           fi
