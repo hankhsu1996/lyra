@@ -54,20 +54,19 @@ jobs:
       - name: Check lint warnings
         id: lint
         run: |
-          # Check for lint warnings
-          LINT_OUTPUT=$(buildifier -mode=check -lint=warn -r . 2>&1)
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -ne 0 ]; then
+          # Run buildifier with lint warnings and store output in a file
+          buildifier -mode=check -lint=warn -r . > lint_output.txt 2>&1 || {
+            # Write to GitHub Summary if there are warnings
             echo "### ❌ Lint warnings detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "$LINT_OUTPUT" >> $GITHUB_STEP_SUMMARY
+            cat lint_output.txt >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
             # Also print to console
-            echo "$LINT_OUTPUT"
+            cat lint_output.txt
             exit 1
-          else
-            echo "### ✅ Lint check passed" >> $GITHUB_STEP_SUMMARY
-          fi
+          }
+
+          # No warnings found
+          echo "### ✅ Lint check passed" >> $GITHUB_STEP_SUMMARY
