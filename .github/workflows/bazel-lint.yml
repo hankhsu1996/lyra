@@ -35,7 +35,22 @@ jobs:
 
       - name: Run buildifier
         id: buildifier
-        continue-on-error: true
         run: |
           set -o pipefail
-          buildifier -mode=check -r . | tee -a "$GITHUB_STEP_SUMMARY"
+          RESULT=$(buildifier -mode=check -lint=warn -r . 2>&1) || {
+            echo "Buildifier found issues:" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "$RESULT" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "$RESULT"
+            exit 1
+          }
+
+          if [ -z "$RESULT" ]; then
+            echo "No issues found by buildifier" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Buildifier output:" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "$RESULT" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+          fi
