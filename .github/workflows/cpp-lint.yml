@@ -1,0 +1,51 @@
+name: C++ Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.hpp"
+      - "**/*.cpp"
+      - ".clang-format"
+      - ".clang-tidy"
+      - ".github/workflows/cpp-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.hpp"
+      - "**/*.cpp"
+      - ".clang-format"
+      - ".clang-tidy"
+      - ".github/workflows/cpp-lint.yml"
+
+jobs:
+  lint:
+    name: C++ Format & Tidy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run C++ linting
+        id: cpp-linter
+        uses: cpp-linter/cpp-linter-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          style: 'file'        # Use .clang-format config file
+          tidy-checks: ''      # Use .clang-tidy config file
+          extensions: 'hpp,cpp'
+          exclude-regex: '(external|third_party)'
+          step-summary: true
+          file-annotations: true
+          thread-comments: ${{ github.event_name == 'pull_request' && 'update' }}
+
+      - name: Fail on issues
+        if: steps.cpp-linter.outputs.checks-failed > 0
+        run: |
+          echo "### ❌ C++ linting found issues" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the annotations and step summary above for details." >> $GITHUB_STEP_SUMMARY
+          echo "Format issues: ${{ steps.cpp-linter.outputs.format-checks-failed }}" >> $GITHUB_STEP_SUMMARY
+          echo "Tidy issues: ${{ steps.cpp-linter.outputs.tidy-checks-failed }}" >> $GITHUB_STEP_SUMMARY
+          exit 1
