@@ -29,28 +29,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup buildifier
-        uses: jbajic/setup-buildifier@v1
-        with:
-          buildifier-version: "8.2.1"
+        run: |
+          wget -q https://github.com/bazelbuild/buildtools/releases/download/v8.2.1/buildifier-linux-amd64
+          chmod +x buildifier-linux-amd64
+          sudo mv buildifier-linux-amd64 /usr/local/bin/buildifier
+          buildifier --version
 
       - name: Run buildifier
         id: buildifier
         run: |
-          set -o pipefail
-          RESULT=$(buildifier -mode=check -lint=warn -r . 2>&1) || {
-            echo "Buildifier found issues:" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            echo "$RESULT" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            echo "$RESULT"
+          if ! buildifier -mode=check -lint=warn -r .; then
+            echo "Buildifier found issues" >> $GITHUB_STEP_SUMMARY
+            echo "Run 'buildifier -r .' locally to fix formatting issues" >> $GITHUB_STEP_SUMMARY
             exit 1
-          }
-
-          if [ -z "$RESULT" ]; then
-            echo "No issues found by buildifier" >> $GITHUB_STEP_SUMMARY
           else
-            echo "Buildifier output:" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            echo "$RESULT" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo "No issues found by buildifier" >> $GITHUB_STEP_SUMMARY
           fi
