@@ -33,15 +33,9 @@ jobs:
         with:
           buildifier-version: "8.2.1"
 
-      - name: Check format with buildifier
+      - name: Run buildifier
+        id: buildifier
+        continue-on-error: true
         run: |
           set -o pipefail
-          output=$(buildifier -mode=check -r . 2>&1)
-          echo "$output"
-          {
-            echo "### Buildifier check result"
-            echo '```'
-            echo "$output"
-            echo '```'
-          } >> $GITHUB_STEP_SUMMARY
-          exit $?
+          buildifier -mode=check -r . | tee -a "$GITHUB_STEP_SUMMARY"
