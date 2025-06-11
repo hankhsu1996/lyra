@@ -31,7 +31,7 @@ jobs:
       - name: Setup buildifier
         uses: jbajic/setup-buildifier@v1
         with:
-          buildifier-version: "8.1.1"
+          buildifier-version: "8.2.1"
 
       - name: Run buildifier check
         run: buildifier -mode=check -r .
