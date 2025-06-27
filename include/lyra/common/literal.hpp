@@ -77,8 +77,7 @@ struct Literal {
 
  private:
   Literal(common::Type t, ValueStorage v)
-      : type(std::move(t)), value(std::move(v)) {
-  }
+      : type(std::move(t)), value(std::move(v)) {}
 };
 
 inline auto operator<<(std::ostream& os, const Literal& literal)

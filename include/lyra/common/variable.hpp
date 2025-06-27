@@ -11,11 +11,13 @@ namespace lyra::common {
 struct Variable {
   SymbolRef symbol{};
   Type type;
+  const slang::ast::Type* slang_type{};
 
   static auto FromSlang(const slang::ast::ValueSymbol* symbol) -> Variable {
     return {
         .symbol = symbol,
         .type = Type::FromSlang(symbol->getType()),
+        .slang_type = &symbol->getType(),
     };
   }
 };

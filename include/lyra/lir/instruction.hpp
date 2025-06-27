@@ -14,7 +14,8 @@ namespace lyra::lir {
 
 enum class InstructionKind {
   // Memory operations
-  kLiteral,
+  kIntegerLiteral,
+  kStringLiteral,
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
@@ -206,7 +207,11 @@ struct Instruction {
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       // Memory operations
-      case InstructionKind::kLiteral:
+      case InstructionKind::kIntegerLiteral:
+        return fmt::format(
+            "lit   {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kStringLiteral:
         return fmt::format(
             "lit   {}, {}", result.value(), operands[0].ToString());
 

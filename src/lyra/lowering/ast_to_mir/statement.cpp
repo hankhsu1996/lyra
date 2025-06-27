@@ -209,7 +209,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       // stopExpr → while condition
       auto condition = (for_loop.stopExpr != nullptr)
                            ? LowerExpression(*for_loop.stopExpr)
-                           : std::make_unique<mir::LiteralExpression>(
+                           : std::make_unique<mir::IntegerLiteralExpression>(
                                  common::Literal::Bool(true));
 
       auto while_stmt = std::make_unique<mir::WhileStatement>(
@@ -225,8 +225,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
       auto body = LowerStatement(forever_loop.body);
 
       // Create a constant true condition for the while loop
-      auto true_condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto true_condition = std::make_unique<mir::IntegerLiteralExpression>(
+          common::Literal::Bool(true));
 
       // Create a while statement with the true condition
       return std::make_unique<mir::WhileStatement>(

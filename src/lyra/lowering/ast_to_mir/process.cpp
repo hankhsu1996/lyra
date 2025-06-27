@@ -57,8 +57,8 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       loop_block->statements.push_back(LowerStatement(slang_statement));
 
       // while (true) { wait_event; body; }
-      auto condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto condition = std::make_unique<mir::IntegerLiteralExpression>(
+          common::Literal::Bool(true));
       auto loop = std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(loop_block));
 
@@ -81,8 +81,8 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       auto loop_block = LowerStatement(procedural_block.getBody());
 
       // Simply wrap in while (true) { ... }
-      auto condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto condition = std::make_unique<mir::IntegerLiteralExpression>(
+          common::Literal::Bool(true));
       auto loop = std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(loop_block));
 

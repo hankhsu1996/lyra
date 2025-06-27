@@ -17,13 +17,26 @@ using IK = lir::InstructionKind;
 auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     -> lir::TempRef {
   switch (expression.kind) {
-    case mir::Expression::Kind::kLiteral: {
+    case mir::Expression::Kind::kIntegerLiteral: {
       const auto& literal_expression =
-          mir::As<mir::LiteralExpression>(expression);
+          mir::As<mir::IntegerLiteralExpression>(expression);
       auto result =
-          builder.AllocateTemp("lit", literal_expression.literal.type);
+          builder.AllocateTemp("lit.i", literal_expression.literal.type);
       auto literal = builder.InternLiteral(literal_expression.literal);
-      auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
+      auto instruction =
+          Instruction::Basic(IK::kIntegerLiteral, result, literal);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kStringLiteral: {
+      const auto& literal_expression =
+          mir::As<mir::StringLiteralExpression>(expression);
+      auto result =
+          builder.AllocateTemp("lit.s", literal_expression.literal.type);
+      auto literal = builder.InternLiteral(literal_expression.literal);
+      auto instruction =
+          Instruction::Basic(IK::kStringLiteral, result, literal);
       builder.AddInstruction(std::move(instruction));
       return result;
     }
@@ -101,7 +114,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // create a inctruction to load 1 to temp
         auto temp = builder.AllocateTemp("sys", system_call.type);
         auto const_one = builder.InternLiteral(Literal::Int(1));
-        auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);
+        auto instruction =
+            Instruction::Basic(IK::kIntegerLiteral, temp, const_one);
         builder.AddInstruction(std::move(instruction));
         arguments.push_back(temp);
       }
@@ -365,7 +379,7 @@ auto LowerIncrementDecrementExpression(
   auto const_one_temp = builder.AllocateTemp("const", identifier.type);
   auto const_one = builder.InternLiteral(Literal::Int(1));
   auto const_instruction =
-      Instruction::Basic(IK::kLiteral, const_one_temp, const_one);
+      Instruction::Basic(IK::kIntegerLiteral, const_one_temp, const_one);
   builder.AddInstruction(std::move(const_instruction));
 
   // Compute the new value (add/subtract 1)

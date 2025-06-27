@@ -9,6 +9,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
@@ -25,7 +26,8 @@ using SymbolRef = common::SymbolRef;
 class Expression {
  public:
   enum class Kind {
-    kLiteral,
+    kIntegerLiteral,
+    kStringLiteral,
     kIdentifier,
     kUnary,
     kBinary,
@@ -52,8 +54,10 @@ class Expression {
 
 inline auto ToString(Expression::Kind kind) -> std::string {
   switch (kind) {
-    case Expression::Kind::kLiteral:
-      return "Literal";
+    case Expression::Kind::kIntegerLiteral:
+      return "IntegerLiteral";
+    case Expression::Kind::kStringLiteral:
+      return "StringLiteral";
     case Expression::Kind::kIdentifier:
       return "Identifier";
     case Expression::Kind::kUnary:
@@ -77,13 +81,32 @@ inline auto operator<<(std::ostream& os, const Expression::Kind& kind)
   return os << ToString(kind);
 }
 
-class LiteralExpression : public Expression {
+class IntegerLiteralExpression : public Expression {
  public:
-  static constexpr Kind kKindValue = Kind::kLiteral;
+  static constexpr Kind kKindValue = Kind::kIntegerLiteral;
 
   Literal literal;
 
-  explicit LiteralExpression(Literal literal)
+  explicit IntegerLiteralExpression(Literal literal)
+      : Expression(kKindValue, literal.type), literal(std::move(literal)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return literal.ToString();
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class StringLiteralExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kStringLiteral;
+
+  Literal literal;
+
+  explicit StringLiteralExpression(Literal literal)
       : Expression(kKindValue, literal.type), literal(std::move(literal)) {
   }
 
@@ -178,16 +201,15 @@ class TernaryExpression : public Expression {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("({} ? {} : {})", condition->ToString(),
-                       true_expression->ToString(),
-                       false_expression->ToString());
+    return fmt::format(
+        "({} ? {} : {})", condition->ToString(), true_expression->ToString(),
+        false_expression->ToString());
   }
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
 };
-
 
 class AssignmentExpression : public Expression {
  public:

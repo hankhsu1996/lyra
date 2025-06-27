@@ -72,7 +72,18 @@ auto RunInstruction(
 
   switch (instr.kind) {
     // Memory operations
-    case lir::InstructionKind::kLiteral: {
+    case lir::InstructionKind::kIntegerLiteral: {
+      assert(instr.operands.size() == 1);
+      assert(instr.operands[0].IsLiteral());
+      assert(instr.result.has_value());
+
+      const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
+      RuntimeValue value = RuntimeValue::FromLiteral(literal);
+      temp_table.Write(instr.result.value(), value);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStringLiteral: {
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLiteral());
       assert(instr.result.has_value());

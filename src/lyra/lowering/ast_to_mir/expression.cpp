@@ -24,13 +24,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
     case slang::ast::ExpressionKind::IntegerLiteral: {
       const auto& literal = expression.as<slang::ast::IntegerLiteral>();
       auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      return std::make_unique<mir::IntegerLiteralExpression>(
+          std::move(mir_literal));
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& literal = expression.as<slang::ast::StringLiteral>();
       auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      return std::make_unique<mir::StringLiteralExpression>(
+          std::move(mir_literal));
     }
 
     case slang::ast::ExpressionKind::NamedValue: {

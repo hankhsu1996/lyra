@@ -15,7 +15,11 @@ class SensitivityCollector : public mir::MirVisitor {
  public:
   SensitivityCollector() = default;
 
-  void Visit(const mir::LiteralExpression& /*unused*/) override {
+  void Visit(const mir::IntegerLiteralExpression& /*unused*/) override {
+    // No variable involved
+  }
+
+  void Visit(const mir::StringLiteralExpression& /*unused*/) override {
     // No variable involved
   }
 
