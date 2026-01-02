@@ -16,9 +16,20 @@ class Module {
   }
   virtual ~Module() = default;
 
+  // Non-copyable and non-movable (lambdas capture 'this')
+  Module(const Module&) = delete;
+  auto operator=(const Module&) -> Module& = delete;
+  Module(Module&&) = delete;
+  auto operator=(Module&&) -> Module& = delete;
+
   [[nodiscard]] auto Name() const -> const std::string& {
     return name_;
   }
+
+  // Runs all initial blocks with a local scheduler
+  // Returns the final simulation time
+  // Defined in scheduler.hpp after Scheduler is defined
+  auto RunInitials() -> uint64_t;
 
  protected:
   template <typename T>

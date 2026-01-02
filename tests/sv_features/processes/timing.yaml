@@ -1,0 +1,90 @@
+feature: timing
+description: Tests for delay timing control (#N)
+
+cases:
+  - name: only_delay
+    sv: |
+      module Test;
+        initial #5;
+      endmodule
+    expect_time: 5
+
+  - name: delay_with_inline_assign
+    sv: |
+      module Test;
+        int a;
+        initial #5 a = 1;
+      endmodule
+    expect:
+      a: 1
+
+  - name: delay_then_assign
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          #5;
+          a = 2;
+        end
+      endmodule
+    expect:
+      a: 2
+
+  - name: multiple_delays_then_assign
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          #2;
+          #3;
+          a = 3;
+        end
+      endmodule
+    expect:
+      a: 3
+
+  - name: mixed_delay_forms
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          #2 b = a + 1;
+          #3;
+          a = b + 1;
+        end
+      endmodule
+    expect:
+      a: 12
+      b: 11
+
+  - name: delay_in_loop
+    sv: |
+      module Test;
+        int counter;
+        initial begin
+          counter = 0;
+          while (counter < 3) begin
+            #1;
+            counter = counter + 1;
+          end
+        end
+      endmodule
+    expect:
+      counter: 3
+
+  - name: delay_with_conditional
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          #1;
+          if (1) begin
+            #2;
+            x = 5;
+          end
+        end
+      endmodule
+    expect:
+      x: 5

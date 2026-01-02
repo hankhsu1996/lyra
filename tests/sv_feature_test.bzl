@@ -13,8 +13,13 @@ def sv_feature_test(name, yaml, size = "medium", deps = []):
         name = name,
         size = size,
         srcs = ["framework/sv_feature_tests.cpp"],
-        data = [yaml],
-        env = {"SV_TEST_YAML": "$(rootpath " + yaml + ")"},
+        data = [
+            yaml,
+            "//:sdk_headers",
+        ],
+        env = {
+            "SV_TEST_YAML": "$(rootpath " + yaml + ")",
+        },
         deps = [
             "//:core",
             "//tests:test_framework",

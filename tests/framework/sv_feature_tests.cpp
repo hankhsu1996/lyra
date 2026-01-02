@@ -53,6 +53,10 @@ TEST_P(SvFeatureTest, Interpreter) {
     EXPECT_EQ(result.ReadVariable(var).AsInt64(), expected)
         << "Variable: " << var;
   }
+
+  if (tc.expected_time.has_value()) {
+    EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
+  }
 }
 
 TEST_P(SvFeatureTest, CppCodegen) {
@@ -74,6 +78,10 @@ TEST_P(SvFeatureTest, CppCodegen) {
 
   for (const auto& [var, expected] : tc.expected_values) {
     EXPECT_EQ(result.ReadVariable(var), expected) << "Variable: " << var;
+  }
+
+  if (tc.expected_time.has_value()) {
+    EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
   }
 }
 

@@ -324,6 +324,11 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
       Line("continue;");
       break;
     }
+    case mir::Statement::Kind::kDelay: {
+      const auto& delay = mir::As<mir::DelayStatement>(stmt);
+      Line("co_await Delay(" + std::to_string(delay.delay_amount) + ");");
+      break;
+    }
     case mir::Statement::Kind::kVariableDeclaration: {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();

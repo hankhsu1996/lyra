@@ -4,6 +4,13 @@ Build file for Lyra SystemVerilog simulator.
 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
+# SDK headers for generated C++ code
+filegroup(
+    name = "sdk_headers",
+    srcs = glob(["include/lyra/sdk/*.hpp"]),
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "core",
     srcs = glob(["src/lyra/**/*.cpp"]),

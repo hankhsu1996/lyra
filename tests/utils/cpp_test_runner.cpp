@@ -19,88 +19,17 @@ namespace lyra::test {
 
 namespace {
 
-// Inline SDK for generated code (avoids header dependency issues in test)
-constexpr const char* kSdkCode = R"(
-#include <coroutine>
-#include <cstdint>
-#include <exception>
-#include <functional>
-#include <iostream>
-#include <string>
-#include <vector>
-
-namespace lyra::sdk {
-
-namespace detail {
-template <size_t Width> struct IntegerStorage;
-template <> struct IntegerStorage<1> { using type = uint8_t; };
-template <> struct IntegerStorage<8> { using type = uint8_t; };
-template <> struct IntegerStorage<16> { using type = uint16_t; };
-template <> struct IntegerStorage<32> { using type = uint32_t; };
-template <> struct IntegerStorage<64> { using type = uint64_t; };
-}  // namespace detail
-
-template <size_t Width>
-class Integer {
- public:
-  using StorageType = typename detail::IntegerStorage<Width>::type;
-  Integer() : value_(0) {}
-  Integer(StorageType value) : value_(value) {}
-  operator StorageType() const { return value_; }
-  auto operator=(StorageType value) -> Integer& { value_ = value; return *this; }
-  auto operator++() -> Integer& { ++value_; return *this; }
-  auto operator++(int) -> Integer { Integer tmp = *this; ++value_; return tmp; }
-  auto operator--() -> Integer& { --value_; return *this; }
-  auto operator--(int) -> Integer { Integer tmp = *this; --value_; return tmp; }
- private:
-  StorageType value_;
-};
-
-class Task {
- public:
-  struct promise_type {
-    auto get_return_object() -> Task {
-      return Task{std::coroutine_handle<promise_type>::from_promise(*this)};
-    }
-    static auto initial_suspend() -> std::suspend_never { return {}; }
-    static auto final_suspend() noexcept -> std::suspend_always { return {}; }
-    static void return_void() {}
-    static void unhandled_exception() { std::terminate(); }
-  };
-  using Handle = std::coroutine_handle<promise_type>;
-  explicit Task(Handle handle) : handle_(handle) {}
-  ~Task() { if (handle_) handle_.destroy(); }
-  Task(const Task&) = delete;
-  Task& operator=(const Task&) = delete;
-  Task(Task&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
- private:
-  Handle handle_;
-};
-
-class Module {
- public:
-  explicit Module(std::string name) : name_(std::move(name)) {}
-  virtual ~Module() = default;
- protected:
-  template <typename T>
-  void RegisterInitial(Task (T::*method)()) {
-    initial_methods_.push_back([this, method]() {
-      return (static_cast<T*>(this)->*method)();
-    });
+auto GetSdkIncludePath() -> std::filesystem::path {
+  // In Bazel tests, TEST_SRCDIR points to the runfiles directory
+  // The SDK headers are at $TEST_SRCDIR/_main/include
+  const char* test_srcdir = std::getenv("TEST_SRCDIR");
+  if (test_srcdir != nullptr) {
+    return std::filesystem::path(test_srcdir) / "_main" / "include";
   }
- public:
-  void RunInitials() {
-    for (auto& method : initial_methods_) { method(); }
-  }
- private:
-  std::string name_;
-  std::vector<std::function<Task()>> initial_methods_;
-};
-
-}  // namespace lyra::sdk
-
-using namespace lyra::sdk;
-)";
+  // Fallback for running outside Bazel (e.g., local development)
+  // Assume we're in the workspace root
+  return std::filesystem::current_path() / "include";
+}
 
 auto MakeUniqueTempDir() -> std::filesystem::path {
   static std::random_device rd;
@@ -184,36 +113,34 @@ auto CppTestRunner::RunFromSources(
   codegen::CppCodegen codegen;
   std::string generated = codegen.Generate(*mir);
 
-  // Build main() that prints variables
+  // Build main() that prints variables and final time
   std::ostringstream main_code;
   main_code << "\nint main() {\n";
   main_code << "  " << mir->name << " dut;\n";
-  main_code << "  dut.RunInitials();\n";
+  main_code << "  auto final_time = dut.RunInitials();\n";
   for (const auto& var : variables_to_read) {
     main_code << "  std::cout << \"" << var << "=\" << dut." << var
               << " << std::endl;\n";
   }
+  main_code << "  std::cout << \"__time__=\" << final_time << std::endl;\n";
   main_code << "  return 0;\n";
   main_code << "}\n";
 
   auto cpp_path = tmp_dir / "test.cpp";
   auto bin_path = tmp_dir / "test";
 
-  // Write complete C++ file
+  // Write complete C++ file (generated code + main)
   {
     std::ofstream out(cpp_path);
-    out << kSdkCode << "\n";
-    auto pos = generated.find("class ");
-    if (pos != std::string::npos) {
-      out << generated.substr(pos);
-    } else {
-      out << generated;
-    }
+    out << "#include <iostream>\n";
+    out << generated;
     out << main_code.str();
   }
 
-  // Compile
-  std::string compile_cmd = "clang++ -std=c++23 -o " + bin_path.string() + " " +
+  // Compile with SDK include path
+  auto sdk_include = GetSdkIncludePath();
+  std::string compile_cmd = "clang++ -std=c++23 -I" + sdk_include.string() +
+                            " -o " + bin_path.string() + " " +
                             cpp_path.string() + " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
@@ -229,15 +156,19 @@ auto CppTestRunner::RunFromSources(
     return result;
   }
 
-  // Parse output (format: "var=value\n")
+  // Parse output (format: "var=value\n" and "__time__=value\n")
   std::istringstream iss(run_output);
   std::string line;
   while (std::getline(iss, line)) {
     auto eq_pos = line.find('=');
     if (eq_pos != std::string::npos) {
       std::string name = line.substr(0, eq_pos);
-      int64_t value = std::stoll(line.substr(eq_pos + 1));
-      result.variables_[name] = value;
+      if (name == "__time__") {
+        result.final_time_ = std::stoull(line.substr(eq_pos + 1));
+      } else {
+        int64_t value = std::stoll(line.substr(eq_pos + 1));
+        result.variables_[name] = value;
+      }
     }
   }
 
@@ -270,15 +201,16 @@ auto CppTestRunner::RunFromSource(
   codegen::CppCodegen codegen;
   std::string generated = codegen.Generate(*mir);
 
-  // Build main() that prints variables
+  // Build main() that prints variables and final time
   std::ostringstream main_code;
   main_code << "\nint main() {\n";
   main_code << "  " << mir->name << " dut;\n";
-  main_code << "  dut.RunInitials();\n";
+  main_code << "  auto final_time = dut.RunInitials();\n";
   for (const auto& var : variables_to_read) {
     main_code << "  std::cout << \"" << var << "=\" << dut." << var
               << " << std::endl;\n";
   }
+  main_code << "  std::cout << \"__time__=\" << final_time << std::endl;\n";
   main_code << "  return 0;\n";
   main_code << "}\n";
 
@@ -288,18 +220,12 @@ auto CppTestRunner::RunFromSource(
   auto cpp_path = tmp_dir / "test.cpp";
   auto bin_path = tmp_dir / "test";
 
-  // Write complete C++ file
+  // Write complete C++ file (generated code + main)
   std::string full_code;
   {
     std::ostringstream code_stream;
-    code_stream << kSdkCode << "\n";
-    // Skip the #include and using lines from generated code
-    auto pos = generated.find("class ");
-    if (pos != std::string::npos) {
-      code_stream << generated.substr(pos);
-    } else {
-      code_stream << generated;
-    }
+    code_stream << "#include <iostream>\n";
+    code_stream << generated;
     code_stream << main_code.str();
     full_code = code_stream.str();
 
@@ -312,8 +238,10 @@ auto CppTestRunner::RunFromSource(
     std::cerr << "=== Generated C++ ===\n" << full_code << "\n=== End ===\n";
   }
 
-  // Compile
-  std::string compile_cmd = "clang++ -std=c++23 -o " + bin_path.string() + " " +
+  // Compile with SDK include path
+  auto sdk_include = GetSdkIncludePath();
+  std::string compile_cmd = "clang++ -std=c++23 -I" + sdk_include.string() +
+                            " -o " + bin_path.string() + " " +
                             cpp_path.string() + " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
@@ -329,15 +257,19 @@ auto CppTestRunner::RunFromSource(
     return result;
   }
 
-  // Parse output (format: "var=value\n")
+  // Parse output (format: "var=value\n" and "__time__=value\n")
   std::istringstream iss(run_output);
   std::string line;
   while (std::getline(iss, line)) {
     auto eq_pos = line.find('=');
     if (eq_pos != std::string::npos) {
       std::string name = line.substr(0, eq_pos);
-      int64_t value = std::stoll(line.substr(eq_pos + 1));
-      result.variables_[name] = value;
+      if (name == "__time__") {
+        result.final_time_ = std::stoull(line.substr(eq_pos + 1));
+      } else {
+        int64_t value = std::stoll(line.substr(eq_pos + 1));
+        result.variables_[name] = value;
+      }
     }
   }
 

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ struct TestCase {
   std::string sv_code;
   std::vector<SourceFile> files;
   std::map<std::string, int64_t> expected_values;
+  std::optional<uint64_t> expected_time;
 
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();

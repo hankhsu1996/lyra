@@ -38,6 +38,10 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       }
     }
 
+    if (node["expect_time"]) {
+      tc.expected_time = node["expect_time"].as<uint64_t>();
+    }
+
     cases.push_back(std::move(tc));
   }
 

@@ -40,6 +40,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "processes_timing_tests",
+    yaml = "sv_features/processes/timing.yaml",
+)
+
+sv_feature_test(
     name = "control_flow_conditionals_tests",
     yaml = "sv_features/control_flow/conditionals.yaml",
 )
@@ -59,16 +64,6 @@ cc_test(
     name = "non_blocking_tests",
     size = "small",
     srcs = ["e2e/non_blocking_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "timing_tests",
-    size = "small",
-    srcs = ["e2e/timing_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",
