@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
@@ -169,6 +170,8 @@ void CppCodegen::EmitClass(const mir::Module& module) {
     const auto& process = module.processes[i];
     if (process->process_kind == mir::ProcessKind::kInitial) {
       Line("RegisterInitial(&" + module.name + "::" + process->name + ");");
+    } else if (process->process_kind == mir::ProcessKind::kAlways) {
+      Line("RegisterAlways(&" + module.name + "::" + process->name + ");");
     }
   }
   indent_--;
@@ -232,7 +235,8 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
         const auto& syscall =
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
         if (syscall.name == "$finish") {
-          Line("co_return;  // $finish");
+          Line("Finish();");
+          Line("co_return;");
           break;
         }
         throw std::runtime_error(
@@ -329,6 +333,28 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
       Line("co_await Delay(" + std::to_string(delay.delay_amount) + ");");
       break;
     }
+    case mir::Statement::Kind::kWaitEvent: {
+      const auto& wait = mir::As<mir::WaitEventStatement>(stmt);
+      // For now, only support single trigger (first one)
+      // Multiple triggers with 'or' would need different handling
+      if (!wait.triggers.empty()) {
+        const auto& trigger = wait.triggers[0];
+        std::string var_name(trigger.variable->name);
+        switch (trigger.edge_kind) {
+          case common::EdgeKind::kPosedge:
+            Line("co_await WaitPosedge(&" + var_name + ");");
+            break;
+          case common::EdgeKind::kNegedge:
+            Line("co_await WaitNegedge(&" + var_name + ");");
+            break;
+          case common::EdgeKind::kAnyChange:
+          case common::EdgeKind::kBothEdge:
+            throw std::runtime_error(
+                "C++ codegen: unsupported edge kind for WaitEvent");
+        }
+      }
+      break;
+    }
     case mir::Statement::Kind::kVariableDeclaration: {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();
@@ -393,8 +419,14 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
     }
     case mir::Expression::Kind::kAssignment: {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
-      out_ << assign.target->name << " = ";
-      EmitExpression(*assign.value);
+      if (assign.is_non_blocking) {
+        out_ << "ScheduleNba(&" << assign.target->name << ", ";
+        EmitExpression(*assign.value);
+        out_ << ")";
+      } else {
+        out_ << assign.target->name << " = ";
+        EmitExpression(*assign.value);
+      }
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -424,10 +456,33 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
           out_ << "!";
           EmitExpression(*unary.operand);
           break;
-        case mir::UnaryOperator::kBitwiseNot:
-          out_ << "~";
+        case mir::UnaryOperator::kBitwiseNot: {
+          // In C++, ~ inverts ALL bits of the underlying type, but SV only
+          // inverts the declared width. For a 4-bit stored in uint8_t:
+          // ~0x05 = 0xFA (wrong), should be 0x0A
+          // Fix: mask result to declared bit width
+          if (unary.operand->type.kind == common::Type::Kind::kTwoState) {
+            auto data =
+                std::get<common::TwoStateData>(unary.operand->type.data);
+            size_t width = data.bit_width;
+            // For types that match C++ types exactly (8,16,32,64), no mask
+            // needed
+            bool needs_mask =
+                (width != 8 && width != 16 && width != 32 && width != 64);
+            if (needs_mask) {
+              // Compute mask: (1 << width) - 1, or all 1s for width bits
+              uint64_t mask = (width >= 64) ? ~0ULL : ((1ULL << width) - 1);
+              out_ << "((~";
+              EmitExpression(*unary.operand);
+              out_ << ") & " << mask << "ULL)";
+              break;
+            }
+          }
+          out_ << "(~";
           EmitExpression(*unary.operand);
+          out_ << ")";
           break;
+        }
         case mir::UnaryOperator::kPreincrement:
           out_ << "++";
           EmitExpression(*unary.operand);

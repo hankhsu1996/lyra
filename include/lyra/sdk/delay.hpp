@@ -16,15 +16,21 @@ inline thread_local Scheduler* current_scheduler = nullptr;
 
 class Delay {
  public:
-  explicit Delay(uint64_t amount) : amount_(amount) {}
+  explicit Delay(uint64_t amount) : amount_(amount) {
+  }
 
-  static auto await_ready() -> bool { return false; }
+  static auto await_ready() -> bool {
+    return false;
+  }
 
   void await_suspend(std::coroutine_handle<> handle) const;
 
-  static void await_resume() {}
+  static void await_resume() {
+  }
 
-  [[nodiscard]] auto Amount() const -> uint64_t { return amount_; }
+  [[nodiscard]] auto Amount() const -> uint64_t {
+    return amount_;
+  }
 
  private:
   uint64_t amount_;

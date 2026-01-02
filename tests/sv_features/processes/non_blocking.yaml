@@ -1,0 +1,128 @@
+feature: non_blocking
+description: Tests for non-blocking assignments (<=)
+
+cases:
+  - name: simple_non_blocking
+    sv: |
+      module Test;
+        int a, b;
+
+        initial begin
+          a = 1;
+          b <= a + 1;
+          a = 5;
+        end
+      endmodule
+    expect:
+      a: 5
+      b: 2
+
+  - name: blocking_then_non_blocking
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1;
+          b <= a;
+        end
+      endmodule
+    expect:
+      a: 1
+      b: 1
+
+  - name: multiple_non_blocking
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a <= 1;
+          b <= 2;
+        end
+      endmodule
+    expect:
+      a: 1
+      b: 2
+
+  - name: register_with_clock
+    sv: |
+      module Test;
+        bit clk;
+        int d, q;
+
+        initial begin
+          clk = 0;
+          forever #5 clk = ~clk;
+        end
+
+        always_ff @(posedge clk)
+          q <= d;
+
+        initial begin
+          d = 42;
+          #12;
+          d = 99;
+          #10;
+          $finish();
+        end
+      endmodule
+    expect:
+      q: 99
+    expect_time: 22
+
+  - name: register_with_enable
+    sv: |
+      module Test;
+        bit clk, en;
+        int d, q;
+
+        initial begin
+          clk = 0;
+          forever #5 clk = ~clk;
+        end
+
+        always_ff @(posedge clk) begin
+          if (en)
+            q <= d;
+        end
+
+        initial begin
+          en = 1;
+          d = 42;
+          #10;
+          d = 99;
+          #10;
+          en = 0;
+          d = 7;
+          #10;
+          $finish();
+        end
+      endmodule
+    expect:
+      q: 99
+    expect_time: 30
+
+  - name: pipelined_non_blocking
+    sv: |
+      module Test;
+        int d, q1, q2;
+        bit clk;
+
+        always_ff @(posedge clk) begin
+          q1 <= d;
+          q2 <= q1;
+        end
+
+        initial begin
+          d = 10;
+          clk = 0;
+          #5 clk = 1;
+          #5 clk = 0;
+          #5 clk = 1;
+          #5 clk = 0;
+          $finish();
+        end
+      endmodule
+    expect:
+      q1: 10
+      q2: 10
+    expect_time: 20

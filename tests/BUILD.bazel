@@ -45,6 +45,12 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "processes_non_blocking_tests",
+    size = "large",
+    yaml = "sv_features/processes/non_blocking.yaml",
+)
+
+sv_feature_test(
     name = "control_flow_conditionals_tests",
     yaml = "sv_features/control_flow/conditionals.yaml",
 )
@@ -58,16 +64,6 @@ sv_feature_test(
 sv_feature_test(
     name = "datatypes_variables_tests",
     yaml = "sv_features/datatypes/variables.yaml",
-)
-
-cc_test(
-    name = "non_blocking_tests",
-    size = "small",
-    srcs = ["e2e/non_blocking_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
 )
 
 cc_test(

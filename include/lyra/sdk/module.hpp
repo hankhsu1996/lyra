@@ -9,6 +9,19 @@
 namespace lyra::sdk {
 
 class Scheduler;
+class Module;
+
+// Thread-local pointer to the current module for NBA access
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline thread_local Module* current_module = nullptr;
+
+// Thread-local simulation termination flag (set by $finish)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline thread_local bool simulation_finished = false;
+
+inline void Finish() {
+  simulation_finished = true;
+}
 
 class Module {
  public:
@@ -31,10 +44,29 @@ class Module {
   // Defined in scheduler.hpp after Scheduler is defined
   auto RunInitials() -> uint64_t;
 
+  // Non-blocking assignment support
+  template <typename T>
+  void ScheduleNba(T* target, T value) {
+    nba_queue_.emplace_back([target, value]() { *target = value; });
+  }
+
+  void FlushNba() {
+    for (auto& action : nba_queue_) {
+      action();
+    }
+    nba_queue_.clear();
+  }
+
  protected:
   template <typename T>
   void RegisterInitial(Task (T::*method)()) {
     initial_methods_.push_back(
+        [this, method]() { return (static_cast<T*>(this)->*method)(); });
+  }
+
+  template <typename T>
+  void RegisterAlways(Task (T::*method)()) {
+    always_methods_.push_back(
         [this, method]() { return (static_cast<T*>(this)->*method)(); });
   }
 
@@ -43,6 +75,8 @@ class Module {
 
   std::string name_;
   std::vector<std::function<Task()>> initial_methods_;
+  std::vector<std::function<Task()>> always_methods_;
+  std::vector<std::function<void()>> nba_queue_;
 };
 
 }  // namespace lyra::sdk

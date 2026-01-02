@@ -41,10 +41,14 @@ class Integer {
  public:
   using StorageType = typename detail::IntegerStorage<Width>::Type;
 
-  Integer() : value_(0) {}
-  explicit Integer(StorageType value) : value_(value) {}
+  Integer() : value_(0) {
+  }
+  explicit Integer(StorageType value) : value_(value) {
+  }
 
-  explicit operator StorageType() const { return value_; }
+  explicit operator StorageType() const {
+    return value_;
+  }
 
   auto operator=(StorageType value) -> Integer& {
     value_ = value;
