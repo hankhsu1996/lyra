@@ -363,6 +363,45 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
           EmitExpression(*unary.operand);
           out_ << "--";
           break;
+        case mir::UnaryOperator::kReductionAnd:
+          // 1 if all bits are 1: !~a (branchless)
+          out_ << "!~(";
+          EmitExpression(*unary.operand);
+          out_ << ")";
+          break;
+        case mir::UnaryOperator::kReductionNand:
+          // 1 if not all bits are 1: !!~a (branchless)
+          out_ << "!!~(";
+          EmitExpression(*unary.operand);
+          out_ << ")";
+          break;
+        case mir::UnaryOperator::kReductionOr:
+          // 1 if any bit is 1: !!a (branchless)
+          out_ << "!!(";
+          EmitExpression(*unary.operand);
+          out_ << ")";
+          break;
+        case mir::UnaryOperator::kReductionNor:
+          // 1 if no bits are 1: !a (branchless)
+          out_ << "!(";
+          EmitExpression(*unary.operand);
+          out_ << ")";
+          break;
+        case mir::UnaryOperator::kReductionXor:
+          // 1 if odd number of 1-bits: __builtin_parityll
+          // TODO(hankhsu): Consider std::popcount (C++20) for target C++ version
+          out_ << "__builtin_parityll(static_cast<uint64_t>(static_cast<"
+               << ToCppUnsignedType(unary.operand->type) << ">(";
+          EmitExpression(*unary.operand);
+          out_ << ")))";
+          break;
+        case mir::UnaryOperator::kReductionXnor:
+          // 1 if even number of 1-bits: !__builtin_parityll
+          out_ << "!__builtin_parityll(static_cast<uint64_t>(static_cast<"
+               << ToCppUnsignedType(unary.operand->type) << ">(";
+          EmitExpression(*unary.operand);
+          out_ << ")))";
+          break;
         default:
           out_ << "/* TODO: " << ToString(unary.op) << " */";
           EmitExpression(*unary.operand);

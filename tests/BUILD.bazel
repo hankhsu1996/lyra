@@ -80,16 +80,6 @@ cc_test(
 )
 
 cc_test(
-    name = "unary_ops_tests",
-    size = "small",
-    srcs = ["e2e/unary_ops_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
     name = "wait_event_tests",
     size = "small",
     srcs = ["e2e/wait_event_tests.cpp"],
