@@ -16,9 +16,7 @@ Internally: compiler logic is a library, orchestrator handles config, caching, a
 ## Compilation Pipeline
 
 ```
-SystemVerilog -> Slang -> MIR -> Backend
-                           |
-                           +-> LIR (for interpreter/LLVM)
+SystemVerilog -> Slang -> MIR -> C++ codegen -> compile -> run
 ```
 
 ### Slang (Frontend)
@@ -34,22 +32,14 @@ SystemVerilog -> Slang -> MIR -> Backend
 - Encodes parameter interfaces
 - Primary input for C++ code generation
 
-### LIR (Low-level IR)
+### C++ Codegen
 
-- SSA-style with basic blocks and linear instructions
-- Used by interpreter and potential LLVM backend
-- NOT used for C++ codegen (MIR maps directly to C++)
-
-### Backend Selection
-
-C++ codegen uses MIR directly because:
-- MIR control flow (if/while/do-while) maps 1:1 to C++
-- Avoids reconstructing high-level structure from basic blocks
+MIR maps directly to C++ because:
+- Control flow (if/while/do-while) maps 1:1
+- Avoids reconstructing structure from linearized form
 - Produces readable output (a core requirement)
 
-LIR is for backends that need linearized form:
-- Interpreter: simple instruction dispatch loop
-- LLVM (future): SSA aligns with LLVM IR
+Generated code links against SDK for simulation runtime.
 
 ## Runtime Elaboration Model
 
@@ -62,30 +52,36 @@ Traditional flow (Verilator-style):
 
 LYRA flow:
 - Slang validates semantics
-- MIR/LIR represent module templates
+- MIR represents module templates
 - Generated C++ constructs hierarchy at runtime
 - Parameters become constructor arguments
 - `generate for/if` becomes constructor logic
 
 This trades some runtime initialization cost for faster compilation and better debuggability.
 
-## Component Responsibilities
+## Project Structure
 
-| Component | Responsibility |
-|-----------|----------------|
-| `frontend/` | Slang wrapper, produces AST |
-| `mir/` | Module template IR, high-level semantics |
-| `lir/` | Linear IR, scheduling, backend input |
-| `lowering/` | AST->MIR, MIR->LIR transformations |
-| `interpreter/` | Development backend, event-driven execution |
-| `driver/` | Orchestration, pipeline coordination |
-| `common/` | Shared types, utilities |
+```
+include/lyra/
+  common/       # shared types, utilities
+  frontend/     # Slang wrapper, produces AST
+  mir/          # module template IR
+  codegen/      # MIR -> C++ generator
+  sdk/          # runtime library (Task, Scheduler, Signal)
+  cli/          # lyra subcommands (build, run, emit)
+```
+
+Deprecated (legacy interpreter path):
+- `lir/` - linearized IR, not needed for C++ backend
+- `lowering/mir_to_lir/` - LIR transformation
+- `interpreter/` - replaced by generated C++ + SDK
 
 ## Data Flow
 
 1. Source files -> `SlangFrontend` -> AST
 2. AST -> `AstToMir` -> MIR Module (template)
-3. MIR -> C++ codegen (primary path)
-   OR MIR -> `MirToLir` -> LIR -> interpreter
+3. MIR -> `Codegen` -> C++ source files
+4. C++ compiler -> executable (linked with SDK)
+5. Run executable
 
 Each stage is independent and testable.
