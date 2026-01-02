@@ -16,7 +16,9 @@ Internally: compiler logic is a library, orchestrator handles config, caching, a
 ## Compilation Pipeline
 
 ```
-SystemVerilog -> Slang -> MIR -> LIR -> Backend
+SystemVerilog -> Slang -> MIR -> Backend
+                           |
+                           +-> LIR (for interpreter/LLVM)
 ```
 
 ### Slang (Frontend)
@@ -30,17 +32,24 @@ SystemVerilog -> Slang -> MIR -> LIR -> Backend
 - Preserves high-level structure: statements, expressions, control flow
 - Represents module templates, not elaborated instances
 - Encodes parameter interfaces
+- Primary input for C++ code generation
 
 ### LIR (Low-level IR)
 
 - SSA-style with basic blocks and linear instructions
-- Scheduling semantics (comb/ff/NBA)
-- Backend-agnostic representation
+- Used by interpreter and potential LLVM backend
+- NOT used for C++ codegen (MIR maps directly to C++)
 
-### Backend
+### Backend Selection
 
-Current: Interpreter (for development/testing)
-Target: C++ code generation
+C++ codegen uses MIR directly because:
+- MIR control flow (if/while/do-while) maps 1:1 to C++
+- Avoids reconstructing high-level structure from basic blocks
+- Produces readable output (a core requirement)
+
+LIR is for backends that need linearized form:
+- Interpreter: simple instruction dispatch loop
+- LLVM (future): SSA aligns with LLVM IR
 
 ## Runtime Elaboration Model
 
@@ -76,7 +85,7 @@ This trades some runtime initialization cost for faster compilation and better d
 
 1. Source files -> `SlangFrontend` -> AST
 2. AST -> `AstToMir` -> MIR Module (template)
-3. MIR -> `MirToLir` -> LIR Module (linearized)
-4. LIR -> Backend (interpreter or C++ codegen)
+3. MIR -> C++ codegen (primary path)
+   OR MIR -> `MirToLir` -> LIR -> interpreter
 
 Each stage is independent and testable.
