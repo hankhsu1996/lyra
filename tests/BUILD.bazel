@@ -50,16 +50,6 @@ sv_feature_test(
 )
 
 cc_test(
-    name = "binary_ops_tests",
-    size = "small",
-    srcs = ["e2e/binary_ops_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
     name = "loop_tests",
     size = "small",
     srcs = ["e2e/loop_tests.cpp"],

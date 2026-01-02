@@ -8,6 +8,13 @@ namespace lyra::codegen {
 
 namespace {
 
+auto IsSigned(const common::Type& type) -> bool {
+  if (type.kind != common::Type::Kind::kTwoState) {
+    return false;
+  }
+  return std::get<common::TwoStateData>(type.data).is_signed;
+}
+
 auto ToCppType(const common::Type& type) -> std::string {
   switch (type.kind) {
     case common::Type::Kind::kVoid:
@@ -37,6 +44,30 @@ auto ToCppType(const common::Type& type) -> std::string {
     }
   }
   return "/* unknown type */";
+}
+
+auto ToCppUnsignedType(const common::Type& type) -> std::string {
+  if (type.kind != common::Type::Kind::kTwoState) {
+    return "/* unknown type */";
+  }
+  auto data = std::get<common::TwoStateData>(type.data);
+  size_t width = data.bit_width;
+  if (width == 1) {
+    return "bool";
+  }
+  if (width <= 8) {
+    return "uint8_t";
+  }
+  if (width <= 16) {
+    return "uint16_t";
+  }
+  if (width <= 32) {
+    return "uint32_t";
+  }
+  if (width <= 64) {
+    return "uint64_t";
+  }
+  return "/* TODO: wide integer */";
 }
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
@@ -252,11 +283,31 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
     }
     case mir::Expression::Kind::kBinary: {
       const auto& bin = mir::As<mir::BinaryExpression>(expr);
-      out_ << "(";
-      EmitExpression(*bin.left);
-      out_ << " " << ToCppOperator(bin.op) << " ";
-      EmitExpression(*bin.right);
-      out_ << ")";
+      if (bin.op == mir::BinaryOperator::kBitwiseXnor) {
+        // XNOR: ~(a ^ b)
+        out_ << "(~(";
+        EmitExpression(*bin.left);
+        out_ << " ^ ";
+        EmitExpression(*bin.right);
+        out_ << "))";
+      } else if (bin.op == mir::BinaryOperator::kLogicalShiftRight &&
+                 IsSigned(bin.left->type)) {
+        // Logical right shift on signed: cast to unsigned, shift, cast back
+        // SV: signed >> n (zero-fill)
+        // C++: static_cast<signed_t>(static_cast<unsigned_t>(val) >> n)
+        out_ << "static_cast<" << ToCppType(bin.left->type) << ">(";
+        out_ << "static_cast<" << ToCppUnsignedType(bin.left->type) << ">(";
+        EmitExpression(*bin.left);
+        out_ << ") >> ";
+        EmitExpression(*bin.right);
+        out_ << ")";
+      } else {
+        out_ << "(";
+        EmitExpression(*bin.left);
+        out_ << " " << ToCppOperator(bin.op) << " ";
+        EmitExpression(*bin.right);
+        out_ << ")";
+      }
       break;
     }
     case mir::Expression::Kind::kAssignment: {
@@ -317,6 +368,13 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
           EmitExpression(*unary.operand);
           break;
       }
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kConversion: {
+      const auto& conv = mir::As<mir::ConversionExpression>(expr);
+      out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
+      EmitExpression(*conv.value);
       out_ << ")";
       break;
     }

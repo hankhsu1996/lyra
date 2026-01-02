@@ -196,6 +196,32 @@ cases:
     expect:
       c: 6
 
+  - name: bitwise_xnor
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 3;
+          c = a ~^ b;
+        end
+      endmodule
+    expect:
+      c: -7
+
+  - name: bitwise_xnor_alt
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 3;
+          c = a ^~ b;
+        end
+      endmodule
+    expect:
+      c: -7
+
   - name: logical_and
     sv: |
       module Test;
@@ -255,3 +281,131 @@ cases:
       endmodule
     expect:
       b: 8
+
+  - name: shift_arith_right_signed
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = -8;
+          b = 2;
+          c = a >>> b;
+        end
+      endmodule
+    expect:
+      c: -2
+
+  - name: shift_logic_right_signed
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = -8;
+          b = 2;
+          c = a >> b;
+        end
+      endmodule
+    expect:
+      c: 1073741822
+
+  - name: shift_arith_left_signed
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = -8;
+          b = 2;
+          c = a <<< b;
+        end
+      endmodule
+    expect:
+      c: -32
+
+  - name: shift_logic_left_signed
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = -8;
+          b = 2;
+          c = a << b;
+        end
+      endmodule
+    expect:
+      c: -32
+
+  - name: addition_bit_and_int
+    sv: |
+      module Test;
+        bit a;
+        int b, c;
+        initial begin
+          a = 1;
+          b = 10;
+          c = a + b;
+        end
+      endmodule
+    expect:
+      c: 11
+
+  - name: addition_int_and_longint
+    sv: |
+      module Test;
+        int a;
+        longint b, c;
+        initial begin
+          a = 100;
+          b = 1000;
+          c = a + b;
+        end
+      endmodule
+    expect:
+      c: 1100
+
+  - name: addition_bit_and_longint
+    sv: |
+      module Test;
+        bit a;
+        longint b, c;
+        initial begin
+          a = 1;
+          b = 1000;
+          c = a + b;
+        end
+      endmodule
+    expect:
+      c: 1001
+
+  - name: string_equal
+    sv: |
+      module Test;
+        string a, b, c;
+        bit r1, r2;
+        initial begin
+          a = "hello";
+          b = "hello";
+          c = "world";
+          r1 = (a == b);
+          r2 = (a == c);
+        end
+      endmodule
+    expect:
+      r1: 1
+      r2: 0
+
+  - name: string_not_equal
+    sv: |
+      module Test;
+        string a, b, c;
+        bit r1, r2;
+        initial begin
+          a = "hello";
+          b = "hello";
+          c = "world";
+          r1 = (a != c);
+          r2 = (a != b);
+        end
+      endmodule
+    expect:
+      r1: 1
+      r2: 0
