@@ -1,4 +1,11 @@
-load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "test_utils",
+    srcs = ["utils/cpp_test_runner.cpp"],
+    hdrs = ["utils/cpp_test_runner.hpp"],
+    deps = ["//:core"],
+)
 
 cc_test(
     name = "binary_ops_tests",
@@ -86,6 +93,17 @@ cc_test(
     srcs = ["e2e/wait_event_tests.cpp"],
     deps = [
         "//:core",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "codegen_tests",
+    size = "small",
+    srcs = ["e2e/codegen_tests.cpp"],
+    deps = [
+        "//:core",
+        "//tests:test_utils",
         "@googletest//:gtest",
     ],
 )

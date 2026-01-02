@@ -4,10 +4,10 @@
 [![Bazel File Lint](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml)
 [![C++ Lint](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml)
 
-**Lyra** is a clean, structured, and extensible SystemVerilog compiler and simulator.
-It features a modern multi-stage compilation pipeline, enabling accurate semantic analysis, flexible intermediate representations, and native execution through interpretation or LLVM.
+**Lyra** is a SystemVerilog compiler that generates readable C++ for simulation.
+It prioritizes fast iteration (compile + run + debug) over peak simulation speed.
 
-> ⚠️ **Development Status**: This project is under active development. Features are incomplete, APIs are unstable, and rapid changes should be expected.
+> **Development Status**: This project is under active development. Features are incomplete, APIs are unstable, and rapid changes should be expected.
 
 ## 🛠️ Build Instructions
 

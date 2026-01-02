@@ -93,6 +93,8 @@ TEST(FeatureTest, TestName) {
 - C++23 standard with Clang compiler
 - Google C++ style guide (`.clang-format`, `.clang-tidy`)
 - Naming: `CamelCase` for classes/functions, `lower_case_` for private members, `kCamelCase` for enum constants
+- Code must be clangd warning-free
+- Run clang-format before committing
 
 ## Commit Format
 
