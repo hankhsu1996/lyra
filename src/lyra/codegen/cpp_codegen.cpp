@@ -1,11 +1,43 @@
 #include "lyra/codegen/cpp_codegen.hpp"
 
+#include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::codegen {
 
 namespace {
+
+auto ToCppType(const common::Type& type) -> std::string {
+  switch (type.kind) {
+    case common::Type::Kind::kVoid:
+      return "void";
+    case common::Type::Kind::kString:
+      return "std::string";
+    case common::Type::Kind::kTwoState: {
+      auto data = std::get<common::TwoStateData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+      if (width == 1) {
+        return "bool";
+      }
+      if (width <= 8) {
+        return is_signed ? "int8_t" : "uint8_t";
+      }
+      if (width <= 16) {
+        return is_signed ? "int16_t" : "uint16_t";
+      }
+      if (width <= 32) {
+        return is_signed ? "int32_t" : "uint32_t";
+      }
+      if (width <= 64) {
+        return is_signed ? "int64_t" : "uint64_t";
+      }
+      return "/* TODO: wide integer */";
+    }
+  }
+  return "/* unknown type */";
+}
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   switch (op) {
@@ -126,8 +158,8 @@ void CppCodegen::EmitClass(const mir::Module& module) {
 
 void CppCodegen::EmitVariables(const std::vector<common::Variable>& variables) {
   for (const auto& var : variables) {
-    std::string type_str = "int";  // TODO(hankhsu): proper type mapping
-    Line(type_str + " " + std::string(var.symbol->name) + " = 0;");
+    std::string type_str = ToCppType(var.type);
+    Line(type_str + " " + std::string(var.symbol->name) + "{};");
   }
 }
 
@@ -190,12 +222,12 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
     case mir::Statement::Kind::kVariableDeclaration: {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();
-      out_ << "int " << decl.variable.symbol->name;
+      out_ << ToCppType(decl.variable.type) << " " << decl.variable.symbol->name;
       if (decl.initializer) {
         out_ << " = ";
         EmitExpression(*decl.initializer);
       } else {
-        out_ << " = 0";
+        out_ << "{}";
       }
       out_ << ";\n";
       break;

@@ -27,3 +27,6 @@ Thumbs.db
 *.log
 *.log.*
 *tmp*
+
+# Local config files (personal preferences)
+*.local.md

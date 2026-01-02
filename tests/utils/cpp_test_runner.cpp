@@ -21,6 +21,7 @@ namespace {
 // Inline SDK for generated code (avoids header dependency issues in test)
 constexpr const char* kSdkCode = R"(
 #include <coroutine>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -28,6 +29,31 @@ constexpr const char* kSdkCode = R"(
 #include <vector>
 
 namespace lyra::sdk {
+
+namespace detail {
+template <size_t Width> struct IntegerStorage;
+template <> struct IntegerStorage<1> { using type = uint8_t; };
+template <> struct IntegerStorage<8> { using type = uint8_t; };
+template <> struct IntegerStorage<16> { using type = uint16_t; };
+template <> struct IntegerStorage<32> { using type = uint32_t; };
+template <> struct IntegerStorage<64> { using type = uint64_t; };
+}  // namespace detail
+
+template <size_t Width>
+class Integer {
+ public:
+  using StorageType = typename detail::IntegerStorage<Width>::type;
+  Integer() : value_(0) {}
+  Integer(StorageType value) : value_(value) {}
+  operator StorageType() const { return value_; }
+  auto operator=(StorageType value) -> Integer& { value_ = value; return *this; }
+  auto operator++() -> Integer& { ++value_; return *this; }
+  auto operator++(int) -> Integer { Integer tmp = *this; ++value_; return tmp; }
+  auto operator--() -> Integer& { --value_; return *this; }
+  auto operator--(int) -> Integer { Integer tmp = *this; --value_; return tmp; }
+ private:
+  StorageType value_;
+};
 
 class Task {
  public:
