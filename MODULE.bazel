@@ -27,6 +27,9 @@ bazel_dep(name = "spdlog", version = "1.15.1")
 # Testing framework
 bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
 
+# YAML parsing for test data
+bazel_dep(name = "yaml-cpp", version = "0.8.0")
+
 # Development tools
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
 git_override(

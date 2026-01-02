@@ -1,0 +1,67 @@
+feature: binary_operators
+description: Tests for binary arithmetic, comparison, and logical operators
+
+cases:
+  - name: addition_basic
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 10;
+          b = 20;
+          c = a + b;
+        end
+      endmodule
+    expect:
+      c: 30
+
+  - name: subtraction_basic
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 30;
+          b = 12;
+          c = a - b;
+        end
+      endmodule
+    expect:
+      c: 18
+
+  - name: multiplication_basic
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 7;
+          c = a * b;
+        end
+      endmodule
+    expect:
+      c: 35
+
+  - name: complex_expression
+    sv: |
+      module Test;
+        int a, b, c, d;
+        initial begin
+          a = 5;
+          b = 10;
+          c = 3;
+          d = a + b * c;
+        end
+      endmodule
+    expect:
+      d: 35
+
+  - name: multi_file_basic
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x;
+            initial x = 100;
+          endmodule
+    expect:
+      x: 100

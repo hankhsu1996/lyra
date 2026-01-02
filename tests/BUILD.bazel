@@ -1,10 +1,31 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//tests:sv_feature_test.bzl", "sv_feature_test")
 
 cc_library(
     name = "test_utils",
     srcs = ["utils/cpp_test_runner.cpp"],
     hdrs = ["utils/cpp_test_runner.hpp"],
-    deps = ["//:core"],
+    deps = [
+        "//:core",
+        "//tests:test_framework",
+    ],
+)
+
+cc_library(
+    name = "test_framework",
+    srcs = ["framework/yaml_loader.cpp"],
+    hdrs = [
+        "framework/test_case.hpp",
+        "framework/yaml_loader.hpp",
+    ],
+    deps = [
+        "@yaml-cpp",
+    ],
+)
+
+sv_feature_test(
+    name = "operators_binary_tests",
+    yaml = "sv_features/operators/binary.yaml",
 )
 
 cc_test(

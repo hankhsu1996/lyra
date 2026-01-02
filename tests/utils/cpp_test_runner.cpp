@@ -1,7 +1,5 @@
 #include "tests/utils/cpp_test_runner.hpp"
 
-#include <slang/ast/Compilation.h>
-
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +7,8 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+
+#include <slang/ast/Compilation.h>
 
 #include "lyra/codegen/cpp_codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
@@ -78,7 +78,8 @@ using namespace lyra::sdk;
 auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   std::array<char, 128> buffer{};
   std::string result;
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+  std::unique_ptr<FILE, decltype(&pclose)> pipe(
+      popen(cmd.c_str(), "r"), pclose);
   if (!pipe) {
     return {-1, "popen failed"};
   }
@@ -97,6 +98,105 @@ auto CppTestResult::ReadVariable(const std::string& name) const -> int64_t {
     throw std::runtime_error("Variable not found: " + name);
   }
   return it->second;
+}
+
+auto CppTestRunner::RunFromSources(
+    const std::vector<SourceFile>& files,
+    const std::vector<std::string>& variables_to_read) -> CppTestResult {
+  CppTestResult result;
+
+  // Create temp directory for SV files
+  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test";
+  std::filesystem::create_directories(tmp_dir);
+
+  // Write SV files to temp directory
+  std::vector<std::string> file_paths;
+  for (const auto& file : files) {
+    auto file_path = tmp_dir / file.name;
+    std::ofstream out(file_path);
+    out << file.content;
+    file_paths.push_back(file_path.string());
+  }
+
+  // Parse SV files
+  frontend::SlangFrontend frontend;
+  auto compilation = frontend.LoadFromFiles(file_paths);
+  if (!compilation) {
+    result.error_message_ = "Failed to parse SV files";
+    return result;
+  }
+
+  // Lower to MIR
+  const auto& root = compilation->getRoot();
+  auto mir = lowering::ast_to_mir::AstToMir(root);
+  if (!mir) {
+    result.error_message_ = "Failed to lower to MIR";
+    return result;
+  }
+
+  // Generate C++
+  codegen::CppCodegen codegen;
+  std::string generated = codegen.Generate(*mir);
+
+  // Build main() that prints variables
+  std::ostringstream main_code;
+  main_code << "\nint main() {\n";
+  main_code << "  " << mir->name << " dut;\n";
+  main_code << "  dut.RunInitials();\n";
+  for (const auto& var : variables_to_read) {
+    main_code << "  std::cout << \"" << var << "=\" << dut." << var
+              << " << std::endl;\n";
+  }
+  main_code << "  return 0;\n";
+  main_code << "}\n";
+
+  auto cpp_path = tmp_dir / "test.cpp";
+  auto bin_path = tmp_dir / "test";
+
+  // Write complete C++ file
+  {
+    std::ofstream out(cpp_path);
+    out << kSdkCode << "\n";
+    auto pos = generated.find("class ");
+    if (pos != std::string::npos) {
+      out << generated.substr(pos);
+    } else {
+      out << generated;
+    }
+    out << main_code.str();
+  }
+
+  // Compile
+  std::string compile_cmd = "clang++ -std=c++23 -o " + bin_path.string() + " " +
+                            cpp_path.string() + " 2>&1";
+  auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
+  if (compile_status != 0) {
+    result.error_message_ = "Compilation failed: " + compile_output;
+    return result;
+  }
+
+  // Run
+  auto [run_status, run_output] = ExecuteCommand(bin_path.string());
+  if (run_status != 0) {
+    result.error_message_ =
+        "Execution failed with status " + std::to_string(run_status);
+    return result;
+  }
+
+  // Parse output (format: "var=value\n")
+  std::istringstream iss(run_output);
+  std::string line;
+  while (std::getline(iss, line)) {
+    auto eq_pos = line.find('=');
+    if (eq_pos != std::string::npos) {
+      std::string name = line.substr(0, eq_pos);
+      int64_t value = std::stoll(line.substr(eq_pos + 1));
+      result.variables_[name] = value;
+    }
+  }
+
+  result.success_ = true;
+  return result;
 }
 
 auto CppTestRunner::RunFromSource(
@@ -130,7 +230,8 @@ auto CppTestRunner::RunFromSource(
   main_code << "  " << mir->name << " dut;\n";
   main_code << "  dut.RunInitials();\n";
   for (const auto& var : variables_to_read) {
-    main_code << "  std::cout << \"" << var << "=\" << dut." << var << " << std::endl;\n";
+    main_code << "  std::cout << \"" << var << "=\" << dut." << var
+              << " << std::endl;\n";
   }
   main_code << "  return 0;\n";
   main_code << "}\n";
@@ -157,8 +258,8 @@ auto CppTestRunner::RunFromSource(
   }
 
   // Compile
-  std::string compile_cmd = "clang++ -std=c++23 -o " + bin_path.string() +
-                            " " + cpp_path.string() + " 2>&1";
+  std::string compile_cmd = "clang++ -std=c++23 -o " + bin_path.string() + " " +
+                            cpp_path.string() + " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
     result.error_message_ = "Compilation failed: " + compile_output;
@@ -168,8 +269,8 @@ auto CppTestRunner::RunFromSource(
   // Run
   auto [run_status, run_output] = ExecuteCommand(bin_path.string());
   if (run_status != 0) {
-    result.error_message_ = "Execution failed with status " +
-                            std::to_string(run_status);
+    result.error_message_ =
+        "Execution failed with status " + std::to_string(run_status);
     return result;
   }
 

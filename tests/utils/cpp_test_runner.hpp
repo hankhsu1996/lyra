@@ -5,11 +5,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include "tests/framework/test_case.hpp"
+
 namespace lyra::test {
 
 class CppTestResult {
  public:
-  [[nodiscard]] auto Success() const -> bool { return success_; }
+  [[nodiscard]] auto Success() const -> bool {
+    return success_;
+  }
   [[nodiscard]] auto ErrorMessage() const -> const std::string& {
     return error_message_;
   }
@@ -25,8 +29,14 @@ class CppTestResult {
 
 class CppTestRunner {
  public:
+  // Single-file test
   static auto RunFromSource(
       const std::string& sv_code,
+      const std::vector<std::string>& variables_to_read) -> CppTestResult;
+
+  // Multi-file test
+  static auto RunFromSources(
+      const std::vector<SourceFile>& files,
       const std::vector<std::string>& variables_to_read) -> CppTestResult;
 };
 
