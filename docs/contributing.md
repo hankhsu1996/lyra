@@ -34,3 +34,4 @@ Ask:
 |----------|---------|
 | `philosophy.md` | North star, priorities, tradeoffs |
 | `architecture.md` | Component relationships, data flow |
+| `cpp-codegen.md` | SV to C++ mapping, coroutine model |
