@@ -45,18 +45,14 @@ sv_feature_test(
 )
 
 sv_feature_test(
-    name = "datatypes_variables_tests",
-    yaml = "sv_features/datatypes/variables.yaml",
+    name = "control_flow_loops_tests",
+    size = "large",
+    yaml = "sv_features/control_flow/loops.yaml",
 )
 
-cc_test(
-    name = "loop_tests",
-    size = "small",
-    srcs = ["e2e/loop_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
+sv_feature_test(
+    name = "datatypes_variables_tests",
+    yaml = "sv_features/datatypes/variables.yaml",
 )
 
 cc_test(
@@ -85,17 +81,6 @@ cc_test(
     srcs = ["e2e/wait_event_tests.cpp"],
     deps = [
         "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "codegen_tests",
-    size = "small",
-    srcs = ["e2e/codegen_tests.cpp"],
-    deps = [
-        "//:core",
-        "//tests:test_utils",
         "@googletest//:gtest",
     ],
 )

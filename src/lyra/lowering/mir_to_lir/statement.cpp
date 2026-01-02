@@ -201,6 +201,61 @@ auto LowerStatement(
       break;
     }
 
+    case mir::Statement::Kind::kFor: {
+      const auto& for_statement = mir::As<mir::ForStatement>(statement);
+      assert(for_statement.body);
+
+      // Lower initializers first (variable declarations and init expressions)
+      for (const auto& init : for_statement.initializers) {
+        LowerStatement(*init, builder, lowering_context);
+      }
+
+      auto cond_label = builder.MakeLabel("for.cond");
+      auto body_label = builder.MakeLabel("for.body");
+      auto step_label = builder.MakeLabel("for.step");
+      auto end_label = builder.MakeLabel("for.end");
+
+      builder.AddInstruction(Instruction::Jump(cond_label));
+
+      // continue jumps to step (to run step expressions before condition)
+      lowering_context.PushLoop({
+          .continue_label = step_label,
+          .break_label = end_label,
+      });
+
+      // Condition block
+      builder.StartBlock(cond_label);
+      if (for_statement.condition) {
+        auto condition_value =
+            LowerExpression(*for_statement.condition, builder);
+        builder.AddInstruction(
+            Instruction::Branch(condition_value, body_label, end_label));
+      } else {
+        // No condition = infinite loop
+        builder.AddInstruction(Instruction::Jump(body_label));
+      }
+      builder.EndBlock();
+
+      // Body block
+      builder.StartBlock(body_label);
+      LowerStatement(*for_statement.body, builder, lowering_context);
+      builder.AddInstruction(Instruction::Jump(step_label));
+      builder.EndBlock();
+
+      // Step block
+      builder.StartBlock(step_label);
+      for (const auto& step : for_statement.steps) {
+        LowerExpression(*step, builder);
+      }
+      builder.AddInstruction(Instruction::Jump(cond_label));
+      builder.EndBlock();
+
+      lowering_context.PopLoop();
+
+      builder.StartBlock(end_label);
+      break;
+    }
+
     case mir::Statement::Kind::kBreak: {
       assert(lowering_context.HasLoop());
       auto target = lowering_context.CurrentLoop().break_label;

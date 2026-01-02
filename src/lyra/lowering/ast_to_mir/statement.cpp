@@ -59,9 +59,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
       switch (timing_control.kind) {
         case slang::ast::TimingControlKind::Invalid: {
-          throw std::runtime_error(fmt::format(
-              "Unsupported timing control kind {} in AST to MIR LowerStatement",
-              slang::ast::toString(timing_control.kind)));
+          throw std::runtime_error(
+              fmt::format(
+                  "Unsupported timing control kind {} in AST to MIR "
+                  "LowerStatement",
+                  slang::ast::toString(timing_control.kind)));
         }
         case slang::ast::TimingControlKind::Delay: {
           const auto& delay_control =
@@ -69,9 +71,10 @@ auto LowerStatement(const slang::ast::Statement& statement)
           const auto& expression = delay_control.expr;
 
           if (expression.kind != ExpressionKind::IntegerLiteral) {
-            throw std::runtime_error(fmt::format(
-                "Unsupported delay expression kind {}",
-                slang::ast::toString(expression.kind)));
+            throw std::runtime_error(
+                fmt::format(
+                    "Unsupported delay expression kind {}",
+                    slang::ast::toString(expression.kind)));
           }
 
           const auto& int_literal = expression.as<slang::ast::IntegerLiteral>();
@@ -141,9 +144,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
         case slang::ast::TimingControlKind::OneStepDelay:
         case slang::ast::TimingControlKind::CycleDelay:
         case slang::ast::TimingControlKind::BlockEventList:
-          throw std::runtime_error(fmt::format(
-              "Unsupported timing control kind {} in AST to MIR LowerStatement",
-              slang::ast::toString(timing_control.kind)));
+          throw std::runtime_error(
+              fmt::format(
+                  "Unsupported timing control kind {} in AST to MIR "
+                  "LowerStatement",
+                  slang::ast::toString(timing_control.kind)));
       }
     }
 
@@ -187,36 +192,34 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
     case StatementKind::ForLoop: {
       const auto& for_loop = statement.as<slang::ast::ForLoopStatement>();
-      auto block = std::make_unique<mir::BlockStatement>();
 
-      // loopVars → VariableDeclarationStatement
-      for (const auto* var : for_loop.loopVars) {
-        block->statements.push_back(LowerVariableDeclaration(*var));
-      }
-
-      // initializers → ExpressionStatement
+      // Note: loopVars contains variables declared in the for-loop header
+      // (e.g., `for (int i = 0; ...)`). Slang emits these as separate
+      // VariableDeclaration statements in the enclosing block, so we don't
+      // need to process them here. We only process the initializers array,
+      // which contains assignment expressions for pre-declared variables.
+      std::vector<std::unique_ptr<mir::Statement>> initializers;
       for (const auto* expr : for_loop.initializers) {
-        block->statements.push_back(LowerExpressionStatement(*expr));
+        initializers.push_back(LowerExpressionStatement(*expr));
       }
 
-      // body + steps → while body
-      auto while_body = std::make_unique<mir::BlockStatement>();
-      while_body->statements.push_back(LowerStatement(for_loop.body));
-      for (const auto* step : for_loop.steps) {
-        while_body->statements.push_back(LowerExpressionStatement(*step));
-      }
-
-      // stopExpr → while condition
+      // Condition (nullptr if no stop expression = infinite loop)
       auto condition = (for_loop.stopExpr != nullptr)
                            ? LowerExpression(*for_loop.stopExpr)
-                           : std::make_unique<mir::LiteralExpression>(
-                                 common::Literal::Bool(true));
+                           : nullptr;
 
-      auto while_stmt = std::make_unique<mir::WhileStatement>(
-          std::move(condition), std::move(while_body));
+      // Step expressions
+      std::vector<std::unique_ptr<mir::Expression>> steps;
+      for (const auto* step : for_loop.steps) {
+        steps.push_back(LowerExpression(*step));
+      }
 
-      block->statements.push_back(std::move(while_stmt));
-      return block;
+      // Body
+      auto body = LowerStatement(for_loop.body);
+
+      return std::make_unique<mir::ForStatement>(
+          std::move(initializers), std::move(condition), std::move(steps),
+          std::move(body));
     }
 
     case StatementKind::ForeverLoop: {
@@ -246,9 +249,10 @@ auto LowerStatement(const slang::ast::Statement& statement)
     }
 
     default:
-      throw std::runtime_error(fmt::format(
-          "Unsupported statement kind {} in AST to MIR LowerStatement",
-          slang::ast::toString(statement.kind)));
+      throw std::runtime_error(
+          fmt::format(
+              "Unsupported statement kind {} in AST to MIR LowerStatement",
+              slang::ast::toString(statement.kind)));
   }
 }
 

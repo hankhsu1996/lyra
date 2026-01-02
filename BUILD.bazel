@@ -22,3 +22,10 @@ cc_binary(
     includes = ["include"],
     deps = ["//:core"],
 )
+
+cc_binary(
+    name = "emit_cpp",
+    srcs = ["src/main/emit_cpp.cpp"],
+    includes = ["include"],
+    deps = ["//:core"],
+)

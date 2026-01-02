@@ -1,5 +1,7 @@
 #include "lyra/codegen/cpp_codegen.hpp"
 
+#include <stdexcept>
+
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
@@ -225,6 +227,17 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kExpression: {
       const auto& expr_stmt = mir::As<mir::ExpressionStatement>(stmt);
+      // Handle system calls specially
+      if (expr_stmt.expression->kind == mir::Expression::Kind::kSystemCall) {
+        const auto& syscall =
+            mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
+        if (syscall.name == "$finish") {
+          Line("co_return;  // $finish");
+          break;
+        }
+        throw std::runtime_error(
+            "C++ codegen: unsupported system call: " + syscall.name);
+      }
       Indent();
       EmitExpression(*expr_stmt.expression);
       out_ << ";\n";
@@ -250,10 +263,72 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
       out_ << "}\n";
       break;
     }
+    case mir::Statement::Kind::kWhile: {
+      const auto& while_stmt = mir::As<mir::WhileStatement>(stmt);
+      Indent();
+      out_ << "while (";
+      EmitExpression(*while_stmt.condition);
+      out_ << ") {\n";
+      indent_++;
+      EmitStatement(*while_stmt.body);
+      indent_--;
+      Indent();
+      out_ << "}\n";
+      break;
+    }
+    case mir::Statement::Kind::kDoWhile: {
+      const auto& do_while = mir::As<mir::DoWhileStatement>(stmt);
+      Indent();
+      out_ << "do {\n";
+      indent_++;
+      EmitStatement(*do_while.body);
+      indent_--;
+      Indent();
+      out_ << "} while (";
+      EmitExpression(*do_while.condition);
+      out_ << ");\n";
+      break;
+    }
+    case mir::Statement::Kind::kFor: {
+      const auto& for_stmt = mir::As<mir::ForStatement>(stmt);
+      // Emit initializers (variable declarations must be outside for loop in
+      // C++)
+      for (const auto& init : for_stmt.initializers) {
+        EmitStatement(*init);
+      }
+      Indent();
+      out_ << "for (; ";
+      if (for_stmt.condition) {
+        EmitExpression(*for_stmt.condition);
+      }
+      out_ << "; ";
+      for (size_t i = 0; i < for_stmt.steps.size(); ++i) {
+        if (i > 0) {
+          out_ << ", ";
+        }
+        EmitExpression(*for_stmt.steps[i]);
+      }
+      out_ << ") {\n";
+      indent_++;
+      EmitStatement(*for_stmt.body);
+      indent_--;
+      Indent();
+      out_ << "}\n";
+      break;
+    }
+    case mir::Statement::Kind::kBreak: {
+      Line("break;");
+      break;
+    }
+    case mir::Statement::Kind::kContinue: {
+      Line("continue;");
+      break;
+    }
     case mir::Statement::Kind::kVariableDeclaration: {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();
-      out_ << ToCppType(decl.variable.type) << " " << decl.variable.symbol->name;
+      out_ << ToCppType(decl.variable.type) << " "
+           << decl.variable.symbol->name;
       if (decl.initializer) {
         out_ << " = ";
         EmitExpression(*decl.initializer);
@@ -264,8 +339,8 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
       break;
     }
     default:
-      Line("// TODO: " + ToString(stmt.kind));
-      break;
+      throw std::runtime_error(
+          "C++ codegen: unimplemented statement kind: " + ToString(stmt.kind));
   }
 }
 
@@ -290,8 +365,9 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
         out_ << " ^ ";
         EmitExpression(*bin.right);
         out_ << "))";
-      } else if (bin.op == mir::BinaryOperator::kLogicalShiftRight &&
-                 IsSigned(bin.left->type)) {
+      } else if (
+          bin.op == mir::BinaryOperator::kLogicalShiftRight &&
+          IsSigned(bin.left->type)) {
         // Logical right shift on signed: cast to unsigned, shift, cast back
         // SV: signed >> n (zero-fill)
         // C++: static_cast<signed_t>(static_cast<unsigned_t>(val) >> n)
@@ -389,7 +465,8 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
           break;
         case mir::UnaryOperator::kReductionXor:
           // 1 if odd number of 1-bits: __builtin_parityll
-          // TODO(hankhsu): Consider std::popcount (C++20) for target C++ version
+          // TODO(hankhsu): Consider std::popcount (C++20) for target C++
+          // version
           out_ << "__builtin_parityll(static_cast<uint64_t>(static_cast<"
                << ToCppUnsignedType(unary.operand->type) << ">(";
           EmitExpression(*unary.operand);
@@ -418,8 +495,8 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
       break;
     }
     default:
-      out_ << "/* TODO: " << ToString(expr.kind) << " */";
-      break;
+      throw std::runtime_error(
+          "C++ codegen: unimplemented expression kind: " + ToString(expr.kind));
   }
 }
 

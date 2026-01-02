@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <sstream>
 
 #include <slang/ast/Compilation.h>
@@ -101,6 +102,26 @@ class Module {
 using namespace lyra::sdk;
 )";
 
+auto MakeUniqueTempDir() -> std::filesystem::path {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<uint64_t> dis;
+
+  // Use TEST_TMPDIR if running under bazel test, otherwise use system temp
+  std::filesystem::path base;
+  const char* test_tmpdir = std::getenv("TEST_TMPDIR");
+  if (test_tmpdir != nullptr) {
+    base = test_tmpdir;
+  } else {
+    base = std::filesystem::temp_directory_path() / "lyra_test";
+  }
+  std::filesystem::create_directories(base);
+
+  auto unique_dir = base / std::to_string(dis(gen));
+  std::filesystem::create_directories(unique_dir);
+  return unique_dir;
+}
+
 auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   std::array<char, 128> buffer{};
   std::string result;
@@ -131,9 +152,8 @@ auto CppTestRunner::RunFromSources(
     const std::vector<std::string>& variables_to_read) -> CppTestResult {
   CppTestResult result;
 
-  // Create temp directory for SV files
-  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test";
-  std::filesystem::create_directories(tmp_dir);
+  // Create unique temp directory for this test
+  auto tmp_dir = MakeUniqueTempDir();
 
   // Write SV files to temp directory
   std::vector<std::string> file_paths;
@@ -262,25 +282,34 @@ auto CppTestRunner::RunFromSource(
   main_code << "  return 0;\n";
   main_code << "}\n";
 
-  // Create temp directory and files
-  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test";
-  std::filesystem::create_directories(tmp_dir);
+  // Create unique temp directory for this test
+  auto tmp_dir = MakeUniqueTempDir();
 
   auto cpp_path = tmp_dir / "test.cpp";
   auto bin_path = tmp_dir / "test";
 
   // Write complete C++ file
+  std::string full_code;
   {
-    std::ofstream out(cpp_path);
-    out << kSdkCode << "\n";
+    std::ostringstream code_stream;
+    code_stream << kSdkCode << "\n";
     // Skip the #include and using lines from generated code
     auto pos = generated.find("class ");
     if (pos != std::string::npos) {
-      out << generated.substr(pos);
+      code_stream << generated.substr(pos);
     } else {
-      out << generated;
+      code_stream << generated;
     }
-    out << main_code.str();
+    code_stream << main_code.str();
+    full_code = code_stream.str();
+
+    std::ofstream out(cpp_path);
+    out << full_code;
+  }
+
+  // Debug: print generated code if LYRA_DEBUG_CODEGEN is set
+  if (std::getenv("LYRA_DEBUG_CODEGEN") != nullptr) {
+    std::cerr << "=== Generated C++ ===\n" << full_code << "\n=== End ===\n";
   }
 
   // Compile

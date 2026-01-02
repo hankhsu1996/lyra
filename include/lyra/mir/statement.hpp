@@ -31,6 +31,7 @@ class Statement {
     kConditional,
     kWhile,
     kDoWhile,
+    kFor,
     kBreak,
     kContinue,
 
@@ -71,6 +72,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "While";
     case Statement::Kind::kDoWhile:
       return "DoWhile";
+    case Statement::Kind::kFor:
+      return "For";
     case Statement::Kind::kBreak:
       return "Break";
     case Statement::Kind::kContinue:
@@ -212,6 +215,35 @@ class DoWhileStatement : public Statement {
       std::unique_ptr<Expression> condition, std::unique_ptr<Statement> body)
       : Statement(kKindValue),
         condition(std::move(condition)),
+        body(std::move(body)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class ForStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kFor;
+  // Loop variable declarations (e.g., int i = 0)
+  std::vector<std::unique_ptr<Statement>> initializers;
+  // Condition expression (nullptr = infinite loop)
+  std::unique_ptr<Expression> condition;
+  // Step expressions (e.g., i = i + 1)
+  std::vector<std::unique_ptr<Expression>> steps;
+  // Loop body
+  std::unique_ptr<Statement> body;
+
+  ForStatement(
+      std::vector<std::unique_ptr<Statement>> initializers,
+      std::unique_ptr<Expression> condition,
+      std::vector<std::unique_ptr<Expression>> steps,
+      std::unique_ptr<Statement> body)
+      : Statement(kKindValue),
+        initializers(std::move(initializers)),
+        condition(std::move(condition)),
+        steps(std::move(steps)),
         body(std::move(body)) {
   }
 

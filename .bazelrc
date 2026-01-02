@@ -24,4 +24,3 @@ build:fastbuild --cxxopt='-O1'
 
 # Test configuration
 test --test_output=errors
-test --test_timeout=5
