@@ -1,0 +1,57 @@
+feature: variable_declarations
+description: Tests for variable declarations and scoping
+
+cases:
+  - name: declaration_without_init
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int a;
+          a = 123;
+          result = a;
+        end
+      endmodule
+    expect:
+      result: 123
+
+  - name: declaration_with_init
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int a = 42;
+          result = a;
+        end
+      endmodule
+    expect:
+      result: 42
+
+  - name: multiple_locals_chained
+    sv: |
+      module Test;
+        int final_a, final_b, final_c;
+        initial begin
+          int a = 1;
+          int b = a + 2;
+          int c = b + 3;
+          final_a = a;
+          final_b = b;
+          final_c = c;
+        end
+      endmodule
+    expect:
+      final_a: 1
+      final_b: 3
+      final_c: 6
+
+  - name: local_scope_isolation
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          int x = 99;
+        end
+      endmodule
+    expect:
+      x: 0

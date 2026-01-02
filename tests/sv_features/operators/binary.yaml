@@ -55,13 +55,203 @@ cases:
     expect:
       d: 35
 
-  - name: multi_file_basic
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x;
-            initial x = 100;
-          endmodule
+  - name: comparison_equal
+    sv: |
+      module Test;
+        int a, b;
+        bit c, d;
+        initial begin
+          a = 10;
+          b = 10;
+          c = (a == b);
+          d = (a == 11);
+        end
+      endmodule
     expect:
-      x: 100
+      c: 1
+      d: 0
+
+  - name: comparison_not_equal
+    sv: |
+      module Test;
+        int a, b;
+        bit c, d;
+        initial begin
+          a = 10;
+          b = 11;
+          c = (a != b);
+          d = (a != 10);
+        end
+      endmodule
+    expect:
+      c: 1
+      d: 0
+
+  - name: comparison_less_than
+    sv: |
+      module Test;
+        int a, b;
+        bit c, d;
+        initial begin
+          a = 5;
+          b = 10;
+          c = (a < b);
+          d = (b < a);
+        end
+      endmodule
+    expect:
+      c: 1
+      d: 0
+
+  - name: comparison_less_than_equal
+    sv: |
+      module Test;
+        int a, b, c;
+        bit d, e, f;
+        initial begin
+          a = 5;
+          b = 10;
+          c = 5;
+          d = (a <= b);
+          e = (a <= c);
+          f = (b <= a);
+        end
+      endmodule
+    expect:
+      d: 1
+      e: 1
+      f: 0
+
+  - name: comparison_greater_than
+    sv: |
+      module Test;
+        int a, b;
+        bit c, d;
+        initial begin
+          a = 15;
+          b = 10;
+          c = (a > b);
+          d = (b > a);
+        end
+      endmodule
+    expect:
+      c: 1
+      d: 0
+
+  - name: comparison_greater_than_equal
+    sv: |
+      module Test;
+        int a, b, c;
+        bit d, e, f;
+        initial begin
+          a = 15;
+          b = 10;
+          c = 15;
+          d = (a >= b);
+          e = (a >= c);
+          f = (b >= a);
+        end
+      endmodule
+    expect:
+      d: 1
+      e: 1
+      f: 0
+
+  - name: bitwise_and
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 3;
+          c = a & b;
+        end
+      endmodule
+    expect:
+      c: 1
+
+  - name: bitwise_or
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 3;
+          c = a | b;
+        end
+      endmodule
+    expect:
+      c: 7
+
+  - name: bitwise_xor
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = 3;
+          c = a ^ b;
+        end
+      endmodule
+    expect:
+      c: 6
+
+  - name: logical_and
+    sv: |
+      module Test;
+        int a, b;
+        bit r1, r2, r3;
+        initial begin
+          a = 5;
+          b = 0;
+          r1 = a && b;
+          r2 = a && 1;
+          r3 = b && b;
+        end
+      endmodule
+    expect:
+      r1: 0
+      r2: 1
+      r3: 0
+
+  - name: logical_or
+    sv: |
+      module Test;
+        int a, b;
+        bit r1, r2, r3;
+        initial begin
+          a = 5;
+          b = 0;
+          r1 = a || b;
+          r2 = b || b;
+          r3 = a || a;
+        end
+      endmodule
+    expect:
+      r1: 1
+      r2: 0
+      r3: 1
+
+  - name: shift_left
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 8;
+          b = a << 2;
+        end
+      endmodule
+    expect:
+      b: 32
+
+  - name: shift_right
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 32;
+          b = a >> 2;
+        end
+      endmodule
+    expect:
+      b: 8

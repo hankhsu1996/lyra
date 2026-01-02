@@ -126,7 +126,7 @@ void CppCodegen::EmitClass(const mir::Module& module) {
 
 void CppCodegen::EmitVariables(const std::vector<common::Variable>& variables) {
   for (const auto& var : variables) {
-    std::string type_str = "int";  // TODO: proper type mapping
+    std::string type_str = "int";  // TODO(hankhsu): proper type mapping
     Line(type_str + " " + std::string(var.symbol->name) + " = 0;");
   }
 }
@@ -167,6 +167,39 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
       out_ << ";\n";
       break;
     }
+    case mir::Statement::Kind::kConditional: {
+      const auto& cond = mir::As<mir::ConditionalStatement>(stmt);
+      Indent();
+      out_ << "if (";
+      EmitExpression(*cond.condition);
+      out_ << ") {\n";
+      indent_++;
+      EmitStatement(*cond.then_branch);
+      indent_--;
+      if (cond.else_branch) {
+        Indent();
+        out_ << "} else {\n";
+        indent_++;
+        EmitStatement(*cond.else_branch);
+        indent_--;
+      }
+      Indent();
+      out_ << "}\n";
+      break;
+    }
+    case mir::Statement::Kind::kVariableDeclaration: {
+      const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
+      Indent();
+      out_ << "int " << decl.variable.symbol->name;
+      if (decl.initializer) {
+        out_ << " = ";
+        EmitExpression(*decl.initializer);
+      } else {
+        out_ << " = 0";
+      }
+      out_ << ";\n";
+      break;
+    }
     default:
       Line("// TODO: " + ToString(stmt.kind));
       break;
@@ -198,6 +231,61 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       out_ << assign.target->name << " = ";
       EmitExpression(*assign.value);
+      break;
+    }
+    case mir::Expression::Kind::kTernary: {
+      const auto& ternary = mir::As<mir::TernaryExpression>(expr);
+      out_ << "(";
+      EmitExpression(*ternary.condition);
+      out_ << " ? ";
+      EmitExpression(*ternary.true_expression);
+      out_ << " : ";
+      EmitExpression(*ternary.false_expression);
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kUnary: {
+      const auto& unary = mir::As<mir::UnaryExpression>(expr);
+      out_ << "(";
+      switch (unary.op) {
+        case mir::UnaryOperator::kPlus:
+          out_ << "+";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kMinus:
+          out_ << "-";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kLogicalNot:
+          out_ << "!";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kBitwiseNot:
+          out_ << "~";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kPreincrement:
+          out_ << "++";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kPredecrement:
+          out_ << "--";
+          EmitExpression(*unary.operand);
+          break;
+        case mir::UnaryOperator::kPostincrement:
+          EmitExpression(*unary.operand);
+          out_ << "++";
+          break;
+        case mir::UnaryOperator::kPostdecrement:
+          EmitExpression(*unary.operand);
+          out_ << "--";
+          break;
+        default:
+          out_ << "/* TODO: " << ToString(unary.op) << " */";
+          EmitExpression(*unary.operand);
+          break;
+      }
+      out_ << ")";
       break;
     }
     default:

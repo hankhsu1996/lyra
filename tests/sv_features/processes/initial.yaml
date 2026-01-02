@@ -1,0 +1,38 @@
+feature: initial_blocks
+description: Tests for initial blocks and sequential execution
+
+cases:
+  - name: assign_constant
+    sv: |
+      module Test;
+        int a;
+        initial a = 42;
+      endmodule
+    expect:
+      a: 42
+
+  - name: two_initial_blocks
+    sv: |
+      module Test;
+        int a, b;
+        initial a = 10;
+        initial b = 20;
+      endmodule
+    expect:
+      a: 10
+      b: 20
+
+  - name: add_and_assign_sequence
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 5;
+          b = a + 3;
+          c = b + 4;
+        end
+      endmodule
+    expect:
+      a: 5
+      b: 8
+      c: 12

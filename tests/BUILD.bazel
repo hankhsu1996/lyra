@@ -25,33 +25,34 @@ cc_library(
 
 sv_feature_test(
     name = "operators_binary_tests",
+    size = "large",
     yaml = "sv_features/operators/binary.yaml",
+)
+
+sv_feature_test(
+    name = "operators_unary_tests",
+    yaml = "sv_features/operators/unary.yaml",
+)
+
+sv_feature_test(
+    name = "processes_initial_tests",
+    yaml = "sv_features/processes/initial.yaml",
+)
+
+sv_feature_test(
+    name = "control_flow_conditionals_tests",
+    yaml = "sv_features/control_flow/conditionals.yaml",
+)
+
+sv_feature_test(
+    name = "datatypes_variables_tests",
+    yaml = "sv_features/datatypes/variables.yaml",
 )
 
 cc_test(
     name = "binary_ops_tests",
     size = "small",
     srcs = ["e2e/binary_ops_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "control_flow_tests",
-    size = "small",
-    srcs = ["e2e/control_flow_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "initial_tests",
-    size = "small",
-    srcs = ["e2e/initial_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",
@@ -92,16 +93,6 @@ cc_test(
     name = "unary_ops_tests",
     size = "small",
     srcs = ["e2e/unary_ops_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "variable_declaration_tests",
-    size = "small",
-    srcs = ["e2e/variable_declaration_tests.cpp"],
     deps = [
         "//:core",
         "@googletest//:gtest",

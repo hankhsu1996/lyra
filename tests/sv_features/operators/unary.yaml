@@ -1,0 +1,149 @@
+feature: unary_operators
+description: Tests for unary operators (+, -, !, ~, ++, --)
+
+cases:
+  - name: unary_plus
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = +a;
+        end
+      endmodule
+    expect:
+      b: 10
+
+  - name: unary_minus
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = -a;
+        end
+      endmodule
+    expect:
+      b: -10
+
+  - name: logical_not_nonzero
+    sv: |
+      module Test;
+        int a;
+        bit r;
+        initial begin
+          a = 10;
+          r = !a;
+        end
+      endmodule
+    expect:
+      r: 0
+
+  - name: logical_not_zero
+    sv: |
+      module Test;
+        int a;
+        bit r;
+        initial begin
+          a = 0;
+          r = !a;
+        end
+      endmodule
+    expect:
+      r: 1
+
+  - name: bitwise_not
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = ~a;
+        end
+      endmodule
+    expect:
+      b: -11
+
+  - name: compound_unary
+    sv: |
+      module Test;
+        int a, b, c, d;
+        initial begin
+          a = 5;
+          b = 3;
+          c = -a + b * 2;
+          d = -(a + b);
+        end
+      endmodule
+    expect:
+      c: 1
+      d: -8
+
+  - name: pre_increment
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5;
+          b = ++a;
+        end
+      endmodule
+    expect:
+      a: 6
+      b: 6
+
+  - name: post_increment
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5;
+          b = a++;
+        end
+      endmodule
+    expect:
+      a: 6
+      b: 5
+
+  - name: pre_decrement
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5;
+          b = --a;
+        end
+      endmodule
+    expect:
+      a: 4
+      b: 4
+
+  - name: post_decrement
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5;
+          b = a--;
+        end
+      endmodule
+    expect:
+      a: 4
+      b: 5
+
+  - name: nested_increment_decrement
+    sv: |
+      module Test;
+        int a, b, c, d;
+        initial begin
+          a = 5;
+          b = 10;
+          c = ++a + b--;
+          d = --a + ++b;
+        end
+      endmodule
+    expect:
+      a: 5
+      b: 10
+      c: 16
+      d: 15
