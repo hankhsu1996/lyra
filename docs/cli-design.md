@@ -13,6 +13,7 @@ Design document for the `lyra` command-line tool.
 | `lyra emit <file.sv>`     | Done   | Generate buildable C++ project |
 | `lyra emit --out-dir gen` | Done   | Specify output directory       |
 | `lyra check <file.sv>`    | Done   | Parse and validate only        |
+| `lyra dump <fmt> <file>`  | Done   | Dump IR (cpp, mir, lir)        |
 | `lyra build`              | —      | Generate binary only (no run)  |
 | `lyra init`               | —      | Initialize new project         |
 
@@ -37,6 +38,18 @@ cmake --preset default
 cmake --build build
 ./build/sim
 ```
+
+### Dump Command (`lyra dump`)
+
+Debug command to inspect internal representations:
+
+```bash
+lyra dump cpp file.sv   # Generated C++ code
+lyra dump mir file.sv   # MIR (high-level, structured)
+lyra dump lir file.sv   # LIR (low-level, linearized)
+```
+
+Useful for debugging the compiler pipeline and understanding how SystemVerilog maps to each IR stage.
 
 ## Backends
 

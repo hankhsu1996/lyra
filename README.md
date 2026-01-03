@@ -31,6 +31,9 @@ lyra run --interpret <file.sv>     # Run with interpreter
 lyra emit <file.sv>                # Generate buildable C++ project (to out/)
 lyra emit --out-dir <dir> <file>   # Specify output directory
 lyra check <file.sv>               # Parse and validate only
+lyra dump cpp <file.sv>            # Dump generated C++ code
+lyra dump mir <file.sv>            # Dump MIR (high-level IR)
+lyra dump lir <file.sv>            # Dump LIR (low-level IR)
 ```
 
 ## Build Instructions

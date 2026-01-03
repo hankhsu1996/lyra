@@ -1,5 +1,6 @@
 #pragma once
 
+#include <format>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -8,6 +9,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include "lyra/common/formatting.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
@@ -51,6 +53,7 @@ class Statement {
 
   virtual ~Statement() = default;
   virtual void Accept(MirVisitor& visitor) const = 0;
+  [[nodiscard]] virtual auto ToString(int indent) const -> std::string = 0;
 };
 
 // Convert Statement::Kind to string
@@ -106,6 +109,12 @@ class VariableDeclarationStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    auto init = initializer ? " = " + initializer->ToString() : "";
+    return std::format(
+        "{}var {}{}\n", common::Indent(indent), variable.symbol->name, init);
+  }
 };
 
 class AssignStatement : public Statement {
@@ -121,6 +130,11 @@ class AssignStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format(
+        "{}{} = {}\n", common::Indent(indent), target->name, value->ToString());
+  }
 };
 
 class ExpressionStatement : public Statement {
@@ -134,6 +148,11 @@ class ExpressionStatement : public Statement {
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format(
+        "{}{}\n", common::Indent(indent), expression->ToString());
   }
 };
 
@@ -150,6 +169,10 @@ class WaitEventStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format("{}@(...)\n", common::Indent(indent));
+  }
 };
 
 class DelayStatement : public Statement {
@@ -163,6 +186,10 @@ class DelayStatement : public Statement {
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format("{}#{}\n", common::Indent(indent), delay_amount);
   }
 };
 
@@ -185,6 +212,19 @@ class ConditionalStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    std::string result =
+        std::format("{}if {}\n", common::Indent(indent), condition->ToString());
+    if (then_branch) {
+      result += then_branch->ToString(indent + 1);
+    }
+    if (else_branch) {
+      result += std::format("{}else\n", common::Indent(indent));
+      result += else_branch->ToString(indent + 1);
+    }
+    return result;
+  }
 };
 
 class WhileStatement : public Statement {
@@ -203,6 +243,15 @@ class WhileStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    auto result = std::format(
+        "{}while {}\n", common::Indent(indent), condition->ToString());
+    if (body) {
+      result += body->ToString(indent + 1);
+    }
+    return result;
+  }
 };
 
 class DoWhileStatement : public Statement {
@@ -220,6 +269,16 @@ class DoWhileStatement : public Statement {
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    std::string result = std::format("{}do\n", common::Indent(indent));
+    if (body) {
+      result += body->ToString(indent + 1);
+    }
+    result += std::format(
+        "{}while {}\n", common::Indent(indent), condition->ToString());
+    return result;
   }
 };
 
@@ -250,6 +309,14 @@ class ForStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    auto result = std::format("{}for (...)\n", common::Indent(indent));
+    if (body) {
+      result += body->ToString(indent + 1);
+    }
+    return result;
+  }
 };
 
 class BreakStatement : public Statement {
@@ -261,6 +328,10 @@ class BreakStatement : public Statement {
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format("{}break\n", common::Indent(indent));
   }
 };
 
@@ -274,6 +345,10 @@ class ContinueStatement : public Statement {
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format("{}continue\n", common::Indent(indent));
+  }
 };
 
 class BlockStatement : public Statement {
@@ -286,6 +361,14 @@ class BlockStatement : public Statement {
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    std::string result;
+    for (const auto& stmt : statements) {
+      result += stmt->ToString(indent);
+    }
+    return result;
   }
 };
 

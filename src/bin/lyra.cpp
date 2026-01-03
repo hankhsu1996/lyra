@@ -13,7 +13,9 @@
 #include "lyra/compiler/compiler.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
+#include "lyra/lir/module.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
+#include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
 
 namespace fs = std::filesystem;
 
@@ -212,6 +214,54 @@ auto CheckCommand(const std::vector<std::string>& files) -> int {
   }
 }
 
+enum class DumpFormat { kCpp, kMir, kLir };
+
+auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
+    -> int {
+  if (files.empty()) {
+    std::cerr << "lyra dump: no input files\n";
+    return 1;
+  }
+
+  try {
+    lyra::frontend::SlangFrontend frontend;
+    auto compilation = frontend.LoadFromFiles(files);
+    if (!compilation) {
+      std::cerr << "lyra dump: failed to parse\n";
+      return 1;
+    }
+
+    const auto& root = compilation->getRoot();
+    auto mir = lyra::lowering::ast_to_mir::AstToMir(root);
+    if (!mir) {
+      std::cerr << "lyra dump: failed to lower to MIR\n";
+      return 1;
+    }
+
+    switch (format) {
+      case DumpFormat::kCpp: {
+        lyra::compiler::Codegen codegen;
+        std::cout << codegen.Generate(*mir);
+        break;
+      }
+      case DumpFormat::kMir: {
+        std::cout << mir->ToString();
+        break;
+      }
+      case DumpFormat::kLir: {
+        auto lir = lyra::lowering::mir_to_lir::MirToLir(*mir);
+        std::cout << lir->ToString(lyra::common::FormatMode::kContextual);
+        break;
+      }
+    }
+
+    return 0;
+  } catch (const std::exception& e) {
+    std::cerr << "lyra dump: " << e.what() << "\n";
+    return 1;
+  }
+}
+
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -240,9 +290,16 @@ auto main(int argc, char* argv[]) -> int {
   check_cmd.add_argument("files").remaining().help(
       "SystemVerilog source files");
 
+  // Subcommand: dump
+  argparse::ArgumentParser dump_cmd("dump");
+  dump_cmd.add_description("Dump internal representations (for debugging)");
+  dump_cmd.add_argument("format").help("Output format: cpp, mir, or lir");
+  dump_cmd.add_argument("files").remaining().help("SystemVerilog source files");
+
   program.add_subparser(run_cmd);
   program.add_subparser(emit_cmd);
   program.add_subparser(check_cmd);
+  program.add_subparser(dump_cmd);
 
   try {
     program.parse_args(argc, argv);
@@ -267,6 +324,25 @@ auto main(int argc, char* argv[]) -> int {
   if (program.is_subcommand_used("check")) {
     auto files = check_cmd.get<std::vector<std::string>>("files");
     return CheckCommand(files);
+  }
+
+  if (program.is_subcommand_used("dump")) {
+    auto format_str = dump_cmd.get<std::string>("format");
+    auto files = dump_cmd.get<std::vector<std::string>>("files");
+
+    DumpFormat format{};
+    if (format_str == "cpp") {
+      format = DumpFormat::kCpp;
+    } else if (format_str == "mir") {
+      format = DumpFormat::kMir;
+    } else if (format_str == "lir") {
+      format = DumpFormat::kLir;
+    } else {
+      std::cerr << "lyra dump: unknown format '" << format_str
+                << "' (use cpp, mir, or lir)\n";
+      return 1;
+    }
+    return DumpCommand(files, format);
   }
 
   // No subcommand provided
