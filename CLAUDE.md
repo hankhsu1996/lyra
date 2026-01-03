@@ -58,12 +58,10 @@ SystemVerilog → AST → MIR → LIR → Interpreter → Results
 ### Key Components
 
 - **Driver** (`driver/driver.hpp`): Entry point orchestrating the full pipeline
-
   - `Driver::RunFromSource(code)` or `Driver::RunFromFiles(paths)`
   - Returns `DriverResult` with `ReadVariable(name)` to query final values
 
 - **LIR Context** (`lir/context.hpp`): Resource management for temps, labels, literals
-
   - `TempRef`, `LabelRef`, `LiteralRef` are pointer-based references into context pools
 
 - **SimulationRunner** (`interpreter/simulation_runner.hpp`): Implements SystemVerilog time regions
@@ -104,16 +102,3 @@ TEST(FeatureTest, TestName) {
 ## Naming Conventions
 
 Use terminology from the IEEE 1800 SystemVerilog LRM for precision and consistency. When implementing SystemVerilog features, reference the relevant LRM section and use its exact terminology in class names, function names, and comments.
-
-## Commit Format
-
-```
-<Summary starting with verb, 50 chars or less>
-
-- Bullet point explaining what changed
-- Another bullet point if needed (2-5 total)
-
-🤖 Generated with [Claude Code](https://claude.ai/code)
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
-```
