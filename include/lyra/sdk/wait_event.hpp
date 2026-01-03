@@ -3,6 +3,7 @@
 #include <coroutine>
 #include <cstdint>
 #include <functional>
+#include <type_traits>
 #include <vector>
 
 namespace lyra::sdk {
@@ -15,6 +16,42 @@ extern thread_local Scheduler* current_scheduler;
 
 // Edge kind for wait triggers (matches common::EdgeKind)
 enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
+
+template <typename T>
+auto MakeTriggerChecker(T* var, EdgeKind kind) -> std::function<bool()> {
+  if (kind == EdgeKind::kAnyChange) {
+    return [var, prev = *var]() mutable {
+      bool triggered = *var != prev;
+      prev = *var;
+      return triggered;
+    };
+  }
+  // Edge triggers only make sense for types convertible to uint64_t
+  if constexpr (std::is_convertible_v<T, uint64_t>) {
+    return [var, kind, prev_bit = static_cast<uint64_t>(*var) & 1]() mutable {
+      uint64_t new_bit = static_cast<uint64_t>(*var) & 1;
+      bool triggered = false;
+      switch (kind) {
+        case EdgeKind::kPosedge:
+          triggered = (prev_bit == 0 && new_bit == 1);
+          break;
+        case EdgeKind::kNegedge:
+          triggered = (prev_bit == 1 && new_bit == 0);
+          break;
+        case EdgeKind::kBothEdge:
+          triggered = (prev_bit != new_bit);
+          break;
+        default:
+          break;
+      }
+      prev_bit = new_bit;
+      return triggered;
+    };
+  } else {
+    // Non-numeric types don't support edge triggers
+    return []() { return false; };
+  }
+}
 
 // NOLINTBEGIN(readability-identifier-naming)
 // Coroutine awaitable requires specific naming convention from C++ standard
@@ -44,11 +81,9 @@ class ImplicitEvent {
 };
 
 // Trigger info for multi-variable waits
-// Uses type-erased reader function for extensibility to any type/bit-width
+// Captures comparison behavior at the source for any type
 struct TriggerInfo {
-  std::function<int64_t()> read_value;  // Type-erased value reader
-  EdgeKind kind;
-  int64_t value;  // Captured value at registration time
+  std::function<bool()> check_triggered;  // Returns true if trigger fired
 };
 
 // Awaitable for OR-combined implicit events (e.g., always_comb sensitivity

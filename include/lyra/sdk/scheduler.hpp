@@ -12,13 +12,10 @@
 
 namespace lyra::sdk {
 
-// Waiter represents a suspended coroutine waiting for a value change
-// Uses type-erased reader function for extensibility to any type/bit-width
+// Waiter represents a suspended coroutine waiting for a trigger condition
 struct Waiter {
   std::coroutine_handle<> handle;
-  std::function<int64_t()> read_value;  // Type-erased value reader
-  EdgeKind kind;
-  int64_t previous_value;
+  std::function<bool()> check_triggered;  // Type-erased trigger check
 };
 
 class Scheduler {
@@ -65,14 +62,9 @@ class Scheduler {
   }
 
   void RegisterWait(
-      std::coroutine_handle<> handle, std::function<int64_t()> read_value,
-      EdgeKind kind, int64_t current_value) {
+      std::coroutine_handle<> handle, std::function<bool()> check_triggered) {
     waiters_.push_back(
-        Waiter{
-            .handle = handle,
-            .read_value = std::move(read_value),
-            .kind = kind,
-            .previous_value = current_value});
+        Waiter{.handle = handle, .check_triggered = std::move(check_triggered)});
   }
 
   [[nodiscard]] auto CurrentTime() const -> uint64_t {
@@ -120,10 +112,9 @@ class Scheduler {
   void CheckTriggers() {
     std::vector<std::coroutine_handle<>> to_resume;
 
-    // First pass: find which handles should be resumed
-    for (const auto& waiter : waiters_) {
-      int64_t current_value = waiter.read_value();
-      if (ShouldTrigger(waiter.previous_value, current_value, waiter.kind)) {
+    // First pass: check each waiter's trigger condition
+    for (auto& waiter : waiters_) {
+      if (waiter.check_triggered()) {
         // Only add if not already in to_resume (OR semantics)
         bool already_added = false;
         for (const auto& h : to_resume) {
@@ -138,7 +129,7 @@ class Scheduler {
       }
     }
 
-    // Second pass: remove ALL waiters for triggered handles and update others
+    // Second pass: remove ALL waiters for triggered handles
     auto it = waiters_.begin();
     while (it != waiters_.end()) {
       bool should_remove = false;
@@ -151,8 +142,6 @@ class Scheduler {
       if (should_remove) {
         it = waiters_.erase(it);
       } else {
-        // Update previous value for next check
-        it->previous_value = it->read_value();
         ++it;
       }
     }
@@ -177,30 +166,6 @@ class Scheduler {
   }
 
  private:
-  // Check if value change should trigger based on edge kind
-  // Follows the same pattern as interpreter's TriggerManager::ShouldTrigger
-  static auto ShouldTrigger(
-      int64_t old_value, int64_t new_value, EdgeKind edge_kind) -> bool {
-    if (edge_kind == EdgeKind::kAnyChange) {
-      return old_value != new_value;
-    }
-
-    // For edge detection, only check bit 0
-    uint64_t old_bit0 = static_cast<uint64_t>(old_value) & 1;
-    uint64_t new_bit0 = static_cast<uint64_t>(new_value) & 1;
-
-    switch (edge_kind) {
-      case EdgeKind::kPosedge:
-        return (old_bit0 == 0 && new_bit0 == 1);
-      case EdgeKind::kNegedge:
-        return (old_bit0 == 1 && new_bit0 == 0);
-      case EdgeKind::kBothEdge:
-        return (old_bit0 != new_bit0);
-      default:
-        return false;
-    }
-  }
-
   std::vector<Module*> modules_;
   std::vector<Task> tasks_;
   uint64_t current_time_ = 0;
@@ -220,11 +185,7 @@ inline void Delay::await_suspend(std::coroutine_handle<> handle) const {
 template <typename T>
 void ImplicitEvent<T>::await_suspend(std::coroutine_handle<> handle) const {
   if (current_scheduler != nullptr) {
-    // Capture type in lambda for type-safe reading
-    T* var = var_;
-    current_scheduler->RegisterWait(
-        handle, [var]() { return static_cast<int64_t>(*var); }, kind_,
-        static_cast<int64_t>(*var_));
+    current_scheduler->RegisterWait(handle, MakeTriggerChecker(var_, kind_));
   }
 }
 
@@ -233,8 +194,7 @@ inline void ImplicitEventOr::await_suspend(
     std::coroutine_handle<> handle) const {
   if (current_scheduler != nullptr) {
     for (const auto& trigger : triggers_) {
-      current_scheduler->RegisterWait(
-          handle, trigger.read_value, trigger.kind, trigger.value);
+      current_scheduler->RegisterWait(handle, trigger.check_triggered);
     }
   }
 }

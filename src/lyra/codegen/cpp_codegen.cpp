@@ -361,7 +361,6 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
              edge_kind_str(trigger.edge_kind) + ");");
       } else {
         // Multiple triggers (OR semantics) - use ImplicitEventOr
-        // Each trigger captures the variable in a lambda for type-safe reading
         Indent();
         out_ << "co_await ImplicitEventOr({\n";
         indent_++;
@@ -369,9 +368,8 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
           const auto& trigger = wait.triggers[i];
           std::string var_name(trigger.variable->name);
           Indent();
-          out_ << "{[&]() { return static_cast<int64_t>(" << var_name << "); }, "
-               << edge_kind_str(trigger.edge_kind)
-               << ", static_cast<int64_t>(" << var_name << ")}";
+          out_ << "{MakeTriggerChecker(&" << var_name << ", "
+               << edge_kind_str(trigger.edge_kind) << ")}";
           if (i + 1 < wait.triggers.size()) {
             out_ << ",";
           }

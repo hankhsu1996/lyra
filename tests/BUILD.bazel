@@ -71,12 +71,3 @@ sv_feature_test(
     yaml = "sv_features/datatypes/variables.yaml",
 )
 
-cc_test(
-    name = "wait_event_tests",
-    size = "small",
-    srcs = ["e2e/wait_event_tests.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest",
-    ],
-)

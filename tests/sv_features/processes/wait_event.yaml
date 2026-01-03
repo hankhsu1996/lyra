@@ -174,3 +174,22 @@ cases:
     expect:
       count: 2
     expect_time: 20
+
+  - name: any_change_string_trigger
+    sv: |
+      module Test;
+        string s;
+        int seen;
+        initial begin
+          @(s);
+          seen = 1;
+        end
+
+        initial begin
+          s = "abc";
+          #3 s = "def";
+        end
+      endmodule
+    expect:
+      seen: 1
+    expect_time: 3

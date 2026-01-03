@@ -2,6 +2,18 @@
 
 Universal coding patterns for maintainable software.
 
+## No Workarounds
+
+Never accept workarounds or band-aid fixes. We are building a large, complex system at an early stage - every architectural decision compounds. A workaround today becomes expensive technical debt tomorrow.
+
+Signs you're creating a workaround:
+
+- Forcing data into a structure it doesn't naturally fit
+- Adding special cases for "just this one thing"
+- Saying "this works for now"
+
+The fix: step back, understand why the current design doesn't accommodate the new requirement, and extend the design properly.
+
 ## Parameterize, Don't Specialize
 
 When multiple constructs differ only by a value, create one parameterized construct instead of many specialized ones.
@@ -45,3 +57,7 @@ Before implementing, find how similar problems are solved elsewhere in the codeb
 ## Use Domain Vocabulary
 
 Name things using terminology from the problem domain's authoritative sources. Precision in naming prevents ambiguity and aids discoverability.
+
+## Comments Explain Why, Not What
+
+Code should be self-explanatory. Comments add context the code cannot express: motivation, trade-offs, non-obvious techniques. If code needs explanation, improve the code (better names, clearer structure) rather than adding comments.
