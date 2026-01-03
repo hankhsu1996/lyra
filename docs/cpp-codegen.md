@@ -2,20 +2,20 @@
 
 ## Mapping SystemVerilog to C++
 
-| SystemVerilog | C++ |
-|---------------|-----|
-| `module` | class inheriting from `Module` |
-| `parameter` | constructor argument |
-| `parameter type` | template parameter |
-| variables | member variables |
-| `initial` | coroutine method returning `Task` |
-| `always @(...)` | coroutine method returning `Task` |
-| `always_comb` | regular method, re-evaluated on input change |
-| `always_ff` | coroutine with clock edge sensitivity |
-| `generate for/if` | constructor logic |
-| non-blocking `<=` | deferred update via SDK |
-| `#delay` | `co_await delay(n)` |
-| `@(posedge clk)` | `co_await event(clk, Edge::Posedge)` |
+| SystemVerilog     | C++                                          |
+| ----------------- | -------------------------------------------- |
+| `module`          | class inheriting from `Module`               |
+| `parameter`       | constructor argument                         |
+| `parameter type`  | template parameter                           |
+| variables         | member variables                             |
+| `initial`         | coroutine method returning `Task`            |
+| `always @(...)`   | coroutine method returning `Task`            |
+| `always_comb`     | regular method, re-evaluated on input change |
+| `always_ff`       | coroutine with clock edge sensitivity        |
+| `generate for/if` | constructor logic                            |
+| non-blocking `<=` | deferred update via SDK                      |
+| `#delay`          | `co_await delay(n)`                          |
+| `@(posedge clk)`  | `co_await event(clk, Edge::Posedge)`         |
 
 ## Coroutine Model
 
@@ -30,12 +30,14 @@ Task initial_0() {
 ```
 
 Coroutines suspend on:
+
 - `delay(n)` - resume after n time units
 - `event(signal, edge)` - resume on signal edge
 
 ## Scheduler
 
 Simple priority queue ordered by simulation time:
+
 1. Run all initial coroutines to first suspend
 2. Collect modified variables
 3. Wake coroutines sensitive to those variables
@@ -79,17 +81,20 @@ class Test : public Module {
 ## SDK Interface
 
 Core types:
+
 - `Task` - coroutine return type, wraps coroutine handle
 - `Module` - base class for generated modules
 - `Scheduler` - runs simulation, manages time and events
 - `Signal<T>` - observable value with change detection
 
 Key APIs:
+
 - `delay(n)` - awaitable, resumes after n time units
 - `event(signal, edge)` - awaitable, resumes on signal edge
 - `nba_assign(target, value)` - schedule non-blocking assignment
 
 Scheduler loop (pseudocode):
+
 ```
 while not done:
   run ready coroutines until all suspend

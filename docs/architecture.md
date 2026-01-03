@@ -35,6 +35,7 @@ SystemVerilog -> Slang -> MIR -> C++ codegen -> compile -> run
 ### C++ Codegen
 
 MIR maps directly to C++ because:
+
 - Control flow (if/while/do-while) maps 1:1
 - Avoids reconstructing structure from linearized form
 - Produces readable output (a core requirement)
@@ -46,11 +47,13 @@ Generated code links against SDK for simulation runtime.
 Key insight: hierarchy is constructed at runtime, not compile-time.
 
 Traditional flow (Verilator-style):
+
 - Full elaboration at compile time
 - Entire design flattened
 - Static instance graph
 
 LYRA flow:
+
 - Slang validates semantics
 - MIR represents module templates
 - Generated C++ constructs hierarchy at runtime
@@ -72,6 +75,7 @@ include/lyra/
 ```
 
 Deprecated (legacy interpreter path):
+
 - `lir/` - linearized IR, not needed for C++ backend
 - `lowering/mir_to_lir/` - LIR transformation
 - `interpreter/` - replaced by generated C++ + SDK

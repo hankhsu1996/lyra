@@ -24,6 +24,7 @@ This reflects real pain with tools like Verilator: compile times reaching hours,
 Primary backend generates C++, not LLVM IR.
 
 Reasons:
+
 - Faster compile-time iteration
 - Simpler debugging (step through generated code)
 - Easier integration with existing toolchains
@@ -46,11 +47,13 @@ Slang still performs legality checks, name resolution, and validation. But Slang
 MIR/LIR are module templates, not elaborated instance graphs.
 
 They encode:
+
 - Parameter interfaces
 - Behavioral semantics (always/assign)
 - Scheduling semantics (comb/ff/NBA)
 
 They do not encode:
+
 - Fully elaborated instance graphs
 - Static per-instance specialization
 
@@ -59,6 +62,7 @@ They do not encode:
 Explicitly rejects Verilator's tradeoff of speed over readability.
 
 Rules:
+
 - Preserve original signal and parameter names
 - One function per always block
 - Readable runtime APIs, no macro soup
@@ -67,12 +71,14 @@ Rules:
 ### Event-Driven Simulation (Default)
 
 Default mode:
+
 - Event-driven / process-driven simulation
 - No global flattening
 - No global topo sort
 - No whole-design static scheduling
 
 Optional fast modes (future):
+
 - Local comb sorting
 - Partial specialization
 - Hot-path optimization

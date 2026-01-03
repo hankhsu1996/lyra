@@ -30,6 +30,9 @@ bazel build //... --config=debug     # With debug symbols
 # Format C++ code
 clang-format -i src/lyra/**/*.cpp include/lyra/**/*.hpp
 
+# Format documentation
+npx prettier --write "docs/*.md" README.md
+
 # Run clang-tidy
 clang-tidy src/lyra/**/*.cpp -- -I include
 ```
