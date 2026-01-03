@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(clang-format:*), Bash(npx prettier:*)
+allowed-tools: Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*)
 ---
 
 # Commit
@@ -18,8 +18,14 @@ Before committing, format changed files:
    ```
 
 2. **Documentation** - If any `.md` files changed:
+
    ```bash
    npx prettier --write <changed-md-files>
+   ```
+
+3. **Bazel files** - If any `BUILD.bazel`, `.bzl`, or `MODULE.bazel` files changed:
+   ```bash
+   buildifier <changed-bazel-files>
    ```
 
 Skip formatting if files are already clean (no diff after format).

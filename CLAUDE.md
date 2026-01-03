@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Documentation
 
-| Document                    | Purpose                                    |
-| --------------------------- | ------------------------------------------ |
-| `docs/philosophy.md`        | North star, priorities, tradeoffs          |
-| `docs/design-principles.md` | Implementation guidelines, coding patterns |
-| `docs/architecture.md`      | Component relationships, data flow         |
-| `docs/cpp-codegen.md`       | SV to C++ mapping, coroutine model         |
-| `docs/cli-design.md`        | CLI tool design, config format, commands   |
-| `docs/contributing.md`      | Documentation guidelines                   |
+| Document                           | Purpose                                    |
+| ---------------------------------- | ------------------------------------------ |
+| `docs/philosophy.md`               | North star, priorities, tradeoffs          |
+| `docs/design-principles.md`        | Implementation guidelines, coding patterns |
+| `docs/architecture.md`             | Component relationships, data flow         |
+| `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model         |
+| `docs/cli-design.md`               | CLI tool design, config format, commands   |
+| `docs/documentation-guidelines.md` | Documentation guidelines                   |
 
 ## Commands
 
@@ -20,6 +20,7 @@ bazel build //...                              # Build
 bazel test //...                               # Test
 clang-format -i <files>                        # Format C++
 npx prettier --write <files>                   # Format docs
+buildifier -r .                                # Format Bazel files
 ```
 
 ## Architecture

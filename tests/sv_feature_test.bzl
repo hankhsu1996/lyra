@@ -1,5 +1,7 @@
 """Macro for defining SystemVerilog feature tests."""
 
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
 def sv_feature_test(name, yaml, size = "large", deps = []):
     """Creates a test target that runs SV feature tests from a YAML file.
 
@@ -9,7 +11,7 @@ def sv_feature_test(name, yaml, size = "large", deps = []):
         size: Test size (small, medium, large)
         deps: Additional dependencies
     """
-    native.cc_test(
+    cc_test(
         name = name,
         size = size,
         srcs = ["framework/sv_feature_tests.cpp"],
