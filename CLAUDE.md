@@ -2,103 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-For design philosophy and architectural decisions, see `docs/philosophy.md`.
+## Documentation
 
-## Build Commands
+| Document                    | Purpose                                    |
+| --------------------------- | ------------------------------------------ |
+| `docs/philosophy.md`        | North star, priorities, tradeoffs          |
+| `docs/design-principles.md` | Implementation guidelines, coding patterns |
+| `docs/architecture.md`      | Component relationships, data flow         |
+| `docs/cpp-codegen.md`       | SV to C++ mapping, coroutine model         |
+| `docs/cli-design.md`        | CLI tool design, config format, commands   |
+| `docs/contributing.md`      | Documentation guidelines                   |
 
-```bash
-# Build entire project
-bazel build //...
-
-# Run all tests
-bazel test //...
-
-# Run a single test
-bazel test //tests:binary_ops_tests
-
-# Generate compile_commands.json for IDE integration
-bazel run @hedron_compile_commands//:refresh_all
-
-# Build with specific configuration
-bazel build //... --config=release   # Optimized
-bazel build //... --config=debug     # With debug symbols
-```
-
-## Linting
+## Commands
 
 ```bash
-# Format C++ code
-clang-format -i src/lyra/**/*.cpp include/lyra/**/*.hpp
-
-# Format documentation
-npx prettier --write "docs/*.md" README.md
-
-# Run clang-tidy
-clang-tidy src/lyra/**/*.cpp -- -I include
+bazel build //...                              # Build
+bazel test //...                               # Test
+clang-format -i <files>                        # Format C++
+npx prettier --write <files>                   # Format docs
 ```
 
-## Architecture Overview
+## Architecture
 
-Lyra is a SystemVerilog compiler and simulator with a three-stage compilation pipeline:
+SystemVerilog compiler and simulator:
 
 ```
-SystemVerilog → AST → MIR → LIR → Interpreter → Results
+SV → AST → MIR → LIR → Interpreter
+         ↘ MIR → C++ → Binary (codegen path)
 ```
 
-### Compilation Stages
-
-1. **Frontend** (`frontend/`): Wraps the Slang parser to produce AST
-2. **MIR** (`mir/`): Middle IR preserving high-level structure (statements, expressions, control flow)
-3. **LIR** (`lir/`): Low-level SSA-style IR with basic blocks and linear instructions
-4. **Lowering** (`lowering/`): Transformation passes between stages
-   - `ast_to_mir/`: Slang AST → MIR conversion
-   - `mir_to_lir/`: MIR → LIR linearization with basic block generation
-5. **Interpreter** (`interpreter/`): Event-driven simulation engine
-
-### Key Components
-
-- **Driver** (`driver/driver.hpp`): Entry point orchestrating the full pipeline
-  - `Driver::RunFromSource(code)` or `Driver::RunFromFiles(paths)`
-  - Returns `DriverResult` with `ReadVariable(name)` to query final values
-
-- **LIR Context** (`lir/context.hpp`): Resource management for temps, labels, literals
-  - `TempRef`, `LabelRef`, `LiteralRef` are pointer-based references into context pools
-
-- **SimulationRunner** (`interpreter/simulation_runner.hpp`): Implements SystemVerilog time regions
-  - Active → Inactive → NBA → Postponed execution order
-  - Queue-based event scheduling
-
-### Code Organization
-
-Headers in `include/lyra/`, implementations in `src/lyra/` with matching structure.
+Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-Tests are end-to-end in `tests/e2e/`. Each test parses, compiles, simulates, and verifies results:
-
-```cpp
-TEST(FeatureTest, TestName) {
-  std::string code = R"(
-    module Test;
-      int result;
-      initial begin
-        result = 42;
-      end
-    endmodule
-  )";
-  auto result = Driver::RunFromSource(code);
-  EXPECT_EQ(result.ReadVariable("result").AsInt64(), 42);
-}
-```
+YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and codegen backends.
 
 ## Code Style
 
-- C++23 standard with Clang compiler
-- Google C++ style guide (`.clang-format`, `.clang-tidy`)
-- Naming: `CamelCase` for classes/functions, `lower_case_` for private members, `kCamelCase` for enum constants
-- Code must be clangd warning-free
-- Run clang-format before committing
-
-## Naming Conventions
-
-Use terminology from the IEEE 1800 SystemVerilog LRM for precision and consistency. When implementing SystemVerilog features, reference the relevant LRM section and use its exact terminology in class names, function names, and comments.
+- C++23, Google style, clangd warning-free
+- Naming: `CamelCase` classes/functions, `lower_case_` members, `kCamelCase` enums
+- Use IEEE 1800 LRM terminology for SystemVerilog features

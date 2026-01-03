@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git:*), Bash(clang-format:*), Bash(npx prettier:*)
+allowed-tools: Bash(clang-format:*), Bash(npx prettier:*)
 ---
 
 # Commit

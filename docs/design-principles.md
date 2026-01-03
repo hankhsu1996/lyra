@@ -54,6 +54,10 @@ The fix: find the common structure, parameterize the differences.
 
 Before implementing, find how similar problems are solved elsewhere in the codebase. Mirror existing patterns unless there is a clear reason to diverge.
 
+## Be Consistent
+
+Consistency reduces cognitive load. Use the same conventions everywhere: naming (dashes vs underscores), formatting, patterns, terminology. When adding something new, match what exists.
+
 ## Use Domain Vocabulary
 
 Name things using terminology from the problem domain's authoritative sources. Precision in naming prevents ambiguity and aids discoverability.
