@@ -8,6 +8,7 @@
 
 #include <slang/ast/Compilation.h>
 
+#include "embedded_sdk.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/compiler/compiler.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
@@ -17,11 +18,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-// SDK header files to copy
-const std::vector<std::string> kSdkFiles = {
-    "sdk.hpp",   "module.hpp",     "scheduler.hpp", "task.hpp",
-    "delay.hpp", "wait_event.hpp", "integer.hpp"};
 
 // Convert CamelCase to snake_case (handles acronyms like CPU -> cpu)
 auto ToSnakeCase(const std::string& name) -> std::string {
@@ -41,16 +37,6 @@ auto ToSnakeCase(const std::string& name) -> std::string {
   return result;
 }
 
-// Find SDK directory relative to binary or workspace
-auto FindSdkDirectory() -> std::optional<fs::path> {
-  // Try relative to current working directory (workspace root)
-  fs::path workspace_sdk = "include/lyra/sdk";
-  if (fs::exists(workspace_sdk)) {
-    return workspace_sdk;
-  }
-  return std::nullopt;
-}
-
 // Write string content to file
 void WriteFile(const fs::path& path, const std::string& content) {
   std::ofstream out(path);
@@ -60,20 +46,13 @@ void WriteFile(const fs::path& path, const std::string& content) {
   out << content;
 }
 
-// Copy SDK headers to output directory
-void CopySdkHeaders(const fs::path& output_dir) {
-  auto sdk_src = FindSdkDirectory();
-  if (!sdk_src) {
-    throw std::runtime_error(
-        "Cannot find SDK headers. Run from workspace root.");
-  }
-
+// Write embedded SDK headers to output directory
+void WriteSdkHeaders(const fs::path& output_dir) {
   fs::path sdk_dest = output_dir / "include" / "lyra" / "sdk";
   fs::create_directories(sdk_dest);
 
-  for (const auto& file : kSdkFiles) {
-    fs::copy_file(
-        *sdk_src / file, sdk_dest / file, fs::copy_options::overwrite_existing);
+  for (const auto& [filename, content] : lyra::embedded::kSdkFiles) {
+    WriteFile(sdk_dest / filename, content);
   }
 }
 
@@ -182,19 +161,13 @@ auto EmitCommand(
     lyra::compiler::Codegen codegen;
     std::string code = codegen.Generate(*mir);
 
-    // If no output directory, print to stdout
-    if (output_dir.empty()) {
-      std::cout << code;
-      return 0;
-    }
-
     // Create output directory structure
     fs::path out_path(output_dir);
     fs::path design_dir = out_path / "include" / "design";
     fs::create_directories(design_dir);
 
     // Copy SDK headers
-    CopySdkHeaders(out_path);
+    WriteSdkHeaders(out_path);
 
     // Write generated module code
     std::string module_name = mir->name;
@@ -256,9 +229,9 @@ auto main(int argc, char* argv[]) -> int {
   // Subcommand: emit
   argparse::ArgumentParser emit_cmd("emit");
   emit_cmd.add_description("Emit generated C++ code");
-  emit_cmd.add_argument("-o", "--output")
-      .default_value(std::string{})
-      .help("Output directory (if omitted, prints to stdout)");
+  emit_cmd.add_argument("--out-dir")
+      .default_value(std::string{"out"})
+      .help("Output directory");
   emit_cmd.add_argument("files").remaining().help("SystemVerilog source files");
 
   // Subcommand: check
@@ -287,7 +260,7 @@ auto main(int argc, char* argv[]) -> int {
 
   if (program.is_subcommand_used("emit")) {
     auto files = emit_cmd.get<std::vector<std::string>>("files");
-    auto output_dir = emit_cmd.get<std::string>("--output");
+    auto output_dir = emit_cmd.get<std::string>("--out-dir");
     return EmitCommand(files, output_dir);
   }
 

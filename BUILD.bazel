@@ -11,6 +11,40 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Generate embedded SDK header from SDK files
+genrule(
+    name = "embedded_sdk_gen",
+    srcs = [":sdk_headers"],
+    outs = ["src/bin/embedded_sdk.hpp"],
+    cmd = """
+        exec > $@
+        echo '// Auto-generated file. Do not edit.'
+        echo '#pragma once'
+        echo '#include <map>'
+        echo '#include <string>'
+        echo ''
+        echo 'namespace lyra::embedded {'
+        echo ''
+        echo 'inline const std::map<std::string, std::string> kSdkFiles = {'
+        for f in $(SRCS); do
+            name=$$(basename $$f)
+            printf '    {"%s", R"SDK_RAW(' "$$name"
+            cat $$f
+            echo ')SDK_RAW"},'
+        done
+        echo '};'
+        echo ''
+        echo '}  // namespace lyra::embedded'
+    """,
+)
+
+cc_library(
+    name = "embedded_sdk",
+    hdrs = [":embedded_sdk_gen"],
+    include_prefix = "",
+    strip_include_prefix = "src/bin",
+)
+
 cc_library(
     name = "core",
     srcs = glob(["src/lyra/**/*.cpp"]),
@@ -29,6 +63,7 @@ cc_binary(
     includes = ["include"],
     deps = [
         "//:core",
+        "//:embedded_sdk",
         "@argparse",
     ],
 )

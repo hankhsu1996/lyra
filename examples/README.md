@@ -20,7 +20,7 @@ bazel run //:lyra -- run examples/tiny_cpu.sv
 # Run with interpreter
 bazel run //:lyra -- run --interpret examples/tiny_cpu.sv
 
-# Emit generated C++ to stdout
+# Generate standalone C++ project (to out/)
 bazel run //:lyra -- emit examples/tiny_cpu.sv
 
 # Parse and validate only
@@ -41,10 +41,11 @@ bazel build //:lyra
 
 ## Generating a Standalone C++ Project
 
-Use `lyra emit -o` to generate a complete, buildable C++ project:
+`lyra emit` generates a complete, buildable C++ project to `out/` by default:
 
 ```bash
-lyra emit -o out examples/tiny_cpu.sv
+lyra emit examples/tiny_cpu.sv              # Creates out/
+lyra emit --out-dir gen examples/tiny_cpu.sv  # Creates gen/
 ```
 
 This creates:

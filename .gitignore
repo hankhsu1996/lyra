@@ -29,7 +29,7 @@ Thumbs.db
 *tmp*
 
 # Generated output
-/out/
+out/
 
 # Local config files (personal preferences)
 *.local.md

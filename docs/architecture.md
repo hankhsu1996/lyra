@@ -42,6 +42,21 @@ MIR maps directly to C++ because:
 
 Generated code links against SDK for simulation runtime.
 
+### Embedded SDK
+
+The `lyra emit` command produces a standalone C++ project that includes SDK headers. To enable the binary to work from any directory without installation:
+
+```
+include/lyra/sdk/*.hpp  →  [genrule]  →  embedded_sdk.hpp  →  lyra binary
+```
+
+- SDK headers are maintained as normal `.hpp` files in `include/lyra/sdk/`
+- At build time, a Bazel genrule generates `embedded_sdk.hpp` with file contents as C++ raw string literals
+- The lyra binary embeds this generated header
+- `lyra emit` writes embedded SDK content to the output directory
+
+This approach keeps SDK headers maintainable while producing a self-contained binary.
+
 ## Runtime Elaboration Model
 
 Key insight: hierarchy is constructed at runtime, not compile-time.

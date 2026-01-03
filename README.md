@@ -19,18 +19,18 @@ bazel build //:lyra
 ./bazel-bin/lyra run examples/tiny_cpu.sv
 
 # Generate standalone C++ project
-./bazel-bin/lyra emit -o out examples/tiny_cpu.sv
+./bazel-bin/lyra emit examples/tiny_cpu.sv
 cd out && cmake --preset default && cmake --build build && ./build/sim
 ```
 
 ## CLI Commands
 
 ```bash
-lyra run <file.sv>              # Compile and run (codegen)
-lyra run --interpret <file.sv>  # Run with interpreter
-lyra emit <file.sv>             # Emit C++ to stdout
-lyra emit -o <dir> <file.sv>    # Generate buildable C++ project
-lyra check <file.sv>            # Parse and validate only
+lyra run <file.sv>                 # Compile and run (codegen)
+lyra run --interpret <file.sv>     # Run with interpreter
+lyra emit <file.sv>                # Generate buildable C++ project (to out/)
+lyra emit --out-dir <dir> <file>   # Specify output directory
+lyra check <file.sv>               # Parse and validate only
 ```
 
 ## Build Instructions

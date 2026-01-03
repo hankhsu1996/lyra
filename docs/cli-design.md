@@ -6,17 +6,17 @@ Design document for the `lyra` command-line tool.
 
 ### Subcommands
 
-| Command                | Status | Description                    |
-| ---------------------- | ------ | ------------------------------ |
-| `lyra run <file.sv>`   | Done   | Compile and run (codegen)      |
-| `lyra run --interpret` | Done   | Run with interpreter           |
-| `lyra emit <file.sv>`  | Done   | Emit C++ to stdout             |
-| `lyra emit -o <dir>`   | Done   | Generate buildable C++ project |
-| `lyra check <file.sv>` | Done   | Parse and validate only        |
-| `lyra build`           | —      | Generate binary only (no run)  |
-| `lyra init`            | —      | Initialize new project         |
+| Command                   | Status | Description                    |
+| ------------------------- | ------ | ------------------------------ |
+| `lyra run <file.sv>`      | Done   | Compile and run (codegen)      |
+| `lyra run --interpret`    | Done   | Run with interpreter           |
+| `lyra emit <file.sv>`     | Done   | Generate buildable C++ project |
+| `lyra emit --out-dir gen` | Done   | Specify output directory       |
+| `lyra check <file.sv>`    | Done   | Parse and validate only        |
+| `lyra build`              | —      | Generate binary only (no run)  |
+| `lyra init`               | —      | Initialize new project         |
 
-### Output Structure (`lyra emit -o out/`)
+### Output Structure (`lyra emit` → `out/`)
 
 ```
 out/
