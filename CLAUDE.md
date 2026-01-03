@@ -55,10 +55,12 @@ SystemVerilog → AST → MIR → LIR → Interpreter → Results
 ### Key Components
 
 - **Driver** (`driver/driver.hpp`): Entry point orchestrating the full pipeline
+
   - `Driver::RunFromSource(code)` or `Driver::RunFromFiles(paths)`
   - Returns `DriverResult` with `ReadVariable(name)` to query final values
 
 - **LIR Context** (`lir/context.hpp`): Resource management for temps, labels, literals
+
   - `TempRef`, `LabelRef`, `LiteralRef` are pointer-based references into context pools
 
 - **SimulationRunner** (`interpreter/simulation_runner.hpp`): Implements SystemVerilog time regions
@@ -95,6 +97,10 @@ TEST(FeatureTest, TestName) {
 - Naming: `CamelCase` for classes/functions, `lower_case_` for private members, `kCamelCase` for enum constants
 - Code must be clangd warning-free
 - Run clang-format before committing
+
+## Naming Conventions
+
+Use terminology from the IEEE 1800 SystemVerilog LRM for precision and consistency. When implementing SystemVerilog features, reference the relevant LRM section and use its exact terminology in class names, function names, and comments.
 
 ## Commit Format
 

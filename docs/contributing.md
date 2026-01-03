@@ -10,6 +10,7 @@
 ## Before Adding Content
 
 Ask:
+
 - Is this a decision/philosophy, or implementation detail? (Only the former belongs here)
 - Does this duplicate existing content? (If yes, merge instead)
 - Where does this fit in the current structure? (Never default to appending)
@@ -30,8 +31,9 @@ Ask:
 
 ## Document Index
 
-| Document | Purpose |
-|----------|---------|
-| `philosophy.md` | North star, priorities, tradeoffs |
-| `architecture.md` | Component relationships, data flow |
-| `cpp-codegen.md` | SV to C++ mapping, coroutine model |
+| Document               | Purpose                                    |
+| ---------------------- | ------------------------------------------ |
+| `philosophy.md`        | North star, priorities, tradeoffs          |
+| `design_principles.md` | Implementation guidelines, coding patterns |
+| `architecture.md`      | Component relationships, data flow         |
+| `cpp-codegen.md`       | SV to C++ mapping, coroutine model         |
