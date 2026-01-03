@@ -64,8 +64,10 @@ class Module {
   auto Run() -> uint64_t;
 
   // Non-blocking assignment support
+  // Uses std::type_identity_t to deduce T only from the pointer,
+  // allowing implicit conversion for the value (e.g., int to Int)
   template <typename T>
-  void ScheduleNba(T* target, T value) {
+  void ScheduleNba(T* target, std::type_identity_t<T> value) {
     nba_queue_.emplace_back([target, value]() { *target = value; });
   }
 

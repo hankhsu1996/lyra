@@ -92,27 +92,31 @@ auto ToCppType(const common::Type& type) -> std::string {
       auto data = std::get<common::TwoStateData>(type.data);
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
-      // TODO(hankhsu): Add signed Bit type support
-      if (!is_signed && width <= 64) {
-        return std::format("lyra::sdk::Bit<{}>", width);
+
+      if (width > 64) {
+        return "/* TODO: wide integer */";
       }
-      // Fallback to primitive types for signed values
-      if (width == 1) {
-        return "bool";
+
+      // Use LRM-aligned type aliases for standard signed integer types
+      if (is_signed) {
+        if (width == 8) {
+          return "Byte";
+        }
+        if (width == 16) {
+          return "ShortInt";
+        }
+        if (width == 32) {
+          return "Int";
+        }
+        if (width == 64) {
+          return "LongInt";
+        }
+        // Non-standard signed widths use Bit<N, true>
+        return std::format("Bit<{}, true>", width);
       }
-      if (width <= 8) {
-        return is_signed ? "int8_t" : "uint8_t";
-      }
-      if (width <= 16) {
-        return is_signed ? "int16_t" : "uint16_t";
-      }
-      if (width <= 32) {
-        return is_signed ? "int32_t" : "uint32_t";
-      }
-      if (width <= 64) {
-        return is_signed ? "int64_t" : "uint64_t";
-      }
-      return "/* TODO: wide integer */";
+
+      // Unsigned types use Bit<N>
+      return std::format("Bit<{}>", width);
     }
   }
   return "/* unknown type */";
@@ -124,22 +128,11 @@ auto ToCppUnsignedType(const common::Type& type) -> std::string {
   }
   auto data = std::get<common::TwoStateData>(type.data);
   size_t width = data.bit_width;
-  if (width == 1) {
-    return "bool";
+  if (width > 64) {
+    return "/* TODO: wide integer */";
   }
-  if (width <= 8) {
-    return "uint8_t";
-  }
-  if (width <= 16) {
-    return "uint16_t";
-  }
-  if (width <= 32) {
-    return "uint32_t";
-  }
-  if (width <= 64) {
-    return "uint64_t";
-  }
-  return "/* TODO: wide integer */";
+  // Always return unsigned Bit<N> regardless of original signedness
+  return std::format("Bit<{}>", width);
 }
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
@@ -227,6 +220,18 @@ void Codegen::EmitHeader() {
 
 void Codegen::EmitClass(const mir::Module& module) {
   Line("class " + module.name + " : public lyra::sdk::Module {");
+  indent_++;
+
+  // Type aliases for cleaner generated code
+  Line("template <std::size_t N, bool S = false>");
+  Line("using Bit = lyra::sdk::Bit<N, S>;");
+  Line("using Int = lyra::sdk::Int;");
+  Line("using LongInt = lyra::sdk::LongInt;");
+  Line("using ShortInt = lyra::sdk::ShortInt;");
+  Line("using Byte = lyra::sdk::Byte;");
+  Line("");
+
+  indent_--;
   Line(" public:");
   indent_++;
 
@@ -500,16 +505,15 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
-      // Emit bool literals as true/false for 1-bit unsigned types
+      // Emit literals with their proper SDK type
       if (lit.literal.type.kind == common::Type::Kind::kTwoState) {
-        auto data = std::get<common::TwoStateData>(lit.literal.type.data);
-        if (data.bit_width == 1 && !data.is_signed &&
-            lit.literal.value.IsInt64()) {
-          out_ << (lit.literal.value.AsInt64() != 0 ? "true" : "false");
-          break;
-        }
+        // Emit as typed literal: Type{value}
+        out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
+             << "}";
+      } else {
+        // Non-integral types (string, etc.)
+        out_ << lit.literal.ToString();
       }
-      out_ << lit.literal.ToString();
       break;
     }
     case mir::Expression::Kind::kIdentifier: {
