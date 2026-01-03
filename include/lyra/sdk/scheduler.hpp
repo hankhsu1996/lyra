@@ -115,31 +115,8 @@ class Scheduler {
     }
   }
 
- private:
-  // Check if value change should trigger based on edge kind
-  // Follows the same pattern as interpreter's TriggerManager::ShouldTrigger
-  static auto ShouldTrigger(
-      int64_t old_value, int64_t new_value, EdgeKind edge_kind) -> bool {
-    if (edge_kind == EdgeKind::kAnyChange) {
-      return old_value != new_value;
-    }
-
-    // For edge detection, only check bit 0
-    uint64_t old_bit0 = static_cast<uint64_t>(old_value) & 1;
-    uint64_t new_bit0 = static_cast<uint64_t>(new_value) & 1;
-
-    switch (edge_kind) {
-      case EdgeKind::kPosedge:
-        return (old_bit0 == 0 && new_bit0 == 1);
-      case EdgeKind::kNegedge:
-        return (old_bit0 == 1 && new_bit0 == 0);
-      case EdgeKind::kBothEdge:
-        return (old_bit0 != new_bit0);
-      default:
-        return false;
-    }
-  }
-
+  // Check triggers and wake waiting processes
+  // Called after events that modify variables (mirrors interpreter's WakeWaitingProcesses)
   void CheckTriggers() {
     std::vector<std::coroutine_handle<>> to_resume;
 
@@ -196,6 +173,31 @@ class Scheduler {
     // that trigger more waiters - check again
     if (!to_resume.empty() && !simulation_finished) {
       CheckTriggers();
+    }
+  }
+
+ private:
+  // Check if value change should trigger based on edge kind
+  // Follows the same pattern as interpreter's TriggerManager::ShouldTrigger
+  static auto ShouldTrigger(
+      int64_t old_value, int64_t new_value, EdgeKind edge_kind) -> bool {
+    if (edge_kind == EdgeKind::kAnyChange) {
+      return old_value != new_value;
+    }
+
+    // For edge detection, only check bit 0
+    uint64_t old_bit0 = static_cast<uint64_t>(old_value) & 1;
+    uint64_t new_bit0 = static_cast<uint64_t>(new_value) & 1;
+
+    switch (edge_kind) {
+      case EdgeKind::kPosedge:
+        return (old_bit0 == 0 && new_bit0 == 1);
+      case EdgeKind::kNegedge:
+        return (old_bit0 == 1 && new_bit0 == 0);
+      case EdgeKind::kBothEdge:
+        return (old_bit0 != new_bit0);
+      default:
+        return false;
     }
   }
 
@@ -258,6 +260,10 @@ inline auto Module::RunInitials() -> uint64_t {
 
   // Flush any NBA from initial execution
   FlushNba();
+
+  // Check triggers after time 0 - wakes processes waiting on variables
+  // modified during initial execution (like always_comb/always_latch)
+  scheduler.CheckTriggers();
 
   // Process any delayed tasks and edge triggers
   scheduler.ProcessDelayedTasks();

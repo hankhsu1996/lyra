@@ -32,3 +32,145 @@ cases:
     expect:
       c: 5
     expect_time: 5
+
+  - name: wait_until_change
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          @(a);
+        end
+
+        initial #5 a = 1;
+      endmodule
+    expect:
+      a: 1
+    expect_time: 5
+
+  - name: wait_then_delay
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          @(a);
+          #2;
+        end
+
+        initial #5 a = 1;
+      endmodule
+    expect:
+      a: 1
+    expect_time: 7
+
+  - name: posedge_trigger
+    sv: |
+      module Test;
+        int clk, seen;
+        initial begin
+          @(posedge clk);
+          seen = 1;
+        end
+
+        initial begin
+          clk = 0;
+          #5 clk = 1;
+        end
+      endmodule
+    expect:
+      seen: 1
+    expect_time: 5
+
+  - name: negedge_trigger
+    sv: |
+      module Test;
+        int clk, seen;
+        initial begin
+          @(negedge clk);
+          seen = 1;
+        end
+
+        initial begin
+          clk = 1;
+          #5 clk = 0;
+        end
+      endmodule
+    expect:
+      seen: 1
+    expect_time: 5
+
+  - name: edge_trigger
+    sv: |
+      module Test;
+        int clk, seen;
+        initial begin
+          @(edge clk);
+          seen = 1;
+        end
+
+        initial begin
+          clk = 0;
+          #5 clk = 1;
+        end
+      endmodule
+    expect:
+      seen: 1
+    expect_time: 5
+
+  - name: always_ff_posedge
+    sv: |
+      module Test;
+        int clk, q;
+        initial clk = 0;
+
+        always_ff @(posedge clk) q = 42;
+
+        initial begin
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+        end
+      endmodule
+    expect:
+      q: 42
+    expect_time: 6
+
+  - name: always_latch_behavior
+    sv: |
+      module Test;
+        int a, b, q;
+        always_latch begin
+          if (a > 0)
+            q = a + b;
+        end
+
+        initial begin
+          a = 1; b = 2;
+          #5 a = 0;
+        end
+      endmodule
+    expect:
+      q: 3
+    expect_time: 5
+
+  - name: correct_posedge_count
+    sv: |
+      module Test;
+        bit a;
+        int count;
+
+        always_ff @(posedge a) begin
+          count = count + 1;
+        end
+
+        initial begin
+          a = 0;
+          count = 0;
+          #5 a = 1;
+          #5 a = 0;
+          #5 a = 1;
+          #5 a = 0;
+        end
+      endmodule
+    expect:
+      count: 2
+    expect_time: 20

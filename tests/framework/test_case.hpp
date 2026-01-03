@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <ostream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,5 +26,10 @@ struct TestCase {
     return !files.empty();
   }
 };
+
+// GTest printer for readable test names
+inline void PrintTo(const TestCase& test_case, std::ostream* os) {
+  *os << test_case.feature << "/" << test_case.name;
+}
 
 }  // namespace lyra::test
