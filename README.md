@@ -1,4 +1,4 @@
-# **Lyra: Rethinking SystemVerilog Simulation**
+# Lyra: Rethinking SystemVerilog Simulation
 
 [![Bazel Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml)
 [![Bazel File Lint](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml)
@@ -9,55 +9,67 @@ It prioritizes fast iteration (compile + run + debug) over peak simulation speed
 
 > **Development Status**: This project is under active development. Features are incomplete, APIs are unstable, and rapid changes should be expected.
 
-## 🛠️ Build Instructions
+## Quick Start
 
-Build the entire project:
+```bash
+# Build
+bazel build //:lyra
 
-```
-bazel build //...
-```
+# Run simulation
+./bazel-bin/lyra run examples/tiny_cpu.sv
 
-Run all tests:
-
-```
-bazel test //...
-```
-
-Generate compile commands for IDE integration:
-
-```
-bazel run @hedron_compile_commands//:refresh_all
+# Generate standalone C++ project
+./bazel-bin/lyra emit -o out examples/tiny_cpu.sv
+cd out && cmake --preset default && cmake --build build && ./build/sim
 ```
 
-## 📦 Project Structure
+## CLI Commands
+
+```bash
+lyra run <file.sv>              # Compile and run (codegen)
+lyra run --interpret <file.sv>  # Run with interpreter
+lyra emit <file.sv>             # Emit C++ to stdout
+lyra emit -o <dir> <file.sv>    # Generate buildable C++ project
+lyra check <file.sv>            # Parse and validate only
+```
+
+## Build Instructions
+
+```bash
+bazel build //...                              # Build all
+bazel test //...                               # Run tests
+bazel run @hedron_compile_commands//:refresh_all  # IDE integration
+```
+
+## Project Structure
 
 - `frontend/`: Wrapper for Slang SystemVerilog parser
 - `mir/`: Middle-level IR preserving high-level language structure
 - `lir/`: Low-level IR with SSA-style instructions for simulation
 - `lowering/`: Transformations between AST, MIR, and LIR
-- `common/`: Shared utilities and data structures
-- `interpreter/`: Execution engine for running LIR instructions
-- `driver/`: Integration of the full compiler and simulator pipeline
+- `interpreter/`: LIR execution engine
+- `compiler/`: C++ code generation and compilation
+- `sdk/`: Runtime headers for generated code
 
-## 🔍 Compilation Pipeline
+## Compilation Pipeline
 
 ```
-SystemVerilog → AST → MIR → LIR → [ LLVM IR | Interpreter ] → Results
+SystemVerilog → AST → MIR → LIR → Interpreter
+                    ↘ MIR → C++ → Binary (codegen)
 ```
 
 - **AST**: Generated using [Slang](https://github.com/MikePopoloski/slang)
 - **MIR**: High-level, structure-preserving intermediate representation
-- **LIR**: Linear SSA-style IR for simulation and codegen
-- **Backend**: Interpreter execution engine (current) with LLVM compilation planned
+- **LIR**: Linear SSA-style IR for simulation
+- **Backends**: Interpreter (dev) and Codegen (production)
 
-## 🚧 Roadmap
+## Roadmap
 
 - Complete SystemVerilog language coverage
 - Performance optimizations for large-scale designs
 - Native code generation via LLVM
 - Multi-threading support for parallel simulation
-- Advanced debugging and visualization tools
 
-## 💬 Get Involved
+## Get Involved
 
 Got feedback or ideas? We're building Lyra to make SystemVerilog simulation **cleaner**, **clearer**, and **more scalable** — contributions are welcome!

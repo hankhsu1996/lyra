@@ -12,7 +12,7 @@
 /.clangd/
 
 # Editor files
-.vscode/
+.vscode/settings.json
 .cursor/
 .idea/
 *.swp
@@ -27,6 +27,9 @@ Thumbs.db
 *.log
 *.log.*
 *tmp*
+
+# Generated output
+/out/
 
 # Local config files (personal preferences)
 *.local.md
