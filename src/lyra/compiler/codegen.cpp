@@ -12,6 +12,69 @@ namespace lyra::compiler {
 
 namespace {
 
+// C++ operator precedence (higher value = binds tighter)
+// See: https://en.cppreference.com/w/cpp/language/operator_precedence
+constexpr int kPrecLowest = 0;           // Top level (no parent)
+constexpr int kPrecAssign = 1;           // = += -= etc.
+constexpr int kPrecTernary = 2;          // ?:
+constexpr int kPrecLogicalOr = 3;        // ||
+constexpr int kPrecLogicalAnd = 4;       // &&
+constexpr int kPrecBitwiseOr = 5;        // |
+constexpr int kPrecBitwiseXor = 6;       // ^
+constexpr int kPrecBitwiseAnd = 7;       // &
+constexpr int kPrecEquality = 8;         // == !=
+constexpr int kPrecRelational = 9;       // < <= > >=
+constexpr int kPrecShift = 10;           // << >>
+constexpr int kPrecAdditive = 11;        // + -
+constexpr int kPrecMultiplicative = 12;  // * / %
+constexpr int kPrecUnary = 13;           // ! ~ - + ++ --
+constexpr int kPrecPrimary = 14;         // Literals, identifiers, calls
+
+auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
+  switch (op) {
+    case mir::BinaryOperator::kLogicalOr:
+      return kPrecLogicalOr;
+    case mir::BinaryOperator::kLogicalAnd:
+      return kPrecLogicalAnd;
+    case mir::BinaryOperator::kLogicalImplication:
+    case mir::BinaryOperator::kLogicalEquivalence:
+      return kPrecLogicalOr;  // Treat like ||
+    case mir::BinaryOperator::kBitwiseOr:
+      return kPrecBitwiseOr;
+    case mir::BinaryOperator::kBitwiseXor:
+    case mir::BinaryOperator::kBitwiseXnor:
+      return kPrecBitwiseXor;
+    case mir::BinaryOperator::kBitwiseAnd:
+      return kPrecBitwiseAnd;
+    case mir::BinaryOperator::kEquality:
+    case mir::BinaryOperator::kInequality:
+    case mir::BinaryOperator::kCaseEquality:
+    case mir::BinaryOperator::kCaseInequality:
+    case mir::BinaryOperator::kWildcardEquality:
+    case mir::BinaryOperator::kWildcardInequality:
+      return kPrecEquality;
+    case mir::BinaryOperator::kGreaterThan:
+    case mir::BinaryOperator::kGreaterThanEqual:
+    case mir::BinaryOperator::kLessThan:
+    case mir::BinaryOperator::kLessThanEqual:
+      return kPrecRelational;
+    case mir::BinaryOperator::kLogicalShiftLeft:
+    case mir::BinaryOperator::kLogicalShiftRight:
+    case mir::BinaryOperator::kArithmeticShiftLeft:
+    case mir::BinaryOperator::kArithmeticShiftRight:
+      return kPrecShift;
+    case mir::BinaryOperator::kAddition:
+    case mir::BinaryOperator::kSubtraction:
+      return kPrecAdditive;
+    case mir::BinaryOperator::kMultiplication:
+    case mir::BinaryOperator::kDivision:
+    case mir::BinaryOperator::kModulo:
+    case mir::BinaryOperator::kPower:
+      return kPrecMultiplicative;
+  }
+  return kPrecPrimary;
+}
+
 auto IsSigned(const common::Type& type) -> bool {
   if (type.kind != common::Type::Kind::kTwoState) {
     return false;
@@ -250,22 +313,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kConditional: {
       const auto& cond = mir::As<mir::ConditionalStatement>(stmt);
-      Indent();
-      out_ << "if (";
-      EmitExpression(*cond.condition);
-      out_ << ") {\n";
-      indent_++;
-      EmitStatement(*cond.then_branch);
-      indent_--;
-      if (cond.else_branch) {
-        Indent();
-        out_ << "} else {\n";
-        indent_++;
-        EmitStatement(*cond.else_branch);
-        indent_--;
-      }
-      Indent();
-      out_ << "}\n";
+      EmitConditional(cond, false);
       break;
     }
     case mir::Statement::Kind::kWhile: {
@@ -405,7 +453,43 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
   }
 }
 
-void Codegen::EmitExpression(const mir::Expression& expr) {
+void Codegen::EmitConditional(
+    const mir::ConditionalStatement& cond, bool is_else_if) {
+  if (is_else_if) {
+    out_ << " else if (";
+  } else {
+    Indent();
+    out_ << "if (";
+  }
+  EmitExpression(*cond.condition);
+  out_ << ") {\n";
+  indent_++;
+  EmitStatement(*cond.then_branch);
+  indent_--;
+
+  if (cond.else_branch) {
+    // Check if else branch is another conditional (else-if chain)
+    if (cond.else_branch->kind == mir::Statement::Kind::kConditional) {
+      Indent();
+      out_ << "}";
+      const auto& else_cond =
+          mir::As<mir::ConditionalStatement>(*cond.else_branch);
+      EmitConditional(else_cond, true);
+      return;  // The recursive call handles closing brace
+    }
+    // Regular else branch
+    Indent();
+    out_ << "} else {\n";
+    indent_++;
+    EmitStatement(*cond.else_branch);
+    indent_--;
+  }
+
+  Indent();
+  out_ << "}\n";
+}
+
+void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
@@ -429,30 +513,35 @@ void Codegen::EmitExpression(const mir::Expression& expr) {
     case mir::Expression::Kind::kBinary: {
       const auto& bin = mir::As<mir::BinaryExpression>(expr);
       if (bin.op == mir::BinaryOperator::kBitwiseXnor) {
-        // XNOR: ~(a ^ b)
-        out_ << "(~(";
-        EmitExpression(*bin.left);
+        // XNOR: ~(a ^ b) - uses function-like syntax, always parens
+        out_ << "~(";
+        EmitExpression(*bin.left, kPrecBitwiseXor);
         out_ << " ^ ";
-        EmitExpression(*bin.right);
-        out_ << "))";
+        EmitExpression(*bin.right, kPrecBitwiseXor);
+        out_ << ")";
       } else if (
           bin.op == mir::BinaryOperator::kLogicalShiftRight &&
           IsSigned(bin.left->type)) {
         // Logical right shift on signed: cast to unsigned, shift, cast back
-        // SV: signed >> n (zero-fill)
-        // C++: static_cast<signed_t>(static_cast<unsigned_t>(val) >> n)
         out_ << "static_cast<" << ToCppType(bin.left->type) << ">(";
         out_ << "static_cast<" << ToCppUnsignedType(bin.left->type) << ">(";
-        EmitExpression(*bin.left);
+        EmitExpression(*bin.left, kPrecLowest);
         out_ << ") >> ";
-        EmitExpression(*bin.right);
+        EmitExpression(*bin.right, kPrecShift);
         out_ << ")";
       } else {
-        out_ << "(";
-        EmitExpression(*bin.left);
+        int prec = GetBinaryPrecedence(bin.op);
+        bool needs_parens = prec < parent_prec;
+        if (needs_parens) {
+          out_ << "(";
+        }
+        EmitExpression(*bin.left, prec);
         out_ << " " << ToCppOperator(bin.op) << " ";
-        EmitExpression(*bin.right);
-        out_ << ")";
+        // Right operand needs higher prec for left-associativity
+        EmitExpression(*bin.right, prec + 1);
+        if (needs_parens) {
+          out_ << ")";
+        }
       }
       break;
     }
@@ -460,115 +549,117 @@ void Codegen::EmitExpression(const mir::Expression& expr) {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       if (assign.is_non_blocking) {
         out_ << "this->ScheduleNba(&" << assign.target->name << ", ";
-        EmitExpression(*assign.value);
+        EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else {
         out_ << assign.target->name << " = ";
-        EmitExpression(*assign.value);
+        EmitExpression(*assign.value, kPrecAssign);
       }
       break;
     }
     case mir::Expression::Kind::kTernary: {
       const auto& ternary = mir::As<mir::TernaryExpression>(expr);
-      out_ << "(";
-      EmitExpression(*ternary.condition);
+      bool needs_parens = kPrecTernary < parent_prec;
+      if (needs_parens) {
+        out_ << "(";
+      }
+      EmitExpression(*ternary.condition, kPrecTernary);
       out_ << " ? ";
-      EmitExpression(*ternary.true_expression);
+      EmitExpression(*ternary.true_expression, kPrecTernary);
       out_ << " : ";
-      EmitExpression(*ternary.false_expression);
-      out_ << ")";
+      EmitExpression(*ternary.false_expression, kPrecTernary);
+      if (needs_parens) {
+        out_ << ")";
+      }
       break;
     }
     case mir::Expression::Kind::kUnary: {
       const auto& unary = mir::As<mir::UnaryExpression>(expr);
-      out_ << "(";
+      bool needs_parens = kPrecUnary < parent_prec;
+      if (needs_parens) {
+        out_ << "(";
+      }
       switch (unary.op) {
         case mir::UnaryOperator::kPlus:
           out_ << "+";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kMinus:
           out_ << "-";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kLogicalNot:
           out_ << "!";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
-        case mir::UnaryOperator::kBitwiseNot: {
-          // Bit<N> handles masking internally via operator~
+        case mir::UnaryOperator::kBitwiseNot:
           out_ << "~";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
-        }
         case mir::UnaryOperator::kPreincrement:
           out_ << "++";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kPredecrement:
           out_ << "--";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kPostincrement:
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           out_ << "++";
           break;
         case mir::UnaryOperator::kPostdecrement:
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           out_ << "--";
           break;
         case mir::UnaryOperator::kReductionAnd:
           // 1 if all bits are 1: !~a (branchless)
-          out_ << "!~(";
-          EmitExpression(*unary.operand);
-          out_ << ")";
+          out_ << "!~";
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kReductionNand:
           // 1 if not all bits are 1: !!~a (branchless)
-          out_ << "!!~(";
-          EmitExpression(*unary.operand);
-          out_ << ")";
+          out_ << "!!~";
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kReductionOr:
           // 1 if any bit is 1: !!a (branchless)
-          out_ << "!!(";
-          EmitExpression(*unary.operand);
-          out_ << ")";
+          out_ << "!!";
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kReductionNor:
           // 1 if no bits are 1: !a (branchless)
-          out_ << "!(";
-          EmitExpression(*unary.operand);
-          out_ << ")";
+          out_ << "!";
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
         case mir::UnaryOperator::kReductionXor:
           // 1 if odd number of 1-bits: __builtin_parityll
-          // TODO(hankhsu): Consider std::popcount (C++20) for target C++
-          // version
           out_ << "__builtin_parityll(static_cast<uint64_t>(static_cast<"
                << ToCppUnsignedType(unary.operand->type) << ">(";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecLowest);
           out_ << ")))";
           break;
         case mir::UnaryOperator::kReductionXnor:
           // 1 if even number of 1-bits: !__builtin_parityll
           out_ << "!__builtin_parityll(static_cast<uint64_t>(static_cast<"
                << ToCppUnsignedType(unary.operand->type) << ">(";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecLowest);
           out_ << ")))";
           break;
         default:
           out_ << "/* TODO: " << ToString(unary.op) << " */";
-          EmitExpression(*unary.operand);
+          EmitExpression(*unary.operand, kPrecUnary);
           break;
       }
-      out_ << ")";
+      if (needs_parens) {
+        out_ << ")";
+      }
       break;
     }
     case mir::Expression::Kind::kConversion: {
       const auto& conv = mir::As<mir::ConversionExpression>(expr);
       out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
-      EmitExpression(*conv.value);
+      EmitExpression(*conv.value, kPrecLowest);
       out_ << ")";
       break;
     }

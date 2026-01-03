@@ -17,7 +17,8 @@ class Codegen {
   void EmitVariables(const std::vector<common::Variable>& variables);
   void EmitProcess(const mir::Process& process);
   void EmitStatement(const mir::Statement& stmt);
-  void EmitExpression(const mir::Expression& expr);
+  void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
+  void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
 
   std::ostringstream out_;
   int indent_ = 0;
