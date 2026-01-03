@@ -112,7 +112,7 @@ auto GenerateCompileCommands(const fs::path& output_dir) -> std::string {
 }
 
 // Generate .clang-tidy for generated project
-// Enables useful checks but disables naming style rules (user's choice)
+// Enables useful checks but disables rules that don't apply to generated code
 auto GenerateClangTidy() -> std::string {
   return R"(Checks: >
   -*,
@@ -125,8 +125,11 @@ auto GenerateClangTidy() -> std::string {
   -readability-magic-numbers,
   -readability-convert-member-functions-to-static,
   -readability-static-accessed-through-instance,
+  -readability-redundant-member-init,
+  -readability-function-cognitive-complexity,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  -misc-include-cleaner,
 )";
 }
 

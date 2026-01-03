@@ -1,5 +1,6 @@
 #include "lyra/compiler/codegen.hpp"
 
+#include <format>
 #include <stdexcept>
 
 #include "lyra/common/trigger.hpp"
@@ -28,6 +29,11 @@ auto ToCppType(const common::Type& type) -> std::string {
       auto data = std::get<common::TwoStateData>(type.data);
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
+      // TODO(hankhsu): Add signed Bit type support
+      if (!is_signed && width <= 64) {
+        return std::format("lyra::sdk::Bit<{}>", width);
+      }
+      // Fallback to primitive types for signed values
       if (width == 1) {
         return "bool";
       }
@@ -403,6 +409,15 @@ void Codegen::EmitExpression(const mir::Expression& expr) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
+      // Emit bool literals as true/false for 1-bit unsigned types
+      if (lit.literal.type.kind == common::Type::Kind::kTwoState) {
+        auto data = std::get<common::TwoStateData>(lit.literal.type.data);
+        if (data.bit_width == 1 && !data.is_signed &&
+            lit.literal.value.IsInt64()) {
+          out_ << (lit.literal.value.AsInt64() != 0 ? "true" : "false");
+          break;
+        }
+      }
       out_ << lit.literal.ToString();
       break;
     }
@@ -481,30 +496,9 @@ void Codegen::EmitExpression(const mir::Expression& expr) {
           EmitExpression(*unary.operand);
           break;
         case mir::UnaryOperator::kBitwiseNot: {
-          // In C++, ~ inverts ALL bits of the underlying type, but SV only
-          // inverts the declared width. For a 4-bit stored in uint8_t:
-          // ~0x05 = 0xFA (wrong), should be 0x0A
-          // Fix: mask result to declared bit width
-          if (unary.operand->type.kind == common::Type::Kind::kTwoState) {
-            auto data =
-                std::get<common::TwoStateData>(unary.operand->type.data);
-            size_t width = data.bit_width;
-            // For types that match C++ types exactly (8,16,32,64), no mask
-            // needed
-            bool needs_mask =
-                (width != 8 && width != 16 && width != 32 && width != 64);
-            if (needs_mask) {
-              // Compute mask: (1 << width) - 1, or all 1s for width bits
-              uint64_t mask = (width >= 64) ? ~0ULL : ((1ULL << width) - 1);
-              out_ << "((~";
-              EmitExpression(*unary.operand);
-              out_ << ") & " << mask << "ULL)";
-              break;
-            }
-          }
-          out_ << "(~";
+          // Bit<N> handles masking internally via operator~
+          out_ << "~";
           EmitExpression(*unary.operand);
-          out_ << ")";
           break;
         }
         case mir::UnaryOperator::kPreincrement:
