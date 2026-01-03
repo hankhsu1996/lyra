@@ -1,8 +1,8 @@
 # Lyra: Rethinking SystemVerilog Simulation
 
-[![Bazel Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml)
-[![Bazel File Lint](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml)
-[![C++ Lint](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml/badge.svg?event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml)
+[![Bazel Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml)
+[![Bazel File Lint](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml)
+[![C++ Lint](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-lint.yml)
 
 **Lyra** is a SystemVerilog compiler that generates readable C++ for simulation.
 It prioritizes fast iteration (compile + run + debug) over peak simulation speed.
