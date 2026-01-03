@@ -33,6 +33,8 @@ Skip formatting if files are already clean (no diff after format).
 - Another bullet point if needed (2-5 total)
 ```
 
+Bullet points should describe **what changed**, not background context or why the old state was bad.
+
 ## Instructions
 
 1. Run `git status` and `git diff` to understand the changes
