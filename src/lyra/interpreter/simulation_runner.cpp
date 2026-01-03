@@ -9,7 +9,14 @@ namespace lyra::interpreter {
 
 SimulationRunner::SimulationRunner(
     const lir::Module& module, SimulationContext& context)
-    : module_(module), simulation_context_(context), trigger_manager_(context) {
+    : delay_queue_(),
+      active_queue_(),
+      inactive_queue_(),
+      nba_queue_(),
+      postponed_queue_(),
+      module_(module),
+      simulation_context_(context),
+      trigger_manager_(context) {
 }
 
 void SimulationRunner::Run() {
@@ -207,7 +214,7 @@ void SimulationRunner::ExecuteOneEvent() {
 
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
-      SimulationTime delay_time =
+      auto delay_time =
           simulation_context_.get().current_time + result.delay_amount;
       ScheduledEvent event{
           .process = process,

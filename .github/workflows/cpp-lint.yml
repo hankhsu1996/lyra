@@ -46,6 +46,10 @@ jobs:
           clang-format-20 --version
           clang-tidy-20 --version
 
+      - name: Build (to generate external headers)
+        run: |
+          bazel build //...
+
       - name: Generate compile_commands.json
         run: |
           bazel run @hedron_compile_commands//:refresh_all
