@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tests:sv_feature_test.bzl", "sv_feature_test")
 
 cc_library(
@@ -60,4 +60,3 @@ sv_feature_test(
     name = "datatypes_variables_tests",
     yaml = "sv_features/datatypes/variables.yaml",
 )
-
