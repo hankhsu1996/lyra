@@ -96,13 +96,47 @@ auto GenerateCMakePresets() -> std::string {
 )";
 }
 
+// Generate compile_commands.json for clangd
+auto GenerateCompileCommands(const fs::path& output_dir) -> std::string {
+  auto abs_path = fs::absolute(output_dir).string();
+  return std::format(
+      R"([
+  {{
+    "directory": "{}",
+    "arguments": ["clang++", "-std=c++23", "-Iinclude", "-c", "main.cpp", "-o", "main.o"],
+    "file": "main.cpp"
+  }}
+]
+)",
+      abs_path);
+}
+
+// Generate .clang-tidy for generated project
+// Enables useful checks but disables naming style rules (user's choice)
+auto GenerateClangTidy() -> std::string {
+  return R"(Checks: >
+  -*,
+  modernize-*,
+  readability-*,
+  cppcoreguidelines-*,
+  clang-analyzer-*,
+  -readability-identifier-naming,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-convert-member-functions-to-static,
+  -readability-static-accessed-through-instance,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-capturing-lambda-coroutines,
+)";
+}
+
 // Generate main.cpp
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file)
     -> std::string {
   return "#include \"design/" + header_file +
          "\"\n\n"
-         "int main() {\n"
+         "auto main() -> int {\n"
          "    " +
          module_name +
          " dut;\n"
@@ -183,9 +217,12 @@ auto EmitCommand(
     // Generate main.cpp
     WriteFile(out_path / "main.cpp", GenerateMain(module_name, header_file));
 
-    // Generate CMakeLists.txt and CMakePresets.json
+    // Generate build configuration files
     WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(module_name));
     WriteFile(out_path / "CMakePresets.json", GenerateCMakePresets());
+    WriteFile(
+        out_path / "compile_commands.json", GenerateCompileCommands(out_path));
+    WriteFile(out_path / ".clang-tidy", GenerateClangTidy());
 
     return 0;
   } catch (const std::exception& e) {

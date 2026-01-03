@@ -154,12 +154,10 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
 void Codegen::EmitHeader() {
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
-  Line("using namespace lyra::sdk;");
-  Line("");
 }
 
 void Codegen::EmitClass(const mir::Module& module) {
-  Line("class " + module.name + " : public Module {");
+  Line("class " + module.name + " : public lyra::sdk::Module {");
   Line(" public:");
   indent_++;
 
@@ -183,10 +181,8 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  indent_--;
   Line("");
-  Line(" public:");
-  indent_++;
+  // Member variables
   EmitVariables(module.variables);
   indent_--;
   Line("};");
@@ -200,7 +196,7 @@ void Codegen::EmitVariables(const std::vector<common::Variable>& variables) {
 }
 
 void Codegen::EmitProcess(const mir::Process& process) {
-  Line("auto " + process.name + "() -> Task {");
+  Line("auto " + process.name + "() -> lyra::sdk::Task {");
   indent_++;
   if (process.body) {
     EmitStatement(*process.body);
@@ -235,8 +231,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         const auto& syscall =
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
         if (syscall.name == "$finish") {
-          Line("Finish();");
-          Line("co_return;");
+          Line("co_await lyra::sdk::Finish();");
           break;
         }
         throw std::runtime_error(
@@ -330,7 +325,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(stmt);
-      Line("co_await Delay(" + std::to_string(delay.delay_amount) + ");");
+      Line(
+          "co_await lyra::sdk::Delay(" + std::to_string(delay.delay_amount) +
+          ");");
       break;
     }
     case mir::Statement::Kind::kWaitEvent: {
@@ -342,15 +339,15 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       auto edge_kind_str = [](common::EdgeKind kind) -> std::string {
         switch (kind) {
           case common::EdgeKind::kPosedge:
-            return "EdgeKind::kPosedge";
+            return "lyra::sdk::EdgeKind::kPosedge";
           case common::EdgeKind::kNegedge:
-            return "EdgeKind::kNegedge";
+            return "lyra::sdk::EdgeKind::kNegedge";
           case common::EdgeKind::kAnyChange:
-            return "EdgeKind::kAnyChange";
+            return "lyra::sdk::EdgeKind::kAnyChange";
           case common::EdgeKind::kBothEdge:
-            return "EdgeKind::kBothEdge";
+            return "lyra::sdk::EdgeKind::kBothEdge";
         }
-        return "EdgeKind::kAnyChange";
+        return "lyra::sdk::EdgeKind::kAnyChange";
       };
 
       if (wait.triggers.size() == 1) {
@@ -358,18 +355,18 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         const auto& trigger = wait.triggers[0];
         std::string var_name(trigger.variable->name);
         Line(
-            "co_await ImplicitEvent(&" + var_name + ", " +
+            "co_await lyra::sdk::ImplicitEvent(&" + var_name + ", " +
             edge_kind_str(trigger.edge_kind) + ");");
       } else {
         // Multiple triggers (OR semantics) - use ImplicitEventOr
         Indent();
-        out_ << "co_await ImplicitEventOr({\n";
+        out_ << "co_await lyra::sdk::ImplicitEventOr({\n";
         indent_++;
         for (size_t i = 0; i < wait.triggers.size(); ++i) {
           const auto& trigger = wait.triggers[i];
           std::string var_name(trigger.variable->name);
           Indent();
-          out_ << "{MakeTriggerChecker(&" << var_name << ", "
+          out_ << "{lyra::sdk::MakeTriggerChecker(&" << var_name << ", "
                << edge_kind_str(trigger.edge_kind) << ")}";
           if (i + 1 < wait.triggers.size()) {
             out_ << ",";
@@ -447,7 +444,7 @@ void Codegen::EmitExpression(const mir::Expression& expr) {
     case mir::Expression::Kind::kAssignment: {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       if (assign.is_non_blocking) {
-        out_ << "ScheduleNba(&" << assign.target->name << ", ";
+        out_ << "this->ScheduleNba(&" << assign.target->name << ", ";
         EmitExpression(*assign.value);
         out_ << ")";
       } else {
@@ -592,7 +589,9 @@ void Codegen::Indent() {
 }
 
 void Codegen::Line(const std::string& text) {
-  Indent();
+  if (!text.empty()) {
+    Indent();
+  }
   out_ << text << "\n";
 }
 

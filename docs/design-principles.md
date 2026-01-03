@@ -50,6 +50,18 @@ Signs you need this:
 
 The fix: find the common structure, parameterize the differences.
 
+## Friction Reveals Misplaced Responsibility
+
+When a solution creates inconsistency or complexity in one layer, the problem likely belongs in a different layer.
+
+Signs you need this:
+
+- Breaking uniformity to accommodate a requirement (e.g., one function needs a different signature)
+- Adding complexity that doesn't fit the abstraction's natural purpose
+- The solution feels like it's fighting the existing design
+
+The fix: ask "where does this responsibility naturally belong?" and move it there.
+
 ## Follow Established Patterns
 
 Before implementing, find how similar problems are solved elsewhere in the codebase. Mirror existing patterns unless there is a clear reason to diverge.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <coroutine>
 #include <functional>
 #include <string>
 #include <vector>
@@ -19,9 +20,26 @@ inline thread_local Module* current_module = nullptr;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 inline thread_local bool simulation_finished = false;
 
-inline void Finish() {
-  simulation_finished = true;
-}
+// NOLINTBEGIN(readability-identifier-naming)
+// Coroutine awaitable requires specific naming convention from C++ standard
+
+// Awaitable for $finish - sets flag and suspends forever
+class Finish {
+ public:
+  static auto await_ready() -> bool {
+    return false;
+  }
+
+  static auto await_suspend(std::coroutine_handle<> /*handle*/) -> bool {
+    simulation_finished = true;
+    return true;  // Suspend forever (never resume)
+  }
+
+  static void await_resume() {
+  }
+};
+
+// NOLINTEND(readability-identifier-naming)
 
 class Module {
  public:
