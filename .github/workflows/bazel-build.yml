@@ -11,7 +11,7 @@ on:
       - ".bazelrc"
       - ".bazelignore"
       - ".bazelversion"
-      - ".github/workflows/build.yml"
+      - ".github/workflows/bazel-build.yml"
   pull_request:
     branches: [main]
     paths:
@@ -22,7 +22,7 @@ on:
       - ".bazelrc"
       - ".bazelignore"
       - ".bazelversion"
-      - ".github/workflows/build.yml"
+      - ".github/workflows/bazel-build.yml"
 
 jobs:
   build:
