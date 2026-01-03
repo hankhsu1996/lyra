@@ -28,10 +28,10 @@ class Scheduler {
     // Set thread-local scheduler for coroutines to access BEFORE creating tasks
     current_scheduler = this;
 
-    // Collect all initial blocks as tasks (they start immediately)
+    // Collect all processes as tasks (they start immediately)
     for (auto* module : modules_) {
-      for (auto& method : module->initial_methods_) {
-        tasks_.push_back(method());
+      for (auto& process : module->processes_) {
+        tasks_.push_back(process());
       }
     }
 
@@ -201,8 +201,8 @@ inline void ImplicitEventOr::await_suspend(
   }
 }
 
-// Implementation of Module::RunInitials (needs Scheduler definition)
-inline auto Module::RunInitials() -> uint64_t {
+// Implementation of Module::Run (needs Scheduler definition)
+inline auto Module::Run() -> uint64_t {
   Scheduler scheduler;
   // Set scheduler and module BEFORE creating tasks (they start immediately)
   current_scheduler = &scheduler;
@@ -210,14 +210,9 @@ inline auto Module::RunInitials() -> uint64_t {
   simulation_finished = false;
   std::vector<Task> tasks;
 
-  // Start all initial blocks
-  for (auto& method : initial_methods_) {
-    tasks.push_back(method());
-  }
-
-  // Start all always blocks (they run as infinite loops with WaitEvent)
-  for (auto& method : always_methods_) {
-    tasks.push_back(method());
+  // Start all processes
+  for (auto& process : processes_) {
+    tasks.push_back(process());
   }
 
   // Flush any NBA from initial execution

@@ -23,6 +23,18 @@ npx prettier --write <files>                   # Format docs
 buildifier -r .                                # Format Bazel files
 ```
 
+## Lyra CLI
+
+```bash
+lyra run <file.sv>                             # Compile and run
+lyra run --interpret <file.sv>                 # Run with interpreter
+lyra emit <file.sv>                            # Generate C++ project to out/
+lyra check <file.sv>                           # Parse and validate only
+lyra dump cpp <file.sv>                        # Dump generated C++ code
+lyra dump mir <file.sv>                        # Dump MIR
+lyra dump lir <file.sv>                        # Dump LIR
+```
+
 ## Architecture
 
 SystemVerilog compiler and simulator:

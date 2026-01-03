@@ -233,13 +233,8 @@ void Codegen::EmitClass(const mir::Module& module) {
   // Constructor
   Line(module.name + "() : Module(\"" + module.name + "\") {");
   indent_++;
-  for (size_t i = 0; i < module.processes.size(); ++i) {
-    const auto& process = module.processes[i];
-    if (process->process_kind == mir::ProcessKind::kInitial) {
-      Line("RegisterInitial(&" + module.name + "::" + process->name + ");");
-    } else if (process->process_kind == mir::ProcessKind::kAlways) {
-      Line("RegisterAlways(&" + module.name + "::" + process->name + ");");
-    }
+  for (const auto& process : module.processes) {
+    Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
   }
   indent_--;
   Line("}");

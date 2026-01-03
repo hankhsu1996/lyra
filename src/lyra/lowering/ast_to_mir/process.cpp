@@ -14,23 +14,49 @@
 
 namespace lyra::lowering::ast_to_mir {
 
+namespace {
+// Counters per procedure kind for descriptive naming
+std::size_t initial_counter = 0;
+std::size_t always_counter = 0;
+std::size_t always_comb_counter = 0;
+std::size_t always_latch_counter = 0;
+std::size_t always_ff_counter = 0;
+}  // namespace
+
 auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     -> std::unique_ptr<mir::Process> {
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
 
   auto process = std::make_unique<mir::Process>();
 
-  static std::size_t process_counter = 0;
-  if (procedural_block.name.empty()) {
-    process->name = fmt::format("proc_{}", process_counter++);
-  } else {
+  // Generate descriptive name based on procedure kind
+  if (!procedural_block.name.empty()) {
     process->name = procedural_block.name;
+  } else {
+    switch (procedural_block.procedureKind) {
+      case ProceduralBlockKind::Initial:
+        process->name = fmt::format("initial_{}", initial_counter++);
+        break;
+      case ProceduralBlockKind::Always:
+        process->name = fmt::format("always_{}", always_counter++);
+        break;
+      case ProceduralBlockKind::AlwaysComb:
+        process->name = fmt::format("always_comb_{}", always_comb_counter++);
+        break;
+      case ProceduralBlockKind::AlwaysLatch:
+        process->name = fmt::format("always_latch_{}", always_latch_counter++);
+        break;
+      case ProceduralBlockKind::AlwaysFF:
+        process->name = fmt::format("always_ff_{}", always_ff_counter++);
+        break;
+      case ProceduralBlockKind::Final:
+        process->name = "final";
+        break;
+    }
   }
 
   switch (procedural_block.procedureKind) {
     case ProceduralBlockKind::Initial: {
-      process->process_kind = mir::ProcessKind::kInitial;
-
       const auto& slang_statement = procedural_block.getBody();
       auto statement = LowerStatement(slang_statement);
       process->body = std::move(statement);
@@ -39,8 +65,6 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
 
     case ProceduralBlockKind::AlwaysLatch:
     case ProceduralBlockKind::AlwaysComb: {
-      process->process_kind = mir::ProcessKind::kInitial;
-
       const auto& slang_statement = procedural_block.getBody();
       auto main_body = LowerStatement(slang_statement);
       auto variables = CollectSensitivityList(*main_body);
@@ -75,8 +99,6 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
 
     case ProceduralBlockKind::Always:
     case ProceduralBlockKind::AlwaysFF: {
-      process->process_kind = mir::ProcessKind::kInitial;
-
       // Lower the user's body, which should contain WaitEventStatement itself
       auto loop_block = LowerStatement(procedural_block.getBody());
 

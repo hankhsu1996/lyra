@@ -21,24 +21,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Convert CamelCase to snake_case (handles acronyms like CPU -> cpu)
-auto ToSnakeCase(const std::string& name) -> std::string {
-  std::string result;
-  for (size_t i = 0; i < name.size(); ++i) {
-    char c = name[i];
-    if (std::isupper(c) != 0) {
-      // Insert underscore only if previous char is lowercase
-      if (i > 0 && std::islower(name[i - 1]) != 0) {
-        result += '_';
-      }
-      result += static_cast<char>(std::tolower(c));
-    } else {
-      result += c;
-    }
-  }
-  return result;
-}
-
 // Write string content to file
 void WriteFile(const fs::path& path, const std::string& content) {
   std::ofstream out(path);
@@ -143,7 +125,7 @@ auto GenerateMain(
          "    " +
          module_name +
          " dut;\n"
-         "    dut.RunInitials();\n"
+         "    dut.Run();\n"
          "    return 0;\n"
          "}\n";
 }
@@ -210,7 +192,7 @@ auto EmitCommand(
 
     // Write generated module code
     std::string module_name = mir->name;
-    std::string header_file = ToSnakeCase(module_name) + ".hpp";
+    std::string header_file = module_name + ".hpp";
     fs::path module_path = design_dir / header_file;
 
     // Wrap code with pragma once and proper includes

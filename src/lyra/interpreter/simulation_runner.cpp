@@ -22,8 +22,7 @@ SimulationRunner::SimulationRunner(
 void SimulationRunner::Run() {
   // Initialize simulation state
   InitializeVariables();
-  ScheduleInitialProcesses();
-  ScheduleAlwaysProcesses();
+  ScheduleProcesses();
 
   // Main simulation loop: continue until all queues are empty
   while (!active_queue_.empty() || !delay_queue_.empty()) {
@@ -164,19 +163,9 @@ void SimulationRunner::InitializeVariables() {
   }
 }
 
-void SimulationRunner::ScheduleInitialProcesses() {
+void SimulationRunner::ScheduleProcesses() {
   for (const auto& process : module_.get().processes) {
-    if (process->kind == lir::ProcessKind::kInitial) {
-      active_queue_.push({process, 0, 0});
-    }
-  }
-}
-
-void SimulationRunner::ScheduleAlwaysProcesses() {
-  for (const auto& process : module_.get().processes) {
-    if (process->kind == lir::ProcessKind::kAlways) {
-      active_queue_.push({process, 0, 0});
-    }
+    active_queue_.push({process, 0, 0});
   }
 }
 

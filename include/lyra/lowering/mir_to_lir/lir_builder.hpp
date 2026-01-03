@@ -23,7 +23,7 @@ class LirBuilder {
   auto EndModule() -> std::unique_ptr<lir::Module>;
 
   // Process interface
-  void BeginProcess(lir::ProcessKind kind, const std::string& name);
+  void BeginProcess(const std::string& name);
   void EndProcess();
   void AddProcessVariable(const common::Variable& variable);
 

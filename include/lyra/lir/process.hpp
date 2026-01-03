@@ -17,22 +17,8 @@ namespace lyra::lir {
 // Use string for variable names in triggers
 using Trigger = common::Trigger;
 
-enum class ProcessKind { kInitial, kAlways };
-
-inline auto ToString(ProcessKind kind) -> std::string {
-  switch (kind) {
-    case ProcessKind::kInitial:
-      return "initial";
-    case ProcessKind::kAlways:
-      return "always";
-    default:
-      return "(unknown)";
-  }
-}
-
 struct Process {
   std::string name;
-  ProcessKind kind;
   std::vector<common::Variable> variables;
 
   // List of basic blocks
@@ -43,13 +29,12 @@ struct Process {
       int indentation_level = 0) const -> std::string {
     std::string out;
 
-    // Process header with kind and trigger list
+    // Process header
     if (mode == common::FormatMode::kContextual) {
-      out += fmt::format(
-          "{}Process {} {}", common::Indent(indentation_level), name,
-          lyra::lir::ToString(kind));
+      out +=
+          fmt::format("{}Process {}", common::Indent(indentation_level), name);
     } else {
-      out += fmt::format("Process {} {}", name, lyra::lir::ToString(kind));
+      out += fmt::format("Process {}", name);
     }
 
     out += "\n";

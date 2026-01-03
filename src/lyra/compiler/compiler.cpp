@@ -81,7 +81,7 @@ auto Compiler::CompileAndRun(
   std::ostringstream main_code;
   main_code << "\nint main() {\n";
   main_code << "  " << mir.name << " dut;\n";
-  main_code << "  auto final_time = dut.RunInitials();\n";
+  main_code << "  auto final_time = dut.Run();\n";
   for (const auto& var : variables_to_read) {
     main_code << "  std::cout << \"" << var << "=\" << dut." << var
               << " << std::endl;\n";

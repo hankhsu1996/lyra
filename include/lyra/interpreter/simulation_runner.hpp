@@ -66,8 +66,7 @@ class SimulationRunner {
 
  private:
   void InitializeVariables();
-  void ScheduleInitialProcesses();
-  void ScheduleAlwaysProcesses();
+  void ScheduleProcesses();
   void ExecuteOneEvent();
   void WakeWaitingProcesses(const std::vector<SymbolRef>& modified_variables);
   void ExecuteTimeSlot();

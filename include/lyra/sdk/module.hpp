@@ -1,6 +1,7 @@
 #pragma once
 
 #include <coroutine>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -57,10 +58,10 @@ class Module {
     return name_;
   }
 
-  // Runs all initial blocks with a local scheduler
+  // Runs all processes with a local scheduler
   // Returns the final simulation time
   // Defined in scheduler.hpp after Scheduler is defined
-  auto RunInitials() -> uint64_t;
+  auto Run() -> uint64_t;
 
   // Non-blocking assignment support
   template <typename T>
@@ -77,14 +78,8 @@ class Module {
 
  protected:
   template <typename T>
-  void RegisterInitial(Task (T::*method)()) {
-    initial_methods_.push_back(
-        [this, method]() { return (static_cast<T*>(this)->*method)(); });
-  }
-
-  template <typename T>
-  void RegisterAlways(Task (T::*method)()) {
-    always_methods_.push_back(
+  void RegisterProcess(Task (T::*method)()) {
+    processes_.push_back(
         [this, method]() { return (static_cast<T*>(this)->*method)(); });
   }
 
@@ -92,8 +87,7 @@ class Module {
   friend class Scheduler;
 
   std::string name_;
-  std::vector<std::function<Task()>> initial_methods_;
-  std::vector<std::function<Task()>> always_methods_;
+  std::vector<std::function<Task()>> processes_;
   std::vector<std::function<void()>> nba_queue_;
 };
 

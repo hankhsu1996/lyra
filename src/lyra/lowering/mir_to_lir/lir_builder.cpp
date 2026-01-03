@@ -29,10 +29,9 @@ void LirBuilder::AddModuleVariable(const common::Variable& variable) {
   module_->variables.push_back(variable);
 }
 
-void LirBuilder::BeginProcess(lir::ProcessKind kind, const std::string& name) {
+void LirBuilder::BeginProcess(const std::string& name) {
   assert(!current_process_);
   current_process_ = std::make_shared<lir::Process>();
-  current_process_->kind = kind;
   current_process_->name = name;
   current_blocks_.clear();
 }
@@ -40,9 +39,7 @@ void LirBuilder::BeginProcess(lir::ProcessKind kind, const std::string& name) {
 void LirBuilder::EndProcess() {
   assert(current_process_);
 
-  if (current_process_->kind == lir::ProcessKind::kInitial) {
-    AddInstruction(lir::Instruction::Complete());
-  }
+  AddInstruction(lir::Instruction::Complete());
 
   if (current_block_) {
     EndBlock();

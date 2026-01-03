@@ -6,16 +6,6 @@
 
 namespace lyra::lowering::mir_to_lir {
 
-// Map MIR process kind to LIR process kind
-auto MapProcessKind(mir::ProcessKind kind) -> lir::ProcessKind {
-  switch (kind) {
-    case mir::ProcessKind::kInitial:
-      return lir::ProcessKind::kInitial;
-    case mir::ProcessKind::kAlways:
-      return lir::ProcessKind::kAlways;
-  }
-}
-
 auto LowerProcess(
     const mir::Process& process, LirBuilder& builder,
     LoweringContext& lowering_context) -> void {
@@ -24,8 +14,7 @@ auto LowerProcess(
     return;
   }
 
-  // Begin a new process with the mapped kind
-  builder.BeginProcess(MapProcessKind(process.process_kind), process.name);
+  builder.BeginProcess(process.name);
 
   // Start with an "entry" block for the process
   builder.StartBlock(builder.MakeLabel("entry"));
