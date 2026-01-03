@@ -113,6 +113,40 @@ my_project/
     └── sim
 ```
 
+## Internal Architecture
+
+### Directory Structure (library)
+
+```
+include/lyra/
+├── interpreter/                   # Interpreter backend
+│   ├── interpreter.hpp            # Entry point
+│   ├── interpreter_result.hpp     # Result type
+│   └── interpreter_options.hpp    # Debug/trace options
+│
+├── compiler/                      # Compiler backend
+│   ├── compiler.hpp               # Entry point (codegen + compile + run)
+│   ├── compiler_result.hpp        # Result type
+│   └── codegen.hpp                # Internal: generates C++ from MIR
+│
+└── cli/                           # CLI entry point
+    ├── driver.hpp                 # CLI orchestration
+    └── config.hpp                 # lyra.toml parsing
+```
+
+### Classes
+
+| Class                | Location       | Role                                         |
+| -------------------- | -------------- | -------------------------------------------- |
+| `Interpreter`        | `interpreter/` | Entry point: MIR → LIR → run                 |
+| `InterpreterResult`  | `interpreter/` | Result: context, variable access, final time |
+| `InterpreterOptions` | `interpreter/` | Debug flags (dump_lir, trace)                |
+| `Compiler`           | `compiler/`    | Entry point: MIR → C++ → compile → run       |
+| `CompilerResult`     | `compiler/`    | Result: variable values, final time          |
+| `Codegen`            | `compiler/`    | Internal: generates C++ source from MIR      |
+| `Driver`             | `cli/`         | CLI main logic, dispatches to backends       |
+| `Config`             | `cli/`         | Parses lyra.toml                             |
+
 ## Design Decisions
 
 - **Config format**: TOML (using tomlplusplus)

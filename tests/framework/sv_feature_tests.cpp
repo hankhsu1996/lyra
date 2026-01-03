@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-#include "lyra/driver/driver.hpp"
+#include "lyra/compiler/compiler.hpp"
+#include "lyra/interpreter/interpreter.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/yaml_loader.hpp"
-#include "tests/utils/cpp_test_runner.hpp"
 
 namespace lyra::test {
 namespace {
@@ -41,12 +41,12 @@ class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 TEST_P(SvFeatureTest, Interpreter) {
   const auto& tc = GetParam();
 
-  driver::DriverResult result;
+  interpreter::InterpreterResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
-    result = driver::Driver::RunFromFiles(paths);
+    result = interpreter::Interpreter::RunFromFiles(paths);
   } else {
-    result = driver::Driver::RunFromSource(tc.sv_code);
+    result = interpreter::Interpreter::RunFromSource(tc.sv_code);
   }
 
   for (const auto& [var, expected] : tc.expected_values) {
@@ -68,11 +68,12 @@ TEST_P(SvFeatureTest, CppCodegen) {
     vars.push_back(var);
   }
 
-  CppTestResult result;
+  compiler::CompilerResult result;
   if (tc.IsMultiFile()) {
-    result = CppTestRunner::RunFromSources(tc.files, vars);
+    auto paths = WriteTempFiles(tc.files);
+    result = compiler::Compiler::RunFromFiles(paths, vars);
   } else {
-    result = CppTestRunner::RunFromSource(tc.sv_code, vars);
+    result = compiler::Compiler::RunFromSource(tc.sv_code, vars);
   }
   ASSERT_TRUE(result.Success()) << result.ErrorMessage();
 

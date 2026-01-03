@@ -23,7 +23,6 @@ def sv_feature_test(name, yaml, size = "medium", deps = []):
         deps = [
             "//:core",
             "//tests:test_framework",
-            "//tests:test_utils",
             "@googletest//:gtest",
         ] + deps,
     )

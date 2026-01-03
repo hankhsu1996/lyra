@@ -3,13 +3,10 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
-#include "tests/framework/test_case.hpp"
+namespace lyra::compiler {
 
-namespace lyra::test {
-
-class CppTestResult {
+class CompilerResult {
  public:
   [[nodiscard]] auto Success() const -> bool {
     return success_;
@@ -23,7 +20,7 @@ class CppTestResult {
   }
 
  private:
-  friend class CppTestRunner;
+  friend class Compiler;
 
   bool success_ = false;
   std::string error_message_;
@@ -31,17 +28,4 @@ class CppTestResult {
   uint64_t final_time_ = 0;
 };
 
-class CppTestRunner {
- public:
-  // Single-file test
-  static auto RunFromSource(
-      const std::string& sv_code,
-      const std::vector<std::string>& variables_to_read) -> CppTestResult;
-
-  // Multi-file test
-  static auto RunFromSources(
-      const std::vector<SourceFile>& files,
-      const std::vector<std::string>& variables_to_read) -> CppTestResult;
-};
-
-}  // namespace lyra::test
+}  // namespace lyra::compiler

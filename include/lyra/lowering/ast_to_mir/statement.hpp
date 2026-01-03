@@ -10,7 +10,7 @@ class VariableSymbol;
 
 namespace lyra::mir {
 class Statement;
-class Expressiom;
+class Expression;
 class VariableDeclarationStatement;
 class ExpressionStatement;
 }  // namespace lyra::mir

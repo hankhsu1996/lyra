@@ -1,16 +1,16 @@
 #include <iostream>
-#include <lyra/driver/driver.hpp>
-#include <lyra/driver/driver_options.hpp>
+#include <lyra/interpreter/interpreter.hpp>
+#include <lyra/interpreter/interpreter_options.hpp>
 #include <string>
 #include <vector>
 
-using Driver = lyra::driver::Driver;
-using DriverOptions = lyra::driver::DriverOptions;
+using Interpreter = lyra::interpreter::Interpreter;
+using InterpreterOptions = lyra::interpreter::InterpreterOptions;
 
 auto main() -> int {
   const std::vector<std::string> test_file_paths = {"src/main/test.sv"};
-  DriverOptions options = {.dump_lir = true};
-  auto result = Driver::RunFromFiles(test_file_paths, options);
+  InterpreterOptions options = {.dump_lir = true};
+  auto result = Interpreter::RunFromFiles(test_file_paths, options);
 
   std::cout << "[ Simulation Result ]\n";
   std::cout << "pc      = " << result.ReadVariable("pc") << "\n";

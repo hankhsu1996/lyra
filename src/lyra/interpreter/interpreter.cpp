@@ -1,39 +1,40 @@
-#include "lyra/driver/driver.hpp"
+#include "lyra/interpreter/interpreter.hpp"
 
 #include <iostream>
 #include <memory>
 
 #include <slang/ast/Compilation.h>
 
-#include "lyra/driver/driver_result.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
+#include "lyra/interpreter/interpreter_result.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
 
-namespace lyra::driver {
+namespace lyra::interpreter {
 
 using lyra::lowering::ast_to_mir::AstToMir;
 using lyra::lowering::mir_to_lir::MirToLir;
 
-auto Driver::RunFromSource(
-    const std::string& code, const DriverOptions& options) -> DriverResult {
+auto Interpreter::RunFromSource(
+    const std::string& code, const InterpreterOptions& options)
+    -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
   return RunWithCompilation(std::move(compilation), options);
 }
 
-auto Driver::RunFromFiles(
-    const std::vector<std::string>& paths, const DriverOptions& options)
-    -> DriverResult {
+auto Interpreter::RunFromFiles(
+    const std::vector<std::string>& paths, const InterpreterOptions& options)
+    -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
   return RunWithCompilation(std::move(compilation), options);
 }
 
-auto Driver::RunWithCompilation(
+auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
-    const DriverOptions& options) -> DriverResult {
+    const InterpreterOptions& options) -> InterpreterResult {
   const auto& root = compilation->getRoot();
 
   auto mir = AstToMir(root);
@@ -44,15 +45,15 @@ auto Driver::RunWithCompilation(
               << lir->ToString(common::FormatMode::kContextual) << std::endl;
   }
 
-  auto context = std::make_unique<interpreter::SimulationContext>();
+  auto context = std::make_unique<SimulationContext>();
 
-  interpreter::SimulationRunner runner(*lir, *context);
+  SimulationRunner runner(*lir, *context);
   runner.Run();
 
-  return DriverResult{
+  return InterpreterResult{
       .compilation = std::move(compilation),
       .context = std::move(context),
       .lir_context = lir->context};
 }
 
-}  // namespace lyra::driver
+}  // namespace lyra::interpreter

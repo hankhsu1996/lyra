@@ -5,9 +5,9 @@
 
 #include "lyra/mir/module.hpp"
 
-namespace lyra::codegen {
+namespace lyra::compiler {
 
-class CppCodegen {
+class Codegen {
  public:
   auto Generate(const mir::Module& module) -> std::string;
 
@@ -26,4 +26,4 @@ class CppCodegen {
   void Line(const std::string& text);
 };
 
-}  // namespace lyra::codegen
+}  // namespace lyra::compiler

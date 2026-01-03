@@ -1,4 +1,4 @@
-#include "lyra/codegen/cpp_codegen.hpp"
+#include "lyra/compiler/codegen.hpp"
 
 #include <stdexcept>
 
@@ -7,7 +7,7 @@
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
-namespace lyra::codegen {
+namespace lyra::compiler {
 
 namespace {
 
@@ -141,7 +141,7 @@ auto ToCppOperator(mir::BinaryOperator op) -> const char* {
 
 }  // namespace
 
-auto CppCodegen::Generate(const mir::Module& module) -> std::string {
+auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
 
@@ -151,14 +151,14 @@ auto CppCodegen::Generate(const mir::Module& module) -> std::string {
   return out_.str();
 }
 
-void CppCodegen::EmitHeader() {
+void Codegen::EmitHeader() {
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
   Line("using namespace lyra::sdk;");
   Line("");
 }
 
-void CppCodegen::EmitClass(const mir::Module& module) {
+void Codegen::EmitClass(const mir::Module& module) {
   Line("class " + module.name + " : public Module {");
   Line(" public:");
   indent_++;
@@ -192,14 +192,14 @@ void CppCodegen::EmitClass(const mir::Module& module) {
   Line("};");
 }
 
-void CppCodegen::EmitVariables(const std::vector<common::Variable>& variables) {
+void Codegen::EmitVariables(const std::vector<common::Variable>& variables) {
   for (const auto& var : variables) {
     std::string type_str = ToCppType(var.type);
     Line(type_str + " " + std::string(var.symbol->name) + "{};");
   }
 }
 
-void CppCodegen::EmitProcess(const mir::Process& process) {
+void Codegen::EmitProcess(const mir::Process& process) {
   Line("auto " + process.name + "() -> Task {");
   indent_++;
   if (process.body) {
@@ -211,7 +211,7 @@ void CppCodegen::EmitProcess(const mir::Process& process) {
   Line("");
 }
 
-void CppCodegen::EmitStatement(const mir::Statement& stmt) {
+void Codegen::EmitStatement(const mir::Statement& stmt) {
   switch (stmt.kind) {
     case mir::Statement::Kind::kBlock: {
       const auto& block = mir::As<mir::BlockStatement>(stmt);
@@ -357,8 +357,9 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
         // Single trigger - use simple ImplicitEvent
         const auto& trigger = wait.triggers[0];
         std::string var_name(trigger.variable->name);
-        Line("co_await ImplicitEvent(&" + var_name + ", " +
-             edge_kind_str(trigger.edge_kind) + ");");
+        Line(
+            "co_await ImplicitEvent(&" + var_name + ", " +
+            edge_kind_str(trigger.edge_kind) + ");");
       } else {
         // Multiple triggers (OR semantics) - use ImplicitEventOr
         Indent();
@@ -401,7 +402,7 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
   }
 }
 
-void CppCodegen::EmitExpression(const mir::Expression& expr) {
+void Codegen::EmitExpression(const mir::Expression& expr) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
@@ -586,13 +587,13 @@ void CppCodegen::EmitExpression(const mir::Expression& expr) {
   }
 }
 
-void CppCodegen::Indent() {
+void Codegen::Indent() {
   out_ << std::string(indent_ * 2, ' ');
 }
 
-void CppCodegen::Line(const std::string& text) {
+void Codegen::Line(const std::string& text) {
   Indent();
   out_ << text << "\n";
 }
 
-}  // namespace lyra::codegen
+}  // namespace lyra::compiler

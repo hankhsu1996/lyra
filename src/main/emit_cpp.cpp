@@ -4,7 +4,7 @@
 
 #include <slang/ast/Compilation.h>
 
-#include "lyra/codegen/cpp_codegen.hpp"
+#include "lyra/compiler/codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 
@@ -28,7 +28,7 @@ auto main(int argc, char* argv[]) -> int {
     return 1;
   }
 
-  lyra::codegen::CppCodegen codegen;
+  lyra::compiler::Codegen codegen;
   std::cout << codegen.Generate(*mir) << std::endl;
   return 0;
 }
