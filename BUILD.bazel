@@ -25,14 +25,10 @@ cc_library(
 
 cc_binary(
     name = "lyra",
-    srcs = ["src/main/main.cpp"],
+    srcs = ["src/bin/lyra.cpp"],
     includes = ["include"],
-    deps = ["//:core"],
-)
-
-cc_binary(
-    name = "emit_cpp",
-    srcs = ["src/main/emit_cpp.cpp"],
-    includes = ["include"],
-    deps = ["//:core"],
+    deps = [
+        "//:core",
+        "@argparse",
+    ],
 )
