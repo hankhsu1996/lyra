@@ -1,0 +1,34 @@
+feature: wait_event
+description: Tests for event control and sensitivity lists (LRM 9.4.2)
+
+cases:
+  - name: always_comb_runs_once_at_time_zero
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 1;
+          b = 2;
+        end
+
+        always_comb c = a + b;
+      endmodule
+    expect:
+      c: 3
+    expect_time: 0
+
+  - name: always_comb_reacts_to_input_change
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 1;
+          b = 2;
+          #5 a = 3;
+        end
+
+        always_comb c = a + b;
+      endmodule
+    expect:
+      c: 5
+    expect_time: 5

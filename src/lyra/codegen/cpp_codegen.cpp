@@ -335,23 +335,51 @@ void CppCodegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kWaitEvent: {
       const auto& wait = mir::As<mir::WaitEventStatement>(stmt);
-      // For now, only support single trigger (first one)
-      // Multiple triggers with 'or' would need different handling
-      if (!wait.triggers.empty()) {
+      if (wait.triggers.empty()) {
+        break;
+      }
+
+      auto edge_kind_str = [](common::EdgeKind kind) -> std::string {
+        switch (kind) {
+          case common::EdgeKind::kPosedge:
+            return "EdgeKind::kPosedge";
+          case common::EdgeKind::kNegedge:
+            return "EdgeKind::kNegedge";
+          case common::EdgeKind::kAnyChange:
+            return "EdgeKind::kAnyChange";
+          case common::EdgeKind::kBothEdge:
+            return "EdgeKind::kBothEdge";
+        }
+        return "EdgeKind::kAnyChange";
+      };
+
+      if (wait.triggers.size() == 1) {
+        // Single trigger - use simple ImplicitEvent
         const auto& trigger = wait.triggers[0];
         std::string var_name(trigger.variable->name);
-        switch (trigger.edge_kind) {
-          case common::EdgeKind::kPosedge:
-            Line("co_await WaitPosedge(&" + var_name + ");");
-            break;
-          case common::EdgeKind::kNegedge:
-            Line("co_await WaitNegedge(&" + var_name + ");");
-            break;
-          case common::EdgeKind::kAnyChange:
-          case common::EdgeKind::kBothEdge:
-            throw std::runtime_error(
-                "C++ codegen: unsupported edge kind for WaitEvent");
+        Line("co_await ImplicitEvent(&" + var_name + ", " +
+             edge_kind_str(trigger.edge_kind) + ");");
+      } else {
+        // Multiple triggers (OR semantics) - use ImplicitEventOr
+        // Each trigger captures the variable in a lambda for type-safe reading
+        Indent();
+        out_ << "co_await ImplicitEventOr({\n";
+        indent_++;
+        for (size_t i = 0; i < wait.triggers.size(); ++i) {
+          const auto& trigger = wait.triggers[i];
+          std::string var_name(trigger.variable->name);
+          Indent();
+          out_ << "{[&]() { return static_cast<int64_t>(" << var_name << "); }, "
+               << edge_kind_str(trigger.edge_kind)
+               << ", static_cast<int64_t>(" << var_name << ")}";
+          if (i + 1 < wait.triggers.size()) {
+            out_ << ",";
+          }
+          out_ << "\n";
         }
+        indent_--;
+        Indent();
+        out_ << "});\n";
       }
       break;
     }

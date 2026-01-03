@@ -51,6 +51,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "processes_wait_event_tests",
+    yaml = "sv_features/processes/wait_event.yaml",
+)
+
+sv_feature_test(
     name = "control_flow_conditionals_tests",
     yaml = "sv_features/control_flow/conditionals.yaml",
 )
