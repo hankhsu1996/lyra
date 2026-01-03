@@ -66,34 +66,28 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     case ProceduralBlockKind::AlwaysLatch:
     case ProceduralBlockKind::AlwaysComb: {
       const auto& slang_statement = procedural_block.getBody();
-      auto main_body = LowerStatement(slang_statement);
-      auto variables = CollectSensitivityList(*main_body);
+      auto body = LowerStatement(slang_statement);
+      auto variables = CollectSensitivityList(*body);
 
       std::vector<common::Trigger> triggers;
       for (const auto& variable : variables) {
         triggers.emplace_back(common::Trigger::AnyChange(variable));
       }
 
-      // Build the body for the loop: wait for triggers, then execute the logic
+      // Build loop: body first, then wait for triggers
+      // This achieves always_comb semantics:
+      // - Body executes at time 0 (first iteration before wait)
+      // - Body re-executes on any input change (after wait)
       auto loop_block = std::make_unique<mir::BlockStatement>();
+      loop_block->statements.push_back(std::move(body));
       loop_block->statements.push_back(
           std::make_unique<mir::WaitEventStatement>(std::move(triggers)));
-      loop_block->statements.push_back(LowerStatement(slang_statement));
 
-      // while (true) { wait_event; body; }
+      // while (true) { body; wait_event; }
       auto condition =
           std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
-      auto loop = std::make_unique<mir::WhileStatement>(
+      process->body = std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(loop_block));
-
-      // Insert an initial execution of the body before entering the loop.
-      // This models the SystemVerilog always_comb behavior that executes once
-      // at time 0.
-      auto full_block = std::make_unique<mir::BlockStatement>();
-      full_block->statements.push_back(std::move(main_body));
-      full_block->statements.push_back(std::move(loop));
-
-      process->body = std::move(full_block);
       break;
     }
 

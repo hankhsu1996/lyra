@@ -385,46 +385,58 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         break;
       }
 
-      auto edge_kind_str = [](common::EdgeKind kind) -> std::string {
+      // Helper to generate trigger expression based on edge kind
+      auto trigger_expr = [](const std::string& var_name,
+                             common::EdgeKind kind) -> std::string {
         switch (kind) {
           case common::EdgeKind::kPosedge:
-            return "lyra::sdk::EdgeKind::kPosedge";
+            return "lyra::sdk::Posedge(&" + var_name + ")";
           case common::EdgeKind::kNegedge:
-            return "lyra::sdk::EdgeKind::kNegedge";
+            return "lyra::sdk::Negedge(&" + var_name + ")";
           case common::EdgeKind::kAnyChange:
-            return "lyra::sdk::EdgeKind::kAnyChange";
           case common::EdgeKind::kBothEdge:
-            return "lyra::sdk::EdgeKind::kBothEdge";
+            return "lyra::sdk::Change(&" + var_name + ")";
         }
-        return "lyra::sdk::EdgeKind::kAnyChange";
+        return "lyra::sdk::Change(&" + var_name + ")";
       };
 
       if (wait.triggers.size() == 1) {
-        // Single trigger - use simple ImplicitEvent
+        // Single trigger: co_await Posedge(&clk);
         const auto& trigger = wait.triggers[0];
         std::string var_name(trigger.variable->name);
-        Line(
-            "co_await lyra::sdk::ImplicitEvent(&" + var_name + ", " +
-            edge_kind_str(trigger.edge_kind) + ");");
+        Line("co_await " + trigger_expr(var_name, trigger.edge_kind) + ";");
       } else {
-        // Multiple triggers (OR semantics) - use ImplicitEventOr
-        Indent();
-        out_ << "co_await lyra::sdk::ImplicitEventOr({\n";
-        indent_++;
-        for (size_t i = 0; i < wait.triggers.size(); ++i) {
-          const auto& trigger = wait.triggers[i];
-          std::string var_name(trigger.variable->name);
+        // Check if all triggers are AnyChange
+        bool all_any_change = std::all_of(
+            wait.triggers.begin(), wait.triggers.end(), [](const auto& t) {
+              return t.edge_kind == common::EdgeKind::kAnyChange;
+            });
+
+        if (all_any_change) {
+          // Optimized: co_await AnyChange(&a, &b, &c);
           Indent();
-          out_ << "{lyra::sdk::MakeTriggerChecker(&" << var_name << ", "
-               << edge_kind_str(trigger.edge_kind) << ")}";
-          if (i + 1 < wait.triggers.size()) {
-            out_ << ",";
+          out_ << "co_await lyra::sdk::AnyChange(";
+          for (size_t i = 0; i < wait.triggers.size(); ++i) {
+            if (i > 0) {
+              out_ << ", ";
+            }
+            out_ << "&" << wait.triggers[i].variable->name;
           }
-          out_ << "\n";
+          out_ << ");\n";
+        } else {
+          // Mixed triggers: co_await AnyOf(Posedge(&clk), Negedge(&rst));
+          Indent();
+          out_ << "co_await lyra::sdk::AnyOf(";
+          for (size_t i = 0; i < wait.triggers.size(); ++i) {
+            if (i > 0) {
+              out_ << ", ";
+            }
+            const auto& trigger = wait.triggers[i];
+            std::string var_name(trigger.variable->name);
+            out_ << trigger_expr(var_name, trigger.edge_kind);
+          }
+          out_ << ");\n";
         }
-        indent_--;
-        Indent();
-        out_ << "});\n";
       }
       break;
     }

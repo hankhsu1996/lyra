@@ -3,8 +3,8 @@
 #include <coroutine>
 #include <cstdint>
 #include <functional>
+#include <tuple>
 #include <type_traits>
-#include <vector>
 
 namespace lyra::sdk {
 
@@ -17,6 +17,9 @@ extern thread_local Scheduler* current_scheduler;
 // Edge kind for wait triggers (matches common::EdgeKind)
 enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
 
+namespace detail {
+
+// Creates a stateful lambda that checks if a trigger condition is met
 template <typename T>
 auto MakeTriggerChecker(T* var, EdgeKind kind) -> std::function<bool()> {
   if (kind == EdgeKind::kAnyChange) {
@@ -53,18 +56,31 @@ auto MakeTriggerChecker(T* var, EdgeKind kind) -> std::function<bool()> {
   }
 }
 
+}  // namespace detail
+
 // NOLINTBEGIN(readability-identifier-naming)
 // Coroutine awaitable requires specific naming convention from C++ standard
 
-// Awaitable for implicit events (LRM 9.4.2)
-// An implicit event is a value change of an expression.
-// Supports edge events (posedge/negedge/edge on LSB) and value change events.
+// Trigger represents a single wait condition on a variable.
+// Can be used directly as an awaitable: co_await Posedge(&clk);
 template <typename T>
-class ImplicitEvent {
+class Trigger {
  public:
-  ImplicitEvent(T* var, EdgeKind kind) : var_(var), kind_(kind) {
+  Trigger(T* var, EdgeKind kind) : var_(var), kind_(kind) {
   }
 
+  [[nodiscard]] auto var() const -> T* {
+    return var_;
+  }
+  [[nodiscard]] auto kind() const -> EdgeKind {
+    return kind_;
+  }
+
+  [[nodiscard]] auto MakeChecker() const -> std::function<bool()> {
+    return detail::MakeTriggerChecker(var_, kind_);
+  }
+
+  // Awaitable interface
   static auto await_ready() -> bool {
     return false;
   }
@@ -80,18 +96,29 @@ class ImplicitEvent {
   EdgeKind kind_;
 };
 
-// Trigger info for multi-variable waits
-// Captures comparison behavior at the source for any type
-struct TriggerInfo {
-  std::function<bool()> check_triggered;  // Returns true if trigger fired
-};
+// Factory functions for creating triggers
+template <typename T>
+auto Posedge(T* var) -> Trigger<T> {
+  return Trigger<T>(var, EdgeKind::kPosedge);
+}
 
-// Awaitable for OR-combined implicit events (e.g., always_comb sensitivity
-// list) Triggers when ANY of the watched variables change
-class ImplicitEventOr {
+template <typename T>
+auto Negedge(T* var) -> Trigger<T> {
+  return Trigger<T>(var, EdgeKind::kNegedge);
+}
+
+template <typename T>
+auto Change(T* var) -> Trigger<T> {
+  return Trigger<T>(var, EdgeKind::kAnyChange);
+}
+
+// AnyChange awaitable - waits for any of the given variables to change.
+// Optimized for always_comb sensitivity lists where all triggers are AnyChange.
+// Usage: co_await AnyChange(&a, &b, &c);
+template <typename... Ts>
+class AnyChangeAwaitable {
  public:
-  ImplicitEventOr(std::initializer_list<TriggerInfo> triggers)
-      : triggers_(triggers) {
+  explicit AnyChangeAwaitable(Ts*... vars) : vars_(vars...) {
   }
 
   static auto await_ready() -> bool {
@@ -104,9 +131,49 @@ class ImplicitEventOr {
   static void await_resume() {
   }
 
+  [[nodiscard]] auto vars() const -> const std::tuple<Ts*...>& {
+    return vars_;
+  }
+
  private:
-  std::vector<TriggerInfo> triggers_;
+  std::tuple<Ts*...> vars_;
 };
+
+template <typename... Ts>
+auto AnyChange(Ts*... vars) -> AnyChangeAwaitable<Ts...> {
+  return AnyChangeAwaitable<Ts...>(vars...);
+}
+
+// AnyOf awaitable - waits for any of the given triggers to fire.
+// Supports mixed edge types: co_await AnyOf(Posedge(&clk), Negedge(&rst));
+template <typename... Triggers>
+class AnyOfAwaitable {
+ public:
+  explicit AnyOfAwaitable(Triggers... triggers) : triggers_(triggers...) {
+  }
+
+  static auto await_ready() -> bool {
+    return false;
+  }
+
+  // Defined in scheduler.hpp after Scheduler is complete
+  void await_suspend(std::coroutine_handle<> handle) const;
+
+  static void await_resume() {
+  }
+
+  [[nodiscard]] auto triggers() const -> const std::tuple<Triggers...>& {
+    return triggers_;
+  }
+
+ private:
+  std::tuple<Triggers...> triggers_;
+};
+
+template <typename... Triggers>
+auto AnyOf(Triggers... triggers) -> AnyOfAwaitable<Triggers...> {
+  return AnyOfAwaitable<Triggers...>(triggers...);
+}
 
 // NOLINTEND(readability-identifier-naming)
 

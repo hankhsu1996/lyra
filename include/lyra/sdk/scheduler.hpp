@@ -182,22 +182,40 @@ inline void Delay::await_suspend(std::coroutine_handle<> handle) const {
   }
 }
 
-// Implementation of ImplicitEvent<T>::await_suspend (needs Scheduler
-// definition)
+// Implementation of Trigger<T>::await_suspend (needs Scheduler definition)
 template <typename T>
-void ImplicitEvent<T>::await_suspend(std::coroutine_handle<> handle) const {
+void Trigger<T>::await_suspend(std::coroutine_handle<> handle) const {
   if (current_scheduler != nullptr) {
-    current_scheduler->RegisterWait(handle, MakeTriggerChecker(var_, kind_));
+    current_scheduler->RegisterWait(handle, MakeChecker());
   }
 }
 
-// Implementation of ImplicitEventOr::await_suspend (needs Scheduler definition)
-inline void ImplicitEventOr::await_suspend(
+// Implementation of AnyChangeAwaitable<Ts...>::await_suspend
+template <typename... Ts>
+void AnyChangeAwaitable<Ts...>::await_suspend(
     std::coroutine_handle<> handle) const {
   if (current_scheduler != nullptr) {
-    for (const auto& trigger : triggers_) {
-      current_scheduler->RegisterWait(handle, trigger.check_triggered);
-    }
+    std::apply(
+        [handle](auto*... vars) {
+          (current_scheduler->RegisterWait(
+               handle, detail::MakeTriggerChecker(vars, EdgeKind::kAnyChange)),
+           ...);
+        },
+        vars_);
+  }
+}
+
+// Implementation of AnyOfAwaitable<Triggers...>::await_suspend
+template <typename... Triggers>
+void AnyOfAwaitable<Triggers...>::await_suspend(
+    std::coroutine_handle<> handle) const {
+  if (current_scheduler != nullptr) {
+    std::apply(
+        [handle](const auto&... triggers) {
+          (current_scheduler->RegisterWait(handle, triggers.MakeChecker()),
+           ...);
+        },
+        triggers_);
   }
 }
 
