@@ -200,8 +200,10 @@ auto LowerBinaryExpression(
         kind = IK::kBinaryNotEqual;
         break;
       default:
-        throw std::runtime_error(fmt::format(
-            "Operator {} is not supported for string operands", expression.op));
+        throw std::runtime_error(
+            fmt::format(
+                "Operator {} is not supported for string operands",
+                expression.op));
     }
   } else {
     switch (expression.op) {
@@ -261,9 +263,10 @@ auto LowerBinaryExpression(
         break;
       case Operator::kLogicalImplication:
       case Operator::kLogicalEquivalence:
-        throw std::runtime_error(fmt::format(
-            "Operator {} is not supported in LowerBinaryExpression",
-            expression.op));
+        throw std::runtime_error(
+            fmt::format(
+                "Operator {} is not supported in LowerBinaryExpression",
+                expression.op));
       case Operator::kLogicalShiftLeft:
         kind = IK::kBinaryLogicalShiftLeft;
         break;
@@ -280,9 +283,10 @@ auto LowerBinaryExpression(
       case Operator::kCaseInequality:
       case Operator::kWildcardEquality:
       case Operator::kWildcardInequality:
-        throw std::runtime_error(fmt::format(
-            "Operator {} is not supported (yet) in LowerBinaryExpression",
-            expression.op));
+        throw std::runtime_error(
+            fmt::format(
+                "Operator {} is not supported (yet) in LowerBinaryExpression",
+                expression.op));
     }
   }
 

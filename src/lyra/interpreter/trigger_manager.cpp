@@ -52,10 +52,11 @@ auto TriggerManager::CheckTriggers(
       const auto& wait_info = info_it->second;
 
       if (ShouldTrigger(old_value, new_value, wait_info.edge_kind)) {
-        events_to_trigger.push_back(ScheduledEvent{
-            .process = process,
-            .block_index = wait_info.block_index,
-            .instruction_index = wait_info.instruction_index});
+        events_to_trigger.push_back(
+            ScheduledEvent{
+                .process = process,
+                .block_index = wait_info.block_index,
+                .instruction_index = wait_info.instruction_index});
         triggered_processes.insert(process);
         to_remove.insert(process);
       }

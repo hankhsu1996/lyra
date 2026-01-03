@@ -91,9 +91,10 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     }
 
     case ProceduralBlockKind::Final:
-      throw std::runtime_error(fmt::format(
-          "Unsupported procedural block kind {} in AST to MIR LowerProcess",
-          slang::ast::toString(procedural_block.procedureKind)));
+      throw std::runtime_error(
+          fmt::format(
+              "Unsupported procedural block kind {} in AST to MIR LowerProcess",
+              slang::ast::toString(procedural_block.procedureKind)));
   }
 
   return process;

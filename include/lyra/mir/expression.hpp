@@ -178,16 +178,15 @@ class TernaryExpression : public Expression {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("({} ? {} : {})", condition->ToString(),
-                       true_expression->ToString(),
-                       false_expression->ToString());
+    return fmt::format(
+        "({} ? {} : {})", condition->ToString(), true_expression->ToString(),
+        false_expression->ToString());
   }
 
   void Accept(MirVisitor& visitor) const override {
     visitor.Visit(*this);
   }
 };
-
 
 class AssignmentExpression : public Expression {
  public:

@@ -278,9 +278,10 @@ auto RunInstruction(
       // Ensure both source and target types are two-state
       if (src.type.kind != common::Type::Kind::kTwoState ||
           target_type.kind != common::Type::Kind::kTwoState) {
-        throw std::runtime_error(fmt::format(
-            "Conversion only supports two-state types, got: {} -> {}", src.type,
-            target_type));
+        throw std::runtime_error(
+            fmt::format(
+                "Conversion only supports two-state types, got: {} -> {}",
+                src.type, target_type));
       }
 
       auto two_state_data = std::get<common::TwoStateData>(target_type.data);

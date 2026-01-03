@@ -181,9 +181,10 @@ void SimulationRunner::ExecuteOneEvent() {
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
-  simulation_context_.get().tracer.Record(fmt::format(
-      "{} | Start at block {} instruction {}", process->name,
-      process->blocks[block_index]->label, instruction_index));
+  simulation_context_.get().tracer.Record(
+      fmt::format(
+          "{} | Start at block {} instruction {}", process->name,
+          process->blocks[block_index]->label, instruction_index));
 
   ProcessContext process_context;
   ProcessEffect process_effect;

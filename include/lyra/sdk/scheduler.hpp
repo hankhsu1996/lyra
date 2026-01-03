@@ -64,7 +64,8 @@ class Scheduler {
   void RegisterWait(
       std::coroutine_handle<> handle, std::function<bool()> check_triggered) {
     waiters_.push_back(
-        Waiter{.handle = handle, .check_triggered = std::move(check_triggered)});
+        Waiter{
+            .handle = handle, .check_triggered = std::move(check_triggered)});
   }
 
   [[nodiscard]] auto CurrentTime() const -> uint64_t {
@@ -108,7 +109,8 @@ class Scheduler {
   }
 
   // Check triggers and wake waiting processes
-  // Called after events that modify variables (mirrors interpreter's WakeWaitingProcesses)
+  // Called after events that modify variables (mirrors interpreter's
+  // WakeWaitingProcesses)
   void CheckTriggers() {
     std::vector<std::coroutine_handle<>> to_resume;
 
