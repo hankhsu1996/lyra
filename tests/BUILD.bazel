@@ -15,7 +15,6 @@ cc_library(
 
 sv_feature_test(
     name = "operators_binary_tests",
-    size = "large",
     yaml = "sv_features/operators/binary.yaml",
 )
 
@@ -36,7 +35,6 @@ sv_feature_test(
 
 sv_feature_test(
     name = "processes_non_blocking_tests",
-    size = "large",
     yaml = "sv_features/processes/non_blocking.yaml",
 )
 
@@ -52,7 +50,6 @@ sv_feature_test(
 
 sv_feature_test(
     name = "control_flow_loops_tests",
-    size = "large",
     yaml = "sv_features/control_flow/loops.yaml",
 )
 

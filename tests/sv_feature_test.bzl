@@ -1,6 +1,6 @@
 """Macro for defining SystemVerilog feature tests."""
 
-def sv_feature_test(name, yaml, size = "medium", deps = []):
+def sv_feature_test(name, yaml, size = "large", deps = []):
     """Creates a test target that runs SV feature tests from a YAML file.
 
     Args:
