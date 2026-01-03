@@ -35,6 +35,12 @@ CI will fail if files aren't formatted.
 - C++23, Google style
 - Naming: `CamelCase` classes/functions, `lower_case_` members, `kCamelCase` enums
 - Use IEEE 1800 LRM terminology for SystemVerilog features
+- Prefer modern C++ idioms:
+  - `std::format` over string concatenation
+  - `std::span`, `std::string_view` for non-owning references
+  - `std::array` over C arrays
+  - `std::optional`, `std::expected` for error handling
+  - Structured bindings, range-based for loops
 
 ## Pull Requests
 

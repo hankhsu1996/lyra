@@ -1,5 +1,6 @@
 #include <argparse/argparse.hpp>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -78,15 +79,17 @@ void CopySdkHeaders(const fs::path& output_dir) {
 
 // Generate CMakeLists.txt
 auto GenerateCMakeLists(const std::string& module_name) -> std::string {
-  return R"(cmake_minimum_required(VERSION 3.21)
-project(sim CXX)
+  return std::format(
+      R"(cmake_minimum_required(VERSION 3.21)
+project({} CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(sim main.cpp)
 target_include_directories(sim PRIVATE include)
-)";
+)",
+      module_name);
 }
 
 // Generate CMakePresets.json (uses clang by default)

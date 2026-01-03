@@ -24,8 +24,15 @@ Before committing, format changed files:
    ```
 
 3. **Bazel files** - If any `BUILD.bazel`, `.bzl`, or `MODULE.bazel` files changed:
+
    ```bash
    buildifier <changed-bazel-files>
+   ```
+
+4. **C++ lint (optional)** - Run clang-tidy on changed C++ files:
+   ```bash
+   bazel run @hedron_compile_commands//:refresh_all  # if compile_commands.json is stale
+   clang-tidy -p . <changed-cpp-files>
    ```
 
 Skip formatting if files are already clean (no diff after format).

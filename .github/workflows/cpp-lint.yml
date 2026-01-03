@@ -20,31 +20,36 @@ on:
 
 jobs:
   lint:
-    name: C++ Format & Tidy Lint
+    name: C++ Format & Tidy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run C++ linting
-        id: cpp-linter
-        uses: cpp-linter/cpp-linter-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
         with:
-          style: 'file'        # Use .clang-format config file
-          tidy-checks: ''      # Use .clang-tidy config file
-          extensions: 'hpp,cpp'
-          step-summary: true
-          file-annotations: true
-          thread-comments: ${{ github.event_name == 'pull_request' && 'update' }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
 
-      - name: Fail on issues
-        if: steps.cpp-linter.outputs.checks-failed > 0
+      - name: Install Clang 19
         run: |
-          echo "### ❌ C++ linting found issues" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check the annotations and step summary above for details." >> $GITHUB_STEP_SUMMARY
-          echo "Format issues: ${{ steps.cpp-linter.outputs.format-checks-failed }}" >> $GITHUB_STEP_SUMMARY
-          echo "Tidy issues: ${{ steps.cpp-linter.outputs.tidy-checks-failed }}" >> $GITHUB_STEP_SUMMARY
-          exit 1
+          sudo apt-get update
+          sudo apt-get install -y clang-19 clang-format-19 clang-tidy-19
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-19 100
+          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-19 100
+
+      - name: Generate compile_commands.json
+        run: |
+          bazel run @hedron_compile_commands//:refresh_all
+
+      - name: Check clang-format
+        run: |
+          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
+
+      - name: Run clang-tidy
+        run: |
+          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy -p . --header-filter='lyra/' {}
