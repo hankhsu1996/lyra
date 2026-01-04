@@ -1,6 +1,6 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(gh pr:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*)
 ---
 
 # Pull Request
