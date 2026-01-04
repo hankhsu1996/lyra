@@ -3,22 +3,8 @@ name: Bazel File Lint
 on:
   push:
     branches: [main]
-    paths:
-      - "**/BUILD.bazel"
-      - "MODULE.bazel"
-      - ".bazelrc"
-      - ".bazelignore"
-      - ".bazelversion"
-      - ".github/workflows/bazel-lint.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "**/BUILD.bazel"
-      - "MODULE.bazel"
-      - ".bazelrc"
-      - ".bazelignore"
-      - ".bazelversion"
-      - ".github/workflows/bazel-lint.yml"
 
 jobs:
   lint:

@@ -3,20 +3,8 @@ name: C++ Lint
 on:
   push:
     branches: [main]
-    paths:
-      - "**/*.hpp"
-      - "**/*.cpp"
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".github/workflows/cpp-lint.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "**/*.hpp"
-      - "**/*.cpp"
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".github/workflows/cpp-lint.yml"
 
 jobs:
   lint:
@@ -33,20 +21,29 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
 
-      - name: Install clang-format-20 and clang-tidy-20
+      - name: Install Clang 20 toolchain
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           . /etc/lsb-release
           echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang-format-20 clang-tidy-20
+          sudo apt-get install -y clang-20 clang-format-20 clang-tidy-20
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo update-alternatives --set clang++ /usr/bin/clang++-20
+          sudo update-alternatives --set clang /usr/bin/clang-20
 
       - name: Verify tool versions
         run: |
+          clang++ --version
           clang-format-20 --version
           clang-tidy-20 --version
 
-      - name: Build (to generate external headers)
+      - name: Check clang-format
+        run: |
+          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
+
+      - name: Build (for headers)
         run: |
           bazel build //...
 
@@ -54,10 +51,6 @@ jobs:
         run: |
           bazel run @hedron_compile_commands//:refresh_all
 
-      - name: Check clang-format
-        run: |
-          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
-
       - name: Run clang-tidy
         run: |
-          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy-20 -p . --header-filter='lyra/' {}
+          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy-20 -p . --header-filter='^.*(src|include)/lyra/.*' {}
