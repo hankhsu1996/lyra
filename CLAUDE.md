@@ -44,8 +44,11 @@ lyra dump lir <file.sv>                        # Dump LIR
 SystemVerilog compiler and simulator:
 
 ```
-SV → AST → MIR → LIR → Interpreter
-         ↘ MIR → C++ → Binary (codegen path)
+                    +---> LIR ---> Interpreter
+                    |
+SV ---> AST ---> MIR +
+                    |
+                    +---> C++ ---> Binary
 ```
 
 Headers in `include/lyra/`, implementations in `src/lyra/`.

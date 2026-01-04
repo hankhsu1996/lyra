@@ -11,7 +11,6 @@
 
 #include "embedded_sdk.hpp"
 #include "lyra/compiler/codegen.hpp"
-#include "lyra/compiler/compiler.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
@@ -50,6 +49,12 @@ project({} CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Use ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${{CCACHE_PROGRAM}})
+endif()
 
 add_executable(sim main.cpp)
 target_include_directories(sim PRIVATE include)
@@ -117,6 +122,11 @@ auto GenerateClangTidy() -> std::string {
 )";
 }
 
+// Generate .gitignore
+auto GenerateGitignore() -> std::string {
+  return "build/\n";
+}
+
 // Generate main.cpp
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file)
@@ -134,9 +144,8 @@ auto GenerateMain(
 
 // Forward declaration
 auto EmitCommandInternal(
-    const std::vector<std::string>& files, const std::string& output_dir,
-    const std::vector<std::string>& include_dirs, const std::string& top_module)
-    -> int;
+    const std::vector<std::string>& source_files, const std::string& out_dir,
+    const std::vector<std::string>& inc_dirs, const std::string& top) -> int;
 
 auto RunCommand(bool use_interpreter) -> int {
   auto config_path = lyra::config::FindConfig();
@@ -163,8 +172,8 @@ auto RunCommand(bool use_interpreter) -> int {
     }
 
     std::string cmd = std::format(
-        "cd {} && cmake --preset default && cmake --build build && "
-        "./build/sim",
+        "cd {} && cmake --preset default > /dev/null && "
+        "cmake --build build > /dev/null && ./build/sim",
         out_path.string());
     return std::system(cmd.c_str());
   } catch (const std::exception& e) {
@@ -175,11 +184,11 @@ auto RunCommand(bool use_interpreter) -> int {
 
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
-    const std::vector<std::string>& incdirs, const std::string& top) -> int {
+    const std::vector<std::string>& inc_dirs, const std::string& top) -> int {
   try {
     lyra::frontend::SlangFrontend frontend;
     lyra::frontend::FrontendOptions options;
-    options.include_dirs = incdirs;
+    options.include_dirs = inc_dirs;
     auto compilation = frontend.LoadFromFiles(source_files, options);
     if (!compilation) {
       std::cerr << "lyra emit: failed to parse\n";
@@ -222,6 +231,7 @@ auto EmitCommandInternal(
     WriteFile(
         out_path / "compile_commands.json", GenerateCompileCommands(out_path));
     WriteFile(out_path / ".clang-tidy", GenerateClangTidy());
+    WriteFile(out_path / ".gitignore", GenerateGitignore());
 
     return 0;
   } catch (const std::exception& e) {
@@ -339,9 +349,10 @@ auto BuildCommand() -> int {
       return result;
     }
 
-    // cmake build
+    // cmake build (suppress stdout, keep stderr for errors)
     std::string cmd = std::format(
-        "cd {} && cmake --preset default && cmake --build build",
+        "cd {} && cmake --preset default > /dev/null && "
+        "cmake --build build > /dev/null",
         out_path.string());
     return std::system(cmd.c_str());
   } catch (const std::exception& e) {
