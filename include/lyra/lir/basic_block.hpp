@@ -5,7 +5,7 @@
 
 #include <fmt/format.h>
 
-#include "lyra/common/formatting.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 

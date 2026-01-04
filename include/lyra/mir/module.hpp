@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "lyra/common/formatting.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/process.hpp"
 

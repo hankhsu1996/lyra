@@ -9,7 +9,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
-#include "lyra/common/formatting.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"

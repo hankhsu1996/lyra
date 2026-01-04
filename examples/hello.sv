@@ -1,5 +1,10 @@
-// Simple example: variable initialization and finish
+// Simple example: Hello World with $display
 module Top;
-  int x = 42;
-  initial $finish;
+  int x;
+  initial begin
+    x = 42;  // TODO: initializer `int x = 42` not yet supported
+    $display("Hello, World!");
+    $display("x = ", x);
+    $finish;
+  end
 endmodule

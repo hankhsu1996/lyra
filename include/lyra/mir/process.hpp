@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include "lyra/common/formatting.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/statement.hpp"
 

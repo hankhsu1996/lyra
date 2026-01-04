@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <format>
+#include <iterator>
 #include <ostream>
 #include <type_traits>
 
@@ -396,3 +398,42 @@ using Int = Bit<32, true>;
 using LongInt = Bit<64, true>;
 
 }  // namespace lyra::sdk
+
+// std::formatter specialization for Bit<N, S>
+template <std::size_t Width, bool Signed>
+struct std::formatter<lyra::sdk::Bit<Width, Signed>> {
+  char spec = 'd';  // default: decimal
+
+  constexpr auto parse(std::format_parse_context& ctx)
+      -> std::format_parse_context::iterator {
+    const char* it = ctx.begin();
+    if (it != ctx.end()) {
+      if (*it == 'd' || *it == 'x' || *it == 'b' || *it == 'o') {
+        spec = *it;
+        return std::next(it);
+      }
+    }
+    return it;
+  }
+
+  auto format(
+      const lyra::sdk::Bit<Width, Signed>& b, std::format_context& ctx) const {
+    switch (spec) {
+      case 'x':
+        return std::format_to(
+            ctx.out(), "{:x}", static_cast<uint64_t>(b.Value()));
+      case 'b':
+        return std::format_to(
+            ctx.out(), "{:b}", static_cast<uint64_t>(b.Value()));
+      case 'o':
+        return std::format_to(
+            ctx.out(), "{:o}", static_cast<uint64_t>(b.Value()));
+      default:
+        if constexpr (Signed) {
+          return std::format_to(ctx.out(), "{}", b.SignedValue());
+        } else {
+          return std::format_to(ctx.out(), "{}", b.Value());
+        }
+    }
+  }
+};

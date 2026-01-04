@@ -84,7 +84,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     case mir::Expression::Kind::kSystemCall: {
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
-      if (system_call.name != "$finish") {
+      if (system_call.name != "$finish" && system_call.name != "$display") {
         throw std::runtime_error(
             fmt::format("Unsupported system call: {}", system_call.name));
       }
@@ -97,8 +97,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       // Add default argument for `$finish` if empty
-      if (arguments.empty()) {
-        // create a inctruction to load 1 to temp
+      if (system_call.name == "$finish" && arguments.empty()) {
         auto temp = builder.AllocateTemp("sys", system_call.type);
         auto const_one = builder.InternLiteral(Literal::Int(1));
         auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);

@@ -3,6 +3,7 @@
 #include <format>
 #include <stdexcept>
 
+#include "lyra/common/sv_format.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -214,6 +215,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
 }
 
 void Codegen::EmitHeader() {
+  Line("#include <print>");
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
 }
@@ -301,6 +303,52 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
         if (syscall.name == "$finish") {
           Line("co_await lyra::sdk::Finish();");
+          break;
+        }
+        if (syscall.name == "$display") {
+          // Empty $display - just print newline
+          if (syscall.arguments.empty()) {
+            Line("std::println(\"\");");
+            break;
+          }
+
+          // Check if first arg is a format string (string literal with %)
+          if (syscall.arguments[0]->kind == mir::Expression::Kind::kLiteral) {
+            const auto& lit =
+                mir::As<mir::LiteralExpression>(*syscall.arguments[0]);
+            if (lit.literal.type.kind == common::Type::Kind::kString) {
+              auto sv_fmt = lit.literal.value.AsString();
+              if (sv_fmt.find('%') != std::string::npos) {
+                // Transform SV format to std::println
+                auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+                Indent();
+                out_ << "std::println(\"" << cpp_fmt << "\"";
+                for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+                  out_ << ", ";
+                  EmitExpression(*syscall.arguments[i]);
+                }
+                out_ << ");\n";
+                break;
+              }
+            }
+          }
+
+          // No format specifiers - generate format string with {} placeholders
+          std::string fmt_str;
+          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+            if (i > 0) {
+              fmt_str += " ";
+            }
+            fmt_str += "{}";
+          }
+
+          Indent();
+          out_ << "std::println(\"" << fmt_str << "\"";
+          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+            out_ << ", ";
+            EmitExpression(*syscall.arguments[i]);
+          }
+          out_ << ");\n";
           break;
         }
         throw std::runtime_error(

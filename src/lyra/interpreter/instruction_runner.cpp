@@ -1,14 +1,88 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
 #include <cassert>
+#include <format>
+#include <iostream>
 
 #include <fmt/core.h>
 
+#include "lyra/common/sv_format.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/lir/instruction.hpp"
 
 namespace lyra::interpreter {
+
+namespace {
+
+// Format a RuntimeValue according to a format specifier
+// spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal, 's' = string
+auto FormatValue(const RuntimeValue& value, char spec) -> std::string {
+  if (value.IsString()) {
+    return value.AsString();
+  }
+
+  auto v = static_cast<uint64_t>(value.AsInt64());
+  switch (spec) {
+    case 'x':
+    case 'h':
+      return std::format("{:x}", v);
+    case 'b':
+      return std::format("{:b}", v);
+    case 'o':
+      return std::format("{:o}", v);
+    default:  // 'd' or 's'
+      return value.ToString();
+  }
+}
+
+// Parse SV format string and format arguments
+// Returns formatted output string
+auto FormatDisplay(
+    const std::string& fmt_str, const std::vector<RuntimeValue>& args)
+    -> std::string {
+  std::string result;
+  size_t arg_idx = 0;
+  size_t i = 0;
+
+  while (i < fmt_str.size()) {
+    if (fmt_str[i] == '%') {
+      if (i + 1 >= fmt_str.size()) {
+        throw std::runtime_error("Invalid format string: trailing %");
+      }
+      char spec = fmt_str[i + 1];
+      if (spec == '%') {
+        result += '%';
+        i += 2;
+      } else if (
+          spec == 'd' || spec == 'h' || spec == 'x' || spec == 'b' ||
+          spec == 'o' || spec == 's') {
+        if (arg_idx >= args.size()) {
+          throw std::runtime_error("Not enough arguments for format string");
+        }
+        result += FormatValue(args[arg_idx], spec);
+        arg_idx++;
+        i += 2;
+      } else if (spec >= '0' && spec <= '9') {
+        throw std::runtime_error(
+            fmt::format(
+                "Unsupported format specifier: width modifiers not yet "
+                "supported "
+                "(found %{}...)",
+                spec));
+      } else {
+        throw std::runtime_error(
+            fmt::format("Unsupported format specifier: %{}", spec));
+      }
+    } else {
+      result += fmt_str[i];
+      i++;
+    }
+  }
+  return result;
+}
+
+}  // namespace
 
 // Execute a single instruction in the given context
 auto RunInstruction(
@@ -332,6 +406,47 @@ auto RunInstruction(
 
         // For now, we just terminate the simulation
         return InstructionResult::Finish();
+      }
+
+      if (instr.system_call_name == "$display") {
+        // Empty $display - just print newline
+        if (instr.operands.empty()) {
+          std::cout << "\n";
+          return InstructionResult::Continue();
+        }
+
+        // Check if first operand is a format string (string with %)
+        const auto& first = get_temp(instr.operands[0]);
+        if (first.IsString()) {
+          auto fmt_str = first.AsString();
+          if (fmt_str.find('%') != std::string::npos) {
+            // Collect remaining arguments
+            std::vector<RuntimeValue> args;
+            for (size_t i = 1; i < instr.operands.size(); ++i) {
+              args.push_back(get_temp(instr.operands[i]));
+            }
+            std::cout << FormatDisplay(fmt_str, args) << "\n";
+            return InstructionResult::Continue();
+          }
+        }
+
+        // No format specifiers - generate format string with %d placeholders
+        std::string gen_fmt;
+        std::vector<RuntimeValue> args;
+        for (size_t i = 0; i < instr.operands.size(); ++i) {
+          if (i > 0) {
+            gen_fmt += " ";
+          }
+          const auto& value = get_temp(instr.operands[i]);
+          if (value.IsString()) {
+            gen_fmt += "%s";
+          } else {
+            gen_fmt += "%d";
+          }
+          args.push_back(value);
+        }
+        std::cout << FormatDisplay(gen_fmt, args) << "\n";
+        return InstructionResult::Continue();
       }
 
       throw std::runtime_error(

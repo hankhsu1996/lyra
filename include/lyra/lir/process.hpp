@@ -7,7 +7,7 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 
-#include "lyra/common/formatting.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lir/basic_block.hpp"
