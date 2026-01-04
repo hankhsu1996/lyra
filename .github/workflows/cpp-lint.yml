@@ -39,18 +39,18 @@ jobs:
           clang-format-20 --version
           clang-tidy-20 --version
 
-      - name: Build (to generate external headers)
+      - name: Check clang-format
         run: |
-          bazel build //...
+          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
+
+      - name: Build external headers
+        run: |
+          bazel build @slang//:slang
 
       - name: Generate compile_commands.json
         run: |
           bazel run @hedron_compile_commands//:refresh_all
 
-      - name: Check clang-format
-        run: |
-          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
-
       - name: Run clang-tidy
         run: |
-          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy-20 -p . --header-filter='lyra/' {}
+          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy-20 -p . --header-filter='^.*(src|include)/lyra/.*' {}
