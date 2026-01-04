@@ -3,20 +3,8 @@ name: C++ Lint
 on:
   push:
     branches: [main]
-    paths:
-      - "**/*.hpp"
-      - "**/*.cpp"
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".github/workflows/cpp-lint.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "**/*.hpp"
-      - "**/*.cpp"
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".github/workflows/cpp-lint.yml"
 
 jobs:
   lint:
