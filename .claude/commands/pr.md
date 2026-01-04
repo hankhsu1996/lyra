@@ -1,15 +1,18 @@
 ---
 description: Create a pull request with a well-formatted description
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(gh pr:*)
 ---
 
 # Pull Request
 
 Create a PR following the project format.
 
-## Pre-PR Checks
+## Context
 
-1. Ensure all changes are committed
-2. Push the branch to remote if not already pushed
+- **Current branch:** !`git branch --show-current`
+- **Git status:** !`git status --short`
+- **Commits on this branch:** !`git log --oneline main..HEAD`
+- **Full diff from main:** !`git diff main..HEAD --stat`
 
 ## PR Format
 
@@ -31,8 +34,9 @@ Don't force a test plan if it doesn't make sense. Write what's useful for review
 
 ## Instructions
 
-1. Run `git status` to ensure working tree is clean
-2. Check if branch is pushed: `git log origin/<branch>..<branch>`
-3. Push if needed: `git push -u origin <branch>`
-4. Create PR: `gh pr create --title "..." --body "..."`
-5. Return the PR URL to the user
+1. Check context above; ensure working tree is clean
+2. Push if needed: `git push -u origin <branch>`
+3. Create PR: `gh pr create --title "..." --body "..."`
+4. Return the PR URL to the user
+
+If updating an existing PR, push the new commits and update the PR body with `gh pr edit`.
