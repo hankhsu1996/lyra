@@ -49,7 +49,7 @@ Skip formatting if files are already clean (no diff after format).
 
 Bullet points should describe **what changed**, not background context or why the old state was bad.
 
-**Do NOT add attribution** (no "Generated with Claude Code", no "Co-Authored-By") - these duplicate badly when squash-merging.
+**IMPORTANT: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By". These duplicate badly when squash-merging.
 
 ## Branch Rules
 
