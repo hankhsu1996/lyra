@@ -57,3 +57,8 @@ sv_feature_test(
     name = "datatypes_variables_tests",
     yaml = "sv_features/datatypes/variables.yaml",
 )
+
+sv_feature_test(
+    name = "display_basic_tests",
+    yaml = "sv_features/display/basic.yaml",
+)

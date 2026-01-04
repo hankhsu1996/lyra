@@ -1,5 +1,7 @@
 #pragma once
 
+#include <sstream>
+
 #include "lyra/interpreter/tracer.hpp"
 #include "lyra/interpreter/variable_table.hpp"
 
@@ -15,6 +17,7 @@ class SimulationContext {
   ModuleVariableTable variable_table;
   SimulationTime current_time = 0;
   Tracer tracer;
+  std::ostringstream display_output;
 };
 
 }  // namespace lyra::interpreter

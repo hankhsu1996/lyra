@@ -14,8 +14,9 @@ cases:
         always_comb c = a + b;
       endmodule
     expect:
-      c: 3
-    expect_time: 0
+      variables:
+        c: 3
+      time: 0
 
   - name: always_comb_reacts_to_input_change
     sv: |
@@ -30,8 +31,9 @@ cases:
         always_comb c = a + b;
       endmodule
     expect:
-      c: 5
-    expect_time: 5
+      variables:
+        c: 5
+      time: 5
 
   - name: wait_until_change
     sv: |
@@ -44,8 +46,9 @@ cases:
         initial #5 a = 1;
       endmodule
     expect:
-      a: 1
-    expect_time: 5
+      variables:
+        a: 1
+      time: 5
 
   - name: wait_then_delay
     sv: |
@@ -59,8 +62,9 @@ cases:
         initial #5 a = 1;
       endmodule
     expect:
-      a: 1
-    expect_time: 7
+      variables:
+        a: 1
+      time: 7
 
   - name: posedge_trigger
     sv: |
@@ -77,8 +81,9 @@ cases:
         end
       endmodule
     expect:
-      seen: 1
-    expect_time: 5
+      variables:
+        seen: 1
+      time: 5
 
   - name: negedge_trigger
     sv: |
@@ -95,8 +100,9 @@ cases:
         end
       endmodule
     expect:
-      seen: 1
-    expect_time: 5
+      variables:
+        seen: 1
+      time: 5
 
   - name: edge_trigger
     sv: |
@@ -113,8 +119,9 @@ cases:
         end
       endmodule
     expect:
-      seen: 1
-    expect_time: 5
+      variables:
+        seen: 1
+      time: 5
 
   - name: always_ff_posedge
     sv: |
@@ -131,8 +138,9 @@ cases:
         end
       endmodule
     expect:
-      q: 42
-    expect_time: 6
+      variables:
+        q: 42
+      time: 6
 
   - name: always_latch_behavior
     sv: |
@@ -149,8 +157,9 @@ cases:
         end
       endmodule
     expect:
-      q: 3
-    expect_time: 5
+      variables:
+        q: 3
+      time: 5
 
   - name: correct_posedge_count
     sv: |
@@ -172,8 +181,9 @@ cases:
         end
       endmodule
     expect:
-      count: 2
-    expect_time: 20
+      variables:
+        count: 2
+      time: 20
 
   - name: any_change_string_trigger
     sv: |
@@ -191,5 +201,6 @@ cases:
         end
       endmodule
     expect:
-      seen: 1
-    expect_time: 3
+      variables:
+        seen: 1
+      time: 3

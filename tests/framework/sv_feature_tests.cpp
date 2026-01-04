@@ -36,6 +36,18 @@ auto WriteTempFiles(const std::vector<SourceFile>& files)
   return paths;
 }
 
+void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
+  if (expected.IsExact()) {
+    EXPECT_EQ(actual, expected.exact.value());
+  } else {
+    for (const auto& substring : expected.contains) {
+      EXPECT_TRUE(actual.find(substring) != std::string::npos)
+          << "Expected output to contain: \"" << substring << "\"\n"
+          << "Actual output: \"" << actual << "\"";
+    }
+  }
+}
+
 class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 
 TEST_P(SvFeatureTest, Interpreter) {
@@ -56,6 +68,10 @@ TEST_P(SvFeatureTest, Interpreter) {
 
   if (tc.expected_time.has_value()) {
     EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
+  }
+
+  if (tc.expected_output.has_value()) {
+    AssertOutput(result.CapturedOutput(), tc.expected_output.value());
   }
 }
 
@@ -83,6 +99,10 @@ TEST_P(SvFeatureTest, CppCodegen) {
 
   if (tc.expected_time.has_value()) {
     EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
+  }
+
+  if (tc.expected_output.has_value()) {
+    AssertOutput(result.CapturedOutput(), tc.expected_output.value());
   }
 }
 

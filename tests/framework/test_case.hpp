@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <map>
-#include <ostream>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -14,6 +14,15 @@ struct SourceFile {
   std::string content;
 };
 
+struct ExpectedOutput {
+  std::optional<std::string> exact;
+  std::vector<std::string> contains;
+
+  [[nodiscard]] auto IsExact() const -> bool {
+    return exact.has_value();
+  }
+};
+
 struct TestCase {
   std::string name;
   std::string feature;
@@ -21,6 +30,7 @@ struct TestCase {
   std::vector<SourceFile> files;
   std::map<std::string, int64_t> expected_values;
   std::optional<uint64_t> expected_time;
+  std::optional<ExpectedOutput> expected_output;
 
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();

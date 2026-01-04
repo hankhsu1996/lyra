@@ -12,7 +12,8 @@ cases:
         end
       endmodule
     expect:
-      b: 10
+      variables:
+        b: 10
 
   - name: unary_minus
     sv: |
@@ -24,7 +25,8 @@ cases:
         end
       endmodule
     expect:
-      b: -10
+      variables:
+        b: -10
 
   - name: logical_not_nonzero
     sv: |
@@ -37,7 +39,8 @@ cases:
         end
       endmodule
     expect:
-      r: 0
+      variables:
+        r: 0
 
   - name: logical_not_zero
     sv: |
@@ -50,7 +53,8 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1
 
   - name: bitwise_not
     sv: |
@@ -62,7 +66,8 @@ cases:
         end
       endmodule
     expect:
-      b: -11
+      variables:
+        b: -11
 
   - name: compound_unary
     sv: |
@@ -76,8 +81,9 @@ cases:
         end
       endmodule
     expect:
-      c: 1
-      d: -8
+      variables:
+        c: 1
+        d: -8
 
   - name: pre_increment
     sv: |
@@ -89,8 +95,9 @@ cases:
         end
       endmodule
     expect:
-      a: 6
-      b: 6
+      variables:
+        a: 6
+        b: 6
 
   - name: post_increment
     sv: |
@@ -102,8 +109,9 @@ cases:
         end
       endmodule
     expect:
-      a: 6
-      b: 5
+      variables:
+        a: 6
+        b: 5
 
   - name: pre_decrement
     sv: |
@@ -115,8 +123,9 @@ cases:
         end
       endmodule
     expect:
-      a: 4
-      b: 4
+      variables:
+        a: 4
+        b: 4
 
   - name: post_decrement
     sv: |
@@ -128,8 +137,9 @@ cases:
         end
       endmodule
     expect:
-      a: 4
-      b: 5
+      variables:
+        a: 4
+        b: 5
 
   - name: nested_increment_decrement
     sv: |
@@ -143,10 +153,11 @@ cases:
         end
       endmodule
     expect:
-      a: 5
-      b: 10
-      c: 16
-      d: 15
+      variables:
+        a: 5
+        b: 10
+        c: 16
+        d: 15
 
   - name: logical_not_bit_types
     sv: |
@@ -166,10 +177,11 @@ cases:
         end
       endmodule
     expect:
-      r1: 1
-      r2: 0
-      r3: 1
-      r4: 0
+      variables:
+        r1: 1
+        r2: 0
+        r3: 1
+        r4: 0
 
   - name: mixed_types_unary
     sv: |
@@ -187,8 +199,9 @@ cases:
         end
       endmodule
     expect:
-      result1: -99
-      result2: -900
+      variables:
+        result1: -99
+        result2: -900
 
   - name: reduction_and
     sv: |
@@ -201,7 +214,8 @@ cases:
         end
       endmodule
     expect:
-      r: 0
+      variables:
+        r: 0
 
   - name: reduction_nand
     sv: |
@@ -214,7 +228,8 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1
 
   - name: reduction_or
     sv: |
@@ -227,7 +242,8 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1
 
   - name: reduction_nor
     sv: |
@@ -240,7 +256,8 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1
 
   - name: reduction_xor
     sv: |
@@ -253,7 +270,8 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1
 
   - name: reduction_xnor
     sv: |
@@ -266,4 +284,5 @@ cases:
         end
       endmodule
     expect:
-      r: 1
+      variables:
+        r: 1

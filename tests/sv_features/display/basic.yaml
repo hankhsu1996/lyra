@@ -1,0 +1,107 @@
+feature: display
+description: Tests for $display system task output
+
+cases:
+  - name: display_string
+    sv: |
+      module Test;
+        initial $display("Hello World");
+      endmodule
+    expect:
+      output: "Hello World\n"
+
+  - name: display_empty
+    sv: |
+      module Test;
+        initial $display();
+      endmodule
+    expect:
+      output: "\n"
+
+  - name: display_integer
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $display("%d", x);
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: display_multiple_values
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = 20;
+          $display("a=%d b=%d", a, b);
+        end
+      endmodule
+    expect:
+      output: "a=10 b=20\n"
+
+  - name: display_hex_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $display("%h", x);
+        end
+      endmodule
+    expect:
+      output: "ff\n"
+
+  - name: display_binary_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      output: "101\n"
+
+  - name: display_multiple_calls
+    sv: |
+      module Test;
+        initial begin
+          $display("line 1");
+          $display("line 2");
+        end
+      endmodule
+    expect:
+      output: |
+        line 1
+        line 2
+
+  - name: display_no_format_string
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 99;
+          $display(x);
+        end
+      endmodule
+    expect:
+      output: "99\n"
+
+  - name: display_contains_check
+    sv: |
+      module Test;
+        initial begin
+          $display("prefix data suffix");
+          $display("more output");
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "data"
+          - "more"

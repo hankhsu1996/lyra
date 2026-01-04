@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <format>
-#include <iostream>
 
 #include <fmt/core.h>
 
@@ -411,7 +410,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$display") {
         // Empty $display - just print newline
         if (instr.operands.empty()) {
-          std::cout << "\n";
+          simulation_context.display_output << "\n";
           return InstructionResult::Continue();
         }
 
@@ -425,7 +424,8 @@ auto RunInstruction(
             for (size_t i = 1; i < instr.operands.size(); ++i) {
               args.push_back(get_temp(instr.operands[i]));
             }
-            std::cout << FormatDisplay(fmt_str, args) << "\n";
+            simulation_context.display_output << FormatDisplay(fmt_str, args)
+                                              << "\n";
             return InstructionResult::Continue();
           }
         }
@@ -443,7 +443,8 @@ auto RunInstruction(
           }
           args.push_back(value);
         }
-        std::cout << FormatDisplay(gen_fmt, args) << "\n";
+        simulation_context.display_output << FormatDisplay(gen_fmt, args)
+                                          << "\n";
         return InstructionResult::Continue();
       }
 

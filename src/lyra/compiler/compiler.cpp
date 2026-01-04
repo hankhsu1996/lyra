@@ -8,6 +8,7 @@
 #include <memory>
 #include <random>
 #include <sstream>
+#include <string_view>
 
 #include <slang/ast/Compilation.h>
 
@@ -77,11 +78,18 @@ auto Compiler::CompileAndRun(
   Codegen codegen;
   std::string generated = codegen.Generate(mir);
 
-  // Build main() that prints variables and final time
+  // Build main() that captures display output and prints results
   std::ostringstream main_code;
   main_code << "\nint main() {\n";
   main_code << "  " << mir.name << " dut;\n";
+  // Redirect cout to capture $display output
+  main_code << "  std::ostringstream captured;\n";
+  main_code << "  auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
   main_code << "  auto final_time = dut.Run();\n";
+  main_code << "  std::cout.rdbuf(old_buf);\n";
+  // Output captured display with markers
+  main_code << "  std::cout << \"__output__=\" << captured.str() "
+            << "<< \"__end_output__\" << std::endl;\n";
   for (const auto& var : variables_to_read) {
     main_code << "  std::cout << \"" << var << "=\" << dut." << var
               << " << std::endl;\n";
@@ -100,6 +108,7 @@ auto Compiler::CompileAndRun(
   {
     std::ostringstream code_stream;
     code_stream << "#include <iostream>\n";
+    code_stream << "#include <sstream>\n";
     code_stream << generated;
     code_stream << main_code.str();
     full_code = code_stream.str();
@@ -132,10 +141,28 @@ auto Compiler::CompileAndRun(
     return result;
   }
 
-  // Parse output (format: "var=value\n" and "__time__=value\n")
+  // Parse output
+  // Format: "__output__=...contents...__end_output__\nvar=value\n__time__=N\n"
+
+  // Extract captured output (between __output__= and __end_output__)
+  constexpr std::string_view kOutputStart = "__output__=";
+  constexpr std::string_view kOutputEnd = "__end_output__";
+  auto output_start = run_output.find(kOutputStart);
+  auto output_end = run_output.find(kOutputEnd);
+  if (output_start != std::string::npos && output_end != std::string::npos) {
+    auto content_start = output_start + kOutputStart.size();
+    result.captured_output_ =
+        run_output.substr(content_start, output_end - content_start);
+  }
+
+  // Parse variable values and time
   std::istringstream iss(run_output);
   std::string line;
   while (std::getline(iss, line)) {
+    // Skip the output marker line
+    if (line.starts_with("__output__=")) {
+      continue;
+    }
     auto eq_pos = line.find('=');
     if (eq_pos != std::string::npos) {
       std::string name = line.substr(0, eq_pos);

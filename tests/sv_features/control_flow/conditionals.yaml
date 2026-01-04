@@ -14,7 +14,8 @@ cases:
         end
       endmodule
     expect:
-      a: 42
+      variables:
+        a: 42
 
   - name: ternary_literal
     sv: |
@@ -25,7 +26,8 @@ cases:
         end
       endmodule
     expect:
-      a: 42
+      variables:
+        a: 42
 
   - name: ternary_variable
     sv: |
@@ -37,7 +39,8 @@ cases:
         end
       endmodule
     expect:
-      a: 42
+      variables:
+        a: 42
 
   - name: ternary_nested
     sv: |
@@ -49,7 +52,8 @@ cases:
         end
       endmodule
     expect:
-      a: 2
+      variables:
+        a: 2
 
   - name: ternary_complex
     sv: |
@@ -62,4 +66,5 @@ cases:
         end
       endmodule
     expect:
-      a: 42
+      variables:
+        a: 42

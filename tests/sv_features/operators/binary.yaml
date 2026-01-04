@@ -13,7 +13,8 @@ cases:
         end
       endmodule
     expect:
-      c: 30
+      variables:
+        c: 30
 
   - name: subtraction_basic
     sv: |
@@ -26,7 +27,8 @@ cases:
         end
       endmodule
     expect:
-      c: 18
+      variables:
+        c: 18
 
   - name: multiplication_basic
     sv: |
@@ -39,7 +41,8 @@ cases:
         end
       endmodule
     expect:
-      c: 35
+      variables:
+        c: 35
 
   - name: complex_expression
     sv: |
@@ -53,7 +56,8 @@ cases:
         end
       endmodule
     expect:
-      d: 35
+      variables:
+        d: 35
 
   - name: comparison_equal
     sv: |
@@ -68,8 +72,9 @@ cases:
         end
       endmodule
     expect:
-      c: 1
-      d: 0
+      variables:
+        c: 1
+        d: 0
 
   - name: comparison_not_equal
     sv: |
@@ -84,8 +89,9 @@ cases:
         end
       endmodule
     expect:
-      c: 1
-      d: 0
+      variables:
+        c: 1
+        d: 0
 
   - name: comparison_less_than
     sv: |
@@ -100,8 +106,9 @@ cases:
         end
       endmodule
     expect:
-      c: 1
-      d: 0
+      variables:
+        c: 1
+        d: 0
 
   - name: comparison_less_than_equal
     sv: |
@@ -118,9 +125,10 @@ cases:
         end
       endmodule
     expect:
-      d: 1
-      e: 1
-      f: 0
+      variables:
+        d: 1
+        e: 1
+        f: 0
 
   - name: comparison_greater_than
     sv: |
@@ -135,8 +143,9 @@ cases:
         end
       endmodule
     expect:
-      c: 1
-      d: 0
+      variables:
+        c: 1
+        d: 0
 
   - name: comparison_greater_than_equal
     sv: |
@@ -153,9 +162,10 @@ cases:
         end
       endmodule
     expect:
-      d: 1
-      e: 1
-      f: 0
+      variables:
+        d: 1
+        e: 1
+        f: 0
 
   - name: bitwise_and
     sv: |
@@ -168,7 +178,8 @@ cases:
         end
       endmodule
     expect:
-      c: 1
+      variables:
+        c: 1
 
   - name: bitwise_or
     sv: |
@@ -181,7 +192,8 @@ cases:
         end
       endmodule
     expect:
-      c: 7
+      variables:
+        c: 7
 
   - name: bitwise_xor
     sv: |
@@ -194,7 +206,8 @@ cases:
         end
       endmodule
     expect:
-      c: 6
+      variables:
+        c: 6
 
   - name: bitwise_xnor
     sv: |
@@ -207,7 +220,8 @@ cases:
         end
       endmodule
     expect:
-      c: -7
+      variables:
+        c: -7
 
   - name: bitwise_xnor_alt
     sv: |
@@ -220,7 +234,8 @@ cases:
         end
       endmodule
     expect:
-      c: -7
+      variables:
+        c: -7
 
   - name: logical_and
     sv: |
@@ -236,9 +251,10 @@ cases:
         end
       endmodule
     expect:
-      r1: 0
-      r2: 1
-      r3: 0
+      variables:
+        r1: 0
+        r2: 1
+        r3: 0
 
   - name: logical_or
     sv: |
@@ -254,9 +270,10 @@ cases:
         end
       endmodule
     expect:
-      r1: 1
-      r2: 0
-      r3: 1
+      variables:
+        r1: 1
+        r2: 0
+        r3: 1
 
   - name: shift_left
     sv: |
@@ -268,7 +285,8 @@ cases:
         end
       endmodule
     expect:
-      b: 32
+      variables:
+        b: 32
 
   - name: shift_right
     sv: |
@@ -280,7 +298,8 @@ cases:
         end
       endmodule
     expect:
-      b: 8
+      variables:
+        b: 8
 
   - name: shift_arith_right_signed
     sv: |
@@ -293,7 +312,8 @@ cases:
         end
       endmodule
     expect:
-      c: -2
+      variables:
+        c: -2
 
   - name: shift_logic_right_signed
     sv: |
@@ -306,7 +326,8 @@ cases:
         end
       endmodule
     expect:
-      c: 1073741822
+      variables:
+        c: 1073741822
 
   - name: shift_arith_left_signed
     sv: |
@@ -319,7 +340,8 @@ cases:
         end
       endmodule
     expect:
-      c: -32
+      variables:
+        c: -32
 
   - name: shift_logic_left_signed
     sv: |
@@ -332,7 +354,8 @@ cases:
         end
       endmodule
     expect:
-      c: -32
+      variables:
+        c: -32
 
   - name: addition_bit_and_int
     sv: |
@@ -346,7 +369,8 @@ cases:
         end
       endmodule
     expect:
-      c: 11
+      variables:
+        c: 11
 
   - name: addition_int_and_longint
     sv: |
@@ -360,7 +384,8 @@ cases:
         end
       endmodule
     expect:
-      c: 1100
+      variables:
+        c: 1100
 
   - name: addition_bit_and_longint
     sv: |
@@ -374,7 +399,8 @@ cases:
         end
       endmodule
     expect:
-      c: 1001
+      variables:
+        c: 1001
 
   - name: string_equal
     sv: |
@@ -390,8 +416,9 @@ cases:
         end
       endmodule
     expect:
-      r1: 1
-      r2: 0
+      variables:
+        r1: 1
+        r2: 0
 
   - name: string_not_equal
     sv: |
@@ -407,5 +434,6 @@ cases:
         end
       endmodule
     expect:
-      r1: 1
-      r2: 0
+      variables:
+        r1: 1
+        r2: 0

@@ -9,7 +9,8 @@ cases:
         initial a = 42;
       endmodule
     expect:
-      a: 42
+      variables:
+        a: 42
 
   - name: two_initial_blocks
     sv: |
@@ -19,8 +20,9 @@ cases:
         initial b = 20;
       endmodule
     expect:
-      a: 10
-      b: 20
+      variables:
+        a: 10
+        b: 20
 
   - name: add_and_assign_sequence
     sv: |
@@ -33,6 +35,7 @@ cases:
         end
       endmodule
     expect:
-      a: 5
-      b: 8
-      c: 12
+      variables:
+        a: 5
+        b: 8
+        c: 12
