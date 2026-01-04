@@ -43,9 +43,9 @@ jobs:
         run: |
           find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
 
-      - name: Build external headers
+      - name: Build (for headers)
         run: |
-          bazel build @slang//:slang
+          bazel build //...
 
       - name: Generate compile_commands.json
         run: |
