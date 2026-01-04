@@ -14,7 +14,7 @@ class Codegen {
  private:
   void EmitHeader();
   void EmitClass(const mir::Module& module);
-  void EmitVariables(const std::vector<common::Variable>& variables);
+  void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);

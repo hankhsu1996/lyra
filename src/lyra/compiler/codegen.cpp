@@ -259,10 +259,18 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("};");
 }
 
-void Codegen::EmitVariables(const std::vector<common::Variable>& variables) {
-  for (const auto& var : variables) {
-    std::string type_str = ToCppType(var.type);
-    Line(type_str + " " + std::string(var.symbol->name) + "{};");
+void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
+  for (const auto& mod_var : variables) {
+    std::string type_str = ToCppType(mod_var.variable.type);
+    Indent();
+    out_ << type_str << " " << mod_var.variable.symbol->name;
+    if (mod_var.initializer) {
+      out_ << " = ";
+      EmitExpression(*mod_var.initializer);
+    } else {
+      out_ << "{}";
+    }
+    out_ << ";\n";
   }
 }
 

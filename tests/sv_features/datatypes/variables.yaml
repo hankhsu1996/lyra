@@ -55,3 +55,28 @@ cases:
       endmodule
     expect:
       x: 0
+
+  - name: module_var_init_literal
+    sv: |
+      module Test;
+        int x = 42;
+        int result;
+        initial begin
+          result = x;
+        end
+      endmodule
+    expect:
+      result: 42
+
+  - name: module_var_init_expression
+    sv: |
+      module Test;
+        int a = 10;
+        int b = a + 5;
+        int result;
+        initial begin
+          result = b;
+        end
+      endmodule
+    expect:
+      result: 15

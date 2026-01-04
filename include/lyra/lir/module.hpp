@@ -40,8 +40,8 @@ struct Module {
       out += fmt::format("Variables: ");
     }
 
-    for (const auto& variable : variables) {
-      out += fmt::format("{} ", variable.symbol->name);
+    for (const auto& var : variables) {
+      out += fmt::format("{} ", var.symbol->name);
     }
 
     out += "\n";

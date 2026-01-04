@@ -5,6 +5,7 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -24,7 +25,15 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
       const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
       auto variable = common::Variable::FromSlang(&variable_symbol);
-      module->variables.push_back(std::move(variable));
+
+      // Extract initializer if present
+      std::unique_ptr<mir::Expression> init_expr = nullptr;
+      if (const auto* initializer = variable_symbol.getInitializer()) {
+        init_expr = LowerExpression(*initializer);
+      }
+
+      module->variables.push_back(
+          mir::ModuleVariable{std::move(variable), std::move(init_expr)});
       continue;
     }
 
