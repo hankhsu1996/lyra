@@ -216,6 +216,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
 
 void Codegen::EmitHeader() {
   Line("#include <print>");
+  Line("#include <iostream>");
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
 }
