@@ -18,11 +18,17 @@ class Compilation;
 
 namespace lyra::frontend {
 
+struct FrontendOptions {
+  std::vector<std::string> include_dirs;
+};
+
 class SlangFrontend {
  public:
   SlangFrontend();
 
-  auto LoadFromFiles(const std::vector<std::string>& paths)
+  auto LoadFromFiles(
+      const std::vector<std::string>& paths,
+      const FrontendOptions& options = {})
       -> std::unique_ptr<slang::ast::Compilation>;
 
   auto LoadFromString(

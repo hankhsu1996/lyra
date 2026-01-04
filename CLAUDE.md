@@ -25,11 +25,15 @@ buildifier -r .                                # Format Bazel files
 
 ## Lyra CLI
 
+Lyra uses a project-based workflow with `lyra.toml` configuration files.
+
 ```bash
-lyra run <file.sv>                             # Compile and run
-lyra run --interpret <file.sv>                 # Run with interpreter
-lyra emit <file.sv>                            # Generate C++ project to out/
-lyra check <file.sv>                           # Parse and validate only
+lyra init <name>                               # Create new project
+lyra run                                       # Build and run (requires lyra.toml)
+lyra run --interpret                           # Run with interpreter
+lyra build                                     # Generate C++ and compile (no run)
+lyra emit                                      # Generate C++ project to out/
+lyra check                                     # Parse and validate only
 lyra dump cpp <file.sv>                        # Dump generated C++ code
 lyra dump mir <file.sv>                        # Dump MIR
 lyra dump lir <file.sv>                        # Dump LIR

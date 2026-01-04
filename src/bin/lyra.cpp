@@ -1,4 +1,5 @@
 #include <argparse/argparse.hpp>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include "embedded_sdk.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/compiler/compiler.hpp"
+#include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
 #include "lyra/lir/module.hpp"
@@ -130,43 +132,55 @@ auto GenerateMain(
          "}\n";
 }
 
-auto RunCommand(const std::vector<std::string>& files, bool use_interpreter)
-    -> int {
-  if (files.empty()) {
-    std::cerr << "lyra run: no input files\n";
+// Forward declaration
+auto EmitCommandInternal(
+    const std::vector<std::string>& files, const std::string& output_dir,
+    const std::vector<std::string>& include_dirs, const std::string& top_module)
+    -> int;
+
+auto RunCommand(bool use_interpreter) -> int {
+  auto config_path = lyra::config::FindConfig();
+  if (!config_path) {
+    std::cerr << "lyra run: no lyra.toml found\n";
     return 1;
   }
 
   try {
+    auto config = lyra::config::LoadConfig(*config_path);
+
     if (use_interpreter) {
-      lyra::interpreter::Interpreter::RunFromFiles(files);
+      // TODO(hankhsu): Add include directory support to interpreter
+      lyra::interpreter::Interpreter::RunFromFiles(config.files);
       return 0;
     }
 
-    // Codegen backend - run simulation
-    auto result = lyra::compiler::Compiler::RunFromFiles(files, {});
-    if (!result.Success()) {
-      std::cerr << "lyra run: " << result.ErrorMessage() << "\n";
-      return 1;
+    // emit + build + run
+    auto out_path = config.root_dir / config.out_dir;
+    int result = EmitCommandInternal(
+        config.files, out_path.string(), config.incdir, config.top);
+    if (result != 0) {
+      return result;
     }
-    return 0;
+
+    std::string cmd = std::format(
+        "cd {} && cmake --preset default && cmake --build build && "
+        "./build/sim",
+        out_path.string());
+    return std::system(cmd.c_str());
   } catch (const std::exception& e) {
     std::cerr << "lyra run: " << e.what() << "\n";
     return 1;
   }
 }
 
-auto EmitCommand(
-    const std::vector<std::string>& files, const std::string& output_dir)
-    -> int {
-  if (files.empty()) {
-    std::cerr << "lyra emit: no input files\n";
-    return 1;
-  }
-
+auto EmitCommandInternal(
+    const std::vector<std::string>& source_files, const std::string& out_dir,
+    const std::vector<std::string>& incdirs, const std::string& top) -> int {
   try {
     lyra::frontend::SlangFrontend frontend;
-    auto compilation = frontend.LoadFromFiles(files);
+    lyra::frontend::FrontendOptions options;
+    options.include_dirs = incdirs;
+    auto compilation = frontend.LoadFromFiles(source_files, options);
     if (!compilation) {
       std::cerr << "lyra emit: failed to parse\n";
       return 1;
@@ -183,23 +197,23 @@ auto EmitCommand(
     std::string code = codegen.Generate(*mir);
 
     // Create output directory structure
-    fs::path out_path(output_dir);
+    fs::path out_path(out_dir);
     fs::path design_dir = out_path / "include" / "design";
     fs::create_directories(design_dir);
 
     // Copy SDK headers
     WriteSdkHeaders(out_path);
 
-    // Write generated module code
-    std::string module_name = mir->name;
-    std::string header_file = module_name + ".hpp";
+    // Use top module from config if provided, otherwise use MIR module name
+    std::string module_name = top.empty() ? mir->name : top;
+    std::string header_file = mir->name + ".hpp";
     fs::path module_path = design_dir / header_file;
 
     // Wrap code with pragma once and proper includes
     std::string header_code = "#pragma once\n\n" + code;
     WriteFile(module_path, header_code);
 
-    // Generate main.cpp
+    // Generate main.cpp (use top module name for instantiation)
     WriteFile(out_path / "main.cpp", GenerateMain(module_name, header_file));
 
     // Generate build configuration files
@@ -216,15 +230,38 @@ auto EmitCommand(
   }
 }
 
-auto CheckCommand(const std::vector<std::string>& files) -> int {
-  if (files.empty()) {
-    std::cerr << "lyra check: no input files\n";
+auto EmitCommand() -> int {
+  auto config_path = lyra::config::FindConfig();
+  if (!config_path) {
+    std::cerr << "lyra emit: no lyra.toml found\n";
     return 1;
   }
 
   try {
+    auto config = lyra::config::LoadConfig(*config_path);
+    auto out_path = config.root_dir / config.out_dir;
+    return EmitCommandInternal(
+        config.files, out_path.string(), config.incdir, config.top);
+  } catch (const std::exception& e) {
+    std::cerr << "lyra emit: " << e.what() << "\n";
+    return 1;
+  }
+}
+
+auto CheckCommand() -> int {
+  auto config_path = lyra::config::FindConfig();
+  if (!config_path) {
+    std::cerr << "lyra check: no lyra.toml found\n";
+    return 1;
+  }
+
+  try {
+    auto config = lyra::config::LoadConfig(*config_path);
+
     lyra::frontend::SlangFrontend frontend;
-    auto compilation = frontend.LoadFromFiles(files);
+    lyra::frontend::FrontendOptions options;
+    options.include_dirs = config.incdir;
+    auto compilation = frontend.LoadFromFiles(config.files, options);
     if (!compilation) {
       std::cerr << "lyra check: failed to parse\n";
       return 1;
@@ -284,6 +321,82 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
   }
 }
 
+auto BuildCommand() -> int {
+  auto config_path = lyra::config::FindConfig();
+  if (!config_path) {
+    std::cerr << "lyra build: no lyra.toml found\n";
+    return 1;
+  }
+
+  try {
+    auto config = lyra::config::LoadConfig(*config_path);
+    auto out_path = config.root_dir / config.out_dir;
+
+    // emit
+    int result = EmitCommandInternal(
+        config.files, out_path.string(), config.incdir, config.top);
+    if (result != 0) {
+      return result;
+    }
+
+    // cmake build
+    std::string cmd = std::format(
+        "cd {} && cmake --preset default && cmake --build build",
+        out_path.string());
+    return std::system(cmd.c_str());
+  } catch (const std::exception& e) {
+    std::cerr << "lyra build: " << e.what() << "\n";
+    return 1;
+  }
+}
+
+auto InitCommand(const std::string& project_path) -> int {
+  fs::path project_dir = fs::path(project_path);
+  if (project_dir.is_relative()) {
+    project_dir = fs::current_path() / project_dir;
+  }
+  std::string project_name = project_dir.filename().string();
+
+  if (fs::exists(project_dir)) {
+    std::cerr << "lyra init: directory '" << project_dir.string()
+              << "' already exists\n";
+    return 1;
+  }
+
+  try {
+    fs::create_directories(project_dir);
+
+    // Create lyra.toml
+    std::string config = std::format(
+        R"([package]
+name = "{}"
+top = "{}"
+
+[sources]
+files = ["{}.sv"]
+)",
+        project_name, project_name, project_name);
+    WriteFile(project_dir / "lyra.toml", config);
+
+    // Create starter SV file
+    std::string sv = std::format(
+        R"(module {};
+  initial begin
+    $display("Hello from {}!");
+  end
+endmodule
+)",
+        project_name, project_name);
+    WriteFile(project_dir / (project_name + ".sv"), sv);
+
+    std::cout << "Created project '" << project_name << "'\n";
+    return 0;
+  } catch (const std::exception& e) {
+    std::cerr << "lyra init: " << e.what() << "\n";
+    return 1;
+  }
+}
+
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -292,25 +405,18 @@ auto main(int argc, char* argv[]) -> int {
 
   // Subcommand: run
   argparse::ArgumentParser run_cmd("run");
-  run_cmd.add_description("Simulate design");
-  run_cmd.add_argument("files").remaining().help("SystemVerilog source files");
+  run_cmd.add_description("Simulate design (requires lyra.toml)");
   run_cmd.add_argument("--interpret", "-i")
       .flag()
       .help("Use interpreter instead of codegen");
 
   // Subcommand: emit
   argparse::ArgumentParser emit_cmd("emit");
-  emit_cmd.add_description("Emit generated C++ code");
-  emit_cmd.add_argument("--out-dir")
-      .default_value(std::string{"out"})
-      .help("Output directory");
-  emit_cmd.add_argument("files").remaining().help("SystemVerilog source files");
+  emit_cmd.add_description("Generate C++ code (requires lyra.toml)");
 
   // Subcommand: check
   argparse::ArgumentParser check_cmd("check");
-  check_cmd.add_description("Parse and validate only");
-  check_cmd.add_argument("files").remaining().help(
-      "SystemVerilog source files");
+  check_cmd.add_description("Parse and validate (requires lyra.toml)");
 
   // Subcommand: dump
   argparse::ArgumentParser dump_cmd("dump");
@@ -318,10 +424,22 @@ auto main(int argc, char* argv[]) -> int {
   dump_cmd.add_argument("format").help("Output format: cpp, mir, or lir");
   dump_cmd.add_argument("files").remaining().help("SystemVerilog source files");
 
+  // Subcommand: build
+  argparse::ArgumentParser build_cmd("build");
+  build_cmd.add_description(
+      "Generate and build C++ project (requires lyra.toml)");
+
+  // Subcommand: init
+  argparse::ArgumentParser init_cmd("init");
+  init_cmd.add_description("Create a new Lyra project");
+  init_cmd.add_argument("name").help("Project name");
+
   program.add_subparser(run_cmd);
   program.add_subparser(emit_cmd);
   program.add_subparser(check_cmd);
   program.add_subparser(dump_cmd);
+  program.add_subparser(build_cmd);
+  program.add_subparser(init_cmd);
 
   try {
     program.parse_args(argc, argv);
@@ -332,20 +450,16 @@ auto main(int argc, char* argv[]) -> int {
   }
 
   if (program.is_subcommand_used("run")) {
-    auto files = run_cmd.get<std::vector<std::string>>("files");
     bool use_interpreter = run_cmd.get<bool>("--interpret");
-    return RunCommand(files, use_interpreter);
+    return RunCommand(use_interpreter);
   }
 
   if (program.is_subcommand_used("emit")) {
-    auto files = emit_cmd.get<std::vector<std::string>>("files");
-    auto output_dir = emit_cmd.get<std::string>("--out-dir");
-    return EmitCommand(files, output_dir);
+    return EmitCommand();
   }
 
   if (program.is_subcommand_used("check")) {
-    auto files = check_cmd.get<std::vector<std::string>>("files");
-    return CheckCommand(files);
+    return CheckCommand();
   }
 
   if (program.is_subcommand_used("dump")) {
@@ -365,6 +479,15 @@ auto main(int argc, char* argv[]) -> int {
       return 1;
     }
     return DumpCommand(files, format);
+  }
+
+  if (program.is_subcommand_used("build")) {
+    return BuildCommand();
+  }
+
+  if (program.is_subcommand_used("init")) {
+    auto name = init_cmd.get<std::string>("name");
+    return InitCommand(name);
   }
 
   // No subcommand provided

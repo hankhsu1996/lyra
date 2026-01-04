@@ -2,20 +2,63 @@
 
 Design document for the `lyra` command-line tool.
 
-## Current Implementation
+## Workflow
 
-### Subcommands
+Lyra uses a project-based workflow with `lyra.toml` configuration files, similar to Cargo for Rust.
 
-| Command                   | Status | Description                    |
-| ------------------------- | ------ | ------------------------------ |
-| `lyra run <file.sv>`      | Done   | Compile and run (codegen)      |
-| `lyra run --interpret`    | Done   | Run with interpreter           |
-| `lyra emit <file.sv>`     | Done   | Generate buildable C++ project |
-| `lyra emit --out-dir gen` | Done   | Specify output directory       |
-| `lyra check <file.sv>`    | Done   | Parse and validate only        |
-| `lyra dump <fmt> <file>`  | Done   | Dump IR (cpp, mir, lir)        |
-| `lyra build`              | —      | Generate binary only (no run)  |
-| `lyra init`               | —      | Initialize new project         |
+### Quick Start
+
+```bash
+# Create a new project
+lyra init my_project
+cd my_project
+
+# Run simulation
+lyra run
+
+# Or build without running
+lyra build
+```
+
+### Project Structure
+
+```
+my_project/
+├── lyra.toml       # Project configuration
+├── my_project.sv   # SystemVerilog source
+└── out/            # Generated C++ project (after build)
+    ├── build/sim   # Compiled binary
+    └── ...
+```
+
+## Configuration (`lyra.toml`)
+
+```toml
+[package]
+name = "my_design"
+top = "Top"                    # Required: top module name
+
+[sources]
+files = ["src/top.sv"]         # Required: source files
+incdir = ["include/"]          # Optional: include directories
+
+[build]
+out_dir = "out"                # Optional: default "out"
+```
+
+## Commands
+
+| Command                  | Description                                   |
+| ------------------------ | --------------------------------------------- |
+| `lyra run`               | Build and run simulation (requires lyra.toml) |
+| `lyra run -i`            | Run with interpreter backend                  |
+| `lyra build`             | Generate C++ and compile (no run)             |
+| `lyra emit`              | Generate C++ project only                     |
+| `lyra check`             | Parse and validate                            |
+| `lyra init <name>`       | Create new project                            |
+| `lyra dump <fmt> <file>` | Debug: dump IR (cpp, mir, lir)                |
+
+All commands except `dump` require a `lyra.toml` file. The CLI searches the current directory and parent directories for the config file.
 
 ### Output Structure (`lyra emit` → `out/`)
 
@@ -30,7 +73,7 @@ out/
 │   └── lyra/sdk/         # SDK headers (copied)
 ```
 
-Build the generated project:
+Build the generated project manually:
 
 ```bash
 cd out
@@ -39,7 +82,7 @@ cmake --build build
 ./build/sim
 ```
 
-### Dump Command (`lyra dump`)
+### Dump Command
 
 Debug command to inspect internal representations:
 
@@ -49,7 +92,7 @@ lyra dump mir file.sv   # MIR (high-level, structured)
 lyra dump lir file.sv   # LIR (low-level, linearized)
 ```
 
-Useful for debugging the compiler pipeline and understanding how SystemVerilog maps to each IR stage.
+This is the only command that accepts file arguments directly.
 
 ## Backends
 
@@ -62,41 +105,15 @@ Two execution backends:
 
 Codegen is the default backend. Interpreter is useful for development (no compile step).
 
-## Planned Features
-
-### Project Configuration (`lyra.toml`)
-
-```toml
-[package]
-name = "my_design"
-top = "Top"
-
-[sources]
-files = ["src/top.sv", "src/sub.sv"]
-incdir = ["src/", "include/"]
-```
-
-With a config file, commands become simpler:
-
-```bash
-lyra run       # Uses lyra.toml
-lyra emit      # Uses lyra.toml
-lyra check     # Uses lyra.toml
-```
-
-### Additional Commands
-
-```bash
-lyra init my_project   # Create new project with lyra.toml
-lyra build             # Emit + compile (don't run)
-```
-
 ## Internal Architecture
 
 ### Library Structure
 
 ```
 include/lyra/
+├── config/                # Project configuration
+│   └── project_config.hpp # lyra.toml parsing
+│
 ├── interpreter/           # Interpreter backend
 │   └── interpreter.hpp    # Entry point
 │
@@ -113,18 +130,19 @@ include/lyra/
 
 ### Key Classes
 
-| Class         | Location       | Role                                 |
-| ------------- | -------------- | ------------------------------------ |
-| `Interpreter` | `interpreter/` | MIR → LIR → run                      |
-| `Compiler`    | `compiler/`    | MIR → C++ → compile → run            |
-| `Codegen`     | `compiler/`    | Generates C++ source from MIR        |
-| `Module`      | `sdk/`         | Base class for generated modules     |
-| `Scheduler`   | `sdk/`         | Coroutine-based simulation scheduler |
+| Class           | Location       | Role                                 |
+| --------------- | -------------- | ------------------------------------ |
+| `ProjectConfig` | `config/`      | lyra.toml parsing                    |
+| `Interpreter`   | `interpreter/` | MIR → LIR → run                      |
+| `Compiler`      | `compiler/`    | MIR → C++ → compile → run            |
+| `Codegen`       | `compiler/`    | Generates C++ source from MIR        |
+| `Module`        | `sdk/`         | Base class for generated modules     |
+| `Scheduler`     | `sdk/`         | Coroutine-based simulation scheduler |
 
 ## Design Decisions
 
 - **Default backend**: Codegen (production path)
-- **C++ standard**: C++23 (for coroutines)
-- **Preferred compiler**: Clang (better coroutine support than GCC)
+- **C++ standard**: C++23 (for coroutines, `<print>`)
+- **Preferred compiler**: Clang (better C++23 support than GCC)
 - **Build system for output**: CMake with presets
-- **One module per file**: Scales to 1000+ modules
+- **Config-first**: Commands use lyra.toml by default (no dual mode)

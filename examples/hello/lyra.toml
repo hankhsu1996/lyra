@@ -1,0 +1,6 @@
+[package]
+name = "hello"
+top = "Top"
+
+[sources]
+files = ["hello.sv"]

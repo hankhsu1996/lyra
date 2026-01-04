@@ -1,78 +1,61 @@
 # Examples
 
-Sample SystemVerilog files for testing Lyra.
+Sample Lyra projects demonstrating SystemVerilog simulation.
 
-## Files
+## Projects
 
-| File          | Description                                |
-| ------------- | ------------------------------------------ |
-| `hello.sv`    | Minimal example (variable init and finish) |
-| `tiny_cpu.sv` | Comprehensive example with all SV features |
+| Project     | Description                                |
+| ----------- | ------------------------------------------ |
+| `hello/`    | Minimal example (variable init and finish) |
+| `tiny_cpu/` | Comprehensive example with all SV features |
+
+Each project contains a `lyra.toml` configuration file and source files.
 
 ## Running Examples
 
-### Using Bazel
-
 ```bash
-# Build and run with codegen (default)
-bazel run //:lyra -- run examples/tiny_cpu.sv
+# Navigate to an example project
+cd examples/hello
 
-# Run with interpreter
-bazel run //:lyra -- run --interpret examples/tiny_cpu.sv
+# Run simulation
+lyra run
 
-# Generate standalone C++ project (to out/)
-bazel run //:lyra -- emit examples/tiny_cpu.sv
+# Or build without running
+lyra build
 
 # Parse and validate only
-bazel run //:lyra -- check examples/tiny_cpu.sv
+lyra check
+
+# Generate C++ project only
+lyra emit
 ```
 
-### Using the Binary Directly
+## Project Structure
 
-After building:
+Each example follows this structure:
+
+```
+hello/
+├── lyra.toml       # Project configuration
+├── hello.sv        # SystemVerilog source
+└── out/            # Generated after build (gitignored)
+    ├── build/sim   # Compiled binary
+    └── ...
+```
+
+## Dump Command (Debug)
+
+The `dump` command is for debugging and requires explicit file paths:
 
 ```bash
-bazel build //:lyra
-
-./bazel-bin/lyra run examples/tiny_cpu.sv
-./bazel-bin/lyra emit examples/tiny_cpu.sv
-./bazel-bin/lyra check examples/tiny_cpu.sv
-```
-
-## Generating a Standalone C++ Project
-
-`lyra emit` generates a complete, buildable C++ project to `out/` by default:
-
-```bash
-lyra emit examples/tiny_cpu.sv              # Creates out/
-lyra emit --out-dir gen examples/tiny_cpu.sv  # Creates gen/
-```
-
-This creates:
-
-```
-out/
-├── CMakeLists.txt        # Build configuration
-├── CMakePresets.json     # Uses clang by default
-├── main.cpp              # Entry point
-├── include/
-│   ├── design/
-│   │   └── tiny_cpu.hpp  # Generated simulation code
-│   └── lyra/sdk/         # SDK headers
-```
-
-Build and run:
-
-```bash
-cd out
-cmake --preset default
-cmake --build build
-./build/sim
+lyra dump cpp examples/hello/hello.sv   # Generated C++ code
+lyra dump mir examples/hello/hello.sv   # MIR (high-level, structured)
+lyra dump lir examples/hello/hello.sv   # LIR (low-level, linearized)
 ```
 
 ## Supported SystemVerilog Features
 
-See `tiny_cpu.sv` for examples of:
+See `tiny_cpu/tiny_cpu.sv` for examples of:
 
 - Data types: `bit`, `int`
 - Time delays: `#5`, `#7`

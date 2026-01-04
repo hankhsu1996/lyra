@@ -19,8 +19,14 @@ void SlangFrontend::AddTree(
   compilation.addSyntaxTree(tree);
 }
 
-auto SlangFrontend::LoadFromFiles(const std::vector<std::string>& paths)
+auto SlangFrontend::LoadFromFiles(
+    const std::vector<std::string>& paths, const FrontendOptions& options)
     -> std::unique_ptr<slang::ast::Compilation> {
+  // Add include directories to source manager
+  for (const auto& dir : options.include_dirs) {
+    source_manager_->addUserDirectories(dir);
+  }
+
   auto compilation = std::make_unique<slang::ast::Compilation>();
 
   for (const auto& path : paths) {

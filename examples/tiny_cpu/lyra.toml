@@ -1,0 +1,6 @@
+[package]
+name = "tiny_cpu"
+top = "TinyCPU"
+
+[sources]
+files = ["tiny_cpu.sv"]
