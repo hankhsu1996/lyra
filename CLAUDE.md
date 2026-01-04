@@ -61,3 +61,29 @@ YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and co
   - `std::array` over C arrays
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
+
+## Approach to Changes
+
+For full design rationale, see `docs/design-principles.md`.
+
+### Adding Features
+
+Before implementing a new feature directly:
+
+1. **Explore existing structure** - Understand how similar things work
+2. **Look for generalization** - Can an existing abstraction be extended?
+3. **Find the right level** - The best change is often minimal when placed correctly
+4. **Prefer extending over adding** - Modify existing infrastructure rather than creating parallel structures
+
+The goal: make the new requirement feel like a natural extension, not a bolt-on.
+
+### Fixing Bugs
+
+After debugging and finding the immediate cause:
+
+1. **Step back** - Why does this bug exist? What allowed it?
+2. **Look for design issues** - Bugs often indicate deeper problems
+3. **Fix the root cause** - Not just the symptom
+4. **Avoid band-aids** - Don't just add a control branch; address the fundamental issue
+
+The goal: leave the codebase stronger, not just patched.
