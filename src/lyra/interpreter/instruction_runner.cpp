@@ -431,12 +431,10 @@ auto RunInstruction(
         }
 
         // No format specifiers - generate format string with %d placeholders
+        // No automatic spacing - matches C++ printf behavior
         std::string gen_fmt;
         std::vector<RuntimeValue> args;
         for (size_t i = 0; i < instr.operands.size(); ++i) {
-          if (i > 0) {
-            gen_fmt += " ";
-          }
           const auto& value = get_temp(instr.operands[i]);
           if (value.IsString()) {
             gen_fmt += "%s";

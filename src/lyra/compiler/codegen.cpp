@@ -342,11 +342,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           }
 
           // No format specifiers - generate format string with {} placeholders
+          // No automatic spacing - matches C++ printf behavior
           std::string fmt_str;
           for (size_t i = 0; i < syscall.arguments.size(); ++i) {
-            if (i > 0) {
-              fmt_str += " ";
-            }
             fmt_str += "{}";
           }
 
