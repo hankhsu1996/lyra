@@ -26,6 +26,10 @@ struct InterpreterResult {
   [[nodiscard]] auto FinalTime() const -> uint64_t {
     return context->current_time;
   }
+
+  [[nodiscard]] auto CapturedOutput() const -> std::string {
+    return context->display_output.str();
+  }
 };
 
 }  // namespace lyra::interpreter

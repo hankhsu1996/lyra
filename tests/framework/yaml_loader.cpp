@@ -30,16 +30,38 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       }
     }
 
+    // Parse unified expect: block
     if (node["expect"]) {
-      for (const auto& pair : node["expect"]) {
-        std::string var_name = pair.first.as<std::string>();
-        int64_t value = pair.second.as<int64_t>();
-        tc.expected_values[var_name] = value;
-      }
-    }
+      const auto& expect = node["expect"];
 
-    if (node["expect_time"]) {
-      tc.expected_time = node["expect_time"].as<uint64_t>();
+      // expect.variables: {var: value, ...}
+      if (expect["variables"]) {
+        for (const auto& pair : expect["variables"]) {
+          std::string var_name = pair.first.as<std::string>();
+          int64_t value = pair.second.as<int64_t>();
+          tc.expected_values[var_name] = value;
+        }
+      }
+
+      // expect.time: N
+      if (expect["time"]) {
+        tc.expected_time = expect["time"].as<uint64_t>();
+      }
+
+      // expect.output: string OR {contains: [...]}
+      if (expect["output"]) {
+        ExpectedOutput output;
+        if (expect["output"].IsScalar()) {
+          // Simple string - exact match
+          output.exact = expect["output"].as<std::string>();
+        } else if (expect["output"]["contains"]) {
+          // Contains list
+          for (const auto& item : expect["output"]["contains"]) {
+            output.contains.push_back(item.as<std::string>());
+          }
+        }
+        tc.expected_output = std::move(output);
+      }
     }
 
     cases.push_back(std::move(tc));

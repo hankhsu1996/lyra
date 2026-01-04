@@ -7,7 +7,8 @@ cases:
       module Test;
         initial #5;
       endmodule
-    expect_time: 5
+    expect:
+      time: 5
 
   - name: delay_with_inline_assign
     sv: |
@@ -16,7 +17,8 @@ cases:
         initial #5 a = 1;
       endmodule
     expect:
-      a: 1
+      variables:
+        a: 1
 
   - name: delay_then_assign
     sv: |
@@ -28,7 +30,8 @@ cases:
         end
       endmodule
     expect:
-      a: 2
+      variables:
+        a: 2
 
   - name: multiple_delays_then_assign
     sv: |
@@ -41,7 +44,8 @@ cases:
         end
       endmodule
     expect:
-      a: 3
+      variables:
+        a: 3
 
   - name: mixed_delay_forms
     sv: |
@@ -55,8 +59,9 @@ cases:
         end
       endmodule
     expect:
-      a: 12
-      b: 11
+      variables:
+        a: 12
+        b: 11
 
   - name: delay_in_loop
     sv: |
@@ -71,7 +76,8 @@ cases:
         end
       endmodule
     expect:
-      counter: 3
+      variables:
+        counter: 3
 
   - name: delay_with_conditional
     sv: |
@@ -87,4 +93,5 @@ cases:
         end
       endmodule
     expect:
-      x: 5
+      variables:
+        x: 5

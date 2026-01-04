@@ -14,8 +14,9 @@ cases:
         end
       endmodule
     expect:
-      a: 5
-      b: 2
+      variables:
+        a: 5
+        b: 2
 
   - name: blocking_then_non_blocking
     sv: |
@@ -27,8 +28,9 @@ cases:
         end
       endmodule
     expect:
-      a: 1
-      b: 1
+      variables:
+        a: 1
+        b: 1
 
   - name: multiple_non_blocking
     sv: |
@@ -40,8 +42,9 @@ cases:
         end
       endmodule
     expect:
-      a: 1
-      b: 2
+      variables:
+        a: 1
+        b: 2
 
   - name: register_with_clock
     sv: |
@@ -66,8 +69,9 @@ cases:
         end
       endmodule
     expect:
-      q: 99
-    expect_time: 22
+      variables:
+        q: 99
+      time: 22
 
   - name: register_with_enable
     sv: |
@@ -98,8 +102,9 @@ cases:
         end
       endmodule
     expect:
-      q: 99
-    expect_time: 30
+      variables:
+        q: 99
+      time: 30
 
   - name: pipelined_non_blocking
     sv: |
@@ -123,6 +128,7 @@ cases:
         end
       endmodule
     expect:
-      q1: 10
-      q2: 10
-    expect_time: 20
+      variables:
+        q1: 10
+        q2: 10
+      time: 20

@@ -18,8 +18,9 @@ cases:
         end
       endmodule
     expect:
-      counter: 5
-      sum: 10
+      variables:
+        counter: 5
+        sum: 10
 
   - name: while_false_condition
     sv: |
@@ -33,7 +34,8 @@ cases:
         end
       endmodule
     expect:
-      x: 10
+      variables:
+        x: 10
 
   - name: while_variable_condition
     sv: |
@@ -50,8 +52,9 @@ cases:
         end
       endmodule
     expect:
-      i: 0
-      result: 6
+      variables:
+        i: 0
+        result: 6
 
   - name: while_nested
     sv: |
@@ -73,9 +76,10 @@ cases:
         end
       endmodule
     expect:
-      i: 3
-      j: 2
-      sum: 6
+      variables:
+        i: 3
+        j: 2
+        sum: 6
 
   # Do-while loops
   - name: do_while_basic_counter
@@ -93,8 +97,9 @@ cases:
         end
       endmodule
     expect:
-      counter: 5
-      sum: 10
+      variables:
+        counter: 5
+        sum: 10
 
   - name: do_while_false_condition
     sv: |
@@ -108,7 +113,8 @@ cases:
         end
       endmodule
     expect:
-      x: 20
+      variables:
+        x: 20
 
   - name: do_while_variable_condition
     sv: |
@@ -125,8 +131,9 @@ cases:
         end
       endmodule
     expect:
-      i: 0
-      result: 6
+      variables:
+        i: 0
+        result: 6
 
   - name: do_while_nested
     sv: |
@@ -148,9 +155,10 @@ cases:
         end
       endmodule
     expect:
-      i: 3
-      j: 2
-      sum: 6
+      variables:
+        i: 3
+        j: 2
+        sum: 6
 
   # For loops
   - name: for_basic_counter
@@ -166,8 +174,9 @@ cases:
         end
       endmodule
     expect:
-      i: 5
-      sum: 10
+      variables:
+        i: 5
+        sum: 10
 
   - name: for_with_loop_var_declaration
     sv: |
@@ -181,7 +190,8 @@ cases:
         end
       endmodule
     expect:
-      sum: 10
+      variables:
+        sum: 10
 
   - name: for_with_multiple_initializers
     sv: |
@@ -195,7 +205,8 @@ cases:
         end
       endmodule
     expect:
-      sum: 15
+      variables:
+        sum: 15
 
   - name: for_without_initializer
     sv: |
@@ -211,8 +222,9 @@ cases:
         end
       endmodule
     expect:
-      i: 4
-      sum: 6
+      variables:
+        i: 4
+        sum: 6
 
   - name: for_without_step
     sv: |
@@ -228,8 +240,9 @@ cases:
         end
       endmodule
     expect:
-      x: 1
-      i: 1
+      variables:
+        x: 1
+        i: 1
 
   - name: for_nested
     sv: |
@@ -245,7 +258,8 @@ cases:
         end
       endmodule
     expect:
-      product: 4
+      variables:
+        product: 4
 
   # Forever loop
   - name: forever_with_finish
@@ -261,7 +275,8 @@ cases:
         end
       endmodule
     expect:
-      counter: 5
+      variables:
+        counter: 5
 
   - name: for_without_condition
     sv: |
@@ -274,7 +289,8 @@ cases:
         end
       endmodule
     expect:
-      i: 3
+      variables:
+        i: 3
 
   # Break
   - name: break_in_while
@@ -290,7 +306,8 @@ cases:
         end
       endmodule
     expect:
-      i: 3
+      variables:
+        i: 3
 
   - name: break_in_do_while
     sv: |
@@ -305,7 +322,8 @@ cases:
         end
       endmodule
     expect:
-      x: 2
+      variables:
+        x: 2
 
   - name: break_in_for
     sv: |
@@ -318,7 +336,8 @@ cases:
         end
       endmodule
     expect:
-      i: 4
+      variables:
+        i: 4
 
   - name: break_inner_loop
     sv: |
@@ -337,7 +356,8 @@ cases:
         end
       endmodule
     expect:
-      count: 2
+      variables:
+        count: 2
 
   # Continue
   - name: continue_in_while
@@ -358,7 +378,8 @@ cases:
         end
       endmodule
     expect:
-      sum: 9
+      variables:
+        sum: 9
 
   - name: continue_in_do_while
     sv: |
@@ -378,4 +399,5 @@ cases:
         end
       endmodule
     expect:
-      sum: 9
+      variables:
+        sum: 9

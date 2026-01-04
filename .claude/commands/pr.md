@@ -24,13 +24,17 @@ Create a PR following the project format.
 
 **Body:**
 
-Include a Summary section. Beyond that, adapt the content to fit the PR type:
+Include a Summary section. Use prose for cohesive changes; use bullets only when listing unrelated items. Beyond that, adapt the content to fit the PR type:
 
 - **Feature PRs:** Background/motivation, what was implemented, test plan if applicable
 - **Bug fix PRs:** Root cause analysis, how it was fixed, any refactoring done
 - **Chore/docs PRs:** Brief explanation of what changed
 
 Don't force a test plan if it doesn't make sense. Write what's useful for reviewers.
+
+Don't list files changed - GitHub already shows this in the diff. Focus on conceptual changes.
+
+Code examples should support explanations, not replace them. Include both the "why" and the "what".
 
 ## Instructions
 

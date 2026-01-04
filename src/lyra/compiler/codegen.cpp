@@ -315,8 +315,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$display") {
           // Empty $display - just print newline
+          // Use std::cout to allow capture via rdbuf redirection
           if (syscall.arguments.empty()) {
-            Line("std::println(\"\");");
+            Line("std::println(std::cout, \"\");");
             break;
           }
 
@@ -330,7 +331,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                 // Transform SV format to std::println
                 auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
                 Indent();
-                out_ << "std::println(\"" << cpp_fmt << "\"";
+                out_ << "std::println(std::cout, \"" << cpp_fmt << "\"";
                 for (size_t i = 1; i < syscall.arguments.size(); ++i) {
                   out_ << ", ";
                   EmitExpression(*syscall.arguments[i]);
@@ -349,7 +350,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           }
 
           Indent();
-          out_ << "std::println(\"" << fmt_str << "\"";
+          out_ << "std::println(std::cout, \"" << fmt_str << "\"";
           for (size_t i = 0; i < syscall.arguments.size(); ++i) {
             out_ << ", ";
             EmitExpression(*syscall.arguments[i]);

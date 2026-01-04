@@ -18,6 +18,9 @@ class CompilerResult {
   [[nodiscard]] auto FinalTime() const -> uint64_t {
     return final_time_;
   }
+  [[nodiscard]] auto CapturedOutput() const -> const std::string& {
+    return captured_output_;
+  }
 
  private:
   friend class Compiler;
@@ -26,6 +29,7 @@ class CompilerResult {
   std::string error_message_;
   std::unordered_map<std::string, int64_t> variables_;
   uint64_t final_time_ = 0;
+  std::string captured_output_;
 };
 
 }  // namespace lyra::compiler
