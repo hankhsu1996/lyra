@@ -100,33 +100,44 @@ auto Compiler::CompileAndRun(
 
   // Create unique temp directory
   auto tmp_dir = MakeUniqueTempDir();
-  auto cpp_path = tmp_dir / "sim.cpp";
+  auto header_path = tmp_dir / "generated.hpp";
+  auto cpp_path = tmp_dir / "test_main.cpp";
   auto bin_path = tmp_dir / "sim";
 
-  // Write complete C++ file (generated code + main)
-  std::string full_code;
+  // Write generated code to header file (matches lyra emit behavior)
+  std::string header_code = "#pragma once\n\n" + generated;
   {
-    std::ostringstream code_stream;
-    code_stream << "#include <iostream>\n";
-    code_stream << "#include <sstream>\n";
-    code_stream << generated;
-    code_stream << main_code.str();
-    full_code = code_stream.str();
+    std::ofstream out(header_path);
+    out << header_code;
+  }
+
+  // Write test wrapper to separate .cpp file that includes the header
+  std::string wrapper_code;
+  {
+    std::ostringstream wrapper_stream;
+    wrapper_stream << "#include <iostream>\n";
+    wrapper_stream << "#include <sstream>\n";
+    wrapper_stream << "#include \"generated.hpp\"\n";
+    wrapper_stream << main_code.str();
+    wrapper_code = wrapper_stream.str();
 
     std::ofstream out(cpp_path);
-    out << full_code;
+    out << wrapper_code;
   }
 
   // Debug: print generated code if LYRA_DEBUG_CODEGEN is set
   if (std::getenv("LYRA_DEBUG_CODEGEN") != nullptr) {
-    std::cerr << "=== Generated C++ ===\n" << full_code << "\n=== End ===\n";
+    std::cerr << "=== Generated Header ===\n"
+              << header_code << "\n=== Test Wrapper ===\n"
+              << wrapper_code << "\n=== End ===\n";
   }
 
-  // Compile with SDK include path
+  // Compile with SDK include path (include tmp_dir for generated.hpp)
   auto sdk_include = GetSdkIncludePath();
   std::string compile_cmd = "clang++ -std=c++23 -I" + sdk_include.string() +
-                            " -o " + bin_path.string() + " " +
-                            cpp_path.string() + " 2>&1";
+                            " -I" + tmp_dir.string() + " -o " +
+                            bin_path.string() + " " + cpp_path.string() +
+                            " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
     result.error_message_ = "Compilation failed: " + compile_output;
