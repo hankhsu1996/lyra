@@ -55,6 +55,7 @@ auto SlangFrontend::LoadFromFiles(
     // Print all diagnostics using slang's formatter
     slang::DiagnosticEngine diag_engine(*source_manager_);
     auto diag_client = std::make_shared<slang::TextDiagnosticClient>();
+    diag_client->showColors(true);
     diag_engine.addClient(diag_client);
     for (const auto& diag : diagnostics) {
       diag_engine.issue(diag);
