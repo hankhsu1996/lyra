@@ -105,3 +105,27 @@ cases:
         contains:
           - "data"
           - "more"
+
+  - name: display_real_default_precision
+    sv: |
+      module Test;
+        real x;
+        initial begin
+          x = 1.5;
+          $display("%f", x);
+        end
+      endmodule
+    expect:
+      output: "1.500000\n"
+
+  - name: display_real_with_precision
+    sv: |
+      module Test;
+        real x;
+        initial begin
+          x = 3.14159;
+          $display("%.3f", x);
+        end
+      endmodule
+    expect:
+      output: "3.142\n"

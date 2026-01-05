@@ -3,12 +3,17 @@
 #include <bit>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
 
 namespace lyra::interpreter {
 
 // Unary Operations
 
 auto UnaryPlus(const RuntimeValue& operand) -> RuntimeValue {
+  if (operand.IsReal()) {
+    return RuntimeValue::Real(operand.AsDouble());
+  }
+
   assert(operand.type.kind == common::Type::Kind::kTwoState);
   auto two_state_data = std::get<common::TwoStateData>(operand.type.data);
   assert(two_state_data.bit_width <= 64);
@@ -18,6 +23,10 @@ auto UnaryPlus(const RuntimeValue& operand) -> RuntimeValue {
 }
 
 auto UnaryMinus(const RuntimeValue& operand) -> RuntimeValue {
+  if (operand.IsReal()) {
+    return RuntimeValue::Real(-operand.AsDouble());
+  }
+
   assert(operand.type.kind == common::Type::Kind::kTwoState);
   auto two_state_data = std::get<common::TwoStateData>(operand.type.data);
   assert(two_state_data.bit_width <= 64);
@@ -33,6 +42,10 @@ auto UnaryMinus(const RuntimeValue& operand) -> RuntimeValue {
 }
 
 auto UnaryLogicalNot(const RuntimeValue& operand) -> RuntimeValue {
+  if (operand.IsReal()) {
+    return RuntimeValue::Bool(operand.AsDouble() == 0.0);
+  }
+
   assert(operand.type.kind == common::Type::Kind::kTwoState);
   auto two_state_data = std::get<common::TwoStateData>(operand.type.data);
   assert(two_state_data.bit_width <= 64);
@@ -139,6 +152,11 @@ auto ReductionXnor(const RuntimeValue& operand) -> RuntimeValue {
 
 auto BinaryAdd(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Real(lhs.AsDouble() + rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -157,6 +175,11 @@ auto BinaryAdd(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Real(lhs.AsDouble() - rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -175,6 +198,11 @@ auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Real(lhs.AsDouble() * rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -193,6 +221,11 @@ auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Real(lhs.AsDouble() / rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -211,6 +244,10 @@ auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    throw std::runtime_error("Modulo not supported for real values");
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -236,6 +273,10 @@ auto BinaryEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     return RuntimeValue::Bool(lhs.AsInt64() == rhs.AsInt64());
   }
 
+  if (lhs.IsReal()) {
+    return RuntimeValue::Bool(lhs.AsDouble() == rhs.AsDouble());
+  }
+
   if (lhs.IsString()) {
     return RuntimeValue::Bool(lhs.AsString() == rhs.AsString());
   }
@@ -250,6 +291,10 @@ auto BinaryNotEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     return RuntimeValue::Bool(lhs.AsInt64() != rhs.AsInt64());
   }
 
+  if (lhs.IsReal()) {
+    return RuntimeValue::Bool(lhs.AsDouble() != rhs.AsDouble());
+  }
+
   if (lhs.IsString()) {
     return RuntimeValue::Bool(lhs.AsString() != rhs.AsString());
   }
@@ -258,6 +303,11 @@ auto BinaryNotEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLessThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(lhs.AsDouble() < rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -274,6 +324,11 @@ auto BinaryLessThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLessThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(lhs.AsDouble() <= rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -290,6 +345,11 @@ auto BinaryLessThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(lhs.AsDouble() > rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -306,6 +366,11 @@ auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(lhs.AsDouble() >= rhs.AsDouble());
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -322,6 +387,11 @@ auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryPower(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Real(std::pow(lhs.AsDouble(), rhs.AsDouble()));
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
   assert(lhs.type == rhs.type);
@@ -416,6 +486,12 @@ auto BinaryBitwiseXnor(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(
+        (lhs.AsDouble() != 0.0) && (rhs.AsDouble() != 0.0));
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
 
@@ -435,6 +511,12 @@ auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLogicalOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  if (lhs.IsReal()) {
+    assert(rhs.IsReal());
+    return RuntimeValue::Bool(
+        (lhs.AsDouble() != 0.0) || (rhs.AsDouble() != 0.0));
+  }
+
   assert(lhs.type.kind == common::Type::Kind::kTwoState);
   assert(rhs.type.kind == common::Type::Kind::kTwoState);
 
