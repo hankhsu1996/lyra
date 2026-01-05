@@ -13,7 +13,7 @@ auto LowerType(const slang::ast::Type& type) -> Type {
     return Type::Void();
   }
 
-  if (type.isIntegral() && !type.isFourState()) {
+  if (type.isIntegral()) {
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();
 
