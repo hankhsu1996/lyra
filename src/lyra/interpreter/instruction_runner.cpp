@@ -1,9 +1,11 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
 #include <cassert>
+#include <cctype>
 #include <format>
 
 #include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "lyra/common/sv_format.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
@@ -14,15 +16,47 @@ namespace lyra::interpreter {
 
 namespace {
 
-// Format a RuntimeValue according to a format specifier
-// spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal, 's' = string
-auto FormatValue(const RuntimeValue& value, char spec) -> std::string {
+struct FormatSpec {
+  char spec{};
+  bool zero_pad = false;
+  std::string width;
+  std::string precision;
+};
+
+// Format a RuntimeValue according to a format specifier.
+// spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal,
+// 's' = string, 'f' = real
+auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
+    -> std::string {
   if (value.IsString()) {
     return value.AsString();
   }
 
+  if (value.IsReal()) {
+    if (spec.spec != 'f' && spec.spec != 'd' && spec.spec != 's') {
+      throw std::runtime_error(
+          fmt::format("Unsupported format specifier: %{}", spec.spec));
+    }
+    if (spec.spec == 'f') {
+      std::string fmt = "{:";
+      if (spec.zero_pad && !spec.width.empty()) {
+        fmt += "0>";
+      }
+      if (!spec.width.empty()) {
+        fmt += spec.width;
+      }
+      if (!spec.precision.empty()) {
+        fmt += ".";
+        fmt += spec.precision;
+      }
+      fmt += "f}";
+      return fmt::format(fmt::runtime(fmt), value.AsDouble());
+    }
+    return value.ToString();
+  }
+
   auto v = static_cast<uint64_t>(value.AsInt64());
-  switch (spec) {
+  switch (spec.spec) {
     case 'x':
     case 'h':
       return std::format("{:x}", v);
@@ -49,29 +83,60 @@ auto FormatDisplay(
       if (i + 1 >= fmt_str.size()) {
         throw std::runtime_error("Invalid format string: trailing %");
       }
-      char spec = fmt_str[i + 1];
-      if (spec == '%') {
+      if (fmt_str[i + 1] == '%') {
         result += '%';
         i += 2;
-      } else if (
-          spec == 'd' || spec == 'h' || spec == 'x' || spec == 'b' ||
-          spec == 'o' || spec == 's') {
+      } else {
+        FormatSpec spec;
+        ++i;  // Consume '%'
+
+        if (i < fmt_str.size() && fmt_str[i] == '0') {
+          spec.zero_pad = true;
+          ++i;
+        }
+
+        while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+          spec.width += fmt_str[i];
+          ++i;
+        }
+
+        if (i < fmt_str.size() && fmt_str[i] == '.') {
+          ++i;
+          if (i >= fmt_str.size() || !std::isdigit(fmt_str[i])) {
+            throw std::runtime_error(
+                "Invalid format string: missing precision digits");
+          }
+          while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+            spec.precision += fmt_str[i];
+            ++i;
+          }
+        }
+
+        if (i >= fmt_str.size()) {
+          throw std::runtime_error("Invalid format string: trailing %");
+        }
+
+        spec.spec = fmt_str[i];
+        if (spec.spec != 'd' && spec.spec != 'h' && spec.spec != 'x' &&
+            spec.spec != 'b' && spec.spec != 'o' && spec.spec != 's' &&
+            spec.spec != 'f') {
+          throw std::runtime_error(
+              fmt::format("Unsupported format specifier: %{}", spec.spec));
+        }
+
+        if (spec.spec != 'f' &&
+            (spec.zero_pad || !spec.width.empty() || !spec.precision.empty())) {
+          throw std::runtime_error(
+              "Unsupported format specifier: width/precision only "
+              "supported for %f");
+        }
+
         if (arg_idx >= args.size()) {
           throw std::runtime_error("Not enough arguments for format string");
         }
         result += FormatValue(args[arg_idx], spec);
         arg_idx++;
-        i += 2;
-      } else if (spec >= '0' && spec <= '9') {
-        throw std::runtime_error(
-            fmt::format(
-                "Unsupported format specifier: width modifiers not yet "
-                "supported "
-                "(found %{}...)",
-                spec));
-      } else {
-        throw std::runtime_error(
-            fmt::format("Unsupported format specifier: %{}", spec));
+        ++i;
       }
     } else {
       result += fmt_str[i];
@@ -341,44 +406,76 @@ auto RunInstruction(
       const auto& src = get_temp(instr.operands[0]);
       const auto& target_type = instr.result_type.value();
 
-      // Handle string to string as a no-op conversion
-      if (src.type == common::Type::String() &&
-          target_type == common::Type::String()) {
+      // Handle string to string and real to real as no-op conversions.
+      if ((src.type == common::Type::String() &&
+           target_type == common::Type::String()) ||
+          (src.type == common::Type::Real() &&
+           target_type == common::Type::Real())) {
         temp_table.Write(instr.result.value(), src);
         return InstructionResult::Continue();
       }
 
-      // Ensure both source and target types are two-state
-      if (src.type.kind != common::Type::Kind::kTwoState ||
-          target_type.kind != common::Type::Kind::kTwoState) {
-        throw std::runtime_error(
-            fmt::format(
-                "Conversion only supports two-state types, got: {} -> {}",
-                src.type, target_type));
+      if (src.type.kind == common::Type::Kind::kTwoState &&
+          target_type.kind == common::Type::Kind::kTwoState) {
+        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+
+        // Reject bit width greater than 64
+        if (two_state_data.bit_width > 64) {
+          throw std::runtime_error(
+              fmt::format(
+                  "Unsupported target bit width > 64: {}", target_type));
+        }
+
+        // Extract source value as int64
+        int64_t raw_value = src.AsInt64();
+
+        // Apply sign/bitwidth conversion
+        RuntimeValue result = two_state_data.is_signed
+                                  ? RuntimeValue::TwoStateSigned(
+                                        raw_value, two_state_data.bit_width)
+                                  : RuntimeValue::TwoStateUnsigned(
+                                        static_cast<uint64_t>(raw_value),
+                                        two_state_data.bit_width);
+
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
       }
 
-      auto two_state_data = std::get<common::TwoStateData>(target_type.data);
-
-      // Reject bit width greater than 64
-      if (two_state_data.bit_width > 64) {
-        throw std::runtime_error(
-            fmt::format("Unsupported target bit width > 64: {}", target_type));
+      if (src.type.kind == common::Type::Kind::kTwoState &&
+          target_type.kind == common::Type::Kind::kReal) {
+        auto two_state_data = std::get<common::TwoStateData>(src.type.data);
+        double real_value = two_state_data.is_signed
+                                ? static_cast<double>(src.AsInt64())
+                                : static_cast<double>(src.AsUInt64());
+        temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
+        return InstructionResult::Continue();
       }
 
-      // Extract source value as int64
-      int64_t raw_value = src.AsInt64();
+      if (src.type.kind == common::Type::Kind::kReal &&
+          target_type.kind == common::Type::Kind::kTwoState) {
+        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+        if (two_state_data.bit_width > 64) {
+          throw std::runtime_error(
+              fmt::format(
+                  "Unsupported target bit width > 64: {}", target_type));
+        }
 
-      // Apply sign/bitwidth conversion
-      RuntimeValue result =
-          two_state_data.is_signed
-              ? RuntimeValue::TwoStateSigned(
-                    raw_value, two_state_data.bit_width)
-              : RuntimeValue::TwoStateUnsigned(
-                    static_cast<uint64_t>(raw_value), two_state_data.bit_width);
+        int64_t raw_value = static_cast<int64_t>(src.AsDouble());
+        RuntimeValue result = two_state_data.is_signed
+                                  ? RuntimeValue::TwoStateSigned(
+                                        raw_value, two_state_data.bit_width)
+                                  : RuntimeValue::TwoStateUnsigned(
+                                        static_cast<uint64_t>(raw_value),
+                                        two_state_data.bit_width);
 
-      // Write result to destination temp
-      temp_table.Write(instr.result.value(), result);
-      return InstructionResult::Continue();
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      throw std::runtime_error(
+          fmt::format(
+              "Conversion only supports two-state/real types, got: {} -> {}",
+              src.type, target_type));
     }
 
     // Control flow

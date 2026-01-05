@@ -13,6 +13,10 @@ auto LowerType(const slang::ast::Type& type) -> Type {
     return Type::Void();
   }
 
+  if (type.isFloating()) {
+    return Type::Real();
+  }
+
   if (type.isIntegral()) {
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();

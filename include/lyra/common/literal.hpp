@@ -57,6 +57,10 @@ struct Literal {
     return {common::Type::String(), ValueStorage(std::move(v))};
   }
 
+  static auto Real(double v) -> Literal {
+    return {common::Type::Real(), ValueStorage(v)};
+  }
+
   auto operator==(const Literal& other) const -> bool = default;
 
   [[nodiscard]] auto ToString() const -> std::string {

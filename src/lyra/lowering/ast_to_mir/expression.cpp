@@ -33,6 +33,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
       return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
     }
 
+    case slang::ast::ExpressionKind::RealLiteral: {
+      const auto& literal = expression.as<slang::ast::RealLiteral>();
+      auto mir_literal = LowerLiteral(literal);
+      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+    }
+
     case slang::ast::ExpressionKind::NamedValue: {
       const auto& named_value =
           expression.as<slang::ast::NamedValueExpression>();
