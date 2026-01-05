@@ -1,5 +1,6 @@
 #include "lyra/interpreter/basic_block_runner.hpp"
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/instruction_runner.hpp"
 
@@ -34,7 +35,8 @@ auto RunBlock(
         return BasicBlockResult::Jump(instruction_result.target_label);
     }
   }
-  throw std::runtime_error("Unreachable code in basic block runner");
+  throw DiagnosticException(
+      Diagnostic::Error({}, "unreachable code in basic block runner"));
 }
 
 }  // namespace lyra::interpreter

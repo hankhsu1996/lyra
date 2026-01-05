@@ -23,6 +23,28 @@ npx prettier --write <files>                   # Format docs
 buildifier -r .                                # Format Bazel files
 ```
 
+## Linting
+
+Run clang-tidy for static analysis. First generate `compile_commands.json`:
+
+```bash
+bazel run @hedron_compile_commands//:refresh_all
+```
+
+Then run clang-tidy on specific files (fast):
+
+```bash
+clang-tidy -p . <files>
+```
+
+Or run on all files (slower):
+
+```bash
+run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
+```
+
+**Note:** When using Bash tool, avoid `$(...)` subshell substitution (it gets escaped incorrectly). Use hardcoded values instead of `$(nproc)`.
+
 ## Lyra CLI
 
 Lyra uses a project-based workflow with `lyra.toml` configuration files.
@@ -59,7 +81,7 @@ YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and co
 
 ## Code Style
 
-- C++23, Google style, clangd warning-free
+- C++23, Google style, clang-tidy warning-free
 - Naming: `CamelCase` classes/functions, `lower_case_` members, `kCamelCase` enums
 - Use IEEE 1800 LRM terminology for SystemVerilog features
 - Prefer modern C++ idioms:

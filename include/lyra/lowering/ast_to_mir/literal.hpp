@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
 
 namespace slang::ast {
@@ -11,7 +12,8 @@ class StringLiteral;
 namespace lyra::lowering::ast_to_mir {
 
 // Lowers a slang AST IntegerLiteral into a MIR Literal.
-auto LowerLiteral(const slang::ast::IntegerLiteral& literal) -> common::Literal;
+auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
+    -> Result<common::Literal>;
 
 // Lowers a slang AST StringLiteral into a MIR Literal.
 auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal;

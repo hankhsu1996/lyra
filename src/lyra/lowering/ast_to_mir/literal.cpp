@@ -5,11 +5,13 @@
 namespace lyra::lowering::ast_to_mir {
 
 auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
-    -> common::Literal {
+    -> Result<common::Literal> {
   const auto& sv_int = literal.getValue();
 
   if (!sv_int.isSingleWord() || sv_int.hasUnknown()) {
-    throw std::runtime_error("Unsupported wide or unknown literal");
+    return std::unexpected(
+        Diagnostic::Error(
+            literal.sourceRange, "unsupported wide or unknown literal"));
   }
 
   std::span<const uint64_t> data(sv_int.getRawPtr(), 1);

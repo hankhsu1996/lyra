@@ -5,6 +5,7 @@ Checks: >
   readability-*,
   cppcoreguidelines-*,
   clang-analyzer-*,
+  misc-include-cleaner,
   -readability-identifier-length,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,
@@ -13,6 +14,10 @@ Checks: >
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
 
 CheckOptions:
+  # Ignore external headers for misc-include-cleaner
+  - key: misc-include-cleaner.IgnoreHeaders
+    value: "slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*"
+
   # Google's naming conventions.
   # See: https://gist.github.com/airglow923/1fa3bda42f2b193920d7f46ee8345e04
   - key: readability-identifier-naming.ClassCase

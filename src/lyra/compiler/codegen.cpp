@@ -1,8 +1,9 @@
 #include "lyra/compiler/codegen.hpp"
 
+#include <algorithm>
 #include <format>
-#include <stdexcept>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -355,15 +356,16 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
 
           Indent();
           out_ << "std::println(std::cout, \"" << fmt_str << "\"";
-          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          for (const auto& arg : syscall.arguments) {
             out_ << ", ";
-            EmitExpression(*syscall.arguments[i]);
+            EmitExpression(*arg);
           }
           out_ << ");\n";
           break;
         }
-        throw std::runtime_error(
-            "C++ codegen: unsupported system call: " + syscall.name);
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, "C++ codegen: unsupported system call: " + syscall.name));
       }
       Indent();
       EmitExpression(*expr_stmt.expression);
@@ -471,9 +473,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         Line("co_await " + trigger_expr(var_name, trigger.edge_kind) + ";");
       } else {
         // Check if all triggers are AnyChange
-        bool all_any_change = std::all_of(
-            wait.triggers.begin(), wait.triggers.end(), [](const auto& t) {
-              return t.edge_kind == common::EdgeKind::kAnyChange;
+        bool all_any_change =
+            std::ranges::all_of(wait.triggers, [](const auto& trigger) {
+              return trigger.edge_kind == common::EdgeKind::kAnyChange;
             });
 
         if (all_any_change) {
@@ -519,8 +521,10 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       break;
     }
     default:
-      throw std::runtime_error(
-          "C++ codegen: unimplemented statement kind: " + ToString(stmt.kind));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, "C++ codegen: unimplemented statement kind: " +
+                      ToString(stmt.kind)));
   }
 }
 
@@ -734,8 +738,10 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       break;
     }
     default:
-      throw std::runtime_error(
-          "C++ codegen: unimplemented expression kind: " + ToString(expr.kind));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, "C++ codegen: unimplemented expression kind: " +
+                      ToString(expr.kind)));
   }
 }
 

@@ -10,6 +10,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "embedded_sdk.hpp"
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
@@ -150,7 +151,8 @@ auto EmitCommandInternal(
 auto RunCommand(bool use_interpreter) -> int {
   auto config_path = lyra::config::FindConfig();
   if (!config_path) {
-    std::cerr << "lyra run: no lyra.toml found\n";
+    lyra::PrintDiagnostic(
+        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
     return 1;
   }
 
@@ -176,8 +178,11 @@ auto RunCommand(bool use_interpreter) -> int {
         "cmake --build build > /dev/null && ./build/sim",
         out_path.string());
     return std::system(cmd.c_str());
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra run: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -185,20 +190,20 @@ auto RunCommand(bool use_interpreter) -> int {
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
     const std::vector<std::string>& inc_dirs, const std::string& top) -> int {
+  lyra::frontend::SlangFrontend frontend;
   try {
-    lyra::frontend::SlangFrontend frontend;
     lyra::frontend::FrontendOptions options;
     options.include_dirs = inc_dirs;
     auto compilation = frontend.LoadFromFiles(source_files, options);
     if (!compilation) {
-      std::cerr << "lyra emit: failed to parse\n";
+      // Diagnostic already printed by frontend
       return 1;
     }
 
     const auto& root = compilation->getRoot();
     auto mir = lyra::lowering::ast_to_mir::AstToMir(root);
     if (!mir) {
-      std::cerr << "lyra emit: failed to lower to MIR\n";
+      // Diagnostic already printed by lowering
       return 1;
     }
 
@@ -234,8 +239,11 @@ auto EmitCommandInternal(
     WriteFile(out_path / ".gitignore", GenerateGitignore());
 
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra emit: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -243,7 +251,8 @@ auto EmitCommandInternal(
 auto EmitCommand() -> int {
   auto config_path = lyra::config::FindConfig();
   if (!config_path) {
-    std::cerr << "lyra emit: no lyra.toml found\n";
+    lyra::PrintDiagnostic(
+        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
     return 1;
   }
 
@@ -252,8 +261,11 @@ auto EmitCommand() -> int {
     auto out_path = config.root_dir / config.out_dir;
     return EmitCommandInternal(
         config.files, out_path.string(), config.incdir, config.top);
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra emit: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -261,24 +273,28 @@ auto EmitCommand() -> int {
 auto CheckCommand() -> int {
   auto config_path = lyra::config::FindConfig();
   if (!config_path) {
-    std::cerr << "lyra check: no lyra.toml found\n";
+    lyra::PrintDiagnostic(
+        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
     return 1;
   }
 
+  lyra::frontend::SlangFrontend frontend;
   try {
     auto config = lyra::config::LoadConfig(*config_path);
 
-    lyra::frontend::SlangFrontend frontend;
     lyra::frontend::FrontendOptions options;
     options.include_dirs = config.incdir;
     auto compilation = frontend.LoadFromFiles(config.files, options);
     if (!compilation) {
-      std::cerr << "lyra check: failed to parse\n";
+      // Diagnostic already printed by frontend
       return 1;
     }
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra check: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -288,22 +304,22 @@ enum class DumpFormat { kCpp, kMir, kLir };
 auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     -> int {
   if (files.empty()) {
-    std::cerr << "lyra dump: no input files\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, "no input files"));
     return 1;
   }
 
+  lyra::frontend::SlangFrontend frontend;
   try {
-    lyra::frontend::SlangFrontend frontend;
     auto compilation = frontend.LoadFromFiles(files);
     if (!compilation) {
-      std::cerr << "lyra dump: failed to parse\n";
+      // Diagnostic already printed by frontend
       return 1;
     }
 
     const auto& root = compilation->getRoot();
     auto mir = lyra::lowering::ast_to_mir::AstToMir(root);
     if (!mir) {
-      std::cerr << "lyra dump: failed to lower to MIR\n";
+      // Diagnostic already printed by lowering
       return 1;
     }
 
@@ -325,8 +341,11 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     }
 
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra dump: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -334,7 +353,8 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
 auto BuildCommand() -> int {
   auto config_path = lyra::config::FindConfig();
   if (!config_path) {
-    std::cerr << "lyra build: no lyra.toml found\n";
+    lyra::PrintDiagnostic(
+        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
     return 1;
   }
 
@@ -355,8 +375,11 @@ auto BuildCommand() -> int {
         "cmake --build build > /dev/null",
         out_path.string());
     return std::system(cmd.c_str());
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra build: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -369,8 +392,10 @@ auto InitCommand(const std::string& project_path) -> int {
   std::string project_name = project_dir.filename().string();
 
   if (fs::exists(project_dir)) {
-    std::cerr << "lyra init: directory '" << project_dir.string()
-              << "' already exists\n";
+    lyra::PrintDiagnostic(
+        lyra::Diagnostic::Error(
+            {}, std::format(
+                    "directory '{}' already exists", project_dir.string())));
     return 1;
   }
 
@@ -402,8 +427,11 @@ endmodule
 
     std::cout << "Created project '" << project_name << "'\n";
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra init: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -455,7 +483,7 @@ auto main(int argc, char* argv[]) -> int {
   try {
     program.parse_args(argc, argv);
   } catch (const std::exception& err) {
-    std::cerr << err.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, err.what()));
     std::cerr << program;
     return 1;
   }
@@ -475,7 +503,12 @@ auto main(int argc, char* argv[]) -> int {
 
   if (program.is_subcommand_used("dump")) {
     auto format_str = dump_cmd.get<std::string>("format");
-    auto files = dump_cmd.get<std::vector<std::string>>("files");
+
+    // Check if files were provided (remaining() arguments need present() check)
+    std::vector<std::string> files;
+    if (auto opt = dump_cmd.present<std::vector<std::string>>("files")) {
+      files = std::move(*opt);
+    }
 
     DumpFormat format{};
     if (format_str == "cpp") {
@@ -485,8 +518,11 @@ auto main(int argc, char* argv[]) -> int {
     } else if (format_str == "lir") {
       format = DumpFormat::kLir;
     } else {
-      std::cerr << "lyra dump: unknown format '" << format_str
-                << "' (use cpp, mir, or lir)\n";
+      lyra::PrintDiagnostic(
+          lyra::Diagnostic::Error(
+              {},
+              std::format(
+                  "unknown format '{}' (use cpp, mir, or lir)", format_str)));
       return 1;
     }
     return DumpCommand(files, format);

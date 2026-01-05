@@ -1,11 +1,14 @@
 #pragma once
 
 #include <slang/ast/types/Type.h>
+#include <slang/text/SourceLocation.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerType(const slang::ast::Type& type) -> common::Type;
+auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
+    -> Result<common::Type>;
 
 }  // namespace lyra::lowering::ast_to_mir

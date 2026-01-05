@@ -1,10 +1,13 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
+#include <fmt/format.h>
+
 namespace lyra::lowering::ast_to_mir {
 
 using Type = common::Type;
 
-auto LowerType(const slang::ast::Type& type) -> Type {
+auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
+    -> Result<Type> {
   if (type.isString()) {
     return Type::String();
   }
@@ -31,12 +34,15 @@ auto LowerType(const slang::ast::Type& type) -> Type {
       return Type::TwoState(64, is_signed);
     }
 
-    throw std::runtime_error{fmt::format(
-        "Unsupported integral type width {} in AST to MIR LowerType", width)};
+    return std::unexpected(
+        Diagnostic::Error(
+            source_range,
+            fmt::format("unsupported integral type width {}", width)));
   }
 
-  throw std::runtime_error{fmt::format(
-      "Unsupported type {} in AST to MIR LowerType", type.toString())};
+  return std::unexpected(
+      Diagnostic::Error(
+          source_range, fmt::format("unsupported type '{}'", type.toString())));
 }
 
 }  // namespace lyra::lowering::ast_to_mir

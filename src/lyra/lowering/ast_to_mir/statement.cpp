@@ -1,7 +1,5 @@
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 
-#include <stdexcept>
-
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/SemanticFacts.h>
@@ -15,7 +13,9 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -59,11 +59,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
       switch (timing_control.kind) {
         case slang::ast::TimingControlKind::Invalid: {
-          throw std::runtime_error(
-              fmt::format(
-                  "Unsupported timing control kind {} in AST to MIR "
-                  "LowerStatement",
-                  slang::ast::toString(timing_control.kind)));
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  statement.sourceRange,
+                  fmt::format(
+                      "unsupported timing control kind '{}'",
+                      slang::ast::toString(timing_control.kind))));
         }
         case slang::ast::TimingControlKind::Delay: {
           const auto& delay_control =
@@ -71,18 +72,21 @@ auto LowerStatement(const slang::ast::Statement& statement)
           const auto& expression = delay_control.expr;
 
           if (expression.kind != ExpressionKind::IntegerLiteral) {
-            throw std::runtime_error(
-                fmt::format(
-                    "Unsupported delay expression kind {}",
-                    slang::ast::toString(expression.kind)));
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    expression.sourceRange,
+                    fmt::format(
+                        "unsupported delay expression kind '{}'",
+                        slang::ast::toString(expression.kind))));
           }
 
           const auto& int_literal = expression.as<slang::ast::IntegerLiteral>();
           auto delay_amount_opt = int_literal.getValue().as<uint64_t>();
           if (!delay_amount_opt) {
-            throw std::runtime_error(
-                "Only constant integer delay is supported in timing control "
-                "lowering");
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    expression.sourceRange,
+                    "only constant integer delay is supported"));
           }
 
           auto delay_statement =
@@ -101,8 +105,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
           const auto& expr = signal_event_control.expr;
 
           if (expr.kind != ExpressionKind::NamedValue) {
-            throw std::runtime_error(
-                "Only simple identifier supported in signal event expression");
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    expr.sourceRange,
+                    "only simple identifier supported in signal event "
+                    "expression"));
           }
 
           const auto& named_expr = expr.as<slang::ast::NamedValueExpression>();
@@ -144,11 +151,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
         case slang::ast::TimingControlKind::OneStepDelay:
         case slang::ast::TimingControlKind::CycleDelay:
         case slang::ast::TimingControlKind::BlockEventList:
-          throw std::runtime_error(
-              fmt::format(
-                  "Unsupported timing control kind {} in AST to MIR "
-                  "LowerStatement",
-                  slang::ast::toString(timing_control.kind)));
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  statement.sourceRange,
+                  fmt::format(
+                      "unsupported timing control kind '{}'",
+                      slang::ast::toString(timing_control.kind))));
       }
     }
 
@@ -157,8 +165,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
           statement.as<slang::ast::ConditionalStatement>();
 
       if (conditional.conditions.size() != 1) {
-        throw std::runtime_error(
-            "Multiple conditions in conditional statement are not supported");
+        throw DiagnosticException(
+            Diagnostic::Error(
+                statement.sourceRange,
+                "multiple conditions in conditional statement are not "
+                "supported"));
       }
 
       auto condition = LowerExpression(*conditional.conditions[0].expr);
@@ -248,17 +259,38 @@ auto LowerStatement(const slang::ast::Statement& statement)
       return std::make_unique<mir::BlockStatement>();  // No-op
     }
 
+    case StatementKind::Invalid:
+      // Slang produces InvalidStatement when it detects semantic issues.
+      // Slang should have already reported a diagnostic explaining the problem.
+      // We cannot proceed with invalid AST nodes.
+      throw DiagnosticException(
+          Diagnostic::Error({}, "cannot lower invalid statement"));
+
     default:
-      throw std::runtime_error(
-          fmt::format(
-              "Unsupported statement kind {} in AST to MIR LowerStatement",
-              slang::ast::toString(statement.kind)));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              statement.sourceRange,
+              fmt::format(
+                  "unsupported statement kind '{}'",
+                  slang::ast::toString(statement.kind))));
   }
 }
 
 auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
     -> std::unique_ptr<mir::VariableDeclarationStatement> {
-  auto variable = common::Variable::FromSlang(&symbol);
+  // Create source range from symbol location
+  slang::SourceRange source_range(symbol.location, symbol.location);
+
+  auto type_result = LowerType(symbol.getType(), source_range);
+  if (!type_result) {
+    throw DiagnosticException(std::move(type_result.error()));
+  }
+
+  common::Variable variable{
+      .symbol = &symbol,
+      .type = *type_result,
+  };
+
   const auto* initializer = symbol.getInitializer();
 
   if (initializer != nullptr) {

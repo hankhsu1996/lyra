@@ -2,6 +2,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_runner.hpp"
 
@@ -32,7 +33,8 @@ void SimulationRunner::Run() {
       simulation_context_.get().current_time = it->first;
 
       if (simulation_context_.get().current_time > kMaxSimulationTime) {
-        throw std::runtime_error("Simulation time exceeded max limit");
+        throw DiagnosticException(
+            Diagnostic::Error({}, "simulation time exceeded max limit"));
       }
 
       // Move delayed events scheduled for this time into the active queue
