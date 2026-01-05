@@ -78,12 +78,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
           expression.as<slang::ast::ConditionalExpression>();
 
       if (conditional_expression.conditions.size() != 1) {
-        throw std::runtime_error(fmt::format(
-            "Unsupported conditional expression with {} conditions in AST "
-            "to "
-            "MIR "
-            "LowerExpression",
-            conditional_expression.conditions.size()));
+        throw std::runtime_error(
+            fmt::format(
+                "Unsupported conditional expression with {} conditions in AST "
+                "to "
+                "MIR "
+                "LowerExpression",
+                conditional_expression.conditions.size()));
       }
 
       auto condition =
@@ -101,10 +102,11 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& left = assignment.left();
 
       if (left.kind != slang::ast::ExpressionKind::NamedValue) {
-        throw std::runtime_error(fmt::format(
-            "Unsupported assignment target kind {} in AST to MIR "
-            "LowerExpression",
-            slang::ast::toString(left.kind)));
+        throw std::runtime_error(
+            fmt::format(
+                "Unsupported assignment target kind {} in AST to MIR "
+                "LowerExpression",
+                slang::ast::toString(left.kind)));
       }
 
       const auto& target = left.as<slang::ast::NamedValueExpression>().symbol;
@@ -127,9 +129,10 @@ auto LowerExpression(const slang::ast::Expression& expression)
             std::string(name), std::move(arguments), return_type);
       }
 
-      throw std::runtime_error(fmt::format(
-          "Unsupported subroutine call {} in AST to MIR LowerExpression",
-          call_expression.getSubroutineName()));
+      throw std::runtime_error(
+          fmt::format(
+              "Unsupported subroutine call {} in AST to MIR LowerExpression",
+              call_expression.getSubroutineName()));
     }
 
     case slang::ast::ExpressionKind::Conversion: {
@@ -142,9 +145,10 @@ auto LowerExpression(const slang::ast::Expression& expression)
     }
 
     default:
-      throw std::runtime_error(fmt::format(
-          "Unsupported expression kind {} in AST to MIR LowerExpression",
-          slang::ast::toString(expression.kind)));
+      throw std::runtime_error(
+          fmt::format(
+              "Unsupported expression kind {} in AST to MIR LowerExpression",
+              slang::ast::toString(expression.kind)));
   }
 }
 
