@@ -57,7 +57,11 @@ class DiagnosticException : public std::exception {
   Diagnostic diag_;
 };
 
+// Print diagnostic with source context (requires SourceManager)
 void PrintDiagnostic(
     const Diagnostic& diag, const slang::SourceManager& sm, bool colors = true);
+
+// Print diagnostic without source context (for errors without source location)
+void PrintDiagnostic(const Diagnostic& diag, bool colors = true);
 
 }  // namespace lyra

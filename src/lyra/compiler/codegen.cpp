@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <format>
-#include <stdexcept>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -363,8 +363,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           out_ << ");\n";
           break;
         }
-        throw std::runtime_error(
-            "C++ codegen: unsupported system call: " + syscall.name);
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, "C++ codegen: unsupported system call: " + syscall.name));
       }
       Indent();
       EmitExpression(*expr_stmt.expression);
@@ -520,8 +521,10 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       break;
     }
     default:
-      throw std::runtime_error(
-          "C++ codegen: unimplemented statement kind: " + ToString(stmt.kind));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, "C++ codegen: unimplemented statement kind: " +
+                      ToString(stmt.kind)));
   }
 }
 
@@ -735,8 +738,10 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       break;
     }
     default:
-      throw std::runtime_error(
-          "C++ codegen: unimplemented expression kind: " + ToString(expr.kind));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, "C++ codegen: unimplemented expression kind: " +
+                      ToString(expr.kind)));
   }
 }
 

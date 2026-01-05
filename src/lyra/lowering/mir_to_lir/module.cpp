@@ -1,7 +1,6 @@
 #include "lyra/lowering/mir_to_lir/module.hpp"
 
-#include <stdexcept>
-
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
@@ -13,7 +12,7 @@ namespace lyra::lowering::mir_to_lir {
 
 auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
   if (module.name.empty()) {
-    throw std::runtime_error("Module has empty name");
+    throw DiagnosticException(Diagnostic::Error({}, "module has empty name"));
   }
 
   auto lir_context = std::make_shared<lir::LirContext>();

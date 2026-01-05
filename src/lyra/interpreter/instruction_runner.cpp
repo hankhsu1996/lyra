@@ -7,6 +7,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -34,8 +35,9 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
 
   if (value.IsReal()) {
     if (spec.spec != 'f' && spec.spec != 'd' && spec.spec != 's') {
-      throw std::runtime_error(
-          fmt::format("Unsupported format specifier: %{}", spec.spec));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format("unsupported format specifier: %{}", spec.spec)));
     }
     if (spec.spec == 'f') {
       std::string fmt = "{:";
@@ -81,7 +83,8 @@ auto FormatDisplay(
   while (i < fmt_str.size()) {
     if (fmt_str[i] == '%') {
       if (i + 1 >= fmt_str.size()) {
-        throw std::runtime_error("Invalid format string: trailing %");
+        throw DiagnosticException(
+            Diagnostic::Error({}, "invalid format string: trailing %"));
       }
       if (fmt_str[i + 1] == '%') {
         result += '%';
@@ -103,8 +106,9 @@ auto FormatDisplay(
         if (i < fmt_str.size() && fmt_str[i] == '.') {
           ++i;
           if (i >= fmt_str.size() || !std::isdigit(fmt_str[i])) {
-            throw std::runtime_error(
-                "Invalid format string: missing precision digits");
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    {}, "invalid format string: missing precision digits"));
           }
           while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
             spec.precision += fmt_str[i];
@@ -113,26 +117,31 @@ auto FormatDisplay(
         }
 
         if (i >= fmt_str.size()) {
-          throw std::runtime_error("Invalid format string: trailing %");
+          throw DiagnosticException(
+              Diagnostic::Error({}, "invalid format string: trailing %"));
         }
 
         spec.spec = fmt_str[i];
         if (spec.spec != 'd' && spec.spec != 'h' && spec.spec != 'x' &&
             spec.spec != 'b' && spec.spec != 'o' && spec.spec != 's' &&
             spec.spec != 'f') {
-          throw std::runtime_error(
-              fmt::format("Unsupported format specifier: %{}", spec.spec));
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, fmt::format("unsupported format specifier: %{}", spec.spec)));
         }
 
         if (spec.spec != 'f' &&
             (spec.zero_pad || !spec.width.empty() || !spec.precision.empty())) {
-          throw std::runtime_error(
-              "Unsupported format specifier: width/precision only "
-              "supported for %f");
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {},
+                  "unsupported format specifier: width/precision only "
+                  "supported for %f"));
         }
 
         if (arg_idx >= args.size()) {
-          throw std::runtime_error("Not enough arguments for format string");
+          throw DiagnosticException(
+              Diagnostic::Error({}, "not enough arguments for format string"));
         }
         result += FormatValue(args[arg_idx], spec);
         arg_idx++;
@@ -421,9 +430,10 @@ auto RunInstruction(
 
         // Reject bit width greater than 64
         if (two_state_data.bit_width > 64) {
-          throw std::runtime_error(
-              fmt::format(
-                  "Unsupported target bit width > 64: {}", target_type));
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, fmt::format(
+                          "unsupported target bit width > 64: {}", target_type)));
         }
 
         // Extract source value as int64
@@ -455,9 +465,10 @@ auto RunInstruction(
           target_type.kind == common::Type::Kind::kTwoState) {
         auto two_state_data = std::get<common::TwoStateData>(target_type.data);
         if (two_state_data.bit_width > 64) {
-          throw std::runtime_error(
-              fmt::format(
-                  "Unsupported target bit width > 64: {}", target_type));
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, fmt::format(
+                          "unsupported target bit width > 64: {}", target_type)));
         }
 
         int64_t raw_value = static_cast<int64_t>(src.AsDouble());
@@ -472,10 +483,12 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      throw std::runtime_error(
-          fmt::format(
-              "Conversion only supports two-state/real types, got: {} -> {}",
-              src.type, target_type));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {},
+              fmt::format(
+                  "conversion only supports two-state/real types, got: {} -> {}",
+                  src.type, target_type)));
     }
 
     // Control flow
@@ -545,8 +558,10 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      throw std::runtime_error(
-          fmt::format("Unsupported system call: {}", instr.system_call_name));
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format(
+                      "unsupported system call: {}", instr.system_call_name)));
     }
 
     case lir::InstructionKind::kJump: {

@@ -177,6 +177,9 @@ auto RunCommand(bool use_interpreter) -> int {
         "cmake --build build > /dev/null && ./build/sim",
         out_path.string());
     return std::system(cmd.c_str());
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra run: " << e.what() << "\n";
     return 1;
@@ -256,6 +259,9 @@ auto EmitCommand() -> int {
     auto out_path = config.root_dir / config.out_dir;
     return EmitCommandInternal(
         config.files, out_path.string(), config.incdir, config.top);
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra emit: " << e.what() << "\n";
     return 1;
@@ -269,10 +275,10 @@ auto CheckCommand() -> int {
     return 1;
   }
 
+  lyra::frontend::SlangFrontend frontend;
   try {
     auto config = lyra::config::LoadConfig(*config_path);
 
-    lyra::frontend::SlangFrontend frontend;
     lyra::frontend::FrontendOptions options;
     options.include_dirs = config.incdir;
     auto compilation = frontend.LoadFromFiles(config.files, options);
@@ -281,6 +287,9 @@ auto CheckCommand() -> int {
       return 1;
     }
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra check: " << e.what() << "\n";
     return 1;
@@ -362,6 +371,9 @@ auto BuildCommand() -> int {
         "cmake --build build > /dev/null",
         out_path.string());
     return std::system(cmd.c_str());
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra build: " << e.what() << "\n";
     return 1;
@@ -409,6 +421,9 @@ endmodule
 
     std::cout << "Created project '" << project_name << "'\n";
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra init: " << e.what() << "\n";
     return 1;

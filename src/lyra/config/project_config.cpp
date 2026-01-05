@@ -1,8 +1,8 @@
 #include "lyra/config/project_config.hpp"
 
 #include <format>
-#include <stdexcept>
 
+#include "lyra/common/diagnostic.hpp"
 #include "toml.hpp"
 
 namespace lyra::config {
@@ -35,45 +35,57 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
   try {
     tbl = toml::parse_file(config_path.string());
   } catch (const toml::parse_error& e) {
-    throw std::runtime_error(
-        std::format("Failed to parse {}: {}", config_path.string(), e.what()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, std::format(
+                    "failed to parse {}: {}", config_path.string(), e.what())));
   }
 
   // [package] section
   auto package = tbl["package"];
   if (!package) {
-    throw std::runtime_error(
-        std::format("{}: missing [package] section", config_path.string()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, std::format(
+                    "{}: missing [package] section", config_path.string())));
   }
 
   auto name = package["name"].value<std::string>();
   if (!name) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing required field 'package.name'", config_path.string()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, std::format(
+                    "{}: missing required field 'package.name'",
+                    config_path.string())));
   }
   config.name = *name;
 
   auto top = package["top"].value<std::string>();
   if (!top) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing required field 'package.top'", config_path.string()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, std::format(
+                    "{}: missing required field 'package.top'",
+                    config_path.string())));
   }
   config.top = *top;
 
   // [sources] section
   auto sources = tbl["sources"];
   if (!sources) {
-    throw std::runtime_error(
-        std::format("{}: missing [sources] section", config_path.string()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, std::format(
+                    "{}: missing [sources] section", config_path.string())));
   }
 
   auto* files_arr = sources["files"].as_array();
   if (files_arr == nullptr || files_arr->empty()) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing or empty 'sources.files'", config_path.string()));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {},
+            std::format(
+                "{}: missing or empty 'sources.files'", config_path.string())));
   }
   for (const auto& elem : *files_arr) {
     if (auto str = elem.value<std::string>()) {

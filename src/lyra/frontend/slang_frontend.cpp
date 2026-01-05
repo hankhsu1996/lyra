@@ -1,8 +1,9 @@
 #include "lyra/frontend/slang_frontend.hpp"
 
-#include <stdexcept>
-
+#include <fmt/core.h>
 #include <slang/ast/Compilation.h>
+#include <slang/diagnostics/DiagnosticEngine.h>
+#include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
 
@@ -32,9 +33,35 @@ auto SlangFrontend::LoadFromFiles(
   for (const auto& path : paths) {
     auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager_);
     if (!result) {
-      throw std::runtime_error("Failed to parse file: " + path);
+      // File not found or couldn't be opened
+      auto [error_code, error_msg] = result.error();
+      fmt::print(stderr, "error: {}: {}\n", path, error_msg);
+      return nullptr;
     }
     AddTree(result.value(), *compilation);
+  }
+
+  // Check for parse/elaboration errors
+  auto diagnostics = compilation->getAllDiagnostics();
+  bool has_errors = false;
+  for (const auto& diag : diagnostics) {
+    if (diag.isError()) {
+      has_errors = true;
+      break;
+    }
+  }
+
+  if (has_errors) {
+    // Print all diagnostics using slang's formatter
+    slang::DiagnosticEngine diag_engine(*source_manager_);
+    auto diag_client = std::make_shared<slang::TextDiagnosticClient>();
+    diag_engine.addClient(diag_client);
+    for (const auto& diag : diagnostics) {
+      diag_engine.issue(diag);
+    }
+    // TextDiagnosticClient buffers output - print it
+    fmt::print(stderr, "{}", diag_client->getString());
+    return nullptr;
   }
 
   return compilation;

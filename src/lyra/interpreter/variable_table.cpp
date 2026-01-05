@@ -1,6 +1,6 @@
 #include "lyra/interpreter/variable_table.hpp"
 
-#include <stdexcept>
+#include "lyra/common/diagnostic.hpp"
 
 namespace lyra::interpreter {
 
@@ -12,8 +12,9 @@ void ModuleVariableTable::Write(
 auto ModuleVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
   auto it = variables_.find(symbol);
   if (it == variables_.end()) {
-    throw std::runtime_error(
-        "Variable not found: " + std::string(symbol->name));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, "variable not found: " + std::string(symbol->name)));
   }
   return it->second;
 }
@@ -25,15 +26,18 @@ auto ModuleVariableTable::ReadFromName(const std::string& name) const
       return value;
     }
   }
-  throw std::runtime_error("Variable not found: " + name);
+  throw DiagnosticException(
+      Diagnostic::Error({}, "variable not found: " + name));
 }
 
 auto ModuleVariableTable::ReadPrevious(const SymbolRef& symbol) const
     -> RuntimeValue {
   auto it = previous_variables_.find(symbol);
   if (it == previous_variables_.end()) {
-    throw std::runtime_error(
-        fmt::format("Cannot read from previous variables: {}", symbol->name));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, fmt::format(
+                    "cannot read from previous variables: {}", symbol->name)));
   }
   return it->second;
 }
@@ -68,8 +72,9 @@ void ProcessVariableTable::Write(
 auto ProcessVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
   auto it = variables_.find(symbol);
   if (it == variables_.end()) {
-    throw std::runtime_error(
-        "Variable not found: " + std::string(symbol->name));
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, "variable not found: " + std::string(symbol->name)));
   }
   return it->second;
 }
@@ -81,7 +86,8 @@ auto ProcessVariableTable::ReadFromName(const std::string& name) const
       return value;
     }
   }
-  throw std::runtime_error("Variable not found: " + name);
+  throw DiagnosticException(
+      Diagnostic::Error({}, "variable not found: " + name));
 }
 
 auto ProcessVariableTable::Exists(const SymbolRef& symbol) const -> bool {

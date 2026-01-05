@@ -130,4 +130,18 @@ void PrintDiagnostic(
   }
 }
 
+void PrintDiagnostic(const Diagnostic& diag, bool colors) {
+  auto severity_color = GetSeverityColor(diag.severity);
+  auto severity_string = GetSeverityString(diag.severity);
+
+  if (colors) {
+    fmt::print(
+        stderr, "{}: {}\n",
+        fmt::styled(severity_string, fmt::fg(severity_color)),
+        fmt::styled(diag.message, fmt::emphasis::bold));
+  } else {
+    std::print(stderr, "{}: {}\n", severity_string, diag.message);
+  }
+}
+
 }  // namespace lyra

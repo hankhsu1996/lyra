@@ -2,6 +2,7 @@
 
 #include <cassert>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 
@@ -85,8 +86,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
       if (system_call.name != "$finish" && system_call.name != "$display") {
-        throw std::runtime_error(
-            fmt::format("Unsupported system call: {}", system_call.name));
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {},
+                fmt::format("unsupported system call: {}", system_call.name)));
       }
 
       std::vector<TempRef> arguments;
@@ -199,10 +202,11 @@ auto LowerBinaryExpression(
         kind = IK::kBinaryNotEqual;
         break;
       default:
-        throw std::runtime_error(
-            fmt::format(
-                "Operator {} is not supported for string operands",
-                expression.op));
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format(
+                        "operator {} is not supported for string operands",
+                        expression.op)));
     }
   } else {
     switch (expression.op) {
@@ -262,10 +266,10 @@ auto LowerBinaryExpression(
         break;
       case Operator::kLogicalImplication:
       case Operator::kLogicalEquivalence:
-        throw std::runtime_error(
-            fmt::format(
-                "Operator {} is not supported in LowerBinaryExpression",
-                expression.op));
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {},
+                fmt::format("operator {} is not supported", expression.op)));
       case Operator::kLogicalShiftLeft:
         kind = IK::kBinaryLogicalShiftLeft;
         break;
@@ -282,10 +286,10 @@ auto LowerBinaryExpression(
       case Operator::kCaseInequality:
       case Operator::kWildcardEquality:
       case Operator::kWildcardInequality:
-        throw std::runtime_error(
-            fmt::format(
-                "Operator {} is not supported (yet) in LowerBinaryExpression",
-                expression.op));
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format(
+                        "operator {} is not yet supported", expression.op)));
     }
   }
 
@@ -351,8 +355,9 @@ auto LowerIncrementDecrementExpression(
 
   // Check if the operand is a variable reference (identifier)
   if (expression.operand->kind != mir::Expression::Kind::kIdentifier) {
-    throw std::runtime_error(
-        "Increment/decrement operations require a variable operand");
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, "increment/decrement operations require a variable operand"));
   }
 
   const auto& identifier =
