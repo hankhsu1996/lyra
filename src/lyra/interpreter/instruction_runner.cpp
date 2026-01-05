@@ -126,7 +126,8 @@ auto FormatDisplay(
             spec.spec != 'f') {
           throw DiagnosticException(
               Diagnostic::Error(
-                  {}, fmt::format("unsupported format specifier: %{}", spec.spec)));
+                  {},
+                  fmt::format("unsupported format specifier: %{}", spec.spec)));
         }
 
         if (spec.spec != 'f' &&
@@ -431,8 +432,9 @@ auto RunInstruction(
         if (two_state_data.bit_width > 64) {
           throw DiagnosticException(
               Diagnostic::Error(
-                  {}, fmt::format(
-                          "unsupported target bit width > 64: {}", target_type)));
+                  {},
+                  fmt::format(
+                      "unsupported target bit width > 64: {}", target_type)));
         }
 
         // Extract source value as int64
@@ -466,8 +468,9 @@ auto RunInstruction(
         if (two_state_data.bit_width > 64) {
           throw DiagnosticException(
               Diagnostic::Error(
-                  {}, fmt::format(
-                          "unsupported target bit width > 64: {}", target_type)));
+                  {},
+                  fmt::format(
+                      "unsupported target bit width > 64: {}", target_type)));
         }
 
         auto raw_value = static_cast<int64_t>(src.AsDouble());
@@ -484,10 +487,10 @@ auto RunInstruction(
 
       throw DiagnosticException(
           Diagnostic::Error(
-              {},
-              fmt::format(
-                  "conversion only supports two-state/real types, got: {} -> {}",
-                  src.type, target_type)));
+              {}, fmt::format(
+                      "conversion only supports two-state/real types, got: {} "
+                      "-> {}",
+                      src.type, target_type)));
     }
 
     // Control flow
