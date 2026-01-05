@@ -75,8 +75,7 @@ struct RuntimeValue {
 
   static auto Real(double value) -> RuntimeValue {
     return RuntimeValue{
-        .type = common::Type::Real(),
-        .value = common::ValueStorage(value)};
+        .type = common::Type::Real(), .value = common::ValueStorage(value)};
   }
 
   [[nodiscard]] auto AsInt64() const -> int64_t {
