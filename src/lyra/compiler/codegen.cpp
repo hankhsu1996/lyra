@@ -96,6 +96,8 @@ auto ToCppType(const common::Type& type) -> std::string {
       return "void";
     case common::Type::Kind::kReal:
       return "Real";
+    case common::Type::Kind::kShortReal:
+      return "ShortReal";
     case common::Type::Kind::kString:
       return "std::string";
     case common::Type::Kind::kTwoState: {
@@ -226,6 +228,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
 void Codegen::EmitHeader() {
   Line("#include <print>");
   Line("#include <iostream>");
+  Line("#include <cmath>");
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
 }
@@ -242,6 +245,7 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("using ShortInt = lyra::sdk::ShortInt;");
   Line("using Byte = lyra::sdk::Byte;");
   Line("using Real = double;");
+  Line("using ShortReal = float;");
   Line("");
 
   indent_--;
@@ -592,7 +596,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kBinary: {
       const auto& bin = mir::As<mir::BinaryExpression>(expr);
-      if (bin.op == mir::BinaryOperator::kBitwiseXnor) {
+      if (bin.op == mir::BinaryOperator::kPower) {
+        // Power: std::pow(a, b) - C++ doesn't have ** operator
+        out_ << "std::pow(";
+        EmitExpression(*bin.left, kPrecLowest);
+        out_ << ", ";
+        EmitExpression(*bin.right, kPrecLowest);
+        out_ << ")";
+      } else if (bin.op == mir::BinaryOperator::kBitwiseXnor) {
         // XNOR: ~(a ^ b) - uses function-like syntax, always parens
         out_ << "~(";
         EmitExpression(*bin.left, kPrecBitwiseXor);

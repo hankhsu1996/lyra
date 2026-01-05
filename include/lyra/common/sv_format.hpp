@@ -79,7 +79,7 @@ inline auto ParseDisplayFormat(const std::string& fmt_str)
 }
 
 // Transform a SV format string to std::format syntax
-// %d -> {}, %h/%x -> {:x}, %b -> {:b}, %o -> {:o}, %s -> {}, %f -> {:f}
+// %d -> {:d}, %h/%x -> {:x}, %b -> {:b}, %o -> {:o}, %s -> {}, %f -> {:f}
 inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
   std::string result;
   size_t i = 0;
@@ -125,7 +125,16 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
         }
 
         char c = sv_fmt[i];
-        if (c == 'd' || c == 's') {
+        if (c == 'd') {
+          if (zero_pad || !width.empty() || !precision.empty()) {
+            throw std::runtime_error(
+                "Unsupported format specifier: width/precision only "
+                "supported for %f");
+          }
+          // Use {:d} to ensure bools print as 1/0 instead of true/false
+          result += "{:d}";
+          ++i;
+        } else if (c == 's') {
           if (zero_pad || !width.empty() || !precision.empty()) {
             throw std::runtime_error(
                 "Unsupported format specifier: width/precision only "

@@ -61,6 +61,10 @@ struct Literal {
     return {common::Type::Real(), ValueStorage(v)};
   }
 
+  static auto ShortReal(float v) -> Literal {
+    return {common::Type::ShortReal(), ValueStorage(v)};
+  }
+
   auto operator==(const Literal& other) const -> bool = default;
 
   [[nodiscard]] auto ToString() const -> std::string {

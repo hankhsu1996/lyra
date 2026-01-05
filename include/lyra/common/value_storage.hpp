@@ -28,7 +28,8 @@ auto Match(Variant&& v, Matchers&&... matchers) {
 
 class ValueStorage {
  public:
-  using Storage = std::variant<std::monostate, int64_t, double, std::string>;
+  using Storage =
+      std::variant<std::monostate, int64_t, double, float, std::string>;
 
   ValueStorage() = default;
   explicit ValueStorage(std::monostate v) : value_(v) {
@@ -36,6 +37,8 @@ class ValueStorage {
   explicit ValueStorage(int64_t v) : value_(v) {
   }
   explicit ValueStorage(double v) : value_(v) {
+  }
+  explicit ValueStorage(float v) : value_(v) {
   }
   explicit ValueStorage(std::string v) : value_(std::move(v)) {
   }
@@ -49,6 +52,7 @@ class ValueStorage {
         value_, [](std::monostate) { return std::string{}; },
         [](int64_t v) { return std::to_string(v); },
         [](double v) { return fmt::format("{:.17g}", v); },
+        [](float v) { return fmt::format("{:.9g}", v); },
         [](const std::string& v) { return "\"" + v + "\""; });
   }
 
@@ -69,6 +73,10 @@ class ValueStorage {
     return Is<double>();
   }
 
+  [[nodiscard]] auto IsFloat() const -> bool {
+    return Is<float>();
+  }
+
   [[nodiscard]] auto IsString() const -> bool {
     return Is<std::string>();
   }
@@ -85,6 +93,10 @@ class ValueStorage {
 
   [[nodiscard]] auto AsDouble() const -> double {
     return As<double>();
+  }
+
+  [[nodiscard]] auto AsFloat() const -> float {
+    return As<float>();
   }
 
   [[nodiscard]] auto AsString() const -> const std::string& {
@@ -111,6 +123,8 @@ class ValueStorage {
             return std::hash<int64_t>{}(val);
           } else if constexpr (std::is_same_v<T, double>) {
             return std::hash<double>{}(val);
+          } else if constexpr (std::is_same_v<T, float>) {
+            return std::hash<float>{}(val);
           } else if constexpr (std::is_same_v<T, std::string>) {
             return std::hash<std::string>{}(val);
           } else {

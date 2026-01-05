@@ -40,6 +40,8 @@ struct RuntimeValue {
       }
       case common::Type::Kind::kReal:
         return Real(0.0);
+      case common::Type::Kind::kShortReal:
+        return ShortReal(0.0F);
       case common::Type::Kind::kString:
         return String("");
     }
@@ -78,12 +80,22 @@ struct RuntimeValue {
         .type = common::Type::Real(), .value = common::ValueStorage(value)};
   }
 
+  static auto ShortReal(float value) -> RuntimeValue {
+    return RuntimeValue{
+        .type = common::Type::ShortReal(),
+        .value = common::ValueStorage(value)};
+  }
+
   [[nodiscard]] auto AsInt64() const -> int64_t {
     return value.AsInt64();
   }
 
   [[nodiscard]] auto AsDouble() const -> double {
     return value.AsDouble();
+  }
+
+  [[nodiscard]] auto AsFloat() const -> float {
+    return value.AsFloat();
   }
 
   [[nodiscard]] auto AsUInt64() const -> uint64_t {
@@ -113,6 +125,10 @@ struct RuntimeValue {
 
   [[nodiscard]] auto IsReal() const -> bool {
     return type.kind == common::Type::Kind::kReal;
+  }
+
+  [[nodiscard]] auto IsShortReal() const -> bool {
+    return type.kind == common::Type::Kind::kShortReal;
   }
 
   [[nodiscard]] auto GetBitWidth() const -> uint32_t {

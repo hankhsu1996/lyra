@@ -43,12 +43,15 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     return value.AsString();
   }
 
-  if (value.IsReal()) {
+  if (value.IsReal() || value.IsShortReal()) {
     if (spec.spec != 'f' && spec.spec != 'd' && spec.spec != 's') {
       throw DiagnosticException(
           Diagnostic::Error(
               {}, fmt::format("unsupported format specifier: %{}", spec.spec)));
     }
+    // Convert shortreal to double for formatting
+    double dval = value.IsReal() ? value.AsDouble()
+                                 : static_cast<double>(value.AsFloat());
     if (spec.spec == 'f') {
       std::string fmt = "{:";
       if (spec.zero_pad && !spec.width.empty()) {
@@ -62,7 +65,7 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
         fmt += spec.precision;
       }
       fmt += "f}";
-      return fmt::format(fmt::runtime(fmt), value.AsDouble());
+      return fmt::format(fmt::runtime(fmt), dval);
     }
     return value.ToString();
   }
@@ -496,11 +499,64 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      // Shortreal conversions
+      if (src.type.kind == common::Type::Kind::kTwoState &&
+          target_type.kind == common::Type::Kind::kShortReal) {
+        auto two_state_data = std::get<common::TwoStateData>(src.type.data);
+        float float_value = two_state_data.is_signed
+                                ? static_cast<float>(src.AsInt64())
+                                : static_cast<float>(src.AsUInt64());
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::ShortReal(float_value));
+        return InstructionResult::Continue();
+      }
+
+      if (src.type.kind == common::Type::Kind::kShortReal &&
+          target_type.kind == common::Type::Kind::kTwoState) {
+        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+        if (two_state_data.bit_width > 64) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {},
+                  fmt::format(
+                      "unsupported target bit width > 64: {}", target_type)));
+        }
+
+        auto raw_value = static_cast<int64_t>(src.AsFloat());
+        RuntimeValue result = two_state_data.is_signed
+                                  ? RuntimeValue::TwoStateSigned(
+                                        raw_value, two_state_data.bit_width)
+                                  : RuntimeValue::TwoStateUnsigned(
+                                        static_cast<uint64_t>(raw_value),
+                                        two_state_data.bit_width);
+
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (src.type.kind == common::Type::Kind::kReal &&
+          target_type.kind == common::Type::Kind::kShortReal) {
+        // Precision loss: double -> float
+        temp_table.Write(
+            instr.result.value(),
+            RuntimeValue::ShortReal(static_cast<float>(src.AsDouble())));
+        return InstructionResult::Continue();
+      }
+
+      if (src.type.kind == common::Type::Kind::kShortReal &&
+          target_type.kind == common::Type::Kind::kReal) {
+        // Precision gain: float -> double
+        temp_table.Write(
+            instr.result.value(),
+            RuntimeValue::Real(static_cast<double>(src.AsFloat())));
+        return InstructionResult::Continue();
+      }
+
       throw DiagnosticException(
           Diagnostic::Error(
               {}, fmt::format(
-                      "conversion only supports two-state/real types, got: {} "
-                      "-> {}",
+                      "conversion only supports two-state/real/shortreal "
+                      "types, got: {} -> {}",
                       src.type, target_type)));
     }
 
@@ -561,6 +617,8 @@ auto RunInstruction(
           const auto& value = get_temp(operand);
           if (value.IsString()) {
             gen_fmt += "%s";
+          } else if (value.IsReal() || value.IsShortReal()) {
+            gen_fmt += "%f";
           } else {
             gen_fmt += "%d";
           }
@@ -594,8 +652,15 @@ auto RunInstruction(
       const auto& false_target =
           std::get<lir::LabelRef>(instr.operands[2].value);
 
-      assert(condition.IsTwoState());
-      bool condition_result = condition.AsInt64() != 0;
+      bool condition_result = false;
+      if (condition.IsReal()) {
+        condition_result = condition.AsDouble() != 0.0;
+      } else if (condition.IsShortReal()) {
+        condition_result = condition.AsFloat() != 0.0F;
+      } else {
+        assert(condition.IsTwoState());
+        condition_result = condition.AsInt64() != 0;
+      }
 
       const auto& next_label = condition_result ? true_target : false_target;
       return InstructionResult::Jump(next_label);

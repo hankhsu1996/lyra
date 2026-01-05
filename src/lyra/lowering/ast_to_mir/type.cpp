@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
 #include <fmt/format.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/type.hpp"
@@ -20,6 +21,11 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
   }
 
   if (type.isFloating()) {
+    const auto& floating = type.as<slang::ast::FloatingType>();
+    if (floating.floatKind == slang::ast::FloatingType::ShortReal) {
+      return Type::ShortReal();
+    }
+    // Real and RealTime both map to real (64-bit)
     return Type::Real();
   }
 
