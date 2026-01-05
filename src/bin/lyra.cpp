@@ -1,16 +1,20 @@
 #include <argparse/argparse.hpp>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
 
 #include "embedded_sdk.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/indent.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"

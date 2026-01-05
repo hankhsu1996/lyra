@@ -1,5 +1,10 @@
 #include "lyra/lowering/ast_to_mir/process.hpp"
 
+#include <cstddef>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include <fmt/format.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
@@ -8,8 +13,13 @@
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
+#include "lyra/common/trigger.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
+#include "lyra/mir/expression.hpp"
+#include "lyra/mir/process.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 

@@ -1,6 +1,13 @@
 #include "lyra/interpreter/variable_table.hpp"
 
+#include <string>
+#include <utility>
+
+#include <fmt/core.h>
+
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/variable.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 

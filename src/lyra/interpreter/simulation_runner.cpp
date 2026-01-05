@@ -1,10 +1,18 @@
 #include "lyra/interpreter/simulation_runner.hpp"
 
+#include <cstddef>
+#include <queue>
+#include <utility>
+#include <vector>
+
 #include <fmt/core.h>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/interpreter/process_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_runner.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/module.hpp"
 
 namespace lyra::interpreter {
 

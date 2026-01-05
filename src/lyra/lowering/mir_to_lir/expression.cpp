@@ -1,10 +1,17 @@
 #include "lyra/lowering/mir_to_lir/expression.hpp"
 
 #include <cassert>
+#include <utility>
+#include <vector>
 
-#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
+#include "lyra/lir/instruction.hpp"
+#include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/operators.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 

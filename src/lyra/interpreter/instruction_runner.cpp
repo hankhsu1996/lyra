@@ -2,15 +2,26 @@
 
 #include <cassert>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <format>
+#include <functional>
+#include <string>
+#include <vector>
 
 #include <fmt/core.h>
 #include <fmt/format.h>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
+#include "lyra/interpreter/process_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
+#include "lyra/lir/operand.hpp"
 
 namespace lyra::interpreter {
 

@@ -1,8 +1,15 @@
 #include "lyra/interpreter/basic_block_runner.hpp"
 
+#include <cstddef>
+
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/interpreter/basic_block_result.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/instruction_runner.hpp"
+#include "lyra/interpreter/process_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/basic_block.hpp"
 
 namespace lyra::interpreter {
 

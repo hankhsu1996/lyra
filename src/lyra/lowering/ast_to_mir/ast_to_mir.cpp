@@ -1,5 +1,7 @@
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 
+#include <memory>
+
 #include <fmt/format.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>

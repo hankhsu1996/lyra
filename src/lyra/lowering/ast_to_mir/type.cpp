@@ -2,6 +2,9 @@
 
 #include <fmt/format.h>
 
+#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/type.hpp"
+
 namespace lyra::lowering::ast_to_mir {
 
 using Type = common::Type;

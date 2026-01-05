@@ -1,6 +1,15 @@
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 
+#include <cstdint>
+#include <expected>
+#include <span>
+#include <utility>
+
 #include <slang/ast/expressions/LiteralExpressions.h>
+
+#include "lyra/common/bit_utils.hpp"
+#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 

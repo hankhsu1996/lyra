@@ -1,5 +1,13 @@
 #include "lyra/lir/context.hpp"
 
+#include <cstddef>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "lyra/common/literal.hpp"
+#include "lyra/common/type.hpp"
+
 namespace lyra::lir {
 
 auto LirContext::AllocateTemp(std::string name, common::Type type) -> TempRef {

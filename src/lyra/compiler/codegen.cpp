@@ -1,13 +1,19 @@
 #include "lyra/compiler/codegen.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <format>
+#include <string>
+#include <vector>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/module.hpp"
+#include "lyra/mir/operators.hpp"
+#include "lyra/mir/process.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::compiler {
