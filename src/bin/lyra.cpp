@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -412,23 +413,56 @@ auto BuildCommand() -> int {
   }
 }
 
-auto InitCommand(const std::string& project_path) -> int {
-  fs::path project_dir = fs::path(project_path);
-  if (project_dir.is_relative()) {
-    project_dir = fs::current_path() / project_dir;
-  }
-  std::string project_name = project_dir.filename().string();
+auto InitCommand(std::optional<std::string> name, bool force) -> int {
+  fs::path project_dir;
+  std::string project_name;
+  bool create_directory = false;
 
-  if (fs::exists(project_dir)) {
-    lyra::PrintDiagnostic(
-        lyra::Diagnostic::Error(
-            {}, std::format(
-                    "directory '{}' already exists", project_dir.string())));
-    return 1;
+  if (name.has_value()) {
+    // Create subdirectory (existing behavior)
+    project_dir = fs::path(*name);
+    if (project_dir.is_relative()) {
+      project_dir = fs::current_path() / project_dir;
+    }
+    project_name = project_dir.filename().string();
+    create_directory = true;
+
+    if (fs::exists(project_dir)) {
+      lyra::PrintDiagnostic(
+          lyra::Diagnostic::Error(
+              {}, std::format(
+                      "directory '{}' already exists", project_dir.string())));
+      return 1;
+    }
+  } else {
+    // Initialize in current directory
+    project_dir = fs::current_path();
+    project_name = project_dir.filename().string();
+
+    // Check for existing lyra.toml
+    if (fs::exists(project_dir / "lyra.toml") && !force) {
+      lyra::PrintDiagnostic(
+          lyra::Diagnostic::Error(
+              {}, "lyra.toml already exists (use --force to overwrite)"));
+      return 1;
+    }
   }
 
   try {
-    fs::create_directories(project_dir);
+    if (create_directory) {
+      fs::create_directories(project_dir);
+
+      // Create starter SV file only for new projects
+      std::string sv = std::format(
+          R"(module {};
+  initial begin
+    $display("Hello from {}!");
+  end
+endmodule
+)",
+          project_name, project_name);
+      WriteFile(project_dir / (project_name + ".sv"), sv);
+    }
 
     // Create lyra.toml
     std::string config = std::format(
@@ -442,18 +476,11 @@ files = ["{}.sv"]
         project_name, project_name, project_name);
     WriteFile(project_dir / "lyra.toml", config);
 
-    // Create starter SV file
-    std::string sv = std::format(
-        R"(module {};
-  initial begin
-    $display("Hello from {}!");
-  end
-endmodule
-)",
-        project_name, project_name);
-    WriteFile(project_dir / (project_name + ".sv"), sv);
-
-    std::cout << "Created project '" << project_name << "'\n";
+    if (create_directory) {
+      std::cout << "Created project '" << project_name << "'\n";
+    } else {
+      std::cout << "Initialized project '" << project_name << "'\n";
+    }
     return 0;
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());
@@ -499,7 +526,12 @@ auto main(int argc, char* argv[]) -> int {
   // Subcommand: init
   argparse::ArgumentParser init_cmd("init");
   init_cmd.add_description("Create a new Lyra project");
-  init_cmd.add_argument("name").help("Project name");
+  init_cmd.add_argument("name")
+      .help("Project name (default: current directory)")
+      .nargs(argparse::nargs_pattern::optional);
+  init_cmd.add_argument("-f", "--force")
+      .help("Overwrite existing lyra.toml")
+      .flag();
 
   program.add_subparser(run_cmd);
   program.add_subparser(emit_cmd);
@@ -561,8 +593,9 @@ auto main(int argc, char* argv[]) -> int {
   }
 
   if (program.is_subcommand_used("init")) {
-    auto name = init_cmd.get<std::string>("name");
-    return InitCommand(name);
+    auto name = init_cmd.present<std::string>("name");
+    bool force = init_cmd.get<bool>("--force");
+    return InitCommand(name, force);
   }
 
   // No subcommand provided
