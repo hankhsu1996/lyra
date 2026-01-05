@@ -259,6 +259,13 @@ auto LowerStatement(const slang::ast::Statement& statement)
       return std::make_unique<mir::BlockStatement>();  // No-op
     }
 
+    case StatementKind::Invalid:
+      // Slang produces InvalidStatement when it detects semantic issues.
+      // Slang should have already reported a diagnostic explaining the problem.
+      // We cannot proceed with invalid AST nodes.
+      throw DiagnosticException(
+          Diagnostic::Error({}, "cannot lower invalid statement"));
+
     default:
       throw DiagnosticException(
           Diagnostic::Error(

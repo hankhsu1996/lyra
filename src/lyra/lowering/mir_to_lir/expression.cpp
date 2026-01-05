@@ -85,12 +85,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     case mir::Expression::Kind::kSystemCall: {
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
-      if (system_call.name != "$finish" && system_call.name != "$display") {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {},
-                fmt::format("unsupported system call: {}", system_call.name)));
-      }
+      // Supported system calls are validated in AST→MIR
+      assert(system_call.name == "$finish" || system_call.name == "$display");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -193,104 +189,90 @@ auto LowerBinaryExpression(
   const bool is_rhs_string = rhs->type == Type::String();
   const bool is_string = is_lhs_string || is_rhs_string;
 
+  // String operand restrictions and unsupported operators are validated in
+  // AST→MIR. For strings, only equality/inequality are allowed.
   if (is_string) {
-    switch (expression.op) {
-      case Operator::kEquality:
-        kind = IK::kBinaryEqual;
-        break;
-      case Operator::kInequality:
-        kind = IK::kBinaryNotEqual;
-        break;
-      default:
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {}, fmt::format(
-                        "operator {} is not supported for string operands",
-                        expression.op)));
-    }
-  } else {
-    switch (expression.op) {
-      case Operator::kAddition:
-        kind = IK::kBinaryAdd;
-        break;
-      case Operator::kSubtraction:
-        kind = IK::kBinarySubtract;
-        break;
-      case Operator::kMultiplication:
-        kind = IK::kBinaryMultiply;
-        break;
-      case Operator::kDivision:
-        kind = IK::kBinaryDivide;
-        break;
-      case Operator::kModulo:
-        kind = IK::kBinaryModulo;
-        break;
-      case Operator::kEquality:
-        kind = IK::kBinaryEqual;
-        break;
-      case Operator::kInequality:
-        kind = IK::kBinaryNotEqual;
-        break;
-      case Operator::kLessThan:
-        kind = IK::kBinaryLessThan;
-        break;
-      case Operator::kLessThanEqual:
-        kind = IK::kBinaryLessThanEqual;
-        break;
-      case Operator::kGreaterThan:
-        kind = IK::kBinaryGreaterThan;
-        break;
-      case Operator::kGreaterThanEqual:
-        kind = IK::kBinaryGreaterThanEqual;
-        break;
-      case Operator::kPower:
-        kind = IK::kBinaryPower;
-        break;
-      case Operator::kBitwiseAnd:
-        kind = IK::kBinaryBitwiseAnd;
-        break;
-      case Operator::kBitwiseOr:
-        kind = IK::kBinaryBitwiseOr;
-        break;
-      case Operator::kBitwiseXor:
-        kind = IK::kBinaryBitwiseXor;
-        break;
-      case Operator::kBitwiseXnor:
-        kind = IK::kBinaryBitwiseXnor;
-        break;
-      case Operator::kLogicalAnd:
-        kind = IK::kBinaryLogicalAnd;
-        break;
-      case Operator::kLogicalOr:
-        kind = IK::kBinaryLogicalOr;
-        break;
-      case Operator::kLogicalImplication:
-      case Operator::kLogicalEquivalence:
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {},
-                fmt::format("operator {} is not supported", expression.op)));
-      case Operator::kLogicalShiftLeft:
-        kind = IK::kBinaryLogicalShiftLeft;
-        break;
-      case Operator::kLogicalShiftRight:
-        kind = IK::kBinaryLogicalShiftRight;
-        break;
-      case Operator::kArithmeticShiftLeft:
-        kind = IK::kBinaryArithmeticShiftLeft;
-        break;
-      case Operator::kArithmeticShiftRight:
-        kind = IK::kBinaryArithmeticShiftRight;
-        break;
-      case Operator::kCaseEquality:
-      case Operator::kCaseInequality:
-      case Operator::kWildcardEquality:
-      case Operator::kWildcardInequality:
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {}, fmt::format(
-                        "operator {} is not yet supported", expression.op)));
-    }
+    assert(
+        expression.op == Operator::kEquality ||
+        expression.op == Operator::kInequality);
+  }
+
+  switch (expression.op) {
+    case Operator::kAddition:
+      kind = IK::kBinaryAdd;
+      break;
+    case Operator::kSubtraction:
+      kind = IK::kBinarySubtract;
+      break;
+    case Operator::kMultiplication:
+      kind = IK::kBinaryMultiply;
+      break;
+    case Operator::kDivision:
+      kind = IK::kBinaryDivide;
+      break;
+    case Operator::kModulo:
+      kind = IK::kBinaryModulo;
+      break;
+    case Operator::kEquality:
+      kind = IK::kBinaryEqual;
+      break;
+    case Operator::kInequality:
+      kind = IK::kBinaryNotEqual;
+      break;
+    case Operator::kLessThan:
+      kind = IK::kBinaryLessThan;
+      break;
+    case Operator::kLessThanEqual:
+      kind = IK::kBinaryLessThanEqual;
+      break;
+    case Operator::kGreaterThan:
+      kind = IK::kBinaryGreaterThan;
+      break;
+    case Operator::kGreaterThanEqual:
+      kind = IK::kBinaryGreaterThanEqual;
+      break;
+    case Operator::kPower:
+      kind = IK::kBinaryPower;
+      break;
+    case Operator::kBitwiseAnd:
+      kind = IK::kBinaryBitwiseAnd;
+      break;
+    case Operator::kBitwiseOr:
+      kind = IK::kBinaryBitwiseOr;
+      break;
+    case Operator::kBitwiseXor:
+      kind = IK::kBinaryBitwiseXor;
+      break;
+    case Operator::kBitwiseXnor:
+      kind = IK::kBinaryBitwiseXnor;
+      break;
+    case Operator::kLogicalAnd:
+      kind = IK::kBinaryLogicalAnd;
+      break;
+    case Operator::kLogicalOr:
+      kind = IK::kBinaryLogicalOr;
+      break;
+    case Operator::kLogicalShiftLeft:
+      kind = IK::kBinaryLogicalShiftLeft;
+      break;
+    case Operator::kLogicalShiftRight:
+      kind = IK::kBinaryLogicalShiftRight;
+      break;
+    case Operator::kArithmeticShiftLeft:
+      kind = IK::kBinaryArithmeticShiftLeft;
+      break;
+    case Operator::kArithmeticShiftRight:
+      kind = IK::kBinaryArithmeticShiftRight;
+      break;
+
+    // Unsupported operators - rejected in AST→MIR
+    case Operator::kLogicalImplication:
+    case Operator::kLogicalEquivalence:
+    case Operator::kCaseEquality:
+    case Operator::kCaseInequality:
+    case Operator::kWildcardEquality:
+    case Operator::kWildcardInequality:
+      assert(false && "unsupported operator should be rejected in AST→MIR");
   }
 
   auto result = builder.AllocateTemp("bin", expression.type);
@@ -353,12 +335,8 @@ auto LowerIncrementDecrementExpression(
   using lir::InstructionKind;
   using Operator = mir::UnaryOperator;
 
-  // Check if the operand is a variable reference (identifier)
-  if (expression.operand->kind != mir::Expression::Kind::kIdentifier) {
-    throw DiagnosticException(
-        Diagnostic::Error(
-            {}, "increment/decrement operations require a variable operand"));
-  }
+  // Operand must be a variable reference - validated in AST→MIR
+  assert(expression.operand->kind == mir::Expression::Kind::kIdentifier);
 
   const auto& identifier =
       mir::As<mir::IdentifierExpression>(*expression.operand);

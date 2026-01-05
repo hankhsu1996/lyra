@@ -558,10 +558,8 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      throw DiagnosticException(
-          Diagnostic::Error(
-              {}, fmt::format(
-                      "unsupported system call: {}", instr.system_call_name)));
+      // Supported system calls are validated in AST→MIR
+      assert(false && "unsupported system call should be rejected in AST→MIR");
     }
 
     case lir::InstructionKind::kJump: {

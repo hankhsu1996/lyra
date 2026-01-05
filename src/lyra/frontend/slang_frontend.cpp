@@ -41,28 +41,34 @@ auto SlangFrontend::LoadFromFiles(
     AddTree(result.value(), *compilation);
   }
 
-  // Check for parse/elaboration errors
+  // Check for parse/elaboration diagnostics
   auto diagnostics = compilation->getAllDiagnostics();
-  bool has_errors = false;
-  for (const auto& diag : diagnostics) {
-    if (diag.isError()) {
-      has_errors = true;
-      break;
-    }
-  }
-
-  if (has_errors) {
-    // Print all diagnostics using slang's formatter
+  if (!diagnostics.empty()) {
+    // Set up diagnostic engine with our warning policies
     slang::DiagnosticEngine diag_engine(*source_manager_);
     auto diag_client = std::make_shared<slang::TextDiagnosticClient>();
     diag_client->showColors(true);
     diag_engine.addClient(diag_client);
+
+    // Promote certain warnings to errors - these warnings result in invalid
+    // AST nodes that we cannot lower, so they must be treated as errors
+    std::vector<std::string> warning_options = {
+        "error=finish-num",  // Invalid $fatal/$finish argument
+    };
+    diag_engine.setWarningOptions(warning_options);
+
+    // Issue all diagnostics through the engine
     for (const auto& diag : diagnostics) {
       diag_engine.issue(diag);
     }
+
     // TextDiagnosticClient buffers output - print it
     fmt::print(stderr, "{}", diag_client->getString());
-    return nullptr;
+
+    // Check if there were any errors (including promoted warnings)
+    if (diag_engine.getNumErrors() > 0) {
+      return nullptr;
+    }
   }
 
   return compilation;

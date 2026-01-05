@@ -182,7 +182,7 @@ auto RunCommand(bool use_interpreter) -> int {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra run: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -243,7 +243,7 @@ auto EmitCommandInternal(
     lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra emit: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -265,7 +265,7 @@ auto EmitCommand() -> int {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra emit: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -294,7 +294,7 @@ auto CheckCommand() -> int {
     lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra check: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -345,7 +345,7 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra dump: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -379,7 +379,7 @@ auto BuildCommand() -> int {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra build: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -431,7 +431,7 @@ endmodule
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
   } catch (const std::exception& e) {
-    std::cerr << "lyra init: " << e.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, e.what()));
     return 1;
   }
 }
@@ -483,7 +483,7 @@ auto main(int argc, char* argv[]) -> int {
   try {
     program.parse_args(argc, argv);
   } catch (const std::exception& err) {
-    std::cerr << err.what() << "\n";
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, err.what()));
     std::cerr << program;
     return 1;
   }

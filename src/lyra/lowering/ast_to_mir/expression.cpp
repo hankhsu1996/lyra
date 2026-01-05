@@ -58,9 +58,24 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& unary_expression =
           expression.as<slang::ast::UnaryExpression>();
 
-      auto operand = LowerExpression(unary_expression.operand());
       auto mir_operator =
           mir::ConvertSlangUnaryOperatorToMir(unary_expression.op);
+
+      // Check increment/decrement requires a variable operand
+      using Op = mir::UnaryOperator;
+      bool is_inc_dec = mir_operator == Op::kPreincrement ||
+                        mir_operator == Op::kPostincrement ||
+                        mir_operator == Op::kPredecrement ||
+                        mir_operator == Op::kPostdecrement;
+      if (is_inc_dec && unary_expression.operand().kind !=
+                            slang::ast::ExpressionKind::NamedValue) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "increment/decrement requires a variable operand"));
+      }
+
+      auto operand = LowerExpression(unary_expression.operand());
 
       return std::make_unique<mir::UnaryExpression>(
           mir_operator, std::move(operand));
@@ -70,11 +85,44 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& binary_expression =
           expression.as<slang::ast::BinaryExpression>();
 
-      auto left = LowerExpression(binary_expression.left());
-      auto right = LowerExpression(binary_expression.right());
-
       auto mir_operator =
           mir::ConvertSlangBinaryOperatorToMir(binary_expression.op);
+
+      // Check for unsupported operators
+      using Op = mir::BinaryOperator;
+      if (mir_operator == Op::kLogicalImplication ||
+          mir_operator == Op::kLogicalEquivalence) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                fmt::format("unsupported operator '{}'", mir_operator)));
+      }
+      if (mir_operator == Op::kCaseEquality ||
+          mir_operator == Op::kCaseInequality ||
+          mir_operator == Op::kWildcardEquality ||
+          mir_operator == Op::kWildcardInequality) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                fmt::format(
+                    "operator '{}' is not yet supported", mir_operator)));
+      }
+
+      // Check string operand restrictions
+      bool has_string_operand = binary_expression.left().type->isString() ||
+                                binary_expression.right().type->isString();
+      if (has_string_operand && mir_operator != Op::kEquality &&
+          mir_operator != Op::kInequality) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                fmt::format(
+                    "operator '{}' is not supported for string operands",
+                    mir_operator)));
+      }
+
+      auto left = LowerExpression(binary_expression.left());
+      auto right = LowerExpression(binary_expression.right());
 
       return std::make_unique<mir::BinaryExpression>(
           mir_operator, std::move(left), std::move(right));
@@ -126,6 +174,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& call_expression = expression.as<slang::ast::CallExpression>();
       if (call_expression.isSystemCall()) {
         auto name = call_expression.getSubroutineName();
+
+        // Validate supported system calls
+        if (name != "$finish" && name != "$display") {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  fmt::format("unsupported system call '{}'", name)));
+        }
+
         std::vector<std::unique_ptr<mir::Expression>> arguments;
         for (const auto& arg : call_expression.arguments()) {
           arguments.push_back(LowerExpression(*arg));
@@ -158,6 +215,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
       return std::make_unique<mir::ConversionExpression>(
           std::move(value), *type_result);
     }
+
+    case slang::ast::ExpressionKind::Invalid:
+      // Slang produces InvalidExpression when it detects semantic issues.
+      // Slang should have already reported a diagnostic explaining the problem.
+      // We cannot proceed with invalid AST nodes.
+      throw DiagnosticException(
+          Diagnostic::Error({}, "cannot lower invalid expression"));
 
     default:
       throw DiagnosticException(
