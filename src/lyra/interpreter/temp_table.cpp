@@ -3,6 +3,8 @@
 #include <fmt/core.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra::interpreter {
 

@@ -2,11 +2,17 @@
 
 #include <iostream>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/indent.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
+#include "lyra/interpreter/interpreter_options.hpp"
 #include "lyra/interpreter/interpreter_result.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"

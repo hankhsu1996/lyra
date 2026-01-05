@@ -1,8 +1,14 @@
 #include "lyra/interpreter/process_runner.hpp"
 
+#include <cstddef>
+#include <memory>
+
 #include "lyra/interpreter/basic_block_runner.hpp"
 #include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_result.hpp"
+#include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
 

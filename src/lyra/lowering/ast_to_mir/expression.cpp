@@ -1,5 +1,9 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -14,6 +18,7 @@
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/operators.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 

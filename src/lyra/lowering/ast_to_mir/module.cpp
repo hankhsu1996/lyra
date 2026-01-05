@@ -1,11 +1,15 @@
 #include "lyra/lowering/ast_to_mir/module.hpp"
 
+#include <memory>
+#include <utility>
+
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"

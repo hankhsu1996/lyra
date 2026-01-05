@@ -1,6 +1,12 @@
 #include "lyra/lowering/mir_to_lir/module.hpp"
 
+#include <cassert>
+#include <memory>
+#include <utility>
+
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/lir/context.hpp"
+#include "lyra/lir/instruction.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"

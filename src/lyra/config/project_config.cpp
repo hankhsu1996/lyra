@@ -1,6 +1,9 @@
 #include "lyra/config/project_config.hpp"
 
+#include <filesystem>
 #include <format>
+#include <optional>
+#include <string>
 
 #include "lyra/common/diagnostic.hpp"
 #include "toml.hpp"

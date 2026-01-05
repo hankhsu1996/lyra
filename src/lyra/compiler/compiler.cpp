@@ -1,20 +1,28 @@
 #include "lyra/compiler/compiler.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <random>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <utility>
+#include <vector>
 
 #include <slang/ast/Compilation.h>
 
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
+#include "lyra/mir/module.hpp"
 
 namespace lyra::compiler {
 
@@ -55,6 +63,7 @@ auto MakeUniqueTempDir() -> std::filesystem::path {
 auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   std::array<char, 128> buffer{};
   std::string result;
+  // NOLINTNEXTLINE(misc-include-cleaner): popen/pclose are in <cstdio>
   std::unique_ptr<FILE, decltype(&pclose)> pipe(
       popen(cmd.c_str(), "r"), pclose);
   if (!pipe) {
@@ -63,7 +72,8 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
     result += buffer.data();
   }
-  int status = pclose(pipe.release());
+  int status = pclose(pipe.release());  // NOLINT(misc-include-cleaner)
+  // NOLINTNEXTLINE(misc-include-cleaner): WEXITSTATUS is in <sys/wait.h>
   return {WEXITSTATUS(status), result};
 }
 
@@ -71,6 +81,7 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
 
 auto Compiler::CompileAndRun(
     const mir::Module& mir, const std::vector<std::string>& variables_to_read)
+    // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
     -> CompilerResult {
   CompilerResult result;
 

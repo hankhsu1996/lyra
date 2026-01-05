@@ -1,5 +1,9 @@
 #include "lyra/frontend/slang_frontend.hpp"
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include <fmt/core.h>
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/DiagnosticEngine.h>

@@ -1,8 +1,15 @@
 #include "lyra/lowering/mir_to_lir/statement.hpp"
 
 #include <cassert>
+#include <utility>
 
+#include "lyra/common/literal.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/lir/instruction.hpp"
+#include "lyra/lir/operand.hpp"
+#include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 

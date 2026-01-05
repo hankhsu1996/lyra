@@ -1,6 +1,17 @@
 #include "lyra/interpreter/trigger_manager.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+#include "lyra/common/trigger.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
+#include "lyra/interpreter/variable_table.hpp"
+#include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
 

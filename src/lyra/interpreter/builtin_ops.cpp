@@ -3,7 +3,11 @@
 #include <bit>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
+
+#include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 

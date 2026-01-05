@@ -1,9 +1,20 @@
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 
 #include <cassert>
+#include <memory>
+#include <string>
 #include <utility>
 
 #include <fmt/core.h>
+
+#include "lyra/common/literal.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/variable.hpp"
+#include "lyra/lir/basic_block.hpp"
+#include "lyra/lir/context.hpp"
+#include "lyra/lir/instruction.hpp"
+#include "lyra/lir/module.hpp"
+#include "lyra/lir/process.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 

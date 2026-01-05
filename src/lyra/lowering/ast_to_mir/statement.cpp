@@ -1,5 +1,10 @@
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/SemanticFacts.h>
@@ -14,8 +19,12 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
+#include "lyra/common/trigger.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
