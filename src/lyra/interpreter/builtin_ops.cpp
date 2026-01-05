@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <format>
-#include <stdexcept>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -60,13 +59,40 @@ void CheckBinaryTwoState64(
   }
 }
 
+// Helper to check if a value is any floating-point type (real or shortreal)
+auto IsFloating(const RuntimeValue& val) -> bool {
+  return val.IsReal() || val.IsShortReal();
+}
+
+// Helper to get double value from any floating type (for type coercion)
+auto AsDoubleValue(const RuntimeValue& val) -> double {
+  if (val.IsReal()) {
+    return val.AsDouble();
+  }
+  if (val.IsShortReal()) {
+    return static_cast<double>(val.AsFloat());
+  }
+  common::ThrowInternalError(
+      "AsDoubleValue",
+      std::format("expected floating type, got {}", val.type.ToString()));
+}
+
+// Helper to check that both operands are floating types (for coercion)
+void CheckBinaryFloating(
+    const char* op_name, const RuntimeValue& lhs, const RuntimeValue& rhs) {
+  if (!IsFloating(lhs) || !IsFloating(rhs)) {
+    TypeMismatch(op_name, lhs, rhs);
+  }
+}
+
 }  // namespace
 
 // Unary Operations
 
 auto UnaryPlus(const RuntimeValue& operand) -> RuntimeValue {
-  if (operand.IsReal()) {
-    return RuntimeValue::Real(operand.AsDouble());
+  if (IsFloating(operand)) {
+    // Promote to real for consistency
+    return RuntimeValue::Real(AsDoubleValue(operand));
   }
 
   CheckTwoState64("UnaryPlus", operand);
@@ -76,8 +102,8 @@ auto UnaryPlus(const RuntimeValue& operand) -> RuntimeValue {
 }
 
 auto UnaryMinus(const RuntimeValue& operand) -> RuntimeValue {
-  if (operand.IsReal()) {
-    return RuntimeValue::Real(-operand.AsDouble());
+  if (IsFloating(operand)) {
+    return RuntimeValue::Real(-AsDoubleValue(operand));
   }
 
   CheckTwoState64("UnaryMinus", operand);
@@ -94,8 +120,8 @@ auto UnaryMinus(const RuntimeValue& operand) -> RuntimeValue {
 }
 
 auto UnaryLogicalNot(const RuntimeValue& operand) -> RuntimeValue {
-  if (operand.IsReal()) {
-    return RuntimeValue::Bool(operand.AsDouble() == 0.0);
+  if (IsFloating(operand)) {
+    return RuntimeValue::Bool(AsDoubleValue(operand) == 0.0);
   }
 
   CheckTwoState64("UnaryLogicalNot", operand);
@@ -195,11 +221,9 @@ auto ReductionXnor(const RuntimeValue& operand) -> RuntimeValue {
 
 auto BinaryAdd(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryAdd", lhs, rhs);
-    }
-    return RuntimeValue::Real(lhs.AsDouble() + rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryAdd", lhs, rhs);
+    return RuntimeValue::Real(AsDoubleValue(lhs) + AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryAdd", lhs, rhs);
@@ -216,11 +240,9 @@ auto BinaryAdd(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinarySubtract", lhs, rhs);
-    }
-    return RuntimeValue::Real(lhs.AsDouble() - rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinarySubtract", lhs, rhs);
+    return RuntimeValue::Real(AsDoubleValue(lhs) - AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinarySubtract", lhs, rhs);
@@ -237,11 +259,9 @@ auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryMultiply", lhs, rhs);
-    }
-    return RuntimeValue::Real(lhs.AsDouble() * rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryMultiply", lhs, rhs);
+    return RuntimeValue::Real(AsDoubleValue(lhs) * AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryMultiply", lhs, rhs);
@@ -258,12 +278,10 @@ auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryDivide", lhs, rhs);
-    }
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryDivide", lhs, rhs);
     // IEEE 754: division by zero returns Inf
-    return RuntimeValue::Real(lhs.AsDouble() / rhs.AsDouble());
+    return RuntimeValue::Real(AsDoubleValue(lhs) / AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryDivide", lhs, rhs);
@@ -287,9 +305,9 @@ auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
+  if (IsFloating(lhs) || IsFloating(rhs)) {
     common::ThrowInternalError(
-        "BinaryModulo", "modulo not supported for real values");
+        "BinaryModulo", "modulo not supported for floating-point values");
   }
 
   CheckBinaryTwoState64("BinaryModulo", lhs, rhs);
@@ -311,19 +329,21 @@ auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
       lhs.AsUInt64() % rhs.AsUInt64(), two_state_data.bit_width);
 }
 
-// Supports TwoState, Real, and String types.
+// Supports TwoState, Real, ShortReal, and String types.
 auto BinaryEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  // Handle floating-point comparisons with coercion
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryEqual", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) == AsDoubleValue(rhs));
+  }
+
   if (lhs.type != rhs.type) {
     TypeMismatch("BinaryEqual", lhs, rhs);
   }
 
   if (lhs.IsTwoState()) {
     return RuntimeValue::Bool(lhs.AsInt64() == rhs.AsInt64());
-  }
-
-  if (lhs.IsReal()) {
-    return RuntimeValue::Bool(lhs.AsDouble() == rhs.AsDouble());
   }
 
   if (lhs.IsString()) {
@@ -336,16 +356,18 @@ auto BinaryEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryNotEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  // Handle floating-point comparisons with coercion
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryNotEqual", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) != AsDoubleValue(rhs));
+  }
+
   if (lhs.type != rhs.type) {
     TypeMismatch("BinaryNotEqual", lhs, rhs);
   }
 
   if (lhs.IsTwoState()) {
     return RuntimeValue::Bool(lhs.AsInt64() != rhs.AsInt64());
-  }
-
-  if (lhs.IsReal()) {
-    return RuntimeValue::Bool(lhs.AsDouble() != rhs.AsDouble());
   }
 
   if (lhs.IsString()) {
@@ -359,11 +381,9 @@ auto BinaryNotEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLessThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryLessThan", lhs, rhs);
-    }
-    return RuntimeValue::Bool(lhs.AsDouble() < rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryLessThan", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) < AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryLessThan", lhs, rhs);
@@ -378,11 +398,9 @@ auto BinaryLessThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLessThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryLessThanEqual", lhs, rhs);
-    }
-    return RuntimeValue::Bool(lhs.AsDouble() <= rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryLessThanEqual", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) <= AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryLessThanEqual", lhs, rhs);
@@ -397,11 +415,9 @@ auto BinaryLessThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryGreaterThan", lhs, rhs);
-    }
-    return RuntimeValue::Bool(lhs.AsDouble() > rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryGreaterThan", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) > AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryGreaterThan", lhs, rhs);
@@ -416,11 +432,9 @@ auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryGreaterThanEqual", lhs, rhs);
-    }
-    return RuntimeValue::Bool(lhs.AsDouble() >= rhs.AsDouble());
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryGreaterThanEqual", lhs, rhs);
+    return RuntimeValue::Bool(AsDoubleValue(lhs) >= AsDoubleValue(rhs));
   }
 
   CheckBinaryTwoState64("BinaryGreaterThanEqual", lhs, rhs);
@@ -435,11 +449,9 @@ auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryPower(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryPower", lhs, rhs);
-    }
-    return RuntimeValue::Real(std::pow(lhs.AsDouble(), rhs.AsDouble()));
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryPower", lhs, rhs);
+    return RuntimeValue::Real(std::pow(AsDoubleValue(lhs), AsDoubleValue(rhs)));
   }
 
   CheckBinaryTwoState64("BinaryPower", lhs, rhs);
@@ -516,12 +528,10 @@ auto BinaryBitwiseXnor(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryLogicalAnd", lhs, rhs);
-    }
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryLogicalAnd", lhs, rhs);
     return RuntimeValue::Bool(
-        (lhs.AsDouble() != 0.0) && (rhs.AsDouble() != 0.0));
+        (AsDoubleValue(lhs) != 0.0) && (AsDoubleValue(rhs) != 0.0));
   }
 
   // Logical operations allow different bit widths
@@ -538,12 +548,10 @@ auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
 
 auto BinaryLogicalOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
-  if (lhs.IsReal()) {
-    if (!rhs.IsReal()) {
-      TypeMismatch("BinaryLogicalOr", lhs, rhs);
-    }
+  if (IsFloating(lhs) || IsFloating(rhs)) {
+    CheckBinaryFloating("BinaryLogicalOr", lhs, rhs);
     return RuntimeValue::Bool(
-        (lhs.AsDouble() != 0.0) || (rhs.AsDouble() != 0.0));
+        (AsDoubleValue(lhs) != 0.0) || (AsDoubleValue(rhs) != 0.0));
   }
 
   // Logical operations allow different bit widths

@@ -27,7 +27,7 @@ struct TwoStateData {
 };
 
 struct Type {
-  enum class Kind { kVoid, kTwoState, kReal, kString };
+  enum class Kind { kVoid, kTwoState, kReal, kShortReal, kString };
 
   Kind kind{};
   std::variant<std::monostate, TwoStateData> data{};
@@ -95,6 +95,10 @@ struct Type {
     return Type{.kind = Kind::kReal};
   }
 
+  static auto ShortReal() -> Type {
+    return Type{.kind = Kind::kShortReal};
+  }
+
   auto operator==(const Type& other) const -> bool = default;
 
   [[nodiscard]] auto Hash() const -> std::size_t {
@@ -133,6 +137,8 @@ struct Type {
             std::get<TwoStateData>(data).is_signed ? "signed" : "unsigned");
       case Kind::kReal:
         return "real";
+      case Kind::kShortReal:
+        return "shortreal";
       case Kind::kString:
         return "string";
     }
@@ -147,6 +153,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "bit";
     case Type::Kind::kReal:
       return "real";
+    case Type::Kind::kShortReal:
+      return "shortreal";
     case Type::Kind::kString:
       return "string";
   }

@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <slang/ast/expressions/LiteralExpressions.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
@@ -42,6 +43,12 @@ auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
 }
 
 auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal {
+  if (literal.type->isFloating()) {
+    const auto& floating = literal.type->as<slang::ast::FloatingType>();
+    if (floating.floatKind == slang::ast::FloatingType::ShortReal) {
+      return common::Literal::ShortReal(static_cast<float>(literal.getValue()));
+    }
+  }
   return common::Literal::Real(literal.getValue());
 }
 

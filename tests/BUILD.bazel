@@ -64,6 +64,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_shortreal_types_tests",
+    yaml = "sv_features/datatypes/shortreal_types.yaml",
+)
+
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
