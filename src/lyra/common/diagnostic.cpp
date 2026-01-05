@@ -78,16 +78,19 @@ void PrintHighlightLine(
 void PrintDiagnostic(
     const Diagnostic& diag, const slang::SourceManager& sm, bool colors) {
   auto loc = diag.location.start();
-  bool has_location =
-      loc.buffer() != slang::SourceLocation::NoLocation.buffer();
 
   constexpr auto kFilenameColor = fmt::terminal_color::cyan;
   constexpr auto kLocationColor = fmt::terminal_color::bright_cyan;
   constexpr auto kHighlightColor = fmt::terminal_color::bright_green;
+  constexpr auto kToolColor = fmt::terminal_color::white;
+
+  // Check if we have a valid source location
+  // An empty SourceRange{} may have a buffer but line/col will be 0
+  auto line = sm.getLineNumber(loc);
+  bool has_location = line != 0;
 
   if (has_location) {
     auto filename = sm.getFileName(loc);
-    auto line = sm.getLineNumber(loc);
     auto col = sm.getColumnNumber(loc);
 
     if (colors) {
@@ -97,6 +100,15 @@ void PrintDiagnostic(
           fmt::styled(col, fmt::fg(kLocationColor)));
     } else {
       std::print(stderr, "{}:{}:{}: ", filename, line, col);
+    }
+  } else {
+    // No source location - use tool name prefix like clang does
+    if (colors) {
+      fmt::print(
+          stderr, "{}: ",
+          fmt::styled("lyra", fmt::fg(kToolColor) | fmt::emphasis::bold));
+    } else {
+      std::print(stderr, "lyra: ");
     }
   }
 
@@ -134,13 +146,17 @@ void PrintDiagnostic(const Diagnostic& diag, bool colors) {
   auto severity_color = GetSeverityColor(diag.severity);
   auto severity_string = GetSeverityString(diag.severity);
 
+  constexpr auto kToolColor = fmt::terminal_color::white;
+
+  // No source location - use tool name prefix like clang does
   if (colors) {
     fmt::print(
-        stderr, "{}: {}\n",
+        stderr, "{}: {}: {}\n",
+        fmt::styled("lyra", fmt::fg(kToolColor) | fmt::emphasis::bold),
         fmt::styled(severity_string, fmt::fg(severity_color)),
         fmt::styled(diag.message, fmt::emphasis::bold));
   } else {
-    std::print(stderr, "{}: {}\n", severity_string, diag.message);
+    std::print(stderr, "lyra: {}: {}\n", severity_string, diag.message);
   }
 }
 

@@ -8,7 +8,6 @@
 #include <fmt/format.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/sv_format.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -98,19 +97,19 @@ auto FormatDisplay(
           ++i;
         }
 
-        while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+        while (i < fmt_str.size() && (std::isdigit(fmt_str[i]) != 0)) {
           spec.width += fmt_str[i];
           ++i;
         }
 
         if (i < fmt_str.size() && fmt_str[i] == '.') {
           ++i;
-          if (i >= fmt_str.size() || !std::isdigit(fmt_str[i])) {
+          if (i >= fmt_str.size() || (std::isdigit(fmt_str[i]) == 0)) {
             throw DiagnosticException(
                 Diagnostic::Error(
                     {}, "invalid format string: missing precision digits"));
           }
-          while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+          while (i < fmt_str.size() && (std::isdigit(fmt_str[i]) != 0)) {
             spec.precision += fmt_str[i];
             ++i;
           }
@@ -471,7 +470,7 @@ auto RunInstruction(
                           "unsupported target bit width > 64: {}", target_type)));
         }
 
-        int64_t raw_value = static_cast<int64_t>(src.AsDouble());
+        auto raw_value = static_cast<int64_t>(src.AsDouble());
         RuntimeValue result = two_state_data.is_signed
                                   ? RuntimeValue::TwoStateSigned(
                                         raw_value, two_state_data.bit_width)

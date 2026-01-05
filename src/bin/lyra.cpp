@@ -503,7 +503,12 @@ auto main(int argc, char* argv[]) -> int {
 
   if (program.is_subcommand_used("dump")) {
     auto format_str = dump_cmd.get<std::string>("format");
-    auto files = dump_cmd.get<std::vector<std::string>>("files");
+
+    // Check if files were provided (remaining() arguments need present() check)
+    std::vector<std::string> files;
+    if (auto opt = dump_cmd.present<std::vector<std::string>>("files")) {
+      files = std::move(*opt);
+    }
 
     DumpFormat format{};
     if (format_str == "cpp") {
