@@ -86,3 +86,31 @@ cases:
     expect:
       variables:
         result: 15
+
+  - name: logic_type_basic
+    sv: |
+      module Test;
+        logic [31:0] a;
+        int result;
+        initial begin
+          a = 42;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: logic_type_signed
+    sv: |
+      module Test;
+        logic signed [31:0] a;
+        int result;
+        initial begin
+          a = -10;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -10
