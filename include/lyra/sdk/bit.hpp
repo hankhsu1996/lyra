@@ -157,6 +157,17 @@ class Bit {
     }
   }
 
+  // Explicit conversion to floating-point types (for static_cast)
+  template <typename T>
+    requires std::is_floating_point_v<T>
+  explicit constexpr operator T() const {
+    if constexpr (Signed) {
+      return static_cast<T>(SignedValue());
+    } else {
+      return static_cast<T>(value_);
+    }
+  }
+
   // Bitwise NOT - the key operation that differs for 1-bit vs multi-bit
   [[nodiscard]] constexpr auto operator~() const -> Bit {
     if constexpr (Width == 1) {

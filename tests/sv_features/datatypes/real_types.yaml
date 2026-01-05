@@ -1,0 +1,412 @@
+feature: real_type_support
+description: Tests for real (floating-point) type support
+
+cases:
+  # Variable declaration tests
+  - name: real_declaration_default
+    sv: |
+      module Test;
+        real x;
+        initial $display("%f", x);
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: real_declaration_with_init
+    sv: |
+      module Test;
+        real x = 3.14;
+        initial $display("%f", x);
+      endmodule
+    expect:
+      output: "3.140000\n"
+
+  - name: real_local_variable
+    sv: |
+      module Test;
+        initial begin
+          real x = 2.5;
+          $display("%f", x);
+        end
+      endmodule
+    expect:
+      output: "2.500000\n"
+
+  - name: real_assignment
+    sv: |
+      module Test;
+        real x;
+        initial begin
+          x = 1.25;
+          $display("%f", x);
+        end
+      endmodule
+    expect:
+      output: "1.250000\n"
+
+  # Arithmetic operation tests
+  - name: real_add
+    sv: |
+      module Test;
+        real a = 1.5;
+        real b = 2.5;
+        real c;
+        initial begin
+          c = a + b;
+          $display("%f", c);
+        end
+      endmodule
+    expect:
+      output: "4.000000\n"
+
+  - name: real_subtract
+    sv: |
+      module Test;
+        real a = 5.5;
+        real b = 2.0;
+        real c;
+        initial begin
+          c = a - b;
+          $display("%f", c);
+        end
+      endmodule
+    expect:
+      output: "3.500000\n"
+
+  - name: real_multiply
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 4.0;
+        real c;
+        initial begin
+          c = a * b;
+          $display("%f", c);
+        end
+      endmodule
+    expect:
+      output: "10.000000\n"
+
+  - name: real_divide
+    sv: |
+      module Test;
+        real a = 7.5;
+        real b = 2.5;
+        real c;
+        initial begin
+          c = a / b;
+          $display("%f", c);
+        end
+      endmodule
+    expect:
+      output: "3.000000\n"
+
+  - name: real_power
+    sv: |
+      module Test;
+        real a = 2.0;
+        real b = 3.0;
+        real c;
+        initial begin
+          c = a ** b;
+          $display("%f", c);
+        end
+      endmodule
+    expect:
+      output: "8.000000\n"
+
+  - name: real_unary_minus
+    sv: |
+      module Test;
+        real a = 3.5;
+        real b;
+        initial begin
+          b = -a;
+          $display("%f", b);
+        end
+      endmodule
+    expect:
+      output: "-3.500000\n"
+
+  - name: real_unary_plus
+    sv: |
+      module Test;
+        real a = 3.5;
+        real b;
+        initial begin
+          b = +a;
+          $display("%f", b);
+        end
+      endmodule
+    expect:
+      output: "3.500000\n"
+
+  # Comparison operation tests
+  - name: real_less_than_true
+    sv: |
+      module Test;
+        real a = 1.5;
+        real b = 2.5;
+        initial $display("%d", a < b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_less_than_false
+    sv: |
+      module Test;
+        real a = 3.5;
+        real b = 2.5;
+        initial $display("%d", a < b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: real_greater_than_true
+    sv: |
+      module Test;
+        real a = 3.5;
+        real b = 2.5;
+        initial $display("%d", a > b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_greater_than_false
+    sv: |
+      module Test;
+        real a = 1.5;
+        real b = 2.5;
+        initial $display("%d", a > b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: real_less_equal_true
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 2.5;
+        initial $display("%d", a <= b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_greater_equal_true
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 2.5;
+        initial $display("%d", a >= b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_equal_true
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 2.5;
+        initial $display("%d", a == b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_equal_false
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 3.5;
+        initial $display("%d", a == b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: real_not_equal_true
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 3.5;
+        initial $display("%d", a != b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_not_equal_false
+    sv: |
+      module Test;
+        real a = 2.5;
+        real b = 2.5;
+        initial $display("%d", a != b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  # Logical operation tests
+  - name: real_logical_and_true
+    sv: |
+      module Test;
+        real a = 1.5;
+        real b = 2.5;
+        initial $display("%d", a && b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_logical_and_false
+    sv: |
+      module Test;
+        real a = 1.5;
+        real b = 0.0;
+        initial $display("%d", a && b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: real_logical_or_true
+    sv: |
+      module Test;
+        real a = 0.0;
+        real b = 2.5;
+        initial $display("%d", a || b);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_logical_or_false
+    sv: |
+      module Test;
+        real a = 0.0;
+        real b = 0.0;
+        initial $display("%d", a || b);
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: real_logical_not_true
+    sv: |
+      module Test;
+        real a = 0.0;
+        initial $display("%d", !a);
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: real_logical_not_false
+    sv: |
+      module Test;
+        real a = 2.5;
+        initial $display("%d", !a);
+      endmodule
+    expect:
+      output: "0\n"
+
+  # Type conversion tests
+  - name: int_to_real_conversion
+    sv: |
+      module Test;
+        int i = 42;
+        real r;
+        initial begin
+          r = i;
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "42.000000\n"
+
+  - name: real_to_int_conversion
+    sv: |
+      module Test;
+        real r = 3.7;
+        int i;
+        initial begin
+          i = r;
+          $display("%d", i);
+        end
+      endmodule
+    expect:
+      output: "3\n"
+
+  - name: real_to_int_negative
+    sv: |
+      module Test;
+        real r = -3.7;
+        int i;
+        initial begin
+          i = r;
+          $display("%d", i);
+        end
+      endmodule
+    expect:
+      output: "-3\n"
+
+  - name: int_literal_to_real
+    sv: |
+      module Test;
+        real r;
+        initial begin
+          r = 100;
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "100.000000\n"
+
+  # Mixed operations
+  - name: real_complex_expression
+    sv: |
+      module Test;
+        real a = 2.0;
+        real b = 3.0;
+        real c = 4.0;
+        real result;
+        initial begin
+          result = (a + b) * c;
+          $display("%f", result);
+        end
+      endmodule
+    expect:
+      output: "20.000000\n"
+
+  - name: real_in_conditional
+    sv: |
+      module Test;
+        real x = 2.5;
+        initial begin
+          if (x > 2.0)
+            $display("greater");
+          else
+            $display("not greater");
+        end
+      endmodule
+    expect:
+      output: "greater\n"
+
+  - name: real_as_condition
+    sv: |
+      module Test;
+        real x = 1.5;
+        initial begin
+          if (x)
+            $display("nonzero");
+          else
+            $display("zero");
+        end
+      endmodule
+    expect:
+      output: "nonzero\n"
+
+  - name: real_zero_as_condition
+    sv: |
+      module Test;
+        real x = 0.0;
+        initial begin
+          if (x)
+            $display("nonzero");
+          else
+            $display("zero");
+        end
+      endmodule
+    expect:
+      output: "zero\n"

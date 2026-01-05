@@ -594,8 +594,13 @@ auto RunInstruction(
       const auto& false_target =
           std::get<lir::LabelRef>(instr.operands[2].value);
 
-      assert(condition.IsTwoState());
-      bool condition_result = condition.AsInt64() != 0;
+      bool condition_result = false;
+      if (condition.IsReal()) {
+        condition_result = condition.AsDouble() != 0.0;
+      } else {
+        assert(condition.IsTwoState());
+        condition_result = condition.AsInt64() != 0;
+      }
 
       const auto& next_label = condition_result ? true_target : false_target;
       return InstructionResult::Jump(next_label);
