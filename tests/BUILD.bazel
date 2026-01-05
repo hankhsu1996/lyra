@@ -69,6 +69,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_realtime_types_tests",
+    yaml = "sv_features/datatypes/realtime_types.yaml",
+)
+
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
