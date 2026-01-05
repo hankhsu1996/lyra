@@ -1,5 +1,8 @@
 #pragma once
 
+// Platform requirements - must be first to fail fast on unsupported compilers
+#include "lyra/sdk/platform_check.hpp"
+
 // Umbrella header for the Lyra SDK - all includes are intentional
 #include "lyra/sdk/bit.hpp"
 #include "lyra/sdk/delay.hpp"

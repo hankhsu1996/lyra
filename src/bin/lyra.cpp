@@ -22,6 +22,7 @@
 #include "lyra/lir/module.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
+#include "lyra/toolchain/toolchain.hpp"
 
 namespace fs = std::filesystem;
 
@@ -132,6 +133,19 @@ auto GenerateGitignore() -> std::string {
   return "build/\n";
 }
 
+// Check toolchain before build operations
+// Returns false if toolchain check fails and errors were printed
+auto EnsureToolchain() -> bool {
+  auto status = lyra::toolchain::CheckToolchain();
+  if (!status.ok) {
+    for (const auto& error : status.errors) {
+      lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, error));
+    }
+    return false;
+  }
+  return true;
+}
+
 // Generate main.cpp
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file)
@@ -167,6 +181,11 @@ auto RunCommand(bool use_interpreter) -> int {
       // TODO(hankhsu): Add include directory support to interpreter
       lyra::interpreter::Interpreter::RunFromFiles(config.files);
       return 0;
+    }
+
+    // Check toolchain before build (skip for interpreter mode)
+    if (!EnsureToolchain()) {
+      return 1;
     }
 
     // emit + build + run
@@ -359,6 +378,11 @@ auto BuildCommand() -> int {
   if (!config_path) {
     lyra::PrintDiagnostic(
         lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
+    return 1;
+  }
+
+  // Check toolchain before build
+  if (!EnsureToolchain()) {
     return 1;
   }
 
