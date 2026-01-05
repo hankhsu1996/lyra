@@ -10,6 +10,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "embedded_sdk.hpp"
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
@@ -185,8 +186,8 @@ auto RunCommand(bool use_interpreter) -> int {
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
     const std::vector<std::string>& inc_dirs, const std::string& top) -> int {
+  lyra::frontend::SlangFrontend frontend;
   try {
-    lyra::frontend::SlangFrontend frontend;
     lyra::frontend::FrontendOptions options;
     options.include_dirs = inc_dirs;
     auto compilation = frontend.LoadFromFiles(source_files, options);
@@ -234,6 +235,9 @@ auto EmitCommandInternal(
     WriteFile(out_path / ".gitignore", GenerateGitignore());
 
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra emit: " << e.what() << "\n";
     return 1;
@@ -292,8 +296,8 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     return 1;
   }
 
+  lyra::frontend::SlangFrontend frontend;
   try {
-    lyra::frontend::SlangFrontend frontend;
     auto compilation = frontend.LoadFromFiles(files);
     if (!compilation) {
       std::cerr << "lyra dump: failed to parse\n";
@@ -325,6 +329,9 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     }
 
     return 0;
+  } catch (const lyra::DiagnosticException& e) {
+    lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
+    return 1;
   } catch (const std::exception& e) {
     std::cerr << "lyra dump: " << e.what() << "\n";
     return 1;

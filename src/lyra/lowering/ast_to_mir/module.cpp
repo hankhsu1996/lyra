@@ -5,8 +5,10 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
+#include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -24,7 +26,20 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     // Lower variables
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
       const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
-      auto variable = common::Variable::FromSlang(&variable_symbol);
+
+      // Create source range from symbol location
+      slang::SourceRange source_range(
+          variable_symbol.location, variable_symbol.location);
+
+      auto type_result = LowerType(variable_symbol.getType(), source_range);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      common::Variable variable{
+          .symbol = &variable_symbol,
+          .type = *type_result,
+      };
 
       // Extract initializer if present
       std::unique_ptr<mir::Expression> init_expr = nullptr;
@@ -33,7 +48,9 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       }
 
       module->variables.push_back(
-          mir::ModuleVariable{std::move(variable), std::move(init_expr)});
+          mir::ModuleVariable{
+              .variable = std::move(variable),
+              .initializer = std::move(init_expr)});
       continue;
     }
 

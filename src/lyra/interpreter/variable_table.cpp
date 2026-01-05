@@ -44,7 +44,7 @@ void ModuleVariableTable::UpdatePrevious(
 }
 
 auto ModuleVariableTable::Exists(const SymbolRef& symbol) const -> bool {
-  return variables_.find(symbol) != variables_.end();
+  return variables_.contains(symbol);
 }
 
 void ModuleVariableTable::CreateVariable(
@@ -85,7 +85,7 @@ auto ProcessVariableTable::ReadFromName(const std::string& name) const
 }
 
 auto ProcessVariableTable::Exists(const SymbolRef& symbol) const -> bool {
-  return variables_.find(symbol) != variables_.end();
+  return variables_.contains(symbol);
 }
 
 void ProcessVariableTable::CreateVariable(

@@ -531,8 +531,8 @@ auto RunInstruction(
         // No automatic spacing - matches C++ printf behavior
         std::string gen_fmt;
         std::vector<RuntimeValue> args;
-        for (size_t i = 0; i < instr.operands.size(); ++i) {
-          const auto& value = get_temp(instr.operands[i]);
+        for (const auto& operand : instr.operands) {
+          const auto& value = get_temp(operand);
           if (value.IsString()) {
             gen_fmt += "%s";
           } else {

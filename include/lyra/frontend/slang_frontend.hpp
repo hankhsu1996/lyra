@@ -35,6 +35,10 @@ class SlangFrontend {
       const std::string& code, const std::string& name = "input.sv")
       -> std::unique_ptr<slang::ast::Compilation>;
 
+  [[nodiscard]] auto GetSourceManager() const -> const slang::SourceManager& {
+    return *source_manager_;
+  }
+
  private:
   std::shared_ptr<slang::SourceManager> source_manager_;
   std::vector<std::shared_ptr<slang::syntax::SyntaxTree>> owned_trees_;

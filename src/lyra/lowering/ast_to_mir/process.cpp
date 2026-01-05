@@ -1,7 +1,5 @@
 #include "lyra/lowering/ast_to_mir/process.hpp"
 
-#include <stdexcept>
-
 #include <fmt/format.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
@@ -9,23 +7,22 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-namespace {
-// Counters per procedure kind for descriptive naming
-std::size_t initial_counter = 0;
-std::size_t always_counter = 0;
-std::size_t always_comb_counter = 0;
-std::size_t always_latch_counter = 0;
-std::size_t always_ff_counter = 0;
-}  // namespace
-
 auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     -> std::unique_ptr<mir::Process> {
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
+
+  // Static counters for generating unique process names
+  static std::size_t initial_counter = 0;
+  static std::size_t always_counter = 0;
+  static std::size_t always_comb_counter = 0;
+  static std::size_t always_latch_counter = 0;
+  static std::size_t always_ff_counter = 0;
 
   auto process = std::make_unique<mir::Process>();
 
@@ -106,11 +103,16 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
       break;
     }
 
-    case ProceduralBlockKind::Final:
-      throw std::runtime_error(
-          fmt::format(
-              "Unsupported procedural block kind {} in AST to MIR LowerProcess",
-              slang::ast::toString(procedural_block.procedureKind)));
+    case ProceduralBlockKind::Final: {
+      slang::SourceRange source_range(
+          procedural_block.location, procedural_block.location);
+      throw DiagnosticException(
+          Diagnostic::Error(
+              source_range,
+              fmt::format(
+                  "unsupported procedural block kind '{}'",
+                  slang::ast::toString(procedural_block.procedureKind))));
+    }
   }
 
   return process;

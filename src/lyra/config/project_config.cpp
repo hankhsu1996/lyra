@@ -69,8 +69,8 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
         std::format("{}: missing [sources] section", config_path.string()));
   }
 
-  auto files_arr = sources["files"].as_array();
-  if (!files_arr || files_arr->empty()) {
+  auto* files_arr = sources["files"].as_array();
+  if (files_arr == nullptr || files_arr->empty()) {
     throw std::runtime_error(
         std::format(
             "{}: missing or empty 'sources.files'", config_path.string()));
@@ -87,7 +87,7 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
   }
 
   // Optional: incdir
-  if (auto incdir_arr = sources["incdir"].as_array()) {
+  if (auto* incdir_arr = sources["incdir"].as_array()) {
     for (const auto& elem : *incdir_arr) {
       if (auto str = elem.value<std::string>()) {
         fs::path inc_path = *str;

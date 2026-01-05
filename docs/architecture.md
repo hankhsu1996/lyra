@@ -81,13 +81,17 @@ This trades some runtime initialization cost for faster compilation and better d
 
 ```
 include/lyra/
-  common/       # shared types, utilities
+  common/       # shared types, utilities, diagnostics
   frontend/     # Slang wrapper, produces AST
   mir/          # module template IR
   codegen/      # MIR -> C++ generator
   sdk/          # runtime library (Task, Scheduler, Signal)
   cli/          # lyra subcommands (build, run, emit)
 ```
+
+### Key Components
+
+- **Diagnostic** (`common/diagnostic.hpp`): Error reporting with source locations. Uses `std::expected<T, Diagnostic>` (aliased as `Result<T>`) for error propagation. Produces colorful terminal output with file:line:col and source context.
 
 Deprecated (legacy interpreter path):
 

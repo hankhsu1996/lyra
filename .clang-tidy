@@ -1,3 +1,4 @@
+# misc-include-cleaner disabled - too strict about transitive includes
 Checks: >
   -*,
   google-*,
@@ -13,6 +14,10 @@ Checks: >
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
 
 CheckOptions:
+  # Ignore external headers for misc-include-cleaner
+  - key: misc-include-cleaner.IgnoreHeaders
+    value: "slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*"
+
   # Google's naming conventions.
   # See: https://gist.github.com/airglow923/1fa3bda42f2b193920d7f46ee8345e04
   - key: readability-identifier-naming.ClassCase

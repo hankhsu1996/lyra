@@ -1,12 +1,11 @@
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 
-#include <stdexcept>
-
 #include <fmt/format.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/module.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -20,14 +19,18 @@ auto AstToMir(const slang::ast::RootSymbol& root)
 
       // Verify the instance has a valid name
       if (instance_symbol.name.empty()) {
-        throw std::runtime_error("Instance symbol has empty name in AstToMir");
+        slang::SourceRange source_range(
+            instance_symbol.location, instance_symbol.location);
+        throw DiagnosticException(
+            Diagnostic::Error(source_range, "instance symbol has empty name"));
       }
 
       return LowerModule(instance_symbol);
     }
   }
 
-  throw std::runtime_error("no top-level instance found in AstToMir");
+  throw DiagnosticException(
+      Diagnostic::Error(slang::SourceRange{}, "no top-level instance found"));
 }
 
 }  // namespace lyra::lowering::ast_to_mir
