@@ -179,7 +179,8 @@ auto RunCommand(bool use_interpreter) -> int {
 
     if (use_interpreter) {
       // TODO(hankhsu): Add include directory support to interpreter
-      lyra::interpreter::Interpreter::RunFromFiles(config.files);
+      auto result = lyra::interpreter::Interpreter::RunFromFiles(config.files);
+      std::cout << result.CapturedOutput();
       return 0;
     }
 
