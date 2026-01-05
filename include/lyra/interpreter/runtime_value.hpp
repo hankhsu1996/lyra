@@ -38,6 +38,8 @@ struct RuntimeValue {
         }
         return TwoStateUnsigned(0, data.bit_width);
       }
+      case common::Type::Kind::kReal:
+        return Real(0.0);
       case common::Type::Kind::kString:
         return String("");
     }
@@ -71,8 +73,18 @@ struct RuntimeValue {
         .value = common::ValueStorage(std::move(value))};
   }
 
+  static auto Real(double value) -> RuntimeValue {
+    return RuntimeValue{
+        .type = common::Type::Real(),
+        .value = common::ValueStorage(value)};
+  }
+
   [[nodiscard]] auto AsInt64() const -> int64_t {
     return value.AsInt64();
+  }
+
+  [[nodiscard]] auto AsDouble() const -> double {
+    return value.AsDouble();
   }
 
   [[nodiscard]] auto AsUInt64() const -> uint64_t {
@@ -98,6 +110,10 @@ struct RuntimeValue {
 
   [[nodiscard]] auto IsString() const -> bool {
     return type.kind == common::Type::Kind::kString;
+  }
+
+  [[nodiscard]] auto IsReal() const -> bool {
+    return type.kind == common::Type::Kind::kReal;
   }
 
   [[nodiscard]] auto GetBitWidth() const -> uint32_t {

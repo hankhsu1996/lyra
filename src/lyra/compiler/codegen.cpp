@@ -87,6 +87,8 @@ auto ToCppType(const common::Type& type) -> std::string {
   switch (type.kind) {
     case common::Type::Kind::kVoid:
       return "void";
+    case common::Type::Kind::kReal:
+      return "Real";
     case common::Type::Kind::kString:
       return "std::string";
     case common::Type::Kind::kTwoState: {
@@ -232,6 +234,7 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("using LongInt = lyra::sdk::LongInt;");
   Line("using ShortInt = lyra::sdk::ShortInt;");
   Line("using Byte = lyra::sdk::Byte;");
+  Line("using Real = double;");
   Line("");
 
   indent_--;

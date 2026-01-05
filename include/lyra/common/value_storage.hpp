@@ -28,12 +28,14 @@ auto Match(Variant&& v, Matchers&&... matchers) {
 
 class ValueStorage {
  public:
-  using Storage = std::variant<std::monostate, int64_t, std::string>;
+  using Storage = std::variant<std::monostate, int64_t, double, std::string>;
 
   ValueStorage() = default;
   explicit ValueStorage(std::monostate v) : value_(v) {
   }
   explicit ValueStorage(int64_t v) : value_(v) {
+  }
+  explicit ValueStorage(double v) : value_(v) {
   }
   explicit ValueStorage(std::string v) : value_(std::move(v)) {
   }
@@ -46,6 +48,7 @@ class ValueStorage {
     return Match(
         value_, [](std::monostate) { return std::string{}; },
         [](int64_t v) { return std::to_string(v); },
+        [](double v) { return fmt::format("{:.17g}", v); },
         [](const std::string& v) { return "\"" + v + "\""; });
   }
 
@@ -62,6 +65,10 @@ class ValueStorage {
     return Is<int64_t>();
   }
 
+  [[nodiscard]] auto IsDouble() const -> bool {
+    return Is<double>();
+  }
+
   [[nodiscard]] auto IsString() const -> bool {
     return Is<std::string>();
   }
@@ -74,6 +81,10 @@ class ValueStorage {
 
   [[nodiscard]] auto AsInt64() const -> int64_t {
     return As<int64_t>();
+  }
+
+  [[nodiscard]] auto AsDouble() const -> double {
+    return As<double>();
   }
 
   [[nodiscard]] auto AsString() const -> const std::string& {
@@ -98,6 +109,8 @@ class ValueStorage {
             return 0;
           } else if constexpr (std::is_same_v<T, int64_t>) {
             return std::hash<int64_t>{}(val);
+          } else if constexpr (std::is_same_v<T, double>) {
+            return std::hash<double>{}(val);
           } else if constexpr (std::is_same_v<T, std::string>) {
             return std::hash<std::string>{}(val);
           } else {

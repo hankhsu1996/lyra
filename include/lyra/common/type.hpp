@@ -27,7 +27,7 @@ struct TwoStateData {
 };
 
 struct Type {
-  enum class Kind { kVoid, kTwoState, kString };
+  enum class Kind { kVoid, kTwoState, kReal, kString };
 
   Kind kind{};
   std::variant<std::monostate, TwoStateData> data{};
@@ -35,6 +35,9 @@ struct Type {
   static auto FromSlang(const slang::ast::Type& type) -> Type {
     if (type.isString()) {
       return Type{.kind = Kind::kString};
+    }
+    if (type.isFloating()) {
+      return Type::Real();
     }
     if (type.isIntegral()) {
       if (type.isSigned()) {
@@ -88,6 +91,10 @@ struct Type {
     return Type{.kind = Kind::kString};
   }
 
+  static auto Real() -> Type {
+    return Type{.kind = Kind::kReal};
+  }
+
   auto operator==(const Type& other) const -> bool = default;
 
   [[nodiscard]] auto Hash() const -> std::size_t {
@@ -124,6 +131,8 @@ struct Type {
         return fmt::format(
             "bit[{}] {}", std::get<TwoStateData>(data).bit_width,
             std::get<TwoStateData>(data).is_signed ? "signed" : "unsigned");
+      case Kind::kReal:
+        return "real";
       case Kind::kString:
         return "string";
     }
@@ -136,6 +145,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "void";
     case Type::Kind::kTwoState:
       return "bit";
+    case Type::Kind::kReal:
+      return "real";
     case Type::Kind::kString:
       return "string";
   }

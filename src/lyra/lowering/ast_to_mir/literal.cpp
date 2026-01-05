@@ -30,4 +30,8 @@ auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
   return common::Literal::String(std::move(value));
 }
 
+auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal {
+  return common::Literal::Real(literal.getValue());
+}
+
 }  // namespace lyra::lowering::ast_to_mir
