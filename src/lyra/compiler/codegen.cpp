@@ -368,6 +368,10 @@ void Codegen::EmitClass(const mir::Module& module) {
   for (const auto& process : module.processes) {
     Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
   }
+  // Register child modules for hierarchical execution
+  for (const auto& submod : module.submodules) {
+    Line("RegisterChild(&" + submod.instance_name + "_);");
+  }
   indent_--;
   Line("}");
   Line("");
