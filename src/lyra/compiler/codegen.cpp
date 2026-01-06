@@ -321,10 +321,46 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(stmt);
       out_ << std::string(indent_ * 2, ' ');
-      EmitAssignmentTarget(assign.target);
-      out_ << " = ";
-      EmitExpression(*assign.value);
-      out_ << ";\n";
+
+      if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
+        // Packed element assignment: vec[idx] = val
+        // Generate: vec = (vec & ~(1ULL << adj_idx)) | ((val & 1ULL) <<
+        // adj_idx)
+        const auto& base_type = assign.target.base_type.value();
+        const auto& two_state = std::get<common::TwoStateData>(base_type.data);
+        size_t total_width = two_state.bit_width;
+        int32_t lower_bound = two_state.lower_bound;
+        // For single-bit assignment, element_width = 1
+        size_t element_width = 1;
+
+        // Helper lambda to emit adjusted index
+        auto emit_adjusted_index = [&]() {
+          if (lower_bound != 0) {
+            out_ << "(static_cast<int>(";
+            EmitExpression(*assign.target.element_index, kPrecLowest);
+            out_ << ") - " << lower_bound << ")";
+          } else {
+            out_ << "static_cast<size_t>(";
+            EmitExpression(*assign.target.element_index, kPrecLowest);
+            out_ << ")";
+          }
+        };
+
+        out_ << assign.target.symbol->name << " = ("
+             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
+             << ((1ULL << element_width) - 1) << "ULL} << ";
+        emit_adjusted_index();
+        out_ << ")) | ((Bit<" << total_width << ">{";
+        EmitExpression(*assign.value);
+        out_ << ".Value() & " << ((1ULL << element_width) - 1) << "ULL} << ";
+        emit_adjusted_index();
+        out_ << "));\n";
+      } else {
+        EmitAssignmentTarget(assign.target);
+        out_ << " = ";
+        EmitExpression(*assign.value);
+        out_ << ";\n";
+      }
       break;
     }
     case mir::Statement::Kind::kExpression: {
@@ -778,6 +814,40 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       if (assign.is_non_blocking) {
         // TODO(hankhsu): Support NBA for array elements
         out_ << "this->ScheduleNba(&" << assign.target.symbol->name << ", ";
+        EmitExpression(*assign.value, kPrecLowest);
+        out_ << ")";
+      } else if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
+        // Packed element assignment as expression
+        // Result is the assigned value (the RHS)
+        out_ << "(";
+        const auto& base_type = assign.target.base_type.value();
+        const auto& two_state = std::get<common::TwoStateData>(base_type.data);
+        size_t total_width = two_state.bit_width;
+        int32_t lower_bound = two_state.lower_bound;
+        size_t element_width = 1;
+
+        // Helper lambda to emit adjusted index
+        auto emit_adjusted_index = [&]() {
+          if (lower_bound != 0) {
+            out_ << "(static_cast<int>(";
+            EmitExpression(*assign.target.element_index, kPrecLowest);
+            out_ << ") - " << lower_bound << ")";
+          } else {
+            out_ << "static_cast<size_t>(";
+            EmitExpression(*assign.target.element_index, kPrecLowest);
+            out_ << ")";
+          }
+        };
+
+        out_ << assign.target.symbol->name << " = ("
+             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
+             << ((1ULL << element_width) - 1) << "ULL} << ";
+        emit_adjusted_index();
+        out_ << ")) | ((Bit<" << total_width << ">{";
+        EmitExpression(*assign.value, kPrecLowest);
+        out_ << ".Value() & " << ((1ULL << element_width) - 1) << "ULL} << ";
+        emit_adjusted_index();
+        out_ << ")), ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else {

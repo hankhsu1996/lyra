@@ -454,6 +454,54 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kStorePackedElement: {
+      // Store element to packed vector: variable[index] = value
+      // operands[0] = variable (packed vector)
+      // operands[1] = index
+      // operands[2] = value to store
+      // result_type contains element width
+      assert(instr.operands.size() == 3);
+      assert(instr.operands[0].IsVariable());
+      assert(instr.operands[1].IsTemp());
+      assert(instr.operands[2].IsTemp());
+      assert(instr.result_type.has_value());
+
+      auto current = read_variable(instr.operands[0]);
+      assert(current.IsTwoState());
+
+      auto index_value = get_temp(instr.operands[1]);
+      auto index = static_cast<size_t>(index_value.AsInt64());
+
+      auto new_value = get_temp(instr.operands[2]);
+
+      // Get element width from result_type
+      const auto& elem_type = instr.result_type.value();
+      assert(elem_type.kind == common::Type::Kind::kTwoState);
+      auto elem_data = std::get<common::TwoStateData>(elem_type.data);
+      size_t element_width = elem_data.bit_width;
+
+      // Compute bit position and masks
+      size_t shift = index * element_width;
+      uint64_t elem_mask =
+          common::MakeBitMask(static_cast<uint32_t>(element_width));
+      uint64_t clear_mask = ~(elem_mask << shift);
+
+      // Merge: (current & ~(mask << shift)) | ((new_value & mask) << shift)
+      uint64_t merged = (current.AsUInt64() & clear_mask) |
+                        ((new_value.AsUInt64() & elem_mask) << shift);
+
+      // Write back with original type's width and signedness
+      const auto& current_data =
+          std::get<common::TwoStateData>(current.type.data);
+      auto result =
+          current_data.is_signed
+              ? RuntimeValue::TwoStateSigned(
+                    static_cast<int64_t>(merged), current_data.bit_width)
+              : RuntimeValue::TwoStateUnsigned(merged, current_data.bit_width);
+      store_variable(instr.operands[0], result, false);
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kMove: {
       assert(instr.operands.size() == 1);
       assert(instr.result.has_value());

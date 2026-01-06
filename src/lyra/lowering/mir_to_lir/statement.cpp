@@ -48,11 +48,38 @@ auto LowerStatement(
       auto result_value = LowerExpression(*expression, builder);
 
       if (target.IsElementSelect()) {
-        // Unpacked array element assignment: array[index] = value
         auto index = LowerExpression(*target.element_index, builder);
-        auto instruction = Instruction::StoreUnpackedElement(
-            target.symbol, index, result_value);
-        builder.AddInstruction(std::move(instruction));
+
+        if (target.IsPacked()) {
+          // Packed element assignment: vec[index] = value (single bit for now)
+          const auto& two_state =
+              std::get<common::TwoStateData>(target.base_type->data);
+
+          // Adjust index for non-zero-based ranges (e.g., bit [10:5])
+          auto adjusted_index = index;
+          if (two_state.lower_bound != 0) {
+            auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+            auto offset_literal =
+                builder.InternLiteral(Literal::Int(two_state.lower_bound));
+            builder.AddInstruction(
+                Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+            adjusted_index = builder.AllocateTemp("adj_idx", Type::Int());
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kBinarySubtract, adjusted_index,
+                    {Operand::Temp(index), Operand::Temp(offset_temp)}));
+          }
+
+          auto instruction = Instruction::StorePackedElement(
+              target.symbol, adjusted_index, result_value, 1);
+          builder.AddInstruction(std::move(instruction));
+        } else {
+          // Unpacked array element assignment: array[index] = value
+          auto instruction = Instruction::StoreUnpackedElement(
+              target.symbol, index, result_value);
+          builder.AddInstruction(std::move(instruction));
+        }
         break;
       }
 

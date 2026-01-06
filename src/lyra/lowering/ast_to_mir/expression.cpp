@@ -189,7 +189,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
             array_expr.as<slang::ast::NamedValueExpression>().symbol;
         auto index = LowerExpression(element_select.selector());
 
-        mir::AssignmentTarget target(&array_symbol, std::move(index));
+        // Lower base type to distinguish packed vs unpacked
+        auto base_type_result =
+            LowerType(array_symbol.getType(), array_expr.sourceRange);
+        if (!base_type_result) {
+          throw DiagnosticException(std::move(base_type_result.error()));
+        }
+
+        mir::AssignmentTarget target(
+            &array_symbol, std::move(index), *base_type_result);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }

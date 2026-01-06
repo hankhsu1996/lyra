@@ -22,6 +22,7 @@ enum class InstructionKind {
   kStoreUnpackedElement,  // Store to unpacked array: arr[index] = value
   kLoadPackedElement,     // Bit/element select from packed: vec[index]
   kLoadPackedSlice,       // Range/part-select from packed: vec[msb:lsb]
+  kStorePackedElement,    // Store to packed element: vec[index] = value
 
   // Move operation
   kMove,
@@ -203,6 +204,19 @@ struct Instruction {
         .operands = {Operand::Temp(value), Operand::Temp(lsb_temp)}};
   }
 
+  // Store element to packed vector: variable[index] = value
+  // element_width stored in result_type for interpreter
+  static auto StorePackedElement(
+      SymbolRef variable, TempRef index, TempRef value, size_t element_width)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStorePackedElement,
+        .result_type = common::Type::TwoStateUnsigned(element_width),
+        .operands = {
+            Operand::Variable(variable), Operand::Temp(index),
+            Operand::Temp(value)}};
+  }
+
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
@@ -294,6 +308,11 @@ struct Instruction {
         return fmt::format(
             "ldpsl {}, {}[{}:]", result.value(), operands[0].ToString(),
             operands[1].ToString());
+
+      case InstructionKind::kStorePackedElement:
+        return fmt::format(
+            "stpel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            operands[2].ToString());
 
       case InstructionKind::kMove:
         return fmt::format(

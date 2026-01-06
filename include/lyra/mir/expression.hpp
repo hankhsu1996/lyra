@@ -202,20 +202,36 @@ class ElementSelectExpression;
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable
   std::unique_ptr<Expression>
-      element_index;  // Optional: index for element select
+      element_index;              // Optional: index for element select
+  std::optional<Type> base_type;  // Type of base variable (for element select)
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
-      : symbol(std::move(sym)), element_index(nullptr) {
+      : symbol(std::move(sym)),
+        element_index(nullptr),
+        base_type(std::nullopt) {
   }
 
   // Constructor for element select assignment
   AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index)
-      : symbol(std::move(sym)), element_index(std::move(index)) {
+      : symbol(std::move(sym)),
+        element_index(std::move(index)),
+        base_type(std::nullopt) {
+  }
+
+  // Constructor for element select assignment with base type
+  AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index, Type type)
+      : symbol(std::move(sym)),
+        element_index(std::move(index)),
+        base_type(std::move(type)) {
   }
 
   [[nodiscard]] auto IsElementSelect() const -> bool {
     return element_index != nullptr;
+  }
+
+  [[nodiscard]] auto IsPacked() const -> bool {
+    return base_type && base_type->kind == Type::Kind::kTwoState;
   }
 
   [[nodiscard]] auto ToString() const -> std::string {

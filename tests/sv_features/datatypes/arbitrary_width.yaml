@@ -558,3 +558,84 @@ cases:
       variables:
         lsb: 0
         msb: 1
+
+  # Element assignment tests
+  - name: element_assign_set_bit
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'b00000000;
+          a[3] = 1;  // Set bit 3
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8  # bit 3 set = 0b00001000
+
+  - name: element_assign_clear_bit
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'b11111111;
+          a[5] = 0;  // Clear bit 5
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 223  # 0xFF with bit 5 clear = 0b11011111
+
+  - name: element_assign_multiple_bits
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 0;
+          a[0] = 1;
+          a[2] = 1;
+          a[4] = 1;
+          a[6] = 1;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 85  # 0b01010101
+
+  - name: element_assign_variable_index
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int i;
+        int result;
+        initial begin
+          a = 0;
+          i = 4;
+          a[i] = 1;  // Set bit 4
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 16
+
+  - name: element_assign_nonzero_base
+    sv: |
+      module Test;
+        bit [10:5] x;  // 6-bit vector with range 10:5
+        int result;
+        initial begin
+          x = 0;
+          x[7] = 1;  // Set bit 7 (storage bit 2)
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4  # bit 2 of storage set = 0b000100
