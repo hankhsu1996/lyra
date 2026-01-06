@@ -345,11 +345,21 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               if (sv_fmt.find('%') != std::string::npos) {
                 // Transform SV format to std::println
                 auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+                auto needs_cast = common::NeedsIntCast(sv_fmt);
                 Indent();
                 out_ << "std::println(std::cout, \"" << cpp_fmt << "\"";
                 for (size_t i = 1; i < syscall.arguments.size(); ++i) {
                   out_ << ", ";
-                  EmitExpression(*syscall.arguments[i]);
+                  // Cast to int64_t if format spec has width (Bit<N> doesn't
+                  // support std::format width specifiers)
+                  size_t spec_idx = i - 1;
+                  if (spec_idx < needs_cast.size() && needs_cast[spec_idx]) {
+                    out_ << "static_cast<int64_t>(";
+                    EmitExpression(*syscall.arguments[i]);
+                    out_ << ")";
+                  } else {
+                    EmitExpression(*syscall.arguments[i]);
+                  }
                 }
                 out_ << ");\n";
                 break;

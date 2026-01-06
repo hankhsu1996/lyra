@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(clang-format:*), Bash(clang-tidy:*), Bash(npx prettier:*), Bash(buildifier:*)
 ---
 
 # Commit
@@ -16,13 +16,16 @@ Create a commit following the project format.
 
 ## Pre-commit Checks
 
-Before committing, format changed files:
+Before committing, format and lint changed files:
 
 1. **C++ files** - If any `.cpp` or `.hpp` files changed:
 
    ```bash
    clang-format -i <changed-cpp-files>
+   clang-tidy -p . <changed-cpp-files>
    ```
+
+   Code must be clang-tidy warning-free. Fix any warnings before committing.
 
 2. **Documentation** - If any `.md` files changed:
 

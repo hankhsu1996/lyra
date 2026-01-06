@@ -4,7 +4,6 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <functional>
 #include <string>
 #include <vector>
@@ -70,16 +69,41 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     return value.ToString();
   }
 
-  auto v = static_cast<uint64_t>(value.AsInt64());
+  // Build format string with optional width for integer types
+  auto build_int_format = [&spec](char type_char) -> std::string {
+    std::string fmt = "{:";
+    if (spec.zero_pad) {
+      fmt += "0";
+    }
+    if (!spec.width.empty()) {
+      fmt += spec.width;
+    }
+    fmt += type_char;
+    fmt += "}";
+    return fmt;
+  };
+
   switch (spec.spec) {
     case 'x':
-    case 'h':
-      return std::format("{:x}", v);
-    case 'b':
-      return std::format("{:b}", v);
-    case 'o':
-      return std::format("{:o}", v);
-    default:  // 'd' or 's'
+    case 'h': {
+      // Unsigned for hex/binary/octal
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('x')), v);
+    }
+    case 'b': {
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('b')), v);
+    }
+    case 'o': {
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('o')), v);
+    }
+    case 'd': {
+      // Signed for decimal to preserve negative numbers
+      auto v = value.AsInt64();
+      return fmt::format(fmt::runtime(build_int_format('d')), v);
+    }
+    default:  // 's'
       return value.ToString();
   }
 }
@@ -144,13 +168,22 @@ auto FormatDisplay(
                   fmt::format("unsupported format specifier: %{}", spec.spec)));
         }
 
-        if (spec.spec != 'f' &&
-            (spec.zero_pad || !spec.width.empty() || !spec.precision.empty())) {
+        // Precision is only valid for %f (floats)
+        if (spec.spec != 'f' && !spec.precision.empty()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, fmt::format(
+                          "unsupported format specifier: precision not "
+                          "supported for "
+                          "%{}",
+                          spec.spec)));
+        }
+        // Width is not supported for %s (strings)
+        if (spec.spec == 's' && (spec.zero_pad || !spec.width.empty())) {
           throw DiagnosticException(
               Diagnostic::Error(
                   {},
-                  "unsupported format specifier: width/precision only "
-                  "supported for %f"));
+                  "unsupported format specifier: width not supported for %s"));
         }
 
         if (arg_idx >= args.size()) {

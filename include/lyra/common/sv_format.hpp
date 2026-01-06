@@ -11,7 +11,7 @@ namespace lyra::common {
 // Supported format specifiers for $display
 // %d - decimal, %h/%x - hex, %b - binary, %o - octal, %s - string, %f - real
 // %% - literal %
-// Throws on unsupported specifiers (e.g., %t, %m, %0d)
+// Throws on unsupported specifiers (e.g., %t, %m)
 
 struct FormatSpec {
   char spec;        // 'd', 'h', 'x', 'b', 'o', 's', 'f'
@@ -41,18 +41,18 @@ inline auto ParseDisplayFormat(const std::string& fmt_str)
         if (i < fmt_str.size() && fmt_str[i] == '0') {
           ++i;
         }
-        while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+        while (i < fmt_str.size() && (std::isdigit(fmt_str[i]) != 0)) {
           ++i;
         }
 
         // Optional precision for real: .<digits>
         if (i < fmt_str.size() && fmt_str[i] == '.') {
           ++i;
-          if (i >= fmt_str.size() || !std::isdigit(fmt_str[i])) {
+          if (i >= fmt_str.size() || (std::isdigit(fmt_str[i]) == 0)) {
             throw std::runtime_error(
                 "Invalid format string: missing precision digits");
           }
-          while (i < fmt_str.size() && std::isdigit(fmt_str[i])) {
+          while (i < fmt_str.size() && (std::isdigit(fmt_str[i]) != 0)) {
             ++i;
           }
         }
@@ -103,18 +103,18 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
           ++i;
         }
 
-        while (i < sv_fmt.size() && std::isdigit(sv_fmt[i])) {
+        while (i < sv_fmt.size() && (std::isdigit(sv_fmt[i]) != 0)) {
           width += sv_fmt[i];
           ++i;
         }
 
         if (i < sv_fmt.size() && sv_fmt[i] == '.') {
           ++i;
-          if (i >= sv_fmt.size() || !std::isdigit(sv_fmt[i])) {
+          if (i >= sv_fmt.size() || (std::isdigit(sv_fmt[i]) == 0)) {
             throw std::runtime_error(
                 "Invalid format string: missing precision digits");
           }
-          while (i < sv_fmt.size() && std::isdigit(sv_fmt[i])) {
+          while (i < sv_fmt.size() && (std::isdigit(sv_fmt[i]) != 0)) {
             precision += sv_fmt[i];
             ++i;
           }
@@ -126,13 +126,20 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
 
         char c = sv_fmt[i];
         if (c == 'd') {
-          if (zero_pad || !width.empty() || !precision.empty()) {
+          if (!precision.empty()) {
             throw std::runtime_error(
-                "Unsupported format specifier: width/precision only "
-                "supported for %f");
+                "Unsupported format specifier: precision not supported for %d");
+          }
+          std::string spec = "{:";
+          if (zero_pad) {
+            spec += "0";
+          }
+          if (!width.empty()) {
+            spec += width;
           }
           // Use {:d} to ensure bools print as 1/0 instead of true/false
-          result += "{:d}";
+          spec += "d}";
+          result += spec;
           ++i;
         } else if (c == 's') {
           if (zero_pad || !width.empty() || !precision.empty()) {
@@ -158,28 +165,50 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
           result += spec;
           ++i;
         } else if (c == 'h' || c == 'x') {
-          if (zero_pad || !width.empty() || !precision.empty()) {
+          if (!precision.empty()) {
             throw std::runtime_error(
-                "Unsupported format specifier: width/precision only "
-                "supported for %f");
+                "Unsupported format specifier: precision not supported for "
+                "%h/%x");
           }
-          result += "{:x}";
+          std::string spec = "{:";
+          if (zero_pad) {
+            spec += "0";
+          }
+          if (!width.empty()) {
+            spec += width;
+          }
+          spec += "x}";
+          result += spec;
           ++i;
         } else if (c == 'b') {
-          if (zero_pad || !width.empty() || !precision.empty()) {
+          if (!precision.empty()) {
             throw std::runtime_error(
-                "Unsupported format specifier: width/precision only "
-                "supported for %f");
+                "Unsupported format specifier: precision not supported for %b");
           }
-          result += "{:b}";
+          std::string spec = "{:";
+          if (zero_pad) {
+            spec += "0";
+          }
+          if (!width.empty()) {
+            spec += width;
+          }
+          spec += "b}";
+          result += spec;
           ++i;
         } else if (c == 'o') {
-          if (zero_pad || !width.empty() || !precision.empty()) {
+          if (!precision.empty()) {
             throw std::runtime_error(
-                "Unsupported format specifier: width/precision only "
-                "supported for %f");
+                "Unsupported format specifier: precision not supported for %o");
           }
-          result += "{:o}";
+          std::string spec = "{:";
+          if (zero_pad) {
+            spec += "0";
+          }
+          if (!width.empty()) {
+            spec += width;
+          }
+          spec += "o}";
+          result += spec;
           ++i;
         } else {
           throw std::runtime_error(
@@ -192,6 +221,62 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
     }
   }
   return result;
+}
+
+// Returns a vector of bools indicating whether each format argument needs
+// to be cast to int64_t for std::format compatibility. This is needed because
+// custom types like Bit<N> don't support width specifiers in std::format.
+// Integer format specs (d, h, x, b, o) with width or zero_pad need casting.
+inline auto NeedsIntCast(const std::string& sv_fmt) -> std::vector<bool> {
+  std::vector<bool> needs_cast;
+  size_t i = 0;
+
+  while (i < sv_fmt.size()) {
+    if (sv_fmt[i] == '%') {
+      if (i + 1 >= sv_fmt.size()) {
+        break;
+      }
+      if (sv_fmt[i + 1] == '%') {
+        i += 2;
+      } else {
+        ++i;  // Consume '%'
+        bool zero_pad = false;
+        bool has_width = false;
+
+        if (i < sv_fmt.size() && sv_fmt[i] == '0') {
+          zero_pad = true;
+          ++i;
+        }
+
+        while (i < sv_fmt.size() && (std::isdigit(sv_fmt[i]) != 0)) {
+          has_width = true;
+          ++i;
+        }
+
+        // Skip precision
+        if (i < sv_fmt.size() && sv_fmt[i] == '.') {
+          ++i;
+          while (i < sv_fmt.size() && (std::isdigit(sv_fmt[i]) != 0)) {
+            ++i;
+          }
+        }
+
+        if (i >= sv_fmt.size()) {
+          break;
+        }
+
+        char c = sv_fmt[i];
+        // Integer types with width/zero_pad need casting
+        bool is_int_type =
+            (c == 'd' || c == 'h' || c == 'x' || c == 'b' || c == 'o');
+        needs_cast.push_back(is_int_type && (zero_pad || has_width));
+        ++i;
+      }
+    } else {
+      ++i;
+    }
+  }
+  return needs_cast;
 }
 
 // Check if a string contains format specifiers (has % followed by valid spec)
