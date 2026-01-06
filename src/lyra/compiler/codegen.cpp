@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -899,6 +900,22 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
       EmitExpression(*conv.value, kPrecLowest);
       out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kSystemCall: {
+      // System functions that return values
+      const auto& syscall = mir::As<mir::SystemCallExpression>(expr);
+      if (syscall.name == "$time") {
+        out_ << "lyra::sdk::Time()";
+      } else if (syscall.name == "$stime") {
+        out_ << "lyra::sdk::STime()";
+      } else if (syscall.name == "$realtime") {
+        out_ << "lyra::sdk::RealTime()";
+      } else {
+        // System tasks like $display, $finish are handled in statement context
+        throw common::InternalError(
+            "codegen", "unexpected system call in expression: " + syscall.name);
+      }
       break;
     }
     default:

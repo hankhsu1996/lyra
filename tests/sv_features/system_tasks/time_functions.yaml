@@ -1,0 +1,187 @@
+feature: time_functions
+description: Tests for simulation time system functions ($time, $stime, $realtime)
+
+cases:
+  # $time tests
+  - name: time_returns_zero_initially
+    sv: |
+      module Test;
+        longint t;
+        initial begin
+          t = $time;
+        end
+      endmodule
+    expect:
+      variables:
+        t: 0
+
+  - name: time_after_delay
+    sv: |
+      module Test;
+        longint t;
+        initial begin
+          #100;
+          t = $time;
+        end
+      endmodule
+    expect:
+      variables:
+        t: 100
+
+  - name: time_multiple_delays
+    sv: |
+      module Test;
+        longint t1, t2, t3;
+        initial begin
+          t1 = $time;
+          #50;
+          t2 = $time;
+          #25;
+          t3 = $time;
+        end
+      endmodule
+    expect:
+      variables:
+        t1: 0
+        t2: 50
+        t3: 75
+
+  - name: time_in_display
+    sv: |
+      module Test;
+        initial begin
+          #10;
+          $display("time=%d", $time);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "time=10"
+
+  # $stime tests
+  - name: stime_returns_32bit
+    sv: |
+      module Test;
+        int t;
+        initial begin
+          #100;
+          t = $stime;
+        end
+      endmodule
+    expect:
+      variables:
+        t: 100
+
+  - name: stime_truncates_to_32bit
+    description: $stime returns only low 32 bits
+    sv: |
+      module Test;
+        int t;
+        longint big_time;
+        initial begin
+          // Simulate large time value behavior
+          // Since we can't easily exceed 32 bits in test, just verify basic behavior
+          #1000;
+          t = $stime;
+        end
+      endmodule
+    expect:
+      variables:
+        t: 1000
+
+  # $realtime tests
+  - name: realtime_returns_real
+    sv: |
+      module Test;
+        real t;
+        initial begin
+          #50;
+          t = $realtime;
+          $display("t=%f", t);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "t=50"
+
+  - name: realtime_in_display
+    sv: |
+      module Test;
+        initial begin
+          #25;
+          $display("realtime=%f", $realtime);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "realtime=25"
+
+  # Time in expressions
+  - name: time_in_expression
+    description: $time can be used in arithmetic expressions
+    sv: |
+      module Test;
+        initial begin
+          #10;
+          $display("time+5=%d", $time + 5);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "time+5=15"
+
+  - name: stime_in_expression
+    description: $stime can be used in arithmetic expressions
+    sv: |
+      module Test;
+        initial begin
+          #20;
+          $display("stime*2=%d", $stime * 2);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "stime*2=40"
+
+  - name: time_assigned_to_variable_then_used
+    sv: |
+      module Test;
+        time t;
+        initial begin
+          #15;
+          t = $time;
+          $display("t+10=%d", t + 10);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "t+10=25"
+
+  # Combined test
+  - name: all_time_functions
+    sv: |
+      module Test;
+        longint t1;
+        int t2;
+        real t3;
+        initial begin
+          #42;
+          t1 = $time;
+          t2 = $stime;
+          t3 = $realtime;
+          $display("t1=%d t2=%d t3=%f", t1, t2, t3);
+        end
+      endmodule
+    expect:
+      variables:
+        t1: 42
+        t2: 42
+      output:
+        contains:
+          - "t1=42 t2=42 t3=42"

@@ -189,16 +189,21 @@ struct Instruction {
         .kind = InstructionKind::kDelay, .operands = {std::move(delay)}};
   }
 
-  static auto SystemCall(std::string name, std::vector<TempRef> args)
-      -> Instruction {
+  // System call instruction
+  // For system tasks (no return value): result = std::nullopt
+  // For system functions (return value): result = temp to store result
+  static auto SystemCall(
+      std::string name, std::vector<TempRef> args,
+      std::optional<TempRef> result = std::nullopt,
+      std::optional<common::Type> result_type = std::nullopt) -> Instruction {
     std::vector<Operand> operands;
     for (auto& arg : args) {
       operands.push_back(Operand::Temp(arg));
     }
     return Instruction{
         .kind = InstructionKind::kSystemCall,
-        .result = std::nullopt,
-        .result_type = std::nullopt,
+        .result = result,
+        .result_type = result_type,
         .operands = std::move(operands),
         .system_call_name = std::move(name)};
   }

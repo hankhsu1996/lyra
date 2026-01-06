@@ -5,6 +5,7 @@
 #include <map>
 #include <vector>
 
+#include "lyra/sdk/bit.hpp"
 #include "lyra/sdk/delay.hpp"
 #include "lyra/sdk/module.hpp"
 #include "lyra/sdk/task.hpp"
@@ -222,6 +223,21 @@ void AnyOfAwaitable<Triggers...>::await_suspend(
 // Implementation of CurrentTime() for diagnostic output
 inline auto CurrentTime() -> uint64_t {
   return current_scheduler != nullptr ? current_scheduler->CurrentTime() : 0;
+}
+
+// $time - returns 64-bit unsigned simulation time (type 'time')
+inline auto Time() -> Bit<64> {
+  return Bit<64>{CurrentTime()};
+}
+
+// $stime - returns low 32 bits of simulation time as unsigned
+inline auto STime() -> Bit<32> {
+  return Bit<32>{static_cast<uint32_t>(CurrentTime() & 0xFFFFFFFF)};
+}
+
+// $realtime - returns simulation time as real (double)
+inline auto RealTime() -> double {
+  return static_cast<double>(CurrentTime());
 }
 
 // Implementation of Module::Run (needs Scheduler definition)

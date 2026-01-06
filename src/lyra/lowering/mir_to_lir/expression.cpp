@@ -123,9 +123,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
       // Supported system calls are validated in AST→MIR
+      // System tasks: $finish, $stop, $exit, $display (no return value)
+      // System functions: $time, $stime, $realtime (return value)
       assert(
           system_call.name == "$finish" || system_call.name == "$stop" ||
-          system_call.name == "$exit" || system_call.name == "$display");
+          system_call.name == "$exit" || system_call.name == "$display" ||
+          system_call.name == "$time" || system_call.name == "$stime" ||
+          system_call.name == "$realtime");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -145,11 +149,25 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         arguments.push_back(temp);
       }
 
-      auto instruction =
-          Instruction::SystemCall(system_call.name, std::move(arguments));
-      builder.AddInstruction(std::move(instruction));
+      // System functions return a value, system tasks do not
+      bool is_function = system_call.name == "$time" ||
+                         system_call.name == "$stime" ||
+                         system_call.name == "$realtime";
 
       auto result = builder.AllocateTemp("sys", system_call.type);
+
+      if (is_function) {
+        // Pass result temp to store the return value
+        auto instruction = Instruction::SystemCall(
+            system_call.name, std::move(arguments), result, system_call.type);
+        builder.AddInstruction(std::move(instruction));
+      } else {
+        // No result for system tasks
+        auto instruction =
+            Instruction::SystemCall(system_call.name, std::move(arguments));
+        builder.AddInstruction(std::move(instruction));
+      }
+
       return result;
     }
   }
