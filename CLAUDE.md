@@ -61,6 +61,17 @@ lyra dump mir <file.sv>                        # Dump MIR
 lyra dump lir <file.sv>                        # Dump LIR
 ```
 
+The `lyra.toml` format requires separate sections:
+
+```toml
+[package]
+name = "project_name"
+top = "TopModule"
+
+[sources]
+files = ["file1.sv", "file2.sv"]
+```
+
 ## Architecture
 
 SystemVerilog compiler and simulator:

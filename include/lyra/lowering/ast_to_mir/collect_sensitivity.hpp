@@ -3,6 +3,7 @@
 #include <unordered_set>
 
 #include "lyra/common/symbol.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/visitor.hpp"
 
@@ -50,6 +51,11 @@ class SensitivityCollector : public mir::MirVisitor {
     expression.condition->Accept(*this);
     expression.true_expression->Accept(*this);
     expression.false_expression->Accept(*this);
+  }
+
+  void Visit(const mir::ElementSelectExpression& expression) override {
+    expression.value->Accept(*this);
+    expression.selector->Accept(*this);
   }
 
   void Visit(const mir::VariableDeclarationStatement& statement) override {

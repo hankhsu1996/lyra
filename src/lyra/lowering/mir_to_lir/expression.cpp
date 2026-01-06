@@ -70,13 +70,43 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
     case mir::Expression::Kind::kAssignment: {
       const auto& assignment = mir::As<mir::AssignmentExpression>(expression);
-      assert(assignment.target);
       assert(assignment.value);
       auto value = LowerExpression(*assignment.value, builder);
+
+      if (assignment.target.IsElementSelect()) {
+        // Element select assignment: array[index] = value
+        auto index = LowerExpression(*assignment.target.element_index, builder);
+        auto instruction =
+            Instruction::StoreElement(assignment.target.symbol, index, value);
+        builder.AddInstruction(std::move(instruction));
+        return value;
+      }
+
+      // Simple variable assignment
       auto instruction = Instruction::StoreVariable(
-          assignment.target, value, assignment.is_non_blocking);
+          assignment.target.symbol, value, assignment.is_non_blocking);
       builder.AddInstruction(std::move(instruction));
       return value;
+    }
+
+    case mir::Expression::Kind::kElementSelect: {
+      const auto& select = mir::As<mir::ElementSelectExpression>(expression);
+      assert(select.value);
+      assert(select.selector);
+
+      // The array value must be an identifier (direct array access)
+      if (select.value->kind != mir::Expression::Kind::kIdentifier) {
+        assert(false && "only direct array variable access is supported");
+      }
+
+      const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
+      auto index = LowerExpression(*select.selector, builder);
+
+      auto result = builder.AllocateTemp("elem", expression.type);
+      auto instruction = Instruction::LoadElement(
+          result, array_id.symbol, index, expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
     }
 
     case mir::Expression::Kind::kConversion: {

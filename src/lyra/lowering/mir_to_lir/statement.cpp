@@ -47,9 +47,18 @@ auto LowerStatement(
       // Lower the expression and get its result value
       auto result_value = LowerExpression(*expression, builder);
 
+      if (target.IsElementSelect()) {
+        // Element select assignment: array[index] = value
+        auto index = LowerExpression(*target.element_index, builder);
+        auto instruction =
+            Instruction::StoreElement(target.symbol, index, result_value);
+        builder.AddInstruction(std::move(instruction));
+        break;
+      }
+
       // Store the result to the target variable
       auto instruction =
-          Instruction::StoreVariable(target, result_value, false);
+          Instruction::StoreVariable(target.symbol, result_value, false);
       builder.AddInstruction(std::move(instruction));
       break;
     }

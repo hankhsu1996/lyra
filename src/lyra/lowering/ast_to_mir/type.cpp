@@ -49,6 +49,16 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
             fmt::format("unsupported integral type width {}", width)));
   }
 
+  if (type.isUnpackedArray()) {
+    const auto& array_type = type.as<slang::ast::FixedSizeUnpackedArrayType>();
+    auto element_result = LowerType(array_type.elementType, source_range);
+    if (!element_result) {
+      return element_result;
+    }
+    return Type::Array(
+        *element_result, array_type.range.width(), array_type.range.lower());
+  }
+
   return std::unexpected(
       Diagnostic::Error(
           source_range, fmt::format("unsupported type '{}'", type.toString())));

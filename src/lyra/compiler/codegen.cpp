@@ -130,6 +130,12 @@ auto ToCppType(const common::Type& type) -> std::string {
       // Unsigned types use Bit<N>
       return std::format("Bit<{}>", width);
     }
+    case common::Type::Kind::kArray: {
+      const auto& array_data = std::get<common::ArrayData>(type.data);
+      return std::format(
+          "std::array<{}, {}>", ToCppType(*array_data.element_type),
+          array_data.size);
+    }
   }
   return "/* unknown type */";
 }
@@ -226,9 +232,10 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
 }
 
 void Codegen::EmitHeader() {
-  Line("#include <print>");
-  Line("#include <iostream>");
+  Line("#include <array>");
   Line("#include <cmath>");
+  Line("#include <iostream>");
+  Line("#include <print>");
   Line("#include <lyra/sdk/sdk.hpp>");
   Line("");
 }
@@ -313,7 +320,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(stmt);
       out_ << std::string(indent_ * 2, ' ');
-      out_ << assign.target->name << " = ";
+      EmitAssignmentTarget(assign.target);
+      out_ << " = ";
       EmitExpression(*assign.value);
       out_ << ";\n";
       break;
@@ -639,13 +647,24 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kAssignment: {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       if (assign.is_non_blocking) {
-        out_ << "this->ScheduleNba(&" << assign.target->name << ", ";
+        // TODO(hankhsu): Support NBA for array elements
+        out_ << "this->ScheduleNba(&" << assign.target.symbol->name << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else {
-        out_ << assign.target->name << " = ";
+        EmitAssignmentTarget(assign.target);
+        out_ << " = ";
         EmitExpression(*assign.value, kPrecAssign);
       }
+      break;
+    }
+    case mir::Expression::Kind::kElementSelect: {
+      const auto& select = mir::As<mir::ElementSelectExpression>(expr);
+      EmitExpression(*select.value, kPrecPrimary);
+      // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
+      out_ << "[static_cast<size_t>(";
+      EmitExpression(*select.selector, kPrecLowest);
+      out_ << ")]";
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -759,6 +778,16 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           Diagnostic::Error(
               {}, "C++ codegen: unimplemented expression kind: " +
                       ToString(expr.kind)));
+  }
+}
+
+void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
+  out_ << target.symbol->name;
+  if (target.IsElementSelect()) {
+    // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
+    out_ << "[static_cast<size_t>(";
+    EmitExpression(*target.element_index, kPrecLowest);
+    out_ << ")]";
   }
 }
 

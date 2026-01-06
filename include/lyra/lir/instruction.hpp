@@ -18,6 +18,8 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
+  kLoadElement,   // Load from array[index]
+  kStoreElement,  // Store to array[index]
 
   // Move operation
   kMove,
@@ -155,6 +157,27 @@ struct Instruction {
         .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
+  // Load element: result = array[index]
+  static auto LoadElement(
+      TempRef result, SymbolRef array, TempRef index, common::Type element_type)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoadElement,
+        .result = result,
+        .result_type = std::move(element_type),
+        .operands = {Operand::Variable(array), Operand::Temp(index)}};
+  }
+
+  // Store element: array[index] = value
+  static auto StoreElement(SymbolRef array, TempRef index, TempRef value)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreElement,
+        .operands = {
+            Operand::Variable(array), Operand::Temp(index),
+            Operand::Temp(value)}};
+  }
+
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
@@ -221,6 +244,16 @@ struct Instruction {
       case InstructionKind::kStoreVariableNonBlocking:
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
+
+      case InstructionKind::kLoadElement:
+        return fmt::format(
+            "ldel  {}, {}[{}]", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kStoreElement:
+        return fmt::format(
+            "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            operands[2].ToString());
 
       case InstructionKind::kMove:
         return fmt::format(

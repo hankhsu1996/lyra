@@ -120,11 +120,16 @@ class VariableDeclarationStatement : public Statement {
 class AssignStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kAssign;
-  SymbolRef target;
+  AssignmentTarget target;
   std::unique_ptr<Expression> value;
 
-  AssignStatement(SymbolRef t, std::unique_ptr<Expression> v)
+  AssignStatement(AssignmentTarget t, std::unique_ptr<Expression> v)
       : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
+  }
+
+  // Convenience constructor for simple variable assignment
+  AssignStatement(SymbolRef sym, std::unique_ptr<Expression> v)
+      : Statement(kKindValue), target(std::move(sym)), value(std::move(v)) {
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -133,7 +138,8 @@ class AssignStatement : public Statement {
 
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     return std::format(
-        "{}{} = {}\n", common::Indent(indent), target->name, value->ToString());
+        "{}{} = {}\n", common::Indent(indent), target.ToString(),
+        value->ToString());
   }
 };
 
