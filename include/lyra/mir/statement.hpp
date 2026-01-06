@@ -356,29 +356,55 @@ class RepeatStatement : public Statement {
   }
 };
 
+/// Case statement condition type
+enum class CaseCondition {
+  kNormal,      // Regular case (exact equality)
+  kWildcardZ,   // casez - Z/? bits are wildcards
+  kWildcardXZ,  // casex - X/Z/? bits are wildcards
+};
+
+inline auto ToString(CaseCondition condition) -> std::string {
+  switch (condition) {
+    case CaseCondition::kNormal:
+      return "case";
+    case CaseCondition::kWildcardZ:
+      return "casez";
+    case CaseCondition::kWildcardXZ:
+      return "casex";
+  }
+}
+
 /// A single case item containing one or more expressions and a statement
 struct CaseItem {
   std::vector<std::unique_ptr<Expression>> expressions;
+  /// Masks for wildcard patterns (parallel to expressions).
+  /// For normal case, masks are all-1s (compare all bits).
+  /// For casez/casex, mask bits are 0 for wildcard positions.
+  std::vector<int64_t> masks;
   std::unique_ptr<Statement> statement;
 
   CaseItem(
       std::vector<std::unique_ptr<Expression>> exprs,
-      std::unique_ptr<Statement> stmt)
-      : expressions(std::move(exprs)), statement(std::move(stmt)) {
+      std::vector<int64_t> pattern_masks, std::unique_ptr<Statement> stmt)
+      : expressions(std::move(exprs)),
+        masks(std::move(pattern_masks)),
+        statement(std::move(stmt)) {
   }
 };
 
 class CaseStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kCase;
+  CaseCondition case_condition = CaseCondition::kNormal;
   std::unique_ptr<Expression> condition;
   std::vector<CaseItem> items;
   std::unique_ptr<Statement> default_case;  // nullptr if no default
 
   CaseStatement(
-      std::unique_ptr<Expression> cond, std::vector<CaseItem> case_items,
-      std::unique_ptr<Statement> default_stmt)
+      CaseCondition case_cond, std::unique_ptr<Expression> cond,
+      std::vector<CaseItem> case_items, std::unique_ptr<Statement> default_stmt)
       : Statement(kKindValue),
+        case_condition(case_cond),
         condition(std::move(cond)),
         items(std::move(case_items)),
         default_case(std::move(default_stmt)) {
@@ -390,7 +416,8 @@ class CaseStatement : public Statement {
 
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     std::string result = std::format(
-        "{}case {}\n", common::Indent(indent), condition->ToString());
+        "{}{} {}\n", common::Indent(indent), mir::ToString(case_condition),
+        condition->ToString());
     for (const auto& item : items) {
       std::string exprs_str;
       for (size_t i = 0; i < item.expressions.size(); ++i) {

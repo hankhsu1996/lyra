@@ -23,6 +23,7 @@
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
@@ -267,15 +268,22 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::Case: {
       const auto& case_stmt = statement.as<slang::ast::CaseStatement>();
 
-      // Only support basic case, not casez/casex/case inside
-      if (case_stmt.condition != slang::ast::CaseStatementCondition::Normal) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                statement.sourceRange,
-                fmt::format(
-                    "unsupported case condition '{}' (only basic case is "
-                    "supported)",
-                    slang::ast::toString(case_stmt.condition))));
+      // Convert slang condition to MIR CaseCondition
+      mir::CaseCondition case_condition;
+      switch (case_stmt.condition) {
+        case slang::ast::CaseStatementCondition::Normal:
+          case_condition = mir::CaseCondition::kNormal;
+          break;
+        case slang::ast::CaseStatementCondition::WildcardJustZ:
+          case_condition = mir::CaseCondition::kWildcardZ;
+          break;
+        case slang::ast::CaseStatementCondition::WildcardXOrZ:
+          case_condition = mir::CaseCondition::kWildcardXZ;
+          break;
+        case slang::ast::CaseStatementCondition::Inside:
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  statement.sourceRange, "case inside is not yet supported"));
       }
 
       // Lower the controlling expression
@@ -284,14 +292,44 @@ auto LowerStatement(const slang::ast::Statement& statement)
       // Lower each case item
       std::vector<mir::CaseItem> items;
       for (const auto& item : case_stmt.items) {
-        // Lower all expressions for this item
+        // Lower all expressions and extract masks for this item
         std::vector<std::unique_ptr<mir::Expression>> exprs;
+        std::vector<int64_t> masks;
+
         for (const auto* expr : item.expressions) {
-          exprs.push_back(LowerExpression(*expr));
+          // For casez/casex, extract mask from constant patterns
+          if (case_condition != mir::CaseCondition::kNormal) {
+            // Get constant value - slang evaluates constant expressions
+            const auto* const_val = expr->getConstant();
+            if (const_val == nullptr || !const_val->isInteger()) {
+              throw DiagnosticException(
+                  Diagnostic::Error(
+                      expr->sourceRange,
+                      "casez/casex patterns must be compile-time constants"));
+            }
+
+            const auto& sv_int = const_val->integer();
+            auto [value, mask] = ExtractMaskAndValue(sv_int, case_condition);
+
+            // Create a literal expression with the masked value
+            // Match the signedness of the case expression
+            auto width = sv_int.getBitWidth();
+            auto literal = sv_int.isSigned()
+                               ? common::Literal::TwoStateSigned(value, width)
+                               : common::Literal::TwoStateUnsigned(
+                                     static_cast<uint64_t>(value), width);
+            exprs.push_back(std::make_unique<mir::LiteralExpression>(literal));
+            masks.push_back(mask);
+          } else {
+            // Normal case - use regular expression lowering
+            exprs.push_back(LowerExpression(*expr));
+            // Mask of all 1s for normal case (compare all bits)
+            masks.push_back(-1);
+          }
         }
         // Lower the statement
         auto stmt = LowerStatement(*item.stmt);
-        items.emplace_back(std::move(exprs), std::move(stmt));
+        items.emplace_back(std::move(exprs), std::move(masks), std::move(stmt));
       }
 
       // Lower optional default case
@@ -301,7 +339,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
 
       return std::make_unique<mir::CaseStatement>(
-          std::move(condition), std::move(items), std::move(default_case));
+          case_condition, std::move(condition), std::move(items),
+          std::move(default_case));
     }
 
     case StatementKind::Break: {
