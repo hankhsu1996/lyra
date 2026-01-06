@@ -4,7 +4,6 @@ Current SystemVerilog features not yet supported.
 
 ## Statements
 
-- `case` / `casex` / `casez` - switch statements
 - `foreach` - array iteration
 - `return` - function returns
 - `wait(expr)` - wait statements

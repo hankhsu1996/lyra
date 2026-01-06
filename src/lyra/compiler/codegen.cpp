@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <format>
 #include <string>
-#include <vector>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -797,21 +796,38 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         auto result_data = std::get<common::TwoStateData>(expr.type.data);
         size_t element_width = result_data.bit_width;
 
+        // Get lower_bound for non-zero-based ranges
+        const auto& value_data =
+            std::get<common::TwoStateData>(select.value->type.data);
+        int32_t lower_bound = value_data.lower_bound;
+
         if (element_width == 1) {
-          // Single bit selection: value.GetBit(index)
+          // Single bit selection: value.GetBit(index - lower_bound)
           EmitExpression(*select.value, kPrecPrimary);
           out_ << ".GetBit(";
+          if (lower_bound != 0) {
+            out_ << "static_cast<int>(";
+          }
           EmitExpression(*select.selector, kPrecLowest);
+          if (lower_bound != 0) {
+            out_ << ") - " << lower_bound;
+          }
           out_ << ")";
         } else {
           // Multi-bit element selection from 2D packed array
-          // Generate: static_cast<ResultType>((value >> (index * width)) &
-          // mask)
+          // Generate: static_cast<ResultType>((value >> ((index - lb) * width))
+          // & mask)
           out_ << "static_cast<" << ToCppType(expr.type) << ">((";
           EmitExpression(*select.value, kPrecShift);
-          out_ << " >> (";
+          out_ << " >> ((";
+          if (lower_bound != 0) {
+            out_ << "static_cast<int>(";
+          }
           EmitExpression(*select.selector, kPrecMultiplicative);
-          out_ << " * " << element_width << ")) & "
+          if (lower_bound != 0) {
+            out_ << ") - " << lower_bound;
+          }
+          out_ << ") * " << element_width << ")) & "
                << std::format("0x{:X}", (1ULL << element_width) - 1) << ")";
         }
       } else {
@@ -831,6 +847,13 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
 
       // Compute LSB (minimum of left and right bounds)
       int32_t lsb = std::min(range.left, range.right);
+
+      // Adjust for non-zero-based ranges (e.g., bit [63:32])
+      if (range.value->type.kind == common::Type::Kind::kTwoState) {
+        const auto& value_data =
+            std::get<common::TwoStateData>(range.value->type.data);
+        lsb -= value_data.lower_bound;
+      }
 
       // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >> lsb)
       // & mask) Need to cast to uint64_t first to avoid ambiguous operator&

@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
+#include <cstdint>
 #include <expected>
 
 #include <fmt/format.h>
@@ -35,8 +36,13 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();
 
+    // Get range info for non-zero-based indexing (e.g., bit [63:32])
+    int32_t lower_bound = 0;
+    auto range = type.getFixedRange();
+    lower_bound = range.lower();
+
     if (width >= 1 && width <= 64) {
-      return Type::TwoState(width, is_signed);
+      return Type::TwoState(width, is_signed, lower_bound);
     }
 
     return std::unexpected(

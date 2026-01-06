@@ -427,3 +427,134 @@ cases:
     expect:
       variables:
         result: 202  # 0xCA
+
+  # Non-zero-based range tests
+  - name: nonzero_base_declaration
+    sv: |
+      module Test;
+        bit [63:32] x;
+        int result;
+        initial begin
+          x = 32'hDEADBEEF;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -559038737  # 0xDEADBEEF as signed int
+
+  - name: nonzero_base_bit_index_lsb
+    sv: |
+      module Test;
+        bit [63:32] x;
+        int result;
+        initial begin
+          x = 32'hAAAA5555;
+          result = x[32];  // LSB (bit 0 of storage)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: nonzero_base_bit_index_msb
+    sv: |
+      module Test;
+        bit [63:32] x;
+        int result;
+        initial begin
+          x = 32'h80000000;
+          result = x[63];  // MSB (bit 31 of storage)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: nonzero_base_bit_index_middle
+    sv: |
+      module Test;
+        bit [63:32] x;
+        int result;
+        initial begin
+          x = 32'h00001000;  // Bit 44 = bit 12 of storage
+          result = x[44];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: nonzero_base_range_select
+    sv: |
+      module Test;
+        bit [63:32] x;
+        int result;
+        initial begin
+          x = 32'hABCD1234;
+          result = x[47:40];  // Extract byte at positions 47:40 = bits 15:8 of storage
+        end
+      endmodule
+    expect:
+      variables:
+        result: 18  # 0x12 = bits [15:8] of 0xABCD1234
+
+  - name: nonzero_base_variable_index
+    sv: |
+      module Test;
+        bit [10:5] x;
+        int i;
+        int result;
+        initial begin
+          x = 6'b101010;  // 42
+          i = 7;
+          result = x[i];  // Access bit 7 (storage bit 2) = 0
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: nonzero_base_small_range
+    sv: |
+      module Test;
+        bit [5:2] x;  // 4-bit vector with range 5:2
+        int result;
+        initial begin
+          x = 4'b1010;  // x[5]=1, x[4]=0, x[3]=1, x[2]=0
+          result = x[3];  // Bit 3 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: nonzero_base_range_sum
+    sv: |
+      module Test;
+        bit [10:5] x;
+        int sum;
+        initial begin
+          x = 6'b110011;  // x[10]=1, x[9]=1, x[8]=0, x[7]=0, x[6]=1, x[5]=1
+          sum = x[5] + x[6] + x[7] + x[8] + x[9] + x[10];
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 4  # 1+1+0+0+1+1
+
+  - name: nonzero_base_negative_range
+    sv: |
+      module Test;
+        bit [3:-4] x;  // 8-bit vector, indices 3 down to -4
+        int lsb, msb;
+        initial begin
+          x = 8'b10101010;
+          lsb = x[-4];  // LSB (storage bit 0) = 0
+          msb = x[3];   // MSB (storage bit 7) = 1
+        end
+      endmodule
+    expect:
+      variables:
+        lsb: 0
+        msb: 1

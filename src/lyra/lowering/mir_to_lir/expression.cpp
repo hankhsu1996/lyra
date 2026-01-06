@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cstdint>
 #include <utility>
-#include <vector>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
@@ -103,8 +102,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (select.value->type.kind == common::Type::Kind::kTwoState) {
         // Packed vector: lower the value, then select element/bit
         auto value = LowerExpression(*select.value, builder);
+
+        // Adjust index for non-zero-based ranges (e.g., bit [63:32])
+        const auto& two_state =
+            std::get<common::TwoStateData>(select.value->type.data);
+        auto adjusted_index = index;
+        if (two_state.lower_bound != 0) {
+          auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+          auto offset_literal =
+              builder.InternLiteral(Literal::Int(two_state.lower_bound));
+          builder.AddInstruction(
+              Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+          adjusted_index = builder.AllocateTemp("adj_idx", Type::Int());
+          builder.AddInstruction(
+              Instruction::Basic(
+                  IK::kBinarySubtract, adjusted_index,
+                  {Operand::Temp(index), Operand::Temp(offset_temp)}));
+        }
+
         auto instruction = Instruction::LoadPackedElement(
-            result, value, index, expression.type);
+            result, value, adjusted_index, expression.type);
         builder.AddInstruction(std::move(instruction));
         return result;
       }
@@ -191,6 +209,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       // Compute LSB: for [7:4], LSB is 4
       int32_t lsb = std::min(range.left, range.right);
+
+      // Adjust for non-zero-based ranges (e.g., bit [63:32])
+      if (range.value->type.kind == common::Type::Kind::kTwoState) {
+        const auto& two_state =
+            std::get<common::TwoStateData>(range.value->type.data);
+        lsb -= two_state.lower_bound;
+      }
 
       // Create a literal for the LSB shift amount
       auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());

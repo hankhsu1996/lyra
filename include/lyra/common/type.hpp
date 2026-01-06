@@ -18,6 +18,8 @@ struct Type;  // Forward declaration for ArrayData
 struct TwoStateData {
   size_t bit_width;
   bool is_signed;
+  int32_t lower_bound =
+      0;  // LSB index for non-zero-based ranges (e.g., 32 for [63:32])
 
   auto operator==(const TwoStateData& other) const -> bool = default;
 
@@ -25,6 +27,7 @@ struct TwoStateData {
     std::size_t h = 0;
     h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= std::hash<bool>{}(is_signed) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<int32_t>{}(lower_bound) + 0x9e3779b9 + (h << 6) + (h >> 2);
     return h;
   }
 };
@@ -65,10 +68,14 @@ struct Type {
     return Type{.kind = Kind::kVoid};
   }
 
-  static auto TwoState(size_t bit_width, bool is_signed) -> Type {
+  static auto TwoState(
+      size_t bit_width, bool is_signed, int32_t lower_bound = 0) -> Type {
     return Type{
         .kind = Kind::kTwoState,
-        .data = TwoStateData{.bit_width = bit_width, .is_signed = is_signed}};
+        .data = TwoStateData{
+            .bit_width = bit_width,
+            .is_signed = is_signed,
+            .lower_bound = lower_bound}};
   }
 
   static auto TwoStateSigned(size_t bit_width) -> Type {
@@ -153,10 +160,16 @@ struct Type {
     switch (kind) {
       case Kind::kVoid:
         return "void";
-      case Kind::kTwoState:
-        return fmt::format(
-            "bit[{}] {}", std::get<TwoStateData>(data).bit_width,
-            std::get<TwoStateData>(data).is_signed ? "signed" : "unsigned");
+      case Kind::kTwoState: {
+        const auto& ts = std::get<TwoStateData>(data);
+        auto sign_str = ts.is_signed ? "signed" : "unsigned";
+        if (ts.lower_bound != 0) {
+          // Show actual range for non-zero-based vectors
+          auto msb = static_cast<int32_t>(ts.bit_width) + ts.lower_bound - 1;
+          return fmt::format("bit[{}:{}] {}", msb, ts.lower_bound, sign_str);
+        }
+        return fmt::format("bit[{}] {}", ts.bit_width, sign_str);
+      }
       case Kind::kReal:
         return "real";
       case Kind::kShortReal:
