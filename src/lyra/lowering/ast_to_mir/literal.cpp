@@ -7,10 +7,12 @@
 
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/types/AllTypes.h>
+#include <slang/numeric/SVInt.h>
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
@@ -50,6 +52,46 @@ auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal {
     }
   }
   return common::Literal::Real(literal.getValue());
+}
+
+auto ExtractMaskAndValue(
+    const slang::SVInt& sv_int, mir::CaseCondition condition)
+    -> std::pair<int64_t, int64_t> {
+  auto width = sv_int.getBitWidth();
+
+  // Build mask by checking each bit for wildcard status
+  uint64_t mask = 0;
+  uint64_t value = 0;
+
+  for (uint32_t i = 0; i < width; ++i) {
+    auto bit = sv_int[i];
+    bool is_wildcard = false;
+
+    if (condition == mir::CaseCondition::kWildcardXZ) {
+      // casex: both X and Z are wildcards
+      is_wildcard =
+          (bit.value == slang::logic_t::X_VALUE ||
+           bit.value == slang::logic_t::Z_VALUE);
+    } else if (condition == mir::CaseCondition::kWildcardZ) {
+      // casez: only Z is wildcard
+      is_wildcard = (bit.value == slang::logic_t::Z_VALUE);
+    }
+
+    if (!is_wildcard) {
+      mask |= (1ULL << i);
+      // For 0 or 1 bits, use the actual value; for X in casez, treat as 0
+      if (bit.value == 1) {
+        value |= (1ULL << i);
+      }
+    }
+  }
+
+  // Truncate to width
+  uint64_t width_mask = lyra::common::MakeBitMask(width);
+  mask &= width_mask;
+  value &= width_mask;
+
+  return {static_cast<int64_t>(value), static_cast<int64_t>(mask)};
 }
 
 }  // namespace lyra::lowering::ast_to_mir

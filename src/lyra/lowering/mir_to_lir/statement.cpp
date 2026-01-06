@@ -388,16 +388,43 @@ auto LowerStatement(
         builder.StartBlock(check_labels[i]);
 
         // Evaluate all expressions and OR together
-        // match = (cond == expr0) || (cond == expr1) || ...
+        // For normal case: match = (cond == expr0) || (cond == expr1) || ...
+        // For casez/casex: match = ((cond & mask0) == expr0) || ...
         lir::TempRef match_result{};
         for (size_t j = 0; j < item.expressions.size(); ++j) {
           auto expr_value = LowerExpression(*item.expressions[j], builder);
+          int64_t mask = item.masks[j];
+
+          lir::TempRef cmp_lhs;
+          if (mask == -1) {
+            // Normal case - compare directly
+            cmp_lhs = cond_temp;
+          } else {
+            // Wildcard case - apply mask to condition
+            // Use unsigned literal to match condition type (slang converts to
+            // unsigned)
+            auto mask_literal = builder.InternLiteral(
+                Literal::UInt(static_cast<uint32_t>(mask)));
+            auto mask_temp = builder.AllocateTemp("case.mask", Type::UInt());
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kLiteral, mask_temp, Operand::Literal(mask_literal)));
+            auto masked_cond =
+                builder.AllocateTemp("case.masked_cond", Type::UInt());
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kBinaryBitwiseAnd, masked_cond,
+                    std::vector<Operand>{
+                        Operand::Temp(cond_temp), Operand::Temp(mask_temp)}));
+            cmp_lhs = masked_cond;
+          }
+
           auto cmp_temp = builder.AllocateTemp("case.cmp", Type::Int());
           builder.AddInstruction(
               Instruction::Basic(
                   IK::kBinaryEqual, cmp_temp,
                   std::vector<Operand>{
-                      Operand::Temp(cond_temp), Operand::Temp(expr_value)}));
+                      Operand::Temp(cmp_lhs), Operand::Temp(expr_value)}));
 
           if (j == 0) {
             match_result = cmp_temp;
