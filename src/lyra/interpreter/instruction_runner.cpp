@@ -11,7 +11,9 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_context.hpp"
@@ -320,37 +322,63 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kLoadElement: {
-      // Load element: result = array[index]
+      // Load element: result = container[index]
+      // Container can be Variable (array) or Temp (packed vector)
       assert(instr.operands.size() == 2);
       assert(instr.result.has_value());
-      assert(instr.operands[0].IsVariable());
-
-      auto array_value = read_variable(instr.operands[0]);
-      assert(array_value.IsArray());
 
       auto index_value = get_temp(instr.operands[1]);
       auto index = static_cast<size_t>(index_value.AsInt64());
 
-      // Get lower bound from array type
-      const auto& array_type = array_value.type;
-      const auto& array_data = std::get<common::ArrayData>(array_type.data);
-      int32_t lower_bound = array_data.lower_bound;
+      if (instr.operands[0].IsVariable()) {
+        // Array element access
+        auto array_value = read_variable(instr.operands[0]);
+        assert(array_value.IsArray());
 
-      // Adjust index: actual_idx = sv_idx - lower_bound
-      size_t actual_idx =
-          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+        // Get lower bound from array type
+        const auto& array_type = array_value.type;
+        const auto& array_data = std::get<common::ArrayData>(array_type.data);
+        int32_t lower_bound = array_data.lower_bound;
 
-      // Bounds check
-      if (actual_idx >= array_value.AsArray().size()) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {}, fmt::format(
-                        "array index {} out of bounds (size {})", index,
-                        array_value.AsArray().size())));
+        // Adjust index: actual_idx = sv_idx - lower_bound
+        auto actual_idx =
+            static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+
+        // Bounds check
+        if (actual_idx >= array_value.AsArray().size()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, fmt::format(
+                          "array index {} out of bounds (size {})", index,
+                          array_value.AsArray().size())));
+        }
+
+        const auto& element = array_value.GetElement(actual_idx);
+        temp_table.Write(instr.result.value(), element);
+      } else {
+        // Packed vector element/bit selection
+        assert(instr.operands[0].IsTemp());
+        assert(instr.result_type.has_value());
+
+        auto value = get_temp(instr.operands[0]);
+        assert(value.IsTwoState());
+
+        // Get element width from result type
+        const auto& result_type = instr.result_type.value();
+        assert(result_type.kind == common::Type::Kind::kTwoState);
+        auto result_data = std::get<common::TwoStateData>(result_type.data);
+        size_t element_width = result_data.bit_width;
+
+        // Compute bit position: start_bit = index * element_width
+        size_t start_bit = index * element_width;
+
+        // Extract element: (value >> start_bit) & mask
+        uint64_t mask =
+            common::MakeBitMask(static_cast<uint32_t>(element_width));
+        auto extracted = (value.AsUInt64() >> start_bit) & mask;
+        auto result = RuntimeValue::TwoStateUnsigned(extracted, element_width);
+        temp_table.Write(instr.result.value(), result);
       }
-
-      const auto& element = array_value.GetElement(actual_idx);
-      temp_table.Write(instr.result.value(), element);
       return InstructionResult::Continue();
     }
 
@@ -374,7 +402,7 @@ auto RunInstruction(
       int32_t lower_bound = array_data.lower_bound;
 
       // Adjust index: actual_idx = sv_idx - lower_bound
-      size_t actual_idx =
+      auto actual_idx =
           static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
 
       // Bounds check

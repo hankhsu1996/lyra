@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <iterator>
@@ -314,6 +315,20 @@ class Bit {
   template <std::size_t W, bool S>
   [[nodiscard]] constexpr auto operator>>(Bit<W, S> amount) const -> Bit {
     return *this >> amount.Value();
+  }
+
+  // Bit selection - extract a single bit at the given index
+  // Returns Bit<1> (always unsigned, regardless of source signedness)
+  template <typename T>
+    requires std::is_integral_v<T>
+  [[nodiscard]] constexpr auto GetBit(T index) const -> Bit<1> {
+    return Bit<1>{static_cast<uint8_t>((value_ >> index) & 1)};
+  }
+
+  // Bit selection with Bit type as index
+  template <std::size_t W, bool S>
+  [[nodiscard]] constexpr auto GetBit(Bit<W, S> index) const -> Bit<1> {
+    return GetBit(index.Value());
   }
 
   // Compound assignment operators

@@ -789,11 +789,38 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kElementSelect: {
       const auto& select = mir::As<mir::ElementSelectExpression>(expr);
-      EmitExpression(*select.value, kPrecPrimary);
-      // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
-      out_ << "[static_cast<size_t>(";
-      EmitExpression(*select.selector, kPrecLowest);
-      out_ << ")]";
+
+      // Check if this is bit/element selection (packed type) or array access
+      if (select.value->type.kind == common::Type::Kind::kTwoState) {
+        // Get element width from result type
+        auto result_data = std::get<common::TwoStateData>(expr.type.data);
+        size_t element_width = result_data.bit_width;
+
+        if (element_width == 1) {
+          // Single bit selection: value.GetBit(index)
+          EmitExpression(*select.value, kPrecPrimary);
+          out_ << ".GetBit(";
+          EmitExpression(*select.selector, kPrecLowest);
+          out_ << ")";
+        } else {
+          // Multi-bit element selection from 2D packed array
+          // Generate: static_cast<ResultType>((value >> (index * width)) &
+          // mask)
+          out_ << "static_cast<" << ToCppType(expr.type) << ">((";
+          EmitExpression(*select.value, kPrecShift);
+          out_ << " >> (";
+          EmitExpression(*select.selector, kPrecMultiplicative);
+          out_ << " * " << element_width << ")) & "
+               << std::format("0x{:X}", (1ULL << element_width) - 1) << ")";
+        }
+      } else {
+        // Array element access: array[index]
+        EmitExpression(*select.value, kPrecPrimary);
+        // Cast index to size_t to avoid Bit<N> → bool → size_t issues
+        out_ << "[static_cast<size_t>(";
+        EmitExpression(*select.selector, kPrecLowest);
+        out_ << ")]";
+      }
       break;
     }
     case mir::Expression::Kind::kTernary: {

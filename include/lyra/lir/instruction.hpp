@@ -18,8 +18,9 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
-  kLoadElement,   // Load from array[index]
-  kStoreElement,  // Store to array[index]
+  kLoadElement,   // Load element: array[index] or packed[index]
+  kStoreElement,  // Store element: array[index] = value or packed[index] =
+                  // value
 
   // Move operation
   kMove,
@@ -157,7 +158,9 @@ struct Instruction {
         .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
-  // Load element: result = array[index]
+  // Load element: result = container[index]
+  // For arrays: operand is Variable (array reference)
+  // For packed vectors: operand is Temp (value)
   static auto LoadElement(
       TempRef result, SymbolRef array, TempRef index, common::Type element_type)
       -> Instruction {
@@ -166,6 +169,17 @@ struct Instruction {
         .result = result,
         .result_type = std::move(element_type),
         .operands = {Operand::Variable(array), Operand::Temp(index)}};
+  }
+
+  // Load element from packed vector (value, not variable reference)
+  static auto LoadElement(
+      TempRef result, TempRef value, TempRef index, common::Type element_type)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoadElement,
+        .result = result,
+        .result_type = std::move(element_type),
+        .operands = {Operand::Temp(value), Operand::Temp(index)}};
   }
 
   // Store element: array[index] = value

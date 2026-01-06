@@ -282,3 +282,75 @@ cases:
     expect:
       variables:
         result: 15
+
+  # Bit indexing tests
+  - name: bit_index_constant
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'b10101010;  // 0xAA = 170
+          result = a[1];    // Bit 1 is 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: bit_index_zero
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'b10101010;
+          result = a[0];    // Bit 0 is 0
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: bit_index_high
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'b10000000;  // 128
+          result = a[7];    // Bit 7 is 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: bit_index_arithmetic
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int sum;
+        initial begin
+          a = 8'b11001010;  // 0xCA
+          sum = a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7];
+          // Bits: 0+1+0+1+0+0+1+1 = 4
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 4
+
+  - name: bit_index_conditional
+    sv: |
+      module Test;
+        bit [3:0] a;
+        int result;
+        initial begin
+          a = 4'b1010;
+          result = a[3] ? 100 : 200;  // Bit 3 is 1, so result = 100
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100

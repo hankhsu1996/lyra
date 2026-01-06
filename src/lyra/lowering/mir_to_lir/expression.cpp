@@ -94,15 +94,25 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       assert(select.value);
       assert(select.selector);
 
-      // The array value must be an identifier (direct array access)
+      auto index = LowerExpression(*select.selector, builder);
+      auto result = builder.AllocateTemp("elem", expression.type);
+
+      // Check if this is packed type (value) or array type (variable reference)
+      if (select.value->type.kind == common::Type::Kind::kTwoState) {
+        // Packed vector: lower the value, then select element
+        auto value = LowerExpression(*select.value, builder);
+        auto instruction =
+            Instruction::LoadElement(result, value, index, expression.type);
+        builder.AddInstruction(std::move(instruction));
+        return result;
+      }
+
+      // Array: must be a direct variable reference
       if (select.value->kind != mir::Expression::Kind::kIdentifier) {
         assert(false && "only direct array variable access is supported");
       }
 
       const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-      auto index = LowerExpression(*select.selector, builder);
-
-      auto result = builder.AllocateTemp("elem", expression.type);
       auto instruction = Instruction::LoadElement(
           result, array_id.symbol, index, expression.type);
       builder.AddInstruction(std::move(instruction));
