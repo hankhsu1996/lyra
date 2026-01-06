@@ -1,5 +1,7 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
+#include <expected>
+
 #include <fmt/format.h>
 #include <slang/ast/types/AllTypes.h>
 
@@ -33,20 +35,15 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();
 
-    if (width == 1) {
-      return Type::TwoState(1, is_signed);
-    }
-    if (width == 32) {
-      return Type::TwoState(32, is_signed);
-    }
-    if (width == 64) {
-      return Type::TwoState(64, is_signed);
+    if (width >= 1 && width <= 64) {
+      return Type::TwoState(width, is_signed);
     }
 
     return std::unexpected(
         Diagnostic::Error(
             source_range,
-            fmt::format("unsupported integral type width {}", width)));
+            fmt::format(
+                "unsupported integral type width {} (must be 1-64)", width)));
   }
 
   if (type.isUnpackedArray()) {

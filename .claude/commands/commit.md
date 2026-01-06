@@ -79,7 +79,8 @@ git switch -c <type>/<short-description>
 
 1. Check context above; create feature branch if on main
 2. Format changed files if needed (C++, markdown, Bazel)
-3. Stage files with `git add <files>` (do NOT use `git add -A`)
-4. Run `git commit` as a separate command (do NOT chain with add)
+3. Run linters (clang-tidy for C++) and **fix all warnings before proceeding**
+4. Stage files with `git add <files>` (do NOT use `git add -A`)
+5. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.

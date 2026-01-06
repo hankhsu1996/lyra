@@ -1,0 +1,35 @@
+feature: size_cast_expressions
+description: Tests for size cast expressions (N'(expr))
+
+cases:
+  - name: size_cast_truncation
+    sv: |
+      module Test;
+        bit [3:0] small;
+        bit [7:0] medium;
+        int result;
+        initial begin
+          medium = 255;
+          small = 4'(medium);  // Explicit size cast to truncate to 4 bits
+          result = int'(small);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15  # 255 & 0xF = 15
+
+  - name: size_cast_extension
+    sv: |
+      module Test;
+        bit [3:0] small;
+        bit [7:0] medium;
+        int result;
+        initial begin
+          small = 4'hF;
+          medium = 8'(small);  // Extend to 8 bits
+          result = int'(medium);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15

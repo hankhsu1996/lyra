@@ -1,0 +1,253 @@
+feature: arbitrary_width_bit_vectors
+description: Tests for bit vectors with arbitrary widths (1-64 bits)
+
+cases:
+  - name: bit_4_basic
+    sv: |
+      module Test;
+        bit [3:0] a;
+        int result;
+        initial begin
+          a = 5;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 5
+
+  - name: bit_4_overflow
+    sv: |
+      module Test;
+        bit [3:0] a;
+        int result;
+        initial begin
+          a = 15;
+          a = a + 1;  // Should wrap to 0
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: bit_8_basic
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 200;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 200
+
+  - name: bit_8_overflow
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 255;
+          a = a + 1;  // Should wrap to 0
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: bit_16_basic
+    sv: |
+      module Test;
+        bit [15:0] a;
+        int result;
+        initial begin
+          a = 12345;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12345
+
+  - name: bit_5_arithmetic
+    sv: |
+      module Test;
+        bit [4:0] a, b, c;
+        int result;
+        initial begin
+          a = 10;
+          b = 20;
+          c = a + b;  // 30 & 0x1F = 30
+          result = c;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: bit_5_overflow_arithmetic
+    sv: |
+      module Test;
+        bit [4:0] a, b, c;
+        int result;
+        initial begin
+          a = 20;
+          b = 20;
+          c = a + b;  // 40 & 0x1F = 8
+          result = c;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+
+  - name: logic_signed_4bit
+    sv: |
+      module Test;
+        logic signed [3:0] a;
+        int result;
+        initial begin
+          a = -5;  // 4-bit: 1011 = -5
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -5
+
+  - name: logic_signed_4bit_comparison
+    sv: |
+      module Test;
+        logic signed [3:0] a, b;
+        int result;
+        initial begin
+          a = -8;  // Minimum 4-bit signed value
+          b = 7;   // Maximum 4-bit signed value
+          result = (a < b) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: bit_12_bitwise
+    sv: |
+      module Test;
+        bit [11:0] a, b, c;
+        int result;
+        initial begin
+          a = 12'hABC;
+          b = 12'h123;
+          c = a & b;
+          result = c;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32  # 0xABC & 0x123 = 0x020
+
+  - name: bit_24_basic
+    sv: |
+      module Test;
+        bit [23:0] a;
+        int result;
+        initial begin
+          a = 24'hCAFE12;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 13303314  # 0xCAFE12
+
+  - name: bit_48_basic
+    sv: |
+      module Test;
+        bit [47:0] a;
+        longint result;
+        initial begin
+          a = 48'hDEADBEEF1234;
+          result = longint'(a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 244837814047284  # 0xDEADBEEF1234
+
+  - name: bit_63_basic
+    sv: |
+      module Test;
+        bit [62:0] a;
+        longint result;
+        initial begin
+          a = 63'h7FFFFFFFFFFFFFF0;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 9223372036854775792  # 0x7FFFFFFFFFFFFFF0
+
+  - name: bit_7_shift
+    sv: |
+      module Test;
+        bit [6:0] a;
+        int result;
+        initial begin
+          a = 7'b1010101;  // 85
+          a = a << 2;      // Should mask to 7 bits
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 84  # (85 << 2) & 0x7F = 340 & 127 = 84
+
+  - name: byte_type
+    sv: |
+      module Test;
+        byte a;
+        int result;
+        initial begin
+          a = -100;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -100
+
+  - name: shortint_type
+    sv: |
+      module Test;
+        shortint a;
+        int result;
+        initial begin
+          a = -30000;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -30000
+
+  - name: bit_2_basic
+    sv: |
+      module Test;
+        bit [1:0] a;
+        int result;
+        initial begin
+          a = 3;
+          a = a + 1;  // Should wrap: 3 + 1 = 0 (mod 4)
+          result = int'(a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
