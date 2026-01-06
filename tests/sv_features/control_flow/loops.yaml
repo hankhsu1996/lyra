@@ -401,3 +401,104 @@ cases:
     expect:
       variables:
         sum: 9
+
+  # Repeat loops
+  - name: repeat_basic_counter
+    sv: |
+      module Test;
+        int counter;
+        initial begin
+          counter = 0;
+          repeat (5) begin
+            counter = counter + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 5
+
+  - name: repeat_zero_count
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          repeat (0) begin
+            x = 20;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: repeat_variable_count
+    sv: |
+      module Test;
+        int n;
+        int sum;
+        initial begin
+          n = 3;
+          sum = 0;
+          repeat (n) begin
+            sum = sum + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 3
+
+  - name: repeat_nested
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          count = 0;
+          repeat (3) begin
+            repeat (2) begin
+              count = count + 1;
+            end
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 6
+
+  - name: repeat_with_break
+    sv: |
+      module Test;
+        int i;
+        initial begin
+          i = 0;
+          repeat (10) begin
+            if (i == 3) break;
+            i = i + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        i: 3
+
+  - name: repeat_with_continue
+    sv: |
+      module Test;
+        int i;
+        int sum;
+        initial begin
+          i = 0;
+          sum = 0;
+          repeat (5) begin
+            i = i + 1;
+            if (i == 2 || i == 4)
+              continue;
+            sum = sum + i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 9

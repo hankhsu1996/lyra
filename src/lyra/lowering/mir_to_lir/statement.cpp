@@ -272,6 +272,78 @@ auto LowerStatement(
       break;
     }
 
+    case mir::Statement::Kind::kRepeat: {
+      const auto& repeat_statement = mir::As<mir::RepeatStatement>(statement);
+      assert(repeat_statement.count);
+      assert(repeat_statement.body);
+
+      // Evaluate count expression and store in a counter temp
+      auto count_value = LowerExpression(*repeat_statement.count, builder);
+      auto counter_temp = builder.AllocateTemp("repeat.counter", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(IK::kMove, counter_temp, count_value));
+
+      // Create literals for comparison and decrement
+      auto zero_literal = builder.InternLiteral(Literal::Int(0));
+      auto one_literal = builder.InternLiteral(Literal::Int(1));
+
+      auto cond_label = builder.MakeLabel("repeat.cond");
+      auto body_label = builder.MakeLabel("repeat.body");
+      auto step_label = builder.MakeLabel("repeat.step");
+      auto end_label = builder.MakeLabel("repeat.end");
+
+      builder.AddInstruction(Instruction::Jump(cond_label));
+
+      // continue jumps to step (to decrement before checking condition)
+      lowering_context.PushLoop({
+          .continue_label = step_label,
+          .break_label = end_label,
+      });
+
+      // Condition block: counter > 0
+      builder.StartBlock(cond_label);
+      auto zero_temp = builder.AllocateTemp("zero", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(
+              IK::kLiteral, zero_temp, Operand::Literal(zero_literal)));
+      auto cond_temp = builder.AllocateTemp("repeat.cond", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(
+              IK::kBinaryGreaterThan, cond_temp,
+              {Operand::Temp(counter_temp), Operand::Temp(zero_temp)}));
+      builder.AddInstruction(
+          Instruction::Branch(cond_temp, body_label, end_label));
+      builder.EndBlock();
+
+      // Body block
+      builder.StartBlock(body_label);
+      LowerStatement(*repeat_statement.body, builder, lowering_context);
+      builder.AddInstruction(Instruction::Jump(step_label));
+      builder.EndBlock();
+
+      // Step block: counter = counter - 1
+      builder.StartBlock(step_label);
+      auto one_temp = builder.AllocateTemp("one", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(
+              IK::kLiteral, one_temp, Operand::Literal(one_literal)));
+      auto new_counter =
+          builder.AllocateTemp("repeat.new_counter", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(
+              IK::kBinarySubtract, new_counter,
+              {Operand::Temp(counter_temp), Operand::Temp(one_temp)}));
+      builder.AddInstruction(
+          Instruction::Basic(IK::kMove, counter_temp, new_counter));
+      builder.AddInstruction(Instruction::Jump(cond_label));
+      builder.EndBlock();
+
+      lowering_context.PopLoop();
+
+      builder.StartBlock(end_label);
+      break;
+    }
+
     case mir::Statement::Kind::kBreak: {
       assert(lowering_context.HasLoop());
       auto target = lowering_context.CurrentLoop().break_label;

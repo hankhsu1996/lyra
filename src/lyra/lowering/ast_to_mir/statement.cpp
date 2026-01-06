@@ -256,6 +256,14 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(true_condition), std::move(body));
     }
 
+    case StatementKind::RepeatLoop: {
+      const auto& repeat_loop = statement.as<slang::ast::RepeatLoopStatement>();
+      auto count = LowerExpression(repeat_loop.count);
+      auto body = LowerStatement(repeat_loop.body);
+      return std::make_unique<mir::RepeatStatement>(
+          std::move(count), std::move(body));
+    }
+
     case StatementKind::Break: {
       return std::make_unique<mir::BreakStatement>();
     }

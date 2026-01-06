@@ -34,6 +34,7 @@ class Statement {
     kWhile,
     kDoWhile,
     kFor,
+    kRepeat,
     kBreak,
     kContinue,
 
@@ -77,6 +78,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "DoWhile";
     case Statement::Kind::kFor:
       return "For";
+    case Statement::Kind::kRepeat:
+      return "Repeat";
     case Statement::Kind::kBreak:
       return "Break";
     case Statement::Kind::kContinue:
@@ -318,6 +321,31 @@ class ForStatement : public Statement {
 
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     auto result = std::format("{}for (...)\n", common::Indent(indent));
+    if (body) {
+      result += body->ToString(indent + 1);
+    }
+    return result;
+  }
+};
+
+class RepeatStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kRepeat;
+  std::unique_ptr<Expression> count;
+  std::unique_ptr<Statement> body;
+
+  RepeatStatement(
+      std::unique_ptr<Expression> count, std::unique_ptr<Statement> body)
+      : Statement(kKindValue), count(std::move(count)), body(std::move(body)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    auto result =
+        std::format("{}repeat {}\n", common::Indent(indent), count->ToString());
     if (body) {
       result += body->ToString(indent + 1);
     }
