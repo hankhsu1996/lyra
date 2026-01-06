@@ -91,6 +91,28 @@ YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and co
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
 
+## Error Handling
+
+**User-facing errors** - Use `DiagnosticException` (`lyra/common/diagnostic.hpp`):
+
+```cpp
+throw DiagnosticException(
+    Diagnostic::Error(source_range, "descriptive message"));
+```
+
+- Provides consistent error formatting with source locations
+- Caught and printed by CLI commands via `PrintDiagnostic()`
+- Use `slang::SourceRange{}` when no source location is available
+
+**Internal errors** - Use `InternalError` (`lyra/common/internal_error.hpp`):
+
+```cpp
+throw common::InternalError("context", "detail about the bug");
+```
+
+- For compiler bugs, not user errors
+- Includes message asking users to report the issue
+
 ## Approach to Changes
 
 For full design rationale, see `docs/design-principles.md`.

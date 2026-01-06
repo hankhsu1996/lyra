@@ -222,15 +222,15 @@ auto Compiler::RunFromSource(
     return result;
   }
 
-  // Lower to MIR
+  // Lower to MIR (empty top = all modules; test API expects single module)
   const auto& root = compilation->getRoot();
-  auto mir = lowering::ast_to_mir::AstToMir(root);
-  if (!mir) {
-    result.error_message_ = "Failed to lower to MIR";
+  auto modules = lowering::ast_to_mir::AstToMir(root, "");
+  if (modules.size() > 1) {
+    result.error_message_ = "Multiple modules found; use CLI with lyra.toml";
     return result;
   }
 
-  return CompileAndRun(*mir, variables_to_read);
+  return CompileAndRun(*modules.front(), variables_to_read);
 }
 
 auto Compiler::RunFromFiles(
@@ -246,15 +246,15 @@ auto Compiler::RunFromFiles(
     return result;
   }
 
-  // Lower to MIR
+  // Lower to MIR (empty top = all modules; test API expects single module)
   const auto& root = compilation->getRoot();
-  auto mir = lowering::ast_to_mir::AstToMir(root);
-  if (!mir) {
-    result.error_message_ = "Failed to lower to MIR";
+  auto modules = lowering::ast_to_mir::AstToMir(root, "");
+  if (modules.size() > 1) {
+    result.error_message_ = "Multiple modules found; use CLI with lyra.toml";
     return result;
   }
 
-  return CompileAndRun(*mir, variables_to_read);
+  return CompileAndRun(*modules.front(), variables_to_read);
 }
 
 }  // namespace lyra::compiler

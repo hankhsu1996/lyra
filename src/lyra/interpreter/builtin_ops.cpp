@@ -17,7 +17,7 @@ namespace {
 
 [[noreturn]] void TypeMismatch(
     const char* op_name, const RuntimeValue& lhs, const RuntimeValue& rhs) {
-  common::ThrowInternalError(
+  throw common::InternalError(
       op_name, std::format(
                    "type mismatch (lhs={}, rhs={})", lhs.type.ToString(),
                    rhs.type.ToString()));
@@ -25,7 +25,7 @@ namespace {
 
 [[noreturn]] void TypeError(
     const char* op_name, const RuntimeValue& val, const char* expected) {
-  common::ThrowInternalError(
+  throw common::InternalError(
       op_name,
       std::format(
           "invalid type (got {}, expected {})", val.type.ToString(), expected));
@@ -37,7 +37,7 @@ void CheckTwoState64(const char* op_name, const RuntimeValue& val) {
   }
   auto two_state_data = std::get<common::TwoStateData>(val.type.data);
   if (two_state_data.bit_width > 64) {
-    common::ThrowInternalError(
+    throw common::InternalError(
         op_name,
         std::format("bit width {} exceeds max 64", two_state_data.bit_width));
   }
@@ -53,7 +53,7 @@ void CheckBinaryTwoState64(
   }
   auto two_state_data = std::get<common::TwoStateData>(lhs.type.data);
   if (two_state_data.bit_width > 64) {
-    common::ThrowInternalError(
+    throw common::InternalError(
         op_name,
         std::format("bit width {} exceeds max 64", two_state_data.bit_width));
   }
@@ -72,7 +72,7 @@ auto AsDoubleValue(const RuntimeValue& val) -> double {
   if (val.IsShortReal()) {
     return static_cast<double>(val.AsFloat());
   }
-  common::ThrowInternalError(
+  throw common::InternalError(
       "AsDoubleValue",
       std::format("expected floating type, got {}", val.type.ToString()));
 }
@@ -306,7 +306,7 @@ auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
 auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   if (IsFloating(lhs) || IsFloating(rhs)) {
-    common::ThrowInternalError(
+    throw common::InternalError(
         "BinaryModulo", "modulo not supported for floating-point values");
   }
 
@@ -350,7 +350,7 @@ auto BinaryEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     return RuntimeValue::Bool(lhs.AsString() == rhs.AsString());
   }
 
-  common::ThrowInternalError(
+  throw common::InternalError(
       "BinaryEqual", std::format("unsupported type {}", lhs.type.ToString()));
 }
 
@@ -374,7 +374,7 @@ auto BinaryNotEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
     return RuntimeValue::Bool(lhs.AsString() != rhs.AsString());
   }
 
-  common::ThrowInternalError(
+  throw common::InternalError(
       "BinaryNotEqual",
       std::format("unsupported type {}", lhs.type.ToString()));
 }

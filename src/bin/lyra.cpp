@@ -226,14 +226,11 @@ auto EmitCommandInternal(
     }
 
     const auto& root = compilation->getRoot();
-    auto mir = lyra::lowering::ast_to_mir::AstToMir(root);
-    if (!mir) {
-      // Diagnostic already printed by lowering
-      return 1;
-    }
+    auto modules = lyra::lowering::ast_to_mir::AstToMir(root, top);
+    const auto& mir = *modules.front();
 
     lyra::compiler::Codegen codegen;
-    std::string code = codegen.Generate(*mir);
+    std::string code = codegen.Generate(mir);
 
     // Create output directory structure
     fs::path out_path(out_dir);
@@ -243,20 +240,18 @@ auto EmitCommandInternal(
     // Copy SDK headers
     WriteSdkHeaders(out_path);
 
-    // Use top module from config if provided, otherwise use MIR module name
-    std::string module_name = top.empty() ? mir->name : top;
-    std::string header_file = mir->name + ".hpp";
+    std::string header_file = mir.name + ".hpp";
     fs::path module_path = design_dir / header_file;
 
     // Wrap code with pragma once and proper includes
     std::string header_code = "#pragma once\n\n" + code;
     WriteFile(module_path, header_code);
 
-    // Generate main.cpp (use top module name for instantiation)
-    WriteFile(out_path / "main.cpp", GenerateMain(module_name, header_file));
+    // Generate main.cpp
+    WriteFile(out_path / "main.cpp", GenerateMain(mir.name, header_file));
 
     // Generate build configuration files
-    WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(module_name));
+    WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(mir.name));
     WriteFile(out_path / "CMakePresets.json", GenerateCMakePresets());
     WriteFile(
         out_path / "compile_commands.json", GenerateCompileCommands(out_path));
@@ -342,26 +337,25 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     }
 
     const auto& root = compilation->getRoot();
-    auto mir = lyra::lowering::ast_to_mir::AstToMir(root);
-    if (!mir) {
-      // Diagnostic already printed by lowering
-      return 1;
-    }
+    // Empty top = get all modules for dump
+    auto modules = lyra::lowering::ast_to_mir::AstToMir(root, "");
 
-    switch (format) {
-      case DumpFormat::kCpp: {
-        lyra::compiler::Codegen codegen;
-        std::cout << codegen.Generate(*mir);
-        break;
-      }
-      case DumpFormat::kMir: {
-        std::cout << mir->ToString();
-        break;
-      }
-      case DumpFormat::kLir: {
-        auto lir = lyra::lowering::mir_to_lir::MirToLir(*mir);
-        std::cout << lir->ToString(lyra::common::FormatMode::kContextual);
-        break;
+    for (const auto& mir : modules) {
+      switch (format) {
+        case DumpFormat::kCpp: {
+          lyra::compiler::Codegen codegen;
+          std::cout << codegen.Generate(*mir);
+          break;
+        }
+        case DumpFormat::kMir: {
+          std::cout << mir->ToString();
+          break;
+        }
+        case DumpFormat::kLir: {
+          auto lir = lyra::lowering::mir_to_lir::MirToLir(*mir);
+          std::cout << lir->ToString(lyra::common::FormatMode::kContextual);
+          break;
+        }
       }
     }
 

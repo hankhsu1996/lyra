@@ -68,7 +68,7 @@ TEST_F(DumpTest, NonexistentFileShowsError) {
   EXPECT_NE(result.combined_output.find("nonexistent"), std::string::npos);
 }
 
-// Test: lyra dump accepts multiple files
+// Test: lyra dump accepts multiple files and outputs all modules
 TEST_F(DumpTest, AcceptsMultipleFiles) {
   WriteSvModule("a.sv", "ModuleA");
   WriteSvModule("b.sv", "ModuleB");
@@ -76,8 +76,9 @@ TEST_F(DumpTest, AcceptsMultipleFiles) {
   auto result = Run({"dump", "cpp", "a.sv", "b.sv"});
 
   EXPECT_TRUE(result.Success()) << result.combined_output;
-  // Should contain at least the first module (dump outputs primary module)
+  // Should contain both modules
   EXPECT_NE(result.combined_output.find("ModuleA"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("ModuleB"), std::string::npos);
 }
 
 // Test: lyra dump with absolute path works
