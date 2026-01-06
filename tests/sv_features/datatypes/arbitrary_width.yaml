@@ -251,3 +251,34 @@ cases:
       variables:
         result: 0
 
+  - name: size_cast_truncation
+    sv: |
+      module Test;
+        bit [3:0] val4;
+        bit [7:0] val8;
+        int result;
+        initial begin
+          val8 = 255;
+          val4 = 4'(val8);  // Explicit size cast to truncate to 4 bits
+          result = int'(val4);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15  # 255 & 0xF = 15
+
+  - name: size_cast_extension
+    sv: |
+      module Test;
+        bit [3:0] val4;
+        bit [7:0] val8;
+        int result;
+        initial begin
+          val4 = 4'hF;
+          val8 = 8'(val4);  // Extend to 8 bits
+          result = int'(val8);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
