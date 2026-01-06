@@ -34,6 +34,7 @@ class Expression {
     kConversion,
     kSystemCall,
     kElementSelect,
+    kRangeSelect,
   };
 
   Kind kind;
@@ -71,6 +72,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "SystemCall";
     case Expression::Kind::kElementSelect:
       return "ElementSelect";
+    case Expression::Kind::kRangeSelect:
+      return "RangeSelect";
   }
   std::abort();
 }
@@ -325,6 +328,32 @@ class ElementSelectExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}[{}]", value->ToString(), selector->ToString());
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class RangeSelectExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kRangeSelect;
+
+  std::unique_ptr<Expression> value;  // Packed vector being sliced
+  int32_t left;                       // Left bound (e.g., 7 in a[7:4])
+  int32_t right;                      // Right bound (e.g., 4 in a[7:4])
+
+  RangeSelectExpression(
+      std::unique_ptr<Expression> value, int32_t left, int32_t right,
+      Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        value(std::move(value)),
+        left(left),
+        right(right) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}[{}:{}]", value->ToString(), left, right);
   }
 
   void Accept(MirVisitor& visitor) const override {

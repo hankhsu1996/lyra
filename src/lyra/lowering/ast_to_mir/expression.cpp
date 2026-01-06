@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -215,6 +216,46 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       return std::make_unique<mir::ElementSelectExpression>(
           std::move(array_value), std::move(selector), *type_result);
+    }
+
+    case slang::ast::ExpressionKind::RangeSelect: {
+      const auto& range_select =
+          expression.as<slang::ast::RangeSelectExpression>();
+
+      // For now, only support Simple constant range (a[7:4])
+      if (range_select.getSelectionKind() !=
+          slang::ast::RangeSelectionKind::Simple) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "only constant range select supported (not indexed "
+                "part-select)"));
+      }
+
+      auto value = LowerExpression(range_select.value());
+
+      // Get constant bounds using Slang's cached constant values
+      const auto* left_cv = range_select.left().getConstant();
+      const auto* right_cv = range_select.right().getConstant();
+      if (left_cv == nullptr || right_cv == nullptr) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "range select bounds must be constant"));
+      }
+
+      auto left =
+          static_cast<int32_t>(left_cv->integer().as<int64_t>().value());
+      auto right =
+          static_cast<int32_t>(right_cv->integer().as<int64_t>().value());
+
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::RangeSelectExpression>(
+          std::move(value), left, right, *type_result);
     }
 
     case slang::ast::ExpressionKind::Call: {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <string>
 #include <vector>
@@ -821,6 +822,24 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*select.selector, kPrecLowest);
         out_ << ")]";
       }
+      break;
+    }
+    case mir::Expression::Kind::kRangeSelect: {
+      const auto& range = mir::As<mir::RangeSelectExpression>(expr);
+      auto result_data = std::get<common::TwoStateData>(expr.type.data);
+      size_t result_width = result_data.bit_width;
+
+      // Compute LSB (minimum of left and right bounds)
+      int32_t lsb = std::min(range.left, range.right);
+
+      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >> lsb)
+      // & mask) Need to cast to uint64_t first to avoid ambiguous operator&
+      // with Bit<N>
+      out_ << "static_cast<" << ToCppType(expr.type)
+           << ">((static_cast<uint64_t>(";
+      EmitExpression(*range.value, kPrecLowest);
+      out_ << ") >> " << lsb << ") & "
+           << std::format("0x{:X}ULL", (1ULL << result_width) - 1) << ")";
       break;
     }
     case mir::Expression::Kind::kTernary: {

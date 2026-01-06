@@ -354,3 +354,76 @@ cases:
     expect:
       variables:
         result: 100
+
+  # Range select tests
+  - name: range_select_nibble
+    sv: |
+      module Test;
+        bit [7:0] data;
+        bit [3:0] high_nibble;
+        int result;
+        initial begin
+          data = 8'hAB;
+          high_nibble = data[7:4];
+          result = high_nibble;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10  # 0xA
+
+  - name: range_select_low
+    sv: |
+      module Test;
+        bit [7:0] data;
+        int result;
+        initial begin
+          data = 8'hAB;
+          result = data[3:0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11  # 0xB
+
+  - name: range_select_middle
+    sv: |
+      module Test;
+        bit [15:0] data;
+        int result;
+        initial begin
+          data = 16'hABCD;
+          result = data[11:4];  // Extract 0xBC
+        end
+      endmodule
+    expect:
+      variables:
+        result: 188  # 0xBC
+
+  - name: range_select_single_bit
+    sv: |
+      module Test;
+        bit [7:0] data;
+        int result;
+        initial begin
+          data = 8'b10101010;  // 0xAA: bits 7,5,3,1 are set
+          result = data[5:5];  // Single bit at position 5 (which is 1)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: range_select_full_width
+    sv: |
+      module Test;
+        bit [7:0] data;
+        int result;
+        initial begin
+          data = 8'hCA;
+          result = data[7:0];  // Full width select
+        end
+      endmodule
+    expect:
+      variables:
+        result: 202  # 0xCA

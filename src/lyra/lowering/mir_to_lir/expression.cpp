@@ -1,6 +1,8 @@
 #include "lyra/lowering/mir_to_lir/expression.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -74,10 +76,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto value = LowerExpression(*assignment.value, builder);
 
       if (assignment.target.IsElementSelect()) {
-        // Element select assignment: array[index] = value
+        // Unpacked array element assignment: array[index] = value
         auto index = LowerExpression(*assignment.target.element_index, builder);
-        auto instruction =
-            Instruction::StoreElement(assignment.target.symbol, index, value);
+        auto instruction = Instruction::StoreUnpackedElement(
+            assignment.target.symbol, index, value);
         builder.AddInstruction(std::move(instruction));
         return value;
       }
@@ -97,23 +99,23 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto index = LowerExpression(*select.selector, builder);
       auto result = builder.AllocateTemp("elem", expression.type);
 
-      // Check if this is packed type (value) or array type (variable reference)
+      // Check if this is packed type (value) or unpacked array (variable)
       if (select.value->type.kind == common::Type::Kind::kTwoState) {
-        // Packed vector: lower the value, then select element
+        // Packed vector: lower the value, then select element/bit
         auto value = LowerExpression(*select.value, builder);
-        auto instruction =
-            Instruction::LoadElement(result, value, index, expression.type);
+        auto instruction = Instruction::LoadPackedElement(
+            result, value, index, expression.type);
         builder.AddInstruction(std::move(instruction));
         return result;
       }
 
-      // Array: must be a direct variable reference
+      // Unpacked array: must be a direct variable reference
       if (select.value->kind != mir::Expression::Kind::kIdentifier) {
         assert(false && "only direct array variable access is supported");
       }
 
       const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-      auto instruction = Instruction::LoadElement(
+      auto instruction = Instruction::LoadUnpackedElement(
           result, array_id.symbol, index, expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
@@ -178,6 +180,29 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         builder.AddInstruction(std::move(instruction));
       }
 
+      return result;
+    }
+
+    case mir::Expression::Kind::kRangeSelect: {
+      const auto& range = mir::As<mir::RangeSelectExpression>(expression);
+      assert(range.value);
+
+      auto value = LowerExpression(*range.value, builder);
+
+      // Compute LSB: for [7:4], LSB is 4
+      int32_t lsb = std::min(range.left, range.right);
+
+      // Create a literal for the LSB shift amount
+      auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());
+      auto lsb_literal = builder.InternLiteral(Literal::Int(lsb));
+      auto lsb_instruction =
+          Instruction::Basic(IK::kLiteral, lsb_temp, lsb_literal);
+      builder.AddInstruction(std::move(lsb_instruction));
+
+      auto result = builder.AllocateTemp("slice", expression.type);
+      auto instruction = Instruction::LoadPackedSlice(
+          result, value, lsb_temp, expression.type);
+      builder.AddInstruction(std::move(instruction));
       return result;
     }
   }

@@ -1,4 +1,4 @@
-# Limitations
+#Limitations
 
 Current SystemVerilog features not yet supported.
 
@@ -17,7 +17,7 @@ Current SystemVerilog features not yet supported.
 - Hierarchical references (`top.sub.signal`)
 - Concatenation (`{a, b, c}`)
 - Replication (`{4{byte}}`)
-- Range/part select (`[7:0]`, `[base+:width]`)
+- Indexed part select (`[base+:width]`, `[base-:width]`)
 - Struct member access (`.field`)
 - `inside` operator
 - Unsized literals (`'0`, `'1`, `'x`)

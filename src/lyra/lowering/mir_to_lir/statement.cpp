@@ -48,10 +48,10 @@ auto LowerStatement(
       auto result_value = LowerExpression(*expression, builder);
 
       if (target.IsElementSelect()) {
-        // Element select assignment: array[index] = value
+        // Unpacked array element assignment: array[index] = value
         auto index = LowerExpression(*target.element_index, builder);
-        auto instruction =
-            Instruction::StoreElement(target.symbol, index, result_value);
+        auto instruction = Instruction::StoreUnpackedElement(
+            target.symbol, index, result_value);
         builder.AddInstruction(std::move(instruction));
         break;
       }

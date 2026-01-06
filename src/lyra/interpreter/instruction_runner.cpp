@@ -321,69 +321,43 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadElement: {
-      // Load element: result = container[index]
-      // Container can be Variable (array) or Temp (packed vector)
+    case lir::InstructionKind::kLoadUnpackedElement: {
+      // Load element from unpacked array: result = array[index]
       assert(instr.operands.size() == 2);
+      assert(instr.operands[0].IsVariable());
       assert(instr.result.has_value());
+
+      auto array_value = read_variable(instr.operands[0]);
+      assert(array_value.IsArray());
 
       auto index_value = get_temp(instr.operands[1]);
       auto index = static_cast<size_t>(index_value.AsInt64());
 
-      if (instr.operands[0].IsVariable()) {
-        // Array element access
-        auto array_value = read_variable(instr.operands[0]);
-        assert(array_value.IsArray());
+      // Get lower bound from array type
+      const auto& array_type = array_value.type;
+      const auto& array_data = std::get<common::ArrayData>(array_type.data);
+      int32_t lower_bound = array_data.lower_bound;
 
-        // Get lower bound from array type
-        const auto& array_type = array_value.type;
-        const auto& array_data = std::get<common::ArrayData>(array_type.data);
-        int32_t lower_bound = array_data.lower_bound;
+      // Adjust index: actual_idx = sv_idx - lower_bound
+      auto actual_idx =
+          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
 
-        // Adjust index: actual_idx = sv_idx - lower_bound
-        auto actual_idx =
-            static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
-
-        // Bounds check
-        if (actual_idx >= array_value.AsArray().size()) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {}, fmt::format(
-                          "array index {} out of bounds (size {})", index,
-                          array_value.AsArray().size())));
-        }
-
-        const auto& element = array_value.GetElement(actual_idx);
-        temp_table.Write(instr.result.value(), element);
-      } else {
-        // Packed vector element/bit selection
-        assert(instr.operands[0].IsTemp());
-        assert(instr.result_type.has_value());
-
-        auto value = get_temp(instr.operands[0]);
-        assert(value.IsTwoState());
-
-        // Get element width from result type
-        const auto& result_type = instr.result_type.value();
-        assert(result_type.kind == common::Type::Kind::kTwoState);
-        auto result_data = std::get<common::TwoStateData>(result_type.data);
-        size_t element_width = result_data.bit_width;
-
-        // Compute bit position: start_bit = index * element_width
-        size_t start_bit = index * element_width;
-
-        // Extract element: (value >> start_bit) & mask
-        uint64_t mask =
-            common::MakeBitMask(static_cast<uint32_t>(element_width));
-        auto extracted = (value.AsUInt64() >> start_bit) & mask;
-        auto result = RuntimeValue::TwoStateUnsigned(extracted, element_width);
-        temp_table.Write(instr.result.value(), result);
+      // Bounds check
+      if (actual_idx >= array_value.AsArray().size()) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format(
+                        "array index {} out of bounds (size {})", index,
+                        array_value.AsArray().size())));
       }
+
+      const auto& element = array_value.GetElement(actual_idx);
+      temp_table.Write(instr.result.value(), element);
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreElement: {
-      // Store element: array[index] = value
+    case lir::InstructionKind::kStoreUnpackedElement: {
+      // Store element to unpacked array: array[index] = value
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
 
@@ -415,6 +389,68 @@ auto RunInstruction(
       }
 
       array_value.SetElement(actual_idx, value);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kLoadPackedElement: {
+      // Load element/bit from packed vector: result = value[index]
+      assert(instr.operands.size() == 2);
+      assert(instr.operands[0].IsTemp());
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+
+      auto value = get_temp(instr.operands[0]);
+      assert(value.IsTwoState());
+
+      auto index_value = get_temp(instr.operands[1]);
+      auto index = static_cast<size_t>(index_value.AsInt64());
+
+      // Get element width from result type
+      const auto& result_type = instr.result_type.value();
+      assert(result_type.kind == common::Type::Kind::kTwoState);
+      auto result_data = std::get<common::TwoStateData>(result_type.data);
+      size_t element_width = result_data.bit_width;
+
+      // Compute bit position: start_bit = index * element_width
+      size_t start_bit = index * element_width;
+
+      // Extract element: (value >> start_bit) & mask
+      uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(element_width));
+      auto extracted = (value.AsUInt64() >> start_bit) & mask;
+      auto result = RuntimeValue::TwoStateUnsigned(extracted, element_width);
+      temp_table.Write(instr.result.value(), result);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kLoadPackedSlice: {
+      // Load slice from packed vector: result = value[msb:lsb]
+      // operands[0] = value (packed vector)
+      // operands[1] = lsb (shift amount)
+      // result_type contains the width
+      assert(instr.operands.size() == 2);
+      assert(instr.operands[0].IsTemp());
+      assert(instr.operands[1].IsTemp());
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+
+      auto value = get_temp(instr.operands[0]);
+      auto lsb_value = get_temp(instr.operands[1]);
+      auto lsb = static_cast<size_t>(lsb_value.AsInt64());
+
+      const auto& result_type = instr.result_type.value();
+      assert(result_type.kind == common::Type::Kind::kTwoState);
+      auto result_data = std::get<common::TwoStateData>(result_type.data);
+      size_t width = result_data.bit_width;
+
+      // Extract slice: (value >> lsb) & mask
+      uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
+      auto extracted = (value.AsUInt64() >> lsb) & mask;
+
+      auto result = result_data.is_signed
+                        ? RuntimeValue::TwoStateSigned(
+                              static_cast<int64_t>(extracted), width)
+                        : RuntimeValue::TwoStateUnsigned(extracted, width);
+      temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
     }
 

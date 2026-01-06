@@ -18,9 +18,10 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
-  kLoadElement,   // Load element: array[index] or packed[index]
-  kStoreElement,  // Store element: array[index] = value or packed[index] =
-                  // value
+  kLoadUnpackedElement,   // Load from unpacked array: arr[index]
+  kStoreUnpackedElement,  // Store to unpacked array: arr[index] = value
+  kLoadPackedElement,     // Bit/element select from packed: vec[index]
+  kLoadPackedSlice,       // Range/part-select from packed: vec[msb:lsb]
 
   // Move operation
   kMove,
@@ -158,38 +159,48 @@ struct Instruction {
         .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
-  // Load element: result = container[index]
-  // For arrays: operand is Variable (array reference)
-  // For packed vectors: operand is Temp (value)
-  static auto LoadElement(
+  // Load element from unpacked array: result = array[index]
+  static auto LoadUnpackedElement(
       TempRef result, SymbolRef array, TempRef index, common::Type element_type)
       -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadElement,
+        .kind = InstructionKind::kLoadUnpackedElement,
         .result = result,
         .result_type = std::move(element_type),
         .operands = {Operand::Variable(array), Operand::Temp(index)}};
   }
 
-  // Load element from packed vector (value, not variable reference)
-  static auto LoadElement(
+  // Store element to unpacked array: array[index] = value
+  static auto StoreUnpackedElement(
+      SymbolRef array, TempRef index, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreUnpackedElement,
+        .operands = {
+            Operand::Variable(array), Operand::Temp(index),
+            Operand::Temp(value)}};
+  }
+
+  // Load element/bit from packed vector: result = value[index]
+  static auto LoadPackedElement(
       TempRef result, TempRef value, TempRef index, common::Type element_type)
       -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadElement,
+        .kind = InstructionKind::kLoadPackedElement,
         .result = result,
         .result_type = std::move(element_type),
         .operands = {Operand::Temp(value), Operand::Temp(index)}};
   }
 
-  // Store element: array[index] = value
-  static auto StoreElement(SymbolRef array, TempRef index, TempRef value)
+  // Load slice from packed vector: result = value[msb:lsb]
+  // lsb_temp is the shift amount, width from result_type
+  static auto LoadPackedSlice(
+      TempRef result, TempRef value, TempRef lsb_temp, common::Type result_type)
       -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kStoreElement,
-        .operands = {
-            Operand::Variable(array), Operand::Temp(index),
-            Operand::Temp(value)}};
+        .kind = InstructionKind::kLoadPackedSlice,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = {Operand::Temp(value), Operand::Temp(lsb_temp)}};
   }
 
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
@@ -264,15 +275,25 @@ struct Instruction {
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 
-      case InstructionKind::kLoadElement:
+      case InstructionKind::kLoadUnpackedElement:
         return fmt::format(
-            "ldel  {}, {}[{}]", result.value(), operands[0].ToString(),
+            "lduel {}, {}[{}]", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
-      case InstructionKind::kStoreElement:
+      case InstructionKind::kStoreUnpackedElement:
         return fmt::format(
-            "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            "stuel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
+
+      case InstructionKind::kLoadPackedElement:
+        return fmt::format(
+            "ldpel {}, {}[{}]", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
+      case InstructionKind::kLoadPackedSlice:
+        return fmt::format(
+            "ldpsl {}, {}[{}:]", result.value(), operands[0].ToString(),
+            operands[1].ToString());
 
       case InstructionKind::kMove:
         return fmt::format(
