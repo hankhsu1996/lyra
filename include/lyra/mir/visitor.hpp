@@ -23,6 +23,7 @@ class ConditionalStatement;
 class WhileStatement;
 class DoWhileStatement;
 class ForStatement;
+class RepeatStatement;
 class BreakStatement;
 class ContinueStatement;
 class BlockStatement;
@@ -55,6 +56,7 @@ class MirVisitor {
   virtual void Visit(const WhileStatement&) = 0;
   virtual void Visit(const DoWhileStatement&) = 0;
   virtual void Visit(const ForStatement&) = 0;
+  virtual void Visit(const RepeatStatement&) = 0;
   virtual void Visit(const BreakStatement&) = 0;
   virtual void Visit(const ContinueStatement&) = 0;
   virtual void Visit(const BlockStatement&) = 0;

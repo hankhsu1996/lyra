@@ -118,6 +118,11 @@ class SensitivityCollector : public mir::MirVisitor {
     statement.body->Accept(*this);
   }
 
+  void Visit(const mir::RepeatStatement& statement) override {
+    statement.count->Accept(*this);
+    statement.body->Accept(*this);
+  }
+
   void Visit(const mir::BlockStatement& statement) override {
     for (const auto& inner_statement : statement.statements) {
       inner_statement->Accept(*this);

@@ -458,6 +458,19 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       out_ << "}\n";
       break;
     }
+    case mir::Statement::Kind::kRepeat: {
+      const auto& repeat_stmt = mir::As<mir::RepeatStatement>(stmt);
+      Indent();
+      out_ << "for (int _repeat_i = static_cast<int>(";
+      EmitExpression(*repeat_stmt.count);
+      out_ << "); _repeat_i > 0; --_repeat_i) {\n";
+      indent_++;
+      EmitStatement(*repeat_stmt.body);
+      indent_--;
+      Indent();
+      out_ << "}\n";
+      break;
+    }
     case mir::Statement::Kind::kBreak: {
       Line("break;");
       break;

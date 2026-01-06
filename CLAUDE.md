@@ -47,21 +47,41 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
 
 ## Lyra CLI
 
-Lyra uses a project-based workflow with `lyra.toml` configuration files.
+Lyra has two modes: **project-based commands** and **standalone dump commands**.
+
+### Project-Based Commands
+
+These commands require `lyra.toml` in the current directory. They take **NO positional arguments**.
 
 ```bash
-lyra init <name>                               # Create new project
-lyra run                                       # Build and run (requires lyra.toml)
-lyra run --interpret                           # Run with interpreter
-lyra build                                     # Generate C++ and compile (no run)
-lyra emit                                      # Generate C++ project to out/
-lyra check                                     # Parse and validate only
-lyra dump cpp <file.sv>                        # Dump generated C++ code
-lyra dump mir <file.sv>                        # Dump MIR
-lyra dump lir <file.sv>                        # Dump LIR
+lyra run                    # Build C++ and run simulation
+lyra run --interpret        # Run with interpreter (no C++ compilation)
+lyra build                  # Generate and compile C++ (no run)
+lyra emit                   # Generate C++ project to out/
+lyra check                  # Parse and validate only
 ```
 
-The `lyra.toml` format requires separate sections:
+**Important:** Must run from directory containing `lyra.toml`. To run from elsewhere:
+
+```bash
+bash -c 'cd /path/to/project && lyra run'
+```
+
+### Standalone Commands
+
+These commands take source files directly (no `lyra.toml` needed):
+
+```bash
+lyra init <name>            # Create new project in <name>/
+lyra init                   # Create new project in current directory
+lyra dump cpp <file.sv>     # Dump generated C++ code
+lyra dump mir <file.sv>     # Dump MIR
+lyra dump lir <file.sv>     # Dump LIR
+```
+
+### Project Configuration
+
+The `lyra.toml` format:
 
 ```toml
 [package]
@@ -89,6 +109,14 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 ## Testing
 
 YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and codegen backends.
+
+Test targets follow the pattern `//tests:<category>_<feature>_tests`:
+
+```bash
+bazel test //tests:control_flow_loops_tests      # Run loop tests
+bazel test //tests:datatypes_arrays_tests        # Run array tests
+bazel query '//tests/...:*' --output=label       # List all test targets
+```
 
 ## Code Style
 
