@@ -129,3 +129,75 @@ cases:
       endmodule
     expect:
       output: "3.142\n"
+
+  - name: display_integer_width
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $display("%5d", x);
+        end
+      endmodule
+    expect:
+      output: "   42\n"
+
+  - name: display_integer_zero_pad
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $display("%05d", x);
+        end
+      endmodule
+    expect:
+      output: "00042\n"
+
+  - name: display_hex_zero_pad
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $display("%04h", x);
+        end
+      endmodule
+    expect:
+      output: "00ff\n"
+
+  - name: display_binary_zero_pad
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $display("%08b", x);
+        end
+      endmodule
+    expect:
+      output: "00000101\n"
+
+  - name: display_string_width
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hi";
+          $display("[%5s]", s);
+        end
+      endmodule
+    expect:
+      output: "[   hi]\n"
+
+  - name: display_string_left_align
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hi";
+          $display("[%-5s]", s);
+        end
+      endmodule
+    expect:
+      output: "[hi   ]\n"

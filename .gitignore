@@ -10,6 +10,7 @@
 /compile_commands.json
 /.cache/
 /.clangd/
+/obj_dir/
 
 # Editor files
 .vscode/settings.json

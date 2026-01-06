@@ -4,7 +4,6 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <functional>
 #include <string>
 #include <vector>
@@ -30,6 +29,7 @@ namespace {
 struct FormatSpec {
   char spec{};
   bool zero_pad = false;
+  bool left_align = false;
   std::string width;
   std::string precision;
 };
@@ -40,6 +40,16 @@ struct FormatSpec {
 auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     -> std::string {
   if (value.IsString()) {
+    if (!spec.width.empty()) {
+      std::string fmt = "{:";
+      // SV default is right-align, but fmt::format default is left-align
+      if (!spec.left_align) {
+        fmt += ">";  // Right-align (SV default) in fmt::format
+      }
+      fmt += spec.width;
+      fmt += "}";
+      return fmt::format(fmt::runtime(fmt), value.AsString());
+    }
     return value.AsString();
   }
 
@@ -70,16 +80,51 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     return value.ToString();
   }
 
-  auto v = static_cast<uint64_t>(value.AsInt64());
+  // Build format string with optional width for integer types
+  auto build_int_format = [&spec](char type_char) -> std::string {
+    std::string fmt = "{:";
+    if (spec.zero_pad) {
+      fmt += "0";
+    }
+    if (!spec.width.empty()) {
+      fmt += spec.width;
+    }
+    fmt += type_char;
+    fmt += "}";
+    return fmt;
+  };
+
   switch (spec.spec) {
     case 'x':
-    case 'h':
-      return std::format("{:x}", v);
-    case 'b':
-      return std::format("{:b}", v);
-    case 'o':
-      return std::format("{:o}", v);
-    default:  // 'd' or 's'
+    case 'h': {
+      // Unsigned for hex/binary/octal
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('x')), v);
+    }
+    case 'b': {
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('b')), v);
+    }
+    case 'o': {
+      auto v = static_cast<uint64_t>(value.AsInt64());
+      return fmt::format(fmt::runtime(build_int_format('o')), v);
+    }
+    case 'd': {
+      // Signed for decimal to preserve negative numbers
+      auto v = value.AsInt64();
+      return fmt::format(fmt::runtime(build_int_format('d')), v);
+    }
+    default:  // 's'
+      if (!spec.width.empty()) {
+        std::string fmt = "{:";
+        // SV default is right-align, but fmt::format default is left-align
+        if (!spec.left_align) {
+          fmt += ">";  // Right-align (SV default) in fmt::format
+        }
+        fmt += spec.width;
+        fmt += "}";
+        return fmt::format(fmt::runtime(fmt), value.ToString());
+      }
       return value.ToString();
   }
 }
@@ -105,6 +150,12 @@ auto FormatDisplay(
       } else {
         FormatSpec spec;
         ++i;  // Consume '%'
+
+        // Check for left-align flag '-'
+        if (i < fmt_str.size() && fmt_str[i] == '-') {
+          spec.left_align = true;
+          ++i;
+        }
 
         if (i < fmt_str.size() && fmt_str[i] == '0') {
           spec.zero_pad = true;
@@ -144,13 +195,15 @@ auto FormatDisplay(
                   fmt::format("unsupported format specifier: %{}", spec.spec)));
         }
 
-        if (spec.spec != 'f' &&
-            (spec.zero_pad || !spec.width.empty() || !spec.precision.empty())) {
+        // Precision is only valid for %f (floats)
+        if (spec.spec != 'f' && !spec.precision.empty()) {
           throw DiagnosticException(
               Diagnostic::Error(
-                  {},
-                  "unsupported format specifier: width/precision only "
-                  "supported for %f"));
+                  {}, fmt::format(
+                          "unsupported format specifier: precision not "
+                          "supported for "
+                          "%{}",
+                          spec.spec)));
         }
 
         if (arg_idx >= args.size()) {
