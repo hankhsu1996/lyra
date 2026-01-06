@@ -12,6 +12,7 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -159,20 +160,61 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& assignment =
           expression.as<slang::ast::AssignmentExpression>();
       const auto& left = assignment.left();
-
-      if (left.kind != slang::ast::ExpressionKind::NamedValue) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                left.sourceRange, fmt::format(
-                                      "unsupported assignment target kind '{}'",
-                                      slang::ast::toString(left.kind))));
-      }
-
-      const auto& target = left.as<slang::ast::NamedValueExpression>().symbol;
       auto value = LowerExpression(assignment.right());
       auto is_non_blocking = assignment.isNonBlocking();
-      return std::make_unique<mir::AssignmentExpression>(
-          &target, std::move(value), is_non_blocking);
+
+      // Simple variable assignment
+      if (left.kind == slang::ast::ExpressionKind::NamedValue) {
+        const auto& target = left.as<slang::ast::NamedValueExpression>().symbol;
+        return std::make_unique<mir::AssignmentExpression>(
+            &target, std::move(value), is_non_blocking);
+      }
+
+      // Element select assignment (arr[i] = value)
+      if (left.kind == slang::ast::ExpressionKind::ElementSelect) {
+        const auto& element_select =
+            left.as<slang::ast::ElementSelectExpression>();
+        const auto& array_expr = element_select.value();
+
+        // For now, we only support direct array variable access
+        if (array_expr.kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  array_expr.sourceRange,
+                  "only direct array variable assignment is supported"));
+        }
+
+        const auto& array_symbol =
+            array_expr.as<slang::ast::NamedValueExpression>().symbol;
+        auto index = LowerExpression(element_select.selector());
+
+        mir::AssignmentTarget target(&array_symbol, std::move(index));
+        return std::make_unique<mir::AssignmentExpression>(
+            std::move(target), std::move(value), is_non_blocking);
+      }
+
+      throw DiagnosticException(
+          Diagnostic::Error(
+              left.sourceRange, fmt::format(
+                                    "unsupported assignment target kind '{}'",
+                                    slang::ast::toString(left.kind))));
+    }
+
+    case slang::ast::ExpressionKind::ElementSelect: {
+      const auto& element_select =
+          expression.as<slang::ast::ElementSelectExpression>();
+      auto array_value = LowerExpression(element_select.value());
+      auto selector = LowerExpression(element_select.selector());
+
+      // Get the element type from the array type
+      auto type_result =
+          LowerType(*element_select.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::ElementSelectExpression>(
+          std::move(array_value), std::move(selector), *type_result);
     }
 
     case slang::ast::ExpressionKind::Call: {

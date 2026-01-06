@@ -33,6 +33,7 @@ class Expression {
     kAssignment,
     kConversion,
     kSystemCall,
+    kElementSelect,
   };
 
   Kind kind;
@@ -68,6 +69,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Conversion";
     case Expression::Kind::kSystemCall:
       return "SystemCall";
+    case Expression::Kind::kElementSelect:
+      return "ElementSelect";
   }
   std::abort();
 }
@@ -188,24 +191,66 @@ class TernaryExpression : public Expression {
   }
 };
 
+// Forward declaration for AssignmentTarget
+class ElementSelectExpression;
+
+// Represents the target of an assignment - either a simple variable or an array
+// element
+struct AssignmentTarget {
+  SymbolRef symbol;  // The base variable
+  std::unique_ptr<Expression>
+      element_index;  // Optional: index for element select
+
+  // Constructor for simple variable assignment
+  explicit AssignmentTarget(SymbolRef sym)
+      : symbol(std::move(sym)), element_index(nullptr) {
+  }
+
+  // Constructor for element select assignment
+  AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index)
+      : symbol(std::move(sym)), element_index(std::move(index)) {
+  }
+
+  [[nodiscard]] auto IsElementSelect() const -> bool {
+    return element_index != nullptr;
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string {
+    if (element_index) {
+      return fmt::format("{}[{}]", symbol->name, element_index->ToString());
+    }
+    return std::string(symbol->name);
+  }
+};
+
 class AssignmentExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kAssignment;
-  SymbolRef target;
+  AssignmentTarget target;
   std::shared_ptr<Expression> value;
   bool is_non_blocking;
 
   AssignmentExpression(
-      SymbolRef target, std::shared_ptr<Expression> v, bool is_non_blocking)
+      AssignmentTarget target, std::shared_ptr<Expression> v,
+      bool is_non_blocking)
       : Expression(kKindValue, v->type),
-        target(target),
+        target(std::move(target)),
+        value(std::move(v)),
+        is_non_blocking(is_non_blocking) {
+  }
+
+  // Convenience constructor for simple variable assignment
+  AssignmentExpression(
+      SymbolRef sym, std::shared_ptr<Expression> v, bool is_non_blocking)
+      : Expression(kKindValue, v->type),
+        target(std::move(sym)),
         value(std::move(v)),
         is_non_blocking(is_non_blocking) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format(
-        "({} = {})", target->name, value ? value->ToString() : "<null>");
+        "({} = {})", target.ToString(), value ? value->ToString() : "<null>");
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -256,6 +301,30 @@ class SystemCallExpression : public Expression {
       arg_strs.push_back(arg ? arg->ToString() : "<null>");
     }
     return fmt::format("({} {})", name, fmt::join(arg_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class ElementSelectExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kElementSelect;
+
+  std::unique_ptr<Expression> value;     // Array being indexed
+  std::unique_ptr<Expression> selector;  // Index expression
+
+  ElementSelectExpression(
+      std::unique_ptr<Expression> value, std::unique_ptr<Expression> selector,
+      Type element_type)
+      : Expression(kKindValue, std::move(element_type)),
+        value(std::move(value)),
+        selector(std::move(selector)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}[{}]", value->ToString(), selector->ToString());
   }
 
   void Accept(MirVisitor& visitor) const override {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <variant>
@@ -11,6 +12,8 @@
 #include "lyra/common/meta_util.hpp"
 
 namespace lyra::common {
+
+struct Type;  // Forward declaration for ArrayData
 
 struct TwoStateData {
   size_t bit_width;
@@ -26,11 +29,20 @@ struct TwoStateData {
   }
 };
 
+struct ArrayData {
+  std::shared_ptr<Type> element_type;
+  size_t size;
+  int32_t lower_bound;  // For [2:5] style ranges, lower_bound=2
+
+  auto operator==(const ArrayData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 struct Type {
-  enum class Kind { kVoid, kTwoState, kReal, kShortReal, kString };
+  enum class Kind { kVoid, kTwoState, kReal, kShortReal, kString, kArray };
 
   Kind kind{};
-  std::variant<std::monostate, TwoStateData> data{};
+  std::variant<std::monostate, TwoStateData, ArrayData> data{};
 
   static auto FromSlang(const slang::ast::Type& type) -> Type {
     if (type.isString()) {
@@ -99,6 +111,16 @@ struct Type {
     return Type{.kind = Kind::kShortReal};
   }
 
+  static auto Array(Type element, size_t size, int32_t lower_bound = 0)
+      -> Type {
+    return Type{
+        .kind = Kind::kArray,
+        .data = ArrayData{
+            .element_type = std::make_shared<Type>(element),
+            .size = size,
+            .lower_bound = lower_bound}};
+  }
+
   auto operator==(const Type& other) const -> bool = default;
 
   [[nodiscard]] auto Hash() const -> std::size_t {
@@ -141,9 +163,26 @@ struct Type {
         return "shortreal";
       case Kind::kString:
         return "string";
+      case Kind::kArray: {
+        const auto& arr = std::get<ArrayData>(data);
+        return fmt::format("{}[{}]", arr.element_type->ToString(), arr.size);
+      }
     }
   }
 };
+
+inline auto ArrayData::operator==(const ArrayData& other) const -> bool {
+  return size == other.size && lower_bound == other.lower_bound &&
+         *element_type == *other.element_type;
+}
+
+inline auto ArrayData::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= element_type->Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<size_t>{}(size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<int32_t>{}(lower_bound) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  return h;
+}
 
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
@@ -157,6 +196,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "shortreal";
     case Type::Kind::kString:
       return "string";
+    case Type::Kind::kArray:
+      return "array";
   }
 }
 

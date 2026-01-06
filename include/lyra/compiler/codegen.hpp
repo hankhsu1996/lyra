@@ -3,6 +3,7 @@
 #include <sstream>
 #include <string>
 
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::compiler {
@@ -19,6 +20,7 @@ class Codegen {
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
+  void EmitAssignmentTarget(const mir::AssignmentTarget& target);
 
   std::ostringstream out_;
   int indent_ = 0;

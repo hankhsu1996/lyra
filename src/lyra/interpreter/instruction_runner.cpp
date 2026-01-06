@@ -266,6 +266,77 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kLoadElement: {
+      // Load element: result = array[index]
+      assert(instr.operands.size() == 2);
+      assert(instr.result.has_value());
+      assert(instr.operands[0].IsVariable());
+
+      auto array_value = read_variable(instr.operands[0]);
+      assert(array_value.IsArray());
+
+      auto index_value = get_temp(instr.operands[1]);
+      auto index = static_cast<size_t>(index_value.AsInt64());
+
+      // Get lower bound from array type
+      const auto& array_type = array_value.type;
+      const auto& array_data = std::get<common::ArrayData>(array_type.data);
+      int32_t lower_bound = array_data.lower_bound;
+
+      // Adjust index: actual_idx = sv_idx - lower_bound
+      size_t actual_idx =
+          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+
+      // Bounds check
+      if (actual_idx >= array_value.AsArray().size()) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format(
+                        "array index {} out of bounds (size {})", index,
+                        array_value.AsArray().size())));
+      }
+
+      const auto& element = array_value.GetElement(actual_idx);
+      temp_table.Write(instr.result.value(), element);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStoreElement: {
+      // Store element: array[index] = value
+      assert(instr.operands.size() == 3);
+      assert(instr.operands[0].IsVariable());
+
+      // RuntimeValue uses shared_ptr for array storage, so modifications
+      // through this copy will affect the original in the variable table
+      auto array_value = read_variable(instr.operands[0]);
+      assert(array_value.IsArray());
+
+      auto index_value = get_temp(instr.operands[1]);
+      auto index = static_cast<size_t>(index_value.AsInt64());
+      auto value = get_temp(instr.operands[2]);
+
+      // Get lower bound from array type
+      const auto& array_type = array_value.type;
+      const auto& array_data = std::get<common::ArrayData>(array_type.data);
+      int32_t lower_bound = array_data.lower_bound;
+
+      // Adjust index: actual_idx = sv_idx - lower_bound
+      size_t actual_idx =
+          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+
+      // Bounds check
+      if (actual_idx >= array_value.AsArray().size()) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format(
+                        "array index {} out of bounds (size {})", index,
+                        array_value.AsArray().size())));
+      }
+
+      array_value.SetElement(actual_idx, value);
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kMove: {
       assert(instr.operands.size() == 1);
       assert(instr.result.has_value());
