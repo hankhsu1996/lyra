@@ -54,6 +54,8 @@ Bullet points should describe **what changed**, not background context or why th
 
 **IMPORTANT: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By". These duplicate badly when squash-merging.
 
+**IMPORTANT: Focus on features, not implementation journey.** Don't reference internal tracking like "Phase 1", "Step 2", or planning documents.
+
 ## Branch Rules
 
 If on main, create a feature branch first (prefer `switch` over `checkout`):
