@@ -27,6 +27,12 @@ Current SystemVerilog features not yet supported.
 - Case equality (`===`, `!==`)
 - Wildcard equality (`==?`, `!=?`)
 
-## System Tasks
+## System Tasks/Functions
 
-Only `$display` and `$finish` are supported. Others like `$write`, `$monitor`, `$random`, `$readmemh` are not yet implemented.
+Supported:
+
+- `$display` - formatted output
+- `$finish`, `$stop`, `$exit` - simulation control
+- `$time`, `$stime`, `$realtime` - simulation time (without timescale scaling)
+
+Not yet implemented: `$write`, `$monitor`, `$random`, `$readmemh`, `timescale directive.

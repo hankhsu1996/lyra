@@ -768,6 +768,34 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      // Simulation time functions: $time, $stime, $realtime
+      if (instr.system_call_name == "$time") {
+        assert(instr.result.has_value());
+        // $time returns 64-bit signed time
+        auto result = RuntimeValue::TwoStateSigned(
+            static_cast<int64_t>(simulation_context.current_time), 64);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$stime") {
+        assert(instr.result.has_value());
+        // $stime returns low 32 bits of simulation time as unsigned
+        auto result = RuntimeValue::TwoStateUnsigned(
+            simulation_context.current_time & 0xFFFFFFFF, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$realtime") {
+        assert(instr.result.has_value());
+        // $realtime returns simulation time as real (double)
+        auto result = RuntimeValue::Real(
+            static_cast<double>(simulation_context.current_time));
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
       // Supported system calls are validated in AST→MIR
       assert(false && "unsupported system call should be rejected in AST→MIR");
     }
