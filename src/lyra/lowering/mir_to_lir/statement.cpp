@@ -344,6 +344,100 @@ auto LowerStatement(
       break;
     }
 
+    case mir::Statement::Kind::kCase: {
+      const auto& case_stmt = mir::As<mir::CaseStatement>(statement);
+      assert(case_stmt.condition);
+
+      // Evaluate case condition once and store in a temp
+      auto cond_value = LowerExpression(*case_stmt.condition, builder);
+      auto cond_temp = builder.AllocateTemp("case.cond", Type::Int());
+      builder.AddInstruction(
+          Instruction::Basic(IK::kMove, cond_temp, cond_value));
+
+      auto end_label = builder.MakeLabel("case.end");
+
+      // Generate labels for each item body and next check
+      std::vector<lir::LabelRef> item_labels;
+      std::vector<lir::LabelRef> check_labels;
+      for (size_t i = 0; i < case_stmt.items.size(); ++i) {
+        item_labels.push_back(builder.MakeLabel("case.item"));
+        check_labels.push_back(builder.MakeLabel("case.check"));
+      }
+
+      // Default or end label for when no item matches
+      auto default_label = case_stmt.default_case
+                               ? builder.MakeLabel("case.default")
+                               : end_label;
+
+      // Jump to first check
+      if (!case_stmt.items.empty()) {
+        builder.AddInstruction(Instruction::Jump(check_labels[0]));
+      } else if (case_stmt.default_case) {
+        builder.AddInstruction(Instruction::Jump(default_label));
+      } else {
+        builder.AddInstruction(Instruction::Jump(end_label));
+      }
+
+      // Generate check and body blocks for each item
+      for (size_t i = 0; i < case_stmt.items.size(); ++i) {
+        const auto& item = case_stmt.items[i];
+        auto next_label = (i + 1 < case_stmt.items.size()) ? check_labels[i + 1]
+                                                           : default_label;
+
+        // Check block: compare condition against each expression
+        builder.StartBlock(check_labels[i]);
+
+        // Evaluate all expressions and OR together
+        // match = (cond == expr0) || (cond == expr1) || ...
+        lir::TempRef match_result{};
+        for (size_t j = 0; j < item.expressions.size(); ++j) {
+          auto expr_value = LowerExpression(*item.expressions[j], builder);
+          auto cmp_temp = builder.AllocateTemp("case.cmp", Type::Int());
+          builder.AddInstruction(
+              Instruction::Basic(
+                  IK::kBinaryEqual, cmp_temp,
+                  std::vector<Operand>{
+                      Operand::Temp(cond_temp), Operand::Temp(expr_value)}));
+
+          if (j == 0) {
+            match_result = cmp_temp;
+          } else {
+            auto or_temp = builder.AllocateTemp("case.or", Type::Int());
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kBinaryLogicalOr, or_temp,
+                    std::vector<Operand>{
+                        Operand::Temp(match_result), Operand::Temp(cmp_temp)}));
+            match_result = or_temp;
+          }
+        }
+
+        builder.AddInstruction(
+            Instruction::Branch(match_result, item_labels[i], next_label));
+        builder.EndBlock();
+
+        // Body block
+        builder.StartBlock(item_labels[i]);
+        if (item.statement) {
+          LowerStatement(*item.statement, builder, lowering_context);
+        }
+        builder.AddInstruction(Instruction::Jump(end_label));
+        builder.EndBlock();
+      }
+
+      // Default block (if present)
+      if (case_stmt.default_case) {
+        builder.StartBlock(default_label);
+        LowerStatement(*case_stmt.default_case, builder, lowering_context);
+        builder.AddInstruction(Instruction::Jump(end_label));
+        builder.EndBlock();
+      }
+
+      // End block
+      builder.StartBlock(end_label);
+      break;
+    }
+
     case mir::Statement::Kind::kBreak: {
       assert(lowering_context.HasLoop());
       auto target = lowering_context.CurrentLoop().break_label;

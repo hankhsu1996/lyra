@@ -471,6 +471,73 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       out_ << "}\n";
       break;
     }
+    case mir::Statement::Kind::kCase: {
+      const auto& case_stmt = mir::As<mir::CaseStatement>(stmt);
+
+      // Block scope for the condition temp variable
+      Indent();
+      out_ << "{\n";
+      indent_++;
+
+      // Emit condition once into a temp
+      Indent();
+      out_ << "auto _case_cond = ";
+      EmitExpression(*case_stmt.condition);
+      out_ << ";\n";
+
+      // Emit if-else-if chain for each item
+      bool first = true;
+      for (const auto& item : case_stmt.items) {
+        Indent();
+        if (first) {
+          out_ << "if (";
+          first = false;
+        } else {
+          out_ << "} else if (";
+        }
+
+        // Emit condition: (_case_cond == expr0) || (_case_cond == expr1) || ...
+        for (size_t i = 0; i < item.expressions.size(); ++i) {
+          if (i > 0) {
+            out_ << " || ";
+          }
+          out_ << "_case_cond == ";
+          EmitExpression(*item.expressions[i]);
+        }
+        out_ << ") {\n";
+        indent_++;
+        if (item.statement) {
+          EmitStatement(*item.statement);
+        }
+        indent_--;
+      }
+
+      // Emit default case (if any)
+      if (case_stmt.default_case) {
+        if (!case_stmt.items.empty()) {
+          Indent();
+          out_ << "} else {\n";
+          indent_++;
+          EmitStatement(*case_stmt.default_case);
+          indent_--;
+        } else {
+          // No items, just default
+          EmitStatement(*case_stmt.default_case);
+        }
+      }
+
+      // Close if chain
+      if (!case_stmt.items.empty()) {
+        Indent();
+        out_ << "}\n";
+      }
+
+      // Close block scope
+      indent_--;
+      Indent();
+      out_ << "}\n";
+      break;
+    }
     case mir::Statement::Kind::kBreak: {
       Line("break;");
       break;
