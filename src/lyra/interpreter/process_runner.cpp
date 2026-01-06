@@ -15,7 +15,8 @@ namespace lyra::interpreter {
 auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect) -> ProcessResult {
+    ProcessContext& process_context, ProcessEffect& effect,
+    const InstanceContext* instance_context) -> ProcessResult {
   for (const auto& variable : process->variables) {
     process_context.variable_table.InitializeVariable(variable);
   }
@@ -24,7 +25,8 @@ auto RunProcess(
     // get the basic block
     const auto& block = *process->blocks[block_index];
     auto block_result = RunBlock(
-        block, instruction_index, simulation_context, process_context, effect);
+        block, instruction_index, simulation_context, process_context, effect,
+        instance_context);
 
     switch (block_result.kind) {
       case BasicBlockResult::Kind::kComplete:

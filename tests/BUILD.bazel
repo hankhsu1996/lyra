@@ -175,3 +175,8 @@ sv_feature_test(
     name = "timing_printtimescale_tests",
     yaml = "sv_features/timing/printtimescale.yaml",
 )
+
+sv_feature_test(
+    name = "hierarchy_local_variables_tests",
+    yaml = "sv_features/hierarchy/local_variables.yaml",
+)

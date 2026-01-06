@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns  |
 | `docs/architecture.md`             | Component relationships, data flow          |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model          |
+| `docs/interpreter-hierarchy.md`    | Interpreter hierarchical module support     |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands |
 | `docs/limitations.md`              | Unsupported SystemVerilog features          |
 | `docs/documentation-guidelines.md` | Documentation guidelines                    |

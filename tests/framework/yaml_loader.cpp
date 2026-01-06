@@ -64,6 +64,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       }
     }
 
+    // Parse skip_codegen flag (for hierarchy tests that need CLI)
+    if (node["skip_codegen"]) {
+      tc.skip_codegen = node["skip_codegen"].as<bool>();
+    }
+
     cases.push_back(std::move(tc));
   }
 

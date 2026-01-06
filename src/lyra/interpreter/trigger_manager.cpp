@@ -16,11 +16,18 @@
 namespace lyra::interpreter {
 
 void TriggerManager::RegisterWaitingProcess(
-    const std::shared_ptr<lir::Process>& process, const SymbolRef& variable,
+    const std::shared_ptr<lir::Process>& process,
+    const std::shared_ptr<InstanceContext>& instance, const SymbolRef& variable,
     common::EdgeKind edge_kind, std::size_t block_index,
     std::size_t instruction_index) {
-  wait_map_[variable].insert(process);
-  wait_set_[process] = {
+  ProcessInstanceKey pi_key{.process = process, .instance = instance};
+  wait_map_[variable].insert(pi_key);
+
+  // Use (process, instance, variable) as key to store per-variable edge kind
+  ProcessInstanceVarKey piv_key{
+      .process = process, .instance = instance, .variable = variable};
+  wait_set_[piv_key] = {
+      .instance = instance,
       .block_index = block_index,
       .instruction_index = instruction_index,
       .edge_kind = edge_kind};
@@ -30,7 +37,7 @@ auto TriggerManager::CheckTriggers(
     const std::vector<SymbolRef>& modified_variables)
     -> std::vector<ScheduledEvent> {
   std::vector<ScheduledEvent> events_to_trigger;
-  std::unordered_set<std::shared_ptr<lir::Process>> triggered_processes;
+  std::unordered_set<ProcessInstanceKey, ProcessInstanceKeyHash> triggered_keys;
 
   for (const auto& variable : modified_variables) {
     // Read previous and current values of the variable
@@ -47,15 +54,20 @@ auto TriggerManager::CheckTriggers(
       continue;
     }
 
-    std::unordered_set<std::shared_ptr<lir::Process>> to_remove;
+    std::unordered_set<ProcessInstanceKey, ProcessInstanceKeyHash> to_remove;
 
-    for (const auto& process : map_it->second) {
-      // Skip if this process is already triggered
-      if (triggered_processes.contains(process)) {
+    for (const auto& pi_key : map_it->second) {
+      // Skip if this (process, instance) is already triggered
+      if (triggered_keys.contains(pi_key)) {
         continue;
       }
 
-      auto info_it = wait_set_.find(process);
+      // Look up with (process, instance, variable) key
+      ProcessInstanceVarKey piv_key{
+          .process = pi_key.process,
+          .instance = pi_key.instance,
+          .variable = variable};
+      auto info_it = wait_set_.find(piv_key);
       if (info_it == wait_set_.end()) {
         continue;
       }
@@ -65,32 +77,34 @@ auto TriggerManager::CheckTriggers(
       if (ShouldTrigger(old_value, new_value, wait_info.edge_kind)) {
         events_to_trigger.push_back(
             ScheduledEvent{
-                .process = process,
+                .process = pi_key.process,
+                .instance = wait_info.instance,
                 .block_index = wait_info.block_index,
                 .instruction_index = wait_info.instruction_index});
-        triggered_processes.insert(process);
-        to_remove.insert(process);
-      }
-
-      if (!to_remove.empty()) {
-        std::vector<std::string> proc_names;
-        for (const auto& proc : to_remove) {
-          proc_names.push_back(proc->name);
-        }
-
-        std::string trace_detail = fmt::format(
-            "Trigger on variable '{}': old = {}, new = {}, triggered "
-            "process(es) = {}",
-            variable->name, old_value.ToString(), new_value.ToString(),
-            fmt::join(proc_names, ", "));
-
-        context_.get().tracer.Record(trace_detail);
+        triggered_keys.insert(pi_key);
+        to_remove.insert(pi_key);
       }
     }
 
-    // Remove triggered processes from wait map for this variable
-    for (const auto& proc : to_remove) {
-      map_it->second.erase(proc);
+    // Trace triggered processes (moved outside inner loop)
+    if (!to_remove.empty()) {
+      std::vector<std::string> proc_names;
+      for (const auto& k : to_remove) {
+        proc_names.push_back(k.process->name);
+      }
+
+      std::string trace_detail = fmt::format(
+          "Trigger on variable '{}': old = {}, new = {}, triggered "
+          "process(es) = {}",
+          variable->name, old_value.ToString(), new_value.ToString(),
+          fmt::join(proc_names, ", "));
+
+      context_.get().tracer.Record(trace_detail);
+    }
+
+    // Remove triggered keys from wait map for this variable
+    for (const auto& k : to_remove) {
+      map_it->second.erase(k);
     }
 
     if (map_it->second.empty()) {
@@ -104,9 +118,20 @@ auto TriggerManager::CheckTriggers(
   }
   vars_to_remove_.clear();
 
-  // Remove all triggered processes from wait_set
-  for (const auto& proc : triggered_processes) {
-    wait_set_.erase(proc);
+  // Remove all triggered (process, instance, variable) entries from wait_set
+  // When a process triggers, we need to remove ALL its wait entries
+  // (e.g., for @(posedge clk or negedge rst), triggering on clk should
+  // also remove the rst entry)
+  std::vector<ProcessInstanceVarKey> piv_keys_to_remove;
+  for (const auto& [piv_key, _] : wait_set_) {
+    ProcessInstanceKey pi_key{
+        .process = piv_key.process, .instance = piv_key.instance};
+    if (triggered_keys.contains(pi_key)) {
+      piv_keys_to_remove.push_back(piv_key);
+    }
+  }
+  for (const auto& piv_key : piv_keys_to_remove) {
+    wait_set_.erase(piv_key);
   }
 
   return events_to_trigger;

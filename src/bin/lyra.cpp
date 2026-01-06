@@ -187,7 +187,8 @@ auto RunCommand(bool use_interpreter) -> int {
 
     if (use_interpreter) {
       // TODO(hankhsu): Add include directory support to interpreter
-      auto result = lyra::interpreter::Interpreter::RunFromFiles(config.files);
+      auto result = lyra::interpreter::Interpreter::RunFromFiles(
+          config.files, config.top);
       std::cout << result.CapturedOutput();
       // Return non-zero exit code if simulation was stopped via $stop
       return result.Stopped() ? 1 : 0;

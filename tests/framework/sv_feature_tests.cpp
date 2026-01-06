@@ -78,6 +78,11 @@ TEST_P(SvFeatureTest, Interpreter) {
 TEST_P(SvFeatureTest, CppCodegen) {
   const auto& tc = GetParam();
 
+  // Skip codegen test if flag is set (e.g., for hierarchy tests)
+  if (tc.skip_codegen) {
+    GTEST_SKIP() << "Codegen skipped (use CLI for hierarchical modules)";
+  }
+
   std::vector<std::string> vars;
   vars.reserve(tc.expected_values.size());
   for (const auto& [var, _] : tc.expected_values) {

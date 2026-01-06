@@ -34,6 +34,44 @@ using StatementKind = slang::ast::StatementKind;
 using ExpressionKind = slang::ast::ExpressionKind;
 using TimingControlKind = slang::ast::TimingControlKind;
 
+namespace {
+
+// Extract a Trigger from a SignalEventControl
+auto ExtractTrigger(const slang::ast::SignalEventControl& signal_event)
+    -> common::Trigger {
+  const auto& expr = signal_event.expr;
+
+  if (expr.kind != ExpressionKind::NamedValue) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            expr.sourceRange,
+            "only simple identifier supported in signal event expression"));
+  }
+
+  const auto& named_expr = expr.as<slang::ast::NamedValueExpression>();
+  const auto& variable = named_expr.symbol;
+
+  common::EdgeKind edge_kind{};
+  switch (signal_event.edge) {
+    case slang::ast::EdgeKind::None:
+      edge_kind = common::EdgeKind::kAnyChange;
+      break;
+    case slang::ast::EdgeKind::PosEdge:
+      edge_kind = common::EdgeKind::kPosedge;
+      break;
+    case slang::ast::EdgeKind::NegEdge:
+      edge_kind = common::EdgeKind::kNegedge;
+      break;
+    case slang::ast::EdgeKind::BothEdges:
+      edge_kind = common::EdgeKind::kBothEdge;
+      break;
+  }
+
+  return common::Trigger{.edge_kind = edge_kind, .variable = &variable};
+}
+
+}  // namespace
+
 auto LowerStatement(const slang::ast::Statement& statement)
     -> std::unique_ptr<mir::Statement> {
   switch (statement.kind) {
@@ -68,14 +106,6 @@ auto LowerStatement(const slang::ast::Statement& statement)
       const auto& timing_control = timed_statement.timing;
 
       switch (timing_control.kind) {
-        case slang::ast::TimingControlKind::Invalid: {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  statement.sourceRange,
-                  fmt::format(
-                      "unsupported timing control kind '{}'",
-                      slang::ast::toString(timing_control.kind))));
-        }
         case slang::ast::TimingControlKind::Delay: {
           const auto& delay_control =
               timing_control.as<slang::ast::DelayControl>();
@@ -112,38 +142,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
         case slang::ast::TimingControlKind::SignalEvent: {
           const auto& signal_event_control =
               timing_control.as<slang::ast::SignalEventControl>();
-          const auto& expr = signal_event_control.expr;
-
-          if (expr.kind != ExpressionKind::NamedValue) {
-            throw DiagnosticException(
-                Diagnostic::Error(
-                    expr.sourceRange,
-                    "only simple identifier supported in signal event "
-                    "expression"));
-          }
-
-          const auto& named_expr = expr.as<slang::ast::NamedValueExpression>();
-          const auto& variable = named_expr.symbol;
-
-          common::EdgeKind edge_kind{};
-          switch (signal_event_control.edge) {
-            case slang::ast::EdgeKind::None:
-              edge_kind = common::EdgeKind::kAnyChange;
-              break;
-            case slang::ast::EdgeKind::PosEdge:
-              edge_kind = common::EdgeKind::kPosedge;
-              break;
-            case slang::ast::EdgeKind::NegEdge:
-              edge_kind = common::EdgeKind::kNegedge;
-              break;
-            case slang::ast::EdgeKind::BothEdges:
-              edge_kind = common::EdgeKind::kBothEdge;
-              break;
-          }
-
-          auto trigger =
-              common::Trigger{.edge_kind = edge_kind, .variable = &variable};
-          std::vector<common::Trigger> triggers = {trigger};
+          std::vector<common::Trigger> triggers = {
+              ExtractTrigger(signal_event_control)};
 
           auto wait_statement =
               std::make_unique<mir::WaitEventStatement>(std::move(triggers));
@@ -154,7 +154,38 @@ auto LowerStatement(const slang::ast::Statement& statement)
           block->statements.push_back(std::move(inner_statement));
           return block;
         }
-        case slang::ast::TimingControlKind::EventList:
+
+        case slang::ast::TimingControlKind::EventList: {
+          const auto& event_list_control =
+              timing_control.as<slang::ast::EventListControl>();
+
+          std::vector<common::Trigger> triggers;
+          triggers.reserve(event_list_control.events.size());
+
+          for (const auto* event : event_list_control.events) {
+            if (event->kind != TimingControlKind::SignalEvent) {
+              throw DiagnosticException(
+                  Diagnostic::Error(
+                      event->sourceRange,
+                      fmt::format(
+                          "only signal events supported in event list, got: {}",
+                          slang::ast::toString(event->kind))));
+            }
+            const auto& signal_event =
+                event->as<slang::ast::SignalEventControl>();
+            triggers.push_back(ExtractTrigger(signal_event));
+          }
+
+          auto wait_statement =
+              std::make_unique<mir::WaitEventStatement>(std::move(triggers));
+          auto inner_statement = LowerStatement(timed_statement.stmt);
+
+          auto block = std::make_unique<mir::BlockStatement>();
+          block->statements.push_back(std::move(wait_statement));
+          block->statements.push_back(std::move(inner_statement));
+          return block;
+        }
+        case slang::ast::TimingControlKind::Invalid:
         case slang::ast::TimingControlKind::ImplicitEvent:
         case slang::ast::TimingControlKind::RepeatedEvent:
         case slang::ast::TimingControlKind::Delay3:

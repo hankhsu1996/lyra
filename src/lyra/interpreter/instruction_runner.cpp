@@ -257,11 +257,19 @@ auto FormatDisplay(
 // Execute a single instruction in the given context
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect)
-    -> InstructionResult {
+    ProcessContext& process_context, ProcessEffect& effect,
+    const InstanceContext* instance_context) -> InstructionResult {
   auto& temp_table = process_context.temp_table;
   auto& module_variable_table = simulation_context.variable_table;
   auto& process_variable_table = process_context.variable_table;
+
+  // Helper to resolve symbol through instance context (like 'this->member')
+  auto resolve_symbol = [instance_context](const auto* symbol) {
+    if (instance_context != nullptr) {
+      return instance_context->Resolve(symbol);
+    }
+    return symbol;
+  };
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsTemp());
@@ -271,6 +279,8 @@ auto RunInstruction(
   auto read_variable = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
+    // Resolve through instance context (port → parent signal)
+    symbol = resolve_symbol(symbol);
 
     if (process_variable_table.Exists(symbol)) {
       return process_variable_table.Read(symbol);
@@ -282,6 +292,8 @@ auto RunInstruction(
                             const RuntimeValue& value, bool is_non_blocking) {
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
+    // Resolve through instance context (port → parent signal)
+    symbol = resolve_symbol(symbol);
 
     if (process_variable_table.Exists(symbol)) {
       process_variable_table.Write(symbol, value);
@@ -830,7 +842,16 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kWaitEvent: {
-      return InstructionResult::WaitEvent(instr.wait_triggers);
+      // Resolve trigger symbols through instance context
+      // (e.g., port symbols map to parent signals)
+      std::vector<common::Trigger> resolved_triggers;
+      resolved_triggers.reserve(instr.wait_triggers.size());
+      for (const auto& trigger : instr.wait_triggers) {
+        resolved_triggers.push_back(
+            {.edge_kind = trigger.edge_kind,
+             .variable = resolve_symbol(trigger.variable)});
+      }
+      return InstructionResult::WaitEvent(std::move(resolved_triggers));
     }
 
     case lir::InstructionKind::kDelay: {
