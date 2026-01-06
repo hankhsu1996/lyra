@@ -223,7 +223,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
         auto name = call_expression.getSubroutineName();
 
         // Validate supported system calls
-        if (name != "$finish" && name != "$display") {
+        if (name != "$finish" && name != "$stop" && name != "$exit" &&
+            name != "$display") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

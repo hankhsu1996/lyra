@@ -332,8 +332,29 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       if (expr_stmt.expression->kind == mir::Expression::Kind::kSystemCall) {
         const auto& syscall =
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
-        if (syscall.name == "$finish") {
-          Line("co_await lyra::sdk::Finish();");
+
+        // Simulation control tasks: $finish, $stop, $exit
+        if (syscall.name == "$finish" || syscall.name == "$stop" ||
+            syscall.name == "$exit") {
+          // Get level argument (default 1), $exit has no argument
+          std::string level_str = "1";
+          if (!syscall.arguments.empty()) {
+            if (const auto* lit = dynamic_cast<const mir::LiteralExpression*>(
+                    syscall.arguments[0].get())) {
+              level_str = std::to_string(lit->literal.value.AsInt64());
+            }
+          }
+
+          if (syscall.name == "$stop") {
+            Line("co_await lyra::sdk::Stop(" + level_str + ");");
+          } else if (syscall.name == "$exit") {
+            // $exit uses Finish with name "$exit" (exit code 0)
+            // Note: Per LRM, $exit waits for program blocks - not implemented
+            Line("co_await lyra::sdk::Finish(" + level_str + ", \"$exit\");");
+          } else {
+            // $finish (exit code 0)
+            Line("co_await lyra::sdk::Finish(" + level_str + ");");
+          }
           break;
         }
         if (syscall.name == "$display") {

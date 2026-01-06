@@ -701,13 +701,28 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kSystemCall: {
-      if (instr.system_call_name == "$finish") {
-        // If there's an argument, we could use it to determine
-        // the level of diagnostic info to print (future enhancement)
-        // 0 = no info, 1 = minimal info, 2 = full stats
+      // Simulation control tasks: $finish, $stop, $exit
+      if (instr.system_call_name == "$finish" ||
+          instr.system_call_name == "$stop" ||
+          instr.system_call_name == "$exit") {
+        bool is_stop = (instr.system_call_name == "$stop");
 
-        // For now, we just terminate the simulation
-        return InstructionResult::Finish();
+        // Get diagnostic level: 0 = nothing, 1 = time, 2 = time + stats
+        // $exit has no argument, treat as level 1
+        // $finish and $stop default to 1 if no argument (handled in lowering)
+        int level = 1;
+        if (!instr.operands.empty()) {
+          level = static_cast<int>(get_temp(instr.operands[0]).AsUInt64());
+        }
+
+        // Print diagnostics based on level (VCS style)
+        if (level >= 1) {
+          simulation_context.display_output
+              << instr.system_call_name << " called at time "
+              << simulation_context.current_time << "\n";
+        }
+
+        return InstructionResult::Finish(is_stop);
       }
 
       if (instr.system_call_name == "$display") {

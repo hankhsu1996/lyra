@@ -25,6 +25,9 @@ struct BasicBlockResult {
   // For WaitEvent
   std::vector<common::Trigger> triggers{};
 
+  // For Finish - true if terminated via $stop (non-zero exit code)
+  bool is_stop = false;
+
   static auto Complete() -> BasicBlockResult {
     return {.kind = Kind::kComplete};
   }
@@ -48,8 +51,8 @@ struct BasicBlockResult {
     };
   }
 
-  static auto Finish() -> BasicBlockResult {
-    return {.kind = Kind::kFinish};
+  static auto Finish(bool stopped = false) -> BasicBlockResult {
+    return {.kind = Kind::kFinish, .is_stop = stopped};
   }
 
   static auto Jump(lir::LabelRef label) -> BasicBlockResult {

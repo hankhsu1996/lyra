@@ -135,3 +135,8 @@ sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
+
+sv_feature_test(
+    name = "system_tasks_simulation_control_tests",
+    yaml = "sv_features/system_tasks/simulation_control.yaml",
+)

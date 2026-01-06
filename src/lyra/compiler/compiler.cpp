@@ -106,6 +106,8 @@ auto Compiler::CompileAndRun(
               << " << std::endl;\n";
   }
   main_code << "  std::cout << \"__time__=\" << final_time << std::endl;\n";
+  main_code << "  std::cout << \"__stopped__=\" << "
+            << "(lyra::sdk::simulation_stopped ? 1 : 0) << std::endl;\n";
   main_code << "  return 0;\n";
   main_code << "}\n";
 

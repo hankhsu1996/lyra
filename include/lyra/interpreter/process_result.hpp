@@ -29,6 +29,9 @@ struct ProcessResult {
   // For WaitEvent
   std::vector<common::Trigger> triggers{};
 
+  // For Finish - true if terminated via $stop (non-zero exit code)
+  bool is_stop = false;
+
   static auto Complete() -> ProcessResult {
     return ProcessResult{
         .kind = Kind::kComplete,
@@ -57,8 +60,8 @@ struct ProcessResult {
     };
   }
 
-  static auto Finish() -> ProcessResult {
-    return ProcessResult{.kind = Kind::kFinish};
+  static auto Finish(bool stopped = false) -> ProcessResult {
+    return ProcessResult{.kind = Kind::kFinish, .is_stop = stopped};
   }
 
   [[nodiscard]] auto Summary() const -> std::string {
