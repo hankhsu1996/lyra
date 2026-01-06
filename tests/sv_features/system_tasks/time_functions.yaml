@@ -119,6 +119,50 @@ cases:
         contains:
           - "realtime=25"
 
+  # Time in expressions
+  - name: time_in_expression
+    description: $time can be used in arithmetic expressions
+    sv: |
+      module Test;
+        initial begin
+          #10;
+          $display("time+5=%d", $time + 5);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "time+5=15"
+
+  - name: stime_in_expression
+    description: $stime can be used in arithmetic expressions
+    sv: |
+      module Test;
+        initial begin
+          #20;
+          $display("stime*2=%d", $stime * 2);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "stime*2=40"
+
+  - name: time_assigned_to_variable_then_used
+    sv: |
+      module Test;
+        time t;
+        initial begin
+          #15;
+          t = $time;
+          $display("t+10=%d", t + 10);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "t+10=25"
+
   # Combined test
   - name: all_time_functions
     sv: |

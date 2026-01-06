@@ -771,9 +771,9 @@ auto RunInstruction(
       // Simulation time functions: $time, $stime, $realtime
       if (instr.system_call_name == "$time") {
         assert(instr.result.has_value());
-        // $time returns 64-bit signed time
-        auto result = RuntimeValue::TwoStateSigned(
-            static_cast<int64_t>(simulation_context.current_time), 64);
+        // $time returns 64-bit unsigned time (type 'time')
+        auto result =
+            RuntimeValue::TwoStateUnsigned(simulation_context.current_time, 64);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }

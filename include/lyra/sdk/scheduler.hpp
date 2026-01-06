@@ -225,14 +225,14 @@ inline auto CurrentTime() -> uint64_t {
   return current_scheduler != nullptr ? current_scheduler->CurrentTime() : 0;
 }
 
-// $time - returns 64-bit simulation time as LongInt (Bit<64, true>)
-inline auto Time() -> LongInt {
-  return LongInt{static_cast<int64_t>(CurrentTime())};
+// $time - returns 64-bit unsigned simulation time (type 'time')
+inline auto Time() -> Bit<64> {
+  return Bit<64>{CurrentTime()};
 }
 
-// $stime - returns low 32 bits of simulation time as Int (Bit<32, true>)
-inline auto STime() -> Int {
-  return Int{static_cast<int32_t>(CurrentTime() & 0xFFFFFFFF)};
+// $stime - returns low 32 bits of simulation time as unsigned
+inline auto STime() -> Bit<32> {
+  return Bit<32>{static_cast<uint32_t>(CurrentTime() & 0xFFFFFFFF)};
 }
 
 // $realtime - returns simulation time as real (double)
