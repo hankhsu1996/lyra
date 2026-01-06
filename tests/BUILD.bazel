@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("//tests:sv_feature_test.bzl", "sv_feature_test")
 
 cc_library(
@@ -10,6 +10,49 @@ cc_library(
     ],
     deps = [
         "@yaml-cpp",
+    ],
+)
+
+# CLI test framework
+cc_library(
+    name = "cli_test_fixture",
+    srcs = ["cli/cli_test_fixture.cpp"],
+    hdrs = ["cli/cli_test_fixture.hpp"],
+    deps = [
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "cli_init_tests",
+    srcs = ["cli/init_tests.cpp"],
+    data = ["//:lyra"],
+    env = {"TEST_WORKSPACE": "lyra"},
+    deps = [
+        ":cli_test_fixture",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cli_config_tests",
+    srcs = ["cli/config_tests.cpp"],
+    data = ["//:lyra"],
+    env = {"TEST_WORKSPACE": "lyra"},
+    deps = [
+        ":cli_test_fixture",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cli_dump_tests",
+    srcs = ["cli/dump_tests.cpp"],
+    data = ["//:lyra"],
+    env = {"TEST_WORKSPACE": "lyra"},
+    deps = [
+        ":cli_test_fixture",
+        "@googletest//:gtest_main",
     ],
 )
 

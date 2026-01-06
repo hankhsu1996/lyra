@@ -6,7 +6,8 @@
 
 namespace lyra::common {
 
-// Exception type for internal Lyra errors (compiler bugs, not user errors)
+// Exception type for internal Lyra errors (compiler bugs, not user errors).
+// Usage: throw InternalError("context", "detail about the bug");
 class InternalError : public std::runtime_error {
  public:
   InternalError(const char* context, const std::string& detail)
@@ -18,12 +19,5 @@ class InternalError : public std::runtime_error {
                 context, detail)) {
   }
 };
-
-// Helper function to throw internal error (marked [[noreturn]] for
-// optimization)
-[[noreturn]] inline void ThrowInternalError(
-    const char* context, const std::string& detail) {
-  throw InternalError(context, detail);
-}
 
 }  // namespace lyra::common

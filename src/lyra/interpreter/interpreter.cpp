@@ -8,6 +8,7 @@
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/indent.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter_options.hpp"
@@ -43,8 +44,14 @@ auto Interpreter::RunWithCompilation(
     const InterpreterOptions& options) -> InterpreterResult {
   const auto& root = compilation->getRoot();
 
-  auto mir = AstToMir(root);
-  auto lir = MirToLir(*mir);
+  // Empty top = all modules; test API expects single module
+  auto modules = AstToMir(root, "");
+  if (modules.size() > 1) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, "multiple modules found; use CLI with lyra.toml"));
+  }
+  auto lir = MirToLir(*modules.front());
 
   if (options.dump_lir) {
     std::cout << "[ Dumped LIR ]\n"
