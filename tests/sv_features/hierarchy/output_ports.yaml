@@ -1,0 +1,46 @@
+feature: hierarchy_output_ports
+description: Tests output port binding from child to parent
+
+cases:
+  - name: output_port_updates_parent
+    skip_codegen: true
+    description: Child output port updates parent signal
+    sv: |
+      module Generator(output int value);
+        initial value = 42;
+      endmodule
+
+      module Top;
+        int result;
+        Generator gen(.value(result));
+
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        result: 42
+      time: 1
+
+  - name: sequential_output_port
+    skip_codegen: true
+    description: Sequential process writes to output port
+    sv: |
+      module Toggle(input bit clk, output bit state);
+        always_ff @(posedge clk) state = ~state;
+      endmodule
+
+      module Top;
+        bit clk, out;
+        Toggle t(.clk(clk), .state(out));
+
+        initial begin
+          clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        out: 0
+      time: 3

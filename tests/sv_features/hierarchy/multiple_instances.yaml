@@ -1,0 +1,30 @@
+feature: hierarchy_multiple_instances
+description: Tests multiple instances of the same module type
+
+cases:
+  - name: two_counters_independent
+    skip_codegen: true
+    description: Two Counter instances count independently
+    sv: |
+      module Counter(input bit clk, output int count);
+        always_ff @(posedge clk) count = count + 1;
+      endmodule
+
+      module Top;
+        bit clk;
+        int c1, c2;
+        Counter counter1(.clk(clk), .count(c1));
+        Counter counter2(.clk(clk), .count(c2));
+
+        initial begin
+          clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        c1: 2
+        c2: 2
+      time: 3

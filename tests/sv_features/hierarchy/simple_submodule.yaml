@@ -1,0 +1,26 @@
+feature: hierarchy_simple_submodule
+description: Tests basic submodule instantiation
+
+cases:
+  - name: single_child_module
+    skip_codegen: true
+    description: Basic parent instantiates child with ports
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        int x, y, result;
+        Adder add(.a(x), .b(y), .sum(result));
+
+        initial begin
+          x = 3;
+          y = 5;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+      time: 1
