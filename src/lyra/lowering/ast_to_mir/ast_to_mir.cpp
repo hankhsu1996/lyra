@@ -3,6 +3,7 @@
 #include <format>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
@@ -14,6 +15,37 @@
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
+
+namespace {
+
+// Recursively collect all modules in the hierarchy.
+// Uses depth-first traversal: children are collected before parents,
+// ensuring dependency order (child modules defined before parent needs them).
+void CollectModulesRecursive(
+    const slang::ast::InstanceSymbol& instance,
+    std::vector<std::unique_ptr<mir::Module>>& modules,
+    std::unordered_set<std::string>& processed) {
+  std::string name(instance.body.name);
+
+  // Skip already processed modules (avoids duplicates for multiple instances)
+  if (processed.contains(name)) {
+    return;
+  }
+  processed.insert(name);
+
+  // First, recurse into child instances (depth-first)
+  for (const auto& member : instance.body.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      CollectModulesRecursive(child, modules, processed);
+    }
+  }
+
+  // Then add this module (after all children are processed)
+  modules.push_back(LowerModule(instance));
+}
+
+}  // namespace
 
 auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
     -> std::vector<std::unique_ptr<mir::Module>> {
@@ -31,12 +63,12 @@ auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
             Diagnostic::Error(source_range, "instance symbol has empty name"));
       }
 
-      // If top is specified, only lower that module
+      // If top is specified, recursively collect all modules in hierarchy
       if (!top.empty()) {
         if (instance_symbol.body.name == top) {
-          modules.push_back(LowerModule(instance_symbol));
-          return modules;  // Found the top module, done for now
-          // TODO(hankhsu): traverse instantiations for hierarchy support
+          std::unordered_set<std::string> processed;
+          CollectModulesRecursive(instance_symbol, modules, processed);
+          return modules;  // Returns all modules in dependency order
         }
         continue;  // Skip non-matching modules
       }

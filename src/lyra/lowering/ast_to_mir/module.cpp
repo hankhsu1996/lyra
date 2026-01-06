@@ -5,7 +5,9 @@
 #include <utility>
 
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <spdlog/spdlog.h>
@@ -44,7 +46,8 @@ auto MapPortDirection(slang::ast::ArgumentDirection direction)
 auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     -> std::unique_ptr<mir::Module> {
   auto module = std::make_unique<mir::Module>();
-  module->name = std::string(instance_symbol.name);
+  // Use module type name (definition name), not instance name
+  module->name = std::string(instance_symbol.body.name);
 
   // Extract timescale from the instance body
   const auto& body = instance_symbol.body;
@@ -139,6 +142,41 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           symbol.as<slang::ast::ProceduralBlockSymbol>();
       auto process = LowerProcess(procedural_block);
       module->processes.push_back(std::move(process));
+      continue;
+    }
+
+    // Lower submodule instances
+    if (symbol.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = symbol.as<slang::ast::InstanceSymbol>();
+
+      mir::SubmoduleInstance submod;
+      submod.instance_name = std::string(child.name);
+      submod.module_type = std::string(child.getDefinition().name);
+
+      for (const auto* conn : child.getPortConnections()) {
+        const auto* expr = conn->getExpression();
+        // Skip empty/implicit port connections
+        if (expr == nullptr ||
+            expr->kind == slang::ast::ExpressionKind::EmptyArgument) {
+          continue;
+        }
+
+        mir::PortConnection port_conn;
+        port_conn.port_name = std::string(conn->port.name);
+
+        // For output ports, slang wraps the connection in an Assignment
+        // expression (external = internal). Extract just the LHS signal.
+        if (expr->kind == slang::ast::ExpressionKind::Assignment) {
+          const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
+          port_conn.signal = LowerExpression(assignment.left());
+        } else {
+          port_conn.signal = LowerExpression(*expr);
+        }
+
+        submod.connections.push_back(std::move(port_conn));
+      }
+
+      module->submodules.push_back(std::move(submod));
       continue;
     }
   }
