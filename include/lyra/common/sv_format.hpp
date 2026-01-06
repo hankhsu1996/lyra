@@ -37,6 +37,11 @@ inline auto ParseDisplayFormat(const std::string& fmt_str)
         size_t spec_pos = i;
         ++i;  // Consume '%'
 
+        // Optional left-align flag '-'
+        if (i < fmt_str.size() && fmt_str[i] == '-') {
+          ++i;
+        }
+
         // Optional zero-pad flag and width.
         if (i < fmt_str.size() && fmt_str[i] == '0') {
           ++i;
@@ -94,9 +99,16 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
         i += 2;
       } else {
         ++i;  // Consume '%'
+        bool left_align = false;
         bool zero_pad = false;
         std::string width;
         std::string precision;
+
+        // Check for left-align flag '-'
+        if (i < sv_fmt.size() && sv_fmt[i] == '-') {
+          left_align = true;
+          ++i;
+        }
 
         if (i < sv_fmt.size() && sv_fmt[i] == '0') {
           zero_pad = true;
@@ -142,12 +154,24 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
           result += spec;
           ++i;
         } else if (c == 's') {
-          if (zero_pad || !width.empty() || !precision.empty()) {
+          if (!precision.empty()) {
             throw std::runtime_error(
-                "Unsupported format specifier: width/precision only "
-                "supported for %f");
+                "Unsupported format specifier: precision not supported for %s");
           }
-          result += "{}";
+          // Build format spec with optional width and alignment
+          // zero_pad is ignored for strings (Verilator behavior)
+          // SV default is right-align, but std::format default is left-align
+          if (!width.empty()) {
+            std::string spec = "{:";
+            if (!left_align) {
+              spec += ">";  // Right-align (SV default) in std::format
+            }
+            spec += width;
+            spec += "}";
+            result += spec;
+          } else {
+            result += "{}";
+          }
           ++i;
         } else if (c == 'f') {
           std::string spec = "{:";
@@ -242,6 +266,11 @@ inline auto NeedsIntCast(const std::string& sv_fmt) -> std::vector<bool> {
         ++i;  // Consume '%'
         bool zero_pad = false;
         bool has_width = false;
+
+        // Skip left-align flag '-'
+        if (i < sv_fmt.size() && sv_fmt[i] == '-') {
+          ++i;
+        }
 
         if (i < sv_fmt.size() && sv_fmt[i] == '0') {
           zero_pad = true;

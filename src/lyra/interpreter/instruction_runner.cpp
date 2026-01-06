@@ -29,6 +29,7 @@ namespace {
 struct FormatSpec {
   char spec{};
   bool zero_pad = false;
+  bool left_align = false;
   std::string width;
   std::string precision;
 };
@@ -39,6 +40,16 @@ struct FormatSpec {
 auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     -> std::string {
   if (value.IsString()) {
+    if (!spec.width.empty()) {
+      std::string fmt = "{:";
+      // SV default is right-align, but fmt::format default is left-align
+      if (!spec.left_align) {
+        fmt += ">";  // Right-align (SV default) in fmt::format
+      }
+      fmt += spec.width;
+      fmt += "}";
+      return fmt::format(fmt::runtime(fmt), value.AsString());
+    }
     return value.AsString();
   }
 
@@ -104,6 +115,16 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
       return fmt::format(fmt::runtime(build_int_format('d')), v);
     }
     default:  // 's'
+      if (!spec.width.empty()) {
+        std::string fmt = "{:";
+        // SV default is right-align, but fmt::format default is left-align
+        if (!spec.left_align) {
+          fmt += ">";  // Right-align (SV default) in fmt::format
+        }
+        fmt += spec.width;
+        fmt += "}";
+        return fmt::format(fmt::runtime(fmt), value.ToString());
+      }
       return value.ToString();
   }
 }
@@ -129,6 +150,12 @@ auto FormatDisplay(
       } else {
         FormatSpec spec;
         ++i;  // Consume '%'
+
+        // Check for left-align flag '-'
+        if (i < fmt_str.size() && fmt_str[i] == '-') {
+          spec.left_align = true;
+          ++i;
+        }
 
         if (i < fmt_str.size() && fmt_str[i] == '0') {
           spec.zero_pad = true;
@@ -177,13 +204,6 @@ auto FormatDisplay(
                           "supported for "
                           "%{}",
                           spec.spec)));
-        }
-        // Width is not supported for %s (strings)
-        if (spec.spec == 's' && (spec.zero_pad || !spec.width.empty())) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {},
-                  "unsupported format specifier: width not supported for %s"));
         }
 
         if (arg_idx >= args.size()) {

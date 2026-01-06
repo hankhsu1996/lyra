@@ -177,3 +177,27 @@ cases:
       endmodule
     expect:
       output: "00000101\n"
+
+  - name: display_string_width
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hi";
+          $display("[%5s]", s);
+        end
+      endmodule
+    expect:
+      output: "[   hi]\n"
+
+  - name: display_string_left_align
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hi";
+          $display("[%-5s]", s);
+        end
+      endmodule
+    expect:
+      output: "[hi   ]\n"
