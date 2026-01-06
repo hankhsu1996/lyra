@@ -3,6 +3,8 @@
 #include <coroutine>
 #include <cstdint>
 #include <functional>
+#include <iostream>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -17,22 +19,66 @@ class Module;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 inline thread_local Module* current_module = nullptr;
 
-// Thread-local simulation termination flag (set by $finish)
+// Thread-local simulation termination flag (set by $finish, $stop, $exit)
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 inline thread_local bool simulation_finished = false;
+
+// Thread-local flag for $stop (non-zero exit code)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline thread_local bool simulation_stopped = false;
+
+// Forward declaration - implemented in scheduler.hpp after Scheduler is defined
+auto CurrentTime() -> uint64_t;
 
 // NOLINTBEGIN(readability-identifier-naming)
 // Coroutine awaitable requires specific naming convention from C++ standard
 
-// Awaitable for $finish - sets flag and suspends forever
+// Awaitable for $finish/$exit - terminates simulation with exit code 0
 class Finish {
+  int level_;
+  const char* name_;
+
  public:
+  explicit Finish(int level = 1, const char* name = "$finish")
+      : level_(level), name_(name) {
+  }
+
   static auto await_ready() -> bool {
     return false;
   }
 
-  static auto await_suspend(std::coroutine_handle<> /*handle*/) -> bool {
+  [[nodiscard]] auto await_suspend(std::coroutine_handle<> /*handle*/) const
+      -> bool {
+    if (level_ >= 1) {
+      std::println(std::cout, "{} called at time {}", name_, CurrentTime());
+    }
     simulation_finished = true;
+    return true;  // Suspend forever (never resume)
+  }
+
+  static void await_resume() {
+  }
+};
+
+// Awaitable for $stop - terminates simulation with non-zero exit code
+class Stop {
+  int level_;
+
+ public:
+  explicit Stop(int level = 1) : level_(level) {
+  }
+
+  static auto await_ready() -> bool {
+    return false;
+  }
+
+  [[nodiscard]] auto await_suspend(std::coroutine_handle<> /*handle*/) const
+      -> bool {
+    if (level_ >= 1) {
+      std::println(std::cout, "$stop called at time {}", CurrentTime());
+    }
+    simulation_finished = true;
+    simulation_stopped = true;
     return true;  // Suspend forever (never resume)
   }
 

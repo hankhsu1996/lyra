@@ -219,6 +219,11 @@ void AnyOfAwaitable<Triggers...>::await_suspend(
   }
 }
 
+// Implementation of CurrentTime() for diagnostic output
+inline auto CurrentTime() -> uint64_t {
+  return current_scheduler != nullptr ? current_scheduler->CurrentTime() : 0;
+}
+
 // Implementation of Module::Run (needs Scheduler definition)
 inline auto Module::Run() -> uint64_t {
   Scheduler scheduler;
@@ -226,6 +231,7 @@ inline auto Module::Run() -> uint64_t {
   current_scheduler = &scheduler;
   current_module = this;
   simulation_finished = false;
+  simulation_stopped = false;
   std::vector<Task> tasks;
 
   // Start all processes

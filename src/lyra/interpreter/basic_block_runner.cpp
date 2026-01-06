@@ -37,7 +37,7 @@ auto RunBlock(
       case ResultKind::kDelay:
         return BasicBlockResult::Delay(instruction_result.delay_amount, i + 1);
       case ResultKind::kFinish:
-        return BasicBlockResult::Finish();
+        return BasicBlockResult::Finish(instruction_result.is_stop);
       case ResultKind::kJump:
         return BasicBlockResult::Jump(instruction_result.target_label);
     }

@@ -30,6 +30,10 @@ struct InterpreterResult {
   [[nodiscard]] auto CapturedOutput() const -> std::string {
     return context->display_output.str();
   }
+
+  [[nodiscard]] auto Stopped() const -> bool {
+    return context->stopped;
+  }
 };
 
 }  // namespace lyra::interpreter

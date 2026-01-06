@@ -18,6 +18,9 @@ class SimulationContext {
   SimulationTime current_time = 0;
   Tracer tracer;
   std::ostringstream display_output;
+
+  // True if simulation terminated via $stop (non-zero exit code)
+  bool stopped = false;
 };
 
 }  // namespace lyra::interpreter

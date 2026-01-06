@@ -24,6 +24,9 @@ struct InstructionResult {
   // For WaitEvent
   std::vector<common::Trigger> triggers{};
 
+  // For Finish - true if terminated via $stop (non-zero exit code)
+  bool is_stop = false;
+
   static auto Complete() -> InstructionResult {
     return InstructionResult{.kind = Kind::kComplete};
   }
@@ -47,8 +50,8 @@ struct InstructionResult {
     };
   }
 
-  static auto Finish() -> InstructionResult {
-    return InstructionResult{.kind = Kind::kFinish};
+  static auto Finish(bool stopped = false) -> InstructionResult {
+    return InstructionResult{.kind = Kind::kFinish, .is_stop = stopped};
   }
 
   static auto Jump(lir::LabelRef label) -> InstructionResult {

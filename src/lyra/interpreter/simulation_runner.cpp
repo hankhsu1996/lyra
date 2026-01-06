@@ -233,6 +233,9 @@ void SimulationRunner::ExecuteOneEvent() {
     }
     case ProcessResult::Kind::kFinish: {
       finish_requested_ = true;
+      if (result.is_stop) {
+        simulation_context_.get().stopped = true;
+      }
       break;
     }
 

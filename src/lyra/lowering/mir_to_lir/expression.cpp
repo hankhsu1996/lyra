@@ -123,7 +123,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
       // Supported system calls are validated in AST→MIR
-      assert(system_call.name == "$finish" || system_call.name == "$display");
+      assert(
+          system_call.name == "$finish" || system_call.name == "$stop" ||
+          system_call.name == "$exit" || system_call.name == "$display");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -132,8 +134,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         }
       }
 
-      // Add default argument for `$finish` if empty
-      if (system_call.name == "$finish" && arguments.empty()) {
+      // Add default argument (1) for $finish and $stop if not provided
+      // $exit takes no arguments per LRM
+      if ((system_call.name == "$finish" || system_call.name == "$stop") &&
+          arguments.empty()) {
         auto temp = builder.AllocateTemp("sys", system_call.type);
         auto const_one = builder.InternLiteral(Literal::Int(1));
         auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);

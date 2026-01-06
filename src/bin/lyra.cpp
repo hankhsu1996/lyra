@@ -158,7 +158,8 @@ auto GenerateMain(
          module_name +
          " dut;\n"
          "    dut.Run();\n"
-         "    return 0;\n"
+         "    // Return non-zero if simulation was stopped via $stop\n"
+         "    return lyra::sdk::simulation_stopped ? 1 : 0;\n"
          "}\n";
 }
 
@@ -182,7 +183,8 @@ auto RunCommand(bool use_interpreter) -> int {
       // TODO(hankhsu): Add include directory support to interpreter
       auto result = lyra::interpreter::Interpreter::RunFromFiles(config.files);
       std::cout << result.CapturedOutput();
-      return 0;
+      // Return non-zero exit code if simulation was stopped via $stop
+      return result.Stopped() ? 1 : 0;
     }
 
     // Check toolchain before build (skip for interpreter mode)

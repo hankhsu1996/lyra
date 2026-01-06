@@ -42,7 +42,7 @@ auto RunProcess(
             block_result.resume_instruction_index);
 
       case BasicBlockResult::Kind::kFinish:
-        return ProcessResult::Finish();
+        return ProcessResult::Finish(block_result.is_stop);
 
       case BasicBlockResult::Kind::kJump:
         block_index = process->FindBlockIndexByLabel(block_result.target_label);
