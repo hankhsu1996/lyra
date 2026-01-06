@@ -97,6 +97,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "control_flow_case_tests",
+    yaml = "sv_features/control_flow/case.yaml",
+)
+
+sv_feature_test(
     name = "datatypes_variables_tests",
     yaml = "sv_features/datatypes/variables.yaml",
 )

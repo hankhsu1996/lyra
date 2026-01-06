@@ -35,6 +35,7 @@ class Statement {
     kDoWhile,
     kFor,
     kRepeat,
+    kCase,
     kBreak,
     kContinue,
 
@@ -80,6 +81,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "For";
     case Statement::Kind::kRepeat:
       return "Repeat";
+    case Statement::Kind::kCase:
+      return "Case";
     case Statement::Kind::kBreak:
       return "Break";
     case Statement::Kind::kContinue:
@@ -348,6 +351,62 @@ class RepeatStatement : public Statement {
         std::format("{}repeat {}\n", common::Indent(indent), count->ToString());
     if (body) {
       result += body->ToString(indent + 1);
+    }
+    return result;
+  }
+};
+
+/// A single case item containing one or more expressions and a statement
+struct CaseItem {
+  std::vector<std::unique_ptr<Expression>> expressions;
+  std::unique_ptr<Statement> statement;
+
+  CaseItem(
+      std::vector<std::unique_ptr<Expression>> exprs,
+      std::unique_ptr<Statement> stmt)
+      : expressions(std::move(exprs)), statement(std::move(stmt)) {
+  }
+};
+
+class CaseStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kCase;
+  std::unique_ptr<Expression> condition;
+  std::vector<CaseItem> items;
+  std::unique_ptr<Statement> default_case;  // nullptr if no default
+
+  CaseStatement(
+      std::unique_ptr<Expression> cond, std::vector<CaseItem> case_items,
+      std::unique_ptr<Statement> default_stmt)
+      : Statement(kKindValue),
+        condition(std::move(cond)),
+        items(std::move(case_items)),
+        default_case(std::move(default_stmt)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    std::string result = std::format(
+        "{}case {}\n", common::Indent(indent), condition->ToString());
+    for (const auto& item : items) {
+      std::string exprs_str;
+      for (size_t i = 0; i < item.expressions.size(); ++i) {
+        if (i > 0) {
+          exprs_str += ", ";
+        }
+        exprs_str += item.expressions[i]->ToString();
+      }
+      result += std::format("{}  {}:\n", common::Indent(indent), exprs_str);
+      if (item.statement) {
+        result += item.statement->ToString(indent + 2);
+      }
+    }
+    if (default_case) {
+      result += std::format("{}  default:\n", common::Indent(indent));
+      result += default_case->ToString(indent + 2);
     }
     return result;
   }

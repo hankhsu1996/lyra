@@ -264,6 +264,46 @@ auto LowerStatement(const slang::ast::Statement& statement)
           std::move(count), std::move(body));
     }
 
+    case StatementKind::Case: {
+      const auto& case_stmt = statement.as<slang::ast::CaseStatement>();
+
+      // Only support basic case, not casez/casex/case inside
+      if (case_stmt.condition != slang::ast::CaseStatementCondition::Normal) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                statement.sourceRange,
+                fmt::format(
+                    "unsupported case condition '{}' (only basic case is "
+                    "supported)",
+                    slang::ast::toString(case_stmt.condition))));
+      }
+
+      // Lower the controlling expression
+      auto condition = LowerExpression(case_stmt.expr);
+
+      // Lower each case item
+      std::vector<mir::CaseItem> items;
+      for (const auto& item : case_stmt.items) {
+        // Lower all expressions for this item
+        std::vector<std::unique_ptr<mir::Expression>> exprs;
+        for (const auto* expr : item.expressions) {
+          exprs.push_back(LowerExpression(*expr));
+        }
+        // Lower the statement
+        auto stmt = LowerStatement(*item.stmt);
+        items.emplace_back(std::move(exprs), std::move(stmt));
+      }
+
+      // Lower optional default case
+      std::unique_ptr<mir::Statement> default_case;
+      if (case_stmt.defaultCase != nullptr) {
+        default_case = LowerStatement(*case_stmt.defaultCase);
+      }
+
+      return std::make_unique<mir::CaseStatement>(
+          std::move(condition), std::move(items), std::move(default_case));
+    }
+
     case StatementKind::Break: {
       return std::make_unique<mir::BreakStatement>();
     }

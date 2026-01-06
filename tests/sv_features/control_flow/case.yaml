@@ -1,0 +1,174 @@
+feature: case_statements
+description: Tests for case statements (basic case only, no casez/casex/case inside)
+
+cases:
+  - name: case_basic_match
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 2;
+          result = 0;
+          case (x)
+            1: result = 10;
+            2: result = 20;
+            3: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: case_no_match_no_default
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 5;
+          result = 100;
+          case (x)
+            1: result = 10;
+            2: result = 20;
+            3: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: case_default
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 5;
+          result = 0;
+          case (x)
+            1: result = 10;
+            2: result = 20;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99
+
+  - name: case_multiple_values
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 3;
+          result = 0;
+          case (x)
+            1, 2: result = 10;
+            3, 4: result = 20;
+            5, 6: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: case_first_match_wins
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 2;
+          result = 0;
+          case (x)
+            2: result = 10;
+            2: result = 20;
+            2: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+
+  - name: case_variable_condition
+    sv: |
+      module Test;
+        int selector;
+        int a, b, c;
+        int result;
+        initial begin
+          selector = 2;
+          a = 10;
+          b = 20;
+          c = 30;
+          result = 0;
+          case (selector)
+            1: result = a;
+            2: result = b;
+            3: result = c;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: case_constant_expression
+    sv: |
+      module Test;
+        int encode;
+        int result;
+        initial begin
+          encode = 2;
+          result = 0;
+          case (1)
+            encode == 1: result = 1;
+            encode == 2: result = 2;
+            encode == 3: result = 3;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: case_nested
+    sv: |
+      module Test;
+        int x;
+        int y;
+        int result;
+        initial begin
+          x = 1;
+          y = 2;
+          result = 0;
+          case (x)
+            1: begin
+              case (y)
+                1: result = 11;
+                2: result = 12;
+                default: result = 19;
+              endcase
+            end
+            2: begin
+              case (y)
+                1: result = 21;
+                2: result = 22;
+                default: result = 29;
+              endcase
+            end
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12
