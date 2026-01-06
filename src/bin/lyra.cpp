@@ -235,10 +235,6 @@ auto EmitCommandInternal(
 
     const auto& root = compilation->getRoot();
     auto modules = lyra::lowering::ast_to_mir::AstToMir(root, top);
-    const auto& mir = *modules.front();
-
-    lyra::compiler::Codegen codegen;
-    std::string code = codegen.Generate(mir);
 
     // Create output directory structure
     fs::path out_path(out_dir);
@@ -248,20 +244,29 @@ auto EmitCommandInternal(
     // Copy SDK headers
     WriteSdkHeaders(out_path);
 
-    std::string header_file = mir.name + ".hpp";
-    fs::path module_path = design_dir / header_file;
+    // Generate header file for each module
+    lyra::compiler::Codegen codegen;
+    for (const auto& mir : modules) {
+      std::string code = codegen.Generate(*mir);
+      std::string header_file = mir->name + ".hpp";
+      fs::path module_path = design_dir / header_file;
 
-    // Wrap code with pragma once and proper includes
-    std::string header_code = "#pragma once\n\n" + code;
-    WriteFile(module_path, header_code);
+      // Wrap code with pragma once
+      std::string header_code = "#pragma once\n\n" + code;
+      WriteFile(module_path, header_code);
+    }
+
+    // Use top module (last in list) for main.cpp
+    const auto& top_module = *modules.back();
+    std::string header_file = top_module.name + ".hpp";
 
     // Generate main.cpp with global precision for %t formatting
     WriteFile(
         out_path / "main.cpp",
-        GenerateMain(mir.name, header_file, codegen.GetGlobalPrecisionPower()));
+        GenerateMain(top_module.name, header_file, codegen.GetGlobalPrecisionPower()));
 
     // Generate build configuration files
-    WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(mir.name));
+    WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(top_module.name));
     WriteFile(out_path / "CMakePresets.json", GenerateCMakePresets());
     WriteFile(
         out_path / "compile_commands.json", GenerateCompileCommands(out_path));

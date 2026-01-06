@@ -4,6 +4,9 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_set>
+
+#include <slang/ast/Symbol.h>
 
 #include "lyra/common/timescale.hpp"
 #include "lyra/mir/expression.hpp"
@@ -22,7 +25,7 @@ class Codegen {
   }
 
  private:
-  void EmitHeader();
+  void EmitHeader(const std::vector<mir::SubmoduleInstance>& submodules);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
@@ -45,6 +48,9 @@ class Codegen {
   int8_t global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
 
   [[nodiscard]] auto DelayMultiplier() const -> uint64_t;
+
+  // Track port symbols for identifier emission (append _ suffix)
+  std::unordered_set<const slang::ast::Symbol*> port_symbols_;
 
   void Indent();
   void Line(const std::string& text);
