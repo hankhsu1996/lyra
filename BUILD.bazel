@@ -62,6 +62,7 @@ cc_binary(
     name = "lyra",
     srcs = ["src/bin/lyra.cpp"],
     includes = ["include"],
+    visibility = ["//tests:__pkg__"],
     deps = [
         "//:core",
         "//:embedded_sdk",
