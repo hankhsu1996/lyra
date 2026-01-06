@@ -231,7 +231,7 @@ struct AssignmentTarget {
   }
 
   [[nodiscard]] auto IsPacked() const -> bool {
-    return base_type && base_type->kind == Type::Kind::kTwoState;
+    return base_type && base_type->kind == Type::Kind::kIntegral;
   }
 
   [[nodiscard]] auto ToString() const -> std::string {

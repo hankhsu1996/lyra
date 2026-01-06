@@ -211,7 +211,7 @@ struct Instruction {
       -> Instruction {
     return Instruction{
         .kind = InstructionKind::kStorePackedElement,
-        .result_type = common::Type::TwoStateUnsigned(element_width),
+        .result_type = common::Type::IntegralUnsigned(element_width),
         .operands = {
             Operand::Variable(variable), Operand::Temp(index),
             Operand::Temp(value)}};

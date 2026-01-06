@@ -85,10 +85,10 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
 }
 
 auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kTwoState) {
+  if (type.kind != common::Type::Kind::kIntegral) {
     return false;
   }
-  return std::get<common::TwoStateData>(type.data).is_signed;
+  return std::get<common::IntegralData>(type.data).is_signed;
 }
 
 auto ToCppType(const common::Type& type) -> std::string {
@@ -101,8 +101,8 @@ auto ToCppType(const common::Type& type) -> std::string {
       return "ShortReal";
     case common::Type::Kind::kString:
       return "std::string";
-    case common::Type::Kind::kTwoState: {
-      auto data = std::get<common::TwoStateData>(type.data);
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
 
@@ -131,8 +131,8 @@ auto ToCppType(const common::Type& type) -> std::string {
       // Unsigned types use Bit<N>
       return std::format("Bit<{}>", width);
     }
-    case common::Type::Kind::kArray: {
-      const auto& array_data = std::get<common::ArrayData>(type.data);
+    case common::Type::Kind::kUnpackedArray: {
+      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
       return std::format(
           "std::array<{}, {}>", ToCppType(*array_data.element_type),
           array_data.size);
@@ -142,10 +142,10 @@ auto ToCppType(const common::Type& type) -> std::string {
 }
 
 auto ToCppUnsignedType(const common::Type& type) -> std::string {
-  if (type.kind != common::Type::Kind::kTwoState) {
+  if (type.kind != common::Type::Kind::kIntegral) {
     return "/* unknown type */";
   }
-  auto data = std::get<common::TwoStateData>(type.data);
+  auto data = std::get<common::IntegralData>(type.data);
   size_t width = data.bit_width;
   if (width > 64) {
     return "/* TODO: wide integer */";
@@ -327,33 +327,33 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         // Generate: vec = (vec & ~(1ULL << adj_idx)) | ((val & 1ULL) <<
         // adj_idx)
         const auto& base_type = assign.target.base_type.value();
-        const auto& two_state = std::get<common::TwoStateData>(base_type.data);
-        size_t total_width = two_state.bit_width;
-        int32_t lower_bound = two_state.lower_bound;
-        // For single-bit assignment, element_width = 1
-        size_t element_width = 1;
+        size_t total_width = base_type.GetBitWidth();
+        int32_t lower_bound = base_type.GetElementLower();
+        size_t element_width = base_type.GetElementWidth();
 
-        // Helper lambda to emit adjusted index
-        auto emit_adjusted_index = [&]() {
+        // Helper lambda to emit bit position: (index - lower_bound) *
+        // element_width
+        auto emit_bit_position = [&]() {
           if (lower_bound != 0) {
-            out_ << "(static_cast<int>(";
+            out_ << "((static_cast<int>(";
             EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") - " << lower_bound << ")";
+            out_ << ") - " << lower_bound << ") * " << element_width << ")";
           } else {
-            out_ << "static_cast<size_t>(";
+            out_ << "(static_cast<size_t>(";
             EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ")";
+            out_ << ") * " << element_width << ")";
           }
         };
 
+        uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
-             << ((1ULL << element_width) - 1) << "ULL} << ";
-        emit_adjusted_index();
+             << mask << "ULL} << ";
+        emit_bit_position();
         out_ << ")) | ((Bit<" << total_width << ">{";
         EmitExpression(*assign.value);
-        out_ << ".Value() & " << ((1ULL << element_width) - 1) << "ULL} << ";
-        emit_adjusted_index();
+        out_ << ".Value() & " << mask << "ULL} << ";
+        emit_bit_position();
         out_ << "));\n";
       } else {
         EmitAssignmentTarget(assign.target);
@@ -752,7 +752,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
       // Emit literals with their proper SDK type
-      if (lit.literal.type.kind == common::Type::Kind::kTwoState) {
+      if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
         // Emit as typed literal: Type{value}
         out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
              << "}";
@@ -821,32 +821,33 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         // Result is the assigned value (the RHS)
         out_ << "(";
         const auto& base_type = assign.target.base_type.value();
-        const auto& two_state = std::get<common::TwoStateData>(base_type.data);
-        size_t total_width = two_state.bit_width;
-        int32_t lower_bound = two_state.lower_bound;
-        size_t element_width = 1;
+        size_t total_width = base_type.GetBitWidth();
+        int32_t lower_bound = base_type.GetElementLower();
+        size_t element_width = base_type.GetElementWidth();
 
-        // Helper lambda to emit adjusted index
-        auto emit_adjusted_index = [&]() {
+        // Helper lambda to emit bit position: (index - lower_bound) *
+        // element_width
+        auto emit_bit_position = [&]() {
           if (lower_bound != 0) {
-            out_ << "(static_cast<int>(";
+            out_ << "((static_cast<int>(";
             EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") - " << lower_bound << ")";
+            out_ << ") - " << lower_bound << ") * " << element_width << ")";
           } else {
-            out_ << "static_cast<size_t>(";
+            out_ << "(static_cast<size_t>(";
             EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ")";
+            out_ << ") * " << element_width << ")";
           }
         };
 
+        uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
-             << ((1ULL << element_width) - 1) << "ULL} << ";
-        emit_adjusted_index();
+             << mask << "ULL} << ";
+        emit_bit_position();
         out_ << ")) | ((Bit<" << total_width << ">{";
         EmitExpression(*assign.value, kPrecLowest);
-        out_ << ".Value() & " << ((1ULL << element_width) - 1) << "ULL} << ";
-        emit_adjusted_index();
+        out_ << ".Value() & " << mask << "ULL} << ";
+        emit_bit_position();
         out_ << ")), ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
@@ -861,15 +862,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& select = mir::As<mir::ElementSelectExpression>(expr);
 
       // Check if this is bit/element selection (packed type) or array access
-      if (select.value->type.kind == common::Type::Kind::kTwoState) {
+      if (select.value->type.kind == common::Type::Kind::kIntegral) {
         // Get element width from result type
-        auto result_data = std::get<common::TwoStateData>(expr.type.data);
-        size_t element_width = result_data.bit_width;
+        size_t element_width = expr.type.GetBitWidth();
 
-        // Get lower_bound for non-zero-based ranges
-        const auto& value_data =
-            std::get<common::TwoStateData>(select.value->type.data);
-        int32_t lower_bound = value_data.lower_bound;
+        // Get element_lower for non-zero-based ranges
+        int32_t lower_bound = select.value->type.GetElementLower();
 
         if (element_width == 1) {
           // Single bit selection: value.GetBit(index - lower_bound)
@@ -885,20 +883,22 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           out_ << ")";
         } else {
           // Multi-bit element selection from 2D packed array
-          // Generate: static_cast<ResultType>((value >> ((index - lb) * width))
-          // & mask)
-          out_ << "static_cast<" << ToCppType(expr.type) << ">((";
-          EmitExpression(*select.value, kPrecShift);
-          out_ << " >> ((";
-          if (lower_bound != 0) {
-            out_ << "static_cast<int>(";
-          }
-          EmitExpression(*select.selector, kPrecMultiplicative);
+          // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
+          // ((index - lb) * width)) & mask)
+          // Need to cast to uint64_t first to avoid ambiguous operator& with
+          // Bit<N>
+          out_ << "static_cast<" << ToCppType(expr.type)
+               << ">((static_cast<uint64_t>(";
+          EmitExpression(*select.value, kPrecLowest);
+          out_ << ") >> ((static_cast<size_t>(";
+          EmitExpression(*select.selector, kPrecLowest);
           if (lower_bound != 0) {
             out_ << ") - " << lower_bound;
+          } else {
+            out_ << ")";
           }
           out_ << ") * " << element_width << ")) & "
-               << std::format("0x{:X}", (1ULL << element_width) - 1) << ")";
+               << std::format("0x{:X}ULL", (1ULL << element_width) - 1) << ")";
         }
       } else {
         // Array element access: array[index]
@@ -912,17 +912,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kRangeSelect: {
       const auto& range = mir::As<mir::RangeSelectExpression>(expr);
-      auto result_data = std::get<common::TwoStateData>(expr.type.data);
-      size_t result_width = result_data.bit_width;
+      size_t result_width = expr.type.GetBitWidth();
 
       // Compute LSB (minimum of left and right bounds)
       int32_t lsb = std::min(range.left, range.right);
 
       // Adjust for non-zero-based ranges (e.g., bit [63:32])
-      if (range.value->type.kind == common::Type::Kind::kTwoState) {
-        const auto& value_data =
-            std::get<common::TwoStateData>(range.value->type.data);
-        lsb -= value_data.lower_bound;
+      if (range.value->type.kind == common::Type::Kind::kIntegral) {
+        lsb -= range.value->type.GetElementLower();
       }
 
       // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >> lsb)

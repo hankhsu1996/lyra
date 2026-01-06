@@ -335,7 +335,8 @@ auto RunInstruction(
 
       // Get lower bound from array type
       const auto& array_type = array_value.type;
-      const auto& array_data = std::get<common::ArrayData>(array_type.data);
+      const auto& array_data =
+          std::get<common::UnpackedArrayData>(array_type.data);
       int32_t lower_bound = array_data.lower_bound;
 
       // Adjust index: actual_idx = sv_idx - lower_bound
@@ -372,7 +373,8 @@ auto RunInstruction(
 
       // Get lower bound from array type
       const auto& array_type = array_value.type;
-      const auto& array_data = std::get<common::ArrayData>(array_type.data);
+      const auto& array_data =
+          std::get<common::UnpackedArrayData>(array_type.data);
       int32_t lower_bound = array_data.lower_bound;
 
       // Adjust index: actual_idx = sv_idx - lower_bound
@@ -407,8 +409,8 @@ auto RunInstruction(
 
       // Get element width from result type
       const auto& result_type = instr.result_type.value();
-      assert(result_type.kind == common::Type::Kind::kTwoState);
-      auto result_data = std::get<common::TwoStateData>(result_type.data);
+      assert(result_type.kind == common::Type::Kind::kIntegral);
+      auto result_data = std::get<common::IntegralData>(result_type.data);
       size_t element_width = result_data.bit_width;
 
       // Compute bit position: start_bit = index * element_width
@@ -417,7 +419,7 @@ auto RunInstruction(
       // Extract element: (value >> start_bit) & mask
       uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(element_width));
       auto extracted = (value.AsUInt64() >> start_bit) & mask;
-      auto result = RuntimeValue::TwoStateUnsigned(extracted, element_width);
+      auto result = RuntimeValue::IntegralUnsigned(extracted, element_width);
       temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
     }
@@ -438,8 +440,8 @@ auto RunInstruction(
       auto lsb = static_cast<size_t>(lsb_value.AsInt64());
 
       const auto& result_type = instr.result_type.value();
-      assert(result_type.kind == common::Type::Kind::kTwoState);
-      auto result_data = std::get<common::TwoStateData>(result_type.data);
+      assert(result_type.kind == common::Type::Kind::kIntegral);
+      auto result_data = std::get<common::IntegralData>(result_type.data);
       size_t width = result_data.bit_width;
 
       // Extract slice: (value >> lsb) & mask
@@ -447,9 +449,9 @@ auto RunInstruction(
       auto extracted = (value.AsUInt64() >> lsb) & mask;
 
       auto result = result_data.is_signed
-                        ? RuntimeValue::TwoStateSigned(
+                        ? RuntimeValue::IntegralSigned(
                               static_cast<int64_t>(extracted), width)
-                        : RuntimeValue::TwoStateUnsigned(extracted, width);
+                        : RuntimeValue::IntegralUnsigned(extracted, width);
       temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
     }
@@ -474,11 +476,9 @@ auto RunInstruction(
 
       auto new_value = get_temp(instr.operands[2]);
 
-      // Get element width from result_type
+      // Get element width from result_type (the element being stored)
       const auto& elem_type = instr.result_type.value();
-      assert(elem_type.kind == common::Type::Kind::kTwoState);
-      auto elem_data = std::get<common::TwoStateData>(elem_type.data);
-      size_t element_width = elem_data.bit_width;
+      size_t element_width = elem_type.GetBitWidth();
 
       // Compute bit position and masks
       size_t shift = index * element_width;
@@ -492,12 +492,12 @@ auto RunInstruction(
 
       // Write back with original type's width and signedness
       const auto& current_data =
-          std::get<common::TwoStateData>(current.type.data);
+          std::get<common::IntegralData>(current.type.data);
       auto result =
           current_data.is_signed
-              ? RuntimeValue::TwoStateSigned(
+              ? RuntimeValue::IntegralSigned(
                     static_cast<int64_t>(merged), current_data.bit_width)
-              : RuntimeValue::TwoStateUnsigned(merged, current_data.bit_width);
+              : RuntimeValue::IntegralUnsigned(merged, current_data.bit_width);
       store_variable(instr.operands[0], result, false);
       return InstructionResult::Continue();
     }
@@ -674,9 +674,9 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      if (src.type.kind == common::Type::Kind::kTwoState &&
-          target_type.kind == common::Type::Kind::kTwoState) {
-        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+      if (src.type.kind == common::Type::Kind::kIntegral &&
+          target_type.kind == common::Type::Kind::kIntegral) {
+        auto two_state_data = std::get<common::IntegralData>(target_type.data);
 
         // Reject bit width greater than 64
         if (two_state_data.bit_width > 64) {
@@ -692,9 +692,9 @@ auto RunInstruction(
 
         // Apply sign/bitwidth conversion
         RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::TwoStateSigned(
+                                  ? RuntimeValue::IntegralSigned(
                                         raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::TwoStateUnsigned(
+                                  : RuntimeValue::IntegralUnsigned(
                                         static_cast<uint64_t>(raw_value),
                                         two_state_data.bit_width);
 
@@ -702,9 +702,9 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      if (src.type.kind == common::Type::Kind::kTwoState &&
+      if (src.type.kind == common::Type::Kind::kIntegral &&
           target_type.kind == common::Type::Kind::kReal) {
-        auto two_state_data = std::get<common::TwoStateData>(src.type.data);
+        auto two_state_data = std::get<common::IntegralData>(src.type.data);
         double real_value = two_state_data.is_signed
                                 ? static_cast<double>(src.AsInt64())
                                 : static_cast<double>(src.AsUInt64());
@@ -713,8 +713,8 @@ auto RunInstruction(
       }
 
       if (src.type.kind == common::Type::Kind::kReal &&
-          target_type.kind == common::Type::Kind::kTwoState) {
-        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+          target_type.kind == common::Type::Kind::kIntegral) {
+        auto two_state_data = std::get<common::IntegralData>(target_type.data);
         if (two_state_data.bit_width > 64) {
           throw DiagnosticException(
               Diagnostic::Error(
@@ -725,9 +725,9 @@ auto RunInstruction(
 
         auto raw_value = static_cast<int64_t>(src.AsDouble());
         RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::TwoStateSigned(
+                                  ? RuntimeValue::IntegralSigned(
                                         raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::TwoStateUnsigned(
+                                  : RuntimeValue::IntegralUnsigned(
                                         static_cast<uint64_t>(raw_value),
                                         two_state_data.bit_width);
 
@@ -736,9 +736,9 @@ auto RunInstruction(
       }
 
       // Shortreal conversions
-      if (src.type.kind == common::Type::Kind::kTwoState &&
+      if (src.type.kind == common::Type::Kind::kIntegral &&
           target_type.kind == common::Type::Kind::kShortReal) {
-        auto two_state_data = std::get<common::TwoStateData>(src.type.data);
+        auto two_state_data = std::get<common::IntegralData>(src.type.data);
         float float_value = two_state_data.is_signed
                                 ? static_cast<float>(src.AsInt64())
                                 : static_cast<float>(src.AsUInt64());
@@ -748,8 +748,8 @@ auto RunInstruction(
       }
 
       if (src.type.kind == common::Type::Kind::kShortReal &&
-          target_type.kind == common::Type::Kind::kTwoState) {
-        auto two_state_data = std::get<common::TwoStateData>(target_type.data);
+          target_type.kind == common::Type::Kind::kIntegral) {
+        auto two_state_data = std::get<common::IntegralData>(target_type.data);
         if (two_state_data.bit_width > 64) {
           throw DiagnosticException(
               Diagnostic::Error(
@@ -760,9 +760,9 @@ auto RunInstruction(
 
         auto raw_value = static_cast<int64_t>(src.AsFloat());
         RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::TwoStateSigned(
+                                  ? RuntimeValue::IntegralSigned(
                                         raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::TwoStateUnsigned(
+                                  : RuntimeValue::IntegralUnsigned(
                                         static_cast<uint64_t>(raw_value),
                                         two_state_data.bit_width);
 

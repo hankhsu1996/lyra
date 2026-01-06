@@ -1,0 +1,167 @@
+feature: packed_arrays_2d
+description: 2D packed array support
+
+cases:
+  - name: 2d_packed_declaration
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -559038737  # 0xDEADBEEF as signed int
+
+  - name: 2d_packed_element_read
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[0];  // LSB byte = 0xEF = 239
+        end
+      endmodule
+    expect:
+      variables:
+        result: 239
+
+  - name: 2d_packed_element_read_high
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[3];  // MSB byte = 0xDE = 222
+        end
+      endmodule
+    expect:
+      variables:
+        result: 222
+
+  - name: 2d_packed_element_write
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 0;
+          data[1] = 8'hAB;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43776  # 0x0000AB00
+
+  - name: 2d_packed_element_write_high
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 0;
+          data[3] = 8'hFF;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -16777216  # 0xFF000000 as signed
+
+  - name: 2d_packed_multiple_writes
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 0;
+          data[0] = 8'h11;
+          data[1] = 8'h22;
+          data[2] = 8'h33;
+          data[3] = 8'h44;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1144201745  # 0x44332211
+
+  - name: 2d_packed_read_write
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hCAFEBABE;
+          data[0] = data[2];
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -889275650  # 0xCAFEBAFE
+
+  - name: 2d_packed_nonzero_lower
+    sv: |
+      module Test;
+        bit [4:1][7:0] data;
+        int result;
+        initial begin
+          data = 0;
+          data[2] = 8'h55;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 21760  # 0x00005500
+
+  - name: 2d_packed_variable_index
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int idx;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          idx = 2;
+          result = data[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 173  # Element 2 = 0xAD
+
+  - name: 2d_packed_bit_select
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[1][4];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1  # Element 1 = 0xBE = 0b10111110, bit 4 = 1
+
+  - name: 2d_packed_range_select
+    sv: |
+      module Test;
+        bit [3:0][7:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[2][7:4];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10  # Element 2 = 0xAD, upper nibble = 0xA = 10

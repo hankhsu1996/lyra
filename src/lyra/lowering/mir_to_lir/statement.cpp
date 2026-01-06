@@ -51,16 +51,17 @@ auto LowerStatement(
         auto index = LowerExpression(*target.element_index, builder);
 
         if (target.IsPacked()) {
-          // Packed element assignment: vec[index] = value (single bit for now)
+          // Packed element assignment: vec[index] = value
           const auto& two_state =
-              std::get<common::TwoStateData>(target.base_type->data);
+              std::get<common::IntegralData>(target.base_type->data);
+          size_t element_width = target.base_type->GetElementWidth();
 
           // Adjust index for non-zero-based ranges (e.g., bit [10:5])
           auto adjusted_index = index;
-          if (two_state.lower_bound != 0) {
+          if (two_state.element_lower != 0) {
             auto offset_temp = builder.AllocateTemp("offset", Type::Int());
             auto offset_literal =
-                builder.InternLiteral(Literal::Int(two_state.lower_bound));
+                builder.InternLiteral(Literal::Int(two_state.element_lower));
             builder.AddInstruction(
                 Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
 
@@ -72,7 +73,7 @@ auto LowerStatement(
           }
 
           auto instruction = Instruction::StorePackedElement(
-              target.symbol, adjusted_index, result_value, 1);
+              target.symbol, adjusted_index, result_value, element_width);
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment: array[index] = value
@@ -422,7 +423,7 @@ auto LowerStatement(
           auto expr_value = LowerExpression(*item.expressions[j], builder);
           int64_t mask = item.masks[j];
 
-          lir::TempRef cmp_lhs;
+          lir::TempRef cmp_lhs{};
           if (mask == -1) {
             // Normal case - compare directly
             cmp_lhs = cond_temp;
