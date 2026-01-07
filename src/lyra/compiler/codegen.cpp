@@ -222,6 +222,15 @@ auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   return "/* unknown */";
 }
 
+// Check if a module uses any array types (requiring <array> include)
+auto UsesArrayType(const mir::Module& module) -> bool {
+  auto is_array = [](const auto& item) {
+    return item.variable.type.kind == common::Type::Kind::kUnpackedArray;
+  };
+  return std::ranges::any_of(module.variables, is_array) ||
+         std::ranges::any_of(module.ports, is_array);
+}
+
 }  // namespace
 
 auto Codegen::Generate(const mir::Module& module) -> std::string {
@@ -245,7 +254,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
     }
   }
 
-  EmitHeader(module.submodules);
+  EmitHeader(module.submodules, UsesArrayType(module));
   EmitClass(module);
 
   return out_.str();
@@ -259,8 +268,10 @@ auto Codegen::DelayMultiplier() const -> uint64_t {
 }
 
 void Codegen::EmitHeader(
-    const std::vector<mir::SubmoduleInstance>& submodules) {
-  Line("#include <array>");
+    const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays) {
+  if (uses_arrays) {
+    Line("#include <array>");
+  }
   Line("#include <cmath>");
   Line("#include <iostream>");
   Line("#include <print>");

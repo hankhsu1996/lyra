@@ -25,7 +25,8 @@ class Codegen {
   }
 
  private:
-  void EmitHeader(const std::vector<mir::SubmoduleInstance>& submodules);
+  void EmitHeader(
+      const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
