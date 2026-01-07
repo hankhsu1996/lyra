@@ -73,7 +73,8 @@ auto Interpreter::RunWithCompilation(
   return InterpreterResult{
       .compilation = std::move(compilation),
       .context = std::move(context),
-      .lir_context = lir_modules.back()->context};  // Last is top module
+      .lir_context = lir_modules.back()->context,  // Last is top module
+      .top_instance = runner.GetTopInstance()};
 }
 
 }  // namespace lyra::interpreter

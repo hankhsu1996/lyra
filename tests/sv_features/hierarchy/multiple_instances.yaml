@@ -3,7 +3,6 @@ description: Tests multiple instances of the same module type
 
 cases:
   - name: two_counters_independent
-    skip_codegen: true
     description: Two Counter instances count independently
     sv: |
       module Counter(input bit clk, output int count);

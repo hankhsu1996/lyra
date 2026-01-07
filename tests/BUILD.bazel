@@ -182,6 +182,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "hierarchy_nested_hierarchy_tests",
+    yaml = "sv_features/hierarchy/nested_hierarchy.yaml",
+)
+
+sv_feature_test(
     name = "hierarchy_simple_submodule_tests",
     yaml = "sv_features/hierarchy/simple_submodule.yaml",
 )
@@ -194,4 +199,9 @@ sv_feature_test(
 sv_feature_test(
     name = "hierarchy_output_ports_tests",
     yaml = "sv_features/hierarchy/output_ports.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_port_expressions_tests",
+    yaml = "sv_features/hierarchy/port_expressions.yaml",
 )

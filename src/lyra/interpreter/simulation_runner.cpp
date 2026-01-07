@@ -177,13 +177,21 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
       break;
 
     case RegionType::kNba: {
-      std::vector<SymbolRef> modified_variables;
+      std::vector<ModifiedVariable> modified_variables;
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
-        simulation_context_.get().variable_table.Write(
-            action.variable, action.value);
-        modified_variables.push_back(action.variable);
+        if (action.instance != nullptr &&
+            action.instance->Exists(action.variable)) {
+          // Per-instance storage
+          action.instance->Write(action.variable, action.value);
+        } else {
+          // Global storage
+          simulation_context_.get().variable_table.Write(
+              action.variable, action.value);
+        }
+        modified_variables.push_back(
+            {.symbol = action.variable, .instance = action.instance});
         nba_queue_.pop();
       }
 
@@ -205,9 +213,18 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
   }
 }
 
-void SimulationRunner::InitializeModuleVariables(const lir::Module& module) {
+void SimulationRunner::InitializeModuleVariables(
+    const lir::Module& module,
+    const std::shared_ptr<InstanceContext>& instance) {
+  // Initialize module variables in the instance's storage
   for (const auto& variable : module.variables) {
-    simulation_context_.get().variable_table.InitializeVariable(variable);
+    instance->InitializeVariable(variable);
+  }
+
+  // Initialize ports in the instance's storage (for input ports that need
+  // storage)
+  for (const auto& port : module.ports) {
+    instance->InitializeVariable(port.variable);
   }
 }
 
@@ -237,13 +254,16 @@ void SimulationRunner::ElaborateHierarchy() {
 
   // Create top module instance context (no port bindings)
   auto top_instance = std::make_shared<InstanceContext>(
-      top.name, std::unordered_map<common::SymbolRef, common::SymbolRef>{});
+      top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
 
-  // Initialize top module variables
-  InitializeModuleVariables(top);
+  // Initialize top module variables in per-instance storage
+  InitializeModuleVariables(top, top_instance);
 
   // Schedule top module's processes
   ScheduleModuleProcesses(top, top_instance);
+
+  // Store top instance for later access
+  top_instance_ = top_instance;
 
   // Recursively elaborate submodules
   ElaborateSubmodules(top, top.name, top_instance);
@@ -263,31 +283,39 @@ void SimulationRunner::ElaborateSubmodules(
     std::string instance_path = parent_path + "." + submod.instance_name;
 
     // Build port bindings for this instance
-    // Map child port symbols to parent signal symbols
-    std::unordered_map<common::SymbolRef, common::SymbolRef> bindings;
+    // Bindings allow port access to resolve to parent signals:
+    // - Input ports: child reads → parent signal (for simple .a(x) connections)
+    // - Output ports: child writes → parent signal
+    std::unordered_map<common::SymbolRef, PortBinding> bindings;
     for (const auto& conn : submod.connections) {
-      // Find the port symbol in the child module
-      common::SymbolRef port_symbol = nullptr;
+      // Find the port in child module
+      const lir::Port* port_ptr = nullptr;
       for (const auto& port : child->ports) {
         if (std::string(port.variable.symbol->name) == conn.port_name) {
-          port_symbol = port.variable.symbol;
+          port_ptr = &port;
           break;
         }
       }
 
-      if (port_symbol != nullptr) {
-        // Resolve the signal through parent's bindings (for nested hierarchy)
-        auto signal_symbol = parent_instance->Resolve(conn.signal);
-        bindings[port_symbol] = signal_symbol;
+      if (port_ptr == nullptr) {
+        continue;
       }
+
+      // Resolve the signal through parent's bindings (for nested hierarchy)
+      // If parent has a binding, follow it; otherwise use parent instance
+      auto [target_symbol, target_instance] =
+          parent_instance->ResolveBinding(conn.signal);
+      bindings[port_ptr->variable.symbol] = PortBinding{
+          .target_symbol = target_symbol,
+          .target_instance =
+              target_instance ? target_instance : parent_instance};
     }
 
     auto child_instance =
         std::make_shared<InstanceContext>(instance_path, std::move(bindings));
 
-    // Initialize child module's local variables (non-port variables)
-    // Ports are aliases to parent signals via instance context bindings
-    InitializeModuleVariables(*child);
+    // Initialize child module's variables in per-instance storage
+    InitializeModuleVariables(*child, child_instance);
 
     // Schedule child module's processes with this instance context
     ScheduleModuleProcesses(*child, child_instance);
@@ -316,7 +344,7 @@ void SimulationRunner::ExecuteOneEvent() {
 
   auto result = RunProcess(
       process, block_index, instruction_index, simulation_context_.get(),
-      process_context, process_effect, instance.get());
+      process_context, process_effect, instance);
 
   simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", process->name, result.Summary()));
@@ -366,7 +394,7 @@ void SimulationRunner::ExecuteOneEvent() {
 }
 
 void SimulationRunner::WakeWaitingProcesses(
-    const std::vector<SymbolRef>& modified_variables) {
+    const std::vector<ModifiedVariable>& modified_variables) {
   // Delegate to trigger manager
   auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 

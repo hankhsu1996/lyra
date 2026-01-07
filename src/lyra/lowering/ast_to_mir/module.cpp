@@ -1,9 +1,12 @@
 #include "lyra/lowering/ast_to_mir/module.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
+#include <fmt/format.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -13,16 +16,18 @@
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
 #include "lyra/common/timescale.hpp"
+#include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
+#include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/process.hpp"
 
 namespace lyra::lowering::ast_to_mir {
-
-using SymbolRef = slang::ast::Symbol*;
 
 namespace {
 
@@ -39,6 +44,41 @@ auto MapPortDirection(slang::ast::ArgumentDirection direction)
   }
   // Should not reach here
   return mir::PortDirection::kInout;
+}
+
+// Creates an always_comb-like process for a port driver statement.
+// Pattern: while (true) { driver_stmt; @(sensitivity_list); }
+auto CreatePortDriverProcess(
+    std::unique_ptr<mir::PortDriverStatement> driver_stmt,
+    std::size_t& port_driver_counter) -> std::unique_ptr<mir::Process> {
+  auto process = std::make_unique<mir::Process>();
+  process->name = fmt::format("_port_driver_{}", port_driver_counter++);
+
+  // Collect sensitivity list from the driver expression
+  auto variables = CollectSensitivityList(*driver_stmt->value);
+
+  std::vector<common::Trigger> triggers;
+  triggers.reserve(variables.size());
+  for (const auto& variable : variables) {
+    triggers.emplace_back(common::Trigger::AnyChange(variable));
+  }
+
+  // Build loop: driver first, then wait for triggers
+  // This achieves always_comb semantics:
+  // - Body executes at time 0 (first iteration before wait)
+  // - Body re-executes on any input change (after wait)
+  auto loop_block = std::make_unique<mir::BlockStatement>();
+  loop_block->statements.push_back(std::move(driver_stmt));
+  loop_block->statements.push_back(
+      std::make_unique<mir::WaitEventStatement>(std::move(triggers)));
+
+  // while (true) { driver; wait_event; }
+  auto condition =
+      std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+  process->body = std::make_unique<mir::WhileStatement>(
+      std::move(condition), std::move(loop_block));
+
+  return process;
 }
 
 }  // namespace
@@ -153,6 +193,9 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       submod.instance_name = std::string(child.name);
       submod.module_type = std::string(child.getDefinition().name);
 
+      // Counter for generating unique port driver process names
+      static std::size_t port_driver_counter = 0;
+
       for (const auto* conn : child.getPortConnections()) {
         const auto* expr = conn->getExpression();
         // Skip empty/implicit port connections
@@ -163,6 +206,8 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
 
         mir::PortConnection port_conn;
         port_conn.port_name = std::string(conn->port.name);
+        const auto& port = conn->port.as<slang::ast::PortSymbol>();
+        port_conn.direction = MapPortDirection(port.direction);
 
         // For output ports, slang wraps the connection in an Assignment
         // expression (external = internal). Extract just the LHS signal.
@@ -170,7 +215,23 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
           port_conn.signal = LowerExpression(assignment.left());
         } else {
+          // Input port connection
+          // - Codegen: creates a port driver process to write to child's
+          // storage
+          // - Interpreter: uses binding (child port → parent signal)
+          // We need both: the process for codegen, and the signal for bindings
+
+          // Lower expression twice: once for process, once for port connection
+          auto signal_expr = LowerExpression(*expr);
           port_conn.signal = LowerExpression(*expr);
+
+          // Create port driver process (used by codegen)
+          auto driver_stmt = std::make_unique<mir::PortDriverStatement>(
+              submod.instance_name, port_conn.port_name,
+              std::move(signal_expr));
+          auto process = CreatePortDriverProcess(
+              std::move(driver_stmt), port_driver_counter);
+          module->processes.push_back(std::move(process));
         }
 
         submod.connections.push_back(std::move(port_conn));

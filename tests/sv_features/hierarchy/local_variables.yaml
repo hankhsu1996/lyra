@@ -3,7 +3,6 @@ description: Tests for child module local (non-port) variables
 
 cases:
   - name: child_module_local_variable
-    skip_codegen: true  # Codegen test API doesn't support hierarchy yet
     description: |
       Verifies that child module local variables are properly initialized
       and can be used in processes.

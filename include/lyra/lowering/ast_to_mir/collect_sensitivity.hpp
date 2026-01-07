@@ -69,6 +69,10 @@ class SensitivityCollector : public mir::MirVisitor {
     // width is a constant integer, not an expression
   }
 
+  void Visit(const mir::PortDriverExpression& /*unused*/) override {
+    // Port driver is a target (LHS), not a source - no variables to collect
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);
@@ -76,6 +80,10 @@ class SensitivityCollector : public mir::MirVisitor {
   }
 
   void Visit(const mir::AssignStatement& statement) override {
+    statement.value->Accept(*this);
+  }
+
+  void Visit(const mir::PortDriverStatement& statement) override {
     statement.value->Accept(*this);
   }
 
@@ -163,11 +171,19 @@ class SensitivityCollector : public mir::MirVisitor {
   std::unordered_set<SymbolRef> variable_names_;
 };
 
-// Entry point
+// Entry point for statements
 inline auto CollectSensitivityList(const mir::Statement& statement)
     -> std::unordered_set<SymbolRef> {
   SensitivityCollector collector;
   statement.Accept(collector);
+  return std::move(collector).TakeVariableNames();
+}
+
+// Entry point for expressions
+inline auto CollectSensitivityList(const mir::Expression& expression)
+    -> std::unordered_set<SymbolRef> {
+  SensitivityCollector collector;
+  expression.Accept(collector);
   return std::move(collector).TakeVariableNames();
 }
 

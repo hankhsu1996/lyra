@@ -23,6 +23,7 @@ class Statement {
     // Core statements
     kVariableDeclaration,
     kAssign,
+    kPortDriver,
     kExpression,
 
     // Timing control statements
@@ -65,6 +66,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "VariableDeclaration";
     case Statement::Kind::kAssign:
       return "Assign";
+    case Statement::Kind::kPortDriver:
+      return "PortDriver";
     case Statement::Kind::kExpression:
       return "Expression";
     case Statement::Kind::kWaitEvent:
@@ -145,6 +148,34 @@ class AssignStatement : public Statement {
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     return std::format(
         "{}{} = {}\n", common::Indent(indent), target.ToString(),
+        value->ToString());
+  }
+};
+
+// Assigns a value to a submodule's input port: submodule.port = value
+class PortDriverStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kPortDriver;
+  std::string submodule_instance;  // e.g., "child"
+  std::string port_name;           // e.g., "a"
+  std::unique_ptr<Expression> value;
+
+  PortDriverStatement(
+      std::string submodule_instance, std::string port_name,
+      std::unique_ptr<Expression> value)
+      : Statement(kKindValue),
+        submodule_instance(std::move(submodule_instance)),
+        port_name(std::move(port_name)),
+        value(std::move(value)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format(
+        "{}{}.{} = {}\n", common::Indent(indent), submodule_instance, port_name,
         value->ToString());
   }
 };

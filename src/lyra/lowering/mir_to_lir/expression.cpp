@@ -211,6 +211,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return result;
     }
 
+<<<<<<< HEAD
     case mir::Expression::Kind::kRangeSelect: {
       const auto& range = mir::As<mir::RangeSelectExpression>(expression);
       assert(range.value);
@@ -278,6 +279,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           Instruction::LoadPackedSlice(
               result, value, lsb_temp, expression.type));
       return result;
+    }
+
+    case mir::Expression::Kind::kPortDriver: {
+      // PortDriverExpression is only supported by C++ codegen, not the
+      // interpreter.
+      throw std::runtime_error(
+          "PortDriverExpression is not supported by the interpreter");
     }
   }
 }

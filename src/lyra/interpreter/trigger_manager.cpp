@@ -34,19 +34,27 @@ void TriggerManager::RegisterWaitingProcess(
 }
 
 auto TriggerManager::CheckTriggers(
-    const std::vector<SymbolRef>& modified_variables)
+    const std::vector<ModifiedVariable>& modified_variables)
     -> std::vector<ScheduledEvent> {
   std::vector<ScheduledEvent> events_to_trigger;
   std::unordered_set<ProcessInstanceKey, ProcessInstanceKeyHash> triggered_keys;
 
-  for (const auto& variable : modified_variables) {
-    // Read previous and current values of the variable
-    RuntimeValue old_value =
-        context_.get().variable_table.ReadPrevious(variable);
-    RuntimeValue new_value = context_.get().variable_table.Read(variable);
+  for (const auto& [variable, instance] : modified_variables) {
+    // Read previous and current values from the appropriate source
+    RuntimeValue old_value;
+    RuntimeValue new_value;
 
-    // Update previous value for this variable - IMPORTANT!
-    context_.get().variable_table.UpdatePrevious(variable, new_value);
+    if (instance != nullptr && instance->Exists(variable)) {
+      // Per-instance storage
+      old_value = instance->ReadPrevious(variable);
+      new_value = instance->Read(variable);
+      instance->UpdatePrevious(variable, new_value);
+    } else {
+      // Global storage
+      old_value = context_.get().variable_table.ReadPrevious(variable);
+      new_value = context_.get().variable_table.Read(variable);
+      context_.get().variable_table.UpdatePrevious(variable, new_value);
+    }
 
     // Check if any process is waiting on this variable
     auto map_it = wait_map_.find(variable);

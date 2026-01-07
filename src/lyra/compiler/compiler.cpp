@@ -80,14 +80,31 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
 }  // namespace
 
 auto Compiler::CompileAndRun(
-    const mir::Module& mir, const std::vector<std::string>& variables_to_read)
+    const std::vector<std::unique_ptr<mir::Module>>& modules,
+    const std::vector<std::string>& variables_to_read)
     // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
     -> CompilerResult {
   CompilerResult result;
 
-  // Generate C++
+  // Create unique temp directory with design subdirectory for headers
+  auto tmp_dir = MakeUniqueTempDir();
+  auto design_dir = tmp_dir / "design";
+  std::filesystem::create_directories(design_dir);
+  auto cpp_path = tmp_dir / "test_main.cpp";
+  auto bin_path = tmp_dir / "sim";
+
+  // Generate header for each module
   Codegen codegen;
-  std::string generated = codegen.Generate(mir);
+  for (const auto& mir : modules) {
+    std::string generated = codegen.Generate(*mir);
+    std::string header_code = "#pragma once\n\n" + generated;
+    auto header_path = design_dir / (mir->name + ".hpp");
+    std::ofstream out(header_path);
+    out << header_code;
+  }
+
+  // Use last module as top (modules are in dependency order)
+  const auto& top = *modules.back();
 
   // Build main() that captures display output and prints results
   std::ostringstream main_code;
@@ -95,7 +112,7 @@ auto Compiler::CompileAndRun(
   // Initialize global precision for $timeunit($root) and $timeprecision($root)
   main_code << "  lyra::sdk::global_precision_power = "
             << static_cast<int>(codegen.GetGlobalPrecisionPower()) << ";\n";
-  main_code << "  " << mir.name << " dut;\n";
+  main_code << "  " << top.name << " dut;\n";
   // Redirect cout to capture $display output
   main_code << "  std::ostringstream captured;\n";
   main_code << "  auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
@@ -114,26 +131,13 @@ auto Compiler::CompileAndRun(
   main_code << "  return 0;\n";
   main_code << "}\n";
 
-  // Create unique temp directory
-  auto tmp_dir = MakeUniqueTempDir();
-  auto header_path = tmp_dir / "generated.hpp";
-  auto cpp_path = tmp_dir / "test_main.cpp";
-  auto bin_path = tmp_dir / "sim";
-
-  // Write generated code to header file (matches lyra emit behavior)
-  std::string header_code = "#pragma once\n\n" + generated;
-  {
-    std::ofstream out(header_path);
-    out << header_code;
-  }
-
-  // Write test wrapper to separate .cpp file that includes the header
+  // Write test wrapper to separate .cpp file that includes the top header
   std::string wrapper_code;
   {
     std::ostringstream wrapper_stream;
     wrapper_stream << "#include <iostream>\n";
     wrapper_stream << "#include <sstream>\n";
-    wrapper_stream << "#include \"generated.hpp\"\n";
+    wrapper_stream << "#include \"design/" << top.name << ".hpp\"\n";
     wrapper_stream << main_code.str();
     wrapper_code = wrapper_stream.str();
 
@@ -143,17 +147,17 @@ auto Compiler::CompileAndRun(
 
   // Debug: print generated code if LYRA_DEBUG_CODEGEN is set
   if (std::getenv("LYRA_DEBUG_CODEGEN") != nullptr) {
-    std::cerr << "=== Generated Header ===\n"
-              << header_code << "\n=== Test Wrapper ===\n"
-              << wrapper_code << "\n=== End ===\n";
+    std::cerr << "=== Test Wrapper ===\n" << wrapper_code << "\n=== End ===\n";
   }
 
-  // Compile with SDK include path (include tmp_dir for generated.hpp)
+  // Compile with SDK include path
+  // Include both tmp_dir (for test_main.cpp) and design_dir (for module
+  // headers)
   auto sdk_include = GetSdkIncludePath();
   std::string compile_cmd = "clang++ -std=c++23 -I" + sdk_include.string() +
-                            " -I" + tmp_dir.string() + " -o " +
-                            bin_path.string() + " " + cpp_path.string() +
-                            " 2>&1";
+                            " -I" + tmp_dir.string() + " -I" +
+                            design_dir.string() + " -o " + bin_path.string() +
+                            " " + cpp_path.string() + " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
     result.error_message_ = "Compilation failed: " + compile_output;
@@ -227,15 +231,11 @@ auto Compiler::RunFromSource(
     return result;
   }
 
-  // Lower to MIR (empty top = all modules; test API expects single module)
+  // Lower to MIR (empty top = all modules in dependency order, last is top)
   const auto& root = compilation->getRoot();
   auto modules = lowering::ast_to_mir::AstToMir(root, "");
-  if (modules.size() > 1) {
-    result.error_message_ = "Multiple modules found; use CLI with lyra.toml";
-    return result;
-  }
 
-  return CompileAndRun(*modules.front(), variables_to_read);
+  return CompileAndRun(modules, variables_to_read);
 }
 
 auto Compiler::RunFromFiles(
@@ -251,15 +251,11 @@ auto Compiler::RunFromFiles(
     return result;
   }
 
-  // Lower to MIR (empty top = all modules; test API expects single module)
+  // Lower to MIR (empty top = all modules in dependency order, last is top)
   const auto& root = compilation->getRoot();
   auto modules = lowering::ast_to_mir::AstToMir(root, "");
-  if (modules.size() > 1) {
-    result.error_message_ = "Multiple modules found; use CLI with lyra.toml";
-    return result;
-  }
 
-  return CompileAndRun(*modules.front(), variables_to_read);
+  return CompileAndRun(modules, variables_to_read);
 }
 
 }  // namespace lyra::compiler

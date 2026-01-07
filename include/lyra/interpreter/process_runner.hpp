@@ -17,6 +17,7 @@ auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
     ProcessContext& process_context, ProcessEffect& effect,
-    const InstanceContext* instance_context = nullptr) -> ProcessResult;
+    const std::shared_ptr<InstanceContext>& instance_context = nullptr)
+    -> ProcessResult;
 
 }  // namespace lyra::interpreter

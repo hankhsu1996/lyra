@@ -237,9 +237,12 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
     global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
   }
 
-  // Populate port symbols for identifier emission
+  // Populate port symbols for identifier emission (output/inout ports only)
+  // Input ports are public variables without underscore suffix
   for (const auto& port : module.ports) {
-    port_symbols_.insert(port.variable.symbol);
+    if (port.direction != mir::PortDirection::kInput) {
+      port_symbols_.insert(port.variable.symbol);
+    }
   }
 
   EmitHeader(module.submodules);
@@ -318,23 +321,30 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line(" public:");
   indent_++;
 
-  // Constructor with port parameters
+  // Input port member variables (public, for parent to drive)
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      std::string type_str = ToCppType(port.variable.type);
+      Line(type_str + " " + std::string(port.variable.symbol->name) + ";");
+    }
+  }
+
+  // Constructor with port parameters (output/inout ports only)
   Indent();
   out_ << module.name << "(";
 
-  // Generate port parameters
+  // Generate port parameters (output/inout ports only)
   bool first = true;
   for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports are public variables, not constructor parameters
+    }
     if (!first) {
       out_ << ", ";
     }
     first = false;
     std::string type_str = ToCppType(port.variable.type);
-    if (port.direction == mir::PortDirection::kInput) {
-      out_ << "const " << type_str << "& " << port.variable.symbol->name;
-    } else {
-      out_ << type_str << "& " << port.variable.symbol->name;
-    }
+    out_ << type_str << "& " << port.variable.symbol->name;
   }
 
   out_ << ")\n";
@@ -342,17 +352,23 @@ void Codegen::EmitClass(const mir::Module& module) {
   Indent();
   out_ << ": Module(\"" << module.name << "\")";
 
-  // Port initializers
+  // Port initializers (output/inout ports only)
   for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports are public variables, not reference members
+    }
     out_ << ", " << port.variable.symbol->name << "_("
          << port.variable.symbol->name << ")";
   }
 
-  // Submodule initializers (Phase 7)
+  // Submodule initializers - pass only output port connections
   for (const auto& submod : module.submodules) {
     out_ << ", " << submod.instance_name << "_(";
     bool first_conn = true;
     for (const auto& conn : submod.connections) {
+      if (conn.direction == mir::PortDirection::kInput) {
+        continue;  // Input ports assigned in constructor body
+      }
       if (!first_conn) {
         out_ << ", ";
       }
@@ -385,21 +401,19 @@ void Codegen::EmitClass(const mir::Module& module) {
   // Member variables
   EmitVariables(module.variables);
 
-  // Submodule members (Phase 7)
-  for (const auto& submod : module.submodules) {
-    Line(submod.module_type + " " + submod.instance_name + "_;");
+  // Output/inout port reference members (must be before submodules for
+  // initialization order - C++ initializes members in declaration order)
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports declared as public variables above
+    }
+    std::string type_str = ToCppType(port.variable.type);
+    Line(type_str + "& " + std::string(port.variable.symbol->name) + "_;");
   }
 
-  // Port reference members
-  for (const auto& port : module.ports) {
-    std::string type_str = ToCppType(port.variable.type);
-    if (port.direction == mir::PortDirection::kInput) {
-      Line(
-          "const " + type_str + "& " + std::string(port.variable.symbol->name) +
-          "_;");
-    } else {
-      Line(type_str + "& " + std::string(port.variable.symbol->name) + "_;");
-    }
+  // Submodule members (after port references so they can use them)
+  for (const auto& submod : module.submodules) {
+    Line(submod.module_type + " " + submod.instance_name + "_;");
   }
 
   indent_--;
@@ -473,6 +487,14 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         EmitExpression(*assign.value);
         out_ << ";\n";
       }
+      break;
+    }
+    case mir::Statement::Kind::kPortDriver: {
+      const auto& driver = mir::As<mir::PortDriverStatement>(stmt);
+      Indent();
+      out_ << driver.submodule_instance << "_." << driver.port_name << " = ";
+      EmitExpression(*driver.value);
+      out_ << ";\n";
       break;
     }
     case mir::Statement::Kind::kExpression: {
@@ -1119,6 +1141,13 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       EmitSliceShift(*indexed.start, lower, width_offset);
 
       out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
+      break;
+    }
+    case mir::Expression::Kind::kPortDriver: {
+      // Port driver expressions are only used as LHS in PortDriverStatement,
+      // not as standalone expressions. This case shouldn't be reached.
+      const auto& driver = mir::As<mir::PortDriverExpression>(expr);
+      out_ << driver.submodule_instance << "_." << driver.port_name;
       break;
     }
     case mir::Expression::Kind::kTernary: {

@@ -258,17 +258,21 @@ auto FormatDisplay(
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
     ProcessContext& process_context, ProcessEffect& effect,
-    const InstanceContext* instance_context) -> InstructionResult {
+    const std::shared_ptr<InstanceContext>& instance_context)
+    -> InstructionResult {
   auto& temp_table = process_context.temp_table;
   auto& module_variable_table = simulation_context.variable_table;
   auto& process_variable_table = process_context.variable_table;
 
-  // Helper to resolve symbol through instance context (like 'this->member')
-  auto resolve_symbol = [instance_context](const auto* symbol) {
+  // Helper to resolve symbol through instance context port bindings.
+  // Returns (target_symbol, target_instance) where target_instance is nullptr
+  // if not bound (use current instance or global).
+  auto resolve_binding = [&instance_context](const auto* symbol)
+      -> std::pair<common::SymbolRef, std::shared_ptr<InstanceContext>> {
     if (instance_context != nullptr) {
-      return instance_context->Resolve(symbol);
+      return instance_context->ResolveBinding(symbol);
     }
-    return symbol;
+    return {symbol, nullptr};
   };
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
@@ -279,12 +283,27 @@ auto RunInstruction(
   auto read_variable = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
-    // Resolve through instance context (port → parent signal)
-    symbol = resolve_symbol(symbol);
 
+    // Check process-local first
     if (process_variable_table.Exists(symbol)) {
       return process_variable_table.Read(symbol);
     }
+
+    // Resolve through port bindings (output port → target signal/instance)
+    auto [target_symbol, target_instance] = resolve_binding(symbol);
+
+    // If bound, read from target instance's storage
+    if (target_instance != nullptr) {
+      return target_instance->Read(target_symbol);
+    }
+
+    // Otherwise, read from per-instance storage (local vars, input ports)
+    if (instance_context != nullptr && instance_context->Exists(symbol)) {
+      return instance_context->Read(symbol);
+    }
+
+    // Fallback to global table (for backwards compat with non-hierarchical
+    // code)
     return module_variable_table.Read(symbol);
   };
 
@@ -292,18 +311,50 @@ auto RunInstruction(
                             const RuntimeValue& value, bool is_non_blocking) {
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
-    // Resolve through instance context (port → parent signal)
-    symbol = resolve_symbol(symbol);
 
+    // Check process-local first
     if (process_variable_table.Exists(symbol)) {
       process_variable_table.Write(symbol, value);
-    } else {
-      module_variable_table.Write(symbol, value);
+      return;
+    }
+
+    // Resolve through port bindings (output port → target signal/instance)
+    auto [target_symbol, target_instance] = resolve_binding(symbol);
+
+    // If bound (output port), write to target instance's storage
+    if (target_instance != nullptr) {
       if (!is_non_blocking) {
-        effect.RecordVariableModification(symbol);
+        target_instance->Write(target_symbol, value);
+        effect.RecordVariableModification(target_symbol, target_instance);
       } else {
-        effect.RecordNbaAction(NbaAction{.variable = symbol, .value = value});
+        effect.RecordNbaAction(
+            {.variable = target_symbol,
+             .value = value,
+             .instance = target_instance});
       }
+      return;
+    }
+
+    // Otherwise, write to per-instance storage (local vars, input ports)
+    if (instance_context != nullptr) {
+      instance_context->Write(symbol, value);
+      if (!is_non_blocking) {
+        effect.RecordVariableModification(symbol, instance_context);
+      } else {
+        effect.RecordNbaAction(
+            {.variable = symbol, .value = value, .instance = instance_context});
+      }
+      return;
+    }
+
+    // Fallback to global table (for backwards compat with non-hierarchical
+    // code)
+    if (!is_non_blocking) {
+      module_variable_table.Write(symbol, value);
+      effect.RecordVariableModification(symbol);  // Global storage
+    } else {
+      effect.RecordNbaAction(
+          {.variable = symbol, .value = value, .instance = nullptr});
     }
   };
 
@@ -847,9 +898,9 @@ auto RunInstruction(
       std::vector<common::Trigger> resolved_triggers;
       resolved_triggers.reserve(instr.wait_triggers.size());
       for (const auto& trigger : instr.wait_triggers) {
+        auto [target_symbol, _] = resolve_binding(trigger.variable);
         resolved_triggers.push_back(
-            {.edge_kind = trigger.edge_kind,
-             .variable = resolve_symbol(trigger.variable)});
+            {.edge_kind = trigger.edge_kind, .variable = target_symbol});
       }
       return InstructionResult::WaitEvent(std::move(resolved_triggers));
     }

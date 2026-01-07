@@ -19,13 +19,14 @@ enum class PortDirection { kInput, kOutput, kInout };
 // Module port declaration
 struct Port {
   common::Variable variable;
-  PortDirection direction;
+  PortDirection direction = PortDirection::kInput;
 };
 
 // Connection from parent signal to child port
 struct PortConnection {
   std::string port_name;               // Formal port name in child module
   std::unique_ptr<Expression> signal;  // Expression referencing parent signal
+  PortDirection direction = PortDirection::kInput;
 };
 
 // Submodule instantiation
@@ -102,7 +103,14 @@ class Module {
             result += ", ";
           }
           first = false;
-          result += "." + conn.port_name + "(" + conn.signal->ToString() + ")";
+          if (conn.signal) {
+            result +=
+                "." + conn.port_name + "(" + conn.signal->ToString() + ")";
+          } else {
+            // Process-driven port (expression was transformed to implicit
+            // process)
+            result += "." + conn.port_name + "(<process-driven>)";
+          }
         }
         result += ")\n";
       }

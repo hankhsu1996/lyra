@@ -36,6 +36,7 @@ class Expression {
     kElementSelect,
     kRangeSelect,
     kIndexedRangeSelect,
+    kPortDriver,
   };
 
   Kind kind;
@@ -77,6 +78,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "RangeSelect";
     case Expression::Kind::kIndexedRangeSelect:
       return "IndexedRangeSelect";
+    case Expression::Kind::kPortDriver:
+      return "PortDriver";
   }
   std::abort();
 }
@@ -404,6 +407,31 @@ class IndexedRangeSelectExpression : public Expression {
     return fmt::format(
         "{}[{}{}:{}]", value->ToString(), start->ToString(),
         is_ascending ? "+" : "-", width);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Represents a hierarchical port reference: submodule.port
+// Used as LHS in assignments that drive a child module's input port
+class PortDriverExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kPortDriver;
+
+  std::string submodule_instance;  // e.g., "child"
+  std::string port_name;           // e.g., "a"
+
+  PortDriverExpression(
+      std::string submodule_instance, std::string port_name, Type type)
+      : Expression(kKindValue, std::move(type)),
+        submodule_instance(std::move(submodule_instance)),
+        port_name(std::move(port_name)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}.{}", submodule_instance, port_name);
   }
 
   void Accept(MirVisitor& visitor) const override {

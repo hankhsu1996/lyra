@@ -5,6 +5,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "lyra/common/symbol.hpp"
+#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 
 namespace lyra::interpreter {
@@ -17,9 +18,19 @@ struct InterpreterResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
   std::unique_ptr<SimulationContext> context;
   std::shared_ptr<lir::LirContext> lir_context;
+  std::shared_ptr<InstanceContext> top_instance;
 
   [[nodiscard]] auto ReadVariable(const std::string& name) const
       -> RuntimeValue {
+    // First try to read from top instance's per-instance storage
+    if (top_instance != nullptr) {
+      for (const auto& [symbol, value] : top_instance->variables) {
+        if (symbol->name == name) {
+          return value;
+        }
+      }
+    }
+    // Fall back to global variable table (for backwards compatibility)
     return context->variable_table.ReadFromName(name);
   }
 

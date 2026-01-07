@@ -1,32 +1,105 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/variable.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
-// Represents a module instance's symbol bindings (like C++ 'this' pointer).
-// Each instance has a mapping from port symbols to parent signal symbols.
+// Forward declaration for PortBinding
+struct InstanceContext;
+
+// Binding from output port to parent signal (includes target instance)
+struct PortBinding {
+  common::SymbolRef target_symbol;
+  std::shared_ptr<InstanceContext> target_instance;
+};
+
+// Represents a module instance's context (like C++ 'this' pointer).
+// Each instance has:
+// - Port bindings: maps port symbols to (parent_signal, parent_instance)
+// - Variable storage: per-instance storage for module variables
+// - Child instances: for hierarchical port access
 struct InstanceContext {
   std::string instance_path;  // e.g., "top.counter1"
-  std::unordered_map<common::SymbolRef, common::SymbolRef>
-      port_bindings;  // port → parent signal
+
+  // Port bindings: port symbol → (target_symbol, target_instance)
+  std::unordered_map<common::SymbolRef, PortBinding> port_bindings;
+
+  // Per-instance variable storage
+  std::unordered_map<common::SymbolRef, RuntimeValue> variables;
+  std::unordered_map<common::SymbolRef, RuntimeValue> previous_variables;
 
   InstanceContext(
       std::string path,
-      std::unordered_map<common::SymbolRef, common::SymbolRef> bindings)
+      std::unordered_map<common::SymbolRef, PortBinding> bindings)
       : instance_path(std::move(path)), port_bindings(std::move(bindings)) {
   }
 
-  // Resolve symbol through port bindings (like this->member).
-  // Returns the original symbol if no binding exists.
-  [[nodiscard]] auto Resolve(common::SymbolRef symbol) const
-      -> common::SymbolRef {
+  // Resolve symbol through port bindings.
+  // Returns (target_symbol, target_instance) if bound, or (symbol, nullptr)
+  // if not bound.
+  [[nodiscard]] auto ResolveBinding(common::SymbolRef symbol) const
+      -> std::pair<common::SymbolRef, std::shared_ptr<InstanceContext>> {
     auto it = port_bindings.find(symbol);
-    return it != port_bindings.end() ? it->second : symbol;
+    if (it != port_bindings.end()) {
+      return {it->second.target_symbol, it->second.target_instance};
+    }
+    return {symbol, nullptr};
+  }
+
+  // Check if symbol has a binding
+  [[nodiscard]] auto HasBinding(common::SymbolRef symbol) const -> bool {
+    return port_bindings.contains(symbol);
+  }
+
+  // Variable storage methods
+  void Write(common::SymbolRef symbol, const RuntimeValue& value) {
+    variables[symbol] = value;
+  }
+
+  [[nodiscard]] auto Read(common::SymbolRef symbol) const -> RuntimeValue {
+    auto it = variables.find(symbol);
+    if (it == variables.end()) {
+      throw std::runtime_error(
+          "Variable not found in instance: " + instance_path);
+    }
+    return it->second;
+  }
+
+  [[nodiscard]] auto ReadPrevious(common::SymbolRef symbol) const
+      -> RuntimeValue {
+    auto it = previous_variables.find(symbol);
+    if (it == previous_variables.end()) {
+      // Fall back to current value if no previous recorded
+      return Read(symbol);
+    }
+    return it->second;
+  }
+
+  void UpdatePrevious(common::SymbolRef symbol, const RuntimeValue& value) {
+    previous_variables[symbol] = value;
+  }
+
+  [[nodiscard]] auto Exists(common::SymbolRef symbol) const -> bool {
+    return variables.contains(symbol);
+  }
+
+  void CreateVariable(common::SymbolRef symbol, RuntimeValue initial_value) {
+    variables[symbol] = std::move(initial_value);
+  }
+
+  void InitializeVariable(const common::Variable& variable) {
+    auto initial_value = RuntimeValue::DefaultValueForType(variable.type);
+    // Initialize both current and previous values so triggers work correctly
+    // on first change (previous != current when first modified)
+    previous_variables[variable.symbol] = initial_value;
+    CreateVariable(variable.symbol, std::move(initial_value));
   }
 };
 

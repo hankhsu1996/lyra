@@ -18,7 +18,8 @@ using ResultKind = InstructionResult::Kind;
 auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
     SimulationContext& simulation_context, ProcessContext& process_context,
-    ProcessEffect& effect, const InstanceContext* instance_context)
+    ProcessEffect& effect,
+    const std::shared_ptr<InstanceContext>& instance_context)
     -> BasicBlockResult {
   const auto& instructions = block.instructions;
 

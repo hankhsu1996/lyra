@@ -13,6 +13,7 @@ namespace lyra::interpreter {
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
     ProcessContext& process_context, ProcessEffect& effect,
-    const InstanceContext* instance_context = nullptr) -> InstructionResult;
+    const std::shared_ptr<InstanceContext>& instance_context = nullptr)
+    -> InstructionResult;
 
 }  // namespace lyra::interpreter

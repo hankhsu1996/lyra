@@ -53,6 +53,11 @@ class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 TEST_P(SvFeatureTest, Interpreter) {
   const auto& tc = GetParam();
 
+  // Skip interpreter test if flag is set
+  if (tc.skip_interpreter) {
+    GTEST_SKIP() << "Interpreter skipped";
+  }
+
   interpreter::InterpreterResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);

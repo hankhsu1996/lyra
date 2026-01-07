@@ -3,7 +3,6 @@ description: Tests output port binding from child to parent
 
 cases:
   - name: output_port_updates_parent
-    skip_codegen: true
     description: Child output port updates parent signal
     sv: |
       module Generator(output int value);
@@ -22,7 +21,6 @@ cases:
       time: 1
 
   - name: sequential_output_port
-    skip_codegen: true
     description: Sequential process writes to output port
     sv: |
       module Toggle(input bit clk, output bit state);

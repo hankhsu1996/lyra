@@ -7,6 +7,7 @@
 
 #include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/process.hpp"
@@ -96,7 +97,7 @@ class TriggerManager {
       std::size_t block_index, std::size_t instruction_index);
 
   // Process variable changes and return processes that should be triggered
-  auto CheckTriggers(const std::vector<SymbolRef>& modified_variables)
+  auto CheckTriggers(const std::vector<ModifiedVariable>& modified_variables)
       -> std::vector<ScheduledEvent>;
 
  private:

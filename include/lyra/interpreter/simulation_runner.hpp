@@ -73,19 +73,28 @@ class SimulationRunner {
 
   void Run();
 
+  // Get the top instance context (for reading final variable values)
+  [[nodiscard]] auto GetTopInstance() const
+      -> const std::shared_ptr<InstanceContext>& {
+    return top_instance_;
+  }
+
  private:
   void ElaborateHierarchy();
   void ElaborateSubmodules(
       const lir::Module& parent, const std::string& parent_path,
       const std::shared_ptr<InstanceContext>& parent_instance);
-  void InitializeModuleVariables(const lir::Module& module);
+  void InitializeModuleVariables(
+      const lir::Module& module,
+      const std::shared_ptr<InstanceContext>& instance);
   void ScheduleModuleProcesses(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);
   auto LookupModule(const std::string& name) const -> const lir::Module*;
 
   void ExecuteOneEvent();
-  void WakeWaitingProcesses(const std::vector<SymbolRef>& modified_variables);
+  void WakeWaitingProcesses(
+      const std::vector<ModifiedVariable>& modified_variables);
   void ExecuteTimeSlot();
   void ExecuteRegion(RegionType region);
 
@@ -111,6 +120,9 @@ class SimulationRunner {
   std::reference_wrapper<const lir::Module> top_module_;
   std::unordered_map<std::string, std::reference_wrapper<const lir::Module>>
       module_map_;
+
+  // Top instance context (root of instance hierarchy)
+  std::shared_ptr<InstanceContext> top_instance_;
 
   std::reference_wrapper<SimulationContext> simulation_context_;
   TriggerManager trigger_manager_;

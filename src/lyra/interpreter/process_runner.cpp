@@ -16,7 +16,7 @@ auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
     ProcessContext& process_context, ProcessEffect& effect,
-    const InstanceContext* instance_context) -> ProcessResult {
+    const std::shared_ptr<InstanceContext>& instance_context) -> ProcessResult {
   for (const auto& variable : process->variables) {
     process_context.variable_table.InitializeVariable(variable);
   }

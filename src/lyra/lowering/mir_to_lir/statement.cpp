@@ -508,6 +508,14 @@ auto LowerStatement(
       }
       break;
     }
+
+    case mir::Statement::Kind::kPortDriver: {
+      // PortDriverStatement is used by C++ codegen to drive child input ports.
+      // The interpreter uses a different model: input ports are bound to parent
+      // signals, so reads of child input ports resolve to parent signals
+      // directly. No explicit driving needed - skip this statement.
+      break;
+    }
   }
 }
 
