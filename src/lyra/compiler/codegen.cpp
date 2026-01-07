@@ -436,10 +436,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     out_ << type_str << "& " << port.variable.symbol->name;
   }
 
-  out_ << ")\n";
-  indent_++;
-  Indent();
-  out_ << ": Module(\"" << module.name << "\")";
+  out_ << ") : Module(\"" << module.name << "\")";
 
   // Port initializers (output/inout ports only)
   for (const auto& port : module.ports) {
@@ -465,7 +462,6 @@ void Codegen::EmitClass(const mir::Module& module) {
   }
 
   out_ << " {\n";
-  indent_--;
   indent_++;
   for (const auto& process : module.processes) {
     Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
@@ -483,7 +479,6 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  Line("");
   // Member variables
   EmitVariables(module.variables);
 
