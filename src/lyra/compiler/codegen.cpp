@@ -978,15 +978,6 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         break;
       }
 
-      // Helper to get variable name with underscore suffix for ports
-      auto get_var_name = [this](const slang::ast::Symbol* symbol) {
-        std::string name(symbol->name);
-        if (port_symbols_.contains(symbol)) {
-          name += "_";
-        }
-        return name;
-      };
-
       // Helper to generate trigger expression based on edge kind
       auto trigger_expr = [](const std::string& var_name,
                              common::EdgeKind kind) -> std::string {
@@ -1005,8 +996,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       if (wait.triggers.size() == 1) {
         // Single trigger: co_await Posedge(&clk_);
         const auto& trigger = wait.triggers[0];
-        std::string var_name = get_var_name(trigger.variable);
-        Line("co_await " + trigger_expr(var_name, trigger.edge_kind) + ";");
+        std::string var_path = GetTriggerPath(trigger);
+        Line("co_await " + trigger_expr(var_path, trigger.edge_kind) + ";");
       } else {
         // Check if all triggers are AnyChange
         bool all_any_change =
@@ -1022,7 +1013,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             if (i > 0) {
               out_ << ", ";
             }
-            out_ << "&" << get_var_name(wait.triggers[i].variable);
+            out_ << "&" << GetTriggerPath(wait.triggers[i]);
           }
           out_ << ");\n";
         } else {
@@ -1034,8 +1025,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               out_ << ", ";
             }
             const auto& trigger = wait.triggers[i];
-            std::string var_name = get_var_name(trigger.variable);
-            out_ << trigger_expr(var_name, trigger.edge_kind);
+            std::string var_path = GetTriggerPath(trigger);
+            out_ << trigger_expr(var_path, trigger.edge_kind);
           }
           out_ << ");\n";
         }
@@ -1580,6 +1571,22 @@ void Codegen::Line(const std::string& text) {
     Indent();
   }
   out_ << text << "\n";
+}
+
+auto Codegen::GetTriggerPath(const common::Trigger& trigger) const
+    -> std::string {
+  std::string path;
+  // Emit instance path: instance symbols get _ suffix
+  for (const auto& inst_sym : trigger.instance_path) {
+    path += std::string(inst_sym->name) + "_.";
+  }
+  // Emit variable name
+  path += trigger.variable->name;
+  // Append _ for port reference members
+  if (port_symbols_.contains(trigger.variable)) {
+    path += "_";
+  }
+  return path;
 }
 
 }  // namespace lyra::compiler

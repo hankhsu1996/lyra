@@ -102,3 +102,76 @@ cases:
           - "sum = 15"
           - "sum = 25"
           - "sum = 30"
+
+  - name: nested_hierarchy_sensitivity
+    description: always_comb with nested hierarchical read (grandchild)
+    sv: |
+      module Inner;
+        int value;
+      endmodule
+
+      module Middle;
+        Inner u_inner();
+      endmodule
+
+      module Top;
+        Middle u_middle();
+        int result;
+
+        always_comb begin
+          result = u_middle.u_inner.value * 2;
+        end
+
+        initial begin
+          u_middle.u_inner.value = 5;
+          #1;
+          $display("result = %0d", result);
+
+          u_middle.u_inner.value = 10;
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "result = 10"
+          - "result = 20"
+
+  - name: mixed_local_and_hierarchical_sensitivity
+    description: always_comb with both local and hierarchical signals
+    sv: |
+      module Child;
+        int remote;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int local_val;
+        int result;
+
+        always_comb begin
+          result = local_val + u_child.remote;
+        end
+
+        initial begin
+          local_val = 10;
+          u_child.remote = 5;
+          #1;
+          $display("result = %0d", result);
+
+          local_val = 20;
+          #1;
+          $display("result = %0d", result);
+
+          u_child.remote = 15;
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "result = 15"
+          - "result = 25"
+          - "result = 35"
