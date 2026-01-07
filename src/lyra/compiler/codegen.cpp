@@ -228,10 +228,25 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
 
+  // Store timescale info for delay scaling
+  timescale_ = module.timescale;
+  if (module.timescale) {
+    global_precision_power_ = module.timescale->precision_power;
+  } else {
+    global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
+  }
+
   EmitHeader();
   EmitClass(module);
 
   return out_.str();
+}
+
+auto Codegen::DelayMultiplier() const -> uint64_t {
+  if (timescale_) {
+    return timescale_->DelayMultiplier(global_precision_power_);
+  }
+  return common::TimeScale::Default().DelayMultiplier(global_precision_power_);
 }
 
 void Codegen::EmitHeader() {
@@ -256,6 +271,11 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("using Byte = lyra::sdk::Byte;");
   Line("using Real = double;");
   Line("using ShortReal = float;");
+  Line("");
+  // Timescale constant for $time/$stime/$realtime scaling
+  Line(
+      "static constexpr uint64_t kTimeDivisor = " +
+      std::to_string(DelayMultiplier()) + ";");
   Line("");
 
   indent_--;
@@ -613,9 +633,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(stmt);
-      Line(
-          "co_await lyra::sdk::Delay(" + std::to_string(delay.delay_amount) +
-          ");");
+      // Scale delay based on module's timescale
+      uint64_t scaled_delay = delay.delay_amount * DelayMultiplier();
+      Line("co_await lyra::sdk::Delay(" + std::to_string(scaled_delay) + ");");
       break;
     }
     case mir::Statement::Kind::kWaitEvent: {
@@ -1041,11 +1061,11 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // System functions that return values
       const auto& syscall = mir::As<mir::SystemCallExpression>(expr);
       if (syscall.name == "$time") {
-        out_ << "lyra::sdk::Time()";
+        out_ << "lyra::sdk::Time(kTimeDivisor)";
       } else if (syscall.name == "$stime") {
-        out_ << "lyra::sdk::STime()";
+        out_ << "lyra::sdk::STime(kTimeDivisor)";
       } else if (syscall.name == "$realtime") {
-        out_ << "lyra::sdk::RealTime()";
+        out_ << "lyra::sdk::RealTime(kTimeDivisor)";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(

@@ -225,19 +225,20 @@ inline auto CurrentTime() -> uint64_t {
   return current_scheduler != nullptr ? current_scheduler->CurrentTime() : 0;
 }
 
-// $time - returns 64-bit unsigned simulation time (type 'time')
-inline auto Time() -> Bit<64> {
-  return Bit<64>{CurrentTime()};
+// $time - returns 64-bit unsigned simulation time in module's timeunit
+// divisor scales from global precision ticks to module's timeunit
+inline auto Time(uint64_t divisor = 1) -> Bit<64> {
+  return Bit<64>{CurrentTime() / divisor};
 }
 
-// $stime - returns low 32 bits of simulation time as unsigned
-inline auto STime() -> Bit<32> {
-  return Bit<32>{static_cast<uint32_t>(CurrentTime() & 0xFFFFFFFF)};
+// $stime - returns low 32 bits of scaled time as unsigned
+inline auto STime(uint64_t divisor = 1) -> Bit<32> {
+  return Bit<32>{static_cast<uint32_t>((CurrentTime() / divisor) & 0xFFFFFFFF)};
 }
 
-// $realtime - returns simulation time as real (double)
-inline auto RealTime() -> double {
-  return static_cast<double>(CurrentTime());
+// $realtime - returns scaled time as real (double)
+inline auto RealTime(uint64_t divisor = 1) -> double {
+  return static_cast<double>(CurrentTime()) / static_cast<double>(divisor);
 }
 
 // Implementation of Module::Run (needs Scheduler definition)

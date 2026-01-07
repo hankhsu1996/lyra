@@ -8,10 +8,24 @@
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
+#include <slang/numeric/Time.h>
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
 
 namespace lyra::frontend {
+
+namespace {
+
+// Default timescale: 1ps/1ps (no scaling, matches Verilator behavior)
+// This is Lyra's implementation-specific default per LRM when no timescale
+// is specified anywhere in the design.
+auto MakeDefaultTimeScale() -> slang::TimeScale {
+  slang::TimeScaleValue ps{
+      slang::TimeUnit::Picoseconds, slang::TimeScaleMagnitude::One};
+  return slang::TimeScale{ps, ps};
+}
+
+}  // namespace
 
 SlangFrontend::SlangFrontend()
     : source_manager_(std::make_shared<slang::SourceManager>()) {
@@ -32,7 +46,9 @@ auto SlangFrontend::LoadFromFiles(
     source_manager_->addUserDirectories(dir);
   }
 
-  auto compilation = std::make_unique<slang::ast::Compilation>();
+  slang::ast::CompilationOptions comp_options;
+  comp_options.defaultTimeScale = MakeDefaultTimeScale();
+  auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   for (const auto& path : paths) {
     auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager_);
@@ -81,7 +97,9 @@ auto SlangFrontend::LoadFromFiles(
 auto SlangFrontend::LoadFromString(
     const std::string& code, const std::string& name)
     -> std::unique_ptr<slang::ast::Compilation> {
-  auto compilation = std::make_unique<slang::ast::Compilation>();
+  slang::ast::CompilationOptions comp_options;
+  comp_options.defaultTimeScale = MakeDefaultTimeScale();
+  auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
   auto buffer = source_manager_->assignText(name, code);
   auto tree = slang::syntax::SyntaxTree::fromBuffer(buffer, *source_manager_);
   AddTree(tree, *compilation);

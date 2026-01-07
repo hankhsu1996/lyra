@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <sstream>
 #include <string>
 
+#include "lyra/common/timescale.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -30,6 +33,12 @@ class Codegen {
 
   std::ostringstream out_;
   int indent_ = 0;
+
+  // Timescale info for delay scaling
+  std::optional<common::TimeScale> timescale_;
+  int8_t global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
+
+  [[nodiscard]] auto DelayMultiplier() const -> uint64_t;
 
   void Indent();
   void Line(const std::string& text);

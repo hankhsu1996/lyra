@@ -881,29 +881,47 @@ auto RunInstruction(
       }
 
       // Simulation time functions: $time, $stime, $realtime
+      // Scale raw simulation time to module's timeunit per LRM
+      auto scale_time = [&simulation_context]() -> uint64_t {
+        uint64_t raw_time = simulation_context.current_time;
+        if (!simulation_context.timescale) {
+          return raw_time;
+        }
+        uint64_t divisor = simulation_context.timescale->TimeDivisor(
+            simulation_context.global_precision_power);
+        return raw_time / divisor;
+      };
+
       if (instr.system_call_name == "$time") {
         assert(instr.result.has_value());
-        // $time returns 64-bit unsigned time (type 'time')
-        auto result =
-            RuntimeValue::IntegralUnsigned(simulation_context.current_time, 64);
+        // $time returns 64-bit unsigned time in module's timeunit
+        auto result = RuntimeValue::TwoStateUnsigned(scale_time(), 64);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 
       if (instr.system_call_name == "$stime") {
         assert(instr.result.has_value());
-        // $stime returns low 32 bits of simulation time as unsigned
-        auto result = RuntimeValue::IntegralUnsigned(
-            simulation_context.current_time & 0xFFFFFFFF, 32);
+        // $stime returns low 32 bits of scaled time as unsigned
+        auto result =
+            RuntimeValue::TwoStateUnsigned(scale_time() & 0xFFFFFFFF, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 
       if (instr.system_call_name == "$realtime") {
         assert(instr.result.has_value());
-        // $realtime returns simulation time as real (double)
-        auto result = RuntimeValue::Real(
-            static_cast<double>(simulation_context.current_time));
+        // $realtime returns scaled time as real (double)
+        // For accurate fractional time, divide raw time as double
+        auto scaled_time =
+            static_cast<double>(simulation_context.current_time);
+        if (simulation_context.timescale) {
+          auto divisor =
+              static_cast<double>(simulation_context.timescale->TimeDivisor(
+                  simulation_context.global_precision_power));
+          scaled_time /= divisor;
+        }
+        auto result = RuntimeValue::Real(scaled_time);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }

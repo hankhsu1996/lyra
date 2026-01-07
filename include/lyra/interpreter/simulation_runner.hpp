@@ -16,7 +16,9 @@ namespace lyra::interpreter {
 
 using SimulationTime = uint64_t;
 
-constexpr SimulationTime kMaxSimulationTime = 10000;
+// Max simulation time in internal ticks (1 million allows ~1ms at 1ns
+// precision)
+constexpr SimulationTime kMaxSimulationTime = 1'000'000;
 
 using ProcessPtr = std::shared_ptr<lir::Process>;
 

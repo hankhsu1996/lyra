@@ -155,3 +155,8 @@ sv_feature_test(
     name = "system_tasks_time_functions_tests",
     yaml = "sv_features/system_tasks/time_functions.yaml",
 )
+
+sv_feature_test(
+    name = "timing_timescale_tests",
+    yaml = "sv_features/timing/timescale.yaml",
+)

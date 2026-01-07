@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/indent.hpp"
+#include "lyra/common/timescale.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lir/process.hpp"
 
@@ -15,6 +17,8 @@ namespace lyra::lir {
 
 struct Module {
   std::string name;
+  std::optional<common::TimeScale> timescale;
+  int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
   std::vector<common::Variable> variables;
   std::vector<std::shared_ptr<Process>> processes;
   std::shared_ptr<LirContext> context;

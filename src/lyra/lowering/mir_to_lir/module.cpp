@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/timescale.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/module.hpp"
@@ -21,9 +22,19 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
     throw DiagnosticException(Diagnostic::Error({}, "module has empty name"));
   }
 
+  // Compute global precision (for single module, use module's precision or
+  // default)
+  int8_t global_precision = common::TimeScale::kDefaultPrecisionPower;
+  if (module.timescale) {
+    global_precision = module.timescale->precision_power;
+  }
+
   auto lir_context = std::make_shared<lir::LirContext>();
   LirBuilder builder(module.name, lir_context);
   LoweringContext lowering_context;
+
+  // Set timescale context for delay scaling
+  lowering_context.SetTimescale(module.timescale, global_precision);
 
   builder.BeginModule();
 
@@ -63,7 +74,13 @@ auto LowerModule(const mir::Module& module) -> std::unique_ptr<lir::Module> {
     LowerProcess(*process, builder, lowering_context);
   }
 
-  return builder.EndModule();
+  auto lir_module = builder.EndModule();
+
+  // Set timescale info on the LIR module for runtime use
+  lir_module->timescale = module.timescale;
+  lir_module->global_precision_power = global_precision;
+
+  return lir_module;
 }
 
 }  // namespace lyra::lowering::mir_to_lir

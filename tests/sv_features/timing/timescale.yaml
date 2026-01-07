@@ -1,0 +1,178 @@
+feature: timescale
+description: Tests for `timescale directive - time unit and precision
+
+cases:
+  # Core timescale tests - verify delays are scaled to global precision
+  # With `timescale 1ns / 1ps, #10 means 10ns = 10000ps internal ticks
+
+  - name: timescale_1ns_1ps_delay_scaling
+    description: Delay scaled to precision - #10 in 1ns = 10000 ticks in 1ps
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;  // 10ns = 10000ps
+        end
+      endmodule
+    expect:
+      time: 10000
+
+  - name: timescale_1ns_1ps_time_display
+    description: $time returns value in module's time unit (ns), not internal ticks
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;
+          $display("time=%0d", $time);
+        end
+      endmodule
+    expect:
+      time: 10000
+      output:
+        contains:
+          - "time=10"
+
+  - name: timescale_1us_1ns_delay_scaling
+    description: Delay scaled - #5 in 1us = 5000 ticks in 1ns precision
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          #5;  // 5us = 5000ns
+        end
+      endmodule
+    expect:
+      time: 5000
+
+  - name: timescale_1ps_1ps_no_scaling
+    description: When unit equals precision, no scaling needed
+    sv: |
+      `timescale 1ps / 1ps
+      module Test;
+        initial begin
+          #100;
+        end
+      endmodule
+    expect:
+      time: 100
+
+  - name: timescale_10ns_1ns
+    description: 10ns time unit - #5 means 50ns = 50 ticks in 1ns precision
+    sv: |
+      `timescale 10ns / 1ns
+      module Test;
+        initial begin
+          #5;  // 5 * 10ns = 50ns
+        end
+      endmodule
+    expect:
+      time: 50
+
+  - name: timescale_100ps_10ps
+    description: 100ps unit, 10ps precision - #7 means 700ps = 70 ticks
+    sv: |
+      `timescale 100ps / 10ps
+      module Test;
+        initial begin
+          #7;  // 7 * 100ps = 700ps = 70 ticks in 10ps
+        end
+      endmodule
+    expect:
+      time: 70
+
+  # Multiple delays accumulate correctly
+  - name: timescale_multiple_delays
+    description: Multiple delays accumulate in internal units
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;   // 10000ps
+          #20;   // 20000ps
+          #30;   // 30000ps
+        end      // total: 60000ps
+      endmodule
+    expect:
+      time: 60000
+
+  # $time, $stime, $realtime return time in module's timeunit (per LRM)
+  - name: timescale_time_in_module_unit
+    description: $time returns time in module's timeunit (ns)
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        longint t;
+        initial begin
+          #25;  // 25ns = 25000ps internal
+          t = $time;  // returns 25 (in module's ns unit)
+        end
+      endmodule
+    expect:
+      time: 25000
+      variables:
+        t: 25
+
+  - name: timescale_stime_in_module_unit
+    description: $stime returns time in module's timeunit (ns)
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int t;
+        initial begin
+          #50;
+          t = $stime;
+        end
+      endmodule
+    expect:
+      time: 50000
+      variables:
+        t: 50
+
+  - name: timescale_realtime_in_module_unit
+    description: $realtime returns time as real in module's unit
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #42;
+          $display("realtime=%0d", $realtime);
+        end
+      endmodule
+    expect:
+      time: 42000
+      output:
+        contains:
+          - "realtime=42"
+
+  # $stime returns 32-bit unsigned, $time returns 64-bit
+  - name: timescale_stime_vs_time
+    description: $stime returns 32-bit result, $time returns 64-bit result
+    sv: |
+      `timescale 1ps / 1ps
+      module Test;
+        int st;
+        longint ft;
+        initial begin
+          #999999;  // Close to max sim time
+          st = $stime;
+          ft = $time;
+        end
+      endmodule
+    expect:
+      time: 999999
+      variables:
+        st: 999999
+        ft: 999999
+
+  # No timescale directive - uses default (1ps/1ps)
+  - name: no_timescale_uses_default
+    description: Without directive, default is 1ps/1ps (no scaling)
+    sv: |
+      module Test;
+        initial begin
+          #25;  // 25ps with default 1ps/1ps
+        end
+      endmodule
+    expect:
+      time: 25
