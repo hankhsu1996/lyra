@@ -18,6 +18,7 @@
 #include "embedded_sdk.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/indent.hpp"
+#include "lyra/common/timescale.hpp"
 #include "lyra/compiler/codegen.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
@@ -109,6 +110,21 @@ auto GenerateCompileCommands(const fs::path& output_dir) -> std::string {
       abs_path);
 }
 
+// Generate .clang-format for generated project
+auto GenerateClangFormat() -> std::string {
+  return R"(Language: Cpp
+BasedOnStyle: Google
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: "^<lyra/.*>"
+    Priority: 2
+  - Regex: "^<.*>"
+    Priority: 1
+AlignAfterOpenBracket: AlwaysBreak
+AllowShortFunctionsOnASingleLine: false
+)";
+}
+
 // Generate .clang-tidy for generated project
 // Enables useful checks but disables rules that don't apply to generated code
 auto GenerateClangTidy() -> std::string {
@@ -153,18 +169,22 @@ auto EnsureToolchain() -> bool {
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file,
     int8_t global_precision_power) -> std::string {
-  return "#include \"design/" + header_file +
-         "\"\n\n"
-         "auto main() -> int {\n"
-         "    // Initialize global precision for %t formatting\n"
-         "    lyra::sdk::global_precision_power = " +
-         std::to_string(static_cast<int>(global_precision_power)) +
-         ";\n"
-         "    " +
-         module_name +
-         " dut;\n"
-         "    return dut.Run().exit_code;\n"
-         "}\n";
+  std::string precision_init;
+  if (global_precision_power !=
+      lyra::common::TimeScale::kDefaultPrecisionPower) {
+    precision_init = std::format(
+        "    // Initialize global precision for %t formatting\n"
+        "    lyra::sdk::global_precision_power = {};\n",
+        static_cast<int>(global_precision_power));
+  }
+  return std::format(
+      "#include \"design/{}\"\n\n"
+      "auto main() -> int {{\n"
+      "{}"
+      "    {} dut;\n"
+      "    return dut.Run().exit_code;\n"
+      "}}\n",
+      header_file, precision_init, module_name);
 }
 
 // Forward declaration
@@ -270,6 +290,7 @@ auto EmitCommandInternal(
     WriteFile(out_path / "CMakePresets.json", GenerateCMakePresets());
     WriteFile(
         out_path / "compile_commands.json", GenerateCompileCommands(out_path));
+    WriteFile(out_path / ".clang-format", GenerateClangFormat());
     WriteFile(out_path / ".clang-tidy", GenerateClangTidy());
     WriteFile(out_path / ".gitignore", GenerateGitignore());
 

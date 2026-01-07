@@ -12,7 +12,6 @@
 #include "lyra/sdk/delay.hpp"
 #include "lyra/sdk/module.hpp"
 #include "lyra/sdk/task.hpp"
-#include "lyra/sdk/time_utils.hpp"
 #include "lyra/sdk/wait_event.hpp"
 
 namespace lyra::sdk {
@@ -315,8 +314,6 @@ inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
       static_cast<uint64_t>(time_value), module_unit_power,
       global_precision_power);
 }
-
-// PowerToString is available from lyra/sdk/time_utils.hpp
 
 // Implementation of Module::Run (needs Scheduler definition)
 inline auto Module::Run() -> SimulationResult {

@@ -6,6 +6,7 @@
 #include <format>
 #include <ios>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/diagnostic.hpp"
@@ -87,76 +88,6 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
   return kPrecPrimary;
 }
 
-auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return false;
-  }
-  return std::get<common::IntegralData>(type.data).is_signed;
-}
-
-auto ToCppType(const common::Type& type) -> std::string {
-  switch (type.kind) {
-    case common::Type::Kind::kVoid:
-      return "void";
-    case common::Type::Kind::kReal:
-      return "Real";
-    case common::Type::Kind::kShortReal:
-      return "ShortReal";
-    case common::Type::Kind::kString:
-      return "std::string";
-    case common::Type::Kind::kIntegral: {
-      auto data = std::get<common::IntegralData>(type.data);
-      size_t width = data.bit_width;
-      bool is_signed = data.is_signed;
-
-      if (width > 64) {
-        return "/* TODO: wide integer */";
-      }
-
-      // Use LRM-aligned type aliases for standard signed integer types
-      if (is_signed) {
-        if (width == 8) {
-          return "Byte";
-        }
-        if (width == 16) {
-          return "ShortInt";
-        }
-        if (width == 32) {
-          return "Int";
-        }
-        if (width == 64) {
-          return "LongInt";
-        }
-        // Non-standard signed widths use Bit<N, true>
-        return std::format("Bit<{}, true>", width);
-      }
-
-      // Unsigned types use Bit<N>
-      return std::format("Bit<{}>", width);
-    }
-    case common::Type::Kind::kUnpackedArray: {
-      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
-      return std::format(
-          "std::array<{}, {}>", ToCppType(*array_data.element_type),
-          array_data.size);
-    }
-  }
-  return "/* unknown type */";
-}
-
-auto ToCppUnsignedType(const common::Type& type) -> std::string {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return "/* unknown type */";
-  }
-  auto data = std::get<common::IntegralData>(type.data);
-  size_t width = data.bit_width;
-  if (width > 64) {
-    return "/* TODO: wide integer */";
-  }
-  // Always return unsigned Bit<N> regardless of original signedness
-  return std::format("Bit<{}>", width);
-}
-
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   switch (op) {
     case mir::BinaryOperator::kAddition:
@@ -223,12 +154,102 @@ auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   return "/* unknown */";
 }
 
+// Check if a module uses any array types (requiring <array> include)
+auto UsesArrayType(const mir::Module& module) -> bool {
+  auto is_array = [](const auto& item) {
+    return item.variable.type.kind == common::Type::Kind::kUnpackedArray;
+  };
+  return std::ranges::any_of(module.variables, is_array) ||
+         std::ranges::any_of(module.ports, is_array);
+}
+
 }  // namespace
+
+auto Codegen::IsSigned(const common::Type& type) -> bool {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return false;
+  }
+  return std::get<common::IntegralData>(type.data).is_signed;
+}
+
+auto Codegen::ToCppType(const common::Type& type) -> std::string {
+  switch (type.kind) {
+    case common::Type::Kind::kVoid:
+      return "void";
+    case common::Type::Kind::kReal:
+      used_type_aliases_ |= TypeAlias::kReal;
+      return "Real";
+    case common::Type::Kind::kShortReal:
+      used_type_aliases_ |= TypeAlias::kShortReal;
+      return "ShortReal";
+    case common::Type::Kind::kString:
+      return "std::string";
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+
+      if (width > 64) {
+        return "/* TODO: wide integer */";
+      }
+
+      // Use LRM-aligned type aliases for standard signed integer types
+      if (is_signed) {
+        if (width == 8) {
+          used_type_aliases_ |= TypeAlias::kByte;
+          return "Byte";
+        }
+        if (width == 16) {
+          used_type_aliases_ |= TypeAlias::kShortInt;
+          return "ShortInt";
+        }
+        if (width == 32) {
+          used_type_aliases_ |= TypeAlias::kInt;
+          return "Int";
+        }
+        if (width == 64) {
+          used_type_aliases_ |= TypeAlias::kLongInt;
+          return "LongInt";
+        }
+        // Non-standard signed widths use Bit<N, true>
+        used_type_aliases_ |= TypeAlias::kBit;
+        return std::format("Bit<{}, true>", width);
+      }
+
+      // Unsigned types use Bit<N>
+      used_type_aliases_ |= TypeAlias::kBit;
+      return std::format("Bit<{}>", width);
+    }
+    case common::Type::Kind::kUnpackedArray: {
+      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
+      return std::format(
+          "std::array<{}, {}>", ToCppType(*array_data.element_type),
+          array_data.size);
+    }
+  }
+  return "/* unknown type */";
+}
+
+auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return "/* unknown type */";
+  }
+  auto data = std::get<common::IntegralData>(type.data);
+  size_t width = data.bit_width;
+  if (width > 64) {
+    return "/* TODO: wide integer */";
+  }
+  // Always return unsigned Bit<N> regardless of original signedness
+  used_type_aliases_ |= TypeAlias::kBit;
+  return std::format("Bit<{}>", width);
+}
 
 auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
   port_symbols_.clear();
+  used_type_aliases_ = TypeAlias::kNone;
+  used_features_ = CodegenFeature::kNone;
 
   // Store timescale info for delay scaling
   timescale_ = module.timescale;
@@ -246,8 +267,19 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
     }
   }
 
-  EmitHeader(module.submodules);
+  // Two-phase generation: generate class first to collect feature usage,
+  // then emit header with conditional includes, then append class.
+  std::ostringstream class_out;
+  class_out.swap(out_);
   EmitClass(module);
+  std::string class_content = out_.str();
+  out_.swap(class_out);  // Restore empty output stream
+
+  // Now emit header (we know used_features_ from EmitClass)
+  EmitHeader(module.submodules, UsesArrayType(module));
+
+  // Append class content
+  out_ << class_content;
 
   return out_.str();
 }
@@ -260,11 +292,26 @@ auto Codegen::DelayMultiplier() const -> uint64_t {
 }
 
 void Codegen::EmitHeader(
-    const std::vector<mir::SubmoduleInstance>& submodules) {
-  Line("#include <array>");
-  Line("#include <cmath>");
-  Line("#include <iostream>");
-  Line("#include <print>");
+    const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays) {
+  // System headers
+  bool has_system_headers = false;
+  if (uses_arrays) {
+    Line("#include <array>");
+    has_system_headers = true;
+  }
+  if ((used_features_ & CodegenFeature::kCmath) != CodegenFeature::kNone) {
+    Line("#include <cmath>");
+    has_system_headers = true;
+  }
+  if ((used_features_ & CodegenFeature::kDisplay) != CodegenFeature::kNone) {
+    Line("#include <iostream>");
+    Line("#include <print>");
+    has_system_headers = true;
+  }
+  if (has_system_headers) {
+    Line("");
+  }
+  // Lyra SDK header
   Line("#include <lyra/sdk/sdk.hpp>");
 
   // Include headers for submodule types
@@ -279,45 +326,98 @@ void Codegen::EmitHeader(
   Line("");
 }
 
+void Codegen::EmitTypeAliases() {
+  // Only emit type aliases that were actually used
+  if ((used_type_aliases_ & TypeAlias::kBit) != TypeAlias::kNone) {
+    Line("template <std::size_t N, bool S = false>");
+    Line("using Bit = lyra::sdk::Bit<N, S>;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kInt) != TypeAlias::kNone) {
+    Line("using Int = lyra::sdk::Int;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kLongInt) != TypeAlias::kNone) {
+    Line("using LongInt = lyra::sdk::LongInt;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kShortInt) != TypeAlias::kNone) {
+    Line("using ShortInt = lyra::sdk::ShortInt;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kByte) != TypeAlias::kNone) {
+    Line("using Byte = lyra::sdk::Byte;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kReal) != TypeAlias::kNone) {
+    Line("using Real = double;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
+    Line("using ShortReal = float;");
+  }
+  if (used_type_aliases_ != TypeAlias::kNone) {
+    Line("");
+  }
+}
+
+void Codegen::EmitTimescaleConstants(const mir::Module& module) {
+  // Only emit timescale constants that were actually used
+  bool any_emitted = false;
+
+  if ((used_features_ & CodegenFeature::kTimeDivisor) !=
+      CodegenFeature::kNone) {
+    Line(
+        "static constexpr uint64_t kTimeDivisor = " +
+        std::to_string(DelayMultiplier()) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModuleUnitPower) !=
+      CodegenFeature::kNone) {
+    int8_t module_unit_power = timescale_
+                                   ? timescale_->unit_power
+                                   : common::TimeScale::kDefaultUnitPower;
+    Line(
+        "static constexpr int8_t kModuleUnitPower = " +
+        std::to_string(static_cast<int>(module_unit_power)) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModulePrecisionPower) !=
+      CodegenFeature::kNone) {
+    int8_t module_precision_power =
+        timescale_ ? timescale_->precision_power
+                   : common::TimeScale::kDefaultPrecisionPower;
+    Line(
+        "static constexpr int8_t kModulePrecisionPower = " +
+        std::to_string(static_cast<int>(module_precision_power)) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModuleName) != CodegenFeature::kNone) {
+    Line(
+        "static constexpr std::string_view kModuleName = \"" + module.name +
+        "\";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kTimescaleStr) !=
+      CodegenFeature::kNone) {
+    auto ts = timescale_.value_or(common::TimeScale::Default());
+    Line(
+        "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
+        "\";");
+    any_emitted = true;
+  }
+
+  if (any_emitted) {
+    Line("");
+  }
+}
+
 void Codegen::EmitClass(const mir::Module& module) {
-  Line("class " + module.name + " : public lyra::sdk::Module {");
-  indent_++;
+  // Two-phase generation: first generate body to collect type alias and feature
+  // usage, then emit class with only the aliases/constants that were used.
 
-  // Type aliases for cleaner generated code
-  Line("template <std::size_t N, bool S = false>");
-  Line("using Bit = lyra::sdk::Bit<N, S>;");
-  Line("using Int = lyra::sdk::Int;");
-  Line("using LongInt = lyra::sdk::LongInt;");
-  Line("using ShortInt = lyra::sdk::ShortInt;");
-  Line("using Byte = lyra::sdk::Byte;");
-  Line("using Real = double;");
-  Line("using ShortReal = float;");
-  Line("");
-  // Timescale constants for $time/$stime/$realtime scaling and %t formatting
-  Line(
-      "static constexpr uint64_t kTimeDivisor = " +
-      std::to_string(DelayMultiplier()) + ";");
-  int8_t module_unit_power = timescale_ ? timescale_->unit_power
-                                        : common::TimeScale::kDefaultUnitPower;
-  Line(
-      "static constexpr int8_t kModuleUnitPower = " +
-      std::to_string(static_cast<int>(module_unit_power)) + ";");
-  int8_t module_precision_power =
-      timescale_ ? timescale_->precision_power
-                 : common::TimeScale::kDefaultPrecisionPower;
-  Line(
-      "static constexpr int8_t kModulePrecisionPower = " +
-      std::to_string(static_cast<int>(module_precision_power)) + ";");
-  // Module name and timescale string for $printtimescale
-  Line(
-      "static constexpr std::string_view kModuleName = \"" + module.name +
-      "\";");
-  auto ts = timescale_.value_or(common::TimeScale::Default());
-  Line(
-      "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
-      "\";");
-  Line("");
+  // Phase 1: Save current output stream and generate body to a temporary buffer
+  std::ostringstream saved_out;
+  saved_out.swap(out_);
+  int saved_indent = indent_;
+  indent_ = 1;  // Body is indented inside class
 
+  // Generate body content (this populates used_type_aliases_ and
+  // used_features_)
   indent_--;
   Line(" public:");
   indent_++;
@@ -348,10 +448,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     out_ << type_str << "& " << port.variable.symbol->name;
   }
 
-  out_ << ")\n";
-  indent_++;
-  Indent();
-  out_ << ": Module(\"" << module.name << "\")";
+  out_ << ") : Module(\"" << module.name << "\")";
 
   // Port initializers (output/inout ports only)
   for (const auto& port : module.ports) {
@@ -377,7 +474,6 @@ void Codegen::EmitClass(const mir::Module& module) {
   }
 
   out_ << " {\n";
-  indent_--;
   indent_++;
   for (const auto& process : module.processes) {
     Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
@@ -395,7 +491,6 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  Line("");
   // Member variables
   EmitVariables(module.variables);
 
@@ -414,6 +509,25 @@ void Codegen::EmitClass(const mir::Module& module) {
     Line(submod.module_type + " " + submod.instance_name + "_;");
   }
 
+  // Phase 2: Now emit the class with conditional type aliases, then append body
+  std::string body = out_.str();
+  out_.swap(saved_out);  // Restore original output stream
+  indent_ = saved_indent;
+
+  // Emit class declaration
+  Line("class " + module.name + " : public lyra::sdk::Module {");
+  indent_++;
+
+  // Emit only the type aliases that were actually used
+  EmitTypeAliases();
+
+  // Emit only the timescale constants that were actually used
+  EmitTimescaleConstants(module);
+
+  // Append the body content
+  out_ << body;
+
+  // Close the class
   indent_--;
   Line("};");
 }
@@ -467,6 +581,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
+        used_type_aliases_ |= TypeAlias::kBit;
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
@@ -519,6 +634,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           break;
         }
         if (syscall.name == "$display") {
+          used_features_ |= CodegenFeature::kDisplay;
           // Empty $display - just print newline
           // Use std::cout to allow capture via rdbuf redirection
           if (syscall.arguments.empty()) {
@@ -546,6 +662,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                   if (specs[i].spec == 't') {
                     // %t - format the time argument using $timeformat settings
                     // Use .Value() to extract uint64_t from Bit<64>
+                    used_features_ |= CodegenFeature::kModuleUnitPower;
                     out_ << "lyra::sdk::FormatTimeValue(";
                     EmitExpression(*syscall.arguments[i + 1]);
                     out_ << ".Value(), kModuleUnitPower)";
@@ -609,6 +726,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$printtimescale") {
           // $printtimescale() - print current module's timescale
+          used_features_ |= CodegenFeature::kDisplay;
+          used_features_ |= CodegenFeature::kModuleName;
+          used_features_ |= CodegenFeature::kTimescaleStr;
           Line(
               "std::println(std::cout, \"Time scale of ({}) is {}\", "
               "kModuleName, kTimescaleStr);");
@@ -616,6 +736,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$printtimescale_root") {
           // $printtimescale($root) - print global precision (unit = precision)
+          used_features_ |= CodegenFeature::kDisplay;
           Indent();
           out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
                   "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
@@ -958,6 +1079,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& bin = mir::As<mir::BinaryExpression>(expr);
       if (bin.op == mir::BinaryOperator::kPower) {
         // Power: std::pow(a, b) - C++ doesn't have ** operator
+        used_features_ |= CodegenFeature::kCmath;
         out_ << "std::pow(";
         EmitExpression(*bin.left, kPrecLowest);
         out_ << ", ";
@@ -1017,6 +1139,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
+        used_type_aliases_ |= TypeAlias::kBit;
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
@@ -1248,14 +1371,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // System functions that return values
       const auto& syscall = mir::As<mir::SystemCallExpression>(expr);
       if (syscall.name == "$time") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::Time(kTimeDivisor)";
       } else if (syscall.name == "$stime") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::STime(kTimeDivisor)";
       } else if (syscall.name == "$realtime") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::RealTime(kTimeDivisor)";
       } else if (syscall.name == "$timeunit") {
+        used_features_ |= CodegenFeature::kModuleUnitPower;
         out_ << "kModuleUnitPower";
       } else if (syscall.name == "$timeprecision") {
+        used_features_ |= CodegenFeature::kModulePrecisionPower;
         out_ << "kModulePrecisionPower";
       } else if (
           syscall.name == "$timeunit_root" ||
