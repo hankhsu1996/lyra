@@ -154,8 +154,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Supported system calls are validated in AST→MIR
       // System tasks: $finish, $stop, $exit, $display, $timeformat,
       //   $printtimescale (no return)
-      // System functions: $time, $stime, $realtime, $timeunit, $timeprecision
-      //   $timeunit_root, $timeprecision_root (transformed from $root arg)
+      // System functions: $time, $stime, $realtime, $timeunit, $timeprecision,
+      //   $timeunit_root, $timeprecision_root, $signed, $unsigned, $itor,
+      //   $rtoi, $realtobits, $bitstoreal, $shortrealtobits, $bitstoshortreal
       assert(
           system_call.name == "$finish" || system_call.name == "$stop" ||
           system_call.name == "$exit" || system_call.name == "$display" ||
@@ -166,7 +167,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtime" || system_call.name == "$timeunit" ||
           system_call.name == "$timeprecision" ||
           system_call.name == "$timeunit_root" ||
-          system_call.name == "$timeprecision_root");
+          system_call.name == "$timeprecision_root" ||
+          system_call.name == "$signed" || system_call.name == "$unsigned" ||
+          system_call.name == "$itor" || system_call.name == "$rtoi" ||
+          system_call.name == "$realtobits" ||
+          system_call.name == "$bitstoreal" ||
+          system_call.name == "$shortrealtobits" ||
+          system_call.name == "$bitstoshortreal");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -192,7 +199,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtime" || system_call.name == "$timeunit" ||
           system_call.name == "$timeprecision" ||
           system_call.name == "$timeunit_root" ||
-          system_call.name == "$timeprecision_root";
+          system_call.name == "$timeprecision_root" ||
+          system_call.name == "$signed" || system_call.name == "$unsigned" ||
+          system_call.name == "$itor" || system_call.name == "$rtoi" ||
+          system_call.name == "$realtobits" ||
+          system_call.name == "$bitstoreal" ||
+          system_call.name == "$shortrealtobits" ||
+          system_call.name == "$bitstoshortreal";
 
       auto result = builder.AllocateTemp("sys", system_call.type);
 

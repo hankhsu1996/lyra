@@ -142,6 +142,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_conversions_tests",
+    yaml = "sv_features/datatypes/conversions.yaml",
+)
+
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )

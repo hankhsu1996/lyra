@@ -383,7 +383,8 @@ class Bit {
   // Stream output
   friend auto operator<<(std::ostream& os, Bit b) -> std::ostream& {
     if constexpr (Signed) {
-      return os << b.SignedValue();
+      // Cast to largest type to avoid char interpretation for int8_t
+      return os << static_cast<int64_t>(b.SignedValue());
     } else {
       // Cast to largest type to avoid char interpretation for uint8_t
       return os << static_cast<uint64_t>(b.value_);

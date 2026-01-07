@@ -1,5 +1,6 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
+#include <bit>
 #include <cassert>
 #include <cctype>
 #include <cstddef>
@@ -135,9 +136,9 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
 
 // Context for time formatting (%t specifier)
 struct TimeFormatContext {
-  const common::TimeFormatState& time_format;
-  int8_t module_unit_power;  // Module's timeunit (e.g., -9 for 1ns)
-  int8_t global_precision_power;
+  common::TimeFormatState time_format;
+  int8_t module_unit_power = 0;  // Module's timeunit (e.g., -9 for 1ns)
+  int8_t global_precision_power = 0;
 };
 
 // Parse SV format string and format arguments
@@ -967,7 +968,7 @@ auto RunInstruction(
         // All arguments are optional; use defaults if not provided
         auto& tf = simulation_context.time_format;
 
-        if (instr.operands.size() >= 1) {
+        if (!instr.operands.empty()) {
           tf.units = static_cast<int8_t>(get_temp(instr.operands[0]).AsInt64());
         }
         if (instr.operands.size() >= 2) {
@@ -1042,6 +1043,110 @@ auto RunInstruction(
         simulation_context.display_output << "Time scale of ($root) is "
                                           << unit_str << " / " << unit_str
                                           << "\n";
+        return InstructionResult::Continue();
+      }
+
+      // $signed, $unsigned: reinterpret signedness, preserving bit pattern
+      if (instr.system_call_name == "$signed") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(instr.operands.size() == 1);
+        const auto& src = get_temp(instr.operands[0]);
+        // $signed: reinterpret bits as signed, preserving bit width
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto result =
+            RuntimeValue::IntegralSigned(src.AsInt64(), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$unsigned") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(instr.operands.size() == 1);
+        const auto& src = get_temp(instr.operands[0]);
+        // $unsigned: reinterpret bits as unsigned, preserving bit width
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto result = RuntimeValue::IntegralUnsigned(
+            static_cast<uint64_t>(src.AsInt64()), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      // $itor: convert integer to real
+      if (instr.system_call_name == "$itor") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto src_data = std::get<common::IntegralData>(src.type.data);
+        double real_value = src_data.is_signed
+                                ? static_cast<double>(src.AsInt64())
+                                : static_cast<double>(src.AsUInt64());
+        temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
+        return InstructionResult::Continue();
+      }
+
+      // $rtoi: convert real to integer by truncation toward zero
+      if (instr.system_call_name == "$rtoi") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto raw_value = static_cast<int64_t>(src.AsDouble());
+        auto result =
+            target_data.is_signed
+                ? RuntimeValue::IntegralSigned(raw_value, target_data.bit_width)
+                : RuntimeValue::IntegralUnsigned(
+                      static_cast<uint64_t>(raw_value), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      // $realtobits: real → 64-bit IEEE 754 representation
+      if (instr.system_call_name == "$realtobits") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = std::bit_cast<uint64_t>(src.AsDouble());
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 64));
+        return InstructionResult::Continue();
+      }
+
+      // $bitstoreal: 64-bit vector → real (IEEE 754)
+      if (instr.system_call_name == "$bitstoreal") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto real_value = std::bit_cast<double>(src.AsUInt64());
+        temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
+        return InstructionResult::Continue();
+      }
+
+      // $shortrealtobits: shortreal → 32-bit IEEE 754 representation
+      if (instr.system_call_name == "$shortrealtobits") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = std::bit_cast<uint32_t>(src.AsFloat());
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 32));
+        return InstructionResult::Continue();
+      }
+
+      // $bitstoshortreal: 32-bit vector → shortreal (IEEE 754)
+      if (instr.system_call_name == "$bitstoshortreal") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = static_cast<uint32_t>(src.AsUInt64());
+        auto shortreal_value = std::bit_cast<float>(bits);
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::ShortReal(shortreal_value));
         return InstructionResult::Continue();
       }
 
