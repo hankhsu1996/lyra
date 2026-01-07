@@ -319,7 +319,7 @@ inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
 // PowerToString is available from lyra/sdk/time_utils.hpp
 
 // Implementation of Module::Run (needs Scheduler definition)
-inline auto Module::Run() -> uint64_t {
+inline auto Module::Run() -> SimulationResult {
   Scheduler scheduler;
   simulation_finished = false;
   simulation_stopped = false;
@@ -356,7 +356,7 @@ inline auto Module::Run() -> uint64_t {
   scheduler.FlushAllNba();
 
   current_scheduler = nullptr;
-  return scheduler.CurrentTime();
+  return {scheduler.CurrentTime(), simulation_stopped ? 1 : 0};
 }
 
 }  // namespace lyra::sdk

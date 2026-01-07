@@ -116,7 +116,7 @@ auto Compiler::CompileAndRun(
   // Redirect cout to capture $display output
   main_code << "  std::ostringstream captured;\n";
   main_code << "  auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
-  main_code << "  auto final_time = dut.Run();\n";
+  main_code << "  auto result = dut.Run();\n";
   main_code << "  std::cout.rdbuf(old_buf);\n";
   // Output captured display with markers
   main_code << "  std::cout << \"__output__=\" << captured.str() "
@@ -125,9 +125,10 @@ auto Compiler::CompileAndRun(
     main_code << "  std::cout << \"" << var << "=\" << dut." << var
               << " << std::endl;\n";
   }
-  main_code << "  std::cout << \"__time__=\" << final_time << std::endl;\n";
-  main_code << "  std::cout << \"__stopped__=\" << "
-            << "(lyra::sdk::simulation_stopped ? 1 : 0) << std::endl;\n";
+  main_code
+      << "  std::cout << \"__time__=\" << result.final_time << std::endl;\n";
+  main_code
+      << "  std::cout << \"__stopped__=\" << result.exit_code << std::endl;\n";
   main_code << "  return 0;\n";
   main_code << "}\n";
 

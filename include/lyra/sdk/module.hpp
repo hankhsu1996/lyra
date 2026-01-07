@@ -26,6 +26,12 @@ inline thread_local bool simulation_stopped = false;
 // Forward declaration - implemented in scheduler.hpp after Scheduler is defined
 auto CurrentTime() -> uint64_t;
 
+// Result of running a simulation
+struct SimulationResult {
+  uint64_t final_time;
+  int exit_code;  // 0 for $finish, 1 for $stop
+};
+
 // NOLINTBEGIN(readability-identifier-naming)
 // Coroutine awaitable requires specific naming convention from C++ standard
 
@@ -101,9 +107,8 @@ class Module {
   }
 
   // Runs all processes with a local scheduler
-  // Returns the final simulation time
   // Defined in scheduler.hpp after Scheduler is defined
-  auto Run() -> uint64_t;
+  auto Run() -> SimulationResult;
 
   // Non-blocking assignment support
   // Uses std::type_identity_t to deduce T only from the pointer,
