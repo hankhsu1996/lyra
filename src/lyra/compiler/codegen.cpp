@@ -292,14 +292,25 @@ auto Codegen::DelayMultiplier() const -> uint64_t {
 
 void Codegen::EmitHeader(
     const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays) {
+  // System headers
+  bool has_system_headers = false;
   if (uses_arrays) {
     Line("#include <array>");
+    has_system_headers = true;
   }
   if ((used_features_ & CodegenFeature::kCmath) != CodegenFeature::kNone) {
     Line("#include <cmath>");
+    has_system_headers = true;
   }
-  Line("#include <iostream>");
-  Line("#include <print>");
+  if ((used_features_ & CodegenFeature::kDisplay) != CodegenFeature::kNone) {
+    Line("#include <iostream>");
+    Line("#include <print>");
+    has_system_headers = true;
+  }
+  if (has_system_headers) {
+    Line("");
+  }
+  // Lyra SDK header
   Line("#include <lyra/sdk/sdk.hpp>");
 
   // Include headers for submodule types
@@ -622,6 +633,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           break;
         }
         if (syscall.name == "$display") {
+          used_features_ |= CodegenFeature::kDisplay;
           // Empty $display - just print newline
           // Use std::cout to allow capture via rdbuf redirection
           if (syscall.arguments.empty()) {
@@ -713,6 +725,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$printtimescale") {
           // $printtimescale() - print current module's timescale
+          used_features_ |= CodegenFeature::kDisplay;
           used_features_ |= CodegenFeature::kModuleName;
           used_features_ |= CodegenFeature::kTimescaleStr;
           Line(
@@ -722,6 +735,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$printtimescale_root") {
           // $printtimescale($root) - print global precision (unit = precision)
+          used_features_ |= CodegenFeature::kDisplay;
           Indent();
           out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
                   "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"

@@ -110,6 +110,21 @@ auto GenerateCompileCommands(const fs::path& output_dir) -> std::string {
       abs_path);
 }
 
+// Generate .clang-format for generated project
+auto GenerateClangFormat() -> std::string {
+  return R"(Language: Cpp
+BasedOnStyle: Google
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: "^<lyra/.*>"
+    Priority: 2
+  - Regex: "^<.*>"
+    Priority: 1
+AlignAfterOpenBracket: AlwaysBreak
+AllowShortFunctionsOnASingleLine: false
+)";
+}
+
 // Generate .clang-tidy for generated project
 // Enables useful checks but disables rules that don't apply to generated code
 auto GenerateClangTidy() -> std::string {
@@ -275,6 +290,7 @@ auto EmitCommandInternal(
     WriteFile(out_path / "CMakePresets.json", GenerateCMakePresets());
     WriteFile(
         out_path / "compile_commands.json", GenerateCompileCommands(out_path));
+    WriteFile(out_path / ".clang-format", GenerateClangFormat());
     WriteFile(out_path / ".clang-tidy", GenerateClangTidy());
     WriteFile(out_path / ".gitignore", GenerateGitignore());
 

@@ -52,6 +52,7 @@ enum class CodegenFeature : uint8_t {
   kModulePrecisionPower = 1 << 3,  // $timeprecision
   kModuleName = 1 << 4,            // $printtimescale
   kTimescaleStr = 1 << 5,          // $printtimescale
+  kDisplay = 1 << 6,               // #include <iostream>, <print> for $display
 };
 
 // Bitwise OR for combining CodegenFeature flags
