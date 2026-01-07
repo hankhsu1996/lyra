@@ -163,9 +163,7 @@ auto GenerateMain(
          "    " +
          module_name +
          " dut;\n"
-         "    dut.Run();\n"
-         "    // Return non-zero if simulation was stopped via $stop\n"
-         "    return lyra::sdk::simulation_stopped ? 1 : 0;\n"
+         "    return dut.Run().exit_code;\n"
          "}\n";
 }
 
