@@ -46,6 +46,38 @@ struct FormatSpec {
   std::string precision;
 };
 
+// Properties for display/write variants
+struct DisplayVariantProps {
+  char default_format;  // 'd', 'b', 'o', or 'h'
+  bool append_newline;  // true for $display*, false for $write*
+};
+
+// Get properties for a display/write variant
+auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
+  if (name == "$write") {
+    return {.default_format = 'd', .append_newline = false};
+  }
+  if (name == "$writeb") {
+    return {.default_format = 'b', .append_newline = false};
+  }
+  if (name == "$writeo") {
+    return {.default_format = 'o', .append_newline = false};
+  }
+  if (name == "$writeh") {
+    return {.default_format = 'h', .append_newline = false};
+  }
+  if (name == "$displayb") {
+    return {.default_format = 'b', .append_newline = true};
+  }
+  if (name == "$displayo") {
+    return {.default_format = 'o', .append_newline = true};
+  }
+  if (name == "$displayh") {
+    return {.default_format = 'h', .append_newline = true};
+  }
+  return {.default_format = 'd', .append_newline = true};  // $display (default)
+}
+
 // Format a RuntimeValue according to a format specifier.
 // spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal,
 // 's' = string, 'f' = real
@@ -1070,10 +1102,22 @@ auto RunInstruction(
         return InstructionResult::Finish(is_stop);
       }
 
-      if (instr.system_call_name == "$display") {
-        // Empty $display - just print newline
+      // Handle all display/write variants
+      if (instr.system_call_name == "$display" ||
+          instr.system_call_name == "$displayb" ||
+          instr.system_call_name == "$displayo" ||
+          instr.system_call_name == "$displayh" ||
+          instr.system_call_name == "$write" ||
+          instr.system_call_name == "$writeb" ||
+          instr.system_call_name == "$writeo" ||
+          instr.system_call_name == "$writeh") {
+        auto props = GetDisplayVariantProps(instr.system_call_name);
+
+        // Empty call - just print newline if needed
         if (instr.operands.empty()) {
-          simulation_context.display_output << "\n";
+          if (props.append_newline) {
+            simulation_context.display_output << "\n";
+          }
           return InstructionResult::Continue();
         }
 
@@ -1091,19 +1135,21 @@ auto RunInstruction(
         if (first.IsString()) {
           auto fmt_str = first.AsString();
           if (fmt_str.find('%') != std::string::npos) {
-            // Collect remaining arguments
+            // Format string case: use specifiers from format string
             std::vector<RuntimeValue> args;
             for (size_t i = 1; i < instr.operands.size(); ++i) {
               args.push_back(get_temp(instr.operands[i]));
             }
             simulation_context.display_output
-                << FormatDisplay(fmt_str, args, &time_ctx) << "\n";
+                << FormatDisplay(fmt_str, args, &time_ctx);
+            if (props.append_newline) {
+              simulation_context.display_output << "\n";
+            }
             return InstructionResult::Continue();
           }
         }
 
-        // No format specifiers - generate format string with %d placeholders
-        // No automatic spacing - matches C++ printf behavior
+        // No format specifiers - generate format string with variant's default
         std::string gen_fmt;
         std::vector<RuntimeValue> args;
         for (const auto& operand : instr.operands) {
@@ -1113,12 +1159,16 @@ auto RunInstruction(
           } else if (value.IsReal() || value.IsShortReal()) {
             gen_fmt += "%f";
           } else {
-            gen_fmt += "%d";
+            gen_fmt += "%";
+            gen_fmt += props.default_format;
           }
           args.push_back(value);
         }
         simulation_context.display_output
-            << FormatDisplay(gen_fmt, args, &time_ctx) << "\n";
+            << FormatDisplay(gen_fmt, args, &time_ctx);
+        if (props.append_newline) {
+          simulation_context.display_output << "\n";
+        }
         return InstructionResult::Continue();
       }
 

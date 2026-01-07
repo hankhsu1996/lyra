@@ -201,3 +201,153 @@ cases:
       endmodule
     expect:
       output: "[hi   ]\n"
+
+  # $write variants (no newline)
+  - name: write_no_newline
+    sv: |
+      module Test;
+        initial begin
+          $write("no");
+          $write("newline");
+        end
+      endmodule
+    expect:
+      output: "nonewline"
+
+  - name: write_empty_does_nothing
+    sv: |
+      module Test;
+        initial begin
+          $write();
+          $write("done");
+        end
+      endmodule
+    expect:
+      output: "done"
+
+  - name: writeh_default_hex
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $writeh(x);
+        end
+      endmodule
+    expect:
+      output: "ff"
+
+  - name: writeb_default_binary
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $writeb(x);
+        end
+      endmodule
+    expect:
+      output: "101"
+
+  - name: writeo_default_octal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 8;
+          $writeo(x);
+        end
+      endmodule
+    expect:
+      output: "10"
+
+  # $display variants (with newline, different default format)
+  - name: displayh_default_hex
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $displayh(x);
+        end
+      endmodule
+    expect:
+      output: "ff\n"
+
+  - name: displayb_default_binary
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $displayb(x);
+        end
+      endmodule
+    expect:
+      output: "101\n"
+
+  - name: displayo_default_octal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 8;
+          $displayo(x);
+        end
+      endmodule
+    expect:
+      output: "10\n"
+
+  # Format string overrides default
+  - name: displayh_with_format_uses_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $displayh("%d", x);
+        end
+      endmodule
+    expect:
+      output: "255\n"
+
+  - name: writeb_with_format_uses_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $writeb("%h", x);
+        end
+      endmodule
+    expect:
+      output: "ff"
+
+  # Multiple values with variant default
+  - name: displayh_multiple_values
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = 255;
+          $displayh(a, b);
+        end
+      endmodule
+    expect:
+      output: "aff\n"
+
+  # Mixed types - integers use variant format, others use default
+  - name: displayh_mixed_types
+    sv: |
+      module Test;
+        int x;
+        string s;
+        initial begin
+          x = 255;
+          s = "test";
+          $displayh(x, s);
+        end
+      endmodule
+    expect:
+      output: "fftest\n"
