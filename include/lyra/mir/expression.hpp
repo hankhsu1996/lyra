@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
@@ -37,6 +38,7 @@ class Expression {
     kRangeSelect,
     kIndexedRangeSelect,
     kPortDriver,
+    kHierarchicalReference,
   };
 
   Kind kind;
@@ -46,7 +48,8 @@ class Expression {
   Expression(Expression&&) = delete;
   auto operator=(const Expression&) -> Expression& = default;
   auto operator=(Expression&&) -> Expression& = delete;
-  explicit Expression(Kind kind, Type type) : kind(kind), type(type) {
+  explicit Expression(Kind kind, Type type)
+      : kind(kind), type(std::move(type)) {
   }
   virtual ~Expression() = default;
 
@@ -80,6 +83,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "IndexedRangeSelect";
     case Expression::Kind::kPortDriver:
       return "PortDriver";
+    case Expression::Kind::kHierarchicalReference:
+      return "HierarchicalReference";
   }
   std::abort();
 }
@@ -203,13 +208,19 @@ class TernaryExpression : public Expression {
 // Forward declaration for AssignmentTarget
 class ElementSelectExpression;
 
-// Represents the target of an assignment - either a simple variable or an array
-// element
+// Represents the target of an assignment:
+// - Local variable (symbol only)
+// - Array element (symbol + index)
+// - Hierarchical reference (path like "child.port")
 struct AssignmentTarget {
-  SymbolRef symbol;  // The base variable
+  // For local symbol targets
+  SymbolRef symbol;  // The base variable (nullptr for hierarchical)
   std::unique_ptr<Expression>
       element_index;              // Optional: index for element select
   std::optional<Type> base_type;  // Type of base variable (for element select)
+
+  // For hierarchical targets (e.g., child.port)
+  std::vector<std::string> hierarchical_path;
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
@@ -232,6 +243,14 @@ struct AssignmentTarget {
         base_type(std::move(type)) {
   }
 
+  // Constructor for hierarchical reference assignment
+  explicit AssignmentTarget(std::vector<std::string> path)
+      : symbol(nullptr),
+        element_index(nullptr),
+        hierarchical_path(std::move(path)) {
+    assert(!hierarchical_path.empty() && "Hierarchical path must not be empty");
+  }
+
   [[nodiscard]] auto IsElementSelect() const -> bool {
     return element_index != nullptr;
   }
@@ -240,7 +259,14 @@ struct AssignmentTarget {
     return base_type && base_type->kind == Type::Kind::kIntegral;
   }
 
+  [[nodiscard]] auto IsHierarchical() const -> bool {
+    return !hierarchical_path.empty();
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
+    if (IsHierarchical()) {
+      return fmt::format("{}", fmt::join(hierarchical_path, "."));
+    }
     if (element_index) {
       return fmt::format("{}[{}]", symbol->name, element_index->ToString());
     }
@@ -432,6 +458,28 @@ class PortDriverExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}.{}", submodule_instance, port_name);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Represents a general hierarchical reference: path.to.signal
+// Can be used as both RHS (reading) and LHS (writing via AssignmentTarget)
+class HierarchicalReferenceExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kHierarchicalReference;
+
+  std::vector<std::string> path;  // e.g., ["child", "a"]
+
+  HierarchicalReferenceExpression(std::vector<std::string> path, Type type)
+      : Expression(kKindValue, std::move(type)), path(std::move(path)) {
+    assert(!this->path.empty() && "Hierarchical path must not be empty");
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}", fmt::join(path, "."));
   }
 
   void Accept(MirVisitor& visitor) const override {

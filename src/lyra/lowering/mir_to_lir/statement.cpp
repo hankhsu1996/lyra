@@ -49,6 +49,13 @@ auto LowerStatement(
       // Lower the expression and get its result value
       auto result_value = LowerExpression(*expression, builder);
 
+      if (target.IsHierarchical()) {
+        // Hierarchical assignment not yet supported in interpreter.
+        // Will be implemented in Phase 16.
+        throw std::runtime_error(
+            "Hierarchical assignment is not supported by the interpreter");
+      }
+
       if (target.IsElementSelect()) {
         auto index = LowerExpression(*target.element_index, builder);
 

@@ -15,6 +15,7 @@ class ElementSelectExpression;
 class RangeSelectExpression;
 class IndexedRangeSelectExpression;
 class PortDriverExpression;
+class HierarchicalReferenceExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -54,6 +55,7 @@ class MirVisitor {
   virtual void Visit(const RangeSelectExpression&) = 0;
   virtual void Visit(const IndexedRangeSelectExpression&) = 0;
   virtual void Visit(const PortDriverExpression&) = 0;
+  virtual void Visit(const HierarchicalReferenceExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

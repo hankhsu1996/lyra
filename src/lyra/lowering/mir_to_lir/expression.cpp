@@ -77,6 +77,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       assert(assignment.value);
       auto value = LowerExpression(*assignment.value, builder);
 
+      if (assignment.target.IsHierarchical()) {
+        // Hierarchical assignment not yet supported in interpreter.
+        // Will be implemented in Phase 16.
+        throw std::runtime_error(
+            "Hierarchical assignment is not supported by the interpreter");
+      }
+
       if (assignment.target.IsElementSelect()) {
         auto index = LowerExpression(*assignment.target.element_index, builder);
 
@@ -286,6 +293,14 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // interpreter.
       throw std::runtime_error(
           "PortDriverExpression is not supported by the interpreter");
+    }
+
+    case mir::Expression::Kind::kHierarchicalReference: {
+      // HierarchicalReferenceExpression is not yet supported by the
+      // interpreter. Will be implemented in Phase 16.
+      throw std::runtime_error(
+          "HierarchicalReferenceExpression is not supported by the "
+          "interpreter");
     }
   }
 }

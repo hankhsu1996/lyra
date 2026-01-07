@@ -1150,6 +1150,11 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       out_ << driver.submodule_instance << "_." << driver.port_name;
       break;
     }
+    case mir::Expression::Kind::kHierarchicalReference: {
+      const auto& hier = mir::As<mir::HierarchicalReferenceExpression>(expr);
+      EmitHierarchicalPath(hier.path);
+      break;
+    }
     case mir::Expression::Kind::kTernary: {
       const auto& ternary = mir::As<mir::TernaryExpression>(expr);
       bool needs_parens = kPrecTernary < parent_prec;
@@ -1289,6 +1294,11 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
 }
 
 void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
+  if (target.IsHierarchical()) {
+    EmitHierarchicalPath(target.hierarchical_path);
+    return;
+  }
+
   out_ << target.symbol->name;
   // Append underscore for port reference members (Google style)
   if (port_symbols_.contains(target.symbol)) {
@@ -1333,6 +1343,16 @@ void Codegen::EmitSliceShift(
     out_ << " - " << lower_bound;
   }
   out_ << ")";
+}
+
+void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
+  // Emit hierarchical path: ["child", "port"] -> child_.port_
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (i > 0) {
+      out_ << ".";
+    }
+    out_ << path[i] << "_";
+  }
 }
 
 void Codegen::Indent() {

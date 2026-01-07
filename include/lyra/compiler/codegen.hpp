@@ -39,6 +39,7 @@ class Codegen {
   void EmitSliceShift(
       const mir::Expression& start_expr, int32_t lower_bound,
       int32_t width_offset);
+  void EmitHierarchicalPath(const std::vector<std::string>& path);
 
   std::ostringstream out_;
   int indent_ = 0;

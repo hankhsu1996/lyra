@@ -73,6 +73,12 @@ class SensitivityCollector : public mir::MirVisitor {
     // Port driver is a target (LHS), not a source - no variables to collect
   }
 
+  void Visit(const mir::HierarchicalReferenceExpression& /*unused*/) override {
+    // TODO(hankhsu): When hierarchical reads are supported (Future phase),
+    // this should add the referenced signal to the sensitivity list.
+    // Currently HierarchicalReference is only used for LHS (port driving).
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);
