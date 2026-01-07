@@ -117,7 +117,9 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
 constexpr auto FindSystemFunction(std::string_view name)
     -> const SystemFunctionInfo* {
   for (const auto& info : kSystemFunctions) {
-    if (info.name == name) { return &info; }
+    if (info.name == name) {
+      return &info;
+    }
   }
   return nullptr;
 }
