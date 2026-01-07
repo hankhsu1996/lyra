@@ -3,10 +3,14 @@
 #include <bit>
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <fmt/core.h>
@@ -14,7 +18,10 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/time_format.hpp"
+#include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
@@ -69,12 +76,8 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
                                  : static_cast<double>(value.AsFloat());
     if (spec.spec == 'f') {
       std::string fmt = "{:";
-      if (spec.zero_pad && !spec.width.empty()) {
-        fmt += "0>";
-      }
-      if (!spec.width.empty()) {
-        fmt += spec.width;
-      }
+      if (spec.zero_pad && !spec.width.empty()) { fmt += "0>"; }
+      if (!spec.width.empty()) { fmt += spec.width; }
       if (!spec.precision.empty()) {
         fmt += ".";
         fmt += spec.precision;
@@ -88,12 +91,8 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
   // Build format string with optional width for integer types
   auto build_int_format = [&spec](char type_char) -> std::string {
     std::string fmt = "{:";
-    if (spec.zero_pad) {
-      fmt += "0";
-    }
-    if (!spec.width.empty()) {
-      fmt += spec.width;
-    }
+    if (spec.zero_pad) { fmt += "0"; }
+    if (!spec.width.empty()) { fmt += spec.width; }
     fmt += type_char;
     fmt += "}";
     return fmt;
@@ -251,6 +250,37 @@ auto FormatDisplay(
     }
   }
   return result;
+}
+
+// Execute unary math function (real -> real)
+auto ExecuteMathUnary(std::string_view name, double arg) -> double {
+  if (name == "$ln") { return std::log(arg); }
+  if (name == "$log10") { return std::log10(arg); }
+  if (name == "$exp") { return std::exp(arg); }
+  if (name == "$sqrt") { return std::sqrt(arg); }
+  if (name == "$floor") { return std::floor(arg); }
+  if (name == "$ceil") { return std::ceil(arg); }
+  if (name == "$sin") { return std::sin(arg); }
+  if (name == "$cos") { return std::cos(arg); }
+  if (name == "$tan") { return std::tan(arg); }
+  if (name == "$asin") { return std::asin(arg); }
+  if (name == "$acos") { return std::acos(arg); }
+  if (name == "$atan") { return std::atan(arg); }
+  if (name == "$sinh") { return std::sinh(arg); }
+  if (name == "$cosh") { return std::cosh(arg); }
+  if (name == "$tanh") { return std::tanh(arg); }
+  if (name == "$asinh") { return std::asinh(arg); }
+  if (name == "$acosh") { return std::acosh(arg); }
+  if (name == "$atanh") { return std::atanh(arg); }
+  std::unreachable();
+}
+
+// Execute binary math function (real, real -> real)
+auto ExecuteMathBinary(std::string_view name, double a, double b) -> double {
+  if (name == "$pow") { return std::pow(a, b); }
+  if (name == "$atan2") { return std::atan2(a, b); }
+  if (name == "$hypot") { return std::hypot(a, b); }
+  std::unreachable();
 }
 
 }  // namespace
@@ -1046,9 +1076,7 @@ auto RunInstruction(
       // Scale raw simulation time to module's timeunit per LRM
       auto scale_time = [&simulation_context]() -> uint64_t {
         uint64_t raw_time = simulation_context.current_time;
-        if (!simulation_context.timescale) {
-          return raw_time;
-        }
+        if (!simulation_context.timescale) { return raw_time; }
         uint64_t divisor = simulation_context.timescale->TimeDivisor(
             simulation_context.global_precision_power);
         return raw_time / divisor;
@@ -1284,6 +1312,30 @@ auto RunInstruction(
         temp_table.Write(
             instr.result.value(), RuntimeValue::IntegralSigned(result, 32));
         return InstructionResult::Continue();
+      }
+
+      // Math functions: use category-based dispatch from registry
+      const auto* func_info =
+          common::FindSystemFunction(instr.system_call_name);
+      if (func_info != nullptr) {
+        using Category = common::SystemFunctionCategory;
+        if (func_info->category == Category::kMathUnary) {
+          assert(instr.result.has_value());
+          assert(instr.operands.size() == 1);
+          double arg = get_temp(instr.operands[0]).AsDouble();
+          double result = ExecuteMathUnary(instr.system_call_name, arg);
+          temp_table.Write(instr.result.value(), RuntimeValue::Real(result));
+          return InstructionResult::Continue();
+        }
+        if (func_info->category == Category::kMathBinary) {
+          assert(instr.result.has_value());
+          assert(instr.operands.size() == 2);
+          double a = get_temp(instr.operands[0]).AsDouble();
+          double b = get_temp(instr.operands[1]).AsDouble();
+          double result = ExecuteMathBinary(instr.system_call_name, a, b);
+          temp_table.Write(instr.result.value(), RuntimeValue::Real(result));
+          return InstructionResult::Continue();
+        }
       }
 
       // Supported system calls are validated in AST→MIR

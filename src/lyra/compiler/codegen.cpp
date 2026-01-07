@@ -11,6 +11,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/sv_format.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -87,9 +88,7 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
 }
 
 auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return false;
-  }
+  if (type.kind != common::Type::Kind::kIntegral) { return false; }
   return std::get<common::IntegralData>(type.data).is_signed;
 }
 
@@ -108,24 +107,14 @@ auto ToCppType(const common::Type& type) -> std::string {
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
 
-      if (width > 64) {
-        return "/* TODO: wide integer */";
-      }
+      if (width > 64) { return "/* TODO: wide integer */"; }
 
       // Use LRM-aligned type aliases for standard signed integer types
       if (is_signed) {
-        if (width == 8) {
-          return "Byte";
-        }
-        if (width == 16) {
-          return "ShortInt";
-        }
-        if (width == 32) {
-          return "Int";
-        }
-        if (width == 64) {
-          return "LongInt";
-        }
+        if (width == 8) { return "Byte"; }
+        if (width == 16) { return "ShortInt"; }
+        if (width == 32) { return "Int"; }
+        if (width == 64) { return "LongInt"; }
         // Non-standard signed widths use Bit<N, true>
         return std::format("Bit<{}, true>", width);
       }
@@ -149,9 +138,7 @@ auto ToCppUnsignedType(const common::Type& type) -> std::string {
   }
   auto data = std::get<common::IntegralData>(type.data);
   size_t width = data.bit_width;
-  if (width > 64) {
-    return "/* TODO: wide integer */";
-  }
+  if (width > 64) { return "/* TODO: wide integer */"; }
   // Always return unsigned Bit<N> regardless of original signedness
   return std::format("Bit<{}>", width);
 }
@@ -339,9 +326,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     if (port.direction == mir::PortDirection::kInput) {
       continue;  // Input ports are public variables, not constructor parameters
     }
-    if (!first) {
-      out_ << ", ";
-    }
+    if (!first) { out_ << ", "; }
     first = false;
     std::string type_str = ToCppType(port.variable.type);
     out_ << type_str << "& " << port.variable.symbol->name;
@@ -366,9 +351,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     out_ << ", " << submod.instance_name << "_(";
     bool first = true;
     for (const auto& binding : submod.output_bindings) {
-      if (!first) {
-        out_ << ", ";
-      }
+      if (!first) { out_ << ", "; }
       first = false;
       EmitExpression(*binding.signal);
     }
@@ -390,9 +373,7 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("");
 
   // Process methods
-  for (const auto& process : module.processes) {
-    EmitProcess(*process);
-  }
+  for (const auto& process : module.processes) { EmitProcess(*process); }
 
   Line("");
   // Member variables
@@ -435,9 +416,7 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
 void Codegen::EmitProcess(const mir::Process& process) {
   Line("auto " + process.name + "() -> lyra::sdk::Task {");
   indent_++;
-  if (process.body) {
-    EmitStatement(*process.body);
-  }
+  if (process.body) { EmitStatement(*process.body); }
   Line("co_return;");
   indent_--;
   Line("}");
@@ -448,9 +427,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
   switch (stmt.kind) {
     case mir::Statement::Kind::kBlock: {
       const auto& block = mir::As<mir::BlockStatement>(stmt);
-      for (const auto& s : block.statements) {
-        EmitStatement(*s);
-      }
+      for (const auto& s : block.statements) { EmitStatement(*s); }
       break;
     }
     case mir::Statement::Kind::kAssign: {
@@ -585,9 +562,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           Indent();
           out_ << "lyra::sdk::TimeFormat(";
           for (size_t i = 0; i < syscall.arguments.size(); ++i) {
-            if (i > 0) {
-              out_ << ", ";
-            }
+            if (i > 0) { out_ << ", "; }
             if (i == 0) {
               // units: int8_t
               out_ << "static_cast<int8_t>(";
@@ -666,19 +641,13 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       const auto& for_stmt = mir::As<mir::ForStatement>(stmt);
       // Emit initializers (variable declarations must be outside for loop in
       // C++)
-      for (const auto& init : for_stmt.initializers) {
-        EmitStatement(*init);
-      }
+      for (const auto& init : for_stmt.initializers) { EmitStatement(*init); }
       Indent();
       out_ << "for (; ";
-      if (for_stmt.condition) {
-        EmitExpression(*for_stmt.condition);
-      }
+      if (for_stmt.condition) { EmitExpression(*for_stmt.condition); }
       out_ << "; ";
       for (size_t i = 0; i < for_stmt.steps.size(); ++i) {
-        if (i > 0) {
-          out_ << ", ";
-        }
+        if (i > 0) { out_ << ", "; }
         EmitExpression(*for_stmt.steps[i]);
       }
       out_ << ") {\n";
@@ -731,9 +700,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         // Normal case: (_case_cond == expr0) || (_case_cond == expr1) || ...
         // Wildcard case: ((_case_cond & mask0) == expr0) || ...
         for (size_t i = 0; i < item.expressions.size(); ++i) {
-          if (i > 0) {
-            out_ << " || ";
-          }
+          if (i > 0) { out_ << " || "; }
           int64_t mask = item.masks[i];
           // Check if mask is all-1s (no wildcards) - can use direct comparison
           // A mask is "all ones" if it's -1 or all bits are set for the width
@@ -754,9 +721,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         out_ << ") {\n";
         indent_++;
-        if (item.statement) {
-          EmitStatement(*item.statement);
-        }
+        if (item.statement) { EmitStatement(*item.statement); }
         indent_--;
       }
 
@@ -803,16 +768,12 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kWaitEvent: {
       const auto& wait = mir::As<mir::WaitEventStatement>(stmt);
-      if (wait.triggers.empty()) {
-        break;
-      }
+      if (wait.triggers.empty()) { break; }
 
       // Helper to get variable name with underscore suffix for ports
       auto get_var_name = [this](const slang::ast::Symbol* symbol) {
         std::string name(symbol->name);
-        if (port_symbols_.contains(symbol)) {
-          name += "_";
-        }
+        if (port_symbols_.contains(symbol)) { name += "_"; }
         return name;
       };
 
@@ -848,9 +809,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           Indent();
           out_ << "co_await lyra::sdk::AnyChange(";
           for (size_t i = 0; i < wait.triggers.size(); ++i) {
-            if (i > 0) {
-              out_ << ", ";
-            }
+            if (i > 0) { out_ << ", "; }
             out_ << "&" << get_var_name(wait.triggers[i].variable);
           }
           out_ << ");\n";
@@ -859,9 +818,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           Indent();
           out_ << "co_await lyra::sdk::AnyOf(";
           for (size_t i = 0; i < wait.triggers.size(); ++i) {
-            if (i > 0) {
-              out_ << ", ";
-            }
+            if (i > 0) { out_ << ", "; }
             const auto& trigger = wait.triggers[i];
             std::string var_name = get_var_name(trigger.variable);
             out_ << trigger_expr(var_name, trigger.edge_kind);
@@ -948,9 +905,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& ident = mir::As<mir::IdentifierExpression>(expr);
       out_ << ident.symbol->name;
       // Append underscore for port reference members (Google style)
-      if (port_symbols_.contains(ident.symbol)) {
-        out_ << "_";
-      }
+      if (port_symbols_.contains(ident.symbol)) { out_ << "_"; }
       break;
     }
     case mir::Expression::Kind::kBinary: {
@@ -982,16 +937,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       } else {
         int prec = GetBinaryPrecedence(bin.op);
         bool needs_parens = prec < parent_prec;
-        if (needs_parens) {
-          out_ << "(";
-        }
+        if (needs_parens) { out_ << "("; }
         EmitExpression(*bin.left, prec);
         out_ << " " << ToCppOperator(bin.op) << " ";
         // Right operand needs higher prec for left-associativity
         EmitExpression(*bin.right, prec + 1);
-        if (needs_parens) {
-          out_ << ")";
-        }
+        if (needs_parens) { out_ << ")"; }
       }
       break;
     }
@@ -1001,9 +952,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         // TODO(hankhsu): Support NBA for array elements
         out_ << "this->ScheduleNba(&" << assign.target.symbol->name;
         // Append underscore for port reference members (Google style)
-        if (port_symbols_.contains(assign.target.symbol)) {
-          out_ << "_";
-        }
+        if (port_symbols_.contains(assign.target.symbol)) { out_ << "_"; }
         out_ << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
@@ -1052,13 +1001,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           // Single bit selection: value.GetBit(index - lower_bound)
           EmitExpression(*select.value, kPrecPrimary);
           out_ << ".GetBit(";
-          if (lower_bound != 0) {
-            out_ << "static_cast<int>(";
-          }
+          if (lower_bound != 0) { out_ << "static_cast<int>("; }
           EmitExpression(*select.selector, kPrecLowest);
-          if (lower_bound != 0) {
-            out_ << ") - " << lower_bound;
-          }
+          if (lower_bound != 0) { out_ << ") - " << lower_bound; }
           out_ << ")";
         } else {
           // Multi-bit element selection from 2D packed array
@@ -1140,25 +1085,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kTernary: {
       const auto& ternary = mir::As<mir::TernaryExpression>(expr);
       bool needs_parens = kPrecTernary < parent_prec;
-      if (needs_parens) {
-        out_ << "(";
-      }
+      if (needs_parens) { out_ << "("; }
       EmitExpression(*ternary.condition, kPrecTernary);
       out_ << " ? ";
       EmitExpression(*ternary.true_expression, kPrecTernary);
       out_ << " : ";
       EmitExpression(*ternary.false_expression, kPrecTernary);
-      if (needs_parens) {
-        out_ << ")";
-      }
+      if (needs_parens) { out_ << ")"; }
       break;
     }
     case mir::Expression::Kind::kUnary: {
       const auto& unary = mir::As<mir::UnaryExpression>(expr);
       bool needs_parens = kPrecUnary < parent_prec;
-      if (needs_parens) {
-        out_ << "(";
-      }
+      if (needs_parens) { out_ << "("; }
       switch (unary.op) {
         case mir::UnaryOperator::kPlus:
           out_ << "+";
@@ -1231,9 +1170,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           EmitExpression(*unary.operand, kPrecUnary);
           break;
       }
-      if (needs_parens) {
-        out_ << ")";
-      }
+      if (needs_parens) { out_ << ")"; }
       break;
     }
     case mir::Expression::Kind::kConversion: {
@@ -1301,6 +1238,16 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
                 "static_cast<uint64_t>(";
         EmitExpression(*syscall.arguments[0], kPrecLowest);
         out_ << "))";
+      } else if (common::HasDirectCppMapping(syscall.name)) {
+        // Math functions with direct C++ mapping (using registry)
+        const auto* info = common::FindSystemFunction(syscall.name);
+        out_ << info->cpp_function << "(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        if (info->category == common::SystemFunctionCategory::kMathBinary) {
+          out_ << ", ";
+          EmitExpression(*syscall.arguments[1], kPrecLowest);
+        }
+        out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
@@ -1324,9 +1271,7 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
 
   out_ << target.symbol->name;
   // Append underscore for port reference members (Google style)
-  if (port_symbols_.contains(target.symbol)) {
-    out_ << "_";
-  }
+  if (port_symbols_.contains(target.symbol)) { out_ << "_"; }
   if (target.IsElementSelect()) {
     // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
     out_ << "[static_cast<size_t>(";
@@ -1359,12 +1304,8 @@ void Codegen::EmitSliceShift(
   out_ << "(static_cast<size_t>(";
   EmitExpression(start_expr, kPrecLowest);
   out_ << ")";
-  if (width_offset != 0) {
-    out_ << " - " << width_offset;
-  }
-  if (lower_bound != 0) {
-    out_ << " - " << lower_bound;
-  }
+  if (width_offset != 0) { out_ << " - " << width_offset; }
+  if (lower_bound != 0) { out_ << " - " << lower_bound; }
   out_ << ")";
 }
 
@@ -1372,14 +1313,10 @@ void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
   // Emit hierarchical path: ["child", "signal"] -> child_.signal
   // Instance names (all but last) get _ suffix, variable name (last) does not
   for (size_t i = 0; i < path.size(); ++i) {
-    if (i > 0) {
-      out_ << ".";
-    }
+    if (i > 0) { out_ << "."; }
     out_ << path[i];
     // Only instance names (not the final variable) get _ suffix
-    if (i < path.size() - 1) {
-      out_ << "_";
-    }
+    if (i < path.size() - 1) { out_ << "_"; }
   }
 }
 
@@ -1388,9 +1325,7 @@ void Codegen::Indent() {
 }
 
 void Codegen::Line(const std::string& text) {
-  if (!text.empty()) {
-    Indent();
-  }
+  if (!text.empty()) { Indent(); }
   out_ << text << "\n";
 }
 
