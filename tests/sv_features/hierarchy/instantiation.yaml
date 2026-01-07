@@ -23,3 +23,21 @@ cases:
       variables:
         result: 8
       time: 1
+
+  - name: unconnected_input_ports
+    description: Unconnected input ports default to 0
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        int result;
+        Adder add(.sum(result));  // a and b unconnected
+
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        result: 0
+      time: 1

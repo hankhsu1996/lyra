@@ -14,6 +14,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -167,6 +168,25 @@ auto LowerExpression(const slang::ast::Expression& expression)
       // Simple variable assignment
       if (left.kind == slang::ast::ExpressionKind::NamedValue) {
         const auto& target = left.as<slang::ast::NamedValueExpression>().symbol;
+
+        // Check if target is an input port (read-only)
+        if (const auto* scope = target.getParentScope()) {
+          for (const auto& member : scope->members()) {
+            if (member.kind == slang::ast::SymbolKind::Port) {
+              const auto& port = member.as<slang::ast::PortSymbol>();
+              if (port.internalSymbol == &target &&
+                  port.direction == slang::ast::ArgumentDirection::In) {
+                throw DiagnosticException(
+                    Diagnostic::Error(
+                        left.sourceRange, fmt::format(
+                                              "cannot assign to input port "
+                                              "'{}'",
+                                              target.name)));
+              }
+            }
+          }
+        }
+
         return std::make_unique<mir::AssignmentExpression>(
             &target, std::move(value), is_non_blocking);
       }

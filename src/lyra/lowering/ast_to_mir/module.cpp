@@ -24,6 +24,7 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/statement.hpp"
@@ -205,8 +206,6 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
             expr->kind == slang::ast::ExpressionKind::EmptyArgument) {
           continue;
         }
-
-        const auto& port = conn->port.as<slang::ast::PortSymbol>();
 
         // For output ports, slang wraps the connection in an Assignment
         // expression (external = internal). Extract just the LHS signal.

@@ -264,7 +264,8 @@ auto EmitCommandInternal(
     // Generate main.cpp with global precision for %t formatting
     WriteFile(
         out_path / "main.cpp",
-        GenerateMain(top_module.name, header_file, codegen.GetGlobalPrecisionPower()));
+        GenerateMain(
+            top_module.name, header_file, codegen.GetGlobalPrecisionPower()));
 
     // Generate build configuration files
     WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(top_module.name));
