@@ -331,29 +331,17 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
-        // Helper lambda to emit bit position: (index - lower_bound) *
-        // element_width
-        auto emit_bit_position = [&]() {
-          if (lower_bound != 0) {
-            out_ << "((static_cast<int>(";
-            EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") - " << lower_bound << ") * " << element_width << ")";
-          } else {
-            out_ << "(static_cast<size_t>(";
-            EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") * " << element_width << ")";
-          }
-        };
-
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
              << mask << "ULL} << ";
-        emit_bit_position();
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
         out_ << ")) | ((Bit<" << total_width << ">{";
         EmitExpression(*assign.value);
         out_ << ".Value() & " << mask << "ULL} << ";
-        emit_bit_position();
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
         out_ << "));\n";
       } else {
         EmitAssignmentTarget(assign.target);
@@ -825,29 +813,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
-        // Helper lambda to emit bit position: (index - lower_bound) *
-        // element_width
-        auto emit_bit_position = [&]() {
-          if (lower_bound != 0) {
-            out_ << "((static_cast<int>(";
-            EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") - " << lower_bound << ") * " << element_width << ")";
-          } else {
-            out_ << "(static_cast<size_t>(";
-            EmitExpression(*assign.target.element_index, kPrecLowest);
-            out_ << ") * " << element_width << ")";
-          }
-        };
-
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
              << mask << "ULL} << ";
-        emit_bit_position();
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
         out_ << ")) | ((Bit<" << total_width << ">{";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ".Value() & " << mask << "ULL} << ";
-        emit_bit_position();
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
         out_ << ")), ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
@@ -930,6 +906,27 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       EmitExpression(*range.value, kPrecLowest);
       out_ << ") >> " << lsb << ") & "
            << std::format("0x{:X}ULL", (1ULL << result_width) - 1) << ")";
+      break;
+    }
+    case mir::Expression::Kind::kIndexedRangeSelect: {
+      const auto& indexed = mir::As<mir::IndexedRangeSelectExpression>(expr);
+      size_t result_width = expr.type.GetBitWidth();
+      uint64_t mask = (1ULL << result_width) - 1;
+      int32_t lower = indexed.value->type.GetElementLower();
+
+      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
+      // shift) & mask)
+      out_ << "static_cast<" << ToCppType(expr.type)
+           << ">((static_cast<uint64_t>(";
+      EmitExpression(*indexed.value, kPrecLowest);
+      out_ << ") >> ";
+
+      // Ascending (+:): shift by start - lower
+      // Descending (-:): shift by start - (width-1) - lower
+      int32_t width_offset = indexed.is_ascending ? 0 : (indexed.width - 1);
+      EmitSliceShift(*indexed.start, lower, width_offset);
+
+      out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -1070,6 +1067,39 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     EmitExpression(*target.element_index, kPrecLowest);
     out_ << ")]";
   }
+}
+
+void Codegen::EmitPackedBitPosition(
+    const mir::Expression& index_expr, int32_t lower_bound,
+    size_t element_width) {
+  // Emits: (static_cast<int/size_t>(index) - lower_bound) * element_width
+  // or:    static_cast<size_t>(index) * element_width  when lower_bound == 0
+  if (lower_bound != 0) {
+    out_ << "((static_cast<int>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") - " << lower_bound << ") * " << element_width << ")";
+  } else {
+    out_ << "(static_cast<size_t>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") * " << element_width << ")";
+  }
+}
+
+void Codegen::EmitSliceShift(
+    const mir::Expression& start_expr, int32_t lower_bound,
+    int32_t width_offset) {
+  // Emits: (static_cast<size_t>(start) - width_offset - lower_bound)
+  // width_offset is 0 for ascending (+:), or (width-1) for descending (-:)
+  out_ << "(static_cast<size_t>(";
+  EmitExpression(start_expr, kPrecLowest);
+  out_ << ")";
+  if (width_offset != 0) {
+    out_ << " - " << width_offset;
+  }
+  if (lower_bound != 0) {
+    out_ << " - " << lower_bound;
+  }
+  out_ << ")";
 }
 
 void Codegen::Indent() {

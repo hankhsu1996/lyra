@@ -9,6 +9,8 @@
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
+#include "lyra/lowering/mir_to_lir/helpers.hpp"
+#include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -56,21 +58,8 @@ auto LowerStatement(
               std::get<common::IntegralData>(target.base_type->data);
           size_t element_width = target.base_type->GetElementWidth();
 
-          // Adjust index for non-zero-based ranges (e.g., bit [10:5])
-          auto adjusted_index = index;
-          if (two_state.element_lower != 0) {
-            auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-            auto offset_literal =
-                builder.InternLiteral(Literal::Int(two_state.element_lower));
-            builder.AddInstruction(
-                Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
-
-            adjusted_index = builder.AllocateTemp("adj_idx", Type::Int());
-            builder.AddInstruction(
-                Instruction::Basic(
-                    IK::kBinarySubtract, adjusted_index,
-                    {Operand::Temp(index), Operand::Temp(offset_temp)}));
-          }
+          auto adjusted_index =
+              AdjustForNonZeroLower(index, two_state.element_lower, builder);
 
           auto instruction = Instruction::StorePackedElement(
               target.symbol, adjusted_index, result_value, element_width);

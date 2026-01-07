@@ -35,6 +35,7 @@ class Expression {
     kSystemCall,
     kElementSelect,
     kRangeSelect,
+    kIndexedRangeSelect,
   };
 
   Kind kind;
@@ -74,6 +75,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "ElementSelect";
     case Expression::Kind::kRangeSelect:
       return "RangeSelect";
+    case Expression::Kind::kIndexedRangeSelect:
+      return "IndexedRangeSelect";
   }
   std::abort();
 }
@@ -370,6 +373,37 @@ class RangeSelectExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}[{}:{}]", value->ToString(), left, right);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Indexed part-select: a[i+:4] or a[i-:4]
+class IndexedRangeSelectExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kIndexedRangeSelect;
+
+  std::unique_ptr<Expression> value;  // Packed vector being sliced
+  std::unique_ptr<Expression> start;  // Starting index (variable)
+  bool is_ascending;                  // true for +: (IndexedUp), false for -:
+  int32_t width;                      // Constant width
+
+  IndexedRangeSelectExpression(
+      std::unique_ptr<Expression> value, std::unique_ptr<Expression> start,
+      bool is_ascending, int32_t width, Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        value(std::move(value)),
+        start(std::move(start)),
+        is_ascending(is_ascending),
+        width(width) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format(
+        "{}[{}{}:{}]", value->ToString(), start->ToString(),
+        is_ascending ? "+" : "-", width);
   }
 
   void Accept(MirVisitor& visitor) const override {

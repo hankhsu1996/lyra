@@ -10,6 +10,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
+#include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/operators.hpp"
@@ -79,25 +80,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
         if (assignment.target.IsPacked()) {
           // Packed element assignment: vec[index] = value
-          const auto& two_state =
-              std::get<common::IntegralData>(assignment.target.base_type->data);
           size_t element_width = assignment.target.base_type->GetElementWidth();
-
-          // Adjust index for non-zero-based ranges (e.g., bit [10:5])
-          auto adjusted_index = index;
-          if (two_state.element_lower != 0) {
-            auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-            auto offset_literal =
-                builder.InternLiteral(Literal::Int(two_state.element_lower));
-            builder.AddInstruction(
-                Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
-
-            adjusted_index = builder.AllocateTemp("adj_idx", Type::Int());
-            builder.AddInstruction(
-                Instruction::Basic(
-                    IK::kBinarySubtract, adjusted_index,
-                    {Operand::Temp(index), Operand::Temp(offset_temp)}));
-          }
+          int32_t lower = assignment.target.base_type->GetElementLower();
+          auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
 
           auto instruction = Instruction::StorePackedElement(
               assignment.target.symbol, adjusted_index, value, element_width);
@@ -130,24 +115,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (select.value->type.kind == common::Type::Kind::kIntegral) {
         // Packed vector: lower the value, then select element/bit
         auto value = LowerExpression(*select.value, builder);
-
-        // Adjust index for non-zero-based ranges (e.g., bit [63:32])
-        const auto& two_state =
-            std::get<common::IntegralData>(select.value->type.data);
-        auto adjusted_index = index;
-        if (two_state.element_lower != 0) {
-          auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-          auto offset_literal =
-              builder.InternLiteral(Literal::Int(two_state.element_lower));
-          builder.AddInstruction(
-              Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
-
-          adjusted_index = builder.AllocateTemp("adj_idx", Type::Int());
-          builder.AddInstruction(
-              Instruction::Basic(
-                  IK::kBinarySubtract, adjusted_index,
-                  {Operand::Temp(index), Operand::Temp(offset_temp)}));
-        }
+        int32_t lower = select.value->type.GetElementLower();
+        auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
 
         auto instruction = Instruction::LoadPackedElement(
             result, value, adjusted_index, expression.type);
@@ -256,6 +225,45 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto instruction = Instruction::LoadPackedSlice(
           result, value, lsb_temp, expression.type);
       builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kIndexedRangeSelect: {
+      const auto& indexed =
+          mir::As<mir::IndexedRangeSelectExpression>(expression);
+      assert(indexed.value);
+      assert(indexed.start);
+
+      auto value = LowerExpression(*indexed.value, builder);
+      auto start = LowerExpression(*indexed.start, builder);
+
+      TempRef lsb_temp;
+      if (indexed.is_ascending) {
+        // a[i+:4]: lsb = i (start index is the LSB)
+        lsb_temp = start;
+      } else {
+        // a[i-:4]: lsb = i - width + 1
+        auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+        auto offset_literal =
+            builder.InternLiteral(Literal::Int(indexed.width - 1));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+        lsb_temp = builder.AllocateTemp("lsb", Type::Int());
+        builder.AddInstruction(
+            Instruction::Basic(
+                IK::kBinarySubtract, lsb_temp,
+                {Operand::Temp(start), Operand::Temp(offset_temp)}));
+      }
+
+      // Adjust for non-zero-based ranges if needed
+      int32_t lower = indexed.value->type.GetElementLower();
+      lsb_temp = AdjustForNonZeroLower(lsb_temp, lower, builder);
+
+      auto result = builder.AllocateTemp("slice", expression.type);
+      builder.AddInstruction(
+          Instruction::LoadPackedSlice(
+              result, value, lsb_temp, expression.type));
       return result;
     }
   }

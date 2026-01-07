@@ -63,6 +63,12 @@ class SensitivityCollector : public mir::MirVisitor {
     // left and right are constant integers, not expressions
   }
 
+  void Visit(const mir::IndexedRangeSelectExpression& expression) override {
+    expression.value->Accept(*this);
+    expression.start->Accept(*this);
+    // width is a constant integer, not an expression
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);

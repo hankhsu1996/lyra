@@ -230,40 +230,54 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& range_select =
           expression.as<slang::ast::RangeSelectExpression>();
 
-      // For now, only support Simple constant range (a[7:4])
-      if (range_select.getSelectionKind() !=
-          slang::ast::RangeSelectionKind::Simple) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                expression.sourceRange,
-                "only constant range select supported (not indexed "
-                "part-select)"));
-      }
-
-      auto value = LowerExpression(range_select.value());
-
-      // Get constant bounds using Slang's cached constant values
-      const auto* left_cv = range_select.left().getConstant();
-      const auto* right_cv = range_select.right().getConstant();
-      if (left_cv == nullptr || right_cv == nullptr) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                expression.sourceRange,
-                "range select bounds must be constant"));
-      }
-
-      auto left =
-          static_cast<int32_t>(left_cv->integer().as<int64_t>().value());
-      auto right =
-          static_cast<int32_t>(right_cv->integer().as<int64_t>().value());
-
       auto type_result = LowerType(*expression.type, expression.sourceRange);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
 
-      return std::make_unique<mir::RangeSelectExpression>(
-          std::move(value), left, right, *type_result);
+      auto value = LowerExpression(range_select.value());
+      auto selection_kind = range_select.getSelectionKind();
+
+      if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
+        // Constant range select: a[7:4]
+        const auto* left_cv = range_select.left().getConstant();
+        const auto* right_cv = range_select.right().getConstant();
+        if (left_cv == nullptr || right_cv == nullptr) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  "range select bounds must be constant"));
+        }
+
+        auto left =
+            static_cast<int32_t>(left_cv->integer().as<int64_t>().value());
+        auto right =
+            static_cast<int32_t>(right_cv->integer().as<int64_t>().value());
+
+        return std::make_unique<mir::RangeSelectExpression>(
+            std::move(value), left, right, *type_result);
+      }
+
+      // Indexed part-select: a[i+:4] or a[i-:4]
+      auto start = LowerExpression(range_select.left());
+
+      // Width must be constant
+      const auto* width_cv = range_select.right().getConstant();
+      if (width_cv == nullptr) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "indexed part-select width must be constant"));
+      }
+      auto width =
+          static_cast<int32_t>(width_cv->integer().as<int64_t>().value());
+
+      bool is_ascending =
+          (selection_kind == slang::ast::RangeSelectionKind::IndexedUp);
+
+      return std::make_unique<mir::IndexedRangeSelectExpression>(
+          std::move(value), std::move(start), is_ascending, width,
+          *type_result);
     }
 
     case slang::ast::ExpressionKind::Call: {
