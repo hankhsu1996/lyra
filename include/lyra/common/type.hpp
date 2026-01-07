@@ -289,7 +289,7 @@ struct Type {
       case Kind::kIntegral: {
         const auto& ts = std::get<IntegralData>(data);
         std::string base_name = ts.is_four_state ? "logic" : "bit";
-        const auto *sign_str = ts.is_signed ? " signed" : "";
+        const auto* sign_str = ts.is_signed ? " signed" : "";
 
         if (ts.element_type) {
           // Packed array: show dimensions
