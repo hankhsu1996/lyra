@@ -290,13 +290,17 @@ auto LowerExpression(const slang::ast::Expression& expression)
         //                                 $timeformat, $printtimescale
         // System functions (return value): $time, $stime, $realtime,
         //                                  $timeunit, $timeprecision,
-        //                                  $signed, $unsigned, $itor, $rtoi
+        //                                  $signed, $unsigned, $itor, $rtoi,
+        //                                  $realtobits, $bitstoreal,
+        //                                  $shortrealtobits, $bitstoshortreal
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
             name != "$display" && name != "$timeformat" &&
             name != "$printtimescale" && name != "$time" && name != "$stime" &&
             name != "$realtime" && name != "$timeunit" &&
             name != "$timeprecision" && name != "$signed" &&
-            name != "$unsigned" && name != "$itor" && name != "$rtoi") {
+            name != "$unsigned" && name != "$itor" && name != "$rtoi" &&
+            name != "$realtobits" && name != "$bitstoreal" &&
+            name != "$shortrealtobits" && name != "$bitstoshortreal") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

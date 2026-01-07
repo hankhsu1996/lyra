@@ -115,3 +115,117 @@ cases:
     expect:
       variables:
         i: -3
+
+  - name: realtobits_basic
+    sv: |
+      module Test;
+        real r;
+        bit [63:0] bits;
+        initial begin
+          r = 1.0;
+          bits = $realtobits(r);
+          $display("%h", bits);
+        end
+      endmodule
+    expect:
+      output: "3ff0000000000000\n"
+
+  - name: bitstoreal_basic
+    sv: |
+      module Test;
+        bit [63:0] bits;
+        real r;
+        initial begin
+          bits = 64'h3ff0000000000000;  // IEEE 754 for 1.0
+          r = $bitstoreal(bits);
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "1.000000\n"
+
+  - name: realtobits_negative
+    sv: |
+      module Test;
+        real r;
+        bit [63:0] bits;
+        initial begin
+          r = -1.0;
+          bits = $realtobits(r);
+          $display("%h", bits);
+        end
+      endmodule
+    expect:
+      output: "bff0000000000000\n"
+
+  - name: bitstoreal_roundtrip
+    sv: |
+      module Test;
+        real r1, r2;
+        bit [63:0] bits;
+        initial begin
+          r1 = 3.14159265358979;
+          bits = $realtobits(r1);
+          r2 = $bitstoreal(bits);
+          $display("%f", r2);
+        end
+      endmodule
+    expect:
+      output: "3.141593\n"
+
+  - name: shortrealtobits_basic
+    sv: |
+      module Test;
+        shortreal r;
+        bit [31:0] bits;
+        initial begin
+          r = 1.0;
+          bits = $shortrealtobits(r);
+          $display("%h", bits);
+        end
+      endmodule
+    expect:
+      output: "3f800000\n"
+
+  - name: bitstoshortreal_basic
+    sv: |
+      module Test;
+        bit [31:0] bits;
+        shortreal r;
+        initial begin
+          bits = 32'h3f800000;  // IEEE 754 single for 1.0
+          r = $bitstoshortreal(bits);
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "1.000000\n"
+
+  - name: shortrealtobits_negative
+    sv: |
+      module Test;
+        shortreal r;
+        bit [31:0] bits;
+        initial begin
+          r = -1.0;
+          bits = $shortrealtobits(r);
+          $display("%h", bits);
+        end
+      endmodule
+    expect:
+      output: "bf800000\n"
+
+  - name: bitstoshortreal_roundtrip
+    sv: |
+      module Test;
+        shortreal r1, r2;
+        bit [31:0] bits;
+        initial begin
+          r1 = 3.14159;
+          bits = $shortrealtobits(r1);
+          r2 = $bitstoshortreal(bits);
+          $display("%f", r2);
+        end
+      endmodule
+    expect:
+      output: "3.141590\n"

@@ -1,5 +1,6 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
+#include <bit>
 #include <cassert>
 #include <cctype>
 #include <cstddef>
@@ -1102,6 +1103,50 @@ auto RunInstruction(
                 : RuntimeValue::IntegralUnsigned(
                       static_cast<uint64_t>(raw_value), target_data.bit_width);
         temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      // $realtobits: real → 64-bit IEEE 754 representation
+      if (instr.system_call_name == "$realtobits") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = std::bit_cast<uint64_t>(src.AsDouble());
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 64));
+        return InstructionResult::Continue();
+      }
+
+      // $bitstoreal: 64-bit vector → real (IEEE 754)
+      if (instr.system_call_name == "$bitstoreal") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto real_value = std::bit_cast<double>(src.AsUInt64());
+        temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
+        return InstructionResult::Continue();
+      }
+
+      // $shortrealtobits: shortreal → 32-bit IEEE 754 representation
+      if (instr.system_call_name == "$shortrealtobits") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = std::bit_cast<uint32_t>(src.AsFloat());
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 32));
+        return InstructionResult::Continue();
+      }
+
+      // $bitstoshortreal: 32-bit vector → shortreal (IEEE 754)
+      if (instr.system_call_name == "$bitstoshortreal") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto bits = static_cast<uint32_t>(src.AsUInt64());
+        auto shortreal_value = std::bit_cast<float>(bits);
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::ShortReal(shortreal_value));
         return InstructionResult::Continue();
       }
 

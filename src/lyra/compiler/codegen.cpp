@@ -1158,6 +1158,26 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
         EmitExpression(*syscall.arguments[0], kPrecLowest);
         out_ << ")";
+      } else if (syscall.name == "$realtobits") {
+        // Real to 64-bit IEEE 754 bits
+        out_ << "std::bit_cast<uint64_t>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
+      } else if (syscall.name == "$bitstoreal") {
+        // 64-bit bits to real
+        out_ << "std::bit_cast<Real>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
+      } else if (syscall.name == "$shortrealtobits") {
+        // Shortreal to 32-bit IEEE 754 bits
+        out_ << "std::bit_cast<uint32_t>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
+      } else if (syscall.name == "$bitstoshortreal") {
+        // 32-bit bits to shortreal
+        out_ << "std::bit_cast<ShortReal>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
