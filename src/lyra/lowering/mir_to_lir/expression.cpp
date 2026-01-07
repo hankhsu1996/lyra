@@ -272,11 +272,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     }
 
     case mir::Expression::Kind::kHierarchicalReference: {
-      // HierarchicalReferenceExpression is not yet supported by the
-      // interpreter. Will be implemented in Phase 16.
-      throw std::runtime_error(
-          "HierarchicalReferenceExpression is not supported by the "
-          "interpreter");
+      const auto& hier_ref =
+          mir::As<mir::HierarchicalReferenceExpression>(expression);
+      auto result = builder.AllocateTemp("hier", expression.type);
+      auto instruction =
+          Instruction::LoadHierarchical(result, hier_ref.path, expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
     }
   }
 }

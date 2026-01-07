@@ -387,6 +387,26 @@ auto LowerExpression(const slang::ast::Expression& expression)
           std::move(value), *type_result);
     }
 
+    case slang::ast::ExpressionKind::HierarchicalValue: {
+      const auto& hier_expr =
+          expression.as<slang::ast::HierarchicalValueExpression>();
+
+      // Build hierarchical path from slang's reference info
+      std::vector<std::string> path;
+      for (const auto& element : hier_expr.ref.path) {
+        path.emplace_back(element.symbol->name);
+      }
+
+      // Get type from the expression
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::HierarchicalReferenceExpression>(
+          std::move(path), *type_result);
+    }
+
     case slang::ast::ExpressionKind::Invalid:
       // Slang produces InvalidExpression when it detects semantic issues.
       // Slang should have already reported a diagnostic explaining the problem.
