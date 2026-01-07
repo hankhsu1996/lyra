@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <ios>
 #include <string>
+#include <vector>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -552,7 +554,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           int64_t mask = item.masks[i];
           // Check if mask is all-1s (no wildcards) - can use direct comparison
           // A mask is "all ones" if it's -1 or all bits are set for the width
-          uint64_t umask = static_cast<uint64_t>(mask);
+          auto umask = static_cast<uint64_t>(mask);
           bool is_all_ones = (mask == -1) ||
                              (umask == 0xFFFFFFFF) ||        // 32-bit all 1s
                              (umask == 0xFFFFFFFFFFFFFFFF);  // 64-bit all 1s

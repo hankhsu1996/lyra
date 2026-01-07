@@ -885,7 +885,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         // $time returns 64-bit unsigned time (type 'time')
         auto result =
-            RuntimeValue::TwoStateUnsigned(simulation_context.current_time, 64);
+            RuntimeValue::IntegralUnsigned(simulation_context.current_time, 64);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -893,7 +893,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$stime") {
         assert(instr.result.has_value());
         // $stime returns low 32 bits of simulation time as unsigned
-        auto result = RuntimeValue::TwoStateUnsigned(
+        auto result = RuntimeValue::IntegralUnsigned(
             simulation_context.current_time & 0xFFFFFFFF, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();

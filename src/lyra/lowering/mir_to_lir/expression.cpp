@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
