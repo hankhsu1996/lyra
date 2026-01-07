@@ -281,6 +281,12 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line(
       "static constexpr int8_t kModuleUnitPower = " +
       std::to_string(static_cast<int>(module_unit_power)) + ";");
+  int8_t module_precision_power =
+      timescale_ ? timescale_->precision_power
+                 : common::TimeScale::kDefaultPrecisionPower;
+  Line(
+      "static constexpr int8_t kModulePrecisionPower = " +
+      std::to_string(static_cast<int>(module_precision_power)) + ";");
   Line("");
 
   indent_--;
@@ -1105,6 +1111,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << "lyra::sdk::STime(kTimeDivisor)";
       } else if (syscall.name == "$realtime") {
         out_ << "lyra::sdk::RealTime(kTimeDivisor)";
+      } else if (syscall.name == "$timeunit") {
+        out_ << "kModuleUnitPower";
+      } else if (syscall.name == "$timeprecision") {
+        out_ << "kModulePrecisionPower";
+      } else if (
+          syscall.name == "$timeunit_root" ||
+          syscall.name == "$timeprecision_root") {
+        out_ << "lyra::sdk::global_precision_power";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(

@@ -984,6 +984,46 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      if (instr.system_call_name == "$timeunit") {
+        assert(instr.result.has_value());
+        // $timeunit returns module's time unit as power of 10
+        int8_t unit = simulation_context.timescale
+                          ? simulation_context.timescale->unit_power
+                          : common::TimeScale::kDefaultUnitPower;
+        auto result = RuntimeValue::TwoStateSigned(unit, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeunit_root") {
+        assert(instr.result.has_value());
+        // $timeunit($root) returns global simulation precision
+        int8_t unit = simulation_context.global_precision_power;
+        auto result = RuntimeValue::TwoStateSigned(unit, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeprecision") {
+        assert(instr.result.has_value());
+        // $timeprecision returns module's time precision as power of 10
+        int8_t precision = simulation_context.timescale
+                               ? simulation_context.timescale->precision_power
+                               : common::TimeScale::kDefaultPrecisionPower;
+        auto result = RuntimeValue::TwoStateSigned(precision, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeprecision_root") {
+        assert(instr.result.has_value());
+        // $timeprecision($root) returns global simulation precision
+        int8_t precision = simulation_context.global_precision_power;
+        auto result = RuntimeValue::TwoStateSigned(precision, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
       // Supported system calls are validated in AST→MIR
       assert(false && "unsupported system call should be rejected in AST→MIR");
     }

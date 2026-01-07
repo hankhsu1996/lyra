@@ -92,6 +92,9 @@ auto Compiler::CompileAndRun(
   // Build main() that captures display output and prints results
   std::ostringstream main_code;
   main_code << "\nint main() {\n";
+  // Initialize global precision for $timeunit($root) and $timeprecision($root)
+  main_code << "  lyra::sdk::global_precision_power = "
+            << static_cast<int>(codegen.GetGlobalPrecisionPower()) << ";\n";
   main_code << "  " << mir.name << " dut;\n";
   // Redirect cout to capture $display output
   main_code << "  std::ostringstream captured;\n";

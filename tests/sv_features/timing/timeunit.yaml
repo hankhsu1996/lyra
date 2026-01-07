@@ -1,0 +1,210 @@
+feature: timeunit
+description: Tests for $timeunit and $timeprecision system functions (IEEE 1800-2023 §20.4.1)
+
+cases:
+  # Basic $timeunit tests - returns module's time unit as power of 10
+
+  - name: timeunit_basic_ns
+    description: $timeunit returns -9 for 1ns time unit
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -9
+
+  - name: timeunit_basic_us
+    description: $timeunit returns -6 for 1us time unit
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -6
+
+  - name: timeunit_basic_ps
+    description: $timeunit returns -12 for 1ps time unit
+    sv: |
+      `timescale 1ps / 1ps
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -12
+
+  - name: timeunit_10ns
+    description: $timeunit returns -8 for 10ns time unit
+    sv: |
+      `timescale 10ns / 1ns
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -8
+
+  # Basic $timeprecision tests - returns module's time precision as power of 10
+
+  - name: timeprecision_basic_ps
+    description: $timeprecision returns -12 for 1ps precision
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        p: -12
+
+  - name: timeprecision_basic_ns
+    description: $timeprecision returns -9 for 1ns precision
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        p: -9
+
+  - name: timeprecision_basic_fs
+    description: $timeprecision returns -15 for 1fs precision
+    sv: |
+      `timescale 1ps / 1fs
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        p: -15
+
+  # Combined tests
+
+  - name: timeunit_and_timeprecision
+    description: Both functions return correct values
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int u;
+        int p;
+        initial begin
+          u = $timeunit;
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -9
+        p: -12
+
+  - name: timeunit_display
+    description: $timeunit can be used in $display
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $display("timeunit=%0d, timeprecision=%0d", $timeunit, $timeprecision);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "timeunit=-9, timeprecision=-12"
+
+  # Default timescale tests (Lyra default is 1ps/1ps)
+
+  - name: timeunit_default
+    description: Without timescale directive, returns default unit (1ps = -12)
+    sv: |
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -12
+
+  - name: timeprecision_default
+    description: Without timescale directive, returns default precision (1ps = -12)
+    sv: |
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        p: -12
+
+  # $root argument tests - returns global simulation precision
+
+  - name: timeunit_root
+    description: $timeunit($root) returns global simulation precision
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit($root);
+        end
+      endmodule
+    expect:
+      variables:
+        u: -12
+
+  - name: timeprecision_root
+    description: $timeprecision($root) returns global simulation precision
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision($root);
+        end
+      endmodule
+    expect:
+      variables:
+        p: -12
+
+  - name: timeunit_root_display
+    description: $timeunit($root) and $timeprecision($root) in $display
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          $display("root unit=%0d, root prec=%0d", $timeunit($root), $timeprecision($root));
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "root unit=-9, root prec=-9"

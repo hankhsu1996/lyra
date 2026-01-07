@@ -11,6 +11,7 @@
 #include <slang/numeric/Time.h>
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
+#include <slang/util/LanguageVersion.h>
 
 namespace lyra::frontend {
 
@@ -48,6 +49,7 @@ auto SlangFrontend::LoadFromFiles(
 
   slang::ast::CompilationOptions comp_options;
   comp_options.defaultTimeScale = MakeDefaultTimeScale();
+  comp_options.languageVersion = slang::LanguageVersion::v1800_2023;
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   for (const auto& path : paths) {
@@ -99,6 +101,7 @@ auto SlangFrontend::LoadFromString(
     -> std::unique_ptr<slang::ast::Compilation> {
   slang::ast::CompilationOptions comp_options;
   comp_options.defaultTimeScale = MakeDefaultTimeScale();
+  comp_options.languageVersion = slang::LanguageVersion::v1800_2023;
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
   auto buffer = source_manager_->assignText(name, code);
   auto tree = slang::syntax::SyntaxTree::fromBuffer(buffer, *source_manager_);
