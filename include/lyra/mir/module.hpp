@@ -1,10 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "lyra/common/indent.hpp"
+#include "lyra/common/timescale.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/process.hpp"
@@ -20,11 +22,16 @@ struct ModuleVariable {
 class Module {
  public:
   std::string name;
+  std::optional<common::TimeScale> timescale;
   std::vector<ModuleVariable> variables;
   std::vector<std::shared_ptr<Process>> processes;
 
   [[nodiscard]] auto ToString(int indent = 0) const -> std::string {
-    std::string result = common::Indent(indent) + "module " + name + "\n";
+    std::string result = common::Indent(indent) + "module " + name;
+    if (timescale) {
+      result += " [timescale: " + timescale->ToString() + "]";
+    }
+    result += "\n";
 
     if (!variables.empty()) {
       for (const auto& mod_var : variables) {

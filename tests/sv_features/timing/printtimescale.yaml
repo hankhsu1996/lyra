@@ -1,0 +1,149 @@
+feature: printtimescale
+description: Tests for $printtimescale system task (IEEE 1800-2023 Section 20.4.2)
+
+cases:
+  # Basic tests with default timescale (1ps / 1ps when no `timescale directive)
+  - name: printtimescale_default
+    description: $printtimescale() with default timescale (1ps / 1ps)
+    sv: |
+      module Test;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 1ps / 1ps"
+
+  # Explicit timescale 1ns / 1ps
+  - name: printtimescale_1ns_1ps
+    description: $printtimescale() with explicit 1ns / 1ps
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 1ns / 1ps"
+
+  # Explicit timescale 1ms / 1us
+  - name: printtimescale_1ms_1us
+    description: $printtimescale() with 1ms / 1us
+    sv: |
+      `timescale 1ms / 1us
+      module Test;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 1ms / 1us"
+
+  # Explicit timescale 10ns / 1ns
+  - name: printtimescale_10ns_1ns
+    description: $printtimescale() with 10ns / 1ns
+    sv: |
+      `timescale 10ns / 1ns
+      module Test;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 10ns / 1ns"
+
+  # Explicit timescale 100ps / 1ps
+  - name: printtimescale_100ps_1ps
+    description: $printtimescale() with 100ps / 1ps
+    sv: |
+      `timescale 100ps / 1ps
+      module Test;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 100ps / 1ps"
+
+  # $printtimescale($root) - prints global precision
+  # Global precision is 1ps (finest precision, default)
+  - name: printtimescale_root_default
+    description: $printtimescale($root) with default timescale
+    sv: |
+      module Test;
+        initial begin
+          $printtimescale($root);
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of ($root) is 1ps / 1ps"
+
+  # $printtimescale($root) with explicit timescale
+  # Global precision should be 1ns (the timeprecision)
+  - name: printtimescale_root_explicit
+    description: $printtimescale($root) with explicit timescale 1ms / 1ns
+    sv: |
+      `timescale 1ms / 1ns
+      module Test;
+        initial begin
+          $printtimescale($root);
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of ($root) is 1ns / 1ns"
+
+  # Both $printtimescale() and $printtimescale($root) in same module
+  - name: printtimescale_both
+    description: Both $printtimescale() and $printtimescale($root)
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          $printtimescale();
+          $printtimescale($root);
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (Test) is 1us / 1ns"
+          - "Time scale of ($root) is 1ns / 1ns"
+
+  # Different module name
+  - name: printtimescale_different_module_name
+    description: $printtimescale() shows module name correctly
+    sv: |
+      `timescale 1ns / 1ps
+      module MyDut;
+        initial begin
+          $printtimescale();
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time scale of (MyDut) is 1ns / 1ps"

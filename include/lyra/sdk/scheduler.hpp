@@ -1,17 +1,57 @@
 #pragma once
 
+#include <cmath>
 #include <coroutine>
 #include <cstdint>
+#include <format>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "lyra/sdk/bit.hpp"
 #include "lyra/sdk/delay.hpp"
 #include "lyra/sdk/module.hpp"
 #include "lyra/sdk/task.hpp"
+#include "lyra/sdk/time_utils.hpp"
 #include "lyra/sdk/wait_event.hpp"
 
 namespace lyra::sdk {
+
+// Default timescale constants
+constexpr int8_t kDefaultUnitPower = -9;        // 1ns
+constexpr int8_t kDefaultPrecisionPower = -12;  // 1ps
+
+/// State for $timeformat system task (IEEE 1800-2017 §21.3)
+struct TimeFormatState {
+  int8_t units = kUnitsUnset;
+  int precision = 0;
+  std::string suffix;
+  int min_width = 20;
+
+  static constexpr int8_t kUnitsUnset = 127;
+
+  [[nodiscard]] auto FormatModuleTime(
+      uint64_t time_in_module_unit, int8_t module_unit_power,
+      int8_t global_precision) const -> std::string {
+    int8_t effective_units = (units == kUnitsUnset) ? global_precision : units;
+    int exponent = module_unit_power - effective_units;
+    double scaled = static_cast<double>(time_in_module_unit);
+
+    if (exponent > 0) {
+      scaled *= std::pow(10.0, exponent);
+    } else if (exponent < 0) {
+      scaled /= std::pow(10.0, -exponent);
+    }
+
+    auto formatted = std::format("{:.{}f}{}", scaled, precision, suffix);
+    if (static_cast<int>(formatted.size()) < min_width) {
+      formatted =
+          std::string(min_width - static_cast<int>(formatted.size()), ' ') +
+          formatted;
+    }
+    return formatted;
+  }
+};
 
 // Waiter represents a suspended coroutine waiting for a trigger condition
 struct Waiter {
@@ -225,20 +265,53 @@ inline auto CurrentTime() -> uint64_t {
   return current_scheduler != nullptr ? current_scheduler->CurrentTime() : 0;
 }
 
-// $time - returns 64-bit unsigned simulation time (type 'time')
-inline auto Time() -> Bit<64> {
-  return Bit<64>{CurrentTime()};
+// $time - returns 64-bit unsigned simulation time in module's timeunit
+// divisor scales from global precision ticks to module's timeunit
+inline auto Time(uint64_t divisor = 1) -> Bit<64> {
+  return Bit<64>{CurrentTime() / divisor};
 }
 
-// $stime - returns low 32 bits of simulation time as unsigned
-inline auto STime() -> Bit<32> {
-  return Bit<32>{static_cast<uint32_t>(CurrentTime() & 0xFFFFFFFF)};
+// $stime - returns low 32 bits of scaled time as unsigned
+inline auto STime(uint64_t divisor = 1) -> Bit<32> {
+  return Bit<32>{static_cast<uint32_t>((CurrentTime() / divisor) & 0xFFFFFFFF)};
 }
 
-// $realtime - returns simulation time as real (double)
-inline auto RealTime() -> double {
-  return static_cast<double>(CurrentTime());
+// $realtime - returns scaled time as real (double)
+inline auto RealTime(uint64_t divisor = 1) -> double {
+  return static_cast<double>(CurrentTime()) / static_cast<double>(divisor);
 }
+
+// Global $timeformat state for %t formatting
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline TimeFormatState time_format_state;
+
+// Global precision power for time formatting (set by generated module)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline int8_t global_precision_power = kDefaultPrecisionPower;
+
+// $timeformat - set format for %t display
+// All arguments are optional (uses current values if not provided)
+inline void TimeFormat(
+    int8_t units = TimeFormatState::kUnitsUnset, int precision = 0,
+    const std::string& suffix = "", int min_width = 20) {
+  time_format_state.units = units;
+  time_format_state.precision = precision;
+  time_format_state.suffix = suffix;
+  time_format_state.min_width = min_width;
+}
+
+// FormatTimeValue - format a time value according to $timeformat settings
+// time_value: time value in module's timeunit (e.g., from $time)
+// module_unit_power: the module's timeunit power (e.g., -9 for ns)
+template <typename T>
+inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
+    -> std::string {
+  return time_format_state.FormatModuleTime(
+      static_cast<uint64_t>(time_value), module_unit_power,
+      global_precision_power);
+}
+
+// PowerToString is available from lyra/sdk/time_utils.hpp
 
 // Implementation of Module::Run (needs Scheduler definition)
 inline auto Module::Run() -> uint64_t {

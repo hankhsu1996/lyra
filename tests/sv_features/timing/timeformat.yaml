@@ -1,0 +1,265 @@
+feature: timeformat
+description: Tests for $timeformat system task and %t format specifier
+
+cases:
+  # Basic %t tests with default $timeformat
+
+  - name: percent_t_default_format
+    description: "%t with default $timeformat displays time in global precision"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;  // 10ns = 10000ps internal
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 10000
+      output:
+        contains:
+          - "Time:"
+          - "10"
+
+  - name: percent_t_zero_time
+    description: "%t at time 0"
+    sv: |
+      module Test;
+        initial begin
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 0
+      output:
+        contains:
+          - "Time:"
+          - "0"
+
+  # $timeformat with custom settings
+
+  - name: timeformat_nanoseconds
+    description: "$timeformat with nanosecond unit"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 0, " ns", 10);
+          #25;  // 25ns
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 25000
+      output:
+        contains:
+          - "Time:"
+          - "25"
+          - "ns"
+
+  - name: timeformat_with_precision
+    description: "$timeformat with fractional precision"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 2, " ns", 10);
+          #25;
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 25000
+      output:
+        contains:
+          - "Time:"
+          - "25.00"
+          - "ns"
+
+  - name: timeformat_picoseconds
+    description: "$timeformat with picosecond unit"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-12, 0, " ps", 10);
+          #5;  // 5ns = 5000ps
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 5000
+      output:
+        contains:
+          - "Time:"
+          - "5000"
+          - "ps"
+
+  # Multiple format specifiers with %t
+
+  - name: percent_t_with_other_specifiers
+    description: "%t mixed with %d specifier"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        int x;
+        initial begin
+          $timeformat(-9, 0, " ns", 6);
+          x = 42;
+          #10;
+          $display("Time: %t, Value: %d", $time, x);
+        end
+      endmodule
+    expect:
+      time: 10000
+      output:
+        contains:
+          - "Time:"
+          - "10"
+          - "ns"
+          - "Value: 42"
+
+  # $timeformat updates affect subsequent %t
+
+  - name: timeformat_updates
+    description: "$timeformat changes affect subsequent %t"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;
+          $timeformat(-12, 0, " ps", 10);
+          $display("In ps: %t", $time);
+          $timeformat(-9, 0, " ns", 10);
+          $display("In ns: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 10000
+      output:
+        contains:
+          - "In ps:"
+          - "10000"
+          - "ps"
+          - "In ns:"
+          - "10"
+          - "ns"
+
+  # Timescale mismatch: module timescale different from $timeformat units
+
+  - name: timeformat_timescale_mismatch
+    description: "Module in us but $timeformat in ns converts correctly"
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          $timeformat(-9, 0, " ns", 10);
+          #5;  // 5us = 5000ns
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 5000
+      output:
+        contains:
+          - "Time:"
+          - "5000"
+          - "ns"
+
+  # Parameter boundary tests
+
+  - name: timeformat_microseconds
+    description: "$timeformat with microsecond unit"
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          $timeformat(-6, 0, " us", 10);
+          #3;  // 3us
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 3000
+      output:
+        contains:
+          - "Time:"
+          - "3"
+          - "us"
+
+  - name: timeformat_high_precision
+    description: "$timeformat with high precision (5 decimal places)"
+    sv: |
+      `timescale 1ps / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 5, " ns", 15);
+          #12345;  // 12345ps = 12.345ns
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 12345
+      output:
+        contains:
+          - "Time:"
+          - "12.34500"
+          - "ns"
+
+  - name: timeformat_empty_suffix
+    description: "$timeformat with empty suffix"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 0, "", 5);
+          #42;
+          $display("Time: %t end", $time);
+        end
+      endmodule
+    expect:
+      time: 42000
+      output:
+        contains:
+          - "Time:"
+          - "42"
+          - "end"
+
+  # Partial arguments test
+
+  - name: timeformat_partial_args
+    description: "$timeformat with only some arguments uses defaults for rest"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9);  // Only set units, use defaults for rest
+          #10;
+          $display("Time: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 10000
+      output:
+        contains:
+          - "Time:"
+          - "10"
+
+  # Default units test (no $timeformat call)
+
+  - name: percent_t_default_units
+    description: "Without $timeformat, %t uses global precision units"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #1;  // 1ns = 1000ps in internal ticks
+          $display("Default: %t", $time);
+        end
+      endmodule
+    expect:
+      time: 1000
+      output:
+        contains:
+          - "Default:"
+          - "1"

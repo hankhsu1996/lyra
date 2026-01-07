@@ -228,10 +228,25 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
 
+  // Store timescale info for delay scaling
+  timescale_ = module.timescale;
+  if (module.timescale) {
+    global_precision_power_ = module.timescale->precision_power;
+  } else {
+    global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
+  }
+
   EmitHeader();
   EmitClass(module);
 
   return out_.str();
+}
+
+auto Codegen::DelayMultiplier() const -> uint64_t {
+  if (timescale_) {
+    return timescale_->DelayMultiplier(global_precision_power_);
+  }
+  return common::TimeScale::Default().DelayMultiplier(global_precision_power_);
 }
 
 void Codegen::EmitHeader() {
@@ -256,6 +271,30 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("using Byte = lyra::sdk::Byte;");
   Line("using Real = double;");
   Line("using ShortReal = float;");
+  Line("");
+  // Timescale constants for $time/$stime/$realtime scaling and %t formatting
+  Line(
+      "static constexpr uint64_t kTimeDivisor = " +
+      std::to_string(DelayMultiplier()) + ";");
+  int8_t module_unit_power = timescale_ ? timescale_->unit_power
+                                        : common::TimeScale::kDefaultUnitPower;
+  Line(
+      "static constexpr int8_t kModuleUnitPower = " +
+      std::to_string(static_cast<int>(module_unit_power)) + ";");
+  int8_t module_precision_power =
+      timescale_ ? timescale_->precision_power
+                 : common::TimeScale::kDefaultPrecisionPower;
+  Line(
+      "static constexpr int8_t kModulePrecisionPower = " +
+      std::to_string(static_cast<int>(module_precision_power)) + ";");
+  // Module name and timescale string for $printtimescale
+  Line(
+      "static constexpr std::string_view kModuleName = \"" + module.name +
+      "\";");
+  auto ts = timescale_.value_or(common::TimeScale::Default());
+  Line(
+      "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
+      "\";");
   Line("");
 
   indent_--;
@@ -401,20 +440,27 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               if (sv_fmt.find('%') != std::string::npos) {
                 // Transform SV format to std::println
                 auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+                auto specs = common::ParseDisplayFormat(sv_fmt);
                 auto needs_cast = common::NeedsIntCast(sv_fmt);
                 Indent();
                 out_ << "std::println(std::cout, \"" << cpp_fmt << "\"";
-                for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+
+                // Emit arguments - for %t, wrap with FormatTimeValue
+                for (size_t i = 0; i < specs.size(); ++i) {
                   out_ << ", ";
-                  // Cast to int64_t if format spec has width (Bit<N> doesn't
-                  // support std::format width specifiers)
-                  size_t spec_idx = i - 1;
-                  if (spec_idx < needs_cast.size() && needs_cast[spec_idx]) {
+                  if (specs[i].spec == 't') {
+                    // %t - format the time argument using $timeformat settings
+                    // Use .Value() to extract uint64_t from Bit<64>
+                    out_ << "lyra::sdk::FormatTimeValue(";
+                    EmitExpression(*syscall.arguments[i + 1]);
+                    out_ << ".Value(), kModuleUnitPower)";
+                  } else if (i < needs_cast.size() && needs_cast[i]) {
+                    // Cast to int64_t if format spec has width
                     out_ << "static_cast<int64_t>(";
-                    EmitExpression(*syscall.arguments[i]);
+                    EmitExpression(*syscall.arguments[i + 1]);
                     out_ << ")";
                   } else {
-                    EmitExpression(*syscall.arguments[i]);
+                    EmitExpression(*syscall.arguments[i + 1]);
                   }
                 }
                 out_ << ");\n";
@@ -437,6 +483,49 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             EmitExpression(*arg);
           }
           out_ << ");\n";
+          break;
+        }
+        if (syscall.name == "$timeformat") {
+          // $timeformat(units, precision, suffix, min_width)
+          // Cast Bit types to native types since Bit only has implicit bool
+          Indent();
+          out_ << "lyra::sdk::TimeFormat(";
+          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+            if (i > 0) {
+              out_ << ", ";
+            }
+            if (i == 0) {
+              // units: int8_t
+              out_ << "static_cast<int8_t>(";
+              EmitExpression(*syscall.arguments[i]);
+              out_ << ")";
+            } else if (i == 1 || i == 3) {
+              // precision/min_width: int
+              out_ << "static_cast<int>(";
+              EmitExpression(*syscall.arguments[i]);
+              out_ << ")";
+            } else {
+              // suffix: string (no cast needed)
+              EmitExpression(*syscall.arguments[i]);
+            }
+          }
+          out_ << ");\n";
+          break;
+        }
+        if (syscall.name == "$printtimescale") {
+          // $printtimescale() - print current module's timescale
+          Line(
+              "std::println(std::cout, \"Time scale of ({}) is {}\", "
+              "kModuleName, kTimescaleStr);");
+          break;
+        }
+        if (syscall.name == "$printtimescale_root") {
+          // $printtimescale($root) - print global precision (unit = precision)
+          Indent();
+          out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
+                  "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
+                  "power), lyra::sdk::PowerToString(lyra::sdk::global_"
+                  "precision_power));\n";
           break;
         }
         throw DiagnosticException(
@@ -613,9 +702,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(stmt);
-      Line(
-          "co_await lyra::sdk::Delay(" + std::to_string(delay.delay_amount) +
-          ");");
+      // Scale delay based on module's timescale
+      uint64_t scaled_delay = delay.delay_amount * DelayMultiplier();
+      Line("co_await lyra::sdk::Delay(" + std::to_string(scaled_delay) + ");");
       break;
     }
     case mir::Statement::Kind::kWaitEvent: {
@@ -1041,11 +1130,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // System functions that return values
       const auto& syscall = mir::As<mir::SystemCallExpression>(expr);
       if (syscall.name == "$time") {
-        out_ << "lyra::sdk::Time()";
+        out_ << "lyra::sdk::Time(kTimeDivisor)";
       } else if (syscall.name == "$stime") {
-        out_ << "lyra::sdk::STime()";
+        out_ << "lyra::sdk::STime(kTimeDivisor)";
       } else if (syscall.name == "$realtime") {
-        out_ << "lyra::sdk::RealTime()";
+        out_ << "lyra::sdk::RealTime(kTimeDivisor)";
+      } else if (syscall.name == "$timeunit") {
+        out_ << "kModuleUnitPower";
+      } else if (syscall.name == "$timeprecision") {
+        out_ << "kModulePrecisionPower";
+      } else if (
+          syscall.name == "$timeunit_root" ||
+          syscall.name == "$timeprecision_root") {
+        out_ << "lyra::sdk::global_precision_power";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(

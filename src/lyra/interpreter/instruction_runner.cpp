@@ -13,6 +13,7 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/time_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
+#include "lyra/sdk/time_utils.hpp"
 
 namespace lyra::interpreter {
 
@@ -131,11 +133,19 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
   }
 }
 
+// Context for time formatting (%t specifier)
+struct TimeFormatContext {
+  const common::TimeFormatState& time_format;
+  int8_t module_unit_power;  // Module's timeunit (e.g., -9 for 1ns)
+  int8_t global_precision_power;
+};
+
 // Parse SV format string and format arguments
 // Returns formatted output string
+// time_ctx: Optional context for %t formatting
 auto FormatDisplay(
-    const std::string& fmt_str, const std::vector<RuntimeValue>& args)
-    -> std::string {
+    const std::string& fmt_str, const std::vector<RuntimeValue>& args,
+    const TimeFormatContext* time_ctx = nullptr) -> std::string {
   std::string result;
   size_t arg_idx = 0;
   size_t i = 0;
@@ -190,7 +200,7 @@ auto FormatDisplay(
         spec.spec = fmt_str[i];
         if (spec.spec != 'd' && spec.spec != 'h' && spec.spec != 'x' &&
             spec.spec != 'b' && spec.spec != 'o' && spec.spec != 's' &&
-            spec.spec != 'f') {
+            spec.spec != 'f' && spec.spec != 't') {
           throw DiagnosticException(
               Diagnostic::Error(
                   {},
@@ -212,6 +222,24 @@ auto FormatDisplay(
           throw DiagnosticException(
               Diagnostic::Error({}, "not enough arguments for format string"));
         }
+
+        // %t formats time value according to $timeformat settings
+        if (spec.spec == 't') {
+          if (time_ctx != nullptr) {
+            // Format time value using $timeformat settings
+            uint64_t time_val = args[arg_idx].AsUInt64();
+            result += time_ctx->time_format.FormatModuleTime(
+                time_val, time_ctx->module_unit_power,
+                time_ctx->global_precision_power);
+          } else {
+            // No time context - just format as decimal
+            result += FormatValue(args[arg_idx], spec);
+          }
+          arg_idx++;
+          ++i;
+          continue;
+        }
+
         result += FormatValue(args[arg_idx], spec);
         arg_idx++;
         ++i;
@@ -844,6 +872,15 @@ auto RunInstruction(
           return InstructionResult::Continue();
         }
 
+        // Create time format context for %t specifier
+        TimeFormatContext time_ctx{
+            .time_format = simulation_context.time_format,
+            .module_unit_power = simulation_context.timescale
+                                     ? simulation_context.timescale->unit_power
+                                     : common::TimeScale::kDefaultUnitPower,
+            .global_precision_power =
+                simulation_context.global_precision_power};
+
         // Check if first operand is a format string (string with %)
         const auto& first = get_temp(instr.operands[0]);
         if (first.IsString()) {
@@ -854,8 +891,8 @@ auto RunInstruction(
             for (size_t i = 1; i < instr.operands.size(); ++i) {
               args.push_back(get_temp(instr.operands[i]));
             }
-            simulation_context.display_output << FormatDisplay(fmt_str, args)
-                                              << "\n";
+            simulation_context.display_output
+                << FormatDisplay(fmt_str, args, &time_ctx) << "\n";
             return InstructionResult::Continue();
           }
         }
@@ -875,36 +912,136 @@ auto RunInstruction(
           }
           args.push_back(value);
         }
-        simulation_context.display_output << FormatDisplay(gen_fmt, args)
-                                          << "\n";
+        simulation_context.display_output
+            << FormatDisplay(gen_fmt, args, &time_ctx) << "\n";
         return InstructionResult::Continue();
       }
 
       // Simulation time functions: $time, $stime, $realtime
+      // Scale raw simulation time to module's timeunit per LRM
+      auto scale_time = [&simulation_context]() -> uint64_t {
+        uint64_t raw_time = simulation_context.current_time;
+        if (!simulation_context.timescale) {
+          return raw_time;
+        }
+        uint64_t divisor = simulation_context.timescale->TimeDivisor(
+            simulation_context.global_precision_power);
+        return raw_time / divisor;
+      };
+
       if (instr.system_call_name == "$time") {
         assert(instr.result.has_value());
-        // $time returns 64-bit unsigned time (type 'time')
-        auto result =
-            RuntimeValue::IntegralUnsigned(simulation_context.current_time, 64);
+        // $time returns 64-bit unsigned time in module's timeunit
+        auto result = RuntimeValue::IntegralUnsigned(scale_time(), 64);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 
       if (instr.system_call_name == "$stime") {
         assert(instr.result.has_value());
-        // $stime returns low 32 bits of simulation time as unsigned
-        auto result = RuntimeValue::IntegralUnsigned(
-            simulation_context.current_time & 0xFFFFFFFF, 32);
+        // $stime returns low 32 bits of scaled time as unsigned
+        auto result =
+            RuntimeValue::IntegralUnsigned(scale_time() & 0xFFFFFFFF, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 
       if (instr.system_call_name == "$realtime") {
         assert(instr.result.has_value());
-        // $realtime returns simulation time as real (double)
-        auto result = RuntimeValue::Real(
-            static_cast<double>(simulation_context.current_time));
+        // $realtime returns scaled time as real (double)
+        // For accurate fractional time, divide raw time as double
+        auto scaled_time = static_cast<double>(simulation_context.current_time);
+        if (simulation_context.timescale) {
+          auto divisor =
+              static_cast<double>(simulation_context.timescale->TimeDivisor(
+                  simulation_context.global_precision_power));
+          scaled_time /= divisor;
+        }
+        auto result = RuntimeValue::Real(scaled_time);
         temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeformat") {
+        // $timeformat(units, precision, suffix, min_width)
+        // All arguments are optional; use defaults if not provided
+        auto& tf = simulation_context.time_format;
+
+        if (instr.operands.size() >= 1) {
+          tf.units = static_cast<int8_t>(get_temp(instr.operands[0]).AsInt64());
+        }
+        if (instr.operands.size() >= 2) {
+          tf.precision =
+              static_cast<int>(get_temp(instr.operands[1]).AsInt64());
+        }
+        if (instr.operands.size() >= 3) {
+          tf.suffix = get_temp(instr.operands[2]).AsString();
+        }
+        if (instr.operands.size() >= 4) {
+          tf.min_width =
+              static_cast<int>(get_temp(instr.operands[3]).AsInt64());
+        }
+
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeunit") {
+        assert(instr.result.has_value());
+        // $timeunit returns module's time unit as power of 10
+        int8_t unit = simulation_context.timescale
+                          ? simulation_context.timescale->unit_power
+                          : common::TimeScale::kDefaultUnitPower;
+        auto result = RuntimeValue::IntegralSigned(unit, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeunit_root") {
+        assert(instr.result.has_value());
+        // $timeunit($root) returns global simulation precision
+        int8_t unit = simulation_context.global_precision_power;
+        auto result = RuntimeValue::IntegralSigned(unit, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeprecision") {
+        assert(instr.result.has_value());
+        // $timeprecision returns module's time precision as power of 10
+        int8_t precision = simulation_context.timescale
+                               ? simulation_context.timescale->precision_power
+                               : common::TimeScale::kDefaultPrecisionPower;
+        auto result = RuntimeValue::IntegralSigned(precision, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeprecision_root") {
+        assert(instr.result.has_value());
+        // $timeprecision($root) returns global simulation precision
+        int8_t precision = simulation_context.global_precision_power;
+        auto result = RuntimeValue::IntegralSigned(precision, 32);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$printtimescale") {
+        // $printtimescale() prints current module's timescale
+        auto ts =
+            simulation_context.timescale.value_or(common::TimeScale::Default());
+        simulation_context.display_output
+            << "Time scale of (" << simulation_context.module_name << ") is "
+            << ts.ToString() << "\n";
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$printtimescale_root") {
+        // $printtimescale($root) prints global precision (unit = precision)
+        auto gp = simulation_context.global_precision_power;
+        auto unit_str = sdk::PowerToString(gp);
+        simulation_context.display_output << "Time scale of ($root) is "
+                                          << unit_str << " / " << unit_str
+                                          << "\n";
         return InstructionResult::Continue();
       }
 

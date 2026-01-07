@@ -104,7 +104,10 @@ auto LowerStatement(
 
     case mir::Statement::Kind::kDelay: {
       const auto& delay = mir::As<mir::DelayStatement>(statement);
-      auto delay_amount = Literal::ULongInt(delay.delay_amount);
+      // Scale delay based on module's timescale and global precision
+      uint64_t scaled_delay =
+          delay.delay_amount * lowering_context.DelayMultiplier();
+      auto delay_amount = Literal::ULongInt(scaled_delay);
       auto delay_interned = builder.InternLiteral(delay_amount);
       auto instruction = Instruction::Delay(Operand::Literal(delay_interned));
       builder.AddInstruction(std::move(instruction));

@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/timescale.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
@@ -24,7 +25,11 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   auto module = std::make_unique<mir::Module>();
   module->name = std::string(instance_symbol.name);
 
+  // Extract timescale from the instance body
   const auto& body = instance_symbol.body;
+  if (auto ts = body.getTimeScale()) {
+    module->timescale = common::TimeScale::FromSlang(*ts);
+  }
 
   for (const auto& symbol : body.members()) {
     // Lower variables

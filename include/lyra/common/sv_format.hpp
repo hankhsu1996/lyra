@@ -10,11 +10,12 @@ namespace lyra::common {
 
 // Supported format specifiers for $display
 // %d - decimal, %h/%x - hex, %b - binary, %o - octal, %s - string, %f - real
+// %t - time (formats time value according to $timeformat settings)
 // %% - literal %
-// Throws on unsupported specifiers (e.g., %t, %m)
+// Throws on unsupported specifiers (e.g., %m)
 
 struct FormatSpec {
-  char spec;        // 'd', 'h', 'x', 'b', 'o', 's', 'f'
+  char spec;        // 'd', 'h', 'x', 'b', 'o', 's', 'f', 't'
   size_t position;  // Position in the original string where % was found
 };
 
@@ -68,7 +69,7 @@ inline auto ParseDisplayFormat(const std::string& fmt_str)
 
         char c = fmt_str[i];
         if (c == 'd' || c == 'h' || c == 'x' || c == 'b' || c == 'o' ||
-            c == 's' || c == 'f') {
+            c == 's' || c == 'f' || c == 't') {
           specs.push_back({c, spec_pos});
           ++i;
         } else {
@@ -234,6 +235,13 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
           spec += "o}";
           result += spec;
           ++i;
+        } else if (c == 't') {
+          // %t is special: it doesn't consume an argument from the caller.
+          // The formatted time value will be inserted as an extra argument.
+          // Just use {} as placeholder - caller is responsible for providing
+          // the formatted time string at the right position.
+          result += "{}";
+          ++i;
         } else {
           throw std::runtime_error(
               std::format("Unsupported format specifier: %{}", c));
@@ -295,6 +303,7 @@ inline auto NeedsIntCast(const std::string& sv_fmt) -> std::vector<bool> {
         }
 
         char c = sv_fmt[i];
+        // %t is formatted as a string, no int cast needed
         // Integer types with width/zero_pad need casting
         bool is_int_type =
             (c == 'd' || c == 'h' || c == 'x' || c == 'b' || c == 'o');

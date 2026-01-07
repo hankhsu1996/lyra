@@ -152,13 +152,21 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
       // Supported system calls are validated in AST→MIR
-      // System tasks: $finish, $stop, $exit, $display (no return value)
-      // System functions: $time, $stime, $realtime (return value)
+      // System tasks: $finish, $stop, $exit, $display, $timeformat,
+      //   $printtimescale (no return)
+      // System functions: $time, $stime, $realtime, $timeunit, $timeprecision
+      //   $timeunit_root, $timeprecision_root (transformed from $root arg)
       assert(
           system_call.name == "$finish" || system_call.name == "$stop" ||
           system_call.name == "$exit" || system_call.name == "$display" ||
+          system_call.name == "$timeformat" ||
+          system_call.name == "$printtimescale" ||
+          system_call.name == "$printtimescale_root" ||
           system_call.name == "$time" || system_call.name == "$stime" ||
-          system_call.name == "$realtime");
+          system_call.name == "$realtime" || system_call.name == "$timeunit" ||
+          system_call.name == "$timeprecision" ||
+          system_call.name == "$timeunit_root" ||
+          system_call.name == "$timeprecision_root");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -179,9 +187,12 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       // System functions return a value, system tasks do not
-      bool is_function = system_call.name == "$time" ||
-                         system_call.name == "$stime" ||
-                         system_call.name == "$realtime";
+      bool is_function =
+          system_call.name == "$time" || system_call.name == "$stime" ||
+          system_call.name == "$realtime" || system_call.name == "$timeunit" ||
+          system_call.name == "$timeprecision" ||
+          system_call.name == "$timeunit_root" ||
+          system_call.name == "$timeprecision_root";
 
       auto result = builder.AllocateTemp("sys", system_call.type);
 

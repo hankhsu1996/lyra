@@ -286,28 +286,55 @@ auto LowerExpression(const slang::ast::Expression& expression)
         auto name = call_expression.getSubroutineName();
 
         // Validate supported system calls
-        // System tasks (no return value): $finish, $stop, $exit, $display
-        // System functions (return value): $time, $stime, $realtime
+        // System tasks (no return value): $finish, $stop, $exit, $display,
+        //                                 $timeformat, $printtimescale
+        // System functions (return value): $time, $stime, $realtime,
+        //                                  $timeunit, $timeprecision
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
-            name != "$display" && name != "$time" && name != "$stime" &&
-            name != "$realtime") {
+            name != "$display" && name != "$timeformat" &&
+            name != "$printtimescale" && name != "$time" && name != "$stime" &&
+            name != "$realtime" && name != "$timeunit" &&
+            name != "$timeprecision") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,
                   fmt::format("unsupported system call '{}'", name)));
         }
 
-        std::vector<std::unique_ptr<mir::Expression>> arguments;
-        for (const auto& arg : call_expression.arguments()) {
-          arguments.push_back(LowerExpression(*arg));
+        // Handle $timeunit($root), $timeprecision($root),
+        // $printtimescale($root) Transform to $timeunit_root /
+        // $timeprecision_root / $printtimescale_root
+        std::string effective_name(name);
+        bool is_root_variant = false;
+        if ((name == "$timeunit" || name == "$timeprecision" ||
+             name == "$printtimescale") &&
+            call_expression.arguments().size() == 1) {
+          const auto& arg = *call_expression.arguments()[0];
+          if (arg.kind == slang::ast::ExpressionKind::ArbitrarySymbol) {
+            const auto& arb_sym =
+                arg.as<slang::ast::ArbitrarySymbolExpression>();
+            if (arb_sym.symbol->name == "$root") {
+              effective_name = std::string(name) + "_root";
+              is_root_variant = true;
+            }
+          }
         }
+
+        std::vector<std::unique_ptr<mir::Expression>> arguments;
+        // Don't lower arguments for _root variants
+        if (!is_root_variant) {
+          for (const auto& arg : call_expression.arguments()) {
+            arguments.push_back(LowerExpression(*arg));
+          }
+        }
+
         auto return_type_result =
             LowerType(*call_expression.type, expression.sourceRange);
         if (!return_type_result) {
           throw DiagnosticException(std::move(return_type_result.error()));
         }
         return std::make_unique<mir::SystemCallExpression>(
-            std::string(name), std::move(arguments), *return_type_result);
+            effective_name, std::move(arguments), *return_type_result);
       }
 
       throw DiagnosticException(
