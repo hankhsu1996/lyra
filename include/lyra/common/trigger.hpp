@@ -33,13 +33,6 @@ struct Trigger {
     }
   }
 
-  static auto AnyChange(const SymbolRef& variable) -> Trigger {
-    return Trigger{
-        .edge_kind = EdgeKind::kAnyChange,
-        .variable = variable,
-        .instance_path = {}};
-  }
-
   static auto AnyChange(
       const SymbolRef& variable, std::vector<SymbolRef> instance_path)
       -> Trigger {

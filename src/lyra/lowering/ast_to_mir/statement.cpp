@@ -67,7 +67,8 @@ auto ExtractTrigger(const slang::ast::SignalEventControl& signal_event)
       break;
   }
 
-  return common::Trigger{.edge_kind = edge_kind, .variable = &variable};
+  return common::Trigger{
+      .edge_kind = edge_kind, .variable = &variable, .instance_path = {}};
 }
 
 }  // namespace
