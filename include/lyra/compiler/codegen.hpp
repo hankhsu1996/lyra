@@ -43,6 +43,37 @@ inline auto operator&(TypeAlias lhs, TypeAlias rhs) -> TypeAlias {
       static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
 }
 
+// Bit flags for tracking which codegen features are used
+enum class CodegenFeature : uint8_t {
+  kNone = 0,
+  kCmath = 1 << 0,                 // #include <cmath> for std::pow
+  kTimeDivisor = 1 << 1,           // delays, $time, $stime, $realtime
+  kModuleUnitPower = 1 << 2,       // $timeunit, %t format
+  kModulePrecisionPower = 1 << 3,  // $timeprecision
+  kModuleName = 1 << 4,            // $printtimescale
+  kTimescaleStr = 1 << 5,          // $printtimescale
+};
+
+// Bitwise OR for combining CodegenFeature flags
+inline auto operator|(CodegenFeature lhs, CodegenFeature rhs)
+    -> CodegenFeature {
+  return static_cast<CodegenFeature>(
+      static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+}
+
+inline auto operator|=(CodegenFeature& lhs, CodegenFeature rhs)
+    -> CodegenFeature& {
+  lhs = lhs | rhs;
+  return lhs;
+}
+
+// Bitwise AND for checking CodegenFeature flags
+inline auto operator&(CodegenFeature lhs, CodegenFeature rhs)
+    -> CodegenFeature {
+  return static_cast<CodegenFeature>(
+      static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
+}
+
 class Codegen {
  public:
   auto Generate(const mir::Module& module) -> std::string;
@@ -86,11 +117,15 @@ class Codegen {
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;
 
+  // Track which codegen features are used for conditional emission
+  CodegenFeature used_features_ = CodegenFeature::kNone;
+
   // Type conversion helpers (record usage in used_type_aliases_)
   auto ToCppType(const common::Type& type) -> std::string;
   auto ToCppUnsignedType(const common::Type& type) -> std::string;
   static auto IsSigned(const common::Type& type) -> bool;
   void EmitTypeAliases();
+  void EmitTimescaleConstants(const mir::Module& module);
 
   void Indent();
   void Line(const std::string& text);

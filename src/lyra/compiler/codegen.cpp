@@ -6,6 +6,7 @@
 #include <format>
 #include <ios>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/diagnostic.hpp"
@@ -247,6 +248,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   indent_ = 0;
   port_symbols_.clear();
   used_type_aliases_ = TypeAlias::kNone;
+  used_features_ = CodegenFeature::kNone;
 
   // Store timescale info for delay scaling
   timescale_ = module.timescale;
@@ -264,8 +266,19 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
     }
   }
 
-  EmitHeader(module.submodules, UsesArrayType(module));
+  // Two-phase generation: generate class first to collect feature usage,
+  // then emit header with conditional includes, then append class.
+  std::ostringstream class_out;
+  class_out.swap(out_);
   EmitClass(module);
+  std::string class_content = out_.str();
+  out_.swap(class_out);  // Restore empty output stream
+
+  // Now emit header (we know used_features_ from EmitClass)
+  EmitHeader(module.submodules, UsesArrayType(module));
+
+  // Append class content
+  out_ << class_content;
 
   return out_.str();
 }
@@ -282,7 +295,9 @@ void Codegen::EmitHeader(
   if (uses_arrays) {
     Line("#include <array>");
   }
-  Line("#include <cmath>");
+  if ((used_features_ & CodegenFeature::kCmath) != CodegenFeature::kNone) {
+    Line("#include <cmath>");
+  }
   Line("#include <iostream>");
   Line("#include <print>");
   Line("#include <lyra/sdk/sdk.hpp>");
@@ -328,9 +343,60 @@ void Codegen::EmitTypeAliases() {
   }
 }
 
+void Codegen::EmitTimescaleConstants(const mir::Module& module) {
+  // Only emit timescale constants that were actually used
+  bool any_emitted = false;
+
+  if ((used_features_ & CodegenFeature::kTimeDivisor) !=
+      CodegenFeature::kNone) {
+    Line(
+        "static constexpr uint64_t kTimeDivisor = " +
+        std::to_string(DelayMultiplier()) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModuleUnitPower) !=
+      CodegenFeature::kNone) {
+    int8_t module_unit_power = timescale_
+                                   ? timescale_->unit_power
+                                   : common::TimeScale::kDefaultUnitPower;
+    Line(
+        "static constexpr int8_t kModuleUnitPower = " +
+        std::to_string(static_cast<int>(module_unit_power)) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModulePrecisionPower) !=
+      CodegenFeature::kNone) {
+    int8_t module_precision_power =
+        timescale_ ? timescale_->precision_power
+                   : common::TimeScale::kDefaultPrecisionPower;
+    Line(
+        "static constexpr int8_t kModulePrecisionPower = " +
+        std::to_string(static_cast<int>(module_precision_power)) + ";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kModuleName) != CodegenFeature::kNone) {
+    Line(
+        "static constexpr std::string_view kModuleName = \"" + module.name +
+        "\";");
+    any_emitted = true;
+  }
+  if ((used_features_ & CodegenFeature::kTimescaleStr) !=
+      CodegenFeature::kNone) {
+    auto ts = timescale_.value_or(common::TimeScale::Default());
+    Line(
+        "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
+        "\";");
+    any_emitted = true;
+  }
+
+  if (any_emitted) {
+    Line("");
+  }
+}
+
 void Codegen::EmitClass(const mir::Module& module) {
-  // Two-phase generation: first generate body to collect type alias usage,
-  // then emit class with only the type aliases that were used.
+  // Two-phase generation: first generate body to collect type alias and feature
+  // usage, then emit class with only the aliases/constants that were used.
 
   // Phase 1: Save current output stream and generate body to a temporary buffer
   std::ostringstream saved_out;
@@ -338,32 +404,8 @@ void Codegen::EmitClass(const mir::Module& module) {
   int saved_indent = indent_;
   indent_ = 1;  // Body is indented inside class
 
-  // Generate body content (this populates used_type_aliases_)
-  // Timescale constants for $time/$stime/$realtime scaling and %t formatting
-  Line(
-      "static constexpr uint64_t kTimeDivisor = " +
-      std::to_string(DelayMultiplier()) + ";");
-  int8_t module_unit_power = timescale_ ? timescale_->unit_power
-                                        : common::TimeScale::kDefaultUnitPower;
-  Line(
-      "static constexpr int8_t kModuleUnitPower = " +
-      std::to_string(static_cast<int>(module_unit_power)) + ";");
-  int8_t module_precision_power =
-      timescale_ ? timescale_->precision_power
-                 : common::TimeScale::kDefaultPrecisionPower;
-  Line(
-      "static constexpr int8_t kModulePrecisionPower = " +
-      std::to_string(static_cast<int>(module_precision_power)) + ";");
-  // Module name and timescale string for $printtimescale
-  Line(
-      "static constexpr std::string_view kModuleName = \"" + module.name +
-      "\";");
-  auto ts = timescale_.value_or(common::TimeScale::Default());
-  Line(
-      "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
-      "\";");
-  Line("");
-
+  // Generate body content (this populates used_type_aliases_ and
+  // used_features_)
   indent_--;
   Line(" public:");
   indent_++;
@@ -471,6 +513,9 @@ void Codegen::EmitClass(const mir::Module& module) {
 
   // Emit only the type aliases that were actually used
   EmitTypeAliases();
+
+  // Emit only the timescale constants that were actually used
+  EmitTimescaleConstants(module);
 
   // Append the body content
   out_ << body;
@@ -609,6 +654,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                   if (specs[i].spec == 't') {
                     // %t - format the time argument using $timeformat settings
                     // Use .Value() to extract uint64_t from Bit<64>
+                    used_features_ |= CodegenFeature::kModuleUnitPower;
                     out_ << "lyra::sdk::FormatTimeValue(";
                     EmitExpression(*syscall.arguments[i + 1]);
                     out_ << ".Value(), kModuleUnitPower)";
@@ -672,6 +718,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
         if (syscall.name == "$printtimescale") {
           // $printtimescale() - print current module's timescale
+          used_features_ |= CodegenFeature::kModuleName;
+          used_features_ |= CodegenFeature::kTimescaleStr;
           Line(
               "std::println(std::cout, \"Time scale of ({}) is {}\", "
               "kModuleName, kTimescaleStr);");
@@ -1021,6 +1069,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& bin = mir::As<mir::BinaryExpression>(expr);
       if (bin.op == mir::BinaryOperator::kPower) {
         // Power: std::pow(a, b) - C++ doesn't have ** operator
+        used_features_ |= CodegenFeature::kCmath;
         out_ << "std::pow(";
         EmitExpression(*bin.left, kPrecLowest);
         out_ << ", ";
@@ -1312,14 +1361,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // System functions that return values
       const auto& syscall = mir::As<mir::SystemCallExpression>(expr);
       if (syscall.name == "$time") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::Time(kTimeDivisor)";
       } else if (syscall.name == "$stime") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::STime(kTimeDivisor)";
       } else if (syscall.name == "$realtime") {
+        used_features_ |= CodegenFeature::kTimeDivisor;
         out_ << "lyra::sdk::RealTime(kTimeDivisor)";
       } else if (syscall.name == "$timeunit") {
+        used_features_ |= CodegenFeature::kModuleUnitPower;
         out_ << "kModuleUnitPower";
       } else if (syscall.name == "$timeprecision") {
+        used_features_ |= CodegenFeature::kModulePrecisionPower;
         out_ << "kModulePrecisionPower";
       } else if (
           syscall.name == "$timeunit_root" ||
