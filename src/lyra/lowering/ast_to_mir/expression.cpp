@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -188,7 +189,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
             array_expr.as<slang::ast::NamedValueExpression>().symbol;
         auto index = LowerExpression(element_select.selector());
 
-        mir::AssignmentTarget target(&array_symbol, std::move(index));
+        // Lower base type to distinguish packed vs unpacked
+        auto base_type_result =
+            LowerType(array_symbol.getType(), array_expr.sourceRange);
+        if (!base_type_result) {
+          throw DiagnosticException(std::move(base_type_result.error()));
+        }
+
+        mir::AssignmentTarget target(
+            &array_symbol, std::move(index), *base_type_result);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -215,6 +224,60 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       return std::make_unique<mir::ElementSelectExpression>(
           std::move(array_value), std::move(selector), *type_result);
+    }
+
+    case slang::ast::ExpressionKind::RangeSelect: {
+      const auto& range_select =
+          expression.as<slang::ast::RangeSelectExpression>();
+
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      auto value = LowerExpression(range_select.value());
+      auto selection_kind = range_select.getSelectionKind();
+
+      if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
+        // Constant range select: a[7:4]
+        const auto* left_cv = range_select.left().getConstant();
+        const auto* right_cv = range_select.right().getConstant();
+        if (left_cv == nullptr || right_cv == nullptr) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  "range select bounds must be constant"));
+        }
+
+        auto left =
+            static_cast<int32_t>(left_cv->integer().as<int64_t>().value());
+        auto right =
+            static_cast<int32_t>(right_cv->integer().as<int64_t>().value());
+
+        return std::make_unique<mir::RangeSelectExpression>(
+            std::move(value), left, right, *type_result);
+      }
+
+      // Indexed part-select: a[i+:4] or a[i-:4]
+      auto start = LowerExpression(range_select.left());
+
+      // Width must be constant
+      const auto* width_cv = range_select.right().getConstant();
+      if (width_cv == nullptr) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "indexed part-select width must be constant"));
+      }
+      auto width =
+          static_cast<int32_t>(width_cv->integer().as<int64_t>().value());
+
+      bool is_ascending =
+          (selection_kind == slang::ast::RangeSelectionKind::IndexedUp);
+
+      return std::make_unique<mir::IndexedRangeSelectExpression>(
+          std::move(value), std::move(start), is_ascending, width,
+          *type_result);
     }
 
     case slang::ast::ExpressionKind::Call: {

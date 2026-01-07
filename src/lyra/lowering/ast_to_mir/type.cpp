@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 
+#include <cstdint>
 #include <expected>
 
 #include <fmt/format.h>
@@ -31,19 +32,50 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     return Type::Real();
   }
 
+  // Check for multi-dimensional packed arrays before isIntegral()
+  // e.g., bit [3:0][7:0] has isPackedArray()=true
+  if (type.isPackedArray()) {
+    const auto& packed = type.as<slang::ast::PackedArrayType>();
+    auto element_result = LowerType(packed.elementType, source_range);
+    if (!element_result) {
+      return element_result;
+    }
+
+    auto total_width = type.getBitWidth();
+    if (total_width > 64) {
+      return std::unexpected(
+          Diagnostic::Error(
+              source_range,
+              fmt::format(
+                  "unsupported packed array width {} (must be 1-64)",
+                  total_width)));
+    }
+
+    bool is_signed = type.isSigned();
+    bool is_four_state = type.isFourState();
+    return Type::PackedArray(
+        *element_result, packed.range.width(), packed.range.lower(), is_signed,
+        is_four_state);
+  }
+
   if (type.isIntegral()) {
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();
+    bool is_four_state = type.isFourState();
 
-    if (width >= 1 && width <= 64) {
-      return Type::TwoState(width, is_signed);
+    if (width > 64) {
+      return std::unexpected(
+          Diagnostic::Error(
+              source_range,
+              fmt::format(
+                  "unsupported integral type width {} (must be 1-64)", width)));
     }
 
-    return std::unexpected(
-        Diagnostic::Error(
-            source_range,
-            fmt::format(
-                "unsupported integral type width {} (must be 1-64)", width)));
+    // Get range info for non-zero-based indexing (e.g., bit [63:32])
+    auto range = type.getFixedRange();
+    int32_t lower_bound = range.lower();
+
+    return Type::Integral(width, is_signed, is_four_state, lower_bound);
   }
 
   if (type.isUnpackedArray()) {
@@ -52,7 +84,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     if (!element_result) {
       return element_result;
     }
-    return Type::Array(
+    return Type::UnpackedArray(
         *element_result, array_type.range.width(), array_type.range.lower());
   }
 

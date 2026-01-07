@@ -1,6 +1,9 @@
 #include "lyra/lowering/mir_to_lir/expression.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -9,6 +12,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
+#include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/operators.hpp"
@@ -74,11 +78,23 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto value = LowerExpression(*assignment.value, builder);
 
       if (assignment.target.IsElementSelect()) {
-        // Element select assignment: array[index] = value
         auto index = LowerExpression(*assignment.target.element_index, builder);
-        auto instruction =
-            Instruction::StoreElement(assignment.target.symbol, index, value);
-        builder.AddInstruction(std::move(instruction));
+
+        if (assignment.target.IsPacked()) {
+          // Packed element assignment: vec[index] = value
+          size_t element_width = assignment.target.base_type->GetElementWidth();
+          int32_t lower = assignment.target.base_type->GetElementLower();
+          auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
+
+          auto instruction = Instruction::StorePackedElement(
+              assignment.target.symbol, adjusted_index, value, element_width);
+          builder.AddInstruction(std::move(instruction));
+        } else {
+          // Unpacked array element assignment: array[index] = value
+          auto instruction = Instruction::StoreUnpackedElement(
+              assignment.target.symbol, index, value);
+          builder.AddInstruction(std::move(instruction));
+        }
         return value;
       }
 
@@ -94,16 +110,29 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       assert(select.value);
       assert(select.selector);
 
-      // The array value must be an identifier (direct array access)
+      auto index = LowerExpression(*select.selector, builder);
+      auto result = builder.AllocateTemp("elem", expression.type);
+
+      // Check if this is packed type (value) or unpacked array (variable)
+      if (select.value->type.kind == common::Type::Kind::kIntegral) {
+        // Packed vector: lower the value, then select element/bit
+        auto value = LowerExpression(*select.value, builder);
+        int32_t lower = select.value->type.GetElementLower();
+        auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
+
+        auto instruction = Instruction::LoadPackedElement(
+            result, value, adjusted_index, expression.type);
+        builder.AddInstruction(std::move(instruction));
+        return result;
+      }
+
+      // Unpacked array: must be a direct variable reference
       if (select.value->kind != mir::Expression::Kind::kIdentifier) {
         assert(false && "only direct array variable access is supported");
       }
 
       const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-      auto index = LowerExpression(*select.selector, builder);
-
-      auto result = builder.AllocateTemp("elem", expression.type);
-      auto instruction = Instruction::LoadElement(
+      auto instruction = Instruction::LoadUnpackedElement(
           result, array_id.symbol, index, expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
@@ -168,6 +197,75 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         builder.AddInstruction(std::move(instruction));
       }
 
+      return result;
+    }
+
+    case mir::Expression::Kind::kRangeSelect: {
+      const auto& range = mir::As<mir::RangeSelectExpression>(expression);
+      assert(range.value);
+
+      auto value = LowerExpression(*range.value, builder);
+
+      // Compute LSB: for [7:4], LSB is 4
+      int32_t lsb = std::min(range.left, range.right);
+
+      // Adjust for non-zero-based ranges (e.g., bit [63:32])
+      if (range.value->type.kind == common::Type::Kind::kIntegral) {
+        const auto& two_state =
+            std::get<common::IntegralData>(range.value->type.data);
+        lsb -= two_state.element_lower;
+      }
+
+      // Create a literal for the LSB shift amount
+      auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());
+      auto lsb_literal = builder.InternLiteral(Literal::Int(lsb));
+      auto lsb_instruction =
+          Instruction::Basic(IK::kLiteral, lsb_temp, lsb_literal);
+      builder.AddInstruction(std::move(lsb_instruction));
+
+      auto result = builder.AllocateTemp("slice", expression.type);
+      auto instruction = Instruction::LoadPackedSlice(
+          result, value, lsb_temp, expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kIndexedRangeSelect: {
+      const auto& indexed =
+          mir::As<mir::IndexedRangeSelectExpression>(expression);
+      assert(indexed.value);
+      assert(indexed.start);
+
+      auto value = LowerExpression(*indexed.value, builder);
+      auto start = LowerExpression(*indexed.start, builder);
+
+      TempRef lsb_temp;
+      if (indexed.is_ascending) {
+        // a[i+:4]: lsb = i (start index is the LSB)
+        lsb_temp = start;
+      } else {
+        // a[i-:4]: lsb = i - width + 1
+        auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+        auto offset_literal =
+            builder.InternLiteral(Literal::Int(indexed.width - 1));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+        lsb_temp = builder.AllocateTemp("lsb", Type::Int());
+        builder.AddInstruction(
+            Instruction::Basic(
+                IK::kBinarySubtract, lsb_temp,
+                {Operand::Temp(start), Operand::Temp(offset_temp)}));
+      }
+
+      // Adjust for non-zero-based ranges if needed
+      int32_t lower = indexed.value->type.GetElementLower();
+      lsb_temp = AdjustForNonZeroLower(lsb_temp, lower, builder);
+
+      auto result = builder.AllocateTemp("slice", expression.type);
+      builder.AddInstruction(
+          Instruction::LoadPackedSlice(
+              result, value, lsb_temp, expression.type));
       return result;
     }
   }

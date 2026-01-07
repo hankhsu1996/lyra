@@ -43,13 +43,13 @@ struct Literal {
     return {common::Type::ULongInt(), ValueStorage(static_cast<int64_t>(v))};
   }
 
-  static auto TwoStateSigned(int64_t v, size_t width) -> Literal {
-    return {common::Type::TwoStateSigned(width), ValueStorage(v)};
+  static auto IntegralSigned(int64_t v, size_t width) -> Literal {
+    return {common::Type::IntegralSigned(width), ValueStorage(v)};
   }
 
-  static auto TwoStateUnsigned(uint64_t v, size_t width) -> Literal {
+  static auto IntegralUnsigned(uint64_t v, size_t width) -> Literal {
     return {
-        common::Type::TwoStateUnsigned(width),
+        common::Type::IntegralUnsigned(width),
         ValueStorage(static_cast<int64_t>(v))};
   }
 

@@ -33,10 +33,10 @@ auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
 
   if (is_signed) {
     int64_t extended = lyra::common::SignExtend(raw, width);
-    return common::Literal::TwoStateSigned(extended, width);
+    return common::Literal::IntegralSigned(extended, width);
   }
   uint64_t masked = raw & lyra::common::MakeBitMask(width);
-  return common::Literal::TwoStateUnsigned(masked, width);
+  return common::Literal::IntegralUnsigned(masked, width);
 }
 
 auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {

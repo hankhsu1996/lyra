@@ -34,6 +34,8 @@ class Expression {
     kConversion,
     kSystemCall,
     kElementSelect,
+    kRangeSelect,
+    kIndexedRangeSelect,
   };
 
   Kind kind;
@@ -71,6 +73,10 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "SystemCall";
     case Expression::Kind::kElementSelect:
       return "ElementSelect";
+    case Expression::Kind::kRangeSelect:
+      return "RangeSelect";
+    case Expression::Kind::kIndexedRangeSelect:
+      return "IndexedRangeSelect";
   }
   std::abort();
 }
@@ -199,20 +205,36 @@ class ElementSelectExpression;
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable
   std::unique_ptr<Expression>
-      element_index;  // Optional: index for element select
+      element_index;              // Optional: index for element select
+  std::optional<Type> base_type;  // Type of base variable (for element select)
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
-      : symbol(std::move(sym)), element_index(nullptr) {
+      : symbol(std::move(sym)),
+        element_index(nullptr),
+        base_type(std::nullopt) {
   }
 
   // Constructor for element select assignment
   AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index)
-      : symbol(std::move(sym)), element_index(std::move(index)) {
+      : symbol(std::move(sym)),
+        element_index(std::move(index)),
+        base_type(std::nullopt) {
+  }
+
+  // Constructor for element select assignment with base type
+  AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index, Type type)
+      : symbol(std::move(sym)),
+        element_index(std::move(index)),
+        base_type(std::move(type)) {
   }
 
   [[nodiscard]] auto IsElementSelect() const -> bool {
     return element_index != nullptr;
+  }
+
+  [[nodiscard]] auto IsPacked() const -> bool {
+    return base_type && base_type->kind == Type::Kind::kIntegral;
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
@@ -325,6 +347,63 @@ class ElementSelectExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}[{}]", value->ToString(), selector->ToString());
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+class RangeSelectExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kRangeSelect;
+
+  std::unique_ptr<Expression> value;  // Packed vector being sliced
+  int32_t left;                       // Left bound (e.g., 7 in a[7:4])
+  int32_t right;                      // Right bound (e.g., 4 in a[7:4])
+
+  RangeSelectExpression(
+      std::unique_ptr<Expression> value, int32_t left, int32_t right,
+      Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        value(std::move(value)),
+        left(left),
+        right(right) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}[{}:{}]", value->ToString(), left, right);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Indexed part-select: a[i+:4] or a[i-:4]
+class IndexedRangeSelectExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kIndexedRangeSelect;
+
+  std::unique_ptr<Expression> value;  // Packed vector being sliced
+  std::unique_ptr<Expression> start;  // Starting index (variable)
+  bool is_ascending;                  // true for +: (IndexedUp), false for -:
+  int32_t width;                      // Constant width
+
+  IndexedRangeSelectExpression(
+      std::unique_ptr<Expression> value, std::unique_ptr<Expression> start,
+      bool is_ascending, int32_t width, Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        value(std::move(value)),
+        start(std::move(start)),
+        is_ascending(is_ascending),
+        width(width) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format(
+        "{}[{}{}:{}]", value->ToString(), start->ToString(),
+        is_ascending ? "+" : "-", width);
   }
 
   void Accept(MirVisitor& visitor) const override {

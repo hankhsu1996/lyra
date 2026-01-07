@@ -269,7 +269,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       const auto& case_stmt = statement.as<slang::ast::CaseStatement>();
 
       // Convert slang condition to MIR CaseCondition
-      mir::CaseCondition case_condition;
+      mir::CaseCondition case_condition{};
       switch (case_stmt.condition) {
         case slang::ast::CaseStatementCondition::Normal:
           case_condition = mir::CaseCondition::kNormal;
@@ -315,8 +315,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
             // Match the signedness of the case expression
             auto width = sv_int.getBitWidth();
             auto literal = sv_int.isSigned()
-                               ? common::Literal::TwoStateSigned(value, width)
-                               : common::Literal::TwoStateUnsigned(
+                               ? common::Literal::IntegralSigned(value, width)
+                               : common::Literal::IntegralUnsigned(
                                      static_cast<uint64_t>(value), width);
             exprs.push_back(std::make_unique<mir::LiteralExpression>(literal));
             masks.push_back(mask);

@@ -9,6 +9,8 @@
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/expression.hpp"
+#include "lyra/lowering/mir_to_lir/helpers.hpp"
+#include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -48,11 +50,26 @@ auto LowerStatement(
       auto result_value = LowerExpression(*expression, builder);
 
       if (target.IsElementSelect()) {
-        // Element select assignment: array[index] = value
         auto index = LowerExpression(*target.element_index, builder);
-        auto instruction =
-            Instruction::StoreElement(target.symbol, index, result_value);
-        builder.AddInstruction(std::move(instruction));
+
+        if (target.IsPacked()) {
+          // Packed element assignment: vec[index] = value
+          const auto& two_state =
+              std::get<common::IntegralData>(target.base_type->data);
+          size_t element_width = target.base_type->GetElementWidth();
+
+          auto adjusted_index =
+              AdjustForNonZeroLower(index, two_state.element_lower, builder);
+
+          auto instruction = Instruction::StorePackedElement(
+              target.symbol, adjusted_index, result_value, element_width);
+          builder.AddInstruction(std::move(instruction));
+        } else {
+          // Unpacked array element assignment: array[index] = value
+          auto instruction = Instruction::StoreUnpackedElement(
+              target.symbol, index, result_value);
+          builder.AddInstruction(std::move(instruction));
+        }
         break;
       }
 
@@ -395,7 +412,7 @@ auto LowerStatement(
           auto expr_value = LowerExpression(*item.expressions[j], builder);
           int64_t mask = item.masks[j];
 
-          lir::TempRef cmp_lhs;
+          lir::TempRef cmp_lhs{};
           if (mask == -1) {
             // Normal case - compare directly
             cmp_lhs = cond_temp;

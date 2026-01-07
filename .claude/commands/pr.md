@@ -36,6 +36,8 @@ Don't list files changed - GitHub already shows this in the diff. Focus on conce
 
 Code examples should support explanations, not replace them. Include both the "why" and the "what".
 
+**Important:** Never include internal planning concepts like "Phase 1", "Phase 2", or similar milestone labels. PRs describe results, not the journey. Reviewers care about what the code does, not how the implementation was planned or tracked internally.
+
 ## Instructions
 
 1. Check context above; ensure working tree is clean

@@ -48,27 +48,27 @@ struct RuntimeValue {
             std::make_shared<std::vector<RuntimeValue>>(std::move(elements))};
   }
 
-  static auto TwoStateSigned(int64_t value, size_t bit_width) -> RuntimeValue {
+  static auto IntegralSigned(int64_t value, size_t bit_width) -> RuntimeValue {
     uint64_t mask = common::MakeBitMask(bit_width);
     uint64_t truncated = static_cast<uint64_t>(value) & mask;
     int64_t sign_extended = common::SignExtend(truncated, bit_width);
 
     return RuntimeValue{
-        .type = common::Type::TwoStateSigned(bit_width),
+        .type = common::Type::IntegralSigned(bit_width),
         .value = ValueVariant(common::ValueStorage(sign_extended))};
   }
 
-  static auto TwoStateUnsigned(uint64_t value, size_t bit_width)
+  static auto IntegralUnsigned(uint64_t value, size_t bit_width)
       -> RuntimeValue {
     uint64_t masked = value & common::MakeBitMask(bit_width);
     return RuntimeValue{
-        .type = common::Type::TwoStateUnsigned(bit_width),
+        .type = common::Type::IntegralUnsigned(bit_width),
         .value =
             ValueVariant(common::ValueStorage(static_cast<int64_t>(masked)))};
   }
 
   static auto Bool(bool value) -> RuntimeValue {
-    return TwoStateUnsigned(value ? 1 : 0, 1);
+    return IntegralUnsigned(value ? 1 : 0, 1);
   }
 
   static auto String(std::string value) -> RuntimeValue {
@@ -121,7 +121,7 @@ struct RuntimeValue {
 
   // Array accessors - assumes value holds ArrayStorage
   [[nodiscard]] auto IsArray() const -> bool {
-    return type.kind == common::Type::Kind::kArray;
+    return type.kind == common::Type::Kind::kUnpackedArray;
   }
 
   [[nodiscard]] auto AsArray() const -> const std::vector<RuntimeValue>& {
@@ -157,7 +157,7 @@ struct RuntimeValue {
   }
 
   [[nodiscard]] auto IsTwoState() const -> bool {
-    return type.kind == common::Type::Kind::kTwoState;
+    return type.kind == common::Type::Kind::kIntegral;
   }
 
   [[nodiscard]] auto IsString() const -> bool {
@@ -173,10 +173,10 @@ struct RuntimeValue {
   }
 
   [[nodiscard]] auto GetBitWidth() const -> uint32_t {
-    if (type.kind != common::Type::Kind::kTwoState) {
+    if (type.kind != common::Type::Kind::kIntegral) {
       return 0;
     }
-    return std::get<common::TwoStateData>(type.data).bit_width;
+    return std::get<common::IntegralData>(type.data).bit_width;
   }
 
   // Note: Can't use default comparison because ArrayStorage is shared_ptr
@@ -197,12 +197,12 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
   switch (type.kind) {
     case common::Type::Kind::kVoid:
       return {};
-    case common::Type::Kind::kTwoState: {
-      auto data = std::get<common::TwoStateData>(type.data);
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
       if (data.is_signed) {
-        return TwoStateSigned(0, data.bit_width);
+        return IntegralSigned(0, data.bit_width);
       }
-      return TwoStateUnsigned(0, data.bit_width);
+      return IntegralUnsigned(0, data.bit_width);
     }
     case common::Type::Kind::kReal:
       return Real(0.0);
@@ -210,8 +210,8 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       return ShortReal(0.0F);
     case common::Type::Kind::kString:
       return String("");
-    case common::Type::Kind::kArray: {
-      auto array_data = std::get<common::ArrayData>(type.data);
+    case common::Type::Kind::kUnpackedArray: {
+      auto array_data = std::get<common::UnpackedArrayData>(type.data);
       std::vector<RuntimeValue> elements;
       elements.reserve(array_data.size);
       auto element_default = DefaultValueForType(*array_data.element_type);

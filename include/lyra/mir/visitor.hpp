@@ -12,6 +12,8 @@ class AssignmentExpression;
 class ConversionExpression;
 class SystemCallExpression;
 class ElementSelectExpression;
+class RangeSelectExpression;
+class IndexedRangeSelectExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -47,6 +49,8 @@ class MirVisitor {
   virtual void Visit(const ConversionExpression&) = 0;
   virtual void Visit(const SystemCallExpression&) = 0;
   virtual void Visit(const ElementSelectExpression&) = 0;
+  virtual void Visit(const RangeSelectExpression&) = 0;
+  virtual void Visit(const IndexedRangeSelectExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

@@ -1,0 +1,216 @@
+feature: indexed_part_select
+description: Variable-width indexed part-select expressions (a[i+:width], a[i-:width])
+
+cases:
+  - name: ascending_constant_index
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[8+:8];  // Extract byte at position 8 = 0xBE
+        end
+      endmodule
+    expect:
+      variables:
+        result: 190
+
+  - name: ascending_variable_index
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int i;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          i = 16;
+          result = data[i+:8];  // Extract byte at position 16 = 0xAD
+        end
+      endmodule
+    expect:
+      variables:
+        result: 173
+
+  - name: descending_constant_index
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[15-:8];  // Extract bits [15:8] = 0xBE
+        end
+      endmodule
+    expect:
+      variables:
+        result: 190
+
+  - name: descending_variable_index
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int i;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          i = 23;
+          result = data[i-:8];  // Extract bits [23:16] = 0xAD
+        end
+      endmodule
+    expect:
+      variables:
+        result: 173
+
+  - name: loop_byte_extraction
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int sum;
+        initial begin
+          data = 32'h01020304;
+          sum = 0;
+          for (int i = 0; i < 4; i = i + 1) begin
+            sum = sum + data[i*8+:8];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 10
+
+  - name: nibble_select
+    sv: |
+      module Test;
+        bit [15:0] data;
+        int i;
+        int result;
+        initial begin
+          data = 16'hABCD;
+          i = 8;
+          result = data[i+:4];  // Extract nibble at bit 8 = 0xB
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
+
+  # Critical: width=1 single-bit extraction
+  - name: width1_ascending
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[12+:1];  // Extract single bit at position 12 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: width1_descending
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[12-:1];  // Extract single bit at position 12 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # Critical: non-zero-based vectors
+  - name: nonzero_based_ascending
+    sv: |
+      module Test;
+        bit [63:32] data;  // Non-zero-based: indices 32-63
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[40+:8];  // Extract byte at index 40 = 0xBE = 190
+        end
+      endmodule
+    expect:
+      variables:
+        result: 190
+
+  - name: nonzero_based_descending
+    sv: |
+      module Test;
+        bit [63:32] data;  // Non-zero-based: indices 32-63
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[47-:8];  // Extract bits [47:40] = 0xBE = 190
+        end
+      endmodule
+    expect:
+      variables:
+        result: 190
+
+  # Boundary tests
+  - name: boundary_low
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[0+:8];  // Extract lowest byte = 0xEF = 239
+        end
+      endmodule
+    expect:
+      variables:
+        result: 239
+
+  - name: boundary_high
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[24+:8];  // Extract highest byte = 0xDE = 222
+        end
+      endmodule
+    expect:
+      variables:
+        result: 222
+
+  # Equivalence: indexed part-select should match constant slice
+  - name: equivalence_with_slice
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int slice_result;
+        int partsel_result;
+        initial begin
+          data = 32'hDEADBEEF;
+          slice_result = data[15:8];     // Constant slice = 0xBE = 190
+          partsel_result = data[8+:8];   // Part-select = 0xBE = 190
+        end
+      endmodule
+    expect:
+      variables:
+        slice_result: 190
+        partsel_result: 190
+
+  # Width 16 test (larger slice)
+  - name: width16_select
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          result = data[8+:16];  // Extract bits [23:8] = 0xADBE = 44478
+        end
+      endmodule
+    expect:
+      variables:
+        result: 44478

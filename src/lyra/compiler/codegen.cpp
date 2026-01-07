@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <format>
+#include <ios>
 #include <string>
 #include <vector>
 
@@ -85,10 +87,10 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
 }
 
 auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kTwoState) {
+  if (type.kind != common::Type::Kind::kIntegral) {
     return false;
   }
-  return std::get<common::TwoStateData>(type.data).is_signed;
+  return std::get<common::IntegralData>(type.data).is_signed;
 }
 
 auto ToCppType(const common::Type& type) -> std::string {
@@ -101,8 +103,8 @@ auto ToCppType(const common::Type& type) -> std::string {
       return "ShortReal";
     case common::Type::Kind::kString:
       return "std::string";
-    case common::Type::Kind::kTwoState: {
-      auto data = std::get<common::TwoStateData>(type.data);
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
 
@@ -131,8 +133,8 @@ auto ToCppType(const common::Type& type) -> std::string {
       // Unsigned types use Bit<N>
       return std::format("Bit<{}>", width);
     }
-    case common::Type::Kind::kArray: {
-      const auto& array_data = std::get<common::ArrayData>(type.data);
+    case common::Type::Kind::kUnpackedArray: {
+      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
       return std::format(
           "std::array<{}, {}>", ToCppType(*array_data.element_type),
           array_data.size);
@@ -142,10 +144,10 @@ auto ToCppType(const common::Type& type) -> std::string {
 }
 
 auto ToCppUnsignedType(const common::Type& type) -> std::string {
-  if (type.kind != common::Type::Kind::kTwoState) {
+  if (type.kind != common::Type::Kind::kIntegral) {
     return "/* unknown type */";
   }
-  auto data = std::get<common::TwoStateData>(type.data);
+  auto data = std::get<common::IntegralData>(type.data);
   size_t width = data.bit_width;
   if (width > 64) {
     return "/* TODO: wide integer */";
@@ -321,10 +323,34 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     case mir::Statement::Kind::kAssign: {
       const auto& assign = mir::As<mir::AssignStatement>(stmt);
       out_ << std::string(indent_ * 2, ' ');
-      EmitAssignmentTarget(assign.target);
-      out_ << " = ";
-      EmitExpression(*assign.value);
-      out_ << ";\n";
+
+      if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
+        // Packed element assignment: vec[idx] = val
+        // Generate: vec = (vec & ~(1ULL << adj_idx)) | ((val & 1ULL) <<
+        // adj_idx)
+        const auto& base_type = assign.target.base_type.value();
+        size_t total_width = base_type.GetBitWidth();
+        int32_t lower_bound = base_type.GetElementLower();
+        size_t element_width = base_type.GetElementWidth();
+
+        uint64_t mask = (1ULL << element_width) - 1;
+        out_ << assign.target.symbol->name << " = ("
+             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
+             << mask << "ULL} << ";
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
+        out_ << ")) | ((Bit<" << total_width << ">{";
+        EmitExpression(*assign.value);
+        out_ << ".Value() & " << mask << "ULL} << ";
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
+        out_ << "));\n";
+      } else {
+        EmitAssignmentTarget(assign.target);
+        out_ << " = ";
+        EmitExpression(*assign.value);
+        out_ << ";\n";
+      }
       break;
     }
     case mir::Statement::Kind::kExpression: {
@@ -528,7 +554,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           int64_t mask = item.masks[i];
           // Check if mask is all-1s (no wildcards) - can use direct comparison
           // A mask is "all ones" if it's -1 or all bits are set for the width
-          uint64_t umask = static_cast<uint64_t>(mask);
+          auto umask = static_cast<uint64_t>(mask);
           bool is_all_ones = (mask == -1) ||
                              (umask == 0xFFFFFFFF) ||        // 32-bit all 1s
                              (umask == 0xFFFFFFFFFFFFFFFF);  // 64-bit all 1s
@@ -716,7 +742,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kLiteral: {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
       // Emit literals with their proper SDK type
-      if (lit.literal.type.kind == common::Type::Kind::kTwoState) {
+      if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
         // Emit as typed literal: Type{value}
         out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
              << "}";
@@ -780,6 +806,29 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << "this->ScheduleNba(&" << assign.target.symbol->name << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
+      } else if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
+        // Packed element assignment as expression
+        // Result is the assigned value (the RHS)
+        out_ << "(";
+        const auto& base_type = assign.target.base_type.value();
+        size_t total_width = base_type.GetBitWidth();
+        int32_t lower_bound = base_type.GetElementLower();
+        size_t element_width = base_type.GetElementWidth();
+
+        uint64_t mask = (1ULL << element_width) - 1;
+        out_ << assign.target.symbol->name << " = ("
+             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
+             << mask << "ULL} << ";
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
+        out_ << ")) | ((Bit<" << total_width << ">{";
+        EmitExpression(*assign.value, kPrecLowest);
+        out_ << ".Value() & " << mask << "ULL} << ";
+        EmitPackedBitPosition(
+            *assign.target.element_index, lower_bound, element_width);
+        out_ << ")), ";
+        EmitExpression(*assign.value, kPrecLowest);
+        out_ << ")";
       } else {
         EmitAssignmentTarget(assign.target);
         out_ << " = ";
@@ -789,11 +838,97 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kElementSelect: {
       const auto& select = mir::As<mir::ElementSelectExpression>(expr);
-      EmitExpression(*select.value, kPrecPrimary);
-      // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
-      out_ << "[static_cast<size_t>(";
-      EmitExpression(*select.selector, kPrecLowest);
-      out_ << ")]";
+
+      // Check if this is bit/element selection (packed type) or array access
+      if (select.value->type.kind == common::Type::Kind::kIntegral) {
+        // Get element width from result type
+        size_t element_width = expr.type.GetBitWidth();
+
+        // Get element_lower for non-zero-based ranges
+        int32_t lower_bound = select.value->type.GetElementLower();
+
+        if (element_width == 1) {
+          // Single bit selection: value.GetBit(index - lower_bound)
+          EmitExpression(*select.value, kPrecPrimary);
+          out_ << ".GetBit(";
+          if (lower_bound != 0) {
+            out_ << "static_cast<int>(";
+          }
+          EmitExpression(*select.selector, kPrecLowest);
+          if (lower_bound != 0) {
+            out_ << ") - " << lower_bound;
+          }
+          out_ << ")";
+        } else {
+          // Multi-bit element selection from 2D packed array
+          // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
+          // ((index - lb) * width)) & mask)
+          // Need to cast to uint64_t first to avoid ambiguous operator& with
+          // Bit<N>
+          out_ << "static_cast<" << ToCppType(expr.type)
+               << ">((static_cast<uint64_t>(";
+          EmitExpression(*select.value, kPrecLowest);
+          out_ << ") >> ((static_cast<size_t>(";
+          EmitExpression(*select.selector, kPrecLowest);
+          if (lower_bound != 0) {
+            out_ << ") - " << lower_bound;
+          } else {
+            out_ << ")";
+          }
+          out_ << ") * " << element_width << ")) & "
+               << std::format("0x{:X}ULL", (1ULL << element_width) - 1) << ")";
+        }
+      } else {
+        // Array element access: array[index]
+        EmitExpression(*select.value, kPrecPrimary);
+        // Cast index to size_t to avoid Bit<N> → bool → size_t issues
+        out_ << "[static_cast<size_t>(";
+        EmitExpression(*select.selector, kPrecLowest);
+        out_ << ")]";
+      }
+      break;
+    }
+    case mir::Expression::Kind::kRangeSelect: {
+      const auto& range = mir::As<mir::RangeSelectExpression>(expr);
+      size_t result_width = expr.type.GetBitWidth();
+
+      // Compute LSB (minimum of left and right bounds)
+      int32_t lsb = std::min(range.left, range.right);
+
+      // Adjust for non-zero-based ranges (e.g., bit [63:32])
+      if (range.value->type.kind == common::Type::Kind::kIntegral) {
+        lsb -= range.value->type.GetElementLower();
+      }
+
+      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >> lsb)
+      // & mask) Need to cast to uint64_t first to avoid ambiguous operator&
+      // with Bit<N>
+      out_ << "static_cast<" << ToCppType(expr.type)
+           << ">((static_cast<uint64_t>(";
+      EmitExpression(*range.value, kPrecLowest);
+      out_ << ") >> " << lsb << ") & "
+           << std::format("0x{:X}ULL", (1ULL << result_width) - 1) << ")";
+      break;
+    }
+    case mir::Expression::Kind::kIndexedRangeSelect: {
+      const auto& indexed = mir::As<mir::IndexedRangeSelectExpression>(expr);
+      size_t result_width = expr.type.GetBitWidth();
+      uint64_t mask = (1ULL << result_width) - 1;
+      int32_t lower = indexed.value->type.GetElementLower();
+
+      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
+      // shift) & mask)
+      out_ << "static_cast<" << ToCppType(expr.type)
+           << ">((static_cast<uint64_t>(";
+      EmitExpression(*indexed.value, kPrecLowest);
+      out_ << ") >> ";
+
+      // Ascending (+:): shift by start - lower
+      // Descending (-:): shift by start - (width-1) - lower
+      int32_t width_offset = indexed.is_ascending ? 0 : (indexed.width - 1);
+      EmitSliceShift(*indexed.start, lower, width_offset);
+
+      out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -934,6 +1069,39 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     EmitExpression(*target.element_index, kPrecLowest);
     out_ << ")]";
   }
+}
+
+void Codegen::EmitPackedBitPosition(
+    const mir::Expression& index_expr, int32_t lower_bound,
+    size_t element_width) {
+  // Emits: (static_cast<int/size_t>(index) - lower_bound) * element_width
+  // or:    static_cast<size_t>(index) * element_width  when lower_bound == 0
+  if (lower_bound != 0) {
+    out_ << "((static_cast<int>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") - " << lower_bound << ") * " << element_width << ")";
+  } else {
+    out_ << "(static_cast<size_t>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") * " << element_width << ")";
+  }
+}
+
+void Codegen::EmitSliceShift(
+    const mir::Expression& start_expr, int32_t lower_bound,
+    int32_t width_offset) {
+  // Emits: (static_cast<size_t>(start) - width_offset - lower_bound)
+  // width_offset is 0 for ascending (+:), or (width-1) for descending (-:)
+  out_ << "(static_cast<size_t>(";
+  EmitExpression(start_expr, kPrecLowest);
+  out_ << ")";
+  if (width_offset != 0) {
+    out_ << " - " << width_offset;
+  }
+  if (lower_bound != 0) {
+    out_ << " - " << lower_bound;
+  }
+  out_ << ")";
 }
 
 void Codegen::Indent() {
