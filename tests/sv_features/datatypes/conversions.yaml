@@ -59,3 +59,59 @@ cases:
     expect:
       variables:
         result: 0
+
+  - name: itor_basic
+    sv: |
+      module Test;
+        int i;
+        real r;
+        initial begin
+          i = 42;
+          r = $itor(i);
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "42.000000\n"
+
+  - name: itor_negative
+    sv: |
+      module Test;
+        int i;
+        real r;
+        initial begin
+          i = -123;
+          r = $itor(i);
+          $display("%f", r);
+        end
+      endmodule
+    expect:
+      output: "-123.000000\n"
+
+  - name: rtoi_truncate_positive
+    sv: |
+      module Test;
+        real r;
+        int i;
+        initial begin
+          r = 3.7;
+          i = $rtoi(r);
+        end
+      endmodule
+    expect:
+      variables:
+        i: 3
+
+  - name: rtoi_truncate_negative
+    sv: |
+      module Test;
+        real r;
+        int i;
+        initial begin
+          r = -3.7;
+          i = $rtoi(r);
+        end
+      endmodule
+    expect:
+      variables:
+        i: -3

@@ -1074,6 +1074,37 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      // $itor: convert integer to real
+      if (instr.system_call_name == "$itor") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto src_data = std::get<common::IntegralData>(src.type.data);
+        double real_value = src_data.is_signed
+                                ? static_cast<double>(src.AsInt64())
+                                : static_cast<double>(src.AsUInt64());
+        temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
+        return InstructionResult::Continue();
+      }
+
+      // $rtoi: convert real to integer by truncation toward zero
+      if (instr.system_call_name == "$rtoi") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto raw_value = static_cast<int64_t>(src.AsDouble());
+        auto result =
+            target_data.is_signed
+                ? RuntimeValue::IntegralSigned(raw_value, target_data.bit_width)
+                : RuntimeValue::IntegralUnsigned(
+                      static_cast<uint64_t>(raw_value), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
       // Supported system calls are validated in AST→MIR
       assert(false && "unsupported system call should be rejected in AST→MIR");
     }

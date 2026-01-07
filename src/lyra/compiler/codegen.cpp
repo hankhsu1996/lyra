@@ -1148,6 +1148,16 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
         EmitExpression(*syscall.arguments[0], kPrecLowest);
         out_ << ")";
+      } else if (syscall.name == "$itor") {
+        // Convert integer to real
+        out_ << "static_cast<Real>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
+      } else if (syscall.name == "$rtoi") {
+        // Convert real to integer by truncation
+        out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
