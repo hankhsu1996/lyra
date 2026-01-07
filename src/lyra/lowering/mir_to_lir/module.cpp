@@ -117,11 +117,11 @@ auto LowerModule(
     lir_submod.instance_name = submod.instance_name;
     lir_submod.module_type = submod.module_type;
 
-    for (const auto& conn : submod.connections) {
-      lir::PortConnection lir_conn;
-      lir_conn.port_name = conn.port_name;
-      lir_conn.signal = ExtractSignalSymbol(*conn.signal);
-      lir_submod.connections.push_back(std::move(lir_conn));
+    for (const auto& binding : submod.output_bindings) {
+      lir::OutputBinding lir_binding;
+      lir_binding.port_name = binding.port_name;
+      lir_binding.signal = ExtractSignalSymbol(*binding.signal);
+      lir_submod.output_bindings.push_back(std::move(lir_binding));
     }
 
     builder.AddSubmodule(lir_submod);

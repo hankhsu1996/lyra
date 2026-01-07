@@ -298,15 +298,15 @@ void SimulationRunner::ElaborateSubmodules(
     std::string instance_path = parent_path + "." + submod.instance_name;
 
     // Build port bindings for this instance
-    // Bindings allow port access to resolve to parent signals:
-    // - Input ports: child reads → parent signal (for simple .a(x) connections)
-    // - Output ports: child writes → parent signal
+    // Output port bindings: child writes → parent signal
+    // (Input ports use driver processes, no bindings needed)
     std::unordered_map<common::SymbolRef, PortBinding> bindings;
-    for (const auto& conn : submod.connections) {
+    for (const auto& output_binding : submod.output_bindings) {
       // Find the port in child module
       const lir::Port* port_ptr = nullptr;
       for (const auto& port : child->ports) {
-        if (std::string(port.variable.symbol->name) == conn.port_name) {
+        if (std::string(port.variable.symbol->name) ==
+            output_binding.port_name) {
           port_ptr = &port;
           break;
         }
@@ -319,7 +319,7 @@ void SimulationRunner::ElaborateSubmodules(
       // Resolve the signal through parent's bindings (for nested hierarchy)
       // If parent has a binding, follow it; otherwise use parent instance
       auto [target_symbol, target_instance] =
-          parent_instance->ResolveBinding(conn.signal);
+          parent_instance->ResolveBinding(output_binding.signal);
       bindings[port_ptr->variable.symbol] = PortBinding{
           .target_symbol = target_symbol,
           .target_instance =

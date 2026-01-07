@@ -1,182 +1,184 @@
-# Module Hierarchy
+#Module Hierarchy
 
-## Overview
+##Overview
 
-Lyra has two execution backends:
+        Lyra has two execution backends :
 
-| Aspect    | C++ Codegen               | Interpreter             |
-| --------- | ------------------------- | ----------------------- |
-| Path      | MIR → C++ → compile → run | MIR → LIR → interpret   |
-| Speed     | Fast (native code)        | Slower (interpretation) |
-| Use case  | Production simulation     | Development, debugging  |
-| Hierarchy | Constructor instantiation | Elaboration + context   |
+    |
+    Aspect | C++ Codegen | Interpreter | | -- -- -- -- -|
+    -- -- -- -- -- -- -- -- -- -- -- -- -| -- -- -- -- -- -- -- -- -- -- -- -| |
+    Path | MIR → C++ → compile → run | MIR → LIR → interpret | | Speed |
+    Fast(native code) | Slower(interpretation) |
+    | Use case | Production simulation | Development,
+    debugging | | Hierarchy | Constructor instantiation | Elaboration + context
+        |
 
-Both backends support hierarchical modules and produce identical simulation results.
+        Both backends support hierarchical modules and produce identical
+        simulation results
+            .
 
-## Data Flow
+        ##Data Flow
 
+```SV--->AST--->MIR--->C
+        ++ Codegen(AssignmentStatement with hierarchical target) |
+        +--->LIR--->Interpreter(InstanceContext + hierarchical store)
 ```
-                        +---> C++ Codegen (PortDriverStatement emitted directly)
-                        |
-SV ---> AST ---> MIR ---+
-                        |
-                        +---> LIR ---> Interpreter (InstanceContext + resolution)
-```
 
-Key design: **Transform once at AST→MIR, simplify downstream stages**.
+           Key design:
 
-## Input Port Connections
+**Transform once at AST→MIR,
+simplify downstream stages **.
 
-All input port connections are transformed to implicit processes:
+    ##Input Port Connections
+
+        All input port connections are transformed to implicit
+            processes using hierarchical assignment :
 
 ```systemverilog
-// Both cases use the same model
-Child c(.a(x));       // Simple identifier
-Child c(.a(x + y));   // Expression
+                // Both cases use the same model
+                Child c(.a(x));  // Simple identifier
+Child c(.a(x + y));              // Expression
 ```
 
 ### Transformation in AST→MIR
 
 When AST→MIR encounters an input port connection, it:
 
-1. Creates a `PortDriverStatement` representing `submodule.port = expression`
-2. Creates an implicit `always_comb`-like process containing the driver
-3. Stores the signal expression in the port connection (for interpreter bindings)
+1. Creates an `AssignmentStatement` with a hierarchical target (`child.port = expression`)
+2. Wraps it in an implicit `always_comb`-like process
+3. For simple identifiers, also stores binding for interpreter optimization
 
 **MIR Result:**
 
 ```
 module Top
-  Adder add(.a(x), .out(result))  // Signal stored for binding
+  Adder add(.a(x), .out(result))  // Binding stored for interpreter
 
-  process _port_driver_0          // Process for codegen
+  process _port_driver_0          // Unified driver process
     while 1
-      add.a = x
+      add.a = x                   // AssignmentStatement with hierarchical target
       @(x)
 ```
 
-### Backend-Specific Handling
+### Backend Handling
 
-| Stage   | Codegen                        | Interpreter                 |
-| ------- | ------------------------------ | --------------------------- |
-| MIR     | Uses PortDriverStatement       | Uses port connection signal |
-| Runtime | Process drives child's storage | Binding resolves to parent  |
+| Backend     | Simple `.a(x)`    | Expression `.a(x+y)` |
+| ----------- | ----------------- | -------------------- |
+| Codegen     | Driver process    | Driver process       |
+| Interpreter | Binding + process | Process only         |
 
-The MIR stores both representations, allowing each backend to use what it needs.
+Both backends use the same `AssignmentStatement` with hierarchical `AssignmentTarget`. The interpreter additionally uses port bindings for simple connections as an optimization.
 
 ## MIR Representation
 
-### New Statement: PortDriverStatement
+### Hierarchical Assignment Target
+
+Port driving uses `AssignmentStatement` with a hierarchical target:
 
 ```cpp
-class PortDriverStatement : public Statement {
-  std::string submodule_instance;  // e.g., "child"
-  std::string port_name;           // e.g., "a"
-  std::unique_ptr<Expression> value;
+struct AssignmentTarget {
+  std::optional<common::Variable> variable;    // For local assignments
+  std::vector<std::string> hierarchical_path;  // e.g., {"child", "a"}
+
+  bool IsHierarchical() const {
+    return !hierarchical_path.empty();
+  }
 };
 ```
 
-This statement represents driving a submodule's input port:
+    This represents driving a submodule's input port:
+
+```add.a = x + y;  // hierarchical_path = {"add", "a"}
 
 ```
-add.a = x + y;
-```
 
-### Process Creation Pattern
+    ## #Process Creation Pattern
 
-Port driver processes follow the `always_comb` pattern:
+        Port driver processes follow the `always_comb` pattern :
 
 ```cpp
-// while (true) { driver_stmt; @(sensitivity_list); }
-auto CreatePortDriverProcess(PortDriverStatement, counter) -> Process {
-  auto variables = CollectSensitivityList(*driver_stmt->value);
+    // while (true) { assign_stmt; @(sensitivity_list); }
+    auto
+    CreateImplicitAlwaysComb(Statement driver_stmt, counter) -> Process {
+  auto variables = CollectSensitivityList(*driver_stmt);
   // Create triggers from variables
   // Build: while(true) { driver; wait_event(triggers); }
 }
 ```
 
-## C++ Codegen
+    ##C++ Codegen
 
-### Input Port Model
+    ## #Input Port Model
 
-Input ports are public variables (not references):
+        Input ports are public variables(not references)
+    :
 
-```cpp
-class Adder : public lyra::sdk::Module {
+```cpp class Adder : public lyra::sdk::Module {
  public:
   Int a;  // Public for parent to drive
   // ...
 };
 ```
 
-### Port Driver Process Emission
+    ## #Port Driver Process Emission
 
-The `PortDriverStatement` is emitted as:
+        The hierarchical assignment is emitted
+            as :
 
-```cpp
-auto _port_driver_0() -> lyra::sdk::Task {
+```cpp auto _port_driver_0() -> lyra::sdk::Task {
   while (Bit<1>{1}) {
-    add_.a = x + y;  // Direct assignment
+    add_.a = x + y;  // Direct assignment to child member
     co_await lyra::sdk::AnyChange(&y, &x);
   }
   co_return;
 }
 ```
 
-### Output Port Model
+    ## #Output Port Model
 
-Output ports remain as references (parent owns storage):
+        Output ports remain as references(parent owns storage)
+    :
 
-```cpp
-class Adder : public lyra::sdk::Module {
+```cpp class Adder : public lyra::sdk::Module {
  public:
-  Adder(Int& out) : out_(out) {}  // Reference to parent signal
+  Adder(Int& out) : out_(out) {
+  }  // Reference to parent signal
   Int& out_;
 };
 ```
 
 ## Interpreter Input Port Model
 
-The interpreter supports input port connections via **bindings** rather than driver processes:
+The interpreter supports input port connections through two mechanisms:
 
-| Approach    | Codegen                    | Interpreter               |
-| ----------- | -------------------------- | ------------------------- |
-| Model       | Child has storage          | Child aliases parent      |
-| Input write | Parent drives via process  | N/A (binding resolves)    |
-| Input read  | Child reads own storage    | Resolves to parent signal |
-| Sensitivity | Process waits on variables | Wait resolves to parent   |
+| Model        | Use Case             | How It Works                    |
+| ------------ | -------------------- | ------------------------------- |
+| Binding      | Simple `.a(x)`       | Symbol resolution to parent     |
+| Hierarchical | Expression `.a(x+y)` | Process writes to child storage |
 
-### How It Works
+### Binding Model (Simple Ports)
+
+For simple identifier connections:
 
 1. **Elaboration**: Creates binding `child.input_port → parent.signal`
 2. **Read**: Child reads `clk` → resolves to `Top.clk` → reads parent's value
 3. **Wait**: Child waits on `@(posedge clk)` → resolves → waits on `Top.clk`
 
-The `PortDriverStatement` is skipped during MIR→LIR lowering since bindings handle input ports.
+### Hierarchical Store Model (Expression Ports)
 
-### Limitation: Port Expressions
+For expression connections:
 
-Simple identifier connections work:
+1. **Process**: Driver process evaluates expression and writes to child
+2. **Target**: Uses `InstanceContext::children` map to find child instance
+3. **Store**: Writes directly to child's per-instance storage
 
-```systemverilog
-Child c(.a(x));  // Works: binding a → x
-```
-
-Expressions do NOT work in the interpreter:
-
-```systemverilog
-Child c(.a(x + y));  // Interpreter: unsupported (binding can't evaluate expressions)
-                     // Codegen: works via PortDriverStatement
-```
-
-For expression support, the interpreter would need to evaluate expressions, which
-is what the PortDriverStatement process does in codegen.
+Both models produce identical results - binding is an optimization that avoids the overhead of driver processes for simple cases.
 
 ## Port Directions
 
 | Direction | C++ Codegen     | Interpreter        |
 | --------- | --------------- | ------------------ |
-| `input`   | Public variable | Read-only binding  |
+| `input`   | Public variable | Binding or process |
 | `output`  | `T&` reference  | Read-write binding |
 | `inout`   | `T&` reference  | Read-write binding |
 
@@ -203,37 +205,38 @@ auto Resolve(SymbolRef symbol) const -> SymbolRef {
 }
 ```
 
-### Nested Hierarchy Flattening
+    ## #Nested Hierarchy Flattening
 
-Bindings are flattened at elaboration time:
+        Bindings are flattened at elaboration time :
 
-```systemverilog
-module Inner(input bit x);  // uses x
+```systemverilog module
+        Inner(input bit x);  // uses x
 endmodule
 
-module Middle(input bit y);
-  Inner i(.x(y));
+    module
+    Middle(input bit y);
+Inner i(.x(y));
 endmodule
 
-module Top;
-  bit sig;
-  Middle m(.y(sig));
+    module Top;
+bit sig;
+Middle m(.y(sig));
 endmodule
 ```
 
-Bindings:
+    Bindings :
 
+```middle_instance : {y → Top.sig} inner_instance : {
+  x → Top.sig
+}  // Flattened! Not x → Middle.y
 ```
-middle_instance: { y → Top.sig }
-inner_instance:  { x → Top.sig }  // Flattened! Not x → Middle.y
-```
 
-## Trigger Resolution
+    ##Trigger Resolution
 
-When a process waits on an event, the trigger variable is resolved through the instance context:
+        When a process waits on an event,
+    the trigger variable is resolved through the instance context :
 
-```cpp
-for (const auto& trigger : instr.wait_triggers) {
+```cpp for (const auto& trigger : instr.wait_triggers) {
   resolved_triggers.push_back({
       .edge_kind = trigger.edge_kind,
       .variable = resolve_symbol(trigger.variable)  // Resolve!
@@ -245,17 +248,18 @@ Both `counter1` and `counter2` waiting on `@(posedge clk)` resolve to waiting on
 
 ## Limitations
 
-1. **Interpreter port expressions**: Expressions like `.a(x + y)` not supported (codegen only)
-2. **No parameter support**: Parameterized modules require future work
+1. **No parameter support**: Parameterized modules require future work
+2. **No hierarchical reads**: `x = child.signal` not yet supported (future phase)
 
 ## Files
 
-| File                                            | Purpose                         |
-| ----------------------------------------------- | ------------------------------- |
-| `include/lyra/mir/statement.hpp`                | PortDriverStatement definition  |
-| `include/lyra/mir/expression.hpp`               | PortDriverExpression definition |
-| `src/lyra/lowering/ast_to_mir/module.cpp`       | Port expression transformation  |
-| `src/lyra/compiler/codegen.cpp`                 | C++ emission for port drivers   |
-| `src/lyra/lowering/mir_to_lir/statement.cpp`    | LIR lowering (skips PortDriver) |
-| `include/lyra/interpreter/instance_context.hpp` | InstanceContext struct          |
-| `src/lyra/interpreter/simulation_runner.cpp`    | Elaboration and port bindings   |
+| File                                            | Purpose                           |
+| ----------------------------------------------- | --------------------------------- |
+| `include/lyra/mir/expression.hpp`               | HierarchicalReferenceExpression   |
+| `include/lyra/mir/statement.hpp`                | AssignmentTarget with hier. path  |
+| `src/lyra/lowering/ast_to_mir/module.cpp`       | Port connection transformation    |
+| `src/lyra/compiler/codegen.cpp`                 | C++ emission for hier. assignment |
+| `src/lyra/lowering/mir_to_lir/statement.cpp`    | LIR lowering for hier. store      |
+| `include/lyra/interpreter/instance_context.hpp` | InstanceContext + children map    |
+| `src/lyra/interpreter/simulation_runner.cpp`    | Elaboration and port bindings     |
+| `src/lyra/interpreter/instruction_runner.cpp`   | Hierarchical store execution      |

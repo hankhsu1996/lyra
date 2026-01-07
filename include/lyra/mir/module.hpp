@@ -22,18 +22,19 @@ struct Port {
   PortDirection direction = PortDirection::kInput;
 };
 
-// Connection from parent signal to child port
-struct PortConnection {
+// Output port binding: maps child's output port to parent's signal storage.
+// Child writes to output port → actually writes to parent's signal.
+// (Input ports use driver processes instead, no binding needed.)
+struct OutputBinding {
   std::string port_name;               // Formal port name in child module
-  std::unique_ptr<Expression> signal;  // Expression referencing parent signal
-  PortDirection direction = PortDirection::kInput;
+  std::unique_ptr<Expression> signal;  // Parent signal that child writes to
 };
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  std::string instance_name;                // e.g., "counter1"
-  std::string module_type;                  // e.g., "Counter"
-  std::vector<PortConnection> connections;  // Port bindings
+  std::string instance_name;                   // e.g., "counter1"
+  std::string module_type;                     // e.g., "Counter"
+  std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 
 // Module-level variable with optional initializer
@@ -98,19 +99,13 @@ class Module {
         result += common::Indent(indent + 1) + submod.module_type + " " +
                   submod.instance_name + "(";
         bool first = true;
-        for (const auto& conn : submod.connections) {
+        for (const auto& binding : submod.output_bindings) {
           if (!first) {
             result += ", ";
           }
           first = false;
-          if (conn.signal) {
-            result +=
-                "." + conn.port_name + "(" + conn.signal->ToString() + ")";
-          } else {
-            // Process-driven port (expression was transformed to implicit
-            // process)
-            result += "." + conn.port_name + "(<process-driven>)";
-          }
+          result +=
+              "." + binding.port_name + "(" + binding.signal->ToString() + ")";
         }
         result += ")\n";
       }

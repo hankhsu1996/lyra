@@ -206,44 +206,36 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           continue;
         }
 
-        mir::PortConnection port_conn;
-        port_conn.port_name = std::string(conn->port.name);
         const auto& port = conn->port.as<slang::ast::PortSymbol>();
-        port_conn.direction = MapPortDirection(port.direction);
 
         // For output ports, slang wraps the connection in an Assignment
         // expression (external = internal). Extract just the LHS signal.
+        // Output ports need binding so child writes go to parent's storage.
         if (expr->kind == slang::ast::ExpressionKind::Assignment) {
           const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
-          port_conn.signal = LowerExpression(assignment.left());
-          submod.connections.push_back(std::move(port_conn));
+          mir::OutputBinding binding;
+          binding.port_name = std::string(conn->port.name);
+          binding.signal = LowerExpression(assignment.left());
+          submod.output_bindings.push_back(std::move(binding));
         } else {
           // Input port connection (simple `.a(x)` or expression `.a(x + y)`)
           // Create driver process using hierarchical assignment.
           // child.port = expr becomes AssignStatement with hierarchical target.
           //
           // Design: Input ports are value members in child, parent drives them.
-          // - Codegen: Driver process writes to child_.port
-          // - Interpreter (simple only): Uses binding model for optimization
+          // Both codegen and interpreter use driver process (no binding).
           auto signal_expr = LowerExpression(*expr);
 
-          // Create port driver process using hierarchical assignment
-          mir::AssignmentTarget target(
-              {submod.instance_name, port_conn.port_name});
+          // Create port driver process using hierarchical assignment.
+          // Driver writes to child's storage, child reads from own storage.
+          // This is consistent with codegen model (no binding indirection).
+          std::string port_name(conn->port.name);
+          mir::AssignmentTarget target({submod.instance_name, port_name});
           auto driver_stmt = std::make_unique<mir::AssignStatement>(
               std::move(target), std::move(signal_expr));
           auto process = CreateImplicitAlwaysComb(
               std::move(driver_stmt), port_driver_counter);
           module->processes.push_back(std::move(process));
-
-          // For simple ports, also store binding for interpreter optimization
-          // Interpreter uses port binding directly (more efficient than
-          // process)
-          if (expr->kind == slang::ast::ExpressionKind::NamedValue) {
-            port_conn.signal = LowerExpression(*expr);
-            submod.connections.push_back(std::move(port_conn));
-          }
-          // For expression ports, no binding - driver process handles it
         }
       }
 

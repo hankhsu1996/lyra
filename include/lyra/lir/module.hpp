@@ -26,17 +26,18 @@ struct Port {
   PortDirection direction;
 };
 
-// Connection from parent signal to child port
-struct PortConnection {
+// Output port binding: maps child's output port to parent's signal storage.
+// Child writes to output port → actually writes to parent's signal.
+struct OutputBinding {
   std::string port_name;     // Formal port name in child module
   common::SymbolRef signal;  // Parent signal symbol reference
 };
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  std::string instance_name;                // e.g., "counter1"
-  std::string module_type;                  // e.g., "Counter"
-  std::vector<PortConnection> connections;  // Port bindings
+  std::string instance_name;                   // e.g., "counter1"
+  std::string module_type;                     // e.g., "Counter"
+  std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 
 struct Module {
@@ -124,14 +125,14 @@ struct Module {
               "  {} {} (", submod.module_type, submod.instance_name);
         }
         bool first = true;
-        for (const auto& conn : submod.connections) {
+        for (const auto& binding : submod.output_bindings) {
           if (!first) {
             out += ", ";
           }
           first = false;
           out += fmt::format(
-              ".{}(0x{:x})", conn.port_name,
-              reinterpret_cast<std::uintptr_t>(conn.signal));
+              ".{}(0x{:x})", binding.port_name,
+              reinterpret_cast<std::uintptr_t>(binding.signal));
         }
         out += ")\n";
       }

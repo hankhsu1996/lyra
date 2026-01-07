@@ -361,19 +361,16 @@ void Codegen::EmitClass(const mir::Module& module) {
          << port.variable.symbol->name << ")";
   }
 
-  // Submodule initializers - pass only output port connections
+  // Submodule initializers - pass output port bindings as references
   for (const auto& submod : module.submodules) {
     out_ << ", " << submod.instance_name << "_(";
-    bool first_conn = true;
-    for (const auto& conn : submod.connections) {
-      if (conn.direction == mir::PortDirection::kInput) {
-        continue;  // Input ports assigned in constructor body
-      }
-      if (!first_conn) {
+    bool first = true;
+    for (const auto& binding : submod.output_bindings) {
+      if (!first) {
         out_ << ", ";
       }
-      first_conn = false;
-      EmitExpression(*conn.signal);
+      first = false;
+      EmitExpression(*binding.signal);
     }
     out_ << ")";
   }
