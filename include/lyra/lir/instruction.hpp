@@ -237,6 +237,19 @@ struct Instruction {
         .hierarchical_path = std::move(path)};
   }
 
+  // Load from hierarchical target: result = path.to.signal
+  // Path format: ["instance1", "instance2", "symbol_name"]
+  static auto LoadHierarchical(
+      TempRef result, std::vector<std::string> path, common::Type result_type)
+      -> Instruction {
+    assert(path.size() >= 2 && "Path must have instance + symbol");
+    return Instruction{
+        .kind = InstructionKind::kLoadVariable,
+        .result = result,
+        .result_type = std::move(result_type),
+        .hierarchical_path = std::move(path)};
+  }
+
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
@@ -298,6 +311,11 @@ struct Instruction {
             "lit   {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kLoadVariable:
+        if (!hierarchical_path.empty()) {
+          return fmt::format(
+              "load  {}, {}", result.value(),
+              fmt::join(hierarchical_path, "."));
+        }
         return fmt::format(
             "load  {}, {}", result.value(), operands[0].ToString());
 

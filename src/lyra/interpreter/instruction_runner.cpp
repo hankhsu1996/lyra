@@ -509,6 +509,37 @@ auto RunInstruction(
     }
   };
 
+  // Load from hierarchical target: traverse path and load from target instance
+  auto load_hierarchical =
+      [&](const std::vector<std::string>& path) -> RuntimeValue {
+    assert(
+        path.size() >= 2 &&
+        "Hierarchical path must have at least 2 components");
+
+    // Traverse: all but last component are instance names
+    auto target_instance = instance_context;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+      target_instance = target_instance->LookupChild(path[i]);
+      if (!target_instance) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format("Unknown child instance: {}", path[i])));
+      }
+    }
+
+    // Last component is symbol name
+    const auto& symbol_name = path.back();
+    const auto* symbol = target_instance->LookupSymbol(symbol_name);
+    if (!symbol) {
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format("Unknown symbol: {}", symbol_name)));
+    }
+
+    // Read from target instance
+    return target_instance->Read(symbol);
+  };
+
   auto eval_unary_op = [&](const lir::Operand& operand,
                            const std::function<RuntimeValue(RuntimeValue)>& op)
       -> InstructionResult {
@@ -542,8 +573,15 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kLoadVariable: {
-      const auto& src_variable = read_variable(instr.operands[0]);
-      temp_table.Write(instr.result.value(), src_variable);
+      if (!instr.hierarchical_path.empty()) {
+        // Hierarchical load: path in hierarchical_path
+        const auto value = load_hierarchical(instr.hierarchical_path);
+        temp_table.Write(instr.result.value(), value);
+      } else {
+        // Regular load: variable in operands[0]
+        const auto& src_variable = read_variable(instr.operands[0]);
+        temp_table.Write(instr.result.value(), src_variable);
+      }
       return InstructionResult::Continue();
     }
 
