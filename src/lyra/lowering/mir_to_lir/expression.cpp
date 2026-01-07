@@ -152,13 +152,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& system_call = mir::As<mir::SystemCallExpression>(expression);
 
       // Supported system calls are validated in AST→MIR
-      // System tasks: $finish, $stop, $exit, $display (no return value)
+      // System tasks: $finish, $stop, $exit, $display, $timeformat (no return)
       // System functions: $time, $stime, $realtime (return value)
       assert(
           system_call.name == "$finish" || system_call.name == "$stop" ||
           system_call.name == "$exit" || system_call.name == "$display" ||
-          system_call.name == "$time" || system_call.name == "$stime" ||
-          system_call.name == "$realtime");
+          system_call.name == "$timeformat" || system_call.name == "$time" ||
+          system_call.name == "$stime" || system_call.name == "$realtime");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {

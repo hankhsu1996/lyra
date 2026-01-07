@@ -272,10 +272,15 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("using Real = double;");
   Line("using ShortReal = float;");
   Line("");
-  // Timescale constant for $time/$stime/$realtime scaling
+  // Timescale constants for $time/$stime/$realtime scaling and %t formatting
   Line(
       "static constexpr uint64_t kTimeDivisor = " +
       std::to_string(DelayMultiplier()) + ";");
+  int8_t module_unit_power = timescale_ ? timescale_->unit_power
+                                        : common::TimeScale::kDefaultUnitPower;
+  Line(
+      "static constexpr int8_t kModuleUnitPower = " +
+      std::to_string(static_cast<int>(module_unit_power)) + ";");
   Line("");
 
   indent_--;
@@ -421,20 +426,27 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               if (sv_fmt.find('%') != std::string::npos) {
                 // Transform SV format to std::println
                 auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+                auto specs = common::ParseDisplayFormat(sv_fmt);
                 auto needs_cast = common::NeedsIntCast(sv_fmt);
                 Indent();
                 out_ << "std::println(std::cout, \"" << cpp_fmt << "\"";
-                for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+
+                // Emit arguments - for %t, wrap with FormatTimeValue
+                for (size_t i = 0; i < specs.size(); ++i) {
                   out_ << ", ";
-                  // Cast to int64_t if format spec has width (Bit<N> doesn't
-                  // support std::format width specifiers)
-                  size_t spec_idx = i - 1;
-                  if (spec_idx < needs_cast.size() && needs_cast[spec_idx]) {
+                  if (specs[i].spec == 't') {
+                    // %t - format the time argument using $timeformat settings
+                    // Use .Value() to extract uint64_t from Bit<64>
+                    out_ << "lyra::sdk::FormatTimeValue(";
+                    EmitExpression(*syscall.arguments[i + 1]);
+                    out_ << ".Value(), kModuleUnitPower)";
+                  } else if (i < needs_cast.size() && needs_cast[i]) {
+                    // Cast to int64_t if format spec has width
                     out_ << "static_cast<int64_t>(";
-                    EmitExpression(*syscall.arguments[i]);
+                    EmitExpression(*syscall.arguments[i + 1]);
                     out_ << ")";
                   } else {
-                    EmitExpression(*syscall.arguments[i]);
+                    EmitExpression(*syscall.arguments[i + 1]);
                   }
                 }
                 out_ << ");\n";
@@ -455,6 +467,33 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           for (const auto& arg : syscall.arguments) {
             out_ << ", ";
             EmitExpression(*arg);
+          }
+          out_ << ");\n";
+          break;
+        }
+        if (syscall.name == "$timeformat") {
+          // $timeformat(units, precision, suffix, min_width)
+          // Cast Bit types to native types since Bit only has implicit bool
+          Indent();
+          out_ << "lyra::sdk::TimeFormat(";
+          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+            if (i > 0) {
+              out_ << ", ";
+            }
+            if (i == 0) {
+              // units: int8_t
+              out_ << "static_cast<int8_t>(";
+              EmitExpression(*syscall.arguments[i]);
+              out_ << ")";
+            } else if (i == 1 || i == 3) {
+              // precision/min_width: int
+              out_ << "static_cast<int>(";
+              EmitExpression(*syscall.arguments[i]);
+              out_ << ")";
+            } else {
+              // suffix: string (no cast needed)
+              EmitExpression(*syscall.arguments[i]);
+            }
           }
           out_ << ");\n";
           break;

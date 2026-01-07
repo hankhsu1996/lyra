@@ -15,6 +15,12 @@ class Codegen {
  public:
   auto Generate(const mir::Module& module) -> std::string;
 
+  // Get global precision power after Generate() has been called
+  // Used by main.cpp generation to initialize lyra::sdk::global_precision_power
+  [[nodiscard]] auto GetGlobalPrecisionPower() const -> int8_t {
+    return global_precision_power_;
+  }
+
  private:
   void EmitHeader();
   void EmitClass(const mir::Module& module);

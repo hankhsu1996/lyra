@@ -286,11 +286,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
         auto name = call_expression.getSubroutineName();
 
         // Validate supported system calls
-        // System tasks (no return value): $finish, $stop, $exit, $display
+        // System tasks (no return value): $finish, $stop, $exit, $display,
+        //                                 $timeformat
         // System functions (return value): $time, $stime, $realtime
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
-            name != "$display" && name != "$time" && name != "$stime" &&
-            name != "$realtime") {
+            name != "$display" && name != "$timeformat" && name != "$time" &&
+            name != "$stime" && name != "$realtime") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

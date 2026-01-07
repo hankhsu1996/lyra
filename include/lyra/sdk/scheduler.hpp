@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cmath>
 #include <coroutine>
 #include <cstdint>
+#include <format>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "lyra/sdk/bit.hpp"
@@ -12,6 +15,42 @@
 #include "lyra/sdk/wait_event.hpp"
 
 namespace lyra::sdk {
+
+// Default timescale constants
+constexpr int8_t kDefaultUnitPower = -9;        // 1ns
+constexpr int8_t kDefaultPrecisionPower = -12;  // 1ps
+
+/// State for $timeformat system task (IEEE 1800-2017 §21.3)
+struct TimeFormatState {
+  int8_t units = kUnitsUnset;
+  int precision = 0;
+  std::string suffix;
+  int min_width = 20;
+
+  static constexpr int8_t kUnitsUnset = 127;
+
+  [[nodiscard]] auto FormatModuleTime(
+      uint64_t time_in_module_unit, int8_t module_unit_power,
+      int8_t global_precision) const -> std::string {
+    int8_t effective_units = (units == kUnitsUnset) ? global_precision : units;
+    int exponent = module_unit_power - effective_units;
+    double scaled = static_cast<double>(time_in_module_unit);
+
+    if (exponent > 0) {
+      scaled *= std::pow(10.0, exponent);
+    } else if (exponent < 0) {
+      scaled /= std::pow(10.0, -exponent);
+    }
+
+    auto formatted = std::format("{:.{}f}{}", scaled, precision, suffix);
+    if (static_cast<int>(formatted.size()) < min_width) {
+      formatted =
+          std::string(min_width - static_cast<int>(formatted.size()), ' ') +
+          formatted;
+    }
+    return formatted;
+  }
+};
 
 // Waiter represents a suspended coroutine waiting for a trigger condition
 struct Waiter {
@@ -239,6 +278,36 @@ inline auto STime(uint64_t divisor = 1) -> Bit<32> {
 // $realtime - returns scaled time as real (double)
 inline auto RealTime(uint64_t divisor = 1) -> double {
   return static_cast<double>(CurrentTime()) / static_cast<double>(divisor);
+}
+
+// Global $timeformat state for %t formatting
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline TimeFormatState time_format_state;
+
+// Global precision power for time formatting (set by generated module)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+inline int8_t global_precision_power = kDefaultPrecisionPower;
+
+// $timeformat - set format for %t display
+// All arguments are optional (uses current values if not provided)
+inline void TimeFormat(
+    int8_t units = TimeFormatState::kUnitsUnset, int precision = 0,
+    const std::string& suffix = "", int min_width = 20) {
+  time_format_state.units = units;
+  time_format_state.precision = precision;
+  time_format_state.suffix = suffix;
+  time_format_state.min_width = min_width;
+}
+
+// FormatTimeValue - format a time value according to $timeformat settings
+// time_value: time value in module's timeunit (e.g., from $time)
+// module_unit_power: the module's timeunit power (e.g., -9 for ns)
+template <typename T>
+inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
+    -> std::string {
+  return time_format_state.FormatModuleTime(
+      static_cast<uint64_t>(time_value), module_unit_power,
+      global_precision_power);
 }
 
 // Implementation of Module::Run (needs Scheduler definition)

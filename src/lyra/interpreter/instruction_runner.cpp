@@ -13,6 +13,7 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/time_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
@@ -131,11 +132,19 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
   }
 }
 
+// Context for time formatting (%t specifier)
+struct TimeFormatContext {
+  const common::TimeFormatState& time_format;
+  int8_t module_unit_power;  // Module's timeunit (e.g., -9 for 1ns)
+  int8_t global_precision_power;
+};
+
 // Parse SV format string and format arguments
 // Returns formatted output string
+// time_ctx: Optional context for %t formatting
 auto FormatDisplay(
-    const std::string& fmt_str, const std::vector<RuntimeValue>& args)
-    -> std::string {
+    const std::string& fmt_str, const std::vector<RuntimeValue>& args,
+    const TimeFormatContext* time_ctx = nullptr) -> std::string {
   std::string result;
   size_t arg_idx = 0;
   size_t i = 0;
@@ -190,7 +199,7 @@ auto FormatDisplay(
         spec.spec = fmt_str[i];
         if (spec.spec != 'd' && spec.spec != 'h' && spec.spec != 'x' &&
             spec.spec != 'b' && spec.spec != 'o' && spec.spec != 's' &&
-            spec.spec != 'f') {
+            spec.spec != 'f' && spec.spec != 't') {
           throw DiagnosticException(
               Diagnostic::Error(
                   {},
@@ -212,6 +221,24 @@ auto FormatDisplay(
           throw DiagnosticException(
               Diagnostic::Error({}, "not enough arguments for format string"));
         }
+
+        // %t formats time value according to $timeformat settings
+        if (spec.spec == 't') {
+          if (time_ctx != nullptr) {
+            // Format time value using $timeformat settings
+            uint64_t time_val = args[arg_idx].AsUInt64();
+            result += time_ctx->time_format.FormatModuleTime(
+                time_val, time_ctx->module_unit_power,
+                time_ctx->global_precision_power);
+          } else {
+            // No time context - just format as decimal
+            result += FormatValue(args[arg_idx], spec);
+          }
+          arg_idx++;
+          ++i;
+          continue;
+        }
+
         result += FormatValue(args[arg_idx], spec);
         arg_idx++;
         ++i;
@@ -844,6 +871,15 @@ auto RunInstruction(
           return InstructionResult::Continue();
         }
 
+        // Create time format context for %t specifier
+        TimeFormatContext time_ctx{
+            .time_format = simulation_context.time_format,
+            .module_unit_power = simulation_context.timescale
+                                     ? simulation_context.timescale->unit_power
+                                     : common::TimeScale::kDefaultUnitPower,
+            .global_precision_power =
+                simulation_context.global_precision_power};
+
         // Check if first operand is a format string (string with %)
         const auto& first = get_temp(instr.operands[0]);
         if (first.IsString()) {
@@ -854,8 +890,8 @@ auto RunInstruction(
             for (size_t i = 1; i < instr.operands.size(); ++i) {
               args.push_back(get_temp(instr.operands[i]));
             }
-            simulation_context.display_output << FormatDisplay(fmt_str, args)
-                                              << "\n";
+            simulation_context.display_output
+                << FormatDisplay(fmt_str, args, &time_ctx) << "\n";
             return InstructionResult::Continue();
           }
         }
@@ -875,8 +911,8 @@ auto RunInstruction(
           }
           args.push_back(value);
         }
-        simulation_context.display_output << FormatDisplay(gen_fmt, args)
-                                          << "\n";
+        simulation_context.display_output
+            << FormatDisplay(gen_fmt, args, &time_ctx) << "\n";
         return InstructionResult::Continue();
       }
 
@@ -913,8 +949,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         // $realtime returns scaled time as real (double)
         // For accurate fractional time, divide raw time as double
-        auto scaled_time =
-            static_cast<double>(simulation_context.current_time);
+        auto scaled_time = static_cast<double>(simulation_context.current_time);
         if (simulation_context.timescale) {
           auto divisor =
               static_cast<double>(simulation_context.timescale->TimeDivisor(
@@ -923,6 +958,29 @@ auto RunInstruction(
         }
         auto result = RuntimeValue::Real(scaled_time);
         temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$timeformat") {
+        // $timeformat(units, precision, suffix, min_width)
+        // All arguments are optional; use defaults if not provided
+        auto& tf = simulation_context.time_format;
+
+        if (instr.operands.size() >= 1) {
+          tf.units = static_cast<int8_t>(get_temp(instr.operands[0]).AsInt64());
+        }
+        if (instr.operands.size() >= 2) {
+          tf.precision =
+              static_cast<int>(get_temp(instr.operands[1]).AsInt64());
+        }
+        if (instr.operands.size() >= 3) {
+          tf.suffix = get_temp(instr.operands[2]).AsString();
+        }
+        if (instr.operands.size() >= 4) {
+          tf.min_width =
+              static_cast<int>(get_temp(instr.operands[3]).AsInt64());
+        }
+
         return InstructionResult::Continue();
       }
 

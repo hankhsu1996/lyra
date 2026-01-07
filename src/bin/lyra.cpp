@@ -1,4 +1,5 @@
 #include <argparse/argparse.hpp>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -150,11 +151,15 @@ auto EnsureToolchain() -> bool {
 
 // Generate main.cpp
 auto GenerateMain(
-    const std::string& module_name, const std::string& header_file)
-    -> std::string {
+    const std::string& module_name, const std::string& header_file,
+    int8_t global_precision_power) -> std::string {
   return "#include \"design/" + header_file +
          "\"\n\n"
          "auto main() -> int {\n"
+         "    // Initialize global precision for %t formatting\n"
+         "    lyra::sdk::global_precision_power = " +
+         std::to_string(static_cast<int>(global_precision_power)) +
+         ";\n"
          "    " +
          module_name +
          " dut;\n"
@@ -250,8 +255,10 @@ auto EmitCommandInternal(
     std::string header_code = "#pragma once\n\n" + code;
     WriteFile(module_path, header_code);
 
-    // Generate main.cpp
-    WriteFile(out_path / "main.cpp", GenerateMain(mir.name, header_file));
+    // Generate main.cpp with global precision for %t formatting
+    WriteFile(
+        out_path / "main.cpp",
+        GenerateMain(mir.name, header_file, codegen.GetGlobalPrecisionPower()));
 
     // Generate build configuration files
     WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(mir.name));
