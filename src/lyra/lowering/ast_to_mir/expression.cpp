@@ -329,7 +329,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
         //                                  $timeunit, $timeprecision,
         //                                  $signed, $unsigned, $itor, $rtoi,
         //                                  $realtobits, $bitstoreal,
-        //                                  $shortrealtobits, $bitstoshortreal
+        //                                  $shortrealtobits, $bitstoshortreal,
+        //                                  $clog2
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
             name != "$display" && name != "$timeformat" &&
             name != "$printtimescale" && name != "$time" && name != "$stime" &&
@@ -337,7 +338,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
             name != "$timeprecision" && name != "$signed" &&
             name != "$unsigned" && name != "$itor" && name != "$rtoi" &&
             name != "$realtobits" && name != "$bitstoreal" &&
-            name != "$shortrealtobits" && name != "$bitstoshortreal") {
+            name != "$shortrealtobits" && name != "$bitstoshortreal" &&
+            name != "$clog2") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

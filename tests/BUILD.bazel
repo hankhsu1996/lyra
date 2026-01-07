@@ -210,3 +210,8 @@ sv_feature_test(
     name = "hierarchy_port_expressions_tests",
     yaml = "sv_features/hierarchy/port_expressions.yaml",
 )
+
+sv_feature_test(
+    name = "datatypes_math_tests",
+    yaml = "sv_features/datatypes/math.yaml",
+)

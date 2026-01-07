@@ -1,0 +1,87 @@
+feature: math_functions
+description: Math system functions (IEEE 1800 §20.8)
+
+cases:
+  # === Phase 1: $clog2 (Integer Math) ===
+
+  - name: clog2_zero
+    description: $clog2(0) returns 0 (special case)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(0));
+        end
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: clog2_one
+    description: $clog2(1) = 0 (2^0 = 1)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(1));
+        end
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: clog2_two
+    description: $clog2(2) = 1 (2^1 = 2)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(2));
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: clog2_powers_of_two
+    description: $clog2 of exact powers of 2
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(4));
+          $display("%0d", $clog2(8));
+          $display("%0d", $clog2(16));
+          $display("%0d", $clog2(256));
+        end
+      endmodule
+    expect:
+      output: |
+        2
+        3
+        4
+        8
+
+  - name: clog2_non_powers
+    description: $clog2 rounds up for non-powers of 2
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(3));
+          $display("%0d", $clog2(5));
+          $display("%0d", $clog2(7));
+          $display("%0d", $clog2(9));
+        end
+      endmodule
+    expect:
+      output: |
+        2
+        3
+        3
+        4
+
+  - name: clog2_variable
+    description: $clog2 with variable argument
+    sv: |
+      module Test;
+        int n;
+        initial begin
+          n = 100;
+          $display("%0d", $clog2(n));
+        end
+      endmodule
+    expect:
+      output: "7\n"

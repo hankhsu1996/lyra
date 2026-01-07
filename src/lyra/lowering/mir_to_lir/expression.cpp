@@ -182,7 +182,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtobits" ||
           system_call.name == "$bitstoreal" ||
           system_call.name == "$shortrealtobits" ||
-          system_call.name == "$bitstoshortreal");
+          system_call.name == "$bitstoshortreal" ||
+          system_call.name == "$clog2");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -214,7 +215,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtobits" ||
           system_call.name == "$bitstoreal" ||
           system_call.name == "$shortrealtobits" ||
-          system_call.name == "$bitstoshortreal";
+          system_call.name == "$bitstoshortreal" ||
+          system_call.name == "$clog2";
 
       auto result = builder.AllocateTemp("sys", system_call.type);
 

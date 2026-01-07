@@ -1274,6 +1274,18 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      // $clog2: ceiling of log base 2 (arg treated as unsigned, 0 → 0)
+      if (instr.system_call_name == "$clog2") {
+        assert(instr.result.has_value());
+        assert(!instr.operands.empty());
+        const auto& src = get_temp(instr.operands[0]);
+        uint64_t n = src.AsUInt64();
+        int result = (n == 0) ? 0 : std::bit_width(n - 1);
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::IntegralSigned(result, 32));
+        return InstructionResult::Continue();
+      }
+
       // Supported system calls are validated in AST→MIR
       assert(false && "unsupported system call should be rejected in AST→MIR");
     }
