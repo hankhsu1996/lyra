@@ -32,5 +32,8 @@ Thumbs.db
 # Generated output
 out/
 
+# Testing playground (local to each workspace)
+playground/
+
 # Local config files (personal preferences)
 *.local.md
