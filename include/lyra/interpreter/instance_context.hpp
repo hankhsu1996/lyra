@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/variable.hpp"
@@ -39,13 +40,6 @@ struct InstanceContext {
   // Keyed by instance symbol for O(1) lookup without string comparison
   std::unordered_map<common::SymbolRef, std::shared_ptr<InstanceContext>>
       children;
-
-  // Symbol lookup by name (for hierarchical load/store via LIR string paths)
-  std::unordered_map<std::string, common::SymbolRef> symbol_by_name;
-
-  // String-keyed children lookup (for hierarchical load/store via LIR)
-  std::unordered_map<std::string, std::shared_ptr<InstanceContext>>
-      children_by_name;
 
   InstanceContext(
       std::string path,
@@ -107,20 +101,6 @@ struct InstanceContext {
       -> std::shared_ptr<InstanceContext> {
     auto it = children.find(instance_symbol);
     return it != children.end() ? it->second : nullptr;
-  }
-
-  // Look up child instance by name (for LIR hierarchical load/store)
-  [[nodiscard]] auto LookupChildByName(const std::string& name) const
-      -> std::shared_ptr<InstanceContext> {
-    auto it = children_by_name.find(name);
-    return it != children_by_name.end() ? it->second : nullptr;
-  }
-
-  // Look up symbol by name (for hierarchical access)
-  [[nodiscard]] auto LookupSymbol(const std::string& name) const
-      -> common::SymbolRef {
-    auto it = symbol_by_name.find(name);
-    return it != symbol_by_name.end() ? it->second : nullptr;
   }
 
   void CreateVariable(common::SymbolRef symbol, RuntimeValue initial_value) {
