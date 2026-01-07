@@ -86,76 +86,6 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
   return kPrecPrimary;
 }
 
-auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return false;
-  }
-  return std::get<common::IntegralData>(type.data).is_signed;
-}
-
-auto ToCppType(const common::Type& type) -> std::string {
-  switch (type.kind) {
-    case common::Type::Kind::kVoid:
-      return "void";
-    case common::Type::Kind::kReal:
-      return "Real";
-    case common::Type::Kind::kShortReal:
-      return "ShortReal";
-    case common::Type::Kind::kString:
-      return "std::string";
-    case common::Type::Kind::kIntegral: {
-      auto data = std::get<common::IntegralData>(type.data);
-      size_t width = data.bit_width;
-      bool is_signed = data.is_signed;
-
-      if (width > 64) {
-        return "/* TODO: wide integer */";
-      }
-
-      // Use LRM-aligned type aliases for standard signed integer types
-      if (is_signed) {
-        if (width == 8) {
-          return "Byte";
-        }
-        if (width == 16) {
-          return "ShortInt";
-        }
-        if (width == 32) {
-          return "Int";
-        }
-        if (width == 64) {
-          return "LongInt";
-        }
-        // Non-standard signed widths use Bit<N, true>
-        return std::format("Bit<{}, true>", width);
-      }
-
-      // Unsigned types use Bit<N>
-      return std::format("Bit<{}>", width);
-    }
-    case common::Type::Kind::kUnpackedArray: {
-      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
-      return std::format(
-          "std::array<{}, {}>", ToCppType(*array_data.element_type),
-          array_data.size);
-    }
-  }
-  return "/* unknown type */";
-}
-
-auto ToCppUnsignedType(const common::Type& type) -> std::string {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return "/* unknown type */";
-  }
-  auto data = std::get<common::IntegralData>(type.data);
-  size_t width = data.bit_width;
-  if (width > 64) {
-    return "/* TODO: wide integer */";
-  }
-  // Always return unsigned Bit<N> regardless of original signedness
-  return std::format("Bit<{}>", width);
-}
-
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   switch (op) {
     case mir::BinaryOperator::kAddition:
@@ -233,10 +163,90 @@ auto UsesArrayType(const mir::Module& module) -> bool {
 
 }  // namespace
 
+auto Codegen::IsSigned(const common::Type& type) -> bool {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return false;
+  }
+  return std::get<common::IntegralData>(type.data).is_signed;
+}
+
+auto Codegen::ToCppType(const common::Type& type) -> std::string {
+  switch (type.kind) {
+    case common::Type::Kind::kVoid:
+      return "void";
+    case common::Type::Kind::kReal:
+      used_type_aliases_ |= TypeAlias::kReal;
+      return "Real";
+    case common::Type::Kind::kShortReal:
+      used_type_aliases_ |= TypeAlias::kShortReal;
+      return "ShortReal";
+    case common::Type::Kind::kString:
+      return "std::string";
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+
+      if (width > 64) {
+        return "/* TODO: wide integer */";
+      }
+
+      // Use LRM-aligned type aliases for standard signed integer types
+      if (is_signed) {
+        if (width == 8) {
+          used_type_aliases_ |= TypeAlias::kByte;
+          return "Byte";
+        }
+        if (width == 16) {
+          used_type_aliases_ |= TypeAlias::kShortInt;
+          return "ShortInt";
+        }
+        if (width == 32) {
+          used_type_aliases_ |= TypeAlias::kInt;
+          return "Int";
+        }
+        if (width == 64) {
+          used_type_aliases_ |= TypeAlias::kLongInt;
+          return "LongInt";
+        }
+        // Non-standard signed widths use Bit<N, true>
+        used_type_aliases_ |= TypeAlias::kBit;
+        return std::format("Bit<{}, true>", width);
+      }
+
+      // Unsigned types use Bit<N>
+      used_type_aliases_ |= TypeAlias::kBit;
+      return std::format("Bit<{}>", width);
+    }
+    case common::Type::Kind::kUnpackedArray: {
+      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
+      return std::format(
+          "std::array<{}, {}>", ToCppType(*array_data.element_type),
+          array_data.size);
+    }
+  }
+  return "/* unknown type */";
+}
+
+auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return "/* unknown type */";
+  }
+  auto data = std::get<common::IntegralData>(type.data);
+  size_t width = data.bit_width;
+  if (width > 64) {
+    return "/* TODO: wide integer */";
+  }
+  // Always return unsigned Bit<N> regardless of original signedness
+  used_type_aliases_ |= TypeAlias::kBit;
+  return std::format("Bit<{}>", width);
+}
+
 auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
   port_symbols_.clear();
+  used_type_aliases_ = TypeAlias::kNone;
 
   // Store timescale info for delay scaling
   timescale_ = module.timescale;
@@ -289,20 +299,46 @@ void Codegen::EmitHeader(
   Line("");
 }
 
-void Codegen::EmitClass(const mir::Module& module) {
-  Line("class " + module.name + " : public lyra::sdk::Module {");
-  indent_++;
+void Codegen::EmitTypeAliases() {
+  // Only emit type aliases that were actually used
+  if ((used_type_aliases_ & TypeAlias::kBit) != TypeAlias::kNone) {
+    Line("template <std::size_t N, bool S = false>");
+    Line("using Bit = lyra::sdk::Bit<N, S>;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kInt) != TypeAlias::kNone) {
+    Line("using Int = lyra::sdk::Int;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kLongInt) != TypeAlias::kNone) {
+    Line("using LongInt = lyra::sdk::LongInt;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kShortInt) != TypeAlias::kNone) {
+    Line("using ShortInt = lyra::sdk::ShortInt;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kByte) != TypeAlias::kNone) {
+    Line("using Byte = lyra::sdk::Byte;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kReal) != TypeAlias::kNone) {
+    Line("using Real = double;");
+  }
+  if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
+    Line("using ShortReal = float;");
+  }
+  if (used_type_aliases_ != TypeAlias::kNone) {
+    Line("");
+  }
+}
 
-  // Type aliases for cleaner generated code
-  Line("template <std::size_t N, bool S = false>");
-  Line("using Bit = lyra::sdk::Bit<N, S>;");
-  Line("using Int = lyra::sdk::Int;");
-  Line("using LongInt = lyra::sdk::LongInt;");
-  Line("using ShortInt = lyra::sdk::ShortInt;");
-  Line("using Byte = lyra::sdk::Byte;");
-  Line("using Real = double;");
-  Line("using ShortReal = float;");
-  Line("");
+void Codegen::EmitClass(const mir::Module& module) {
+  // Two-phase generation: first generate body to collect type alias usage,
+  // then emit class with only the type aliases that were used.
+
+  // Phase 1: Save current output stream and generate body to a temporary buffer
+  std::ostringstream saved_out;
+  saved_out.swap(out_);
+  int saved_indent = indent_;
+  indent_ = 1;  // Body is indented inside class
+
+  // Generate body content (this populates used_type_aliases_)
   // Timescale constants for $time/$stime/$realtime scaling and %t formatting
   Line(
       "static constexpr uint64_t kTimeDivisor = " +
@@ -424,6 +460,22 @@ void Codegen::EmitClass(const mir::Module& module) {
     Line(submod.module_type + " " + submod.instance_name + "_;");
   }
 
+  // Phase 2: Now emit the class with conditional type aliases, then append body
+  std::string body = out_.str();
+  out_.swap(saved_out);  // Restore original output stream
+  indent_ = saved_indent;
+
+  // Emit class declaration
+  Line("class " + module.name + " : public lyra::sdk::Module {");
+  indent_++;
+
+  // Emit only the type aliases that were actually used
+  EmitTypeAliases();
+
+  // Append the body content
+  out_ << body;
+
+  // Close the class
   indent_--;
   Line("};");
 }
@@ -477,6 +529,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
+        used_type_aliases_ |= TypeAlias::kBit;
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
@@ -1027,6 +1080,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         int32_t lower_bound = base_type.GetElementLower();
         size_t element_width = base_type.GetElementWidth();
 
+        used_type_aliases_ |= TypeAlias::kBit;
         uint64_t mask = (1ULL << element_width) - 1;
         out_ << assign.target.symbol->name << " = ("
              << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
