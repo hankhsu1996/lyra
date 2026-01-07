@@ -53,6 +53,13 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
 
   // Display Tasks
   {.name = "$display", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$displayb", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$displayo", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$displayh", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$write", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$writeb", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$writeo", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$writeh", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$timeformat", .category = Cat::kTimeFormat, .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale_root", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = ""},

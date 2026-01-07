@@ -163,6 +163,38 @@ auto UsesArrayType(const mir::Module& module) -> bool {
          std::ranges::any_of(module.ports, is_array);
 }
 
+// Properties for display/write variants
+struct DisplayVariantProps {
+  char default_format;  // 'd', 'b', 'o', or 'h' (for std::format)
+  bool use_println;     // true for $display*, false for $write*
+};
+
+// Get properties for a display/write variant
+auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
+  if (name == "$write") {
+    return {.default_format = 'd', .use_println = false};
+  }
+  if (name == "$writeb") {
+    return {.default_format = 'b', .use_println = false};
+  }
+  if (name == "$writeo") {
+    return {.default_format = 'o', .use_println = false};
+  }
+  if (name == "$writeh") {
+    return {.default_format = 'x', .use_println = false};
+  }
+  if (name == "$displayb") {
+    return {.default_format = 'b', .use_println = true};
+  }
+  if (name == "$displayo") {
+    return {.default_format = 'o', .use_println = true};
+  }
+  if (name == "$displayh") {
+    return {.default_format = 'x', .use_println = true};
+  }
+  return {.default_format = 'd', .use_println = true};  // $display (default)
+}
+
 }  // namespace
 
 auto Codegen::IsSigned(const common::Type& type) -> bool {
@@ -633,12 +665,23 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           }
           break;
         }
-        if (syscall.name == "$display") {
+        // Handle all display/write variants
+        if (syscall.name == "$display" || syscall.name == "$displayb" ||
+            syscall.name == "$displayo" || syscall.name == "$displayh" ||
+            syscall.name == "$write" || syscall.name == "$writeb" ||
+            syscall.name == "$writeo" || syscall.name == "$writeh") {
           used_features_ |= CodegenFeature::kDisplay;
-          // Empty $display - just print newline
+          auto props = GetDisplayVariantProps(syscall.name);
+          std::string print_fn =
+              props.use_println ? "std::println" : "std::print";
+
+          // Empty call - just print newline if needed
           // Use std::cout to allow capture via rdbuf redirection
           if (syscall.arguments.empty()) {
-            Line("std::println(std::cout, \"\");");
+            if (props.use_println) {
+              Line(print_fn + "(std::cout, \"\");");
+            }
+            // $write with no args does nothing
             break;
           }
 
@@ -649,12 +692,12 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             if (lit.literal.type.kind == common::Type::Kind::kString) {
               auto sv_fmt = lit.literal.value.AsString();
               if (sv_fmt.find('%') != std::string::npos) {
-                // Transform SV format to std::println
+                // Transform SV format to std::print/println
                 auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
                 auto specs = common::ParseDisplayFormat(sv_fmt);
                 auto needs_cast = common::NeedsIntCast(sv_fmt);
                 Indent();
-                out_ << "std::println(std::cout, \"" << cpp_fmt << "\"";
+                out_ << print_fn << "(std::cout, \"" << cpp_fmt << "\"";
 
                 // Emit arguments - for %t, wrap with FormatTimeValue
                 for (size_t i = 0; i < specs.size(); ++i) {
@@ -681,15 +724,21 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             }
           }
 
-          // No format specifiers - generate format string with {} placeholders
-          // No automatic spacing - matches C++ printf behavior
+          // No format specifiers - generate format string with variant's
+          // default Integral types use variant's format, others use {}
           std::string fmt_str;
-          for (size_t i = 0; i < syscall.arguments.size(); ++i) {
-            fmt_str += "{}";
+          for (const auto& arg : syscall.arguments) {
+            if (arg->type.kind == common::Type::Kind::kIntegral) {
+              fmt_str += "{:";
+              fmt_str += props.default_format;
+              fmt_str += "}";
+            } else {
+              fmt_str += "{}";
+            }
           }
 
           Indent();
-          out_ << "std::println(std::cout, \"" << fmt_str << "\"";
+          out_ << print_fn << "(std::cout, \"" << fmt_str << "\"";
           for (const auto& arg : syscall.arguments) {
             out_ << ", ";
             EmitExpression(*arg);
