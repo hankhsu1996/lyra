@@ -26,6 +26,7 @@
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
@@ -46,16 +47,17 @@ auto MapPortDirection(slang::ast::ArgumentDirection direction)
   return mir::PortDirection::kInout;
 }
 
-// Creates an always_comb-like process for a port driver statement.
+// Creates an always_comb-like process for a driver statement.
 // Pattern: while (true) { driver_stmt; @(sensitivity_list); }
-auto CreatePortDriverProcess(
-    std::unique_ptr<mir::PortDriverStatement> driver_stmt,
-    std::size_t& port_driver_counter) -> std::unique_ptr<mir::Process> {
+// Used for implicit port driving: Child c(.a(x + y)) generates c.a = x + y
+auto CreateImplicitAlwaysComb(
+    std::unique_ptr<mir::Statement> driver_stmt, std::size_t& process_counter)
+    -> std::unique_ptr<mir::Process> {
   auto process = std::make_unique<mir::Process>();
-  process->name = fmt::format("_port_driver_{}", port_driver_counter++);
+  process->name = fmt::format("_port_driver_{}", process_counter++);
 
-  // Collect sensitivity list from the driver expression
-  auto variables = CollectSensitivityList(*driver_stmt->value);
+  // Collect sensitivity list from the driver statement
+  auto variables = CollectSensitivityList(*driver_stmt);
 
   std::vector<common::Trigger> triggers;
   triggers.reserve(variables.size());
@@ -97,6 +99,9 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
 
   // Track port internal symbols to exclude from variables list
   std::unordered_set<const slang::ast::Symbol*> port_symbols;
+
+  // Counter for generating unique port driver process names within this module
+  std::size_t port_driver_counter = 0;
 
   // Extract ports from the module definition
   for (const auto* port_symbol : body.getPortList()) {
@@ -193,9 +198,6 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       submod.instance_name = std::string(child.name);
       submod.module_type = std::string(child.getDefinition().name);
 
-      // Counter for generating unique port driver process names
-      static std::size_t port_driver_counter = 0;
-
       for (const auto* conn : child.getPortConnections()) {
         const auto* expr = conn->getExpression();
         // Skip empty/implicit port connections
@@ -214,27 +216,35 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
         if (expr->kind == slang::ast::ExpressionKind::Assignment) {
           const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
           port_conn.signal = LowerExpression(assignment.left());
+          submod.connections.push_back(std::move(port_conn));
         } else {
-          // Input port connection
-          // - Codegen: creates a port driver process to write to child's
-          // storage
-          // - Interpreter: uses binding (child port → parent signal)
-          // We need both: the process for codegen, and the signal for bindings
-
-          // Lower expression twice: once for process, once for port connection
+          // Input port connection (simple `.a(x)` or expression `.a(x + y)`)
+          // Create driver process using hierarchical assignment.
+          // child.port = expr becomes AssignStatement with hierarchical target.
+          //
+          // Design: Input ports are value members in child, parent drives them.
+          // - Codegen: Driver process writes to child_.port
+          // - Interpreter (simple only): Uses binding model for optimization
           auto signal_expr = LowerExpression(*expr);
-          port_conn.signal = LowerExpression(*expr);
 
-          // Create port driver process (used by codegen)
-          auto driver_stmt = std::make_unique<mir::PortDriverStatement>(
-              submod.instance_name, port_conn.port_name,
-              std::move(signal_expr));
-          auto process = CreatePortDriverProcess(
+          // Create port driver process using hierarchical assignment
+          mir::AssignmentTarget target(
+              {submod.instance_name, port_conn.port_name});
+          auto driver_stmt = std::make_unique<mir::AssignStatement>(
+              std::move(target), std::move(signal_expr));
+          auto process = CreateImplicitAlwaysComb(
               std::move(driver_stmt), port_driver_counter);
           module->processes.push_back(std::move(process));
-        }
 
-        submod.connections.push_back(std::move(port_conn));
+          // For simple ports, also store binding for interpreter optimization
+          // Interpreter uses port binding directly (more efficient than
+          // process)
+          if (expr->kind == slang::ast::ExpressionKind::NamedValue) {
+            port_conn.signal = LowerExpression(*expr);
+            submod.connections.push_back(std::move(port_conn));
+          }
+          // For expression ports, no binding - driver process handles it
+        }
       }
 
       module->submodules.push_back(std::move(submod));

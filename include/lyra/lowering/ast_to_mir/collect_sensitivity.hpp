@@ -69,10 +69,6 @@ class SensitivityCollector : public mir::MirVisitor {
     // width is a constant integer, not an expression
   }
 
-  void Visit(const mir::PortDriverExpression& /*unused*/) override {
-    // Port driver is a target (LHS), not a source - no variables to collect
-  }
-
   void Visit(const mir::HierarchicalReferenceExpression& /*unused*/) override {
     // TODO(hankhsu): When hierarchical reads are supported (Future phase),
     // this should add the referenced signal to the sensitivity list.
@@ -86,10 +82,6 @@ class SensitivityCollector : public mir::MirVisitor {
   }
 
   void Visit(const mir::AssignStatement& statement) override {
-    statement.value->Accept(*this);
-  }
-
-  void Visit(const mir::PortDriverStatement& statement) override {
     statement.value->Accept(*this);
   }
 

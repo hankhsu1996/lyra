@@ -14,13 +14,11 @@ class SystemCallExpression;
 class ElementSelectExpression;
 class RangeSelectExpression;
 class IndexedRangeSelectExpression;
-class PortDriverExpression;
 class HierarchicalReferenceExpression;
 
 class Statement;
 class VariableDeclarationStatement;
 class AssignStatement;
-class PortDriverStatement;
 class ExpressionStatement;
 class WaitEventStatement;
 class DelayStatement;
@@ -54,12 +52,10 @@ class MirVisitor {
   virtual void Visit(const ElementSelectExpression&) = 0;
   virtual void Visit(const RangeSelectExpression&) = 0;
   virtual void Visit(const IndexedRangeSelectExpression&) = 0;
-  virtual void Visit(const PortDriverExpression&) = 0;
   virtual void Visit(const HierarchicalReferenceExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;
-  virtual void Visit(const PortDriverStatement&) = 0;
   virtual void Visit(const ExpressionStatement&) = 0;
   virtual void Visit(const WaitEventStatement&) = 0;
   virtual void Visit(const DelayStatement&) = 0;

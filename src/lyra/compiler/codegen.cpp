@@ -489,14 +489,6 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       }
       break;
     }
-    case mir::Statement::Kind::kPortDriver: {
-      const auto& driver = mir::As<mir::PortDriverStatement>(stmt);
-      Indent();
-      out_ << driver.submodule_instance << "_." << driver.port_name << " = ";
-      EmitExpression(*driver.value);
-      out_ << ";\n";
-      break;
-    }
     case mir::Statement::Kind::kExpression: {
       const auto& expr_stmt = mir::As<mir::ExpressionStatement>(stmt);
       // Handle system calls specially
@@ -1141,13 +1133,6 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       EmitSliceShift(*indexed.start, lower, width_offset);
 
       out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
-      break;
-    }
-    case mir::Expression::Kind::kPortDriver: {
-      // Port driver expressions are only used as LHS in PortDriverStatement,
-      // not as standalone expressions. This case shouldn't be reached.
-      const auto& driver = mir::As<mir::PortDriverExpression>(expr);
-      out_ << driver.submodule_instance << "_." << driver.port_name;
       break;
     }
     case mir::Expression::Kind::kHierarchicalReference: {

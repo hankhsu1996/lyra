@@ -1,14 +1,13 @@
 feature: hierarchy_port_expressions
 description: Tests port connections with expressions
 
-# Note: Interpreter tests are skipped because port expressions (like `.a(x + y)`)
-# cannot be represented as simple bindings. The interpreter's binding model maps
-# child ports directly to parent signals, but expressions require evaluation.
-# Codegen handles this via PortDriverStatement processes.
+# Port expressions (like `.a(x + y)`) are handled via implicit always_comb
+# processes that drive the child port using hierarchical assignment.
+# Both codegen and interpreter support this via AssignStatement with
+# hierarchical targets (e.g., `child.a = x + y`).
 
 cases:
   - name: input_port_expression_addition
-    skip_interpreter: true
     description: Input port connected to addition expression
     sv: |
       module Adder(input int a, output int out);
@@ -31,7 +30,6 @@ cases:
       time: 1
 
   - name: input_port_expression_multiply
-    skip_interpreter: true
     description: Input port connected to multiplication expression
     sv: |
       module Doubler(input int val, output int doubled);
@@ -54,7 +52,6 @@ cases:
       time: 1
 
   - name: input_port_expression_ternary
-    skip_interpreter: true
     description: Input port connected to ternary expression
     sv: |
       module Passthrough(input int val, output int out);
@@ -78,7 +75,6 @@ cases:
       time: 1
 
   - name: multiple_input_expressions
-    skip_interpreter: true
     description: Module with multiple input port expressions
     sv: |
       module TwoInputs(input int x, input int y, output int sum);
