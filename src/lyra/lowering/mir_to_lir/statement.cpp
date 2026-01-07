@@ -51,9 +51,9 @@ auto LowerStatement(
 
       if (target.IsHierarchical()) {
         // Hierarchical assignment: child.signal = value
-        // Path format: ["instance", "symbol_name"] - traversed at runtime
         auto instruction = Instruction::StoreHierarchical(
-            target.hierarchical_path, result_value, false);
+            target.hier_instance_symbols, target.hier_target_symbol,
+            result_value, false);
         builder.AddInstruction(std::move(instruction));
         break;
       }

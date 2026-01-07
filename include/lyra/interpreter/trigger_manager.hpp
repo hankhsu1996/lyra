@@ -19,7 +19,8 @@ struct ScheduledEvent;
 
 // Info about a waiting process including its instance context
 struct WaitingProcessInfo {
-  std::shared_ptr<InstanceContext> instance;
+  std::shared_ptr<InstanceContext> process_instance;  // Where process runs
+  std::shared_ptr<InstanceContext> watch_instance;    // Where variable lives
   std::size_t block_index;
   std::size_t instruction_index;
   common::EdgeKind edge_kind;
@@ -90,9 +91,12 @@ class TriggerManager {
   }
 
   // Register a process to wait on variable changes
+  // process_instance: where the process runs (for resumption)
+  // watch_instance: where the variable lives (for trigger detection)
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
-      const std::shared_ptr<InstanceContext>& instance,
+      const std::shared_ptr<InstanceContext>& process_instance,
+      const std::shared_ptr<InstanceContext>& watch_instance,
       const SymbolRef& variable, common::EdgeKind edge_kind,
       std::size_t block_index, std::size_t instruction_index);
 

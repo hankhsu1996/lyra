@@ -330,7 +330,8 @@ void SimulationRunner::ElaborateSubmodules(
         std::make_shared<InstanceContext>(instance_path, std::move(bindings));
 
     // Store child in parent for hierarchical access
-    parent_instance->children[submod.instance_name] = child_instance;
+    parent_instance->children[submod.instance_symbol] = child_instance;
+    parent_instance->children_by_name[submod.instance_name] = child_instance;
 
     // Build symbol lookup map for hierarchical access
     PopulateSymbolLookup(*child, child_instance);
@@ -394,9 +395,32 @@ void SimulationRunner::ExecuteOneEvent() {
 
     case ProcessResult::Kind::kWaitEvent: {
       for (const auto& trigger : result.triggers) {
-        trigger_manager_.RegisterWaitingProcess(
-            process, instance, trigger.variable, trigger.edge_kind,
-            result.block_index, result.resume_instruction_index);
+        // Unified trigger resolution:
+        // 1. Traverse instance_path (empty for local triggers)
+        auto watch_instance = instance;
+        for (const auto& inst_sym : trigger.instance_path) {
+          watch_instance = watch_instance->LookupChild(inst_sym);
+          if (!watch_instance) {
+            break;  // Should not happen - validated at lowering
+          }
+        }
+
+        if (watch_instance) {
+          // 2. Resolve through port bindings (e.g., port -> parent signal)
+          auto [target_symbol, resolved_instance] =
+              watch_instance->ResolveBinding(trigger.variable);
+          if (resolved_instance) {
+            watch_instance = resolved_instance;
+          }
+
+          // Register with both:
+          // - instance: where the process runs (for resumption)
+          // - watch_instance: where the variable lives (for trigger detection)
+          trigger_manager_.RegisterWaitingProcess(
+              process, instance, watch_instance, target_symbol,
+              trigger.edge_kind, result.block_index,
+              result.resume_instruction_index);
+        }
       }
       break;
     }

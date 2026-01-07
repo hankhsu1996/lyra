@@ -114,6 +114,7 @@ auto LowerModule(
   // Carry over submodule instances
   for (const auto& submod : module.submodules) {
     lir::SubmoduleInstance lir_submod;
+    lir_submod.instance_symbol = submod.instance_symbol;
     lir_submod.instance_name = submod.instance_name;
     lir_submod.module_type = submod.module_type;
 

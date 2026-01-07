@@ -81,7 +81,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (assignment.target.IsHierarchical()) {
         // Hierarchical assignment: child.signal = value
         auto instruction = Instruction::StoreHierarchical(
-            assignment.target.hierarchical_path, value,
+            assignment.target.hier_instance_symbols,
+            assignment.target.hier_target_symbol, value,
             assignment.is_non_blocking);
         builder.AddInstruction(std::move(instruction));
         return value;
@@ -275,8 +276,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& hier_ref =
           mir::As<mir::HierarchicalReferenceExpression>(expression);
       auto result = builder.AllocateTemp("hier", expression.type);
-      auto instruction =
-          Instruction::LoadHierarchical(result, hier_ref.path, expression.type);
+      auto instruction = Instruction::LoadHierarchical(
+          result, hier_ref.instance_symbols, hier_ref.target_symbol,
+          expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
     }

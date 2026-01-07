@@ -1,0 +1,104 @@
+feature: hierarchical_sensitivity
+
+cases:
+  - name: always_comb_hierarchical_read
+    description: always_comb re-executes when hierarchical signal changes
+    sv: |
+      module Child;
+        int value;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int result;
+
+        always_comb begin
+          result = u_child.value + 1;
+        end
+
+        initial begin
+          u_child.value = 10;
+          #1;
+          $display("result = %0d", result);
+
+          u_child.value = 20;
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "result = 11"
+          - "result = 21"
+
+  - name: always_comb_hierarchical_expression
+    description: always_comb with hierarchical read in complex expression
+    sv: |
+      module Counter;
+        int count;
+      endmodule
+
+      module Top;
+        Counter u_counter();
+        int doubled;
+        int tripled;
+
+        always_comb begin
+          doubled = u_counter.count * 2;
+          tripled = u_counter.count * 3;
+        end
+
+        initial begin
+          u_counter.count = 5;
+          #1;
+          $display("doubled = %0d, tripled = %0d", doubled, tripled);
+
+          u_counter.count = 7;
+          #1;
+          $display("doubled = %0d, tripled = %0d", doubled, tripled);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "doubled = 10, tripled = 15"
+          - "doubled = 14, tripled = 21"
+
+  - name: always_comb_multiple_hierarchical_reads
+    description: always_comb with multiple hierarchical signals
+    sv: |
+      module Child;
+        int a;
+        int b;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int sum;
+
+        always_comb begin
+          sum = u_child.a + u_child.b;
+        end
+
+        initial begin
+          u_child.a = 10;
+          u_child.b = 5;
+          #1;
+          $display("sum = %0d", sum);
+
+          u_child.a = 20;
+          #1;
+          $display("sum = %0d", sum);
+
+          u_child.b = 10;
+          #1;
+          $display("sum = %0d", sum);
+        end
+      endmodule
+    expect:
+      output:
+        contains:
+          - "sum = 15"
+          - "sum = 25"
+          - "sum = 30"

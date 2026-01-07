@@ -228,14 +228,23 @@ auto LowerExpression(const slang::ast::Expression& expression)
         const auto& hier_expr =
             left.as<slang::ast::HierarchicalValueExpression>();
 
-        // Build hierarchical path from slang's reference info
-        // ref.path contains all elements including the final target symbol
+        // Target symbol (the variable being assigned)
+        mir::SymbolRef target_symbol = &hier_expr.symbol;
+
+        // Instance symbols (for interpreter path traversal)
+        std::vector<mir::SymbolRef> instance_symbols;
+        for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
+          instance_symbols.push_back(hier_expr.ref.path[i].symbol);
+        }
+
+        // String path (for codegen)
         std::vector<std::string> path;
         for (const auto& element : hier_expr.ref.path) {
           path.emplace_back(element.symbol->name);
         }
 
-        mir::AssignmentTarget target(std::move(path));
+        mir::AssignmentTarget target(
+            target_symbol, std::move(instance_symbols), std::move(path));
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -391,7 +400,17 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& hier_expr =
           expression.as<slang::ast::HierarchicalValueExpression>();
 
-      // Build hierarchical path from slang's reference info
+      // Target symbol (for interpreter sensitivity)
+      mir::SymbolRef target_symbol = &hier_expr.symbol;
+
+      // Instance symbols (for interpreter instance traversal)
+      // All but last element in path are instances
+      std::vector<mir::SymbolRef> instance_symbols;
+      for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
+        instance_symbols.push_back(hier_expr.ref.path[i].symbol);
+      }
+
+      // String path (for codegen C++ output)
       std::vector<std::string> path;
       for (const auto& element : hier_expr.ref.path) {
         path.emplace_back(element.symbol->name);
@@ -404,7 +423,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       return std::make_unique<mir::HierarchicalReferenceExpression>(
-          std::move(path), *type_result);
+          target_symbol, std::move(instance_symbols), std::move(path),
+          *type_result);
     }
 
     case slang::ast::ExpressionKind::Invalid:

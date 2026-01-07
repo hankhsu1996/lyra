@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/common/indent.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
@@ -32,8 +33,9 @@ struct OutputBinding {
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  std::string instance_name;                   // e.g., "counter1"
-  std::string module_type;                     // e.g., "Counter"
+  common::SymbolRef instance_symbol;  // Instance symbol (for interpreter)
+  std::string instance_name;          // e.g., "counter1" (for codegen)
+  std::string module_type;            // e.g., "Counter"
   std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 

@@ -58,12 +58,13 @@ auto CreateImplicitAlwaysComb(
   process->name = fmt::format("_port_driver_{}", process_counter++);
 
   // Collect sensitivity list from the driver statement
-  auto variables = CollectSensitivityList(*driver_stmt);
+  auto sensitivity_items = CollectSensitivityList(*driver_stmt);
 
   std::vector<common::Trigger> triggers;
-  triggers.reserve(variables.size());
-  for (const auto& variable : variables) {
-    triggers.emplace_back(common::Trigger::AnyChange(variable));
+  triggers.reserve(sensitivity_items.size());
+  for (const auto& item : sensitivity_items) {
+    triggers.emplace_back(
+        common::Trigger::AnyChange(item.symbol, item.instance_path));
   }
 
   // Build loop: driver first, then wait for triggers
@@ -196,6 +197,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       const auto& child = symbol.as<slang::ast::InstanceSymbol>();
 
       mir::SubmoduleInstance submod;
+      submod.instance_symbol = &child;
       submod.instance_name = std::string(child.name);
       submod.module_type = std::string(child.getDefinition().name);
 
@@ -228,8 +230,13 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           // Create port driver process using hierarchical assignment.
           // Driver writes to child's storage, child reads from own storage.
           // This is consistent with codegen model (no binding indirection).
-          std::string port_name(conn->port.name);
-          mir::AssignmentTarget target({submod.instance_name, port_name});
+          // Use internalSymbol which is the actual storage (same as port init)
+          const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
+          std::string port_name(port_sym.name);
+          mir::AssignmentTarget target(
+              port_sym.internalSymbol,             // target symbol
+              {submod.instance_symbol},            // instance symbols
+              {submod.instance_name, port_name});  // string path
           auto driver_stmt = std::make_unique<mir::AssignStatement>(
               std::move(target), std::move(signal_expr));
           auto process = CreateImplicitAlwaysComb(

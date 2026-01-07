@@ -220,3 +220,8 @@ sv_feature_test(
     name = "hierarchy_hierarchical_reads_tests",
     yaml = "sv_features/hierarchy/hierarchical_reads.yaml",
 )
+
+sv_feature_test(
+    name = "hierarchy_hierarchical_sensitivity_tests",
+    yaml = "sv_features/hierarchy/hierarchical_sensitivity.yaml",
+)
