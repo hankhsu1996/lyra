@@ -22,7 +22,8 @@ Before committing, format and lint changed files:
 
    ```bash
    clang-format -i <changed-cpp-files>
-   clang-tidy -p . <changed-cpp-files>
+   clang-tidy -p . <changed-cpp-files>              # Few files
+   run-clang-tidy -p . -j 20 <changed-cpp-files>    # Many files (parallel)
    ```
 
    Code must be clang-tidy warning-free. Fix any warnings before committing.
