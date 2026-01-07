@@ -11,6 +11,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/sv_format.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -1294,6 +1295,22 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         // 32-bit bits to shortreal
         out_ << "std::bit_cast<ShortReal>(";
         EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
+      } else if (syscall.name == "$clog2") {
+        // Ceiling of log base 2 (0 → 0)
+        out_ << "[](uint64_t n) { return n == 0 ? 0 : std::bit_width(n - 1); }("
+                "static_cast<uint64_t>(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << "))";
+      } else if (common::HasDirectCppMapping(syscall.name)) {
+        // Math functions with direct C++ mapping (using registry)
+        const auto* info = common::FindSystemFunction(syscall.name);
+        out_ << info->cpp_function << "(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        if (info->category == common::SystemFunctionCategory::kMathBinary) {
+          out_ << ", ";
+          EmitExpression(*syscall.arguments[1], kPrecLowest);
+        }
         out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context

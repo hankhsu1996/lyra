@@ -18,6 +18,7 @@
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -322,22 +323,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
       if (call_expression.isSystemCall()) {
         auto name = call_expression.getSubroutineName();
 
-        // Validate supported system calls
-        // System tasks (no return value): $finish, $stop, $exit, $display,
-        //                                 $timeformat, $printtimescale
-        // System functions (return value): $time, $stime, $realtime,
-        //                                  $timeunit, $timeprecision,
-        //                                  $signed, $unsigned, $itor, $rtoi,
-        //                                  $realtobits, $bitstoreal,
-        //                                  $shortrealtobits, $bitstoshortreal
-        if (name != "$finish" && name != "$stop" && name != "$exit" &&
-            name != "$display" && name != "$timeformat" &&
-            name != "$printtimescale" && name != "$time" && name != "$stime" &&
-            name != "$realtime" && name != "$timeunit" &&
-            name != "$timeprecision" && name != "$signed" &&
-            name != "$unsigned" && name != "$itor" && name != "$rtoi" &&
-            name != "$realtobits" && name != "$bitstoreal" &&
-            name != "$shortrealtobits" && name != "$bitstoshortreal") {
+        // Validate supported system calls using registry
+        if (!common::IsSystemFunctionSupported(name)) {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

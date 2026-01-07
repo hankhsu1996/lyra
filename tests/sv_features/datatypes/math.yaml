@@ -1,0 +1,384 @@
+feature: math_functions
+description: Math system functions (IEEE 1800 §20.8)
+
+cases:
+  # $clog2 (Integer Math)
+
+  - name: clog2_zero
+    description: $clog2(0) returns 0 (special case)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(0));
+        end
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: clog2_one
+    description: $clog2(1) = 0 (2^0 = 1)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(1));
+        end
+      endmodule
+    expect:
+      output: "0\n"
+
+  - name: clog2_two
+    description: $clog2(2) = 1 (2^1 = 2)
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(2));
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: clog2_powers_of_two
+    description: $clog2 of exact powers of 2
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(4));
+          $display("%0d", $clog2(8));
+          $display("%0d", $clog2(16));
+          $display("%0d", $clog2(256));
+        end
+      endmodule
+    expect:
+      output: |
+        2
+        3
+        4
+        8
+
+  - name: clog2_non_powers
+    description: $clog2 rounds up for non-powers of 2
+    sv: |
+      module Test;
+        initial begin
+          $display("%0d", $clog2(3));
+          $display("%0d", $clog2(5));
+          $display("%0d", $clog2(7));
+          $display("%0d", $clog2(9));
+        end
+      endmodule
+    expect:
+      output: |
+        2
+        3
+        3
+        4
+
+  - name: clog2_variable
+    description: $clog2 with variable argument
+    sv: |
+      module Test;
+        int n;
+        initial begin
+          n = 100;
+          $display("%0d", $clog2(n));
+        end
+      endmodule
+    expect:
+      output: "7\n"
+
+  # Basic Real Math
+
+  - name: ln_basic
+    description: $ln - natural logarithm
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $ln(1.0));
+          $display("%f", $ln(2.718281828));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.000000
+
+  - name: log10_basic
+    description: $log10 - decimal logarithm
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $log10(1.0));
+          $display("%f", $log10(10.0));
+          $display("%f", $log10(100.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.000000
+        2.000000
+
+  - name: exp_basic
+    description: $exp - exponential
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $exp(0.0));
+          $display("%f", $exp(1.0));
+        end
+      endmodule
+    expect:
+      output: |
+        1.000000
+        2.718282
+
+  - name: sqrt_basic
+    description: $sqrt - square root
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $sqrt(0.0));
+          $display("%f", $sqrt(1.0));
+          $display("%f", $sqrt(4.0));
+          $display("%f", $sqrt(9.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.000000
+        2.000000
+        3.000000
+
+  - name: floor_basic
+    description: $floor - floor function
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $floor(1.5));
+          $display("%f", $floor(2.9));
+          $display("%f", $floor(-1.5));
+        end
+      endmodule
+    expect:
+      output: |
+        1.000000
+        2.000000
+        -2.000000
+
+  - name: ceil_basic
+    description: $ceil - ceiling function
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $ceil(1.5));
+          $display("%f", $ceil(2.1));
+          $display("%f", $ceil(-1.5));
+        end
+      endmodule
+    expect:
+      output: |
+        2.000000
+        3.000000
+        -1.000000
+
+  - name: pow_basic
+    description: $pow - x^y
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $pow(2.0, 0.0));
+          $display("%f", $pow(2.0, 1.0));
+          $display("%f", $pow(2.0, 3.0));
+          $display("%f", $pow(3.0, 2.0));
+        end
+      endmodule
+    expect:
+      output: |
+        1.000000
+        2.000000
+        8.000000
+        9.000000
+
+  # Trigonometric
+
+  - name: sin_basic
+    description: $sin - sine function
+    sv: |
+      module Test;
+        real pi;
+        initial begin
+          pi = 3.14159265358979;
+          $display("%f", $sin(0.0));
+          $display("%f", $sin(pi / 2.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.000000
+
+  - name: cos_basic
+    description: $cos - cosine function
+    sv: |
+      module Test;
+        real pi;
+        initial begin
+          pi = 3.14159265358979;
+          $display("%f", $cos(0.0));
+          $display("%f", $cos(pi));
+        end
+      endmodule
+    expect:
+      output: |
+        1.000000
+        -1.000000
+
+  - name: tan_basic
+    description: $tan - tangent function
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $tan(0.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: asin_basic
+    description: $asin - arc-sine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $asin(0.0));
+          $display("%f", $asin(1.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.570796
+
+  - name: acos_basic
+    description: $acos - arc-cosine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $acos(1.0));
+          $display("%f", $acos(0.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        1.570796
+
+  - name: atan_basic
+    description: $atan - arc-tangent
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $atan(0.0));
+          $display("%f", $atan(1.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        0.785398
+
+  - name: atan2_basic
+    description: $atan2 - arc-tangent of y/x
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $atan2(0.0, 1.0));
+          $display("%f", $atan2(1.0, 1.0));
+        end
+      endmodule
+    expect:
+      output: |
+        0.000000
+        0.785398
+
+  - name: hypot_basic
+    description: $hypot - sqrt(x^2 + y^2)
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $hypot(3.0, 4.0));
+          $display("%f", $hypot(5.0, 12.0));
+        end
+      endmodule
+    expect:
+      output: |
+        5.000000
+        13.000000
+
+  # Hyperbolic
+
+  - name: sinh_basic
+    description: $sinh - hyperbolic sine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $sinh(0.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: cosh_basic
+    description: $cosh - hyperbolic cosine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $cosh(0.0));
+        end
+      endmodule
+    expect:
+      output: "1.000000\n"
+
+  - name: tanh_basic
+    description: $tanh - hyperbolic tangent
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $tanh(0.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: asinh_basic
+    description: $asinh - inverse hyperbolic sine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $asinh(0.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: acosh_basic
+    description: $acosh - inverse hyperbolic cosine
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $acosh(1.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: atanh_basic
+    description: $atanh - inverse hyperbolic tangent
+    sv: |
+      module Test;
+        initial begin
+          $display("%f", $atanh(0.0));
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
