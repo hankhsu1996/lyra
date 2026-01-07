@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 
 #include <fmt/core.h>
@@ -178,6 +181,24 @@ struct TimeScale {
     return prefix + unit;
   }
 };
+
+/// Compute the finest precision across multiple timescales.
+///
+/// Returns the smallest (most precise) precision power among all provided
+/// timescales. If no timescale has a value, returns the default precision.
+///
+/// @param timescales A span of optional timescales from multiple modules
+/// @return The global precision power (smallest value = finest precision)
+inline auto ComputeGlobalPrecision(
+    std::span<const std::optional<TimeScale>> timescales) -> int8_t {
+  int8_t global = TimeScale::kDefaultPrecisionPower;
+  for (const auto& ts : timescales) {
+    if (ts) {
+      global = std::min(global, ts->precision_power);
+    }
+  }
+  return global;
+}
 
 }  // namespace lyra::common
 
