@@ -187,8 +187,8 @@ sv_feature_test(
 )
 
 sv_feature_test(
-    name = "hierarchy_simple_submodule_tests",
-    yaml = "sv_features/hierarchy/simple_submodule.yaml",
+    name = "hierarchy_instantiation_tests",
+    yaml = "sv_features/hierarchy/instantiation.yaml",
 )
 
 sv_feature_test(

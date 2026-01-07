@@ -42,3 +42,26 @@ cases:
       variables:
         out: 0
       time: 3
+
+  - name: multiple_output_ports
+    description: Module with multiple output ports simultaneously
+    sv: |
+      module Splitter(input int x, output int a, output int b);
+        always_comb begin
+          a = x + 1;
+          b = x + 2;
+        end
+      endmodule
+
+      module Top;
+        int input_val = 10;
+        int out1, out2;
+        Splitter splitter(.x(input_val), .a(out1), .b(out2));
+
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        out1: 11
+        out2: 12
+      time: 1
