@@ -10,6 +10,8 @@
 #include <fmt/core.h>
 #include <slang/numeric/Time.h>
 
+#include "lyra/sdk/time_utils.hpp"
+
 namespace lyra::common {
 
 /// Represents a timescale with unit and precision as power-of-10 exponents.
@@ -80,7 +82,8 @@ struct TimeScale {
 
   [[nodiscard]] auto ToString() const -> std::string {
     return fmt::format(
-        "{} / {}", PowerToString(unit_power), PowerToString(precision_power));
+        "{} / {}", sdk::PowerToString(unit_power),
+        sdk::PowerToString(precision_power));
   }
 
   auto operator==(const TimeScale& other) const -> bool = default;
@@ -124,61 +127,6 @@ struct TimeScale {
     }
 
     return base;
-  }
-
-  /// Convert power of 10 to human-readable string.
-  static auto PowerToString(int8_t power) -> std::string {
-    // Handle magnitude prefix
-    int magnitude = 0;
-    if (power >= 0) {
-      magnitude = power % 3;
-      power = power - magnitude;
-    } else {
-      // For negative, we need ceiling division behavior
-      int abs_power = -power;
-      magnitude = (3 - (abs_power % 3)) % 3;
-      power = power + magnitude;
-    }
-
-    std::string prefix;
-    switch (magnitude) {
-      case 0:
-        prefix = "1";
-        break;
-      case 1:
-        prefix = "10";
-        break;
-      case 2:
-        prefix = "100";
-        break;
-    }
-
-    std::string unit;
-    switch (power) {
-      case 0:
-        unit = "s";
-        break;
-      case -3:
-        unit = "ms";
-        break;
-      case -6:
-        unit = "us";
-        break;
-      case -9:
-        unit = "ns";
-        break;
-      case -12:
-        unit = "ps";
-        break;
-      case -15:
-        unit = "fs";
-        break;
-      default:
-        unit = fmt::format("e{}s", power);
-        break;
-    }
-
-    return prefix + unit;
   }
 };
 

@@ -287,6 +287,14 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line(
       "static constexpr int8_t kModulePrecisionPower = " +
       std::to_string(static_cast<int>(module_precision_power)) + ";");
+  // Module name and timescale string for $printtimescale
+  Line(
+      "static constexpr std::string_view kModuleName = \"" + module.name +
+      "\";");
+  auto ts = timescale_.value_or(common::TimeScale::Default());
+  Line(
+      "static constexpr std::string_view kTimescaleStr = \"" + ts.ToString() +
+      "\";");
   Line("");
 
   indent_--;
@@ -502,6 +510,22 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             }
           }
           out_ << ");\n";
+          break;
+        }
+        if (syscall.name == "$printtimescale") {
+          // $printtimescale() - print current module's timescale
+          Line(
+              "std::println(std::cout, \"Time scale of ({}) is {}\", "
+              "kModuleName, kTimescaleStr);");
+          break;
+        }
+        if (syscall.name == "$printtimescale_root") {
+          // $printtimescale($root) - print global precision (unit = precision)
+          Indent();
+          out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
+                  "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
+                  "power), lyra::sdk::PowerToString(lyra::sdk::global_"
+                  "precision_power));\n";
           break;
         }
         throw DiagnosticException(

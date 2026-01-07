@@ -29,6 +29,9 @@ class SimulationContext {
   std::optional<common::TimeScale> timescale;
   int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
 
+  // Module name for $printtimescale output
+  std::string module_name;
+
   // $timeformat state for %t format specifier
   common::TimeFormatState time_format;
 };

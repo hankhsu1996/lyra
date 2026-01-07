@@ -170,3 +170,8 @@ sv_feature_test(
     name = "timing_timeunit_tests",
     yaml = "sv_features/timing/timeunit.yaml",
 )
+
+sv_feature_test(
+    name = "timing_printtimescale_tests",
+    yaml = "sv_features/timing/printtimescale.yaml",
+)

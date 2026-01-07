@@ -1,4 +1,4 @@
-#Limitations
+# Limitations
 
 Current SystemVerilog features not yet supported.
 
@@ -29,11 +29,36 @@ Current SystemVerilog features not yet supported.
 
 Supported:
 
-- `$display` - formatted output
+- `$display` - formatted output (including `%t` format specifier)
 - `$finish`, `$stop`, `$exit` - simulation control
-- `$time`, `$stime`, `$realtime` - simulation time (without timescale scaling)
+- `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
+- `$timeformat` - configure `%t` output format
+- `$timeunit`, `$timeprecision` - query module timescale
+- `$timeunit($root)`, `$timeprecision($root)` - query global precision
+- `$printtimescale`, `$printtimescale($root)` - print timescale info
 
-Not yet implemented: `$write`, `$monitor`, `$random`, `$readmemh`, `timescale directive.
+Not yet supported:
+
+- `$write`, `$monitor` - output variants
+- `$random`, `$urandom` - random number generation
+- `$readmemh`, `$readmemb` - file I/O
+- `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
+- `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
+- `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
+
+## Timescale
+
+Supported:
+
+- `` `timescale `` directive with delay scaling
+- Per-module time unit and precision
+
+Not yet supported:
+
+- `timeunit` / `timeprecision` statements (alternative to directive)
+- Hierarchical designs with different timescales per instance
+- `$unit` compilation unit timescale
+- Real number delays (e.g., `#1.5`)
 
 ## Runtime Behavior
 

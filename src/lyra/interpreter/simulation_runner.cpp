@@ -30,6 +30,8 @@ SimulationRunner::SimulationRunner(
   simulation_context_.get().timescale = module.timescale;
   simulation_context_.get().global_precision_power =
       module.global_precision_power;
+  // Initialize module name for $printtimescale
+  simulation_context_.get().module_name = module.name;
 }
 
 void SimulationRunner::Run() {

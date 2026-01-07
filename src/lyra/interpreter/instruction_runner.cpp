@@ -24,6 +24,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
+#include "lyra/sdk/time_utils.hpp"
 
 namespace lyra::interpreter {
 
@@ -931,7 +932,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$time") {
         assert(instr.result.has_value());
         // $time returns 64-bit unsigned time in module's timeunit
-        auto result = RuntimeValue::TwoStateUnsigned(scale_time(), 64);
+        auto result = RuntimeValue::IntegralUnsigned(scale_time(), 64);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -940,7 +941,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         // $stime returns low 32 bits of scaled time as unsigned
         auto result =
-            RuntimeValue::TwoStateUnsigned(scale_time() & 0xFFFFFFFF, 32);
+            RuntimeValue::IntegralUnsigned(scale_time() & 0xFFFFFFFF, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -990,7 +991,7 @@ auto RunInstruction(
         int8_t unit = simulation_context.timescale
                           ? simulation_context.timescale->unit_power
                           : common::TimeScale::kDefaultUnitPower;
-        auto result = RuntimeValue::TwoStateSigned(unit, 32);
+        auto result = RuntimeValue::IntegralSigned(unit, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -999,7 +1000,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         // $timeunit($root) returns global simulation precision
         int8_t unit = simulation_context.global_precision_power;
-        auto result = RuntimeValue::TwoStateSigned(unit, 32);
+        auto result = RuntimeValue::IntegralSigned(unit, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -1010,7 +1011,7 @@ auto RunInstruction(
         int8_t precision = simulation_context.timescale
                                ? simulation_context.timescale->precision_power
                                : common::TimeScale::kDefaultPrecisionPower;
-        auto result = RuntimeValue::TwoStateSigned(precision, 32);
+        auto result = RuntimeValue::IntegralSigned(precision, 32);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -1019,8 +1020,28 @@ auto RunInstruction(
         assert(instr.result.has_value());
         // $timeprecision($root) returns global simulation precision
         int8_t precision = simulation_context.global_precision_power;
-        auto result = RuntimeValue::TwoStateSigned(precision, 32);
+        auto result = RuntimeValue::IntegralSigned(precision, 32);
         temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$printtimescale") {
+        // $printtimescale() prints current module's timescale
+        auto ts =
+            simulation_context.timescale.value_or(common::TimeScale::Default());
+        simulation_context.display_output
+            << "Time scale of (" << simulation_context.module_name << ") is "
+            << ts.ToString() << "\n";
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$printtimescale_root") {
+        // $printtimescale($root) prints global precision (unit = precision)
+        auto gp = simulation_context.global_precision_power;
+        auto unit_str = sdk::PowerToString(gp);
+        simulation_context.display_output << "Time scale of ($root) is "
+                                          << unit_str << " / " << unit_str
+                                          << "\n";
         return InstructionResult::Continue();
       }
 

@@ -287,12 +287,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
         // Validate supported system calls
         // System tasks (no return value): $finish, $stop, $exit, $display,
-        //                                 $timeformat
+        //                                 $timeformat, $printtimescale
         // System functions (return value): $time, $stime, $realtime,
         //                                  $timeunit, $timeprecision
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
-            name != "$display" && name != "$timeformat" && name != "$time" &&
-            name != "$stime" && name != "$realtime" && name != "$timeunit" &&
+            name != "$display" && name != "$timeformat" &&
+            name != "$printtimescale" && name != "$time" && name != "$stime" &&
+            name != "$realtime" && name != "$timeunit" &&
             name != "$timeprecision") {
           throw DiagnosticException(
               Diagnostic::Error(
@@ -300,11 +301,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
                   fmt::format("unsupported system call '{}'", name)));
         }
 
-        // Handle $timeunit($root) and $timeprecision($root) specially
-        // Transform to $timeunit_root / $timeprecision_root with no arguments
+        // Handle $timeunit($root), $timeprecision($root),
+        // $printtimescale($root) Transform to $timeunit_root /
+        // $timeprecision_root / $printtimescale_root
         std::string effective_name(name);
         bool is_root_variant = false;
-        if ((name == "$timeunit" || name == "$timeprecision") &&
+        if ((name == "$timeunit" || name == "$timeprecision" ||
+             name == "$printtimescale") &&
             call_expression.arguments().size() == 1) {
           const auto& arg = *call_expression.arguments()[0];
           if (arg.kind == slang::ast::ExpressionKind::ArbitrarySymbol) {
@@ -318,7 +321,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
         }
 
         std::vector<std::unique_ptr<mir::Expression>> arguments;
-        // Don't lower arguments for $timeunit_root / $timeprecision_root
+        // Don't lower arguments for _root variants
         if (!is_root_variant) {
           for (const auto& arg : call_expression.arguments()) {
             arguments.push_back(LowerExpression(*arg));
