@@ -249,12 +249,27 @@ auto SimulationRunner::LookupModule(const std::string& name) const
   return &it->second.get();
 }
 
+void SimulationRunner::PopulateSymbolLookup(
+    const lir::Module& module,
+    const std::shared_ptr<InstanceContext>& instance) {
+  for (const auto& var : module.variables) {
+    instance->symbol_by_name[std::string(var.symbol->name)] = var.symbol;
+  }
+  for (const auto& port : module.ports) {
+    instance->symbol_by_name[std::string(port.variable.symbol->name)] =
+        port.variable.symbol;
+  }
+}
+
 void SimulationRunner::ElaborateHierarchy() {
   const auto& top = top_module_.get();
 
   // Create top module instance context (no port bindings)
   auto top_instance = std::make_shared<InstanceContext>(
       top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
+
+  // Build symbol lookup map for hierarchical access
+  PopulateSymbolLookup(top, top_instance);
 
   // Initialize top module variables in per-instance storage
   InitializeModuleVariables(top, top_instance);
@@ -313,6 +328,12 @@ void SimulationRunner::ElaborateSubmodules(
 
     auto child_instance =
         std::make_shared<InstanceContext>(instance_path, std::move(bindings));
+
+    // Store child in parent for hierarchical access
+    parent_instance->children[submod.instance_name] = child_instance;
+
+    // Build symbol lookup map for hierarchical access
+    PopulateSymbolLookup(*child, child_instance);
 
     // Initialize child module's variables in per-instance storage
     InitializeModuleVariables(*child, child_instance);

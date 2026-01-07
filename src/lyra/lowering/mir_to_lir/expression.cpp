@@ -78,10 +78,12 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto value = LowerExpression(*assignment.value, builder);
 
       if (assignment.target.IsHierarchical()) {
-        // Hierarchical assignment not yet supported in interpreter.
-        // Will be implemented in Phase 16.
-        throw std::runtime_error(
-            "Hierarchical assignment is not supported by the interpreter");
+        // Hierarchical assignment: child.signal = value
+        auto instruction = Instruction::StoreHierarchical(
+            assignment.target.hierarchical_path, value,
+            assignment.is_non_blocking);
+        builder.AddInstruction(std::move(instruction));
+        return value;
       }
 
       if (assignment.target.IsElementSelect()) {

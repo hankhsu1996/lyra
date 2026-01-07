@@ -202,6 +202,23 @@ auto LowerExpression(const slang::ast::Expression& expression)
             std::move(target), std::move(value), is_non_blocking);
       }
 
+      // Hierarchical assignment (child.signal = value)
+      if (left.kind == slang::ast::ExpressionKind::HierarchicalValue) {
+        const auto& hier_expr =
+            left.as<slang::ast::HierarchicalValueExpression>();
+
+        // Build hierarchical path from slang's reference info
+        // ref.path contains all elements including the final target symbol
+        std::vector<std::string> path;
+        for (const auto& element : hier_expr.ref.path) {
+          path.emplace_back(element.symbol->name);
+        }
+
+        mir::AssignmentTarget target(std::move(path));
+        return std::make_unique<mir::AssignmentExpression>(
+            std::move(target), std::move(value), is_non_blocking);
+      }
+
       throw DiagnosticException(
           Diagnostic::Error(
               left.sourceRange, fmt::format(

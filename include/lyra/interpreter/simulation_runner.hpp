@@ -9,7 +9,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
@@ -84,7 +83,10 @@ class SimulationRunner {
   void ElaborateSubmodules(
       const lir::Module& parent, const std::string& parent_path,
       const std::shared_ptr<InstanceContext>& parent_instance);
-  void InitializeModuleVariables(
+  static void InitializeModuleVariables(
+      const lir::Module& module,
+      const std::shared_ptr<InstanceContext>& instance);
+  static void PopulateSymbolLookup(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);
   void ScheduleModuleProcesses(

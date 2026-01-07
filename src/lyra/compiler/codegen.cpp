@@ -1346,12 +1346,17 @@ void Codegen::EmitSliceShift(
 }
 
 void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
-  // Emit hierarchical path: ["child", "port"] -> child_.port_
+  // Emit hierarchical path: ["child", "signal"] -> child_.signal
+  // Instance names (all but last) get _ suffix, variable name (last) does not
   for (size_t i = 0; i < path.size(); ++i) {
     if (i > 0) {
       out_ << ".";
     }
-    out_ << path[i] << "_";
+    out_ << path[i];
+    // Only instance names (not the final variable) get _ suffix
+    if (i < path.size() - 1) {
+      out_ << "_";
+    }
   }
 }
 

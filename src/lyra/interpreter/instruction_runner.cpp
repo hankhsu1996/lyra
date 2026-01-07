@@ -358,6 +358,44 @@ auto RunInstruction(
     }
   };
 
+  // Store to hierarchical target: traverse path and store to target instance
+  auto store_hierarchical = [&](const std::vector<std::string>& path,
+                                const RuntimeValue& value,
+                                bool is_non_blocking) {
+    assert(
+        path.size() >= 2 &&
+        "Hierarchical path must have at least 2 components");
+
+    // Traverse: all but last component are instance names
+    auto target_instance = instance_context;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+      target_instance = target_instance->LookupChild(path[i]);
+      if (!target_instance) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format("Unknown child instance: {}", path[i])));
+      }
+    }
+
+    // Last component is symbol name
+    const auto& symbol_name = path.back();
+    const auto* symbol = target_instance->LookupSymbol(symbol_name);
+    if (!symbol) {
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format("Unknown symbol: {}", symbol_name)));
+    }
+
+    // Write to target instance
+    if (!is_non_blocking) {
+      target_instance->Write(symbol, value);
+      effect.RecordVariableModification(symbol, target_instance);
+    } else {
+      effect.RecordNbaAction(
+          {.variable = symbol, .value = value, .instance = target_instance});
+    }
+  };
+
   auto eval_unary_op = [&](const lir::Operand& operand,
                            const std::function<RuntimeValue(RuntimeValue)>& op)
       -> InstructionResult {
@@ -397,18 +435,32 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kStoreVariable: {
-      const auto variable = instr.operands[0];
-      const auto value = get_temp(instr.operands[1]);
-      assert(variable.IsVariable());
-      store_variable(variable, value, false);
+      if (!instr.hierarchical_path.empty()) {
+        // Hierarchical store: path in hierarchical_path, value in operands[0]
+        const auto value = get_temp(instr.operands[0]);
+        store_hierarchical(instr.hierarchical_path, value, false);
+      } else {
+        // Regular store: variable in operands[0], value in operands[1]
+        const auto variable = instr.operands[0];
+        const auto value = get_temp(instr.operands[1]);
+        assert(variable.IsVariable());
+        store_variable(variable, value, false);
+      }
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
-      const auto variable = instr.operands[0];
-      const auto value = get_temp(instr.operands[1]);
-      assert(variable.IsVariable());
-      store_variable(variable, value, true);
+      if (!instr.hierarchical_path.empty()) {
+        // Hierarchical store: path in hierarchical_path, value in operands[0]
+        const auto value = get_temp(instr.operands[0]);
+        store_hierarchical(instr.hierarchical_path, value, true);
+      } else {
+        // Regular store: variable in operands[0], value in operands[1]
+        const auto variable = instr.operands[0];
+        const auto value = get_temp(instr.operands[1]);
+        assert(variable.IsVariable());
+        store_variable(variable, value, true);
+      }
       return InstructionResult::Continue();
     }
 

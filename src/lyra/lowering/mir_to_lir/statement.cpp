@@ -50,10 +50,12 @@ auto LowerStatement(
       auto result_value = LowerExpression(*expression, builder);
 
       if (target.IsHierarchical()) {
-        // Hierarchical assignment not yet supported in interpreter.
-        // Will be implemented in Phase 16.
-        throw std::runtime_error(
-            "Hierarchical assignment is not supported by the interpreter");
+        // Hierarchical assignment: child.signal = value
+        // Path format: ["instance", "symbol_name"] - traversed at runtime
+        auto instruction = Instruction::StoreHierarchical(
+            target.hierarchical_path, result_value, false);
+        builder.AddInstruction(std::move(instruction));
+        break;
       }
 
       if (target.IsElementSelect()) {
