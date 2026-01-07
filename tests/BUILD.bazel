@@ -215,3 +215,8 @@ sv_feature_test(
     name = "datatypes_math_tests",
     yaml = "sv_features/datatypes/math.yaml",
 )
+
+sv_feature_test(
+    name = "hierarchy_hierarchical_reads_tests",
+    yaml = "sv_features/hierarchy/hierarchical_reads.yaml",
+)
