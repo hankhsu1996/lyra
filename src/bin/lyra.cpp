@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -494,6 +495,11 @@ auto main(int argc, char* argv[]) -> int {
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("SystemVerilog simulator");
 
+  // Global option: change to directory before running command (like git -C)
+  program.add_argument("-C")
+      .help("Run as if lyra was started in <dir>")
+      .metavar("<dir>");
+
   // Subcommand: run
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Simulate design (requires lyra.toml)");
@@ -543,6 +549,19 @@ auto main(int argc, char* argv[]) -> int {
     lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, err.what()));
     std::cerr << program;
     return 1;
+  }
+
+  // Handle -C option: change directory before running command
+  if (auto dir = program.present("-C")) {
+    std::error_code ec;
+    fs::current_path(*dir, ec);
+    if (ec) {
+      lyra::PrintDiagnostic(
+          lyra::Diagnostic::Error(
+              {},
+              std::format("cannot change to '{}': {}", *dir, ec.message())));
+      return 1;
+    }
   }
 
   if (program.is_subcommand_used("run")) {

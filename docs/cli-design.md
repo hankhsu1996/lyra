@@ -60,6 +60,14 @@ out_dir = "out"                # Optional: default "out"
 
 All commands except `dump` require a `lyra.toml` file. The CLI searches the current directory and parent directories for the config file.
 
+### Global Options
+
+| Option     | Description                           |
+| ---------- | ------------------------------------- |
+| `-C <dir>` | Run as if lyra was started in `<dir>` |
+
+Example: `lyra -C path/to/project run`
+
 ### Output Structure (`lyra emit` → `out/`)
 
 ```
