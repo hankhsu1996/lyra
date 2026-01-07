@@ -1,0 +1,61 @@
+feature: conversion_functions
+description: Tests for SystemVerilog conversion system functions ($signed, $unsigned, etc.)
+
+cases:
+  - name: signed_cast_basic
+    sv: |
+      module Test;
+        logic [7:0] unsigned_val;
+        logic signed [7:0] signed_result;
+        initial begin
+          unsigned_val = 8'hFF;  // 255 unsigned
+          signed_result = $signed(unsigned_val);  // -1 signed
+        end
+      endmodule
+    expect:
+      variables:
+        signed_result: -1
+
+  - name: unsigned_cast_basic
+    sv: |
+      module Test;
+        logic signed [7:0] signed_val;
+        logic [7:0] unsigned_result;
+        initial begin
+          signed_val = -1;  // 0xFF in bits
+          unsigned_result = $unsigned(signed_val);  // 255 unsigned
+        end
+      endmodule
+    expect:
+      variables:
+        unsigned_result: 255
+
+  - name: signed_preserves_bits
+    sv: |
+      module Test;
+        logic [15:0] a;
+        int result;
+        initial begin
+          a = 16'h8000;  // 32768 unsigned, -32768 if signed
+          result = $signed(a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -32768
+
+  - name: signed_in_comparison
+    sv: |
+      module Test;
+        logic [7:0] a, b;
+        int result;
+        initial begin
+          a = 8'hFF;  // 255 unsigned, -1 if signed
+          b = 8'h01;  // 1
+          // Signed comparison: -1 > 1 is false
+          result = ($signed(a) > $signed(b)) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0

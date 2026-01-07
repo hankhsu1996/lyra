@@ -135,9 +135,9 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
 
 // Context for time formatting (%t specifier)
 struct TimeFormatContext {
-  const common::TimeFormatState& time_format;
-  int8_t module_unit_power;  // Module's timeunit (e.g., -9 for 1ns)
-  int8_t global_precision_power;
+  common::TimeFormatState time_format;
+  int8_t module_unit_power = 0;  // Module's timeunit (e.g., -9 for 1ns)
+  int8_t global_precision_power = 0;
 };
 
 // Parse SV format string and format arguments
@@ -967,7 +967,7 @@ auto RunInstruction(
         // All arguments are optional; use defaults if not provided
         auto& tf = simulation_context.time_format;
 
-        if (instr.operands.size() >= 1) {
+        if (!instr.operands.empty()) {
           tf.units = static_cast<int8_t>(get_temp(instr.operands[0]).AsInt64());
         }
         if (instr.operands.size() >= 2) {
@@ -1042,6 +1042,35 @@ auto RunInstruction(
         simulation_context.display_output << "Time scale of ($root) is "
                                           << unit_str << " / " << unit_str
                                           << "\n";
+        return InstructionResult::Continue();
+      }
+
+      // $signed, $unsigned: reinterpret signedness, preserving bit pattern
+      if (instr.system_call_name == "$signed") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(instr.operands.size() == 1);
+        const auto& src = get_temp(instr.operands[0]);
+        // $signed: reinterpret bits as signed, preserving bit width
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto result =
+            RuntimeValue::IntegralSigned(src.AsInt64(), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
+        return InstructionResult::Continue();
+      }
+
+      if (instr.system_call_name == "$unsigned") {
+        assert(instr.result.has_value());
+        assert(instr.result_type.has_value());
+        assert(instr.operands.size() == 1);
+        const auto& src = get_temp(instr.operands[0]);
+        // $unsigned: reinterpret bits as unsigned, preserving bit width
+        auto target_data =
+            std::get<common::IntegralData>(instr.result_type->data);
+        auto result = RuntimeValue::IntegralUnsigned(
+            static_cast<uint64_t>(src.AsInt64()), target_data.bit_width);
+        temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 

@@ -166,7 +166,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtime" || system_call.name == "$timeunit" ||
           system_call.name == "$timeprecision" ||
           system_call.name == "$timeunit_root" ||
-          system_call.name == "$timeprecision_root");
+          system_call.name == "$timeprecision_root" ||
+          system_call.name == "$signed" || system_call.name == "$unsigned");
 
       std::vector<TempRef> arguments;
       for (const auto& argument : system_call.arguments) {
@@ -192,7 +193,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           system_call.name == "$realtime" || system_call.name == "$timeunit" ||
           system_call.name == "$timeprecision" ||
           system_call.name == "$timeunit_root" ||
-          system_call.name == "$timeprecision_root";
+          system_call.name == "$timeprecision_root" ||
+          system_call.name == "$signed" || system_call.name == "$unsigned";
 
       auto result = builder.AllocateTemp("sys", system_call.type);
 

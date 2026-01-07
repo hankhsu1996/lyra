@@ -289,12 +289,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
         // System tasks (no return value): $finish, $stop, $exit, $display,
         //                                 $timeformat, $printtimescale
         // System functions (return value): $time, $stime, $realtime,
-        //                                  $timeunit, $timeprecision
+        //                                  $timeunit, $timeprecision,
+        //                                  $signed, $unsigned
         if (name != "$finish" && name != "$stop" && name != "$exit" &&
             name != "$display" && name != "$timeformat" &&
             name != "$printtimescale" && name != "$time" && name != "$stime" &&
             name != "$realtime" && name != "$timeunit" &&
-            name != "$timeprecision") {
+            name != "$timeprecision" && name != "$signed" &&
+            name != "$unsigned") {
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,

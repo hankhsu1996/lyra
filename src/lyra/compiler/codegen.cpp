@@ -1143,6 +1143,11 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           syscall.name == "$timeunit_root" ||
           syscall.name == "$timeprecision_root") {
         out_ << "lyra::sdk::global_precision_power";
+      } else if (syscall.name == "$signed" || syscall.name == "$unsigned") {
+        // Cast to target signedness, preserving bit pattern
+        out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
+        EmitExpression(*syscall.arguments[0], kPrecLowest);
+        out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
