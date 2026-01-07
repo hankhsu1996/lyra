@@ -227,6 +227,7 @@ auto ToCppOperator(mir::BinaryOperator op) -> const char* {
 auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.str("");
   indent_ = 0;
+  port_symbols_.clear();
 
   // Store timescale info for delay scaling
   timescale_ = module.timescale;
@@ -236,7 +237,15 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
     global_precision_power_ = common::TimeScale::kDefaultPrecisionPower;
   }
 
-  EmitHeader();
+  // Populate port symbols for identifier emission (output/inout ports only)
+  // Input ports are public variables without underscore suffix
+  for (const auto& port : module.ports) {
+    if (port.direction != mir::PortDirection::kInput) {
+      port_symbols_.insert(port.variable.symbol);
+    }
+  }
+
+  EmitHeader(module.submodules);
   EmitClass(module);
 
   return out_.str();
@@ -249,12 +258,23 @@ auto Codegen::DelayMultiplier() const -> uint64_t {
   return common::TimeScale::Default().DelayMultiplier(global_precision_power_);
 }
 
-void Codegen::EmitHeader() {
+void Codegen::EmitHeader(
+    const std::vector<mir::SubmoduleInstance>& submodules) {
   Line("#include <array>");
   Line("#include <cmath>");
   Line("#include <iostream>");
   Line("#include <print>");
   Line("#include <lyra/sdk/sdk.hpp>");
+
+  // Include headers for submodule types
+  std::unordered_set<std::string> included;
+  for (const auto& submod : submodules) {
+    if (!included.contains(submod.module_type)) {
+      Line("#include \"" + submod.module_type + ".hpp\"");
+      included.insert(submod.module_type);
+    }
+  }
+
   Line("");
 }
 
@@ -301,11 +321,69 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line(" public:");
   indent_++;
 
-  // Constructor
-  Line(module.name + "() : Module(\"" + module.name + "\") {");
+  // Input port member variables (public, for parent to drive)
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      std::string type_str = ToCppType(port.variable.type);
+      Line(type_str + " " + std::string(port.variable.symbol->name) + ";");
+    }
+  }
+
+  // Constructor with port parameters (output/inout ports only)
+  Indent();
+  out_ << module.name << "(";
+
+  // Generate port parameters (output/inout ports only)
+  bool first = true;
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports are public variables, not constructor parameters
+    }
+    if (!first) {
+      out_ << ", ";
+    }
+    first = false;
+    std::string type_str = ToCppType(port.variable.type);
+    out_ << type_str << "& " << port.variable.symbol->name;
+  }
+
+  out_ << ")\n";
+  indent_++;
+  Indent();
+  out_ << ": Module(\"" << module.name << "\")";
+
+  // Port initializers (output/inout ports only)
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports are public variables, not reference members
+    }
+    out_ << ", " << port.variable.symbol->name << "_("
+         << port.variable.symbol->name << ")";
+  }
+
+  // Submodule initializers - pass output port bindings as references
+  for (const auto& submod : module.submodules) {
+    out_ << ", " << submod.instance_name << "_(";
+    bool first = true;
+    for (const auto& binding : submod.output_bindings) {
+      if (!first) {
+        out_ << ", ";
+      }
+      first = false;
+      EmitExpression(*binding.signal);
+    }
+    out_ << ")";
+  }
+
+  out_ << " {\n";
+  indent_--;
   indent_++;
   for (const auto& process : module.processes) {
     Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
+  }
+  // Register child modules for hierarchical execution
+  for (const auto& submod : module.submodules) {
+    Line("RegisterChild(&" + submod.instance_name + "_);");
   }
   indent_--;
   Line("}");
@@ -319,6 +397,22 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("");
   // Member variables
   EmitVariables(module.variables);
+
+  // Output/inout port reference members (must be before submodules for
+  // initialization order - C++ initializes members in declaration order)
+  for (const auto& port : module.ports) {
+    if (port.direction == mir::PortDirection::kInput) {
+      continue;  // Input ports declared as public variables above
+    }
+    std::string type_str = ToCppType(port.variable.type);
+    Line(type_str + "& " + std::string(port.variable.symbol->name) + "_;");
+  }
+
+  // Submodule members (after port references so they can use them)
+  for (const auto& submod : module.submodules) {
+    Line(submod.module_type + " " + submod.instance_name + "_;");
+  }
+
   indent_--;
   Line("};");
 }
@@ -713,6 +807,15 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         break;
       }
 
+      // Helper to get variable name with underscore suffix for ports
+      auto get_var_name = [this](const slang::ast::Symbol* symbol) {
+        std::string name(symbol->name);
+        if (port_symbols_.contains(symbol)) {
+          name += "_";
+        }
+        return name;
+      };
+
       // Helper to generate trigger expression based on edge kind
       auto trigger_expr = [](const std::string& var_name,
                              common::EdgeKind kind) -> std::string {
@@ -729,9 +832,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       };
 
       if (wait.triggers.size() == 1) {
-        // Single trigger: co_await Posedge(&clk);
+        // Single trigger: co_await Posedge(&clk_);
         const auto& trigger = wait.triggers[0];
-        std::string var_name(trigger.variable->name);
+        std::string var_name = get_var_name(trigger.variable);
         Line("co_await " + trigger_expr(var_name, trigger.edge_kind) + ";");
       } else {
         // Check if all triggers are AnyChange
@@ -748,11 +851,11 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             if (i > 0) {
               out_ << ", ";
             }
-            out_ << "&" << wait.triggers[i].variable->name;
+            out_ << "&" << get_var_name(wait.triggers[i].variable);
           }
           out_ << ");\n";
         } else {
-          // Mixed triggers: co_await AnyOf(Posedge(&clk), Negedge(&rst));
+          // Mixed triggers: co_await AnyOf(Posedge(&clk_), Negedge(&rst_));
           Indent();
           out_ << "co_await lyra::sdk::AnyOf(";
           for (size_t i = 0; i < wait.triggers.size(); ++i) {
@@ -760,7 +863,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               out_ << ", ";
             }
             const auto& trigger = wait.triggers[i];
-            std::string var_name(trigger.variable->name);
+            std::string var_name = get_var_name(trigger.variable);
             out_ << trigger_expr(var_name, trigger.edge_kind);
           }
           out_ << ");\n";
@@ -844,6 +947,10 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kIdentifier: {
       const auto& ident = mir::As<mir::IdentifierExpression>(expr);
       out_ << ident.symbol->name;
+      // Append underscore for port reference members (Google style)
+      if (port_symbols_.contains(ident.symbol)) {
+        out_ << "_";
+      }
       break;
     }
     case mir::Expression::Kind::kBinary: {
@@ -892,7 +999,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       if (assign.is_non_blocking) {
         // TODO(hankhsu): Support NBA for array elements
-        out_ << "this->ScheduleNba(&" << assign.target.symbol->name << ", ";
+        out_ << "this->ScheduleNba(&" << assign.target.symbol->name;
+        // Append underscore for port reference members (Google style)
+        if (port_symbols_.contains(assign.target.symbol)) {
+          out_ << "_";
+        }
+        out_ << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
@@ -1018,6 +1130,11 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       EmitSliceShift(*indexed.start, lower, width_offset);
 
       out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
+      break;
+    }
+    case mir::Expression::Kind::kHierarchicalReference: {
+      const auto& hier = mir::As<mir::HierarchicalReferenceExpression>(expr);
+      EmitHierarchicalPath(hier.path);
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -1194,7 +1311,16 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
 }
 
 void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
+  if (target.IsHierarchical()) {
+    EmitHierarchicalPath(target.hierarchical_path);
+    return;
+  }
+
   out_ << target.symbol->name;
+  // Append underscore for port reference members (Google style)
+  if (port_symbols_.contains(target.symbol)) {
+    out_ << "_";
+  }
   if (target.IsElementSelect()) {
     // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
     out_ << "[static_cast<size_t>(";
@@ -1234,6 +1360,21 @@ void Codegen::EmitSliceShift(
     out_ << " - " << lower_bound;
   }
   out_ << ")";
+}
+
+void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
+  // Emit hierarchical path: ["child", "signal"] -> child_.signal
+  // Instance names (all but last) get _ suffix, variable name (last) does not
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (i > 0) {
+      out_ << ".";
+    }
+    out_ << path[i];
+    // Only instance names (not the final variable) get _ suffix
+    if (i < path.size() - 1) {
+      out_ << "_";
+    }
+  }
 }
 
 void Codegen::Indent() {

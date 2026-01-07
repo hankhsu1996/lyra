@@ -1,0 +1,98 @@
+feature: hierarchy_port_expressions
+description: Tests port connections with expressions
+
+# Port expressions (like `.a(x + y)`) are handled via implicit always_comb
+# processes that drive the child port using hierarchical assignment.
+# Both codegen and interpreter support this via AssignStatement with
+# hierarchical targets (e.g., `child.a = x + y`).
+
+cases:
+  - name: input_port_expression_addition
+    description: Input port connected to addition expression
+    sv: |
+      module Adder(input int a, output int out);
+        always_comb out = a + 1;
+      endmodule
+
+      module Top;
+        int x, y, result;
+        Adder add(.a(x + y), .out(result));
+
+        initial begin
+          x = 3;
+          y = 5;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 9
+      time: 1
+
+  - name: input_port_expression_multiply
+    description: Input port connected to multiplication expression
+    sv: |
+      module Doubler(input int val, output int doubled);
+        always_comb doubled = val * 2;
+      endmodule
+
+      module Top;
+        int a, b, result;
+        Doubler d(.val(a + b), .doubled(result));
+
+        initial begin
+          a = 4;
+          b = 3;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 14
+      time: 1
+
+  - name: input_port_expression_ternary
+    description: Input port connected to ternary expression
+    sv: |
+      module Passthrough(input int val, output int out);
+        always_comb out = val;
+      endmodule
+
+      module Top;
+        int sel, a, b, result;
+        Passthrough p(.val(sel ? a : b), .out(result));
+
+        initial begin
+          sel = 1;
+          a = 42;
+          b = 0;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+      time: 1
+
+  - name: multiple_input_expressions
+    description: Module with multiple input port expressions
+    sv: |
+      module TwoInputs(input int x, input int y, output int sum);
+        always_comb sum = x + y;
+      endmodule
+
+      module Top;
+        int a, b, c, result;
+        TwoInputs ti(.x(a + 1), .y(b + c), .sum(result));
+
+        initial begin
+          a = 5;
+          b = 3;
+          c = 2;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
+      time: 1

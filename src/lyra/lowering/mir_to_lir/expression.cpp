@@ -77,6 +77,15 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       assert(assignment.value);
       auto value = LowerExpression(*assignment.value, builder);
 
+      if (assignment.target.IsHierarchical()) {
+        // Hierarchical assignment: child.signal = value
+        auto instruction = Instruction::StoreHierarchical(
+            assignment.target.hierarchical_path, value,
+            assignment.is_non_blocking);
+        builder.AddInstruction(std::move(instruction));
+        return value;
+      }
+
       if (assignment.target.IsElementSelect()) {
         auto index = LowerExpression(*assignment.target.element_index, builder);
 
@@ -291,6 +300,14 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           Instruction::LoadPackedSlice(
               result, value, lsb_temp, expression.type));
       return result;
+    }
+
+    case mir::Expression::Kind::kHierarchicalReference: {
+      // HierarchicalReferenceExpression is not yet supported by the
+      // interpreter. Will be implemented in Phase 16.
+      throw std::runtime_error(
+          "HierarchicalReferenceExpression is not supported by the "
+          "interpreter");
     }
   }
 }

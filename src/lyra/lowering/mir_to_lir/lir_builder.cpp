@@ -40,6 +40,18 @@ void LirBuilder::AddModuleVariable(const common::Variable& variable) {
   module_->variables.push_back(variable);
 }
 
+void LirBuilder::AddPort(
+    const common::Variable& variable, lir::PortDirection direction) {
+  assert(module_);
+  module_->ports.push_back(
+      lir::Port{.variable = variable, .direction = direction});
+}
+
+void LirBuilder::AddSubmodule(const lir::SubmoduleInstance& submodule) {
+  assert(module_);
+  module_->submodules.push_back(submodule);
+}
+
 void LirBuilder::BeginProcess(const std::string& name) {
   assert(!current_process_);
   current_process_ = std::make_shared<lir::Process>();

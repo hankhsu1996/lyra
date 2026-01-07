@@ -2,8 +2,22 @@
 
 Current SystemVerilog features not yet supported.
 
+## Nets
+
+Lyra uses a variable-only model (no `wire`/`net` types):
+
+- No net types (`wire`, `tri`, etc.)
+- No multi-driver resolution / strength
+- `inout` ports not supported (require nets)
+
+## Modules
+
+- Parameterized modules (`parameter`, `localparam`, `#(...)`)
+- Generate blocks (`generate`, `genvar`)
+
 ## Statements
 
+- `case inside` - pattern matching
 - `foreach` - array iteration
 - `return` - function returns
 - `wait(expr)` - wait statements

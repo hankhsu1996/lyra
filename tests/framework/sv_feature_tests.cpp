@@ -53,6 +53,11 @@ class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 TEST_P(SvFeatureTest, Interpreter) {
   const auto& tc = GetParam();
 
+  // Skip interpreter test if flag is set
+  if (tc.skip_interpreter) {
+    GTEST_SKIP() << "Interpreter skipped";
+  }
+
   interpreter::InterpreterResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
@@ -77,6 +82,11 @@ TEST_P(SvFeatureTest, Interpreter) {
 
 TEST_P(SvFeatureTest, CppCodegen) {
   const auto& tc = GetParam();
+
+  // Skip codegen test if flag is set (e.g., for hierarchy tests)
+  if (tc.skip_codegen) {
+    GTEST_SKIP() << "Codegen skipped (use CLI for hierarchical modules)";
+  }
 
   std::vector<std::string> vars;
   vars.reserve(tc.expected_values.size());

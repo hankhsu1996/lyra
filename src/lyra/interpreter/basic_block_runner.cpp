@@ -18,14 +18,16 @@ using ResultKind = InstructionResult::Kind;
 auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
     SimulationContext& simulation_context, ProcessContext& process_context,
-    ProcessEffect& effect) -> BasicBlockResult {
+    ProcessEffect& effect,
+    const std::shared_ptr<InstanceContext>& instance_context)
+    -> BasicBlockResult {
   const auto& instructions = block.instructions;
 
   for (std::size_t i = start_instruction_index; i < instructions.size(); ++i) {
     const auto& instr = instructions[i];
 
-    auto instruction_result =
-        RunInstruction(instr, simulation_context, process_context, effect);
+    auto instruction_result = RunInstruction(
+        instr, simulation_context, process_context, effect, instance_context);
 
     switch (instruction_result.kind) {
       case ResultKind::kComplete:

@@ -69,6 +69,12 @@ class SensitivityCollector : public mir::MirVisitor {
     // width is a constant integer, not an expression
   }
 
+  void Visit(const mir::HierarchicalReferenceExpression& /*unused*/) override {
+    // TODO(hankhsu): When hierarchical reads are supported (Future phase),
+    // this should add the referenced signal to the sensitivity list.
+    // Currently HierarchicalReference is only used for LHS (port driving).
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);
@@ -163,11 +169,19 @@ class SensitivityCollector : public mir::MirVisitor {
   std::unordered_set<SymbolRef> variable_names_;
 };
 
-// Entry point
+// Entry point for statements
 inline auto CollectSensitivityList(const mir::Statement& statement)
     -> std::unordered_set<SymbolRef> {
   SensitivityCollector collector;
   statement.Accept(collector);
+  return std::move(collector).TakeVariableNames();
+}
+
+// Entry point for expressions
+inline auto CollectSensitivityList(const mir::Expression& expression)
+    -> std::unordered_set<SymbolRef> {
+  SensitivityCollector collector;
+  expression.Accept(collector);
   return std::move(collector).TakeVariableNames();
 }
 

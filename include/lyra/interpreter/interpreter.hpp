@@ -21,17 +21,18 @@ class Interpreter {
   Interpreter() = default;
 
   static auto RunFromSource(
-      const std::string& code, const InterpreterOptions& options = {})
-      -> InterpreterResult;
+      const std::string& code, const std::string& top = "",
+      const InterpreterOptions& options = {}) -> InterpreterResult;
 
   static auto RunFromFiles(
-      const std::vector<std::string>& paths,
+      const std::vector<std::string>& paths, const std::string& top = "",
       const InterpreterOptions& options = {}) -> InterpreterResult;
 
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,
-      const InterpreterOptions& options) -> InterpreterResult;
+      const std::string& top, const InterpreterOptions& options)
+      -> InterpreterResult;
 };
 
 }  // namespace lyra::interpreter

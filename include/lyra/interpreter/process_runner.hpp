@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_result.hpp"
@@ -11,9 +12,12 @@
 namespace lyra::interpreter {
 
 // Execute an entire process, or until a delay/finish
+// instance_context can be nullptr for flat (non-hierarchical) modules
 auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect) -> ProcessResult;
+    ProcessContext& process_context, ProcessEffect& effect,
+    const std::shared_ptr<InstanceContext>& instance_context = nullptr)
+    -> ProcessResult;
 
 }  // namespace lyra::interpreter

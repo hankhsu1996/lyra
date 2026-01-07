@@ -1,0 +1,33 @@
+feature: hierarchy_local_variables
+description: Tests for child module local (non-port) variables
+
+cases:
+  - name: child_module_local_variable
+    description: |
+      Verifies that child module local variables are properly initialized
+      and can be used in processes.
+    sv: |
+      module Counter(input bit clk, output int count);
+        int internal;  // Local variable (not a port)
+        always_ff @(posedge clk) begin
+          internal = internal + 1;
+          count = internal;
+        end
+      endmodule
+
+      module Top;
+        bit clk;
+        int c;
+        Counter counter(.clk(clk), .count(c));
+
+        initial begin
+          clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 2
+      time: 3

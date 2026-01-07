@@ -1,7 +1,10 @@
 #include "lyra/interpreter/simulation_runner.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <queue>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -16,6 +19,7 @@
 
 namespace lyra::interpreter {
 
+// Single module constructor (backwards compatibility)
 SimulationRunner::SimulationRunner(
     const lir::Module& module, SimulationContext& context)
     : delay_queue_(),
@@ -23,7 +27,8 @@ SimulationRunner::SimulationRunner(
       inactive_queue_(),
       nba_queue_(),
       postponed_queue_(),
-      module_(module),
+      top_module_(module),
+      module_map_(),
       simulation_context_(context),
       trigger_manager_(context) {
   // Initialize timescale for $time/$stime/$realtime scaling
@@ -32,12 +37,39 @@ SimulationRunner::SimulationRunner(
       module.global_precision_power;
   // Initialize module name for $printtimescale
   simulation_context_.get().module_name = module.name;
+  // Add the single module to the map
+  module_map_.emplace(module.name, std::cref(module));
+}
+
+// Multi-module constructor (hierarchical designs)
+SimulationRunner::SimulationRunner(
+    const std::vector<std::unique_ptr<lir::Module>>& modules,
+    SimulationContext& context)
+    : delay_queue_(),
+      active_queue_(),
+      inactive_queue_(),
+      nba_queue_(),
+      postponed_queue_(),
+      top_module_(
+          *modules.back()),  // Last module is the top (dependency order)
+      module_map_(),
+      simulation_context_(context),
+      trigger_manager_(context) {
+  // Initialize timescale for $time/$stime/$realtime scaling
+  const auto& top = *modules.back();
+  simulation_context_.get().timescale = top.timescale;
+  simulation_context_.get().global_precision_power = top.global_precision_power;
+  // Initialize module name for $printtimescale
+  simulation_context_.get().module_name = top.name;
+  // Build module map for lookup
+  for (const auto& module : modules) {
+    module_map_.emplace(module->name, std::cref(*module));
+  }
 }
 
 void SimulationRunner::Run() {
-  // Initialize simulation state
-  InitializeVariables();
-  ScheduleProcesses();
+  // Elaborate hierarchy: initialize variables and schedule processes
+  ElaborateHierarchy();
 
   // Main simulation loop: continue until all queues are empty
   while (!active_queue_.empty() || !delay_queue_.empty()) {
@@ -145,13 +177,21 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
       break;
 
     case RegionType::kNba: {
-      std::vector<SymbolRef> modified_variables;
+      std::vector<ModifiedVariable> modified_variables;
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
-        simulation_context_.get().variable_table.Write(
-            action.variable, action.value);
-        modified_variables.push_back(action.variable);
+        if (action.instance != nullptr &&
+            action.instance->Exists(action.variable)) {
+          // Per-instance storage
+          action.instance->Write(action.variable, action.value);
+        } else {
+          // Global storage
+          simulation_context_.get().variable_table.Write(
+              action.variable, action.value);
+        }
+        modified_variables.push_back(
+            {.symbol = action.variable, .instance = action.instance});
         nba_queue_.pop();
       }
 
@@ -173,15 +213,136 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
   }
 }
 
-void SimulationRunner::InitializeVariables() {
-  for (const auto& variable : module_.get().variables) {
-    simulation_context_.get().variable_table.InitializeVariable(variable);
+void SimulationRunner::InitializeModuleVariables(
+    const lir::Module& module,
+    const std::shared_ptr<InstanceContext>& instance) {
+  // Initialize module variables in the instance's storage
+  for (const auto& variable : module.variables) {
+    instance->InitializeVariable(variable);
+  }
+
+  // Initialize ports in the instance's storage (for input ports that need
+  // storage)
+  for (const auto& port : module.ports) {
+    instance->InitializeVariable(port.variable);
   }
 }
 
-void SimulationRunner::ScheduleProcesses() {
-  for (const auto& process : module_.get().processes) {
-    active_queue_.push({process, 0, 0});
+void SimulationRunner::ScheduleModuleProcesses(
+    const lir::Module& module,
+    const std::shared_ptr<InstanceContext>& instance) {
+  for (const auto& process : module.processes) {
+    active_queue_.push(
+        {.process = process,
+         .instance = instance,
+         .block_index = 0,
+         .instruction_index = 0});
+  }
+}
+
+auto SimulationRunner::LookupModule(const std::string& name) const
+    -> const lir::Module* {
+  auto it = module_map_.find(name);
+  if (it == module_map_.end()) {
+    return nullptr;
+  }
+  return &it->second.get();
+}
+
+void SimulationRunner::PopulateSymbolLookup(
+    const lir::Module& module,
+    const std::shared_ptr<InstanceContext>& instance) {
+  for (const auto& var : module.variables) {
+    instance->symbol_by_name[std::string(var.symbol->name)] = var.symbol;
+  }
+  for (const auto& port : module.ports) {
+    instance->symbol_by_name[std::string(port.variable.symbol->name)] =
+        port.variable.symbol;
+  }
+}
+
+void SimulationRunner::ElaborateHierarchy() {
+  const auto& top = top_module_.get();
+
+  // Create top module instance context (no port bindings)
+  auto top_instance = std::make_shared<InstanceContext>(
+      top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
+
+  // Build symbol lookup map for hierarchical access
+  PopulateSymbolLookup(top, top_instance);
+
+  // Initialize top module variables in per-instance storage
+  InitializeModuleVariables(top, top_instance);
+
+  // Schedule top module's processes
+  ScheduleModuleProcesses(top, top_instance);
+
+  // Store top instance for later access
+  top_instance_ = top_instance;
+
+  // Recursively elaborate submodules
+  ElaborateSubmodules(top, top.name, top_instance);
+}
+
+void SimulationRunner::ElaborateSubmodules(
+    const lir::Module& parent, const std::string& parent_path,
+    const std::shared_ptr<InstanceContext>& parent_instance) {
+  for (const auto& submod : parent.submodules) {
+    const auto* child = LookupModule(submod.module_type);
+    if (child == nullptr) {
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format("module '{}' not found", submod.module_type)));
+    }
+
+    std::string instance_path = parent_path + "." + submod.instance_name;
+
+    // Build port bindings for this instance
+    // Output port bindings: child writes → parent signal
+    // (Input ports use driver processes, no bindings needed)
+    std::unordered_map<common::SymbolRef, PortBinding> bindings;
+    for (const auto& output_binding : submod.output_bindings) {
+      // Find the port in child module
+      const lir::Port* port_ptr = nullptr;
+      for (const auto& port : child->ports) {
+        if (std::string(port.variable.symbol->name) ==
+            output_binding.port_name) {
+          port_ptr = &port;
+          break;
+        }
+      }
+
+      if (port_ptr == nullptr) {
+        continue;
+      }
+
+      // Resolve the signal through parent's bindings (for nested hierarchy)
+      // If parent has a binding, follow it; otherwise use parent instance
+      auto [target_symbol, target_instance] =
+          parent_instance->ResolveBinding(output_binding.signal);
+      bindings[port_ptr->variable.symbol] = PortBinding{
+          .target_symbol = target_symbol,
+          .target_instance =
+              target_instance ? target_instance : parent_instance};
+    }
+
+    auto child_instance =
+        std::make_shared<InstanceContext>(instance_path, std::move(bindings));
+
+    // Store child in parent for hierarchical access
+    parent_instance->children[submod.instance_name] = child_instance;
+
+    // Build symbol lookup map for hierarchical access
+    PopulateSymbolLookup(*child, child_instance);
+
+    // Initialize child module's variables in per-instance storage
+    InitializeModuleVariables(*child, child_instance);
+
+    // Schedule child module's processes with this instance context
+    ScheduleModuleProcesses(*child, child_instance);
+
+    // Recursively elaborate nested submodules
+    ElaborateSubmodules(*child, instance_path, child_instance);
   }
 }
 
@@ -190,6 +351,7 @@ void SimulationRunner::ExecuteOneEvent() {
   active_queue_.pop();
 
   auto& process = event.process;
+  auto& instance = event.instance;
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
@@ -203,7 +365,7 @@ void SimulationRunner::ExecuteOneEvent() {
 
   auto result = RunProcess(
       process, block_index, instruction_index, simulation_context_.get(),
-      process_context, process_effect);
+      process_context, process_effect, instance);
 
   simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", process->name, result.Summary()));
@@ -221,19 +383,20 @@ void SimulationRunner::ExecuteOneEvent() {
     case ProcessResult::Kind::kDelay: {
       auto delay_time =
           simulation_context_.get().current_time + result.delay_amount;
-      ScheduledEvent event{
+      ScheduledEvent delayed_event{
           .process = process,
+          .instance = instance,
           .block_index = result.block_index,
           .instruction_index = result.resume_instruction_index};
-      delay_queue_[delay_time].push_back(std::move(event));
+      delay_queue_[delay_time].push_back(std::move(delayed_event));
       break;
     }
 
     case ProcessResult::Kind::kWaitEvent: {
       for (const auto& trigger : result.triggers) {
         trigger_manager_.RegisterWaitingProcess(
-            process, trigger.variable, trigger.edge_kind, result.block_index,
-            result.resume_instruction_index);
+            process, instance, trigger.variable, trigger.edge_kind,
+            result.block_index, result.resume_instruction_index);
       }
       break;
     }
@@ -252,7 +415,7 @@ void SimulationRunner::ExecuteOneEvent() {
 }
 
 void SimulationRunner::WakeWaitingProcesses(
-    const std::vector<SymbolRef>& modified_variables) {
+    const std::vector<ModifiedVariable>& modified_variables) {
   // Delegate to trigger manager
   auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 

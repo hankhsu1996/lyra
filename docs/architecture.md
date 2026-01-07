@@ -93,11 +93,14 @@ include/lyra/
 
 - **Diagnostic** (`common/diagnostic.hpp`): Error reporting with source locations. Uses `std::expected<T, Diagnostic>` (aliased as `Result<T>`) for error propagation. Produces colorful terminal output with file:line:col and source context.
 
-Deprecated (legacy interpreter path):
+Alternative execution path (interpreter):
 
-- `lir/` - linearized IR, not needed for C++ backend
-- `lowering/mir_to_lir/` - LIR transformation
-- `interpreter/` - replaced by generated C++ + SDK
+- `lir/` - linearized IR for interpretation
+- `lowering/mir_to_lir/` - MIR to LIR transformation
+- `interpreter/` - direct execution without C++ compilation
+
+The interpreter (`lyra run --interpret`) is useful for development and debugging.
+It supports hierarchical modules via instance contexts (see `docs/interpreter-hierarchy.md`).
 
 ## Data Flow
 

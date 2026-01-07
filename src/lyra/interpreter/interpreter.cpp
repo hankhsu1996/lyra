@@ -24,49 +24,57 @@ using lyra::lowering::ast_to_mir::AstToMir;
 using lyra::lowering::mir_to_lir::MirToLir;
 
 auto Interpreter::RunFromSource(
-    const std::string& code, const InterpreterOptions& options)
-    -> InterpreterResult {
+    const std::string& code, const std::string& top,
+    const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
-  return RunWithCompilation(std::move(compilation), options);
+  return RunWithCompilation(std::move(compilation), top, options);
 }
 
 auto Interpreter::RunFromFiles(
-    const std::vector<std::string>& paths, const InterpreterOptions& options)
-    -> InterpreterResult {
+    const std::vector<std::string>& paths, const std::string& top,
+    const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
-  return RunWithCompilation(std::move(compilation), options);
+  return RunWithCompilation(std::move(compilation), top, options);
 }
 
 auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
-    const InterpreterOptions& options) -> InterpreterResult {
+    const std::string& top, const InterpreterOptions& options)
+    -> InterpreterResult {
   const auto& root = compilation->getRoot();
 
-  // Empty top = all modules; test API expects single module
-  auto modules = AstToMir(root, "");
-  if (modules.size() > 1) {
-    throw DiagnosticException(
-        Diagnostic::Error(
-            {}, "multiple modules found; use CLI with lyra.toml"));
+  // Get modules from AST. If top is specified, returns hierarchy in order.
+  // If top is empty, returns all modules (for backwards compatibility).
+  auto modules = AstToMir(root, top);
+
+  // Lower all modules to LIR
+  std::vector<std::unique_ptr<lir::Module>> lir_modules;
+  lir_modules.reserve(modules.size());
+  for (const auto& mir : modules) {
+    lir_modules.push_back(MirToLir(*mir));
   }
-  auto lir = MirToLir(*modules.front());
 
   if (options.dump_lir) {
-    std::cout << "[ Dumped LIR ]\n"
-              << lir->ToString(common::FormatMode::kContextual) << std::endl;
+    std::cout << "[ Dumped LIR - " << lir_modules.size() << " modules ]\n";
+    for (const auto& lir : lir_modules) {
+      std::cout << lir->ToString(common::FormatMode::kContextual) << "\n"
+                << std::endl;
+    }
   }
 
   auto context = std::make_unique<SimulationContext>();
 
-  SimulationRunner runner(*lir, *context);
+  // Use multi-module constructor for hierarchical support
+  SimulationRunner runner(lir_modules, *context);
   runner.Run();
 
   return InterpreterResult{
       .compilation = std::move(compilation),
       .context = std::move(context),
-      .lir_context = lir->context};
+      .lir_context = lir_modules.back()->context,  // Last is top module
+      .top_instance = runner.GetTopInstance()};
 }
 
 }  // namespace lyra::interpreter

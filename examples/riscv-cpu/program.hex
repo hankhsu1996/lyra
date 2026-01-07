@@ -1,0 +1,10 @@
+// RISC-V Program: Sum of 1 to 10
+// Result should be 55 in x3
+00000093  // addi x1, x0, 0      (sum = 0)
+00100113  // addi x2, x0, 1      (i = 1)
+00b00213  // addi x4, x0, 11     (limit = 11)
+002080b3  // add  x1, x1, x2     (sum += i)
+00110113  // addi x2, x2, 1      (i++)
+fe411ce3  // bne  x2, x4, -8     (if i != 11 goto loop)
+000081b3  // add  x3, x1, x0     (x3 = sum)
+0000006f  // jal  x0, 0          (halt)

@@ -15,10 +15,6 @@ namespace lyra::sdk {
 class Scheduler;
 class Module;
 
-// Thread-local pointer to the current module for NBA access
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-inline thread_local Module* current_module = nullptr;
-
 // Thread-local simulation termination flag (set by $finish, $stop, $exit)
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 inline thread_local bool simulation_finished = false;
@@ -124,11 +120,23 @@ class Module {
     nba_queue_.clear();
   }
 
+  // Collect all modules in hierarchy (self + all descendants)
+  void CollectAllModules(std::vector<Module*>& all_modules) {
+    all_modules.push_back(this);
+    for (auto* child : child_modules_) {
+      child->CollectAllModules(all_modules);
+    }
+  }
+
  protected:
   template <typename T>
   void RegisterProcess(Task (T::*method)()) {
     processes_.push_back(
         [this, method]() { return (static_cast<T*>(this)->*method)(); });
+  }
+
+  void RegisterChild(Module* child) {
+    child_modules_.push_back(child);
   }
 
  private:
@@ -137,6 +145,7 @@ class Module {
   std::string name_;
   std::vector<std::function<Task()>> processes_;
   std::vector<std::function<void()>> nba_queue_;
+  std::vector<Module*> child_modules_;
 };
 
 }  // namespace lyra::sdk

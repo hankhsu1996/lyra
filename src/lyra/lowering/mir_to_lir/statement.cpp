@@ -49,6 +49,15 @@ auto LowerStatement(
       // Lower the expression and get its result value
       auto result_value = LowerExpression(*expression, builder);
 
+      if (target.IsHierarchical()) {
+        // Hierarchical assignment: child.signal = value
+        // Path format: ["instance", "symbol_name"] - traversed at runtime
+        auto instruction = Instruction::StoreHierarchical(
+            target.hierarchical_path, result_value, false);
+        builder.AddInstruction(std::move(instruction));
+        break;
+      }
+
       if (target.IsElementSelect()) {
         auto index = LowerExpression(*target.element_index, builder);
 

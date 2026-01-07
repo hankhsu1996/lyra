@@ -1,0 +1,26 @@
+feature: hierarchy_nested
+description: Tests 3-level nested hierarchy (Top -> Middle -> Inner)
+
+cases:
+  - name: three_level_signal_propagation
+    description: Signal flows through three levels of hierarchy
+    sv: |
+      module Inner(input int in_val, output int out_val);
+        always_comb out_val = in_val + 1;
+      endmodule
+
+      module Middle(input int in_val, output int out_val);
+        Inner inner(.in_val(in_val), .out_val(out_val));
+      endmodule
+
+      module Top;
+        int sig = 5;
+        int result;
+        Middle middle(.in_val(sig), .out_val(result));
+
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        result: 6
+      time: 1

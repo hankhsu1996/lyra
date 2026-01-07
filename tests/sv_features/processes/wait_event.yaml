@@ -204,3 +204,47 @@ cases:
       variables:
         seen: 1
       time: 3
+
+  - name: posedge_or_negedge_trigger_first_edge
+    description: |
+      Test that @(posedge clk or negedge rst) triggers on posedge clk.
+      Regression test for edge kind overwrite bug where wait_set_ key
+      didn't include variable, causing last edge kind to overwrite previous.
+    sv: |
+      module Test;
+        bit clk, rst;
+        int seen;
+        initial begin
+          clk = 0;
+          rst = 1;
+          @(posedge clk or negedge rst);
+          seen = 1;
+        end
+
+        initial #5 clk = 1;
+      endmodule
+    expect:
+      variables:
+        seen: 1
+      time: 5
+
+  - name: posedge_or_negedge_trigger_second_edge
+    description: |
+      Test that @(posedge clk or negedge rst) triggers on negedge rst.
+    sv: |
+      module Test;
+        bit clk, rst;
+        int seen;
+        initial begin
+          clk = 0;
+          rst = 1;
+          @(posedge clk or negedge rst);
+          seen = 1;
+        end
+
+        initial #5 rst = 0;
+      endmodule
+    expect:
+      variables:
+        seen: 1
+      time: 5

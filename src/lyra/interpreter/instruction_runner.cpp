@@ -258,11 +258,23 @@ auto FormatDisplay(
 // Execute a single instruction in the given context
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect)
+    ProcessContext& process_context, ProcessEffect& effect,
+    const std::shared_ptr<InstanceContext>& instance_context)
     -> InstructionResult {
   auto& temp_table = process_context.temp_table;
   auto& module_variable_table = simulation_context.variable_table;
   auto& process_variable_table = process_context.variable_table;
+
+  // Helper to resolve symbol through instance context port bindings.
+  // Returns (target_symbol, target_instance) where target_instance is nullptr
+  // if not bound (use current instance or global).
+  auto resolve_binding = [&instance_context](const auto* symbol)
+      -> std::pair<common::SymbolRef, std::shared_ptr<InstanceContext>> {
+    if (instance_context != nullptr) {
+      return instance_context->ResolveBinding(symbol);
+    }
+    return {symbol, nullptr};
+  };
 
   auto get_temp = [&](const lir::Operand& operand) -> RuntimeValue {
     assert(operand.IsTemp());
@@ -273,9 +285,26 @@ auto RunInstruction(
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
+    // Check process-local first
     if (process_variable_table.Exists(symbol)) {
       return process_variable_table.Read(symbol);
     }
+
+    // Resolve through port bindings (output port → target signal/instance)
+    auto [target_symbol, target_instance] = resolve_binding(symbol);
+
+    // If bound, read from target instance's storage
+    if (target_instance != nullptr) {
+      return target_instance->Read(target_symbol);
+    }
+
+    // Otherwise, read from per-instance storage (local vars, input ports)
+    if (instance_context != nullptr && instance_context->Exists(symbol)) {
+      return instance_context->Read(symbol);
+    }
+
+    // Fallback to global table (for backwards compat with non-hierarchical
+    // code)
     return module_variable_table.Read(symbol);
   };
 
@@ -284,15 +313,87 @@ auto RunInstruction(
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
+    // Check process-local first
     if (process_variable_table.Exists(symbol)) {
       process_variable_table.Write(symbol, value);
-    } else {
-      module_variable_table.Write(symbol, value);
+      return;
+    }
+
+    // Resolve through port bindings (output port → target signal/instance)
+    auto [target_symbol, target_instance] = resolve_binding(symbol);
+
+    // If bound (output port), write to target instance's storage
+    if (target_instance != nullptr) {
       if (!is_non_blocking) {
-        effect.RecordVariableModification(symbol);
+        target_instance->Write(target_symbol, value);
+        effect.RecordVariableModification(target_symbol, target_instance);
       } else {
-        effect.RecordNbaAction(NbaAction{.variable = symbol, .value = value});
+        effect.RecordNbaAction(
+            {.variable = target_symbol,
+             .value = value,
+             .instance = target_instance});
       }
+      return;
+    }
+
+    // Otherwise, write to per-instance storage (local vars, input ports)
+    if (instance_context != nullptr) {
+      instance_context->Write(symbol, value);
+      if (!is_non_blocking) {
+        effect.RecordVariableModification(symbol, instance_context);
+      } else {
+        effect.RecordNbaAction(
+            {.variable = symbol, .value = value, .instance = instance_context});
+      }
+      return;
+    }
+
+    // Fallback to global table (for backwards compat with non-hierarchical
+    // code)
+    if (!is_non_blocking) {
+      module_variable_table.Write(symbol, value);
+      effect.RecordVariableModification(symbol);  // Global storage
+    } else {
+      effect.RecordNbaAction(
+          {.variable = symbol, .value = value, .instance = nullptr});
+    }
+  };
+
+  // Store to hierarchical target: traverse path and store to target instance
+  auto store_hierarchical = [&](const std::vector<std::string>& path,
+                                const RuntimeValue& value,
+                                bool is_non_blocking) {
+    assert(
+        path.size() >= 2 &&
+        "Hierarchical path must have at least 2 components");
+
+    // Traverse: all but last component are instance names
+    auto target_instance = instance_context;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+      target_instance = target_instance->LookupChild(path[i]);
+      if (!target_instance) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format("Unknown child instance: {}", path[i])));
+      }
+    }
+
+    // Last component is symbol name
+    const auto& symbol_name = path.back();
+    const auto* symbol = target_instance->LookupSymbol(symbol_name);
+    if (!symbol) {
+      throw DiagnosticException(
+          Diagnostic::Error(
+              {}, fmt::format("Unknown symbol: {}", symbol_name)));
+    }
+
+    // Write to target instance
+    if (!is_non_blocking) {
+      target_instance->Write(symbol, value);
+      effect.RecordVariableModification(symbol, target_instance);
+    } else {
+      effect.RecordNbaAction(
+          {.variable = symbol, .value = value, .instance = target_instance});
     }
   };
 
@@ -335,18 +436,32 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kStoreVariable: {
-      const auto variable = instr.operands[0];
-      const auto value = get_temp(instr.operands[1]);
-      assert(variable.IsVariable());
-      store_variable(variable, value, false);
+      if (!instr.hierarchical_path.empty()) {
+        // Hierarchical store: path in hierarchical_path, value in operands[0]
+        const auto value = get_temp(instr.operands[0]);
+        store_hierarchical(instr.hierarchical_path, value, false);
+      } else {
+        // Regular store: variable in operands[0], value in operands[1]
+        const auto variable = instr.operands[0];
+        const auto value = get_temp(instr.operands[1]);
+        assert(variable.IsVariable());
+        store_variable(variable, value, false);
+      }
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
-      const auto variable = instr.operands[0];
-      const auto value = get_temp(instr.operands[1]);
-      assert(variable.IsVariable());
-      store_variable(variable, value, true);
+      if (!instr.hierarchical_path.empty()) {
+        // Hierarchical store: path in hierarchical_path, value in operands[0]
+        const auto value = get_temp(instr.operands[0]);
+        store_hierarchical(instr.hierarchical_path, value, true);
+      } else {
+        // Regular store: variable in operands[0], value in operands[1]
+        const auto variable = instr.operands[0];
+        const auto value = get_temp(instr.operands[1]);
+        assert(variable.IsVariable());
+        store_variable(variable, value, true);
+      }
       return InstructionResult::Continue();
     }
 
@@ -831,7 +946,16 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kWaitEvent: {
-      return InstructionResult::WaitEvent(instr.wait_triggers);
+      // Resolve trigger symbols through instance context
+      // (e.g., port symbols map to parent signals)
+      std::vector<common::Trigger> resolved_triggers;
+      resolved_triggers.reserve(instr.wait_triggers.size());
+      for (const auto& trigger : instr.wait_triggers) {
+        auto [target_symbol, _] = resolve_binding(trigger.variable);
+        resolved_triggers.push_back(
+            {.edge_kind = trigger.edge_kind, .variable = target_symbol});
+      }
+      return InstructionResult::WaitEvent(std::move(resolved_triggers));
     }
 
     case lir::InstructionKind::kDelay: {

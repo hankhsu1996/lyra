@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cassert>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include <fmt/core.h>
+#include <fmt/ranges.h>
 
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -100,6 +102,11 @@ struct Instruction {
 
   // Event name
   std::vector<common::Trigger> wait_triggers{};
+
+  // Hierarchical path for store/load (e.g., ["child", "signal"])
+  // When non-empty: all but last component are instance names to traverse,
+  // last component is symbol name to look up at runtime
+  std::vector<std::string> hierarchical_path{};
 
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
@@ -217,6 +224,19 @@ struct Instruction {
             Operand::Temp(value)}};
   }
 
+  // Store to hierarchical target: path.to.signal = value
+  // Path format: ["instance1", "instance2", "symbol_name"]
+  static auto StoreHierarchical(
+      std::vector<std::string> path, TempRef value, bool is_non_blocking)
+      -> Instruction {
+    assert(path.size() >= 2 && "Path must have instance + symbol");
+    return Instruction{
+        .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
+                                : InstructionKind::kStoreVariable,
+        .operands = {Operand::Temp(value)},
+        .hierarchical_path = std::move(path)};
+  }
+
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kWaitEvent,
@@ -282,12 +302,22 @@ struct Instruction {
             "load  {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kStoreVariable:
+        if (!hierarchical_path.empty()) {
+          return fmt::format(
+              "store {}, {}", fmt::join(hierarchical_path, "."),
+              operands[0].ToString());
+        }
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 
       case InstructionKind::kStoreVariableNonBlocking:
+        if (!hierarchical_path.empty()) {
+          return fmt::format(
+              "nba   {}, {}", fmt::join(hierarchical_path, "."),
+              operands[0].ToString());
+        }
         return fmt::format(
-            "store {}, {}", operands[0].ToString(), operands[1].ToString());
+            "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
 
       case InstructionKind::kLoadUnpackedElement:
         return fmt::format(

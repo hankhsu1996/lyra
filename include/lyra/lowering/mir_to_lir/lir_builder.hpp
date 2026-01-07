@@ -20,6 +20,8 @@ class LirBuilder {
   // Module interface
   void BeginModule();
   void AddModuleVariable(const common::Variable& variable);
+  void AddPort(const common::Variable& variable, lir::PortDirection direction);
+  void AddSubmodule(const lir::SubmoduleInstance& submodule);
   auto EndModule() -> std::unique_ptr<lir::Module>;
 
   // Process interface

@@ -1,4 +1,4 @@
-# CLAUDE.md
+#CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns  |
 | `docs/architecture.md`             | Component relationships, data flow          |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model          |
+| `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands |
 | `docs/limitations.md`              | Unsupported SystemVerilog features          |
 | `docs/documentation-guidelines.md` | Documentation guidelines                    |
@@ -141,14 +142,17 @@ throw DiagnosticException(
     Diagnostic::Error(source_range, "descriptive message"));
 ```
 
-- Provides consistent error formatting with source locations
-- Caught and printed by CLI commands via `PrintDiagnostic()`
-- Use `slang::SourceRange{}` when no source location is available
+    - Provides consistent error formatting with source locations -
+    Caught and printed by CLI commands via `PrintDiagnostic()` -
+    Use `slang::SourceRange {
+}
+` when no source location is available
 
-**Internal errors** - Use `InternalError` (`lyra/common/internal_error.hpp`):
+        **Internal errors * *
+    -Use `InternalError` (`lyra / common / internal_error.hpp`)
+    :
 
-```cpp
-throw common::InternalError("context", "detail about the bug");
+```cpp throw common::InternalError("context", "detail about the bug");
 ```
 
 - For compiler bugs, not user errors

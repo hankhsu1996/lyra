@@ -113,6 +113,13 @@ class Scheduler {
     return current_time_;
   }
 
+  // Flush NBA queues for all registered modules
+  void FlushAllNba() {
+    for (auto* module : modules_) {
+      module->FlushNba();
+    }
+  }
+
   // Process all delayed tasks until queue is empty or simulation finishes
   void ProcessDelayedTasks() {
     while (!simulation_finished &&
@@ -132,9 +139,7 @@ class Scheduler {
         }
 
         // Flush NBA after active region
-        if (current_module != nullptr) {
-          current_module->FlushNba();
-        }
+        FlushAllNba();
 
         // After active region, check triggers
         if (!simulation_finished) {
@@ -197,8 +202,8 @@ class Scheduler {
     }
 
     // Flush NBA after triggered processes run
-    if (!to_resume.empty() && current_module != nullptr) {
-      current_module->FlushNba();
+    if (!to_resume.empty()) {
+      FlushAllNba();
     }
 
     // If any coroutines resumed, they might have modified variables
@@ -316,20 +321,29 @@ inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
 // Implementation of Module::Run (needs Scheduler definition)
 inline auto Module::Run() -> uint64_t {
   Scheduler scheduler;
-  // Set scheduler and module BEFORE creating tasks (they start immediately)
-  current_scheduler = &scheduler;
-  current_module = this;
   simulation_finished = false;
   simulation_stopped = false;
-  std::vector<Task> tasks;
 
-  // Start all processes
-  for (auto& process : processes_) {
-    tasks.push_back(process());
+  // Collect all modules in hierarchy and register with scheduler
+  std::vector<Module*> all_modules;
+  CollectAllModules(all_modules);
+  for (auto* mod : all_modules) {
+    scheduler.RegisterModule(mod);
+  }
+
+  // Set scheduler BEFORE creating tasks (they start immediately)
+  current_scheduler = &scheduler;
+
+  // Start all processes from all modules
+  std::vector<Task> tasks;
+  for (auto* mod : all_modules) {
+    for (auto& process : mod->processes_) {
+      tasks.push_back(process());
+    }
   }
 
   // Flush any NBA from initial execution
-  FlushNba();
+  scheduler.FlushAllNba();
 
   // Check triggers after time 0 - wakes processes waiting on variables
   // modified during initial execution (like always_comb/always_latch)
@@ -339,9 +353,8 @@ inline auto Module::Run() -> uint64_t {
   scheduler.ProcessDelayedTasks();
 
   // Final NBA flush
-  FlushNba();
+  scheduler.FlushAllNba();
 
-  current_module = nullptr;
   current_scheduler = nullptr;
   return scheduler.CurrentTime();
 }

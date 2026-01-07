@@ -64,6 +64,14 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       }
     }
 
+    // Parse skip flags
+    if (node["skip_codegen"]) {
+      tc.skip_codegen = node["skip_codegen"].as<bool>();
+    }
+    if (node["skip_interpreter"]) {
+      tc.skip_interpreter = node["skip_interpreter"].as<bool>();
+    }
+
     cases.push_back(std::move(tc));
   }
 

@@ -1,0 +1,43 @@
+feature: hierarchy_simple_submodule
+description: Tests basic submodule instantiation
+
+cases:
+  - name: single_child_module
+    description: Basic parent instantiates child with ports
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        int x, y, result;
+        Adder add(.a(x), .b(y), .sum(result));
+
+        initial begin
+          x = 3;
+          y = 5;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+      time: 1
+
+  - name: unconnected_input_ports
+    description: Unconnected input ports default to 0
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        int result;
+        Adder add(.sum(result));  // a and b unconnected
+
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        result: 0
+      time: 1

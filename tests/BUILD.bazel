@@ -180,3 +180,33 @@ sv_feature_test(
     name = "timing_printtimescale_tests",
     yaml = "sv_features/timing/printtimescale.yaml",
 )
+
+sv_feature_test(
+    name = "hierarchy_local_variables_tests",
+    yaml = "sv_features/hierarchy/local_variables.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_nested_hierarchy_tests",
+    yaml = "sv_features/hierarchy/nested_hierarchy.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_instantiation_tests",
+    yaml = "sv_features/hierarchy/instantiation.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_multiple_instances_tests",
+    yaml = "sv_features/hierarchy/multiple_instances.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_output_ports_tests",
+    yaml = "sv_features/hierarchy/output_ports.yaml",
+)
+
+sv_feature_test(
+    name = "hierarchy_port_expressions_tests",
+    yaml = "sv_features/hierarchy/port_expressions.yaml",
+)

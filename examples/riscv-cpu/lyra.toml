@@ -1,0 +1,13 @@
+[package]
+name = "riscv-cpu"
+top = "tb"
+
+[sources]
+files = [
+    "pkg.sv",
+    "regfile.sv",
+    "alu.sv",
+    "memory.sv",
+    "cpu.sv",
+    "tb.sv",
+]

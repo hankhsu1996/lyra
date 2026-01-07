@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <queue>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "lyra/common/trigger.hpp"
+#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/module.hpp"
@@ -24,6 +27,7 @@ using ProcessPtr = std::shared_ptr<lir::Process>;
 
 struct ScheduledEvent {
   ProcessPtr process;
+  std::shared_ptr<InstanceContext> instance;  // Like C++ 'this' pointer
   std::size_t block_index = 0;
   std::size_t instruction_index = 0;
 };
@@ -34,11 +38,7 @@ using InactiveQueue = std::queue<ScheduledEvent>;
 using NbaQueue = std::queue<NbaAction>;
 using PostponedQueue = std::queue<PostponedAction>;
 
-struct WaitingProcessInfo {
-  std::size_t block_index;
-  std::size_t instruction_index;
-  common::EdgeKind edge_kind;
-};
+// WaitingProcessInfo is defined in trigger_manager.hpp
 
 enum class RegionType {
   kPreponed,      // Not implemented yet
@@ -62,15 +62,41 @@ enum class RegionType {
 
 class SimulationRunner {
  public:
+  // Single module constructor (for backwards compatibility)
   SimulationRunner(const lir::Module& module, SimulationContext& context);
+
+  // Multi-module constructor (for hierarchical designs)
+  SimulationRunner(
+      const std::vector<std::unique_ptr<lir::Module>>& modules,
+      SimulationContext& context);
 
   void Run();
 
+  // Get the top instance context (for reading final variable values)
+  [[nodiscard]] auto GetTopInstance() const
+      -> const std::shared_ptr<InstanceContext>& {
+    return top_instance_;
+  }
+
  private:
-  void InitializeVariables();
-  void ScheduleProcesses();
+  void ElaborateHierarchy();
+  void ElaborateSubmodules(
+      const lir::Module& parent, const std::string& parent_path,
+      const std::shared_ptr<InstanceContext>& parent_instance);
+  static void InitializeModuleVariables(
+      const lir::Module& module,
+      const std::shared_ptr<InstanceContext>& instance);
+  static void PopulateSymbolLookup(
+      const lir::Module& module,
+      const std::shared_ptr<InstanceContext>& instance);
+  void ScheduleModuleProcesses(
+      const lir::Module& module,
+      const std::shared_ptr<InstanceContext>& instance);
+  auto LookupModule(const std::string& name) const -> const lir::Module*;
+
   void ExecuteOneEvent();
-  void WakeWaitingProcesses(const std::vector<SymbolRef>& modified_variables);
+  void WakeWaitingProcesses(
+      const std::vector<ModifiedVariable>& modified_variables);
   void ExecuteTimeSlot();
   void ExecuteRegion(RegionType region);
 
@@ -92,7 +118,14 @@ class SimulationRunner {
 
   bool finish_requested_ = false;
 
-  std::reference_wrapper<const lir::Module> module_;
+  // Module storage - either single module reference or multi-module map
+  std::reference_wrapper<const lir::Module> top_module_;
+  std::unordered_map<std::string, std::reference_wrapper<const lir::Module>>
+      module_map_;
+
+  // Top instance context (root of instance hierarchy)
+  std::shared_ptr<InstanceContext> top_instance_;
+
   std::reference_wrapper<SimulationContext> simulation_context_;
   TriggerManager trigger_manager_;
 };
