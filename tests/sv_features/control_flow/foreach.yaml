@@ -1,0 +1,207 @@
+feature: foreach_loops
+description: Tests for foreach array iteration loops
+
+cases:
+  # Basic 1D unpacked array
+  - name: foreach_basic_sum
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[4];
+          arr[0] = 1;
+          arr[1] = 2;
+          arr[2] = 3;
+          arr[3] = 4;
+          sum = 0;
+          foreach (arr[i]) begin
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 10
+
+  - name: foreach_iteration_order
+    sv: |
+      module Test;
+        int first_idx;
+        int last_idx;
+        initial begin
+          int arr[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          first_idx = -1;
+          last_idx = -1;
+          foreach (arr[i]) begin
+            if (first_idx == -1) first_idx = i;
+            last_idx = i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_idx: 0
+        last_idx: 2
+
+  - name: foreach_index_as_value
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[5];
+          sum = 0;
+          foreach (arr[i]) begin
+            sum = sum + i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 10
+
+  # Non-zero based array
+  - name: foreach_non_zero_base
+    sv: |
+      module Test;
+        int sum;
+        int first_idx;
+        int last_idx;
+        initial begin
+          int arr[2:4];
+          arr[2] = 10;
+          arr[3] = 20;
+          arr[4] = 30;
+          sum = 0;
+          first_idx = -1;
+          last_idx = -1;
+          foreach (arr[i]) begin
+            if (first_idx == -1) first_idx = i;
+            last_idx = i;
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 60
+        first_idx: 2
+        last_idx: 4
+
+  # Packed array with descending range
+  - name: foreach_packed_descending
+    sv: |
+      module Test;
+        int first_idx;
+        int last_idx;
+        int count;
+        initial begin
+          bit [3:0] data;
+          data = 4'b1010;
+          first_idx = -1;
+          last_idx = -1;
+          count = 0;
+          foreach (data[i]) begin
+            if (first_idx == -1) first_idx = i;
+            last_idx = i;
+            if (data[i]) count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_idx: 3
+        last_idx: 0
+        count: 2
+
+  # Break and continue
+  - name: foreach_with_break
+    sv: |
+      module Test;
+        int sum;
+        int stopped_at;
+        initial begin
+          int arr[5];
+          arr[0] = 1;
+          arr[1] = 2;
+          arr[2] = 3;
+          arr[3] = 4;
+          arr[4] = 5;
+          sum = 0;
+          stopped_at = -1;
+          foreach (arr[i]) begin
+            if (i == 3) break;
+            sum = sum + arr[i];
+            stopped_at = i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 6
+        stopped_at: 2
+
+  - name: foreach_with_continue
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[5];
+          arr[0] = 1;
+          arr[1] = 2;
+          arr[2] = 3;
+          arr[3] = 4;
+          arr[4] = 5;
+          sum = 0;
+          foreach (arr[i]) begin
+            if (i == 1 || i == 3) continue;
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 9
+
+  # Nested with for loop
+  - name: foreach_nested_with_for
+    sv: |
+      module Test;
+        int total;
+        initial begin
+          int matrix[2];
+          matrix[0] = 10;
+          matrix[1] = 20;
+          total = 0;
+          foreach (matrix[i]) begin
+            for (int j = 0; j < 2; j++) begin
+              total = total + matrix[i];
+            end
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        total: 60
+
+  # Display index and value
+  - name: foreach_display
+    sv: |
+      module Test;
+        initial begin
+          int arr[3];
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          foreach (arr[i]) begin
+            $display("arr[%0d] = %0d", i, arr[i]);
+          end
+        end
+      endmodule
+    expect:
+      output: |
+        arr[0] = 100
+        arr[1] = 200
+        arr[2] = 300
