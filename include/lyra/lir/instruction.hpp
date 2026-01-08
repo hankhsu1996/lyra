@@ -129,6 +129,14 @@ struct Instruction {
   int64_t method_step{1};  // For next(N)/prev(N), default 1
   std::vector<EnumMemberInfo> enum_members{};
 
+  // For $monitor: how to re-evaluate each argument at end of each time step.
+  // Parallel to operands - std::nullopt for format string literal.
+  // Each argument is an index into Module::monitor_expression_blocks.
+  struct MonitoredArg {
+    size_t expression_block_index;
+  };
+  std::vector<std::optional<MonitoredArg>> monitored_args{};
+
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
       -> Instruction {
@@ -344,6 +352,21 @@ struct Instruction {
         .method_name = std::move(method),
         .method_step = step,
         .enum_members = std::move(members)};
+  }
+
+  // System call with monitored arguments (for $monitor)
+  static auto SystemCallWithMonitor(
+      std::string name, std::vector<TempRef> args,
+      std::vector<std::optional<MonitoredArg>> monitored) -> Instruction {
+    std::vector<Operand> operands;
+    for (auto& arg : args) {
+      operands.push_back(Operand::Temp(arg));
+    }
+    return Instruction{
+        .kind = InstructionKind::kSystemCall,
+        .operands = std::move(operands),
+        .system_call_name = std::move(name),
+        .monitored_args = std::move(monitored)};
   }
 
   static auto Complete() -> Instruction {

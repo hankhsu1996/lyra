@@ -116,6 +116,21 @@ class Codegen {
       const common::Type& result_type, const mir::Expression& value,
       const std::function<void()>& emit_shift, uint64_t mask, bool is_wide);
 
+  // Emit a formatted print call (std::print/println) for
+  // $display/$strobe/$monitor
+  // @param arguments The argument expressions
+  // @param first_arg_idx Index of first value argument (after format string if
+  // present)
+  // @param sv_fmt SV format string (empty means generate default from arg
+  // types)
+  // @param print_fn Print function name ("std::print" or "std::println")
+  // @param default_format Default format char for non-format-string case
+  // ('d','b','o','x')
+  void EmitFormattedPrint(
+      const std::vector<std::unique_ptr<mir::Expression>>& arguments,
+      size_t first_arg_idx, const std::string& sv_fmt,
+      std::string_view print_fn, char default_format);
+
   // Get C++ member access path for a trigger (e.g., "u_child_.value")
   [[nodiscard]] auto GetTriggerPath(const common::Trigger& trigger) const
       -> std::string;

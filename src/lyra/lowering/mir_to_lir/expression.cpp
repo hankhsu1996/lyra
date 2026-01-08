@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
+#include "lyra/lir/module.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
@@ -271,11 +273,56 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Supported system calls are validated in AST→MIR
       assert(common::IsSystemFunctionSupported(system_call.name));
 
+      // Check if this is a $monitor variant that needs symbol tracking
+      bool is_monitor =
+          (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
+           system_call.name == "$monitoro" || system_call.name == "$monitorh");
+
       std::vector<TempRef> arguments;
+      std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
+
+      // Check if first argument is a format string (for $monitor)
+      // Format strings are string literals containing '%' and should not
+      // be tracked for value changes.
+      bool first_is_format_string = false;
+      if (is_monitor && !system_call.arguments.empty()) {
+        const auto& first_arg = system_call.arguments[0];
+        if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
+          const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
+          if (lit.literal.value.IsString() &&
+              lit.literal.value.AsString().find('%') != std::string::npos) {
+            first_is_format_string = true;
+          }
+        }
+      }
+
+      size_t arg_index = 0;
       for (const auto& argument : system_call.arguments) {
         if (argument) {
-          arguments.push_back(LowerExpression(*argument, builder));
+          // For $monitor, skip format string tracking but still lower it
+          bool is_format_string =
+              is_monitor && first_is_format_string && arg_index == 0;
+
+          if (is_monitor && !is_format_string) {
+            // Capture instructions for re-evaluation at each time slot
+            size_t before_count = builder.GetCurrentBlockInstructionCount();
+            TempRef result = LowerExpression(*argument, builder);
+            arguments.push_back(result);
+
+            // Copy the instructions that computed this argument
+            auto instructions = builder.CopyInstructionsSince(before_count);
+            size_t block_idx = builder.AddMonitorExpressionBlock(
+                lir::MonitorExpressionBlock{
+                    .instructions = std::move(instructions), .result = result});
+
+            // Store the expression block index for re-evaluation
+            monitored_args.emplace_back(
+                Instruction::MonitoredArg{.expression_block_index = block_idx});
+          } else {
+            arguments.push_back(LowerExpression(*argument, builder));
+          }
         }
+        ++arg_index;
       }
 
       // Add default argument (1) for $finish and $stop if not provided
@@ -298,6 +345,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Pass result temp to store the return value
         auto instruction = Instruction::SystemCall(
             system_call.name, std::move(arguments), result, system_call.type);
+        builder.AddInstruction(std::move(instruction));
+      } else if (is_monitor) {
+        // $monitor with tracked symbols
+        auto instruction = Instruction::SystemCallWithMonitor(
+            system_call.name, std::move(arguments), std::move(monitored_args));
         builder.AddInstruction(std::move(instruction));
       } else {
         // No result for system tasks

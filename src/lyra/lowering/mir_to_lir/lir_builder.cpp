@@ -1,12 +1,15 @@
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <fmt/core.h>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
@@ -127,6 +130,66 @@ auto LirBuilder::InternLabel(const std::string& name) -> lir::LabelRef {
 auto LirBuilder::InternLiteral(const common::Literal& literal)
     -> lir::LiteralRef {
   return context_->InternLiteral(literal);
+}
+
+namespace {
+
+/// Validates that a MonitorExpressionBlock contains no side effects.
+/// Expression blocks are re-evaluated at each time slot, so they must be pure.
+void ValidateMonitorExpressionBlock(const lir::MonitorExpressionBlock& block) {
+  using IK = lir::InstructionKind;
+
+  for (const auto& instr : block.instructions) {
+    switch (instr.kind) {
+      case IK::kStoreVariable:
+      case IK::kStoreVariableNonBlocking:
+      case IK::kStoreUnpackedElement:
+      case IK::kStorePackedElement:
+        throw common::InternalError(
+            "AddMonitorExpressionBlock",
+            "expression block contains store instruction - expressions must be "
+            "side-effect free");
+
+      case IK::kSystemCall:
+        // System calls are not allowed in expression blocks
+        throw common::InternalError(
+            "AddMonitorExpressionBlock",
+            fmt::format(
+                "expression block contains system call '{}' - expressions must "
+                "be side-effect free",
+                instr.system_call_name));
+
+      default:
+        // All other instructions are allowed (loads, literals, arithmetic,
+        // etc.)
+        break;
+    }
+  }
+}
+
+}  // namespace
+
+auto LirBuilder::AddMonitorExpressionBlock(lir::MonitorExpressionBlock block)
+    -> size_t {
+  assert(module_);
+  ValidateMonitorExpressionBlock(block);
+  size_t index = module_->monitor_expression_blocks.size();
+  module_->monitor_expression_blocks.push_back(std::move(block));
+  return index;
+}
+
+auto LirBuilder::GetCurrentBlockInstructionCount() const -> size_t {
+  assert(current_block_);
+  return current_block_->instructions.size();
+}
+
+auto LirBuilder::CopyInstructionsSince(size_t start_index) const
+    -> std::vector<lir::Instruction> {
+  assert(current_block_);
+  auto& instrs = current_block_->instructions;
+  assert(start_index <= instrs.size());
+  return {
+      instrs.begin() + static_cast<std::ptrdiff_t>(start_index), instrs.end()};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

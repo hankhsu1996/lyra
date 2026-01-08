@@ -11,6 +11,7 @@ class TernaryExpression;
 
 namespace lyra::lowering::mir_to_lir {
 class LirBuilder;
+class InstructionCapture;
 
 // Lowers a MIR Expression into LIR instructions and returns a value
 // that holds the result.
@@ -39,5 +40,11 @@ auto LowerTernaryExpression(
 auto LowerIncrementDecrementExpression(
     const mir::UnaryExpression& expression, LirBuilder& builder)
     -> lir::TempRef;
+
+// Lower an expression for $monitor, capturing instructions into a
+// MonitorExpressionBlock for later re-evaluation. Returns the index of the
+// created block in Module::monitor_expression_blocks.
+auto LowerMonitorExpression(
+    const mir::Expression& expression, LirBuilder& builder) -> size_t;
 
 }  // namespace lyra::lowering::mir_to_lir
