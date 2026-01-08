@@ -414,6 +414,28 @@ auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
   return wide;
 }
 
+// Compute the actual array index after adjusting for lower bound and checking
+// bounds. Returns the adjusted index or throws DiagnosticException if out of
+// bounds.
+auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
+    -> size_t {
+  const auto& array_data =
+      std::get<common::UnpackedArrayData>(array_value.type.data);
+  int32_t lower_bound = array_data.lower_bound;
+
+  auto actual_idx = static_cast<size_t>(sv_index - lower_bound);
+
+  if (actual_idx >= array_value.AsArray().size()) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            {}, fmt::format(
+                    "array index {} out of bounds (size {})", sv_index,
+                    array_value.AsArray().size())));
+  }
+
+  return actual_idx;
+}
+
 }  // namespace
 
 // Execute a single instruction in the given context
@@ -643,7 +665,7 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kLoadUnpackedElement: {
-      // Load element from unpacked array: result = array[index]
+      // Load element from unpacked array variable: result = array[index]
       assert(instr.operands.size() == 2);
       assert(instr.operands[0].IsVariable());
       assert(instr.result.has_value());
@@ -653,34 +675,16 @@ auto RunInstruction(
 
       auto index_value = get_temp(instr.operands[1]);
       assert(!index_value.IsWide() && "array index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-
-      // Get lower bound from array type
-      const auto& array_type = array_value.type;
-      const auto& array_data =
-          std::get<common::UnpackedArrayData>(array_type.data);
-      int32_t lower_bound = array_data.lower_bound;
-
-      // Adjust index: actual_idx = sv_idx - lower_bound
       auto actual_idx =
-          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
 
-      // Bounds check
-      if (actual_idx >= array_value.AsArray().size()) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {}, fmt::format(
-                        "array index {} out of bounds (size {})", index,
-                        array_value.AsArray().size())));
-      }
-
-      const auto& element = array_value.GetElement(actual_idx);
-      temp_table.Write(instr.result.value(), element);
+      temp_table.Write(
+          instr.result.value(), array_value.GetElement(actual_idx));
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreUnpackedElement: {
-      // Store element to unpacked array: array[index] = value
+      // Store element to unpacked array variable: array[index] = value
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
 
@@ -691,29 +695,50 @@ auto RunInstruction(
 
       auto index_value = get_temp(instr.operands[1]);
       assert(!index_value.IsWide() && "array index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-      auto value = get_temp(instr.operands[2]);
-
-      // Get lower bound from array type
-      const auto& array_type = array_value.type;
-      const auto& array_data =
-          std::get<common::UnpackedArrayData>(array_type.data);
-      int32_t lower_bound = array_data.lower_bound;
-
-      // Adjust index: actual_idx = sv_idx - lower_bound
       auto actual_idx =
-          static_cast<size_t>(static_cast<int64_t>(index) - lower_bound);
+          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
 
-      // Bounds check
-      if (actual_idx >= array_value.AsArray().size()) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                {}, fmt::format(
-                        "array index {} out of bounds (size {})", index,
-                        array_value.AsArray().size())));
-      }
+      array_value.SetElement(actual_idx, get_temp(instr.operands[2]));
+      return InstructionResult::Continue();
+    }
 
-      array_value.SetElement(actual_idx, value);
+    case lir::InstructionKind::kLoadUnpackedElementFromTemp: {
+      // Load element from unpacked array in temp: result = array_temp[index]
+      // Used for multi-dimensional array access (e.g., arr[i][j])
+      assert(instr.operands.size() == 2);
+      assert(instr.operands[0].IsTemp());
+      assert(instr.result.has_value());
+
+      auto array_value = get_temp(instr.operands[0]);
+      assert(array_value.IsArray());
+
+      auto index_value = get_temp(instr.operands[1]);
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto actual_idx =
+          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+
+      temp_table.Write(
+          instr.result.value(), array_value.GetElement(actual_idx));
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStoreUnpackedElementToTemp: {
+      // Store element to unpacked array in temp: array_temp[index] = value
+      // Used for multi-dimensional array writes (copy-modify-store pattern)
+      assert(instr.operands.size() == 3);
+      assert(instr.operands[0].IsTemp());
+
+      // RuntimeValue uses shared_ptr for array storage, so modifications
+      // through this copy will affect the original in the temp table
+      auto array_value = get_temp(instr.operands[0]);
+      assert(array_value.IsArray());
+
+      auto index_value = get_temp(instr.operands[1]);
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto actual_idx =
+          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+
+      array_value.SetElement(actual_idx, get_temp(instr.operands[2]));
       return InstructionResult::Continue();
     }
 
