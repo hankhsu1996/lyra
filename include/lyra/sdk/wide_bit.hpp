@@ -5,6 +5,7 @@
 // other Lyra headers. The algorithms here mirror those in
 // lyra/common/wide_bit_ops.hpp but are duplicated for SDK independence.
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -32,11 +33,59 @@ constexpr auto FinalWordMask(std::size_t bit_width) -> uint64_t {
   return (bits_in_final == 0) ? ~0ULL : (1ULL << bits_in_final) - 1;
 }
 
+// Check if all words are zero
+template <typename Container>
+constexpr auto IsZero(const Container& words, std::size_t num_words) -> bool {
+  for (std::size_t i = 0; i < num_words; ++i) {
+    if (words[i] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Divide multi-word integer by single-word divisor.
+// Returns remainder; quotient is stored in words (modified in-place).
+template <typename Container>
+auto DivideByWord(Container& words, std::size_t num_words, uint64_t divisor)
+    -> uint64_t {
+  __uint128_t remainder = 0;
+  for (std::size_t i = num_words; i > 0; --i) {
+    __uint128_t dividend = (remainder << 64) | words[i - 1];
+    words[i - 1] = static_cast<uint64_t>(dividend / divisor);
+    remainder = dividend % divisor;
+  }
+  return static_cast<uint64_t>(remainder);
+}
+
+// Convert to decimal string (unsigned interpretation)
+template <std::size_t NumWords>
+auto ToDecimalString(std::array<uint64_t, NumWords> words) -> std::string {
+  if (IsZero(words, NumWords)) {
+    return "0";
+  }
+
+  std::string result;
+  while (!IsZero(words, NumWords)) {
+    uint64_t digit = DivideByWord(words, NumWords, 10);
+    result.push_back(static_cast<char>('0' + digit));
+  }
+  std::reverse(result.begin(), result.end());
+  return result;
+}
+
 }  // namespace detail
 
 // WideBit<N> represents an N-bit value (N > 64) using multiple 64-bit words.
 // Storage: std::array<uint64_t, WordsForBits(N)> with little-endian word order
 // (LSB in words_[0])
+//
+// Design: Signedness is a template parameter WideBit<Width, Signed>.
+// Rationale: Generated C++ code has static type information. Using template
+// parameters enables compile-time optimization and matches Verilator's approach
+// of generating type-specific functions.
+// Compare to common::WideBit which passes signedness at runtime because the
+// interpreter must handle dynamic types.
 template <std::size_t Width, bool Signed = false>
 class WideBit {
   static_assert(Width > 64, "Use Bit<N> for widths <= 64");
@@ -725,8 +774,19 @@ struct std::formatter<lyra::sdk::WideBit<Width, Signed>> {
   auto format(
       const lyra::sdk::WideBit<Width, Signed>& b,
       std::format_context& ctx) const {
-    // For wide bits, output in hex
     constexpr std::size_t kNumWords = lyra::sdk::detail::WordsForBits(Width);
+
+    // Decimal format: use division-based conversion
+    if (spec == 'd') {
+      std::array<uint64_t, kNumWords> words{};
+      for (std::size_t i = 0; i < kNumWords; ++i) {
+        words[i] = b.GetWord(i);
+      }
+      return std::format_to(
+          ctx.out(), "{}", lyra::sdk::detail::ToDecimalString(words));
+    }
+
+    // Hex format (default for 'x' or unrecognized specs)
     std::string result = "0x";
     bool leading = true;
     for (std::size_t i = kNumWords; i > 0; --i) {

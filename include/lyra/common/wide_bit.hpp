@@ -20,6 +20,13 @@ namespace lyra::common {
 // words_[0]) Note: Logical width is tracked in Type, not here - the class is
 // width-agnostic for most operations, with width passed to operations that need
 // masking.
+//
+// Design: Signedness passed as runtime parameter (vs SDK's template parameter).
+// Rationale: The interpreter handles type information at runtime - the same
+// WideBit object may be interpreted as signed or unsigned depending on the
+// operation context. This matches how RuntimeValue stores signedness in Type.
+// Compare to sdk::WideBit<N, Signed> which uses template parameters because
+// codegen determines types at compile time.
 class WideBit {
  public:
   static constexpr size_t kBitsPerWord = 64;
@@ -162,23 +169,7 @@ class WideBit {
       -> WideBit {
     CheckSameSize("Mul", other);
     WideBit result(words_.size());
-
-    // School multiplication algorithm using __uint128_t for 64x64->128
-    for (size_t i = 0; i < words_.size(); ++i) {
-      if (other.words_[i] == 0) {
-        continue;
-      }
-      uint64_t carry = 0;
-      for (size_t j = 0; j + i < words_.size(); ++j) {
-        // Use __uint128_t for accurate 64x64 -> 128-bit multiplication
-        __uint128_t product =
-            static_cast<__uint128_t>(words_[j]) * other.words_[i];
-        __uint128_t sum = product + result.words_[i + j] + carry;
-        result.words_[i + j] = static_cast<uint64_t>(sum);
-        carry = static_cast<uint64_t>(sum >> 64);
-      }
-    }
-    result.MaskToWidth(bit_width);
+    wide_ops::Multiply(words_, other.words_, result.words_, bit_width);
     return result;
   }
 
@@ -295,6 +286,24 @@ class WideBit {
     return wide_ops::ToOctalStringImpl(words_, [](uint64_t word, bool padded) {
       return padded ? fmt::format("{:022o}", word) : fmt::format("{:o}", word);
     });
+  }
+
+  // String representation (decimal format, unsigned)
+  [[nodiscard]] auto ToDecimalString() const -> std::string {
+    return wide_ops::ToDecimalStringImpl(words_);
+  }
+
+  // String representation (decimal format, signed)
+  // Requires bit_width to determine sign bit position
+  [[nodiscard]] auto ToDecimalStringSigned(size_t bit_width) const
+      -> std::string {
+    bool negative = GetBit(bit_width - 1) != 0;
+    if (!negative) {
+      return ToDecimalString();
+    }
+    // Two's complement: negate then format with '-' prefix
+    WideBit negated = Negate(bit_width);
+    return "-" + negated.ToDecimalString();
   }
 
   // Convert to double (unsigned interpretation)

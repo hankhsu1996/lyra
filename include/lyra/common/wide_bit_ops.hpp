@@ -10,6 +10,7 @@
 //
 // Storage convention: little-endian word order (LSB in words[0]).
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -125,6 +126,32 @@ constexpr auto Add(
     uint64_t carry2 = (sum2 < sum) ? 1 : 0;
     result[i] = sum2;
     carry = carry1 | carry2;
+  }
+  MaskToWidth(result, bit_width);
+}
+
+// Multiplication with carry propagation (school algorithm)
+// Uses __uint128_t for 64x64 -> 128-bit intermediate multiplication
+template <typename Container1, typename Container2, typename DstContainer>
+constexpr auto Multiply(
+    const Container1& lhs, const Container2& rhs, DstContainer& result,
+    size_t bit_width) -> void {
+  // Zero-initialize result
+  for (size_t i = 0; i < result.size(); ++i) {
+    result[i] = 0;
+  }
+
+  for (size_t i = 0; i < rhs.size(); ++i) {
+    if (rhs[i] == 0) {
+      continue;
+    }
+    uint64_t carry = 0;
+    for (size_t j = 0; j + i < result.size(); ++j) {
+      __uint128_t product = static_cast<__uint128_t>(lhs[j]) * rhs[i];
+      __uint128_t sum = product + result[i + j] + carry;
+      result[i + j] = static_cast<uint64_t>(sum);
+      carry = static_cast<uint64_t>(sum >> 64);
+    }
   }
   MaskToWidth(result, bit_width);
 }
@@ -395,6 +422,38 @@ auto ToOctalStringImpl(const Container& words, FormatFn format_fn)
   if (leading) {
     result += "0";
   }
+  return result;
+}
+
+// Divide multi-word integer by single-word divisor.
+// Returns remainder; quotient is stored in words (modified in-place).
+// Uses __uint128_t for 128-bit intermediate calculations.
+template <typename Container>
+auto DivideByWord(Container& words, uint64_t divisor) -> uint64_t {
+  __uint128_t remainder = 0;
+  // Process from MSB to LSB
+  for (size_t i = words.size(); i > 0; --i) {
+    __uint128_t dividend = (remainder << 64) | words[i - 1];
+    words[i - 1] = static_cast<uint64_t>(dividend / divisor);
+    remainder = dividend % divisor;
+  }
+  return static_cast<uint64_t>(remainder);
+}
+
+// Convert to decimal string (unsigned interpretation)
+// Takes words by value since we modify during division
+template <typename Container>
+auto ToDecimalStringImpl(Container words) -> std::string {
+  if (IsZero(words)) {
+    return "0";
+  }
+
+  std::string result;
+  while (!IsZero(words)) {
+    uint64_t digit = DivideByWord(words, 10);
+    result.push_back(static_cast<char>('0' + digit));
+  }
+  std::reverse(result.begin(), result.end());
   return result;
 }
 

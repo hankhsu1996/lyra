@@ -150,10 +150,7 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
       case 'o':
         return wide.ToOctalString();
       case 'd':
-        // TODO(hankhsu): Implement proper multi-precision decimal conversion.
-        // For now, use hex representation since decimal requires division-based
-        // conversion which is complex for arbitrary-width integers.
-        return wide.ToHexString();
+        return wide.ToDecimalString();
       default:
         return wide.ToHexString();
     }
