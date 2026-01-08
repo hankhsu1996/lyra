@@ -53,8 +53,8 @@ struct Type {
   std::variant<std::monostate, IntegralData, UnpackedArrayData> data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
-  // bit[7:0] Byte) This is metadata for codegen readability, not part of
-  // semantic type equality.
+  // bit[7:0] Byte). This is metadata for codegen readability, not part of
+  // semantic type equality. Also used for enum typedefs.
   std::optional<std::string> alias_name;
 
   static auto FromSlang(const slang::ast::Type& type) -> Type {
@@ -402,6 +402,21 @@ inline auto operator<<(std::ostream& os, Type::Kind kind) -> std::ostream& {
 
 inline auto operator<<(std::ostream& os, Type type) -> std::ostream& {
   return os << type.ToString();
+}
+
+// Convert bit width and signedness to a C++ fixed-width integer type string.
+// Used by codegen for enum base types and other contexts requiring C++ types.
+inline auto ToCppIntType(size_t width, bool is_signed) -> std::string {
+  if (width <= 8) {
+    return is_signed ? "int8_t" : "uint8_t";
+  }
+  if (width <= 16) {
+    return is_signed ? "int16_t" : "uint16_t";
+  }
+  if (width <= 32) {
+    return is_signed ? "int32_t" : "uint32_t";
+  }
+  return is_signed ? "int64_t" : "uint64_t";
 }
 
 }  // namespace lyra::common

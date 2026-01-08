@@ -1,4 +1,4 @@
-# Limitations
+#Limitations
 
 Current SystemVerilog features not yet supported.
 
@@ -12,10 +12,11 @@ Supported:
 - Unpacked fixed-size arrays
 - `real`, `shortreal`, `string`
 - `typedef` / type aliases
+- `enum` types (named and anonymous)
+- Enum methods: `first()`, `last()`, `next()`, `prev()`, `num()`, `name()` (IEEE 1800-2023 §6.19.5)
 
 Not yet supported:
 
-- `enum` types
 - `struct` (packed and unpacked)
 - `union` (packed and unpacked)
 - `class` types

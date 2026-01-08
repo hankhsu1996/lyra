@@ -18,7 +18,8 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     -> Result<Type> {
   // Handle type aliases (typedef): unwrap to canonical type but preserve name
   if (type.isAlias()) {
-    auto result = LowerType(type.getCanonicalType(), source_range);
+    const auto& canonical = type.getCanonicalType();
+    auto result = LowerType(canonical, source_range);
     if (result) {
       const auto& alias = type.as<slang::ast::TypeAliasType>();
       result->alias_name = std::string(alias.name);
