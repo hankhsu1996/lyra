@@ -205,3 +205,274 @@ cases:
         arr[0] = 100
         arr[1] = 200
         arr[2] = 300
+
+  # ============================================
+  # Multi-dimensional foreach tests
+  # ============================================
+
+  - name: foreach_2d_basic
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[2][3];
+          arr[0][0] = 1; arr[0][1] = 2; arr[0][2] = 3;
+          arr[1][0] = 4; arr[1][1] = 5; arr[1][2] = 6;
+          sum = 0;
+          foreach (arr[i,j]) begin
+            sum = sum + arr[i][j];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 21
+
+  - name: foreach_2d_iteration_order
+    description: Verify outer dimension iterates first (i changes slower than j)
+    sv: |
+      module Test;
+        int order;
+        initial begin
+          int arr[2][3];
+          order = 0;
+          foreach (arr[i,j]) begin
+            // Build number: each iteration adds i*10 + j
+            // Sequence: (0,0)->(0,1)->(0,2)->(1,0)->(1,1)->(1,2)
+            // Values:   00    01     02     10     11     12
+            order = order * 100 + i * 10 + j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        order: 102101112
+
+  - name: foreach_2d_index_values
+    sv: |
+      module Test;
+        int first_i, first_j;
+        int last_i, last_j;
+        initial begin
+          int arr[3][4];
+          first_i = -1;
+          first_j = -1;
+          last_i = -1;
+          last_j = -1;
+          foreach (arr[i,j]) begin
+            if (first_i == -1) begin
+              first_i = i;
+              first_j = j;
+            end
+            last_i = i;
+            last_j = j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_i: 0
+        first_j: 0
+        last_i: 2
+        last_j: 3
+
+  - name: foreach_2d_non_zero_base
+    sv: |
+      module Test;
+        int sum_i, sum_j;
+        initial begin
+          int arr[1:2][3:5];
+          sum_i = 0;
+          sum_j = 0;
+          foreach (arr[i,j]) begin
+            sum_i = sum_i + i;
+            sum_j = sum_j + j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum_i: 9
+        sum_j: 24
+
+  - name: foreach_3d_basic
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          int arr[2][3][4];
+          count = 0;
+          foreach (arr[i,j,k]) begin
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 24
+
+  - name: foreach_2d_with_break
+    sv: |
+      module Test;
+        int sum;
+        int stopped_i, stopped_j;
+        initial begin
+          int arr[3][3];
+          int val;
+          val = 1;
+          for (int r = 0; r < 3; r++)
+            for (int c = 0; c < 3; c++) begin
+              arr[r][c] = val;
+              val = val + 1;
+            end
+          // arr is now: 1 2 3 / 4 5 6 / 7 8 9
+          sum = 0;
+          stopped_i = -1;
+          stopped_j = -1;
+          foreach (arr[i,j]) begin
+            if (arr[i][j] > 5) break;
+            sum = sum + arr[i][j];
+            stopped_i = i;
+            stopped_j = j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 15
+        stopped_i: 1
+        stopped_j: 1
+
+  - name: foreach_2d_with_continue
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[2][3];
+          arr[0][0] = 1; arr[0][1] = 2; arr[0][2] = 3;
+          arr[1][0] = 4; arr[1][1] = 5; arr[1][2] = 6;
+          sum = 0;
+          foreach (arr[i,j]) begin
+            if (j == 1) continue;
+            sum = sum + arr[i][j];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 14
+
+  - name: foreach_2d_descending_range
+    sv: |
+      module Test;
+        int first_i, first_j;
+        int last_i, last_j;
+        initial begin
+          int arr[3:1][5:3];
+          first_i = -1;
+          first_j = -1;
+          last_i = -1;
+          last_j = -1;
+          foreach (arr[i,j]) begin
+            if (first_i == -1) begin
+              first_i = i;
+              first_j = j;
+            end
+            last_i = i;
+            last_j = j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_i: 3
+        first_j: 5
+        last_i: 1
+        last_j: 3
+
+  - name: foreach_3d_iteration_order
+    description: Verify 3D iteration order (i slowest, k fastest)
+    sv: |
+      module Test;
+        int first_i;
+        int first_j;
+        int first_k;
+        int last_i;
+        int last_j;
+        int last_k;
+        initial begin
+          int arr[2][2][3];
+          first_i = -1;
+          first_j = -1;
+          first_k = -1;
+          last_i = -1;
+          last_j = -1;
+          last_k = -1;
+          foreach (arr[i,j,k]) begin
+            if (first_i == -1) begin
+              first_i = i;
+              first_j = j;
+              first_k = k;
+            end
+            last_i = i;
+            last_j = j;
+            last_k = k;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_i: 0
+        first_j: 0
+        first_k: 0
+        last_i: 1
+        last_j: 1
+        last_k: 2
+
+  - name: foreach_2d_mixed_direction
+    description: First dimension ascending, second descending
+    sv: |
+      module Test;
+        int first_i, first_j;
+        int last_i, last_j;
+        initial begin
+          int arr[0:2][5:3];
+          first_i = -1;
+          first_j = -1;
+          foreach (arr[i,j]) begin
+            if (first_i == -1) begin
+              first_i = i;
+              first_j = j;
+            end
+            last_i = i;
+            last_j = j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_i: 0
+        first_j: 5
+        last_i: 2
+        last_j: 3
+
+  - name: foreach_2d_single_element_dim
+    description: Dimension with only one element
+    sv: |
+      module Test;
+        int count;
+        int captured_j;
+        initial begin
+          int arr[3][5:5];
+          count = 0;
+          captured_j = -1;
+          foreach (arr[i,j]) begin
+            count = count + 1;
+            captured_j = j;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+        captured_j: 5

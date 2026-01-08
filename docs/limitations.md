@@ -18,7 +18,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 ## Statements
 
 - `case inside` - pattern matching
-- `foreach` - multi-dimensional array iteration (1D supported)
+- `foreach` - skipped dimensions (e.g., `foreach(arr[,j])`), dynamic arrays
 - `return` - function returns
 - `wait(expr)` - wait statements
 - `->` - event triggers
@@ -27,7 +27,6 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 ## Expressions
 
-- Hierarchical references (`top.sub.signal`)
 - Concatenation (`{a, b, c}`)
 - Replication (`{4{byte}}`)
 - Struct member access (`.field`)
@@ -43,7 +42,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 Supported:
 
-- `$display` - formatted output (including `%t` format specifier)
+- `$display`, `$write` - formatted output (including `%t` format specifier)
 - `$finish`, `$stop`, `$exit` - simulation control
 - `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
 - `$timeformat` - configure `%t` output format
@@ -53,7 +52,7 @@ Supported:
 
 Not yet supported:
 
-- `$write`, `$monitor` - output variants
+- `$monitor` - continuous monitoring
 - `$random`, `$urandom` - random number generation
 - `$readmemh`, `$readmemb` - file I/O
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
