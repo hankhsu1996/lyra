@@ -9,6 +9,10 @@
 
 namespace lyra::sdk {
 
+// Forward declaration for WideBit class
+template <std::size_t Width, bool Signed>
+class WideBit;
+
 namespace detail {
 
 // Select the smallest unsigned type that can hold Width bits
@@ -122,6 +126,15 @@ class Bit {
         }())} {
   }
 
+  // Explicit conversion from WideBit (truncates to low bits).
+  // Since WideBit > 64 bits and Bit <= 64 bits, this is always truncation.
+  // Made explicit to prevent silent truncation bugs.
+  // Prefer using WideBit::TruncateTo<Width>() for clearer intent.
+  template <std::size_t OtherWidth, bool OtherSigned>
+  explicit constexpr Bit(const WideBit<OtherWidth, OtherSigned>& other)
+      : value_{static_cast<Storage>(other.GetWord(0) & kMask)} {
+  }
+
   // Assignment from any integral type
   template <typename T>
     requires std::is_integral_v<T>
@@ -138,6 +151,12 @@ class Bit {
   // Access signed value (sign-extended)
   [[nodiscard]] constexpr auto SignedValue() const -> SignedStorage {
     return detail::SignExtend<Width>(value_);
+  }
+
+  // Get the sign bit (MSB)
+  [[nodiscard]] constexpr auto GetSignBit() const -> bool {
+    constexpr Storage kSignBit = Storage{1} << (Width - 1);
+    return (value_ & kSignBit) != 0;
   }
 
   // Implicit conversion to bool (for use in conditions like if/while)
@@ -425,6 +444,10 @@ using Int = Bit<32, true>;
 using LongInt = Bit<64, true>;
 
 }  // namespace lyra::sdk
+
+// Include WideBit after Bit is fully defined to resolve circular dependency.
+// Bit(WideBit) constructor needs the full WideBit definition.
+#include "lyra/sdk/wide_bit.hpp"
 
 // std::formatter specialization for Bit<N, S>
 template <std::size_t Width, bool Signed>

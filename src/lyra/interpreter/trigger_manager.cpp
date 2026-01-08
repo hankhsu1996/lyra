@@ -157,8 +157,15 @@ auto TriggerManager::ShouldTrigger(
   }
 
   if (old_value.IsTwoState() && new_value.IsTwoState()) {
-    uint64_t old_bit0 = old_value.AsUInt64() & 1;
-    uint64_t new_bit0 = new_value.AsUInt64() & 1;
+    // Extract bit 0 for edge detection
+    auto get_bit0 = [](const RuntimeValue& v) -> uint64_t {
+      if (v.IsWide()) {
+        return v.AsWideBit().GetBit(0);
+      }
+      return v.AsNarrow().AsUInt64() & 1;
+    };
+    uint64_t old_bit0 = get_bit0(old_value);
+    uint64_t new_bit0 = get_bit0(new_value);
 
     switch (edge_kind) {
       case common::EdgeKind::kPosedge:

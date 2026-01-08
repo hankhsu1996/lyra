@@ -207,13 +207,12 @@ class ElementSelectExpression;
 
 // Represents the target of an assignment:
 // - Local variable (symbol only)
-// - Array element (symbol + index)
+// - Array element (symbol + indices for multi-dim packed arrays)
 // - Hierarchical reference (path like "child.port")
 struct AssignmentTarget {
-  // For local symbol targets
   SymbolRef symbol;  // The base variable (nullptr for hierarchical)
-  std::unique_ptr<Expression>
-      element_index;              // Optional: index for element select
+  std::vector<std::unique_ptr<Expression>>
+      indices;                    // Indices for element select (empty = simple)
   std::optional<Type> base_type;  // Type of base variable (for element select)
 
   // For hierarchical targets
@@ -222,35 +221,43 @@ struct AssignmentTarget {
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
-      : symbol(std::move(sym)),
-        element_index(nullptr),
-        base_type(std::nullopt) {
+      : symbol(std::move(sym)), indices(), base_type(std::nullopt) {
   }
 
-  // Constructor for element select assignment
+  // Constructor for single-index element select assignment
   AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index)
-      : symbol(std::move(sym)),
-        element_index(std::move(index)),
-        base_type(std::nullopt) {
+      : symbol(std::move(sym)), indices(), base_type(std::nullopt) {
+    if (index) {
+      indices.push_back(std::move(index));
+    }
   }
 
-  // Constructor for element select assignment with base type
+  // Constructor for single-index element select assignment with base type
   AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index, Type type)
+      : symbol(std::move(sym)), indices(), base_type(std::move(type)) {
+    if (index) {
+      indices.push_back(std::move(index));
+    }
+  }
+
+  // Constructor for multi-index element select assignment with base type
+  AssignmentTarget(
+      SymbolRef sym, std::vector<std::unique_ptr<Expression>> idxs, Type type)
       : symbol(std::move(sym)),
-        element_index(std::move(index)),
+        indices(std::move(idxs)),
         base_type(std::move(type)) {
   }
 
   // Constructor for hierarchical reference assignment
   AssignmentTarget(SymbolRef target, std::vector<SymbolRef> instances)
       : symbol(nullptr),
-        element_index(nullptr),
+        indices(),
         target_symbol(target),
         instance_path(std::move(instances)) {
   }
 
   [[nodiscard]] auto IsElementSelect() const -> bool {
-    return element_index != nullptr;
+    return !indices.empty();
   }
 
   [[nodiscard]] auto IsPacked() const -> bool {
@@ -265,10 +272,14 @@ struct AssignmentTarget {
     if (IsHierarchical()) {
       return common::FormatHierarchicalPath(instance_path, target_symbol);
     }
-    if (element_index) {
-      return fmt::format("{}[{}]", symbol->name, element_index->ToString());
+    if (indices.empty()) {
+      return std::string(symbol->name);
     }
-    return std::string(symbol->name);
+    std::string result = std::string(symbol->name);
+    for (const auto& idx : indices) {
+      result += fmt::format("[{}]", idx->ToString());
+    }
+    return result;
   }
 };
 

@@ -22,6 +22,7 @@
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/wide_bit_ops.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_context.hpp"
@@ -137,24 +138,46 @@ auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     return fmt;
   };
 
+  // Handle wide values (>64 bits)
+  if (value.IsWide()) {
+    const auto& wide = value.AsWideBit();
+    switch (spec.spec) {
+      case 'x':
+      case 'h':
+        return wide.ToHexString();
+      case 'b':
+        return wide.ToBinaryString();
+      case 'o':
+        return wide.ToOctalString();
+      case 'd':
+        return wide.ToDecimalString();
+      default:
+        return wide.ToHexString();
+    }
+  }
+
+  auto narrow = value.AsNarrow();
+
   switch (spec.spec) {
     case 'x':
     case 'h': {
-      // Unsigned for hex/binary/octal
-      auto v = static_cast<uint64_t>(value.AsInt64());
+      // Unsigned for hex
+      auto v = narrow.AsUInt64();
       return fmt::format(fmt::runtime(build_int_format('x')), v);
     }
     case 'b': {
-      auto v = static_cast<uint64_t>(value.AsInt64());
+      // Unsigned for binary
+      auto v = narrow.AsUInt64();
       return fmt::format(fmt::runtime(build_int_format('b')), v);
     }
     case 'o': {
-      auto v = static_cast<uint64_t>(value.AsInt64());
+      // Unsigned for octal
+      auto v = narrow.AsUInt64();
       return fmt::format(fmt::runtime(build_int_format('o')), v);
     }
     case 'd': {
       // Signed for decimal to preserve negative numbers
-      auto v = value.AsInt64();
+      auto v = narrow.AsInt64();
       return fmt::format(fmt::runtime(build_int_format('d')), v);
     }
     default:  // 's'
@@ -266,7 +289,7 @@ auto FormatDisplay(
         if (spec.spec == 't') {
           if (time_ctx != nullptr) {
             // Format time value using $timeformat settings
-            uint64_t time_val = args[arg_idx].AsUInt64();
+            uint64_t time_val = args[arg_idx].AsNarrow().AsUInt64();
             result += time_ctx->time_format.FormatModuleTime(
                 time_val, time_ctx->module_unit_power,
                 time_ctx->global_precision_power);
@@ -362,6 +385,32 @@ auto ExecuteMathBinary(std::string_view name, double a, double b) -> double {
     return std::hypot(a, b);
   }
   std::unreachable();
+}
+
+// Extract int64 value from RuntimeValue, handling both narrow and wide sources.
+// For wide sources, extracts the low 64 bits.
+auto ExtractInt64FromSource(const RuntimeValue& src) -> int64_t {
+  return src.IsWide() ? static_cast<int64_t>(src.AsWideBit().GetWord(0))
+                      : src.AsNarrow().AsInt64();
+}
+
+// Create a WideBit from an int64 value, with optional sign extension.
+// Masks the final word to the specified bit width for correct behavior.
+auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
+    -> common::WideBit {
+  auto num_words = common::wide_ops::WordsForBits(bit_width);
+  common::WideBit wide(num_words);
+  wide.SetWord(0, static_cast<uint64_t>(value));
+
+  if (sign_extend && value < 0) {
+    for (size_t i = 1; i < num_words; ++i) {
+      wide.SetWord(i, ~uint64_t{0});
+    }
+  }
+
+  // Mask final word to bit width (matches SDK behavior)
+  common::wide_ops::MaskToWidth(wide.Words(), bit_width);
+  return wide;
 }
 
 }  // namespace
@@ -602,7 +651,8 @@ auto RunInstruction(
       assert(array_value.IsArray());
 
       auto index_value = get_temp(instr.operands[1]);
-      auto index = static_cast<size_t>(index_value.AsInt64());
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
 
       // Get lower bound from array type
       const auto& array_type = array_value.type;
@@ -639,7 +689,8 @@ auto RunInstruction(
       assert(array_value.IsArray());
 
       auto index_value = get_temp(instr.operands[1]);
-      auto index = static_cast<size_t>(index_value.AsInt64());
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
       auto value = get_temp(instr.operands[2]);
 
       // Get lower bound from array type
@@ -676,7 +727,8 @@ auto RunInstruction(
       assert(value.IsTwoState());
 
       auto index_value = get_temp(instr.operands[1]);
-      auto index = static_cast<size_t>(index_value.AsInt64());
+      assert(!index_value.IsWide() && "packed element index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
 
       // Get element width from result type
       const auto& result_type = instr.result_type.value();
@@ -687,10 +739,29 @@ auto RunInstruction(
       // Compute bit position: start_bit = index * element_width
       size_t start_bit = index * element_width;
 
-      // Extract element: (value >> start_bit) & mask
-      uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(element_width));
-      auto extracted = (value.AsUInt64() >> start_bit) & mask;
-      auto result = RuntimeValue::IntegralUnsigned(extracted, element_width);
+      // Extract element
+      RuntimeValue result;
+      if (element_width <= 64) {
+        // Narrow element - extract as uint64_t
+        uint64_t mask =
+            common::MakeBitMask(static_cast<uint32_t>(element_width));
+        uint64_t extracted = 0;
+        if (value.IsWide()) {
+          auto shifted = value.AsWideBit().ShiftRightLogical(start_bit);
+          extracted = shifted.GetWord(0) & mask;
+        } else {
+          extracted = (value.AsNarrow().AsUInt64() >> start_bit) & mask;
+        }
+        result = RuntimeValue::IntegralUnsigned(extracted, element_width);
+      } else {
+        // Wide element - extract as WideBit
+        auto wide_value = value.IsWide() ? value.AsWideBit()
+                                         : common::WideBit::FromUInt64(
+                                               value.AsNarrow().AsUInt64(), 2);
+        auto extracted = wide_value.ExtractSlice(start_bit, element_width);
+        result =
+            RuntimeValue::IntegralWide(std::move(extracted), element_width);
+      }
       temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
     }
@@ -708,21 +779,39 @@ auto RunInstruction(
 
       auto value = get_temp(instr.operands[0]);
       auto lsb_value = get_temp(instr.operands[1]);
-      auto lsb = static_cast<size_t>(lsb_value.AsInt64());
+      assert(!lsb_value.IsWide() && "slice index cannot be wide");
+      auto lsb = static_cast<size_t>(lsb_value.AsNarrow().AsInt64());
 
       const auto& result_type = instr.result_type.value();
       assert(result_type.kind == common::Type::Kind::kIntegral);
       auto result_data = std::get<common::IntegralData>(result_type.data);
       size_t width = result_data.bit_width;
 
-      // Extract slice: (value >> lsb) & mask
-      uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
-      auto extracted = (value.AsUInt64() >> lsb) & mask;
-
-      auto result = result_data.is_signed
-                        ? RuntimeValue::IntegralSigned(
-                              static_cast<int64_t>(extracted), width)
-                        : RuntimeValue::IntegralUnsigned(extracted, width);
+      // Extract slice
+      RuntimeValue result;
+      if (width <= 64) {
+        // Narrow slice - extract as uint64_t
+        uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
+        uint64_t extracted = 0;
+        if (value.IsWide()) {
+          auto shifted = value.AsWideBit().ShiftRightLogical(lsb);
+          extracted = shifted.GetWord(0) & mask;
+        } else {
+          extracted = (value.AsNarrow().AsUInt64() >> lsb) & mask;
+        }
+        result = result_data.is_signed
+                     ? RuntimeValue::IntegralSigned(
+                           static_cast<int64_t>(extracted), width)
+                     : RuntimeValue::IntegralUnsigned(extracted, width);
+      } else {
+        // Wide slice - extract as WideBit
+        auto wide_value = value.IsWide() ? value.AsWideBit()
+                                         : common::WideBit::FromUInt64(
+                                               value.AsNarrow().AsUInt64(), 2);
+        auto extracted = wide_value.ExtractSlice(lsb, width);
+        result = RuntimeValue::IntegralWide(
+            std::move(extracted), width, result_data.is_signed);
+      }
       temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
     }
@@ -743,7 +832,8 @@ auto RunInstruction(
       assert(current.IsTwoState());
 
       auto index_value = get_temp(instr.operands[1]);
-      auto index = static_cast<size_t>(index_value.AsInt64());
+      assert(!index_value.IsWide() && "packed element index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
 
       auto new_value = get_temp(instr.operands[2]);
 
@@ -751,24 +841,45 @@ auto RunInstruction(
       const auto& elem_type = instr.result_type.value();
       size_t element_width = elem_type.GetBitWidth();
 
-      // Compute bit position and masks
-      size_t shift = index * element_width;
-      uint64_t elem_mask =
-          common::MakeBitMask(static_cast<uint32_t>(element_width));
-      uint64_t clear_mask = ~(elem_mask << shift);
-
-      // Merge: (current & ~(mask << shift)) | ((new_value & mask) << shift)
-      uint64_t merged = (current.AsUInt64() & clear_mask) |
-                        ((new_value.AsUInt64() & elem_mask) << shift);
-
-      // Write back with original type's width and signedness
+      // Get storage width and signedness
       const auto& current_data =
           std::get<common::IntegralData>(current.type.data);
-      auto result =
-          current_data.is_signed
-              ? RuntimeValue::IntegralSigned(
-                    static_cast<int64_t>(merged), current_data.bit_width)
-              : RuntimeValue::IntegralUnsigned(merged, current_data.bit_width);
+      size_t storage_width = current_data.bit_width;
+      bool storage_is_wide = current.IsWide();
+      bool element_is_wide = element_width > 64;
+
+      // Compute bit position
+      size_t shift = index * element_width;
+
+      RuntimeValue result;
+      if (!storage_is_wide && !element_is_wide) {
+        // Narrow storage, narrow element - existing mask-and-merge logic
+        uint64_t elem_mask =
+            common::MakeBitMask(static_cast<uint32_t>(element_width));
+        uint64_t clear_mask = ~(elem_mask << shift);
+        uint64_t merged =
+            (current.AsNarrow().AsUInt64() & clear_mask) |
+            ((new_value.AsNarrow().AsUInt64() & elem_mask) << shift);
+        result = current_data.is_signed
+                     ? RuntimeValue::IntegralSigned(
+                           static_cast<int64_t>(merged), storage_width)
+                     : RuntimeValue::IntegralUnsigned(merged, storage_width);
+      } else {
+        // Wide storage or wide element - use WideBit InsertSlice
+        size_t storage_words = common::wide_ops::WordsForBits(storage_width);
+        auto current_wide =
+            storage_is_wide ? current.AsWideBit()
+                            : common::WideBit::FromUInt64(
+                                  current.AsNarrow().AsUInt64(), storage_words);
+        auto value_wide = element_is_wide ? new_value.AsWideBit()
+                                          : common::WideBit::FromUInt64(
+                                                new_value.AsNarrow().AsUInt64(),
+                                                storage_words);
+        auto merged =
+            current_wide.InsertSlice(value_wide, shift, element_width);
+        result = RuntimeValue::IntegralWide(
+            std::move(merged), storage_width, current_data.is_signed);
+      }
       store_variable(instr.operands[0], result, false);
       return InstructionResult::Continue();
     }
@@ -949,17 +1060,24 @@ auto RunInstruction(
           target_type.kind == common::Type::Kind::kIntegral) {
         auto two_state_data = std::get<common::IntegralData>(target_type.data);
 
-        // Reject bit width greater than 64
+        // Wide target type - create WideBit and sign-extend if needed
         if (two_state_data.bit_width > 64) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {},
-                  fmt::format(
-                      "unsupported target bit width > 64: {}", target_type)));
+          common::WideBit wide = src.IsWide() ? src.AsWideBit() : [&]() {
+            auto src_data = std::get<common::IntegralData>(src.type.data);
+            return CreateWideFromInt64(
+                src.AsNarrow().AsInt64(), two_state_data.bit_width,
+                src_data.is_signed);
+          }();
+
+          RuntimeValue result = RuntimeValue::IntegralWide(
+              std::move(wide), two_state_data.bit_width,
+              two_state_data.is_signed);
+          temp_table.Write(instr.result.value(), result);
+          return InstructionResult::Continue();
         }
 
-        // Extract source value as int64
-        int64_t raw_value = src.AsInt64();
+        // Narrow target type - extract value (may be from wide source)
+        int64_t raw_value = ExtractInt64FromSource(src);
 
         // Apply sign/bitwidth conversion
         RuntimeValue result = two_state_data.is_signed
@@ -976,9 +1094,19 @@ auto RunInstruction(
       if (src.type.kind == common::Type::Kind::kIntegral &&
           target_type.kind == common::Type::Kind::kReal) {
         auto two_state_data = std::get<common::IntegralData>(src.type.data);
-        double real_value = two_state_data.is_signed
-                                ? static_cast<double>(src.AsInt64())
-                                : static_cast<double>(src.AsUInt64());
+        double real_value = 0.0;
+        if (src.IsWide()) {
+          // Wide source - convert full value to double
+          // Note: For signed wide, we'd need to handle two's complement
+          // but typically unsigned for large values
+          real_value = src.AsWideBit().ToDouble();
+        } else {
+          int64_t raw_value = src.AsNarrow().AsInt64();
+          real_value =
+              two_state_data.is_signed
+                  ? static_cast<double>(raw_value)
+                  : static_cast<double>(static_cast<uint64_t>(raw_value));
+        }
         temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
         return InstructionResult::Continue();
       }
@@ -986,15 +1114,22 @@ auto RunInstruction(
       if (src.type.kind == common::Type::Kind::kReal &&
           target_type.kind == common::Type::Kind::kIntegral) {
         auto two_state_data = std::get<common::IntegralData>(target_type.data);
+        auto raw_value = static_cast<int64_t>(src.AsDouble());
+
+        // Wide target type
         if (two_state_data.bit_width > 64) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {},
-                  fmt::format(
-                      "unsupported target bit width > 64: {}", target_type)));
+          // Real-to-integral: sign-extend if negative
+          common::WideBit wide = CreateWideFromInt64(
+              raw_value, two_state_data.bit_width,
+              /*sign_extend=*/true);
+          RuntimeValue result = RuntimeValue::IntegralWide(
+              std::move(wide), two_state_data.bit_width,
+              two_state_data.is_signed);
+          temp_table.Write(instr.result.value(), result);
+          return InstructionResult::Continue();
         }
 
-        auto raw_value = static_cast<int64_t>(src.AsDouble());
+        // Narrow target type
         RuntimeValue result = two_state_data.is_signed
                                   ? RuntimeValue::IntegralSigned(
                                         raw_value, two_state_data.bit_width)
@@ -1010,9 +1145,17 @@ auto RunInstruction(
       if (src.type.kind == common::Type::Kind::kIntegral &&
           target_type.kind == common::Type::Kind::kShortReal) {
         auto two_state_data = std::get<common::IntegralData>(src.type.data);
-        float float_value = two_state_data.is_signed
-                                ? static_cast<float>(src.AsInt64())
-                                : static_cast<float>(src.AsUInt64());
+        float float_value = 0.0F;
+        if (src.IsWide()) {
+          // Wide source - convert full value to float
+          float_value = static_cast<float>(src.AsWideBit().ToDouble());
+        } else {
+          int64_t raw_value = src.AsNarrow().AsInt64();
+          float_value =
+              two_state_data.is_signed
+                  ? static_cast<float>(raw_value)
+                  : static_cast<float>(static_cast<uint64_t>(raw_value));
+        }
         temp_table.Write(
             instr.result.value(), RuntimeValue::ShortReal(float_value));
         return InstructionResult::Continue();
@@ -1021,15 +1164,22 @@ auto RunInstruction(
       if (src.type.kind == common::Type::Kind::kShortReal &&
           target_type.kind == common::Type::Kind::kIntegral) {
         auto two_state_data = std::get<common::IntegralData>(target_type.data);
+        auto raw_value = static_cast<int64_t>(src.AsFloat());
+
+        // Wide target type
         if (two_state_data.bit_width > 64) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {},
-                  fmt::format(
-                      "unsupported target bit width > 64: {}", target_type)));
+          // Shortreal-to-integral: sign-extend if negative
+          common::WideBit wide = CreateWideFromInt64(
+              raw_value, two_state_data.bit_width,
+              /*sign_extend=*/true);
+          RuntimeValue result = RuntimeValue::IntegralWide(
+              std::move(wide), two_state_data.bit_width,
+              two_state_data.is_signed);
+          temp_table.Write(instr.result.value(), result);
+          return InstructionResult::Continue();
         }
 
-        auto raw_value = static_cast<int64_t>(src.AsFloat());
+        // Narrow target type
         RuntimeValue result = two_state_data.is_signed
                                   ? RuntimeValue::IntegralSigned(
                                         raw_value, two_state_data.bit_width)
@@ -1080,7 +1230,9 @@ auto RunInstruction(
     case lir::InstructionKind::kDelay: {
       assert(instr.operands[0].IsLiteral());
       const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
-      const auto delay_amount = RuntimeValue::FromLiteral(literal).AsUInt64();
+      // Delay amounts are never wide
+      const auto delay_amount =
+          RuntimeValue::FromLiteral(literal).AsNarrow().AsUInt64();
       return InstructionResult::Delay(delay_amount);
     }
 
@@ -1096,7 +1248,9 @@ auto RunInstruction(
         // $finish and $stop default to 1 if no argument (handled in lowering)
         int level = 1;
         if (!instr.operands.empty()) {
-          level = static_cast<int>(get_temp(instr.operands[0]).AsUInt64());
+          // Diagnostic level is never wide
+          level = static_cast<int>(
+              get_temp(instr.operands[0]).AsNarrow().AsUInt64());
         }
 
         // Print diagnostics based on level (VCS style)
@@ -1230,18 +1384,19 @@ auto RunInstruction(
         auto& tf = simulation_context.time_format;
 
         if (!instr.operands.empty()) {
-          tf.units = static_cast<int8_t>(get_temp(instr.operands[0]).AsInt64());
+          tf.units = static_cast<int8_t>(
+              get_temp(instr.operands[0]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 2) {
-          tf.precision =
-              static_cast<int>(get_temp(instr.operands[1]).AsInt64());
+          tf.precision = static_cast<int>(
+              get_temp(instr.operands[1]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 3) {
           tf.suffix = get_temp(instr.operands[2]).AsString();
         }
         if (instr.operands.size() >= 4) {
-          tf.min_width =
-              static_cast<int>(get_temp(instr.operands[3]).AsInt64());
+          tf.min_width = static_cast<int>(
+              get_temp(instr.operands[3]).AsNarrow().AsInt64());
         }
 
         return InstructionResult::Continue();
@@ -1316,8 +1471,8 @@ auto RunInstruction(
         // $signed: reinterpret bits as signed, preserving bit width
         auto target_data =
             std::get<common::IntegralData>(instr.result_type->data);
-        auto result =
-            RuntimeValue::IntegralSigned(src.AsInt64(), target_data.bit_width);
+        auto result = RuntimeValue::IntegralSigned(
+            ExtractInt64FromSource(src), target_data.bit_width);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -1331,7 +1486,8 @@ auto RunInstruction(
         auto target_data =
             std::get<common::IntegralData>(instr.result_type->data);
         auto result = RuntimeValue::IntegralUnsigned(
-            static_cast<uint64_t>(src.AsInt64()), target_data.bit_width);
+            static_cast<uint64_t>(ExtractInt64FromSource(src)),
+            target_data.bit_width);
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();
       }
@@ -1342,9 +1498,11 @@ auto RunInstruction(
         assert(!instr.operands.empty());
         const auto& src = get_temp(instr.operands[0]);
         auto src_data = std::get<common::IntegralData>(src.type.data);
-        double real_value = src_data.is_signed
-                                ? static_cast<double>(src.AsInt64())
-                                : static_cast<double>(src.AsUInt64());
+        double real_value =
+            src_data.is_signed
+                ? static_cast<double>(ExtractInt64FromSource(src))
+                : static_cast<double>(
+                      static_cast<uint64_t>(ExtractInt64FromSource(src)));
         temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
         return InstructionResult::Continue();
       }
@@ -1383,7 +1541,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
         const auto& src = get_temp(instr.operands[0]);
-        auto real_value = std::bit_cast<double>(src.AsUInt64());
+        auto real_value = std::bit_cast<double>(src.AsNarrow().AsUInt64());
         temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
         return InstructionResult::Continue();
       }
@@ -1404,7 +1562,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
         const auto& src = get_temp(instr.operands[0]);
-        auto bits = static_cast<uint32_t>(src.AsUInt64());
+        auto bits = static_cast<uint32_t>(src.AsNarrow().AsUInt64());
         auto shortreal_value = std::bit_cast<float>(bits);
         temp_table.Write(
             instr.result.value(), RuntimeValue::ShortReal(shortreal_value));
@@ -1416,7 +1574,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
         const auto& src = get_temp(instr.operands[0]);
-        uint64_t n = src.AsUInt64();
+        uint64_t n = src.AsNarrow().AsUInt64();
         int result = (n == 0) ? 0 : std::bit_width(n - 1);
         temp_table.Write(
             instr.result.value(), RuntimeValue::IntegralSigned(result, 32));
@@ -1477,7 +1635,11 @@ auto RunInstruction(
         condition_result = condition.AsFloat() != 0.0F;
       } else {
         assert(condition.IsTwoState());
-        condition_result = condition.AsInt64() != 0;
+        if (condition.IsWide()) {
+          condition_result = !condition.AsWideBit().IsZero();
+        } else {
+          condition_result = condition.AsNarrow().raw != 0;
+        }
       }
 
       const auto& next_label = condition_result ? true_target : false_target;

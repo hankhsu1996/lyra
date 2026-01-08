@@ -1,0 +1,207 @@
+feature: packed_arrays_3d
+description: N-dimensional packed array support (read and chained assignment)
+
+cases:
+  # Basic 3D packed array read
+  - name: 3d_packed_basic_read
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;  // 2x2 array of bytes = 32 bits
+        int r0, r1, r2, r3;
+        initial begin
+          data = 32'hDEADBEEF;
+          // Layout: data[1][1]=0xDE, data[1][0]=0xAD, data[0][1]=0xBE, data[0][0]=0xEF
+          r0 = data[0][0];
+          r1 = data[0][1];
+          r2 = data[1][0];
+          r3 = data[1][1];
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 239   # 0xEF
+        r1: 190   # 0xBE
+        r2: 173   # 0xAD
+        r3: 222   # 0xDE
+
+  # Triple index (bit select from 3D element)
+  - name: 3d_packed_triple_index
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int r0, r1, r2;
+        initial begin
+          data = 32'hDEADBEEF;
+          // 0xDE = 0b11011110
+          r0 = data[1][1][0];  // bit 0 = 0
+          r1 = data[1][1][6];  // bit 6 = 1
+          r2 = data[1][1][7];  // bit 7 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 0
+        r1: 1
+        r2: 1
+
+  # Variable indices in 3D access
+  - name: 3d_packed_variable_indices
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int i, j;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          i = 1;
+          j = 0;
+          result = data[i][j];  // data[1][0] = 0xAD
+        end
+      endmodule
+    expect:
+      variables:
+        result: 173
+
+  # Variable indices with bit select
+  - name: 3d_packed_variable_bit_select
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int i, j, k;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          i = 0;
+          j = 1;
+          k = 5;
+          result = data[i][j][k];  // bit 5 of 0xBE (0b10111110) = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # Range select from 3D element
+  - name: 3d_packed_range_select
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int lo_nibble, hi_nibble;
+        initial begin
+          data = 32'hDEADBEEF;
+          lo_nibble = data[1][1][3:0];  // 0xDE lower nibble = 0xE = 14
+          hi_nibble = data[1][1][7:4];  // 0xDE upper nibble = 0xD = 13
+        end
+      endmodule
+    expect:
+      variables:
+        lo_nibble: 14
+        hi_nibble: 13
+
+  # Larger 2D array (note: bit[A][B][C] is 2D: A*B elements of C-bit scalars)
+  - name: 3d_packed_4x4_nibbles
+    sv: |
+      module Test;
+        bit [3:0][3:0][3:0] cube;  // 4x4 array of 4-bit = 64 bits
+        int r;
+        initial begin
+          cube = 64'hFEDCBA98_76543210;
+          // Layout: cube[3]=0xFEDC, cube[2]=0xBA98, cube[1]=0x7654, cube[0]=0x3210
+          // cube[2][1] = nibble 1 of 0xBA98 = 0x9 = 9
+          r = cube[2][1];
+        end
+      endmodule
+    expect:
+      variables:
+        r: 9
+
+  # 3D with single-element outer dimension
+  - name: 3d_packed_single_outer
+    sv: |
+      module Test;
+        bit [0:0][1:0][7:0] data;  // 1x2 array of bytes = 16 bits
+        int r0, r1;
+        initial begin
+          data = 16'hABCD;
+          r0 = data[0][0];  // 0xCD
+          r1 = data[0][1];  // 0xAB
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 205  # 0xCD
+        r1: 171  # 0xAB
+
+  # Whole plane access in 3D
+  - name: 3d_packed_plane_read
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int plane0, plane1;
+        initial begin
+          data = 32'hDEADBEEF;
+          plane0 = data[0];  // 0xBEEF
+          plane1 = data[1];  // 0xDEAD
+        end
+      endmodule
+    expect:
+      variables:
+        plane0: 48879  # 0xBEEF
+        plane1: 57005  # 0xDEAD
+
+  # Chained element assignment (N-dimensional)
+  - name: nd_element_assign_3d
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;  // 2x2 array of bytes = 32 bits
+        int r;
+        initial begin
+          data = 32'h00000000;
+          data[1][0] = 8'hAB;  // Chained element assignment
+          r = data[1][0];
+        end
+      endmodule
+    expect:
+      variables:
+        r: 171  # 0xAB
+
+  - name: nd_element_assign_variable_indices
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;
+        int i, j, r;
+        initial begin
+          data = 32'h00000000;
+          i = 1;
+          j = 1;
+          data[i][j] = 8'hFF;
+          r = data[1][1];
+        end
+      endmodule
+    expect:
+      variables:
+        r: 255
+
+  - name: nd_element_assign_multiple
+    sv: |
+      module Test;
+        bit [1:0][1:0][7:0] data;  // 2x2 array of bytes
+        int r0, r1, r2, r3;
+        initial begin
+          data = 32'h00000000;
+          data[0][0] = 8'h11;
+          data[0][1] = 8'h22;
+          data[1][0] = 8'h33;
+          data[1][1] = 8'h44;
+          r0 = data[0][0];
+          r1 = data[0][1];
+          r2 = data[1][0];
+          r3 = data[1][1];
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 17   # 0x11
+        r1: 34   # 0x22
+        r2: 51   # 0x33
+        r3: 68   # 0x44

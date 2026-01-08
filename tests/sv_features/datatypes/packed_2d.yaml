@@ -165,3 +165,102 @@ cases:
     expect:
       variables:
         result: 10  # Element 2 = 0xAD, upper nibble = 0xA = 10
+
+  # 64-bit boundary tests - exactly 64 bits per element (narrow path boundary)
+  - name: 2d_packed_64bit_element_boundary
+    sv: |
+      module Test;
+        bit [1:0][63:0] data;  // 2 elements of exactly 64 bits
+        longint lo, hi;
+        initial begin
+          data[0] = 64'd1234567890123456789;
+          data[1] = 64'd9876543210;
+          lo = data[0];
+          hi = data[1];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 1234567890123456789
+        hi: 9876543210
+
+  - name: 2d_packed_64bit_variable_index
+    sv: |
+      module Test;
+        bit [1:0][63:0] data;
+        int idx;
+        longint result;
+        initial begin
+          data[0] = 64'd100;
+          data[1] = 64'd200;
+          idx = 1;
+          result = data[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 200
+
+  - name: 2d_packed_64bit_bit_select
+    sv: |
+      module Test;
+        bit [1:0][63:0] data;
+        int result;
+        initial begin
+          data[0] = 64'h8000_0000;  // Bit 31 set
+          result = data[0][31];     // Extract bit 31 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: 2d_packed_64bit_range_select
+    sv: |
+      module Test;
+        bit [1:0][63:0] data;
+        int result;
+        initial begin
+          data[1] = 64'hDEAD_BEEF_CAFE_BABE;
+          result = data[1][47:16];  // Extract bits [47:16] = 0xBEEFCAFE
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1091581186  # 0xBEEFCAFE as signed int
+
+  - name: 2d_packed_nonzero_both_dims
+    sv: |
+      module Test;
+        bit [5:2][7:4] data;  // 4 elements (indices 2-5), each 4 bits (indices 4-7)
+        int result;
+        initial begin
+          data = 16'hABCD;
+          result = data[3];  // Element 3 = bits [7:4] of flattened = 0xC = 12
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12
+
+  - name: 2d_packed_nonzero_both_dims_chained
+    sv: |
+      module Test;
+        bit [5:2][9:6] data;  // 4 elements (indices 2-5), each 4 bits (indices 6-9)
+        int elem5, elem2, bit9, bit6;
+        initial begin
+          data = 16'hABCD;
+          // element [5] = 0xA = 1010, element [2] = 0xD = 1101
+          elem5 = data[5];
+          elem2 = data[2];
+          // data[5] = 1010: bit 9=1, bit 8=0, bit 7=1, bit 6=0
+          bit9 = data[5][9];
+          bit6 = data[5][6];
+        end
+      endmodule
+    expect:
+      variables:
+        elem5: 10   # 0xA
+        elem2: 13   # 0xD
+        bit9: 1     # MSB of 0xA
+        bit6: 0     # LSB of 0xA

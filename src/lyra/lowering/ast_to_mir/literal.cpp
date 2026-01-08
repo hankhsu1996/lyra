@@ -4,6 +4,7 @@
 #include <expected>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/types/AllTypes.h>
@@ -12,6 +13,7 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
+#include "lyra/common/wide_bit.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -20,23 +22,36 @@ auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
     -> Result<common::Literal> {
   const auto& sv_int = literal.getValue();
 
-  if (!sv_int.isSingleWord() || sv_int.hasUnknown()) {
+  // Reject four-state values with unknown bits
+  if (sv_int.hasUnknown()) {
     return std::unexpected(
         Diagnostic::Error(
-            literal.sourceRange, "unsupported wide or unknown literal"));
+            literal.sourceRange, "unsupported literal with unknown bits"));
   }
 
-  std::span<const uint64_t> data(sv_int.getRawPtr(), 1);
-  auto raw = data[0];
   auto width = sv_int.getBitWidth();
   auto is_signed = sv_int.isSigned();
 
-  if (is_signed) {
-    int64_t extended = lyra::common::SignExtend(raw, width);
-    return common::Literal::IntegralSigned(extended, width);
+  if (sv_int.isSingleWord()) {
+    // Standard case: fits in 64 bits
+    auto raw = sv_int.getRawPtr()[0];
+
+    if (is_signed) {
+      int64_t extended = lyra::common::SignExtend(raw, width);
+      return common::Literal::IntegralSigned(extended, width);
+    }
+    uint64_t masked = raw & lyra::common::MakeBitMask(width);
+    return common::Literal::IntegralUnsigned(masked, width);
   }
-  uint64_t masked = raw & lyra::common::MakeBitMask(width);
-  return common::Literal::IntegralUnsigned(masked, width);
+
+  // Wide literal (>64 bits): use WideBit
+  size_t num_words = sv_int.getNumWords();
+  std::vector<uint64_t> words(
+      sv_int.getRawPtr(), sv_int.getRawPtr() + num_words);
+  common::WideBit wide_value(std::move(words));
+  wide_value.MaskToWidth(width);
+
+  return common::Literal::IntegralWide(std::move(wide_value), width, is_signed);
 }
 
 auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {

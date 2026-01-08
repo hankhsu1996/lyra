@@ -214,3 +214,21 @@ cases:
     expect:
       variables:
         result: 44478
+
+  # 2D array indexed part-select
+  - name: indexed_partsel_on_2d
+    sv: |
+      module Test;
+        bit [1:0][7:0] data;  // 2 elements of 8 bits each
+        int i;
+        int result;
+        initial begin
+          data[0] = 8'hAB;
+          data[1] = 8'hCD;
+          i = 4;
+          result = data[1][i+:4];  // Extract high nibble of data[1] = 0xC = 12
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12

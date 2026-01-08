@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -10,6 +11,7 @@
 
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -99,12 +101,19 @@ class Codegen {
   void EmitPackedBitPosition(
       const mir::Expression& index_expr, int32_t lower_bound,
       size_t element_width);
+  void EmitCompositePackedBitPosition(
+      const std::vector<std::unique_ptr<mir::Expression>>& indices,
+      const common::Type& base_type);
   void EmitSliceShift(
       const mir::Expression& start_expr, int32_t lower_bound,
       int32_t width_offset);
   void EmitHierarchicalPath(
       const std::vector<mir::SymbolRef>& instance_path,
       mir::SymbolRef target_symbol);
+  void EmitHierarchicalPath(const std::vector<std::string>& path);
+  void EmitSliceExtract(
+      const common::Type& result_type, const mir::Expression& value,
+      const std::function<void()>& emit_shift, uint64_t mask, bool is_wide);
 
   // Get C++ member access path for a trigger (e.g., "u_child_.value")
   [[nodiscard]] auto GetTriggerPath(const common::Trigger& trigger) const

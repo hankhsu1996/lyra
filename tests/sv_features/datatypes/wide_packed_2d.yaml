@@ -1,0 +1,185 @@
+feature: wide_packed_arrays_2d
+description: 2D packed arrays where total width exceeds 64 bits
+
+cases:
+  # Basic element access in wide 2D arrays
+  - name: wide_2d_element_write_and_read
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;  // 2 elements of 128 bits each
+        longint lo0, lo1;
+        initial begin
+          // Use element assignment directly (values fit in 64 bits)
+          data[0] = 128'd100;
+          data[1] = 128'd200;
+          lo0 = data[0][63:0];
+          lo1 = data[1][63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo0: 100
+        lo1: 200
+
+  - name: wide_2d_element_arithmetic
+    sv: |
+      module Test;
+        bit [1:0][127:0] a, b, c;
+        longint result;
+        initial begin
+          a[0] = 128'd1000;
+          a[1] = 128'd2000;
+          b[0] = 128'd300;
+          b[1] = 128'd400;
+          c[0] = a[0] + b[0];
+          c[1] = a[1] + b[1];
+          result = c[0][63:0] + c[1][63:0];  // 1300 + 2400 = 3700
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3700
+
+  - name: wide_2d_element_overwrite
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        longint lo0, lo1;
+        initial begin
+          data[0] = 128'd100;
+          data[1] = 128'd200;
+          // Overwrite element 0
+          data[0] = 128'd999;
+          lo0 = data[0][63:0];
+          lo1 = data[1][63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo0: 999
+        lo1: 200
+
+  - name: wide_2d_variable_index_read
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        int idx;
+        longint result;
+        initial begin
+          data[0] = 128'd42;
+          data[1] = 128'd84;
+          idx = 1;
+          result = data[idx][63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 84
+
+  - name: wide_2d_variable_index_write
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        int idx;
+        longint lo0, lo1;
+        initial begin
+          idx = 0;
+          data[idx] = 128'd111;
+          idx = 1;
+          data[idx] = 128'd222;
+          lo0 = data[0][63:0];
+          lo1 = data[1][63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo0: 111
+        lo1: 222
+
+  - name: wide_2d_chained_range_select
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        int lo_nibble, next_nibble;
+        initial begin
+          data[1] = 128'hABCDEF;  // Fits in 64 bits
+          lo_nibble = data[1][3:0];   // Should be 0xF = 15
+          next_nibble = data[1][7:4]; // Should be 0xE = 14
+        end
+      endmodule
+    expect:
+      variables:
+        lo_nibble: 15
+        next_nibble: 14
+
+  - name: wide_2d_66bit_elements
+    sv: |
+      module Test;
+        bit [3:0][65:0] data;  // 4 elements of 66 bits each = 264 bits
+        longint lo;
+        int hi;
+        initial begin
+          // Set element 1 to value that fits in 64 bits + bit 64
+          data[1] = 66'd12345678901234;
+          lo = data[1][63:0];
+          hi = data[1][65:64];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 12345678901234
+        hi: 0
+
+  # 65-bit boundary tests - just over 64 bits per element (wide path transition)
+  - name: wide_2d_65bit_boundary
+    sv: |
+      module Test;
+        bit [1:0][64:0] data;  // 2 elements of 65 bits each
+        longint lo0, lo1;
+        initial begin
+          // Set values - testing wide element assignment/read
+          data[0] = 65'd12345678901234;
+          data[1] = 65'd98765432109876;
+          lo0 = data[0][63:0];  // Read low 64 bits
+          lo1 = data[1][63:0];  // Read low 64 bits
+        end
+      endmodule
+    expect:
+      variables:
+        lo0: 12345678901234
+        lo1: 98765432109876
+
+  - name: wide_2d_65bit_variable_index
+    sv: |
+      module Test;
+        bit [1:0][64:0] data;
+        int idx;
+        longint result;
+        initial begin
+          data[0] = 65'd42;
+          data[1] = 65'd84;
+          idx = 0;
+          result = data[idx][63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: wide_2d_whole_array_assignment
+    sv: |
+      module Test;
+        bit [1:0][127:0] a, b;
+        int match0, match1;
+        initial begin
+          a[0] = 128'd1234567890;
+          a[1] = 128'd9876543210;
+          b = a;  // whole-array copy
+          match0 = (b[0] == a[0]) ? 1 : 0;
+          match1 = (b[1] == a[1]) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        match0: 1
+        match1: 1

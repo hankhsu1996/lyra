@@ -107,13 +107,6 @@ struct Type {
     const auto& elem_data = std::get<IntegralData>(element_type.data);
     size_t total_width = elem_data.bit_width * element_count;
 
-    // Validate: total width must not exceed 64 bits
-    if (total_width > 64) {
-      throw std::runtime_error(
-          fmt::format(
-              "Packed array total width {} exceeds 64-bit limit", total_width));
-    }
-
     return Type{
         .kind = Kind::kIntegral,
         .data = IntegralData{
