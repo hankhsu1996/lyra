@@ -201,7 +201,17 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   if (name == "$displayh") {
     return {.default_format = 'x', .use_println = true};
   }
-  return {.default_format = 'd', .use_println = true};  // $display (default)
+  if (name == "$strobeb") {
+    return {.default_format = 'b', .use_println = true};
+  }
+  if (name == "$strobeo") {
+    return {.default_format = 'o', .use_println = true};
+  }
+  if (name == "$strobeh") {
+    return {.default_format = 'x', .use_println = true};
+  }
+  // $display, $strobe (default)
+  return {.default_format = 'd', .use_println = true};
 }
 
 // Get element bit width after applying N indices to a multi-dimensional type
@@ -700,6 +710,87 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             // $finish (exit code 0)
             Line("co_await lyra::sdk::Finish(" + level_str + ");");
           }
+          break;
+        }
+        // Handle strobe variants - schedule to Postponed region
+        if (syscall.name == "$strobe" || syscall.name == "$strobeb" ||
+            syscall.name == "$strobeo" || syscall.name == "$strobeh") {
+          used_features_ |= CodegenFeature::kDisplay;
+          auto props = GetDisplayVariantProps(syscall.name);
+          std::string print_fn = "std::println";  // Strobe always uses println
+
+          // Wrap print in lambda scheduled to Postponed region
+          Line("lyra::sdk::current_scheduler->SchedulePostponed([=]() {");
+          indent_++;
+
+          // Empty call - just print newline
+          if (syscall.arguments.empty()) {
+            Line(print_fn + "(std::cout, \"\");");
+            indent_--;
+            Line("});");
+            break;
+          }
+
+          // Check if first arg is a format string (string literal with %)
+          if (syscall.arguments[0]->kind == mir::Expression::Kind::kLiteral) {
+            const auto& lit =
+                mir::As<mir::LiteralExpression>(*syscall.arguments[0]);
+            if (lit.literal.type.kind == common::Type::Kind::kString) {
+              auto sv_fmt = lit.literal.value.AsString();
+              if (sv_fmt.find('%') != std::string::npos) {
+                // Transform SV format to std::println
+                auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+                auto specs = common::ParseDisplayFormat(sv_fmt);
+                auto needs_cast = common::NeedsIntCast(sv_fmt);
+                Indent();
+                out_ << print_fn << "(std::cout, \"" << cpp_fmt << "\"";
+
+                // Emit arguments - for %t, wrap with FormatTimeValue
+                for (size_t i = 0; i < specs.size(); ++i) {
+                  out_ << ", ";
+                  if (specs[i].spec == 't') {
+                    used_features_ |= CodegenFeature::kModuleUnitPower;
+                    out_ << "lyra::sdk::FormatTimeValue(";
+                    EmitExpression(*syscall.arguments[i + 1]);
+                    out_ << ".Value(), kModuleUnitPower)";
+                  } else if (i < needs_cast.size() && needs_cast[i]) {
+                    out_ << "static_cast<int64_t>(";
+                    EmitExpression(*syscall.arguments[i + 1]);
+                    out_ << ")";
+                  } else {
+                    EmitExpression(*syscall.arguments[i + 1]);
+                  }
+                }
+                out_ << ");\n";
+                indent_--;
+                Line("});");
+                break;
+              }
+            }
+          }
+
+          // No format specifiers - generate format string with variant's
+          // default
+          std::string fmt_str;
+          for (const auto& arg : syscall.arguments) {
+            if (arg->type.kind == common::Type::Kind::kIntegral) {
+              fmt_str += "{:";
+              fmt_str += props.default_format;
+              fmt_str += "}";
+            } else {
+              fmt_str += "{}";
+            }
+          }
+
+          Indent();
+          out_ << print_fn << "(std::cout, \"" << fmt_str << "\"";
+          for (const auto& arg : syscall.arguments) {
+            out_ << ", ";
+            EmitExpression(*arg);
+          }
+          out_ << ");\n";
+          indent_--;
+          Line("});");
           break;
         }
         // Handle all display/write variants

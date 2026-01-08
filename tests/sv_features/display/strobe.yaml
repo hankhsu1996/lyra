@@ -1,0 +1,119 @@
+feature: strobe
+description: Tests for $strobe system task (IEEE 1800-2017 section 21.2.2)
+
+cases:
+  - name: strobe_string
+    sv: |
+      module Test;
+        initial $strobe("Hello Strobe");
+      endmodule
+    expect:
+      output: "Hello Strobe\n"
+
+  - name: strobe_empty
+    sv: |
+      module Test;
+        initial $strobe();
+      endmodule
+    expect:
+      output: "\n"
+
+  - name: strobe_integer
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $strobe("%d", x);
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: strobe_multiple_values
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 10;
+          b = 20;
+          $strobe("a=%d b=%d", a, b);
+        end
+      endmodule
+    expect:
+      output: "a=10 b=20\n"
+
+  - name: strobeb_binary
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'b10101010;
+          $strobeb(x);
+        end
+      endmodule
+    expect:
+      output: "10101010\n"
+
+  - name: strobeo_octal
+    sv: |
+      module Test;
+        logic [8:0] x;
+        initial begin
+          x = 9'o755;
+          $strobeo(x);
+        end
+      endmodule
+    expect:
+      output: "755\n"
+
+  - name: strobeh_hex
+    sv: |
+      module Test;
+        logic [15:0] x;
+        initial begin
+          x = 16'hBEEF;
+          $strobeh(x);
+        end
+      endmodule
+    expect:
+      output: "beef\n"
+
+  # Strobe prints after display within the same time step
+  - name: strobe_after_display_ordering
+    sv: |
+      module Test;
+        initial begin
+          $display("display first");
+          $strobe("strobe second");
+          $display("display third");
+        end
+      endmodule
+    expect:
+      output: "display first\ndisplay third\nstrobe second\n"
+
+  # Multiple strobes execute in order in Postponed region
+  - name: multiple_strobes_ordering
+    sv: |
+      module Test;
+        initial begin
+          $strobe("strobe 1");
+          $strobe("strobe 2");
+          $strobe("strobe 3");
+        end
+      endmodule
+    expect:
+      output: "strobe 1\nstrobe 2\nstrobe 3\n"
+
+  # Strobe with format specifiers
+  - name: strobe_format_specifiers
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $strobe("dec=%0d hex=%0h bin=%0b oct=%0o", x, x, x, x);
+        end
+      endmodule
+    expect:
+      output: "dec=255 hex=ff bin=11111111 oct=377\n"
