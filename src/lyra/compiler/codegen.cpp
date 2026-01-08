@@ -927,6 +927,90 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                   "precision_power));\n";
           break;
         }
+        if (syscall.name == "$readmemh" || syscall.name == "$readmemb" ||
+            syscall.name == "$writememh" || syscall.name == "$writememb") {
+          used_features_ |= CodegenFeature::kMemIo;
+          bool is_read =
+              syscall.name == "$readmemh" || syscall.name == "$readmemb";
+          bool is_hex =
+              syscall.name == "$readmemh" || syscall.name == "$writememh";
+          bool has_start = syscall.arguments.size() >= 3;
+          bool has_end = syscall.arguments.size() == 4;
+
+          if (syscall.arguments.size() < 2 || syscall.arguments.size() > 4) {
+            throw DiagnosticException(
+                Diagnostic::Error({}, "mem I/O expects 2-4 arguments"));
+          }
+
+          const auto& target_expr = *syscall.arguments[1];
+          if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    {}, "mem I/O target must be a named variable"));
+          }
+
+          const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
+          const auto& target_type = target_expr.type;
+
+          if (target_type.kind == common::Type::Kind::kUnpackedArray) {
+            const auto& arr =
+                std::get<common::UnpackedArrayData>(target_type.data);
+            Indent();
+            out_ << "lyra::sdk::"
+                 << (is_read ? "ReadMemArray(" : "WriteMemArray(")
+                 << target.symbol->name << ", " << arr.lower_bound << ", ";
+            EmitExpression(*syscall.arguments[0]);
+            out_ << ", " << (has_start ? "true" : "false") << ", ";
+            if (has_start) {
+              EmitExpression(*syscall.arguments[2]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (has_end ? "true" : "false") << ", ";
+            if (has_end) {
+              EmitExpression(*syscall.arguments[3]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+            break;
+          }
+
+          if (target_type.kind == common::Type::Kind::kIntegral) {
+            const auto& integral =
+                std::get<common::IntegralData>(target_type.data);
+            size_t element_width = integral.element_type
+                                       ? integral.element_type->GetBitWidth()
+                                       : integral.bit_width;
+            size_t element_count =
+                integral.element_type ? integral.element_count : 1;
+            int32_t lower_bound = integral.element_lower;
+            Indent();
+            out_ << "lyra::sdk::"
+                 << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")
+                 << target.symbol->name << ", " << element_width << ", "
+                 << element_count << ", " << lower_bound << ", ";
+            EmitExpression(*syscall.arguments[0]);
+            out_ << ", " << (has_start ? "true" : "false") << ", ";
+            if (has_start) {
+              EmitExpression(*syscall.arguments[2]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (has_end ? "true" : "false") << ", ";
+            if (has_end) {
+              EmitExpression(*syscall.arguments[3]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+            break;
+          }
+
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  {}, "mem I/O target must be an unpacked or packed array"));
+        }
         throw DiagnosticException(
             Diagnostic::Error(
                 {}, "C++ codegen: unsupported system call: " + syscall.name));
@@ -934,116 +1018,6 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       Indent();
       EmitExpression(*expr_stmt.expression);
       out_ << ";\n";
-      break;
-    }
-    case mir::Statement::Kind::kReadMem: {
-      const auto& readmem = mir::As<mir::ReadMemStatement>(stmt);
-      used_features_ |= CodegenFeature::kMemIo;
-
-      bool is_hex = readmem.format == mir::MemFileFormat::kHex;
-      if (readmem.target_type.kind == common::Type::Kind::kUnpackedArray) {
-        const auto& arr =
-            std::get<common::UnpackedArrayData>(readmem.target_type.data);
-        Indent();
-        out_ << "lyra::sdk::ReadMemArray(" << readmem.target_symbol->name
-             << ", " << arr.lower_bound << ", ";
-        EmitExpression(*readmem.filename);
-        out_ << ", " << (readmem.start ? "true" : "false") << ", ";
-        if (readmem.start) {
-          EmitExpression(*readmem.start);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (readmem.end ? "true" : "false") << ", ";
-        if (readmem.end) {
-          EmitExpression(*readmem.end);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      } else {
-        const auto& integral =
-            std::get<common::IntegralData>(readmem.target_type.data);
-        size_t element_width = integral.element_type
-                                   ? integral.element_type->GetBitWidth()
-                                   : integral.bit_width;
-        size_t element_count =
-            integral.element_type ? integral.element_count : 1;
-        int32_t lower_bound = integral.element_lower;
-        Indent();
-        out_ << "lyra::sdk::ReadMemPacked(" << readmem.target_symbol->name
-             << ", " << element_width << ", " << element_count << ", "
-             << lower_bound << ", ";
-        EmitExpression(*readmem.filename);
-        out_ << ", " << (readmem.start ? "true" : "false") << ", ";
-        if (readmem.start) {
-          EmitExpression(*readmem.start);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (readmem.end ? "true" : "false") << ", ";
-        if (readmem.end) {
-          EmitExpression(*readmem.end);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      }
-      break;
-    }
-    case mir::Statement::Kind::kWriteMem: {
-      const auto& writemem = mir::As<mir::WriteMemStatement>(stmt);
-      used_features_ |= CodegenFeature::kMemIo;
-
-      bool is_hex = writemem.format == mir::MemFileFormat::kHex;
-      if (writemem.target_type.kind == common::Type::Kind::kUnpackedArray) {
-        const auto& arr =
-            std::get<common::UnpackedArrayData>(writemem.target_type.data);
-        Indent();
-        out_ << "lyra::sdk::WriteMemArray(" << writemem.target_symbol->name
-             << ", " << arr.lower_bound << ", ";
-        EmitExpression(*writemem.filename);
-        out_ << ", " << (writemem.start ? "true" : "false") << ", ";
-        if (writemem.start) {
-          EmitExpression(*writemem.start);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (writemem.end ? "true" : "false") << ", ";
-        if (writemem.end) {
-          EmitExpression(*writemem.end);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      } else {
-        const auto& integral =
-            std::get<common::IntegralData>(writemem.target_type.data);
-        size_t element_width = integral.element_type
-                                   ? integral.element_type->GetBitWidth()
-                                   : integral.bit_width;
-        size_t element_count =
-            integral.element_type ? integral.element_count : 1;
-        int32_t lower_bound = integral.element_lower;
-        Indent();
-        out_ << "lyra::sdk::WriteMemPacked(" << writemem.target_symbol->name
-             << ", " << element_width << ", " << element_count << ", "
-             << lower_bound << ", ";
-        EmitExpression(*writemem.filename);
-        out_ << ", " << (writemem.start ? "true" : "false") << ", ";
-        if (writemem.start) {
-          EmitExpression(*writemem.start);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (writemem.end ? "true" : "false") << ", ";
-        if (writemem.end) {
-          EmitExpression(*writemem.end);
-        } else {
-          out_ << "0";
-        }
-        out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      }
       break;
     }
     case mir::Statement::Kind::kConditional: {

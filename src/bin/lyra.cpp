@@ -225,10 +225,9 @@ auto RunCommand(bool use_interpreter) -> int {
     }
 
     std::string cmd = std::format(
-        "cd {} && export LYRA_PROJECT_ROOT=\"{}\" && "
-        "cmake --preset default > /dev/null && "
+        "cd {} && cmake --preset default > /dev/null && "
         "cmake --build build > /dev/null && ./build/sim",
-        out_path.string(), config.root_dir.string());
+        out_path.string());
     return std::system(cmd.c_str());
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());

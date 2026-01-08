@@ -9,7 +9,6 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -84,8 +83,7 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
 
 auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
-    const std::vector<std::string>& variables_to_read,
-    std::optional<std::filesystem::path> base_dir)
+    const std::vector<std::string>& variables_to_read)
     // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
     -> CompilerResult {
   CompilerResult result;
@@ -175,10 +173,6 @@ auto Compiler::CompileAndRun(
 
   // Run
   std::string run_cmd = bin_path.string();
-  if (base_dir.has_value()) {
-    run_cmd =
-        std::format("LYRA_PROJECT_ROOT=\"{}\" {}", base_dir->string(), run_cmd);
-  }
   auto [run_status, run_output] = ExecuteCommand(run_cmd);
   if (run_status != 0) {
     result.error_message_ =
@@ -249,7 +243,7 @@ auto Compiler::RunFromSource(
   const auto& root = compilation->getRoot();
   auto modules = lowering::ast_to_mir::AstToMir(root, "");
 
-  return CompileAndRun(modules, variables_to_read, std::nullopt);
+  return CompileAndRun(modules, variables_to_read);
 }
 
 auto Compiler::RunFromFiles(
@@ -269,11 +263,7 @@ auto Compiler::RunFromFiles(
   const auto& root = compilation->getRoot();
   auto modules = lowering::ast_to_mir::AstToMir(root, "");
 
-  std::optional<std::filesystem::path> base_dir;
-  if (!paths.empty()) {
-    base_dir = std::filesystem::path(paths.front()).parent_path();
-  }
-  return CompileAndRun(modules, variables_to_read, base_dir);
+  return CompileAndRun(modules, variables_to_read);
 }
 
 }  // namespace lyra::compiler

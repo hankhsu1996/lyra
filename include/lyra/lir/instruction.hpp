@@ -29,8 +29,6 @@ enum class InstructionKind {
   kLoadPackedElement,           // Bit/element select from packed: vec[index]
   kLoadPackedSlice,             // Range/part-select from packed: vec[msb:lsb]
   kStorePackedElement,          // Store to packed element: vec[index] = value
-  kReadMem,                     // $readmemh/$readmemb
-  kWriteMem,                    // $writememh/$writememb
 
   // Move operation
   kMove,
@@ -93,8 +91,6 @@ enum class InstructionKind {
   kBranch
 };
 
-enum class MemFileFormat { kHex, kBin };
-
 struct Instruction {
   InstructionKind kind{};
 
@@ -116,9 +112,6 @@ struct Instruction {
   // symbol) target_symbol: the final variable symbol to access
   std::vector<SymbolRef> instance_path{};
   SymbolRef target_symbol{nullptr};
-
-  // Mem-file operations
-  MemFileFormat mem_format{MemFileFormat::kHex};
 
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
@@ -306,13 +299,9 @@ struct Instruction {
   // For system tasks (no return value): result = std::nullopt
   // For system functions (return value): result = temp to store result
   static auto SystemCall(
-      std::string name, std::vector<TempRef> args,
+      std::string name, std::vector<Operand> operands,
       std::optional<TempRef> result = std::nullopt,
       std::optional<common::Type> result_type = std::nullopt) -> Instruction {
-    std::vector<Operand> operands;
-    for (auto& arg : args) {
-      operands.push_back(Operand::Temp(arg));
-    }
     return Instruction{
         .kind = InstructionKind::kSystemCall,
         .result = result,
@@ -321,36 +310,16 @@ struct Instruction {
         .system_call_name = std::move(name)};
   }
 
-  static auto ReadMem(
-      SymbolRef target, std::vector<TempRef> args, MemFileFormat format)
-      -> Instruction {
+  static auto SystemCall(
+      std::string name, std::vector<TempRef> args,
+      std::optional<TempRef> result = std::nullopt,
+      std::optional<common::Type> result_type = std::nullopt) -> Instruction {
     std::vector<Operand> operands;
-    operands.reserve(args.size() + 1);
-    operands.push_back(Operand::Variable(target));
     for (auto& arg : args) {
       operands.push_back(Operand::Temp(arg));
     }
-    return Instruction{
-        .kind = InstructionKind::kReadMem,
-        .operands = std::move(operands),
-        .target_symbol = target,
-        .mem_format = format};
-  }
-
-  static auto WriteMem(
-      SymbolRef target, std::vector<TempRef> args, MemFileFormat format)
-      -> Instruction {
-    std::vector<Operand> operands;
-    operands.reserve(args.size() + 1);
-    operands.push_back(Operand::Variable(target));
-    for (auto& arg : args) {
-      operands.push_back(Operand::Temp(arg));
-    }
-    return Instruction{
-        .kind = InstructionKind::kWriteMem,
-        .operands = std::move(operands),
-        .target_symbol = target,
-        .mem_format = format};
+    return SystemCall(
+        std::move(name), std::move(operands), result, std::move(result_type));
   }
 
   static auto Complete() -> Instruction {
@@ -446,16 +415,6 @@ struct Instruction {
         return fmt::format(
             "stpel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
-
-      case InstructionKind::kReadMem:
-        return fmt::format(
-            "readm {}, {}", operands[0].ToString(),
-            operands.size() > 1 ? operands[1].ToString() : "<no-file>");
-
-      case InstructionKind::kWriteMem:
-        return fmt::format(
-            "writem {}, {}", operands[0].ToString(),
-            operands.size() > 1 ? operands[1].ToString() : "<no-file>");
 
       case InstructionKind::kMove:
         return fmt::format(

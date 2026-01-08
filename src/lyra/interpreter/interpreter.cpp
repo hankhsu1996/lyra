@@ -28,7 +28,7 @@ auto Interpreter::RunFromSource(
     const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
-  return RunWithCompilation(std::move(compilation), top, options, std::nullopt);
+  return RunWithCompilation(std::move(compilation), top, options);
 }
 
 auto Interpreter::RunFromFiles(
@@ -36,17 +36,13 @@ auto Interpreter::RunFromFiles(
     const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
-  std::optional<std::filesystem::path> base_dir;
-  if (!paths.empty()) {
-    base_dir = std::filesystem::path(paths.front()).parent_path();
-  }
-  return RunWithCompilation(std::move(compilation), top, options, base_dir);
+  return RunWithCompilation(std::move(compilation), top, options);
 }
 
 auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
-    const std::string& top, const InterpreterOptions& options,
-    std::optional<std::filesystem::path> base_dir) -> InterpreterResult {
+    const std::string& top, const InterpreterOptions& options)
+    -> InterpreterResult {
   const auto& root = compilation->getRoot();
 
   // Get modules from AST. If top is specified, returns hierarchy in order.
@@ -69,8 +65,6 @@ auto Interpreter::RunWithCompilation(
   }
 
   auto context = std::make_unique<SimulationContext>();
-  context->base_dir = std::move(base_dir);
-
   // Use multi-module constructor for hierarchical support
   SimulationRunner runner(lir_modules, *context);
   runner.Run();

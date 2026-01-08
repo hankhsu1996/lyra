@@ -1,7 +1,5 @@
 #pragma once
 
-#include <filesystem>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,8 +31,8 @@ class Interpreter {
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,
-      const std::string& top, const InterpreterOptions& options,
-      std::optional<std::filesystem::path> base_dir) -> InterpreterResult;
+      const std::string& top, const InterpreterOptions& options)
+      -> InterpreterResult;
 };
 
 }  // namespace lyra::interpreter

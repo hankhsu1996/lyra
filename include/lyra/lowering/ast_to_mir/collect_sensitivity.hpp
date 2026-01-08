@@ -101,30 +101,6 @@ class SensitivityCollector : public mir::MirVisitor {
     statement.expression->Accept(*this);
   }
 
-  void Visit(const mir::ReadMemStatement& statement) override {
-    if (statement.filename) {
-      statement.filename->Accept(*this);
-    }
-    if (statement.start) {
-      statement.start->Accept(*this);
-    }
-    if (statement.end) {
-      statement.end->Accept(*this);
-    }
-  }
-
-  void Visit(const mir::WriteMemStatement& statement) override {
-    if (statement.filename) {
-      statement.filename->Accept(*this);
-    }
-    if (statement.start) {
-      statement.start->Accept(*this);
-    }
-    if (statement.end) {
-      statement.end->Accept(*this);
-    }
-  }
-
   void Visit(const mir::BreakStatement& /*unused*/) override {
     // No variable involved in break
   }

@@ -1,8 +1,9 @@
 #pragma once
 
-#include <filesystem>
+#include <cstdint>
 #include <optional>
 #include <sstream>
+#include <string>
 
 #include "lyra/common/time_format.hpp"
 #include "lyra/common/timescale.hpp"
@@ -35,9 +36,6 @@ class SimulationContext {
 
   // $timeformat state for %t format specifier
   common::TimeFormatState time_format;
-
-  // Base directory for resolving relative file paths (e.g., $readmemh)
-  std::optional<std::filesystem::path> base_dir;
 };
 
 }  // namespace lyra::interpreter

@@ -13,6 +13,21 @@
 namespace lyra::test {
 namespace {
 
+class ScopedCurrentPath {
+ public:
+  explicit ScopedCurrentPath(const std::filesystem::path& path)
+      : previous_(std::filesystem::current_path()) {
+    std::filesystem::current_path(path);
+  }
+
+  ~ScopedCurrentPath() {
+    std::filesystem::current_path(previous_);
+  }
+
+ private:
+  std::filesystem::path previous_;
+};
+
 auto GetYamlPath() -> std::string {
   const char* yaml_path = std::getenv("SV_TEST_YAML");
   if (yaml_path == nullptr) {
@@ -74,6 +89,8 @@ TEST_P(SvFeatureTest, Interpreter) {
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
     auto sv_paths = FilterSvFiles(paths);
+    ScopedCurrentPath current_dir(
+        std::filesystem::path(paths.front()).parent_path());
     result = interpreter::Interpreter::RunFromFiles(sv_paths);
   } else {
     result = interpreter::Interpreter::RunFromSource(tc.sv_code);
@@ -112,6 +129,8 @@ TEST_P(SvFeatureTest, CppCodegen) {
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
     auto sv_paths = FilterSvFiles(paths);
+    ScopedCurrentPath current_dir(
+        std::filesystem::path(paths.front()).parent_path());
     result = compiler::Compiler::RunFromFiles(sv_paths, vars);
   } else {
     result = compiler::Compiler::RunFromSource(tc.sv_code, vars);

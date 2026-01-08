@@ -24,8 +24,6 @@ class Statement {
     kVariableDeclaration,
     kAssign,
     kExpression,
-    kReadMem,
-    kWriteMem,
 
     // Timing control statements
     kWaitEvent,
@@ -69,10 +67,6 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Assign";
     case Statement::Kind::kExpression:
       return "Expression";
-    case Statement::Kind::kReadMem:
-      return "ReadMem";
-    case Statement::Kind::kWriteMem:
-      return "WriteMem";
     case Statement::Kind::kWaitEvent:
       return "WaitEvent";
     case Statement::Kind::kDelay:
@@ -171,83 +165,6 @@ class ExpressionStatement : public Statement {
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     return std::format(
         "{}{}\n", common::Indent(indent), expression->ToString());
-  }
-};
-
-enum class MemFileFormat {
-  kHex,
-  kBin,
-};
-
-class ReadMemStatement : public Statement {
- public:
-  static constexpr Kind kKindValue = Kind::kReadMem;
-
-  MemFileFormat format;
-  SymbolRef target_symbol;
-  common::Type target_type;
-  std::unique_ptr<Expression> filename;
-  std::unique_ptr<Expression> start;
-  std::unique_ptr<Expression> end;
-
-  ReadMemStatement(
-      MemFileFormat format, SymbolRef target_symbol, common::Type target_type,
-      std::unique_ptr<Expression> filename, std::unique_ptr<Expression> start,
-      std::unique_ptr<Expression> end)
-      : Statement(kKindValue),
-        format(format),
-        target_symbol(target_symbol),
-        target_type(std::move(target_type)),
-        filename(std::move(filename)),
-        start(std::move(start)),
-        end(std::move(end)) {
-  }
-
-  void Accept(MirVisitor& visitor) const override {
-    visitor.Visit(*this);
-  }
-
-  [[nodiscard]] auto ToString(int indent) const -> std::string override {
-    std::string fmt_name = (format == MemFileFormat::kHex) ? "hex" : "bin";
-    return fmt::format(
-        "{}readmem({} {})\n", common::Indent(indent), fmt_name,
-        target_symbol ? target_symbol->name : "<null>");
-  }
-};
-
-class WriteMemStatement : public Statement {
- public:
-  static constexpr Kind kKindValue = Kind::kWriteMem;
-
-  MemFileFormat format;
-  SymbolRef target_symbol;
-  common::Type target_type;
-  std::unique_ptr<Expression> filename;
-  std::unique_ptr<Expression> start;
-  std::unique_ptr<Expression> end;
-
-  WriteMemStatement(
-      MemFileFormat format, SymbolRef target_symbol, common::Type target_type,
-      std::unique_ptr<Expression> filename, std::unique_ptr<Expression> start,
-      std::unique_ptr<Expression> end)
-      : Statement(kKindValue),
-        format(format),
-        target_symbol(target_symbol),
-        target_type(std::move(target_type)),
-        filename(std::move(filename)),
-        start(std::move(start)),
-        end(std::move(end)) {
-  }
-
-  void Accept(MirVisitor& visitor) const override {
-    visitor.Visit(*this);
-  }
-
-  [[nodiscard]] auto ToString(int indent) const -> std::string override {
-    std::string fmt_name = (format == MemFileFormat::kHex) ? "hex" : "bin";
-    return fmt::format(
-        "{}writemem({} {})\n", common::Indent(indent), fmt_name,
-        target_symbol ? target_symbol->name : "<null>");
   }
 };
 

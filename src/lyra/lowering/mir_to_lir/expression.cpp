@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
@@ -239,17 +240,45 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Supported system calls are validated in AST→MIR
       assert(common::IsSystemFunctionSupported(system_call.name));
 
+      auto is_mem_io =
+          system_call.name == "$readmemh" || system_call.name == "$readmemb" ||
+          system_call.name == "$writememh" || system_call.name == "$writememb";
+
+      std::vector<Operand> operands;
       std::vector<TempRef> arguments;
-      for (const auto& argument : system_call.arguments) {
-        if (argument) {
-          arguments.push_back(LowerExpression(*argument, builder));
+      if (is_mem_io) {
+        if (system_call.arguments.size() < 2 ||
+            system_call.arguments.size() > 4) {
+          throw common::InternalError(
+              "lowering", "mem I/O system call has unexpected arity");
+        }
+        auto filename = LowerExpression(*system_call.arguments[0], builder);
+        operands.push_back(Operand::Temp(filename));
+
+        const auto& target_expr = *system_call.arguments[1];
+        if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
+          throw common::InternalError(
+              "lowering", "mem I/O target must be an identifier");
+        }
+        const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
+        operands.push_back(Operand::Variable(target.symbol));
+
+        for (size_t i = 2; i < system_call.arguments.size(); ++i) {
+          auto temp = LowerExpression(*system_call.arguments[i], builder);
+          operands.push_back(Operand::Temp(temp));
+        }
+      } else {
+        for (const auto& argument : system_call.arguments) {
+          if (argument) {
+            arguments.push_back(LowerExpression(*argument, builder));
+          }
         }
       }
 
       // Add default argument (1) for $finish and $stop if not provided
       // $exit takes no arguments per LRM
       if ((system_call.name == "$finish" || system_call.name == "$stop") &&
-          arguments.empty()) {
+          arguments.empty() && !is_mem_io) {
         auto temp = builder.AllocateTemp("sys", system_call.type);
         auto const_one = builder.InternLiteral(Literal::Int(1));
         auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);
@@ -270,7 +299,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       } else {
         // No result for system tasks
         auto instruction =
-            Instruction::SystemCall(system_call.name, std::move(arguments));
+            is_mem_io
+                ? Instruction::SystemCall(system_call.name, std::move(operands))
+                : Instruction::SystemCall(
+                      system_call.name, std::move(arguments));
         builder.AddInstruction(std::move(instruction));
       }
 

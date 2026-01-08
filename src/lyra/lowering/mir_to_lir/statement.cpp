@@ -22,11 +22,6 @@ using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 using TempRef = lir::TempRef;
 
-auto ToLirMemFormat(mir::MemFileFormat format) -> lir::MemFileFormat {
-  return format == mir::MemFileFormat::kHex ? lir::MemFileFormat::kHex
-                                            : lir::MemFileFormat::kBin;
-}
-
 auto LowerStatement(
     const mir::Statement& statement, LirBuilder& builder,
     LoweringContext& lowering_context) -> void {
@@ -104,42 +99,6 @@ auto LowerStatement(
 
       // Lower the expression, which may produce instructions
       LowerExpression(*expression_statement.expression, builder);
-      break;
-    }
-
-    case mir::Statement::Kind::kReadMem: {
-      const auto& readmem = mir::As<mir::ReadMemStatement>(statement);
-      std::vector<TempRef> args;
-      args.reserve(3);
-      args.push_back(LowerExpression(*readmem.filename, builder));
-      if (readmem.start) {
-        args.push_back(LowerExpression(*readmem.start, builder));
-      }
-      if (readmem.end) {
-        args.push_back(LowerExpression(*readmem.end, builder));
-      }
-      auto instruction = Instruction::ReadMem(
-          readmem.target_symbol, std::move(args),
-          ToLirMemFormat(readmem.format));
-      builder.AddInstruction(std::move(instruction));
-      break;
-    }
-
-    case mir::Statement::Kind::kWriteMem: {
-      const auto& writemem = mir::As<mir::WriteMemStatement>(statement);
-      std::vector<TempRef> args;
-      args.reserve(3);
-      args.push_back(LowerExpression(*writemem.filename, builder));
-      if (writemem.start) {
-        args.push_back(LowerExpression(*writemem.start, builder));
-      }
-      if (writemem.end) {
-        args.push_back(LowerExpression(*writemem.end, builder));
-      }
-      auto instruction = Instruction::WriteMem(
-          writemem.target_symbol, std::move(args),
-          ToLirMemFormat(writemem.format));
-      builder.AddInstruction(std::move(instruction));
       break;
     }
 
