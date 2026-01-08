@@ -52,7 +52,7 @@ struct DisplayVariantProps {
   bool append_newline;  // true for $display*, false for $write*
 };
 
-// Get properties for a display/write variant
+// Get properties for a display/write/strobe variant
 auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   if (name == "$write") {
     return {.default_format = 'd', .append_newline = false};
@@ -66,16 +66,17 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   if (name == "$writeh") {
     return {.default_format = 'h', .append_newline = false};
   }
-  if (name == "$displayb") {
+  if (name == "$displayb" || name == "$strobeb") {
     return {.default_format = 'b', .append_newline = true};
   }
-  if (name == "$displayo") {
+  if (name == "$displayo" || name == "$strobeo") {
     return {.default_format = 'o', .append_newline = true};
   }
-  if (name == "$displayh") {
+  if (name == "$displayh" || name == "$strobeh") {
     return {.default_format = 'h', .append_newline = true};
   }
-  return {.default_format = 'd', .append_newline = true};  // $display (default)
+  // $display, $strobe (default)
+  return {.default_format = 'd', .append_newline = true};
 }
 
 // Format a RuntimeValue according to a format specifier.
@@ -1330,6 +1331,78 @@ auto RunInstruction(
         if (props.append_newline) {
           simulation_context.display_output << "\n";
         }
+        return InstructionResult::Continue();
+      }
+
+      // Handle strobe variants - same as display but queued to Postponed region
+      if (instr.system_call_name == "$strobe" ||
+          instr.system_call_name == "$strobeb" ||
+          instr.system_call_name == "$strobeo" ||
+          instr.system_call_name == "$strobeh") {
+        auto props = GetDisplayVariantProps(instr.system_call_name);
+
+        // Collect argument values now (they'll be read in Postponed region)
+        std::vector<RuntimeValue> arg_values;
+        for (const auto& operand : instr.operands) {
+          arg_values.push_back(get_temp(operand));
+        }
+
+        // Create time format context
+        TimeFormatContext time_ctx{
+            .time_format = simulation_context.time_format,
+            .module_unit_power = simulation_context.timescale
+                                     ? simulation_context.timescale->unit_power
+                                     : common::TimeScale::kDefaultUnitPower,
+            .global_precision_power =
+                simulation_context.global_precision_power};
+
+        // Queue the output for Postponed region
+        effect.RecordPostponedAction(
+            PostponedAction{
+                .action = [&simulation_context, props,
+                           arg_values = std::move(arg_values), time_ctx]() {
+                  // Empty call - just print newline if needed
+                  if (arg_values.empty()) {
+                    if (props.append_newline) {
+                      simulation_context.display_output << "\n";
+                    }
+                    return;
+                  }
+
+                  // Check if first operand is a format string
+                  const auto& first = arg_values[0];
+                  if (first.IsString()) {
+                    auto fmt_str = first.AsString();
+                    if (fmt_str.find('%') != std::string::npos) {
+                      std::vector<RuntimeValue> format_args(
+                          arg_values.begin() + 1, arg_values.end());
+                      simulation_context.display_output
+                          << FormatDisplay(fmt_str, format_args, &time_ctx);
+                      if (props.append_newline) {
+                        simulation_context.display_output << "\n";
+                      }
+                      return;
+                    }
+                  }
+
+                  // No format specifiers - generate format string
+                  std::string gen_fmt;
+                  for (const auto& value : arg_values) {
+                    if (value.IsString()) {
+                      gen_fmt += "%s";
+                    } else if (value.IsReal() || value.IsShortReal()) {
+                      gen_fmt += "%f";
+                    } else {
+                      gen_fmt += "%";
+                      gen_fmt += props.default_format;
+                    }
+                  }
+                  simulation_context.display_output
+                      << FormatDisplay(gen_fmt, arg_values, &time_ctx);
+                  if (props.append_newline) {
+                    simulation_context.display_output << "\n";
+                  }
+                }});
         return InstructionResult::Continue();
       }
 
