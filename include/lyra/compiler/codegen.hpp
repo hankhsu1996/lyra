@@ -9,6 +9,7 @@
 #include <slang/ast/Symbol.h>
 
 #include "lyra/common/timescale.hpp"
+#include "lyra/common/trigger.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -101,7 +102,13 @@ class Codegen {
   void EmitSliceShift(
       const mir::Expression& start_expr, int32_t lower_bound,
       int32_t width_offset);
-  void EmitHierarchicalPath(const std::vector<std::string>& path);
+  void EmitHierarchicalPath(
+      const std::vector<mir::SymbolRef>& instance_path,
+      mir::SymbolRef target_symbol);
+
+  // Get C++ member access path for a trigger (e.g., "u_child_.value")
+  [[nodiscard]] auto GetTriggerPath(const common::Trigger& trigger) const
+      -> std::string;
 
   std::ostringstream out_;
   int indent_ = 0;

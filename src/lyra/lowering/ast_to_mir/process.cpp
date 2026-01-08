@@ -74,11 +74,12 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
     case ProceduralBlockKind::AlwaysComb: {
       const auto& slang_statement = procedural_block.getBody();
       auto body = LowerStatement(slang_statement);
-      auto variables = CollectSensitivityList(*body);
+      auto sensitivity_items = CollectSensitivityList(*body);
 
       std::vector<common::Trigger> triggers;
-      for (const auto& variable : variables) {
-        triggers.emplace_back(common::Trigger::AnyChange(variable));
+      for (const auto& item : sensitivity_items) {
+        triggers.emplace_back(
+            common::Trigger::AnyChange(item.symbol, item.instance_path));
       }
 
       // Build loop: body first, then wait for triggers

@@ -228,14 +228,16 @@ auto LowerExpression(const slang::ast::Expression& expression)
         const auto& hier_expr =
             left.as<slang::ast::HierarchicalValueExpression>();
 
-        // Build hierarchical path from slang's reference info
-        // ref.path contains all elements including the final target symbol
-        std::vector<std::string> path;
-        for (const auto& element : hier_expr.ref.path) {
-          path.emplace_back(element.symbol->name);
+        // Target symbol (the variable being assigned)
+        mir::SymbolRef target_symbol = &hier_expr.symbol;
+
+        // Instance symbols (for path traversal)
+        std::vector<mir::SymbolRef> instance_path;
+        for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
+          instance_path.push_back(hier_expr.ref.path[i].symbol);
         }
 
-        mir::AssignmentTarget target(std::move(path));
+        mir::AssignmentTarget target(target_symbol, std::move(instance_path));
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -385,6 +387,29 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
       return std::make_unique<mir::ConversionExpression>(
           std::move(value), *type_result);
+    }
+
+    case slang::ast::ExpressionKind::HierarchicalValue: {
+      const auto& hier_expr =
+          expression.as<slang::ast::HierarchicalValueExpression>();
+
+      // Target symbol
+      mir::SymbolRef target_symbol = &hier_expr.symbol;
+
+      // Instance symbols (all but last element in path)
+      std::vector<mir::SymbolRef> instance_path;
+      for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
+        instance_path.push_back(hier_expr.ref.path[i].symbol);
+      }
+
+      // Get type from the expression
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::HierarchicalReferenceExpression>(
+          target_symbol, std::move(instance_path), *type_result);
     }
 
     case slang::ast::ExpressionKind::Invalid:

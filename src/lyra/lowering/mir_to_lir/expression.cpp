@@ -81,8 +81,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (assignment.target.IsHierarchical()) {
         // Hierarchical assignment: child.signal = value
         auto instruction = Instruction::StoreHierarchical(
-            assignment.target.hierarchical_path, value,
-            assignment.is_non_blocking);
+            assignment.target.instance_path, assignment.target.target_symbol,
+            value, assignment.is_non_blocking);
         builder.AddInstruction(std::move(instruction));
         return value;
       }
@@ -272,11 +272,14 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     }
 
     case mir::Expression::Kind::kHierarchicalReference: {
-      // HierarchicalReferenceExpression is not yet supported by the
-      // interpreter. Will be implemented in Phase 16.
-      throw std::runtime_error(
-          "HierarchicalReferenceExpression is not supported by the "
-          "interpreter");
+      const auto& hier_ref =
+          mir::As<mir::HierarchicalReferenceExpression>(expression);
+      auto result = builder.AllocateTemp("hier", expression.type);
+      auto instruction = Instruction::LoadHierarchical(
+          result, hier_ref.instance_path, hier_ref.target_symbol,
+          expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
     }
   }
 }

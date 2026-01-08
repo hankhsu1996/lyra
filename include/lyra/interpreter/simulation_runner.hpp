@@ -86,9 +86,6 @@ class SimulationRunner {
   static void InitializeModuleVariables(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);
-  static void PopulateSymbolLookup(
-      const lir::Module& module,
-      const std::shared_ptr<InstanceContext>& instance);
   void ScheduleModuleProcesses(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);

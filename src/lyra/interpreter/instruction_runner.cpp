@@ -21,7 +21,6 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/time_format.hpp"
-#include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
@@ -471,42 +470,48 @@ auto RunInstruction(
     }
   };
 
-  // Store to hierarchical target: traverse path and store to target instance
-  auto store_hierarchical = [&](const std::vector<std::string>& path,
+  // Store to hierarchical target: traverse instance path and store to target
+  auto store_hierarchical = [&](const std::vector<common::SymbolRef>& instances,
+                                common::SymbolRef target,
                                 const RuntimeValue& value,
                                 bool is_non_blocking) {
-    assert(
-        path.size() >= 2 &&
-        "Hierarchical path must have at least 2 components");
-
-    // Traverse: all but last component are instance names
+    // Traverse instance path
     auto target_instance = instance_context;
-    for (size_t i = 0; i < path.size() - 1; ++i) {
-      target_instance = target_instance->LookupChild(path[i]);
+    for (const auto& inst_sym : instances) {
+      target_instance = target_instance->LookupChild(inst_sym);
       if (!target_instance) {
         throw DiagnosticException(
             Diagnostic::Error(
-                {}, fmt::format("Unknown child instance: {}", path[i])));
+                {}, fmt::format("Unknown child instance: {}", inst_sym->name)));
       }
-    }
-
-    // Last component is symbol name
-    const auto& symbol_name = path.back();
-    const auto* symbol = target_instance->LookupSymbol(symbol_name);
-    if (!symbol) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              {}, fmt::format("Unknown symbol: {}", symbol_name)));
     }
 
     // Write to target instance
     if (!is_non_blocking) {
-      target_instance->Write(symbol, value);
-      effect.RecordVariableModification(symbol, target_instance);
+      target_instance->Write(target, value);
+      effect.RecordVariableModification(target, target_instance);
     } else {
       effect.RecordNbaAction(
-          {.variable = symbol, .value = value, .instance = target_instance});
+          {.variable = target, .value = value, .instance = target_instance});
     }
+  };
+
+  // Load from hierarchical target: traverse instance path and load from target
+  auto load_hierarchical = [&](const std::vector<common::SymbolRef>& instances,
+                               common::SymbolRef target) -> RuntimeValue {
+    // Traverse instance path
+    auto target_instance = instance_context;
+    for (const auto& inst_sym : instances) {
+      target_instance = target_instance->LookupChild(inst_sym);
+      if (!target_instance) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {}, fmt::format("Unknown child instance: {}", inst_sym->name)));
+      }
+    }
+
+    // Read from target instance
+    return target_instance->Read(target);
   };
 
   auto eval_unary_op = [&](const lir::Operand& operand,
@@ -542,16 +547,25 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kLoadVariable: {
-      const auto& src_variable = read_variable(instr.operands[0]);
-      temp_table.Write(instr.result.value(), src_variable);
+      if (instr.target_symbol != nullptr) {
+        // Hierarchical load: traverse instance_path, load from target_symbol
+        const auto value =
+            load_hierarchical(instr.instance_path, instr.target_symbol);
+        temp_table.Write(instr.result.value(), value);
+      } else {
+        // Regular load: variable in operands[0]
+        const auto& src_variable = read_variable(instr.operands[0]);
+        temp_table.Write(instr.result.value(), src_variable);
+      }
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariable: {
-      if (!instr.hierarchical_path.empty()) {
-        // Hierarchical store: path in hierarchical_path, value in operands[0]
+      if (instr.target_symbol != nullptr) {
+        // Hierarchical store: traverse instance_path, store to target_symbol
         const auto value = get_temp(instr.operands[0]);
-        store_hierarchical(instr.hierarchical_path, value, false);
+        store_hierarchical(
+            instr.instance_path, instr.target_symbol, value, false);
       } else {
         // Regular store: variable in operands[0], value in operands[1]
         const auto variable = instr.operands[0];
@@ -563,10 +577,11 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
-      if (!instr.hierarchical_path.empty()) {
-        // Hierarchical store: path in hierarchical_path, value in operands[0]
+      if (instr.target_symbol != nullptr) {
+        // Hierarchical store: traverse instance_path, store to target_symbol
         const auto value = get_temp(instr.operands[0]);
-        store_hierarchical(instr.hierarchical_path, value, true);
+        store_hierarchical(
+            instr.instance_path, instr.target_symbol, value, true);
       } else {
         // Regular store: variable in operands[0], value in operands[1]
         const auto variable = instr.operands[0];
@@ -1058,16 +1073,8 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kWaitEvent: {
-      // Resolve trigger symbols through instance context
-      // (e.g., port symbols map to parent signals)
-      std::vector<common::Trigger> resolved_triggers;
-      resolved_triggers.reserve(instr.wait_triggers.size());
-      for (const auto& trigger : instr.wait_triggers) {
-        auto [target_symbol, _] = resolve_binding(trigger.variable);
-        resolved_triggers.push_back(
-            {.edge_kind = trigger.edge_kind, .variable = target_symbol});
-      }
-      return InstructionResult::WaitEvent(std::move(resolved_triggers));
+      // Pass triggers through - resolution happens in simulation_runner
+      return InstructionResult::WaitEvent(instr.wait_triggers);
     }
 
     case lir::InstructionKind::kDelay: {

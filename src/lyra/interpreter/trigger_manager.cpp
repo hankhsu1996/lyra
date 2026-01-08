@@ -17,17 +17,20 @@ namespace lyra::interpreter {
 
 void TriggerManager::RegisterWaitingProcess(
     const std::shared_ptr<lir::Process>& process,
-    const std::shared_ptr<InstanceContext>& instance, const SymbolRef& variable,
-    common::EdgeKind edge_kind, std::size_t block_index,
-    std::size_t instruction_index) {
-  ProcessInstanceKey pi_key{.process = process, .instance = instance};
+    const std::shared_ptr<InstanceContext>& process_instance,
+    const std::shared_ptr<InstanceContext>& watch_instance,
+    const SymbolRef& variable, common::EdgeKind edge_kind,
+    std::size_t block_index, std::size_t instruction_index) {
+  // Use watch_instance in the key since that's where we detect changes
+  ProcessInstanceKey pi_key{.process = process, .instance = watch_instance};
   wait_map_[variable].insert(pi_key);
 
-  // Use (process, instance, variable) as key to store per-variable edge kind
+  // Use (process, watch_instance, variable) as key to store per-variable info
   ProcessInstanceVarKey piv_key{
-      .process = process, .instance = instance, .variable = variable};
+      .process = process, .instance = watch_instance, .variable = variable};
   wait_set_[piv_key] = {
-      .instance = instance,
+      .process_instance = process_instance,  // For resumption
+      .watch_instance = watch_instance,      // For reading values
       .block_index = block_index,
       .instruction_index = instruction_index,
       .edge_kind = edge_kind};
@@ -86,7 +89,8 @@ auto TriggerManager::CheckTriggers(
         events_to_trigger.push_back(
             ScheduledEvent{
                 .process = pi_key.process,
-                .instance = wait_info.instance,
+                .instance = wait_info.process_instance,  // Resume with
+                                                         // process's instance
                 .block_index = wait_info.block_index,
                 .instruction_index = wait_info.instruction_index});
         triggered_keys.insert(pi_key);

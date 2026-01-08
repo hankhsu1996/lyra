@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_set>
+#include <vector>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/mir/expression.hpp"
@@ -10,6 +11,18 @@
 namespace lyra::lowering::ast_to_mir {
 
 using SymbolRef = common::SymbolRef;
+
+// Represents a sensitivity item: a symbol with optional instance path.
+// For local variables, instance_path is empty.
+// For hierarchical references, instance_path contains the traversal symbols.
+struct SensitivityItem {
+  SymbolRef symbol;
+  std::vector<SymbolRef> instance_path;
+
+  auto operator==(const SensitivityItem& other) const -> bool {
+    return symbol == other.symbol && instance_path == other.instance_path;
+  }
+};
 
 // Collects all variable names used in the right-hand side of MIR statements.
 class SensitivityCollector : public mir::MirVisitor {
@@ -21,7 +34,7 @@ class SensitivityCollector : public mir::MirVisitor {
   }
 
   void Visit(const mir::IdentifierExpression& expression) override {
-    variable_names_.insert(expression.symbol);
+    items_.push_back({expression.symbol, {}});
   }
 
   void Visit(const mir::UnaryExpression& expression) override {
@@ -69,10 +82,9 @@ class SensitivityCollector : public mir::MirVisitor {
     // width is a constant integer, not an expression
   }
 
-  void Visit(const mir::HierarchicalReferenceExpression& /*unused*/) override {
-    // TODO(hankhsu): When hierarchical reads are supported (Future phase),
-    // this should add the referenced signal to the sensitivity list.
-    // Currently HierarchicalReference is only used for LHS (port driving).
+  void Visit(const mir::HierarchicalReferenceExpression& expression) override {
+    // Add hierarchical reference with instance path for sensitivity tracking
+    items_.push_back({expression.target_symbol, expression.instance_path});
   }
 
   void Visit(const mir::VariableDeclarationStatement& statement) override {
@@ -161,28 +173,28 @@ class SensitivityCollector : public mir::MirVisitor {
     }
   }
 
-  [[nodiscard]] auto TakeVariableNames() && -> std::unordered_set<SymbolRef> {
-    return std::move(variable_names_);
+  [[nodiscard]] auto TakeItems() && -> std::vector<SensitivityItem> {
+    return std::move(items_);
   }
 
  private:
-  std::unordered_set<SymbolRef> variable_names_;
+  std::vector<SensitivityItem> items_;
 };
 
 // Entry point for statements
 inline auto CollectSensitivityList(const mir::Statement& statement)
-    -> std::unordered_set<SymbolRef> {
+    -> std::vector<SensitivityItem> {
   SensitivityCollector collector;
   statement.Accept(collector);
-  return std::move(collector).TakeVariableNames();
+  return std::move(collector).TakeItems();
 }
 
 // Entry point for expressions
 inline auto CollectSensitivityList(const mir::Expression& expression)
-    -> std::unordered_set<SymbolRef> {
+    -> std::vector<SensitivityItem> {
   SensitivityCollector collector;
   expression.Accept(collector);
-  return std::move(collector).TakeVariableNames();
+  return std::move(collector).TakeItems();
 }
 
 }  // namespace lyra::lowering::ast_to_mir
