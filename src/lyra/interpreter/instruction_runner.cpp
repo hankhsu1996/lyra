@@ -449,8 +449,8 @@ auto RunInstruction(
 
     // Otherwise, write to per-instance storage (local vars, input ports)
     if (instance_context != nullptr) {
-      instance_context->Write(symbol, value);
       if (!is_non_blocking) {
+        instance_context->Write(symbol, value);
         effect.RecordVariableModification(symbol, instance_context);
       } else {
         effect.RecordNbaAction(

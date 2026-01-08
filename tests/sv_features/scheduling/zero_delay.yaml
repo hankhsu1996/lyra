@@ -1,0 +1,70 @@
+feature: zero_delay
+description: Tests for #0 delays (Inactive region behavior per IEEE 1800-2023 Section 4.4)
+
+cases:
+  - name: zero_delay_executes_same_timeslot
+    sv: |
+      module Test;
+        int t1, t2;
+        initial begin
+          t1 = $time;
+          #0;
+          t2 = $time;
+        end
+      endmodule
+    expect:
+      variables:
+        t1: 0
+        t2: 0
+      time: 0
+
+  - name: zero_delay_after_current_block
+    sv: |
+      module Test;
+        int x, before_zero, after_zero;
+        initial begin
+          x <= 10;               // NBA scheduled
+          before_zero = x;       // Active: sees old value (0)
+          #0;                    // Suspends to Inactive, NBA commits
+          after_zero = x;        // Active: sees new value (10)
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+        before_zero: 0
+        after_zero: 10
+
+  - name: multiple_zero_delays_ordered
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 1;
+          #0;
+          b = 2;
+          #0;
+          c = 3;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 1
+        b: 2
+        c: 3
+      time: 0
+
+  - name: zero_delay_sees_nba
+    sv: |
+      module Test;
+        int x, seen;
+        initial begin
+          x <= 42;        // NBA
+          #0;             // Wait for NBA to commit
+          seen = x;       // Should see 42
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+        seen: 42
