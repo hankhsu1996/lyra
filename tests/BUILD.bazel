@@ -67,6 +67,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "operators_concat_tests",
+    yaml = "sv_features/operators/concat.yaml",
+)
+
+sv_feature_test(
     name = "processes_initial_tests",
     yaml = "sv_features/processes/initial.yaml",
 )

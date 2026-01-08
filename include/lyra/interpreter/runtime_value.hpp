@@ -3,6 +3,8 @@
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -99,6 +101,55 @@ struct RuntimeValue {
         .type = is_signed ? common::Type::IntegralSigned(bit_width)
                           : common::Type::IntegralUnsigned(bit_width),
         .value = ValueVariant(common::ValueStorage(std::move(value)))};
+  }
+
+  // Concatenate multiple operands into a single result.
+  // Operands are MSB to LSB order (first operand is most significant).
+  // Result is always unsigned.
+  static auto Concatenate(
+      std::span<const RuntimeValue> operands, size_t result_width)
+      -> RuntimeValue {
+    if (result_width <= 64) {
+      // Narrow result: combine using shift-and-or
+      uint64_t result = 0;
+      size_t shift = 0;
+
+      // Process from LSB to MSB (reverse order)
+      for (const auto& operand : std::views::reverse(operands)) {
+        size_t width = operand.type.GetBitWidth();
+        uint64_t bits = operand.IsWide() ? operand.AsWideBit().GetWord(0)
+                                         : operand.AsNarrow().AsUInt64();
+        // Mask to operand width to avoid sign-extension issues
+        bits &= common::MakeBitMask(static_cast<uint32_t>(width));
+        result |= (bits << shift);
+        shift += width;
+      }
+      return IntegralUnsigned(result, result_width);
+    }
+
+    // Wide result: use WideBit operations
+    size_t num_words = common::wide_ops::WordsForBits(result_width);
+    common::WideBit result(num_words);
+    size_t bit_offset = 0;
+
+    // Process from LSB to MSB (reverse order)
+    for (const auto& operand : std::views::reverse(operands)) {
+      size_t width = operand.type.GetBitWidth();
+
+      // Get operand as WideBit (or convert from narrow)
+      common::WideBit operand_wide =
+          operand.IsWide()
+              ? operand.AsWideBit()
+              : common::WideBit::FromUInt64(operand.AsNarrow().AsUInt64(), 2);
+
+      // Insert operand bits at current offset
+      result = result.InsertSlice(operand_wide, bit_offset, width);
+      bit_offset += width;
+    }
+
+    // Mask to result width
+    common::wide_ops::MaskToWidth(result.Words(), result_width);
+    return IntegralWide(std::move(result), result_width);
   }
 
   // Scalar accessors - assumes value holds ValueStorage

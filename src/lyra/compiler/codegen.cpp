@@ -1,6 +1,7 @@
 #include "lyra/compiler/codegen.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -1755,6 +1756,32 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         throw common::InternalError(
             "codegen", "unexpected system call in expression: " + syscall.name);
       }
+      break;
+    }
+    case mir::Expression::Kind::kConcatenation: {
+      const auto& concat = mir::As<mir::ConcatenationExpression>(expr);
+      size_t result_width = expr.type.GetBitWidth();
+
+      // Debug assertion: sum of operand widths must equal result width
+      [[maybe_unused]] size_t operand_width_sum = 0;
+      for (const auto& op : concat.operands) {
+        operand_width_sum += op->type.GetBitWidth();
+      }
+      assert(
+          operand_width_sum == result_width &&
+          "concatenation operand widths don't sum to result width");
+
+      // SDK Concat<N>() handles both narrow and wide internally:
+      // - Narrow (<=64 bits): returns uint64_t, handles sign-extension masking
+      // - Wide (>64 bits): returns WideBit<N>
+      out_ << "lyra::sdk::Concat<" << result_width << ">(";
+      for (size_t i = 0; i < concat.operands.size(); ++i) {
+        if (i > 0) {
+          out_ << ", ";
+        }
+        EmitExpression(*concat.operands[i], kPrecLowest);
+      }
+      out_ << ")";
       break;
     }
     default:

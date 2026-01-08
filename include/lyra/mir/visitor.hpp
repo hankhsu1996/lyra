@@ -17,6 +17,7 @@ class RangeSelectExpression;
 class IndexedRangeSelectExpression;
 class HierarchicalReferenceExpression;
 class EnumMethodExpression;
+class ConcatenationExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -57,6 +58,7 @@ class MirVisitor {
   virtual void Visit(const IndexedRangeSelectExpression&) = 0;
   virtual void Visit(const HierarchicalReferenceExpression&) = 0;
   virtual void Visit(const EnumMethodExpression&) = 0;
+  virtual void Visit(const ConcatenationExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

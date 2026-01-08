@@ -83,6 +83,9 @@ enum class InstructionKind {
   // Type operations
   kConversion,
 
+  // Concatenation
+  kConcatenation,
+
   // Control flow
   kComplete,
   kWaitEvent,
@@ -369,6 +372,23 @@ struct Instruction {
             Operand::Label(false_label)}};
   }
 
+  // Concatenation: result = {op0, op1, ...}
+  // Operands are ordered MSB to LSB (first operand is most significant)
+  static auto Concatenation(
+      TempRef result, std::vector<TempRef> operands, common::Type result_type)
+      -> Instruction {
+    std::vector<Operand> ops;
+    ops.reserve(operands.size());
+    for (auto& op : operands) {
+      ops.push_back(Operand::Temp(op));
+    }
+    return Instruction{
+        .kind = InstructionKind::kConcatenation,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = std::move(ops)};
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       // Memory operations
@@ -600,6 +620,17 @@ struct Instruction {
       case InstructionKind::kConversion:
         return fmt::format(
             "cvt   {}, {}", result.value(), operands[0].ToString());
+
+      case InstructionKind::kConcatenation: {
+        std::string args;
+        for (size_t i = 0; i < operands.size(); ++i) {
+          if (i > 0) {
+            args += ", ";
+          }
+          args += operands[i].ToString();
+        }
+        return fmt::format("cat   {}, {{{}}}", result.value(), args);
+      }
 
       case InstructionKind::kWaitEvent: {
         std::string result = "wait  ";
