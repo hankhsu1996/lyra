@@ -102,13 +102,76 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
               assignment.target.symbol, adjusted_index, value, element_width);
           builder.AddInstruction(std::move(instruction));
         } else {
-          // Unpacked array element assignment: array[index] = value
-          // Only single index supported for unpacked arrays
-          assert(assignment.target.indices.size() == 1);
-          auto index = LowerExpression(*assignment.target.indices[0], builder);
-          auto instruction = Instruction::StoreUnpackedElement(
-              assignment.target.symbol, index, value);
-          builder.AddInstruction(std::move(instruction));
+          // Unpacked array element assignment
+          size_t num_indices = assignment.target.indices.size();
+
+          // Lower all indices
+          std::vector<TempRef> index_temps;
+          for (const auto& idx_expr : assignment.target.indices) {
+            index_temps.push_back(LowerExpression(*idx_expr, builder));
+          }
+
+          if (num_indices == 1) {
+            // 1D: simple store
+            auto instruction = Instruction::StoreUnpackedElement(
+                assignment.target.symbol, index_temps[0], value);
+            builder.AddInstruction(std::move(instruction));
+          } else {
+            // Multi-dimensional: copy-modify-store pattern
+            // For arr[i][j] = value: load arr[i], modify [j], store back
+            const auto& base_type = *assignment.target.base_type;
+
+            // Load intermediate arrays (all but the last index)
+            std::vector<TempRef> intermediate_temps;
+            const Type* current_type = &base_type;
+
+            for (size_t i = 0; i < num_indices - 1; ++i) {
+              const Type& element_type = current_type->GetElementType();
+              auto temp = builder.AllocateTemp("arr", element_type);
+
+              if (i == 0) {
+                // First level: load from variable
+                auto instr = Instruction::LoadUnpackedElement(
+                    temp, assignment.target.symbol, index_temps[i],
+                    element_type);
+                builder.AddInstruction(std::move(instr));
+              } else {
+                // Subsequent levels: load from temp
+                auto instr = Instruction::LoadUnpackedElementFromTemp(
+                    temp, intermediate_temps.back(), index_temps[i],
+                    element_type);
+                builder.AddInstruction(std::move(instr));
+              }
+
+              intermediate_temps.push_back(temp);
+              current_type = &element_type;
+            }
+
+            // Store value to the innermost array using the last index
+            auto store_instr = Instruction::StoreUnpackedElementToTemp(
+                intermediate_temps.back(), index_temps.back(), value);
+            builder.AddInstruction(std::move(store_instr));
+
+            // Store back intermediate arrays in reverse order (3D+).
+            // For arr[i][j][k] = v (3D), this stores temp0[j] = temp1.
+            // Store-backs may be redundant due to shared_ptr semantics in
+            // RuntimeValue, but kept for correctness regardless of storage
+            // implementation.
+            auto num_intermediates =
+                static_cast<int>(intermediate_temps.size());
+            for (int i = num_intermediates - 1; i >= 1; --i) {
+              auto instr = Instruction::StoreUnpackedElementToTemp(
+                  intermediate_temps[i - 1], index_temps[i],
+                  intermediate_temps[i]);
+              builder.AddInstruction(std::move(instr));
+            }
+
+            // Store back to the base variable
+            auto final_store = Instruction::StoreUnpackedElement(
+                assignment.target.symbol, index_temps[0],
+                intermediate_temps[0]);
+            builder.AddInstruction(std::move(final_store));
+          }
         }
         return value;
       }
@@ -141,14 +204,21 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         return result;
       }
 
-      // Unpacked array: must be a direct variable reference
-      if (select.value->kind != mir::Expression::Kind::kIdentifier) {
-        assert(false && "only direct array variable access is supported");
+      // Unpacked array element access
+      if (select.value->kind == mir::Expression::Kind::kIdentifier) {
+        // Direct variable access: arr[i]
+        const auto& array_id =
+            mir::As<mir::IdentifierExpression>(*select.value);
+        auto instruction = Instruction::LoadUnpackedElement(
+            result, array_id.symbol, index, expression.type);
+        builder.AddInstruction(std::move(instruction));
+        return result;
       }
 
-      const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-      auto instruction = Instruction::LoadUnpackedElement(
-          result, array_id.symbol, index, expression.type);
+      // Nested access (e.g., arr[i][j]): recursively lower the array expression
+      auto array_temp = LowerExpression(*select.value, builder);
+      auto instruction = Instruction::LoadUnpackedElementFromTemp(
+          result, array_temp, index, expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
     }

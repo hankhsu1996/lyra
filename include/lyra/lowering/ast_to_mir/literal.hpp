@@ -14,6 +14,7 @@ namespace slang::ast {
 class IntegerLiteral;
 class RealLiteral;
 class StringLiteral;
+class UnbasedUnsizedIntegerLiteral;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_mir {
@@ -27,6 +28,10 @@ auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal;
 
 // Lowers a slang AST RealLiteral into a MIR Literal.
 auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal;
+
+// Lowers a slang AST UnbasedUnsizedIntegerLiteral into a MIR Literal.
+auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
+    -> Result<common::Literal>;
 
 /// Extracts (value, mask) from an SVInt for casez/casex pattern matching.
 /// For casex: both X and Z bits become wildcards (mask bit = 0)

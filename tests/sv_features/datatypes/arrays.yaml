@@ -143,3 +143,133 @@ cases:
     expect:
       variables:
         result: 300
+
+  # Multi-dimensional unpacked array tests
+
+  - name: multidim_2d_read
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[2][3];
+          int row[3];
+          row = arr[0];  // Get first row (all zeros)
+          result = row[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: multidim_2d_write_and_read
+    sv: |
+      module Test;
+        int result1;
+        int result2;
+        initial begin
+          int arr[2][3];
+          arr[0][0] = 10;
+          arr[0][1] = 20;
+          arr[0][2] = 30;
+          arr[1][0] = 40;
+          arr[1][1] = 50;
+          arr[1][2] = 60;
+          result1 = arr[0][1];
+          result2 = arr[1][2];
+        end
+      endmodule
+    expect:
+      variables:
+        result1: 20
+        result2: 60
+
+  - name: multidim_2d_variable_indices
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[3][4];
+          int i;
+          int j;
+          arr[1][2] = 42;
+          i = 1;
+          j = 2;
+          result = arr[i][j];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: multidim_2d_loop_init
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[2][3];
+          int i;
+          int j;
+          int val;
+          val = 1;
+          for (i = 0; i < 2; i++) begin
+            for (j = 0; j < 3; j++) begin
+              arr[i][j] = val;
+              val = val + 1;
+            end
+          end
+          sum = arr[0][0] + arr[0][1] + arr[0][2] + arr[1][0] + arr[1][1] + arr[1][2];
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 21
+
+  - name: multidim_2d_row_independence
+    description: Verify that rows in 2D arrays are independent (no shared storage)
+    sv: |
+      module Test;
+        int result1;
+        int result2;
+        initial begin
+          int arr[2][3];
+          arr[0][1] = 100;
+          arr[1][1] = 200;
+          result1 = arr[0][1];
+          result2 = arr[1][1];
+        end
+      endmodule
+    expect:
+      variables:
+        result1: 100
+        result2: 200
+
+  - name: multidim_3d_basic
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[2][3][4];
+          arr[1][2][3] = 999;
+          result = arr[1][2][3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 999
+
+  - name: multidim_module_level
+    sv: |
+      module Test;
+        int arr[2][2];
+        int result;
+        initial begin
+          arr[0][0] = 1;
+          arr[0][1] = 2;
+          arr[1][0] = 3;
+          arr[1][1] = 4;
+          result = arr[0][0] + arr[0][1] + arr[1][0] + arr[1][1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
