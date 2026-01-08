@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/common/simulation_region.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
@@ -16,6 +17,8 @@
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
+
+using common::Region;
 
 using SimulationTime = uint64_t;
 
@@ -39,26 +42,7 @@ using NbaQueue = std::queue<NbaAction>;
 using PostponedQueue = std::queue<PostponedAction>;
 
 // WaitingProcessInfo is defined in trigger_manager.hpp
-
-enum class RegionType {
-  kPreponed,      // Not implemented yet
-  kPreActive,     // Not implemented yet
-  kActive,        // Main always blocks, schedules NBA
-  kInactive,      // #0 delays
-  kPreNba,        // Not implemented yet
-  kNba,           // Commit NBA updates
-  kPostNba,       // Not implemented yet
-  kPreObserved,   // Not implemented yet
-  kObserved,      // Not implemented yet
-  kPostObserved,  // Not implemented yet
-  kReactive,      // Testbench execution
-  kReInactive,    // Not implemented yet
-  kPreReNba,      // Not implemented yet
-  kReNba,         // Not implemented yet
-  kPostReNba,     // Not implemented yet
-  kPrePostponed,  // Not implemented yet
-  kPostponed      // Final observation ($strobe, $monitor)
-};
+// Region enum is defined in lyra/common/simulation_region.hpp
 
 class SimulationRunner {
  public:
@@ -95,14 +79,13 @@ class SimulationRunner {
   void WakeWaitingProcesses(
       const std::vector<ModifiedVariable>& modified_variables);
   void ExecuteTimeSlot();
-  void ExecuteRegion(RegionType region);
+  void ExecuteRegion(Region region);
 
   // Helper functions for ExecuteTimeSlot
   auto HasPendingActivity() const -> bool;
   auto HasActivityInActiveGroup() const -> bool;
-  auto HasActivityInReactiveGroup() const -> bool;
+  static auto HasActivityInReactiveGroup() -> bool;
   auto IsAllRegionEmpty() const -> bool;
-  void MoveToActive(std::queue<ScheduledEvent>& source);
 
   // Global queues
   DelayQueue delay_queue_;

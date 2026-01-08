@@ -38,7 +38,12 @@ auto RunProcess(
             block_result.resume_instruction_index);
 
       case BasicBlockResult::Kind::kDelay:
-        // Store where to resume (current block, instruction index from result)
+        // #0 delays go to Inactive region (same time slot)
+        // Non-zero delays go to delay queue (future time slot)
+        if (block_result.delay_amount == 0) {
+          return ProcessResult::ScheduleInactive(
+              block_index, block_result.resume_instruction_index);
+        }
         return ProcessResult::Delay(
             block_result.delay_amount, block_index,
             block_result.resume_instruction_index);

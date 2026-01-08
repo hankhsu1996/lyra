@@ -17,7 +17,7 @@ using SymbolRef = common::SymbolRef;
 
 // Result of running a Process execution
 struct ProcessResult {
-  enum class Kind { kComplete, kDelay, kWaitEvent, kFinish };
+  enum class Kind { kComplete, kDelay, kScheduleInactive, kWaitEvent, kFinish };
 
   Kind kind = Kind::kComplete;
   uint64_t delay_amount = 0;
@@ -49,6 +49,16 @@ struct ProcessResult {
     };
   }
 
+  // Schedule to Inactive region (for #0 delays)
+  static auto ScheduleInactive(
+      std::size_t block_index, std::size_t instruction_index) -> ProcessResult {
+    return ProcessResult{
+        .kind = Kind::kScheduleInactive,
+        .block_index = block_index,
+        .resume_instruction_index = instruction_index,
+    };
+  }
+
   static auto WaitEvent(
       std::vector<common::Trigger> triggers, std::size_t block_index,
       std::size_t instruction_index) -> ProcessResult {
@@ -70,6 +80,10 @@ struct ProcessResult {
     switch (kind) {
       case Kind::kDelay:
         base = fmt::format("Delay for {} time units", delay_amount);
+        break;
+
+      case Kind::kScheduleInactive:
+        base = "Schedule to Inactive region (#0)";
         break;
 
       case Kind::kWaitEvent: {

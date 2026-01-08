@@ -969,7 +969,14 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       const auto& delay = mir::As<mir::DelayStatement>(stmt);
       // Scale delay based on module's timescale
       uint64_t scaled_delay = delay.delay_amount * DelayMultiplier();
-      Line("co_await lyra::sdk::Delay(" + std::to_string(scaled_delay) + ");");
+      if (scaled_delay == 0) {
+        // #0 delay goes to Inactive region (same time slot)
+        Line("co_await lyra::sdk::ZeroDelay();");
+      } else {
+        // Non-zero delay goes to delay queue (future time slot)
+        Line(
+            "co_await lyra::sdk::Delay(" + std::to_string(scaled_delay) + ");");
+      }
       break;
     }
     case mir::Statement::Kind::kWaitEvent: {

@@ -17,7 +17,7 @@ def sv_feature_test(name, yaml, size = "large", deps = []):
         srcs = ["framework/sv_feature_tests.cpp"],
         data = [
             yaml,
-            "//:sdk_headers",
+            "//:embedded_headers",
         ],
         env = {
             "SV_TEST_YAML": "$(rootpath " + yaml + ")",
