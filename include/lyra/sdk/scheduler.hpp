@@ -133,9 +133,29 @@ class Scheduler {
     }
   }
 
+  // Check if any module has pending NBA actions
+  [[nodiscard]] auto HasAnyNba() const -> bool {
+    return std::ranges::any_of(
+        modules_, [](const Module* m) { return m->HasPendingNba(); });
+  }
+
   // Check if Active group has pending activity
+  // Per LRM 4.4: Active group includes Active, Inactive, and NBA regions
   [[nodiscard]] auto HasActiveGroupActivity() const -> bool {
-    return !active_handles_.empty() || !inactive_queue_.empty();
+    return !active_handles_.empty() || !inactive_queue_.empty() || HasAnyNba();
+  }
+
+  // Check if Reactive group has pending activity (stub - always false)
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  [[nodiscard]] auto HasActivityInReactiveGroup() const -> bool {
+    // Stub: Reactive group not implemented yet (for program blocks)
+    // Will access reactive queues when implemented
+    return false;
+  }
+
+  // Check if any simulation activity remains (Active or Reactive groups)
+  [[nodiscard]] auto HasPendingActivity() const -> bool {
+    return HasActiveGroupActivity() || HasActivityInReactiveGroup();
   }
 
   // Process Inactive queue: move handles to Active
@@ -218,19 +238,43 @@ class Scheduler {
   // Execute a complete time slot per IEEE 1800 Section 4.4
   void ExecuteTimeSlot() {
     using common::Region;
-    // Active group loop: Active → Inactive → NBA
-    // Use do-while to ensure NBA flush happens at least once
-    do {
-      ExecuteRegion(Region::kActive);
-      ExecuteRegion(Region::kInactive);
-      ExecuteRegion(Region::kNBA);
 
-      // Check triggers (wakes waiting processes to active)
-      if (!simulation_finished) {
-        CheckTriggersToActive();
+    // Preponed region: #1step sampling (stub)
+    ExecuteRegion(Region::kPreponed);
+
+    // Check triggers at start of time slot to update prev values and wake
+    // processes. This handles the case where initial process execution
+    // (outside ExecuteTimeSlot) modified variables that should trigger waiters.
+    if (!simulation_finished) {
+      CheckTriggersToActive();
+    }
+
+    // Main iteration loop (LRM 4.5)
+    while (HasPendingActivity() && !simulation_finished) {
+      // Active group iteration: Active -> Inactive -> NBA
+      while (HasActiveGroupActivity() && !simulation_finished) {
+        ExecuteRegion(Region::kActive);
+        ExecuteRegion(Region::kInactive);
+        ExecuteRegion(Region::kNBA);
+
+        // Check triggers (wakes waiting processes to active)
+        if (!simulation_finished) {
+          CheckTriggersToActive();
+        }
       }
-    } while (HasActiveGroupActivity() && !simulation_finished);
 
+      // Observed region: assertion evaluation (stub)
+      ExecuteRegion(Region::kObserved);
+
+      // Reactive group iteration (stub - for program blocks)
+      while (HasActivityInReactiveGroup() && !simulation_finished) {
+        ExecuteRegion(Region::kReactive);
+        ExecuteRegion(Region::kReInactive);
+        ExecuteRegion(Region::kReNBA);
+      }
+    }
+
+    // Postponed region: $strobe, $monitor
     ExecuteRegion(Region::kPostponed);
   }
 
@@ -278,9 +322,8 @@ class Scheduler {
     for (auto& waiter : waiters_) {
       if (waiter.check_triggered()) {
         auto* addr = waiter.handle.address();
-        bool already = std::any_of(
-            triggered.begin(), triggered.end(),
-            [addr](auto h) { return h.address() == addr; });
+        bool already = std::ranges::any_of(
+            triggered, [addr](auto h) { return h.address() == addr; });
         if (!already) {
           triggered.push_back(waiter.handle);
         }
@@ -290,9 +333,8 @@ class Scheduler {
     // Remove triggered waiters using C++20 erase_if
     std::erase_if(waiters_, [&](const Waiter& w) {
       auto* addr = w.handle.address();
-      return std::any_of(triggered.begin(), triggered.end(), [addr](auto h) {
-        return h.address() == addr;
-      });
+      return std::ranges::any_of(
+          triggered, [addr](auto h) { return h.address() == addr; });
     });
 
     return triggered;
@@ -318,6 +360,7 @@ inline void Delay::await_suspend(std::coroutine_handle<> handle) const {
 }
 
 // Implementation of ZeroDelay::await_suspend (schedules to Inactive region)
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 inline void ZeroDelay::await_suspend(std::coroutine_handle<> handle) const {
   if (current_scheduler != nullptr) {
     current_scheduler->ScheduleInactive(handle);
@@ -445,7 +488,9 @@ inline auto Module::Run() -> SimulationResult {
   scheduler.ProcessDelayedTasks();
 
   current_scheduler = nullptr;
-  return {scheduler.CurrentTime(), simulation_stopped ? 1 : 0};
+  return {
+      .final_time = scheduler.CurrentTime(),
+      .exit_code = simulation_stopped ? 1 : 0};
 }
 
 }  // namespace lyra::sdk
