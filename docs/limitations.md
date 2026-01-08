@@ -47,11 +47,9 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 ## Expressions
 
-- Concatenation (`{a, b, c}`)
 - Replication (`{4{byte}}`)
 - Struct member access (`.field`)
 - `inside` operator
-- Unsized literals (`'0`, `'1`, `'x`)
 
 ## Operators
 

@@ -41,6 +41,7 @@ class Expression {
     kRangeSelect,
     kIndexedRangeSelect,
     kHierarchicalReference,
+    kConcatenation,
   };
 
   Kind kind;
@@ -89,6 +90,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "IndexedRangeSelect";
     case Expression::Kind::kHierarchicalReference:
       return "HierarchicalReference";
+    case Expression::Kind::kConcatenation:
+      return "Concatenation";
   }
   std::abort();
 }
@@ -559,6 +562,35 @@ class HierarchicalReferenceExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return common::FormatHierarchicalPath(instance_path, target_symbol);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Concatenation expression: {a, b, c}
+// Operands are ordered MSB to LSB (first operand is most significant)
+// Result type is unsigned packed vector with width = sum of operand widths
+class ConcatenationExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kConcatenation;
+
+  std::vector<std::unique_ptr<Expression>> operands;
+
+  ConcatenationExpression(
+      std::vector<std::unique_ptr<Expression>> ops, Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        operands(std::move(ops)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    std::vector<std::string> op_strs;
+    op_strs.reserve(operands.size());
+    for (const auto& op : operands) {
+      op_strs.push_back(op->ToString());
+    }
+    return fmt::format("{{{}}}", fmt::join(op_strs, ", "));
   }
 
   void Accept(MirVisitor& visitor) const override {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -135,11 +136,36 @@ class Bit {
       : value_{static_cast<Storage>(other.GetWord(0) & kMask)} {
   }
 
+  // Conversion from types with kWidth and Value() (e.g., NarrowConcatResult).
+  // This enables direct assignment from Concat<N>() results.
+  template <typename T>
+    requires(
+        !std::is_integral_v<T> && requires { T::kWidth; } &&
+        requires(const T& t) {
+          { t.Value() } -> std::convertible_to<uint64_t>;
+        })
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  constexpr Bit(const T& other)
+      : value_{static_cast<Storage>(other.Value() & kMask)} {
+  }
+
   // Assignment from any integral type
   template <typename T>
     requires std::is_integral_v<T>
   constexpr auto operator=(T value) -> Bit& {
     value_ = static_cast<Storage>(static_cast<uint64_t>(value) & kMask);
+    return *this;
+  }
+
+  // Assignment from types with kWidth and Value() (e.g., NarrowConcatResult).
+  template <typename T>
+    requires(
+        !std::is_integral_v<T> && requires { T::kWidth; } &&
+        requires(const T& t) {
+          { t.Value() } -> std::convertible_to<uint64_t>;
+        })
+  constexpr auto operator=(const T& value) -> Bit& {
+    value_ = static_cast<Storage>(value.Value() & kMask);
     return *this;
   }
 

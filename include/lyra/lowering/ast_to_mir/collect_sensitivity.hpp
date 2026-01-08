@@ -96,6 +96,12 @@ class SensitivityCollector : public mir::MirVisitor {
     items_.push_back({expression.target_symbol, expression.instance_path});
   }
 
+  void Visit(const mir::ConcatenationExpression& expression) override {
+    for (const auto& operand : expression.operands) {
+      operand->Accept(*this);
+    }
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);

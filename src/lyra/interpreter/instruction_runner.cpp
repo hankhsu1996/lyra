@@ -1243,6 +1243,29 @@ auto RunInstruction(
                       src.type, target_type)));
     }
 
+    // Concatenation: result = {op0, op1, ...}
+    // Operands are ordered MSB to LSB (first operand is most significant)
+    case lir::InstructionKind::kConcatenation: {
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+
+      const auto& result_type = instr.result_type.value();
+      size_t result_width = result_type.GetBitWidth();
+
+      // Collect operand values
+      std::vector<RuntimeValue> operand_values;
+      operand_values.reserve(instr.operands.size());
+      for (const auto& operand : instr.operands) {
+        operand_values.push_back(get_temp(operand));
+      }
+
+      // RuntimeValue::Concatenate handles narrow/wide dispatch internally
+      temp_table.Write(
+          instr.result.value(),
+          RuntimeValue::Concatenate(operand_values, result_width));
+      return InstructionResult::Continue();
+    }
+
     // Control flow
     case lir::InstructionKind::kComplete: {
       return InstructionResult::Complete();

@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -613,6 +612,27 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       return std::make_unique<mir::HierarchicalReferenceExpression>(
           target_symbol, std::move(instance_path), *type_result);
+    }
+
+    case slang::ast::ExpressionKind::Concatenation: {
+      const auto& concat_expr =
+          expression.as<slang::ast::ConcatenationExpression>();
+
+      // Lower all operands
+      std::vector<std::unique_ptr<mir::Expression>> operands;
+      operands.reserve(concat_expr.operands().size());
+      for (const auto* operand : concat_expr.operands()) {
+        operands.push_back(LowerExpression(*operand));
+      }
+
+      // Get the result type from slang (already computed with correct width)
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::ConcatenationExpression>(
+          std::move(operands), *type_result);
     }
 
     case slang::ast::ExpressionKind::Invalid:

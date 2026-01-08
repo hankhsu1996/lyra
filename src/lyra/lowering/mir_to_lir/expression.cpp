@@ -440,6 +440,20 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(std::move(instruction));
       return result;
     }
+
+    case mir::Expression::Kind::kConcatenation: {
+      const auto& concat = mir::As<mir::ConcatenationExpression>(expression);
+      std::vector<TempRef> operand_temps;
+      operand_temps.reserve(concat.operands.size());
+      for (const auto& operand : concat.operands) {
+        operand_temps.push_back(LowerExpression(*operand, builder));
+      }
+      auto result = builder.AllocateTemp("cat", expression.type);
+      auto instruction = Instruction::Concatenation(
+          result, std::move(operand_temps), expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
   }
 }
 

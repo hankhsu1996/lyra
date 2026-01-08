@@ -1,0 +1,281 @@
+feature: concatenation
+description: Tests for concatenation operator {a, b, c} (LRM 11.4.12)
+
+cases:
+  - name: concat_two_bytes
+    sv: |
+      module Test;
+        byte a, b;
+        bit [15:0] c;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          c = {a, b};
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xABCD
+
+  - name: concat_two_nibbles
+    sv: |
+      module Test;
+        bit [3:0] a, b;
+        bit [7:0] c;
+        initial begin
+          a = 4'hF;
+          b = 4'h3;
+          c = {a, b};
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xF3
+
+  - name: concat_with_literals
+    sv: |
+      module Test;
+        bit [7:0] a;
+        bit [15:0] c;
+        initial begin
+          a = 8'h12;
+          c = {a, 8'h34};
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0x1234
+
+  - name: concat_three_operands
+    sv: |
+      module Test;
+        bit [3:0] a, b, c;
+        bit [11:0] result;
+        initial begin
+          a = 4'hA;
+          b = 4'hB;
+          c = 4'hC;
+          result = {a, b, c};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xABC
+
+  - name: concat_four_bytes
+    sv: |
+      module Test;
+        byte a, b, c, d;
+        int result;
+        initial begin
+          a = 8'h12;
+          b = 8'h34;
+          c = 8'h56;
+          d = 8'h78;
+          result = {a, b, c, d};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x12345678
+
+  - name: concat_single_bits
+    sv: |
+      module Test;
+        bit a, b, c, d;
+        bit [3:0] result;
+        initial begin
+          a = 1'b1;
+          b = 1'b0;
+          c = 1'b1;
+          d = 1'b1;
+          result = {a, b, c, d};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
+
+  - name: concat_mixed_widths
+    sv: |
+      module Test;
+        bit [3:0] a;
+        bit [7:0] b;
+        bit [11:0] result;
+        initial begin
+          a = 4'hF;
+          b = 8'hAB;
+          result = {a, b};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xFAB
+
+  - name: concat_in_expression
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [15:0] c;
+        int sum;
+        initial begin
+          a = 8'h01;
+          b = 8'h02;
+          c = {a, b};
+          sum = c + 1;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0x0102
+        sum: 0x0103
+
+  - name: concat_wide_result_72bit
+    sv: |
+      module Test;
+        bit [31:0] a, b;
+        bit [7:0] c;
+        bit [71:0] result;
+        longint lo;
+        initial begin
+          a = 32'hDEADBEEF;
+          b = 32'hCAFEBABE;
+          c = 8'hFF;
+          result = {a, b, c};
+          lo = result[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: -5927036404436910337
+
+  - name: concat_wide_result_96bit
+    sv: |
+      module Test;
+        int a, b, c;
+        bit [95:0] result;
+        longint lo;
+        initial begin
+          a = 32'h11111111;
+          b = 32'h22222222;
+          c = 32'h33333333;
+          result = {a, b, c};
+          lo = result[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 0x2222222233333333
+
+  - name: concat_nested
+    sv: |
+      module Test;
+        bit [3:0] a, b, c, d;
+        bit [15:0] result;
+        initial begin
+          a = 4'h1;
+          b = 4'h2;
+          c = 4'h3;
+          d = 4'h4;
+          result = {{a, b}, {c, d}};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x1234
+
+  - name: concat_all_literals
+    sv: |
+      module Test;
+        bit [15:0] result;
+        initial begin
+          result = {8'hAB, 8'hCD};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xABCD
+
+  - name: concat_assign_to_wider
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        int result;
+        initial begin
+          a = 8'hFF;
+          b = 8'hEE;
+          result = {a, b};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xFFEE
+
+  # Code review tests: sign-extension, boundaries, edge cases
+
+  - name: concat_signed_operands
+    description: Verify signed operands contribute raw bits (not sign-extended)
+    sv: |
+      module Test;
+        byte a, b;
+        bit [15:0] result;
+        initial begin
+          a = -1;  // 0xFF in raw bits
+          b = -2;  // 0xFE in raw bits
+          result = {a, b};  // Should be 0xFFFE, not sign-extended
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xFFFE
+
+  - name: concat_64bit_boundary
+    description: Test exact 64-bit result (narrow/wide threshold)
+    sv: |
+      module Test;
+        int a, b;
+        longint result;
+        initial begin
+          a = 32'hDEADBEEF;
+          b = 32'hCAFEBABE;
+          result = {a, b};
+        end
+      endmodule
+    expect:
+      variables:
+        result: -2401053089206453570  # 0xDEADBEEFCAFEBABE as signed
+
+  - name: concat_single_operand
+    description: Degenerate case - single operand concat (commonly used to force unsigned)
+    sv: |
+      module Test;
+        byte a;
+        bit [7:0] result;
+        initial begin
+          a = -1;  // 0xFF
+          result = {a};  // Result should be 0xFF (unsigned)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 255
+
+  - name: concat_wide_128bit
+    description: Test 128-bit wide result
+    sv: |
+      module Test;
+        longint a, b;
+        bit [127:0] result;
+        longint lo, hi;
+        initial begin
+          a = 64'hFEDCBA9876543210;
+          b = 64'h0123456789ABCDEF;
+          result = {a, b};
+          lo = result[63:0];
+          hi = result[127:64];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 0x0123456789ABCDEF
+        hi: -81985529216486896  # 0xFEDCBA9876543210 as signed
