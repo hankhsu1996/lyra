@@ -280,9 +280,10 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       auto array_data = std::get<common::UnpackedArrayData>(type.data);
       std::vector<RuntimeValue> elements;
       elements.reserve(array_data.size);
-      auto element_default = DefaultValueForType(*array_data.element_type);
+      // Must create a NEW default value for each element to avoid shared
+      // ArrayStorage when element_type is itself an array
       for (size_t i = 0; i < array_data.size; ++i) {
-        elements.push_back(element_default);
+        elements.push_back(DefaultValueForType(*array_data.element_type));
       }
       return Array(type, std::move(elements));
     }

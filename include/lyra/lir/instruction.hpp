@@ -20,11 +20,15 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
-  kLoadUnpackedElement,   // Load from unpacked array: arr[index]
-  kStoreUnpackedElement,  // Store to unpacked array: arr[index] = value
-  kLoadPackedElement,     // Bit/element select from packed: vec[index]
-  kLoadPackedSlice,       // Range/part-select from packed: vec[msb:lsb]
-  kStorePackedElement,    // Store to packed element: vec[index] = value
+  kLoadUnpackedElement,  // Load from unpacked array variable: arr[index]
+  kLoadUnpackedElementFromTemp,  // Load from unpacked array temp: temp[index]
+  kStoreUnpackedElement,  // Store to unpacked array variable: arr[index] =
+                          // value
+  kStoreUnpackedElementToTemp,  // Store to unpacked array temp: temp[index] =
+                                // value
+  kLoadPackedElement,           // Bit/element select from packed: vec[index]
+  kLoadPackedSlice,             // Range/part-select from packed: vec[msb:lsb]
+  kStorePackedElement,          // Store to packed element: vec[index] = value
 
   // Move operation
   kMove,
@@ -186,6 +190,29 @@ struct Instruction {
         .kind = InstructionKind::kStoreUnpackedElement,
         .operands = {
             Operand::Variable(array), Operand::Temp(index),
+            Operand::Temp(value)}};
+  }
+
+  // Load element from unpacked array in temp: result = array_temp[index]
+  // Used for multi-dimensional array access (e.g., arr[i][j])
+  static auto LoadUnpackedElementFromTemp(
+      TempRef result, TempRef array_temp, TempRef index,
+      common::Type element_type) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoadUnpackedElementFromTemp,
+        .result = result,
+        .result_type = std::move(element_type),
+        .operands = {Operand::Temp(array_temp), Operand::Temp(index)}};
+  }
+
+  // Store element to unpacked array in temp: array_temp[index] = value
+  // Used for multi-dimensional array writes (copy-modify-store pattern)
+  static auto StoreUnpackedElementToTemp(
+      TempRef array_temp, TempRef index, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreUnpackedElementToTemp,
+        .operands = {
+            Operand::Temp(array_temp), Operand::Temp(index),
             Operand::Temp(value)}};
   }
 
@@ -351,9 +378,19 @@ struct Instruction {
             "lduel {}, {}[{}]", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
+      case InstructionKind::kLoadUnpackedElementFromTemp:
+        return fmt::format(
+            "lduet {}, {}[{}]", result.value(), operands[0].ToString(),
+            operands[1].ToString());
+
       case InstructionKind::kStoreUnpackedElement:
         return fmt::format(
             "stuel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            operands[2].ToString());
+
+      case InstructionKind::kStoreUnpackedElementToTemp:
+        return fmt::format(
+            "stuet {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
       case InstructionKind::kLoadPackedElement:
