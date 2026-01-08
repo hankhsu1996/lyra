@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -133,6 +134,9 @@ class Codegen {
 
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;
+
+  // Track user-defined type aliases (typedef): name → C++ definition
+  std::map<std::string, std::string> user_type_aliases_;
 
   // Track which codegen features are used for conditional emission
   CodegenFeature used_features_ = CodegenFeature::kNone;

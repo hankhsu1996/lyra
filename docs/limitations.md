@@ -1,6 +1,26 @@
-# Limitations
+#Limitations
 
 Current SystemVerilog features not yet supported.
+
+## Data Types
+
+Supported:
+
+- Integral types (`bit`, `logic`, `reg`, `byte`, `shortint`, `int`, `longint`)
+- Arbitrary-width bit vectors (1-bit to 200+ bits)
+- Packed multi-dimensional arrays with non-zero lower bounds
+- Unpacked fixed-size arrays
+- `real`, `shortreal`, `string`
+- `typedef` / type aliases
+- `enum` types (named and anonymous)
+- Enum methods: `first()`, `last()`, `next()`, `prev()`, `num()`, `name()` (IEEE 1800-2023 §6.19.5)
+
+Not yet supported:
+
+- `struct` (packed and unpacked)
+- `union` (packed and unpacked)
+- `class` types
+- Dynamic arrays, associative arrays, queues
 
 ## Nets
 
@@ -42,7 +62,8 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 Supported:
 
-- `$display`, `$write` - formatted output (including `%t` format specifier)
+- `$display`, `$displayb`, `$displayo`, `$displayh` - formatted output with newline (including `%t` format specifier)
+- `$write`, `$writeb`, `$writeo`, `$writeh` - formatted output without newline
 - `$finish`, `$stop`, `$exit` - simulation control
 - `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
 - `$timeformat` - configure `%t` output format

@@ -50,6 +50,38 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return result;
     }
 
+    case mir::Expression::Kind::kEnumValue: {
+      // Emit enum value as its integer constant
+      const auto& enum_val = mir::As<mir::EnumValueExpression>(expression);
+      auto result = builder.AllocateTemp("enum", enum_val.type);
+      auto literal = builder.InternLiteral(
+          Literal::IntegralSigned(enum_val.value, enum_val.type.GetBitWidth()));
+      auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kEnumMethod: {
+      const auto& em = mir::As<mir::EnumMethodExpression>(expression);
+      auto receiver = LowerExpression(*em.receiver, builder);
+      auto result = builder.AllocateTemp("enum_method", em.type);
+
+      // Convert MIR enum members to LIR enum members
+      std::vector<lir::EnumMemberInfo> lir_members;
+      lir_members.reserve(em.members.size());
+      for (const auto& m : em.members) {
+        lir_members.push_back({.name = m.name, .value = m.value});
+      }
+
+      // Generate a single method call instruction - the interpreter handles
+      // the lookup logic at runtime
+      builder.AddInstruction(
+          Instruction::MethodCall(
+              mir::ToString(em.method), receiver, result, em.type, em.step,
+              std::move(lir_members)));
+      return result;
+    }
+
     case mir::Expression::Kind::kUnary: {
       const auto& unary = mir::As<mir::UnaryExpression>(expression);
       assert(unary.operand);

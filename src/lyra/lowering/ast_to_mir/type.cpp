@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <string>
 
 #include <fmt/format.h>
 #include <slang/ast/types/AllTypes.h>
@@ -15,6 +16,17 @@ using Type = common::Type;
 
 auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     -> Result<Type> {
+  // Handle type aliases (typedef): unwrap to canonical type but preserve name
+  if (type.isAlias()) {
+    const auto& canonical = type.getCanonicalType();
+    auto result = LowerType(canonical, source_range);
+    if (result) {
+      const auto& alias = type.as<slang::ast::TypeAliasType>();
+      result->alias_name = std::string(alias.name);
+    }
+    return result;
+  }
+
   if (type.isString()) {
     return Type::String();
   }

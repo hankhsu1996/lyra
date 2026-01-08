@@ -1707,6 +1707,70 @@ auto RunInstruction(
       assert(false && "unsupported system call should be rejected in AST→MIR");
     }
 
+    case lir::InstructionKind::kMethodCall: {
+      // Generic method call - currently handles enum methods (next, prev, name)
+      // Future: string methods, class methods
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+      assert(!instr.operands.empty());
+
+      const auto& receiver = get_temp(instr.operands[0]);
+      int64_t current_value = receiver.AsNarrow().AsInt64();
+      const auto& members = instr.enum_members;
+
+      // Find current position in enum member list
+      size_t current_pos = 0;
+      bool found = false;
+      for (size_t i = 0; i < members.size(); ++i) {
+        if (members[i].value == current_value) {
+          current_pos = i;
+          found = true;
+          break;
+        }
+      }
+
+      RuntimeValue result;
+      if (instr.method_name == "next") {
+        if (found) {
+          // next(N): move forward N positions with wrap-around
+          auto step = static_cast<size_t>(instr.method_step);
+          size_t target_pos = (current_pos + step) % members.size();
+          result = RuntimeValue::IntegralSigned(
+              members[target_pos].value, instr.result_type->GetBitWidth());
+        } else {
+          // Invalid value: return 0 (implementation-defined per IEEE 1800-2023)
+          result =
+              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
+        }
+      } else if (instr.method_name == "prev") {
+        if (found) {
+          // prev(N): move backward N positions with wrap-around
+          // Add members.size() before subtracting to avoid underflow
+          size_t step = static_cast<size_t>(instr.method_step) % members.size();
+          size_t target_pos =
+              (current_pos + members.size() - step) % members.size();
+          result = RuntimeValue::IntegralSigned(
+              members[target_pos].value, instr.result_type->GetBitWidth());
+        } else {
+          // Invalid value: return 0 (implementation-defined per IEEE 1800-2023)
+          result =
+              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
+        }
+      } else if (instr.method_name == "name") {
+        if (found) {
+          result = RuntimeValue::String(members[current_pos].name);
+        } else {
+          // Invalid value: return empty string (implementation-defined)
+          result = RuntimeValue::String("");
+        }
+      } else {
+        assert(false && "unsupported method call");
+      }
+
+      temp_table.Write(instr.result.value(), result);
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kJump: {
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLabel());

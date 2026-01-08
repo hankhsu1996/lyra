@@ -1,0 +1,103 @@
+feature: typedef
+description: Tests for typedef / type aliases
+
+cases:
+  - name: typedef_basic_integral
+    description: Basic typedef of integral type
+    sv: |
+      module Test;
+        typedef bit [7:0] Byte;
+        Byte data;
+        int result;
+        initial begin
+          data = 8'hAB;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  - name: typedef_signed
+    description: Typedef of signed type
+    sv: |
+      module Test;
+        typedef byte SignedByte;
+        SignedByte data;
+        int result;
+        initial begin
+          data = -100;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -100
+
+  - name: typedef_packed_array
+    description: Typedef of packed array
+    sv: |
+      module Test;
+        typedef bit [3:0][7:0] Word32;
+        Word32 data;
+        int result;
+        initial begin
+          data[0] = 8'h12;
+          data[1] = 8'h34;
+          result = data[0] + data[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 70
+
+  - name: typedef_nested
+    description: Typedef of another typedef
+    sv: |
+      module Test;
+        typedef bit [7:0] Byte;
+        typedef Byte MyByte;
+        MyByte data;
+        int result;
+        initial begin
+          data = 8'h55;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 85
+
+  - name: typedef_unpacked_array
+    description: Typedef of unpacked array
+    sv: |
+      module Test;
+        typedef int IntArray[4];
+        IntArray arr;
+        int result;
+        initial begin
+          arr[0] = 10;
+          arr[1] = 20;
+          result = arr[0] + arr[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: typedef_multiple_vars
+    description: Multiple variables using same typedef
+    sv: |
+      module Test;
+        typedef bit [15:0] Word;
+        Word a, b;
+        int result;
+        initial begin
+          a = 16'h1234;
+          b = 16'h4321;
+          result = a + b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 21845

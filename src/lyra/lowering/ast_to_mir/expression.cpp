@@ -18,6 +18,7 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -68,6 +69,31 @@ auto LowerExpression(const slang::ast::Expression& expression)
     case slang::ast::ExpressionKind::NamedValue: {
       const auto& named_value =
           expression.as<slang::ast::NamedValueExpression>();
+
+      // Handle enum value references - emit as EnumValueExpression
+      if (named_value.symbol.kind == slang::ast::SymbolKind::EnumValue) {
+        const auto& enum_val =
+            named_value.symbol.as<slang::ast::EnumValueSymbol>();
+        const auto& cv = enum_val.getValue();
+        int64_t value = cv.integer().as<int64_t>().value_or(0);
+
+        // Get enum type name from parent scope
+        const auto* parent_scope = enum_val.getParentScope();
+        std::string enum_name = std::string(
+            parent_scope->asSymbol().as<slang::ast::EnumType>().name);
+
+        auto type_result =
+            LowerType(named_value.symbol.getType(), expression.sourceRange);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+
+        return std::make_unique<mir::EnumValueExpression>(
+            *type_result, std::move(enum_name), std::string(enum_val.name),
+            value);
+      }
+
+      // Regular variable reference
       auto type_result =
           LowerType(named_value.symbol.getType(), expression.sourceRange);
       if (!type_result) {
@@ -344,6 +370,161 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
     case slang::ast::ExpressionKind::Call: {
       const auto& call_expression = expression.as<slang::ast::CallExpression>();
+
+      // Handle compile-time constant calls (includes enum methods like first(),
+      // last()). slang evaluates these at compile time.
+      if (const auto* cv = call_expression.getConstant(); cv != nullptr) {
+        auto type_result =
+            LowerType(*call_expression.type, expression.sourceRange);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+
+        if (type_result->kind == common::Type::Kind::kIntegral) {
+          int64_t value = cv->integer().as<int64_t>().value_or(0);
+          const auto& integral_data =
+              std::get<common::IntegralData>(type_result->data);
+          auto literal =
+              integral_data.is_signed
+                  ? common::Literal::IntegralSigned(
+                        value, integral_data.bit_width)
+                  : common::Literal::IntegralUnsigned(
+                        static_cast<uint64_t>(value), integral_data.bit_width);
+          return std::make_unique<mir::LiteralExpression>(std::move(literal));
+        }
+        if (type_result->kind == common::Type::Kind::kString) {
+          return std::make_unique<mir::LiteralExpression>(
+              common::Literal::String(std::string(cv->str())));
+        }
+        // Fall through for other constant types
+      }
+
+      // Handle enum method calls - slang doesn't always pre-evaluate num() as
+      // constant, so we handle it explicitly here.
+      // Note: isSystemCall() returns true for built-in methods like enum.num(),
+      // so we check the subroutine name first before the isSystemCall check.
+      auto subroutine_name = call_expression.getSubroutineName();
+      if (!call_expression.arguments().empty()) {
+        const auto& first_arg = *call_expression.arguments()[0];
+        // Get canonical type to handle typedef'd enums (e.g., typedef enum
+        // {...} t)
+        const auto& canonical_type = first_arg.type->getCanonicalType();
+        if (canonical_type.isEnum()) {
+          const auto& enum_type = canonical_type.as<slang::ast::EnumType>();
+
+          if (subroutine_name == "num") {
+            // num() returns the count of enum members
+            int64_t count = 0;
+            for ([[maybe_unused]] const auto& _ : enum_type.values()) {
+              ++count;
+            }
+            // num() returns int type
+            return std::make_unique<mir::LiteralExpression>(
+                common::Literal::Int(static_cast<int32_t>(count)));
+          }
+          if (subroutine_name == "first") {
+            // first() returns the first enum value
+            auto it = enum_type.values().begin();
+            if (it != enum_type.values().end()) {
+              int64_t value =
+                  it->getValue().integer().as<int64_t>().value_or(0);
+              auto type_result =
+                  LowerType(*call_expression.type, expression.sourceRange);
+              if (!type_result) {
+                throw DiagnosticException(std::move(type_result.error()));
+              }
+              const auto& integral_data =
+                  std::get<common::IntegralData>(type_result->data);
+              auto literal = integral_data.is_signed
+                                 ? common::Literal::IntegralSigned(
+                                       value, integral_data.bit_width)
+                                 : common::Literal::IntegralUnsigned(
+                                       static_cast<uint64_t>(value),
+                                       integral_data.bit_width);
+              return std::make_unique<mir::LiteralExpression>(
+                  std::move(literal));
+            }
+          }
+          if (subroutine_name == "last") {
+            // last() returns the last enum value
+            int64_t last_value = 0;
+            for (const auto& member : enum_type.values()) {
+              last_value =
+                  member.getValue().integer().as<int64_t>().value_or(0);
+            }
+            auto type_result =
+                LowerType(*call_expression.type, expression.sourceRange);
+            if (!type_result) {
+              throw DiagnosticException(std::move(type_result.error()));
+            }
+            const auto& integral_data =
+                std::get<common::IntegralData>(type_result->data);
+            auto literal = integral_data.is_signed
+                               ? common::Literal::IntegralSigned(
+                                     last_value, integral_data.bit_width)
+                               : common::Literal::IntegralUnsigned(
+                                     static_cast<uint64_t>(last_value),
+                                     integral_data.bit_width);
+            return std::make_unique<mir::LiteralExpression>(std::move(literal));
+          }
+
+          // Runtime enum methods (next, prev, name)
+          if (subroutine_name == "next" || subroutine_name == "prev" ||
+              subroutine_name == "name") {
+            auto receiver = LowerExpression(first_arg);
+
+            // Collect enum member info for codegen
+            std::vector<mir::EnumMemberInfo> members;
+            for (const auto& member : enum_type.values()) {
+              members.push_back(
+                  {std::string(member.name),
+                   member.getValue().integer().as<int64_t>().value_or(0)});
+            }
+
+            // Get step argument for next(N) / prev(N), default is 1
+            // IEEE 1800-2023 requires step to be a constant expression
+            int64_t step = 1;
+            if (call_expression.arguments().size() > 1) {
+              const auto* step_cv =
+                  call_expression.arguments()[1]->getConstant();
+              if (step_cv == nullptr) {
+                throw DiagnosticException(
+                    Diagnostic::Error(
+                        call_expression.arguments()[1]->sourceRange,
+                        fmt::format(
+                            "step argument to {}() must be a constant "
+                            "expression",
+                            subroutine_name)));
+              }
+              step = step_cv->integer().as<int64_t>().value_or(1);
+            }
+
+            mir::EnumMethod method = mir::EnumMethod::kNext;
+            if (subroutine_name == "prev") {
+              method = mir::EnumMethod::kPrev;
+            } else if (subroutine_name == "name") {
+              method = mir::EnumMethod::kName;
+            }
+
+            auto type_result =
+                LowerType(*call_expression.type, expression.sourceRange);
+            if (!type_result) {
+              throw DiagnosticException(std::move(type_result.error()));
+            }
+
+            return std::make_unique<mir::EnumMethodExpression>(
+                *type_result, method, std::move(receiver), step,
+                std::move(members));
+          }
+
+          // Unknown enum method
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  fmt::format("unknown enum method '{}'", subroutine_name)));
+        }
+      }
+
       if (call_expression.isSystemCall()) {
         auto name = call_expression.getSubroutineName();
 

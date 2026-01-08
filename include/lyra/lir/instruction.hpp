@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -87,8 +88,16 @@ enum class InstructionKind {
   kWaitEvent,
   kDelay,
   kSystemCall,
+  kMethodCall,  // Generic method call (enum methods, future: string/class
+                // methods)
   kJump,
   kBranch
+};
+
+// Enum member info for method call runtime helpers
+struct EnumMemberInfo {
+  std::string name;
+  int64_t value;
 };
 
 struct Instruction {
@@ -112,6 +121,13 @@ struct Instruction {
   // symbol) target_symbol: the final variable symbol to access
   std::vector<SymbolRef> instance_path{};
   SymbolRef target_symbol{nullptr};
+
+  // Method call: method name and metadata
+  // For enum methods: method_name is "next", "prev", or "name"
+  // operands[0] = receiver
+  std::string method_name{};
+  int64_t method_step{1};  // For next(N)/prev(N), default 1
+  std::vector<EnumMemberInfo> enum_members{};
 
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
@@ -312,6 +328,22 @@ struct Instruction {
         .result_type = result_type,
         .operands = std::move(operands),
         .system_call_name = std::move(name)};
+  }
+
+  // Method call instruction (enum methods, future: string/class methods)
+  // For enum methods: receiver is operands[0]
+  static auto MethodCall(
+      std::string method, TempRef receiver, TempRef result,
+      common::Type result_type, int64_t step,
+      std::vector<EnumMemberInfo> members) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kMethodCall,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = {Operand::Temp(receiver)},
+        .method_name = std::move(method),
+        .method_step = step,
+        .enum_members = std::move(members)};
   }
 
   static auto Complete() -> Instruction {
@@ -599,6 +631,18 @@ struct Instruction {
           }
           return fmt::format("call  {} {}", system_call_name, args);
         }
+
+      case InstructionKind::kMethodCall:
+        // Show step parameter only for next/prev with non-default step
+        // name() method doesn't take a step parameter
+        if (method_step != 1 && method_name != "name") {
+          return fmt::format(
+              "mcall {}, {}.{}({})", result.value(), operands[0].ToString(),
+              method_name, method_step);
+        }
+        return fmt::format(
+            "mcall {}, {}.{}()", result.value(), operands[0].ToString(),
+            method_name);
 
       case InstructionKind::kJump:
         if (operands.size() == 1) {

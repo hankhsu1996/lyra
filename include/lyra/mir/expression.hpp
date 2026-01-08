@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
@@ -28,6 +29,8 @@ class Expression {
   enum class Kind {
     kLiteral,
     kIdentifier,
+    kEnumValue,
+    kEnumMethod,
     kUnary,
     kBinary,
     kTernary,
@@ -62,6 +65,10 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Literal";
     case Expression::Kind::kIdentifier:
       return "Identifier";
+    case Expression::Kind::kEnumValue:
+      return "EnumValue";
+    case Expression::Kind::kEnumMethod:
+      return "EnumMethod";
     case Expression::Kind::kUnary:
       return "Unary";
     case Expression::Kind::kBinary:
@@ -121,6 +128,91 @@ class IdentifierExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}:{}", symbol->name, type);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Represents an enum value reference (e.g., State::IDLE)
+// Carries both the integer value (for interpreter) and names (for codegen)
+class EnumValueExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kEnumValue;
+  std::string enum_name;   // "state_t"
+  std::string value_name;  // "IDLE"
+  int64_t value;           // 0
+
+  EnumValueExpression(
+      Type type, std::string enum_name, std::string value_name, int64_t value)
+      : Expression(kKindValue, std::move(type)),
+        enum_name(std::move(enum_name)),
+        value_name(std::move(value_name)),
+        value(value) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}::{}:{}", enum_name, value_name, type);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Enum member info for runtime enum method calls
+struct EnumMemberInfo {
+  std::string name;
+  int64_t value;
+};
+
+// Enum method type for runtime calls
+enum class EnumMethod {
+  kNext,
+  kPrev,
+  kName,
+};
+
+inline auto ToString(EnumMethod method) -> std::string {
+  switch (method) {
+    case EnumMethod::kNext:
+      return "next";
+    case EnumMethod::kPrev:
+      return "prev";
+    case EnumMethod::kName:
+      return "name";
+  }
+  return "unknown";
+}
+
+// Represents a runtime enum method call (next, prev, name)
+// The receiver is the enum variable, and members contain all enum values
+// for codegen to generate the lookup switch.
+class EnumMethodExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kEnumMethod;
+  EnumMethod method;
+  std::unique_ptr<Expression> receiver;  // The enum variable
+  int64_t step;                          // For next(N) and prev(N), default 1
+  std::vector<EnumMemberInfo> members;   // Cached enum member info for codegen
+
+  EnumMethodExpression(
+      Type type, EnumMethod method, std::unique_ptr<Expression> receiver,
+      int64_t step, std::vector<EnumMemberInfo> members)
+      : Expression(kKindValue, std::move(type)),
+        method(method),
+        receiver(std::move(receiver)),
+        step(step),
+        members(std::move(members)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    if (step != 1 && method != EnumMethod::kName) {
+      return fmt::format(
+          "{}.{}({})", receiver->ToString(), mir::ToString(method), step);
+    }
+    return fmt::format("{}.{}()", receiver->ToString(), mir::ToString(method));
   }
 
   void Accept(MirVisitor& visitor) const override {

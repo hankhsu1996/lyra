@@ -7,6 +7,7 @@
 #include <functional>
 #include <ios>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -234,6 +235,22 @@ auto Codegen::IsSigned(const common::Type& type) -> bool {
 }
 
 auto Codegen::ToCppType(const common::Type& type) -> std::string {
+  // Handle user-defined type aliases (typedef)
+  if (type.alias_name) {
+    const auto& name = *type.alias_name;
+
+    // Get the C++ definition for this alias by computing it without the alias
+    // name
+    common::Type underlying = type;
+    underlying.alias_name = std::nullopt;
+    std::string cpp_def = ToCppType(underlying);
+
+    // Register the alias for later emission
+    user_type_aliases_[name] = cpp_def;
+
+    return name;
+  }
+
   switch (type.kind) {
     case common::Type::Kind::kVoid:
       return "void";
@@ -315,6 +332,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   indent_ = 0;
   port_symbols_.clear();
   used_type_aliases_ = TypeAlias::kNone;
+  user_type_aliases_.clear();
   used_features_ = CodegenFeature::kNone;
 
   // Store timescale info for delay scaling
@@ -416,7 +434,13 @@ void Codegen::EmitTypeAliases() {
   if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
     Line("using ShortReal = float;");
   }
-  if (used_type_aliases_ != TypeAlias::kNone) {
+
+  // Emit user-defined type aliases (typedef)
+  for (const auto& [name, def] : user_type_aliases_) {
+    Line(std::format("using {} = {};", name, def));
+  }
+
+  if (used_type_aliases_ != TypeAlias::kNone || !user_type_aliases_.empty()) {
     Line("");
   }
 }
@@ -1255,6 +1279,72 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // Append underscore for port reference members (Google style)
       if (port_symbols_.contains(ident.symbol)) {
         out_ << "_";
+      }
+      break;
+    }
+    case mir::Expression::Kind::kEnumValue: {
+      // Emit enum value as integer literal (no enum class generation)
+      const auto& ev = mir::As<mir::EnumValueExpression>(expr);
+      out_ << ToCppType(ev.type) << "{" << ev.value << "}";
+      break;
+    }
+    case mir::Expression::Kind::kEnumMethod: {
+      const auto& em = mir::As<mir::EnumMethodExpression>(expr);
+      switch (em.method) {
+        case mir::EnumMethod::kNext:
+        case mir::EnumMethod::kPrev: {
+          // Generate inline lambda with switch
+          // Cast to int64_t since Bit<N,S> is a class type that can't be used
+          // directly in switch
+          out_ << "[&]() -> " << ToCppType(em.type)
+               << " { switch (static_cast<int64_t>(";
+          EmitExpression(*em.receiver, kPrecLowest);
+          out_ << ")) {";
+          for (size_t i = 0; i < em.members.size(); ++i) {
+            size_t target_idx = 0;
+            if (em.method == mir::EnumMethod::kNext) {
+              // next(N): move forward N positions with wrap-around
+              // E.g., for enum {A, B, C, D, E} at position 3 (D), next(3) goes
+              // to position (3+3) % 5 = 1 (B)
+              target_idx =
+                  (i + static_cast<size_t>(em.step)) % em.members.size();
+            } else {
+              // prev(N): move backward N positions with wrap-around
+              // We add members.size() before subtracting to avoid underflow
+              // when step > i. The inner modulo handles step >= size.
+              // E.g., for enum {A, B, C, D, E} at position 1 (B), prev(3) goes
+              // to position (1 + 5 - 3) % 5 = 3 (D)
+              target_idx =
+                  (i + em.members.size() -
+                   (static_cast<size_t>(em.step) % em.members.size())) %
+                  em.members.size();
+            }
+            out_ << " case " << em.members[i].value << ": return "
+                 << ToCppType(em.type) << "{" << em.members[target_idx].value
+                 << "};";
+          }
+          // Default case: when receiver has an invalid value (not matching any
+          // enum member), the behavior is implementation-defined per IEEE
+          // 1800-2023. We return the type's default value (0).
+          out_ << " default: return " << ToCppType(em.type) << "{};";
+          out_ << " } }()";
+          break;
+        }
+        case mir::EnumMethod::kName: {
+          // Generate inline lambda returning string
+          out_ << "[&]() -> std::string { switch (static_cast<int64_t>(";
+          EmitExpression(*em.receiver, kPrecLowest);
+          out_ << ")) {";
+          for (const auto& m : em.members) {
+            out_ << " case " << m.value << ": return \"" << m.name << "\";";
+          }
+          // Default case: when receiver has an invalid value (not matching any
+          // enum member), the behavior is implementation-defined per IEEE
+          // 1800-2023. We return an empty string.
+          out_ << " default: return \"\";";
+          out_ << " } }()";
+          break;
+        }
       }
       break;
     }

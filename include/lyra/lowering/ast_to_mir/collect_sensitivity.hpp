@@ -33,6 +33,15 @@ class SensitivityCollector : public mir::MirVisitor {
     // No variable involved
   }
 
+  void Visit(const mir::EnumValueExpression& /*unused*/) override {
+    // Enum values are constants, no variable involved
+  }
+
+  void Visit(const mir::EnumMethodExpression& expression) override {
+    // Visit the receiver expression to collect its sensitivity
+    expression.receiver->Accept(*this);
+  }
+
   void Visit(const mir::IdentifierExpression& expression) override {
     items_.push_back({expression.symbol, {}});
   }
