@@ -18,7 +18,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 ## Statements
 
 - `case inside` - pattern matching
-- `foreach` - skipped dimensions (e.g., `foreach(arr[,j])`), dynamic arrays
+- `foreach` - dynamic arrays only (multi-dimensional and skipped dimensions supported)
 - `return` - function returns
 - `wait(expr)` - wait statements
 - `->` - event triggers

@@ -476,3 +476,109 @@ cases:
       variables:
         count: 3
         captured_j: 5
+
+  # ============================================
+  # Skipped dimension tests
+  # ============================================
+
+  - name: foreach_skip_middle_dim
+    description: Skip middle dimension with foreach(arr[i,,k])
+    sv: |
+      module Test;
+        int count;
+        int first_i;
+        int first_k;
+        int last_i;
+        int last_k;
+        initial begin
+          int arr[2][3][4];
+          count = 0;
+          first_i = -1;
+          first_k = -1;
+          foreach (arr[i,,k]) begin
+            if (first_i == -1) begin
+              first_i = i;
+              first_k = k;
+            end
+            last_i = i;
+            last_k = k;
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 8
+        first_i: 0
+        first_k: 0
+        last_i: 1
+        last_k: 3
+
+  - name: foreach_skip_first_dim
+    description: Skip first dimension with foreach(arr[,j,k])
+    sv: |
+      module Test;
+        int count;
+        int first_j;
+        int first_k;
+        initial begin
+          int arr[2][3][4];
+          count = 0;
+          first_j = -1;
+          first_k = -1;
+          foreach (arr[,j,k]) begin
+            if (first_j == -1) begin
+              first_j = j;
+              first_k = k;
+            end
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 12
+        first_j: 0
+        first_k: 0
+
+  - name: foreach_skip_trailing_dims
+    description: Only iterate first dimension (trailing dims omitted)
+    sv: |
+      module Test;
+        int count;
+        int sum_i;
+        initial begin
+          int arr[3][4][5];
+          count = 0;
+          sum_i = 0;
+          foreach (arr[i]) begin
+            sum_i = sum_i + i;
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+        sum_i: 3
+
+  - name: foreach_skip_multiple_dims
+    description: Skip first and last dimensions
+    sv: |
+      module Test;
+        int count;
+        int sum_j;
+        initial begin
+          int arr[2][3][4];
+          count = 0;
+          sum_j = 0;
+          foreach (arr[,j]) begin
+            sum_j = sum_j + j;
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+        sum_j: 3

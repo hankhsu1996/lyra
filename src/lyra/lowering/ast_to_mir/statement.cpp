@@ -77,6 +77,8 @@ auto ExtractTrigger(const slang::ast::SignalEventControl& signal_event)
 // For multi-dimensional arrays like `foreach(arr[i,j,k])`, generates:
 //   { int i; int j; int k;
 //     for (i = ...) { for (j = ...) { for (k = ...) { body } } } }
+// Skipped dimensions like `foreach(arr[i,,k])` generate no loop for that
+// dimension.
 auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
     -> std::unique_ptr<mir::Statement> {
   // Check for empty loopDims (shouldn't happen, but be safe)
@@ -86,14 +88,11 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
             foreach_loop.sourceRange, "foreach loop has no dimensions"));
   }
 
-  // Validate all dimensions upfront
+  // Validate non-skipped dimensions
   for (const auto& dim : foreach_loop.loopDims) {
-    // Check for skipped dimension (loopVar == nullptr)
+    // Skipped dimensions (loopVar == nullptr) are allowed - no loop generated
     if (dim.loopVar == nullptr) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              foreach_loop.sourceRange,
-              "skipped dimensions in foreach are not yet supported"));
+      continue;
     }
 
     // Check for dynamic arrays (range is nullopt)
@@ -108,8 +107,11 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
   // Create outer block to hold all variable declarations and nested for loops
   auto block = std::make_unique<mir::BlockStatement>();
 
-  // Declare all loop variables upfront in the outer block
+  // Declare loop variables upfront (skip dimensions with no loop variable)
   for (const auto& dim : foreach_loop.loopDims) {
+    if (dim.loopVar == nullptr) {
+      continue;
+    }
     auto var_decl = LowerVariableDeclaration(*dim.loopVar);
     block->statements.push_back(std::move(var_decl));
   }
@@ -119,9 +121,13 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
 
   // Build nested for loops from innermost to outermost
   // Process dimensions in reverse order so the first dimension is outermost
+  // Skip dimensions with no loop variable (foreach(arr[i,,k]) skips middle)
   for (auto i = static_cast<int>(foreach_loop.loopDims.size()) - 1; i >= 0;
        --i) {
     const auto& dim = foreach_loop.loopDims[static_cast<size_t>(i)];
+    if (dim.loopVar == nullptr) {
+      continue;
+    }
     const auto& range = dim.range.value();
     const auto* loop_var = dim.loopVar;
 
