@@ -4,8 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <ios>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -89,84 +92,9 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
   return kPrecPrimary;
 }
 
-auto IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return false;
-  }
-  return std::get<common::IntegralData>(type.data).is_signed;
-}
-
 // Returns true if bit width requires WideBit (> 64 bits)
 constexpr auto IsWideWidth(size_t width) -> bool {
   return width > 64;
-}
-
-auto ToCppType(const common::Type& type) -> std::string {
-  switch (type.kind) {
-    case common::Type::Kind::kVoid:
-      return "void";
-    case common::Type::Kind::kReal:
-      return "Real";
-    case common::Type::Kind::kShortReal:
-      return "ShortReal";
-    case common::Type::Kind::kString:
-      return "std::string";
-    case common::Type::Kind::kIntegral: {
-      auto data = std::get<common::IntegralData>(type.data);
-      size_t width = data.bit_width;
-      bool is_signed = data.is_signed;
-
-      if (IsWideWidth(width)) {
-        // Wide integers use lyra::sdk::WideBit<N>
-        if (is_signed) {
-          return std::format("lyra::sdk::WideBit<{}, true>", width);
-        }
-        return std::format("lyra::sdk::WideBit<{}>", width);
-      }
-
-      // Use LRM-aligned type aliases for standard signed integer types
-      if (is_signed) {
-        if (width == 8) {
-          return "Byte";
-        }
-        if (width == 16) {
-          return "ShortInt";
-        }
-        if (width == 32) {
-          return "Int";
-        }
-        if (width == 64) {
-          return "LongInt";
-        }
-        // Non-standard signed widths use Bit<N, true>
-        return std::format("Bit<{}, true>", width);
-      }
-
-      // Unsigned types use Bit<N>
-      return std::format("Bit<{}>", width);
-    }
-    case common::Type::Kind::kUnpackedArray: {
-      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
-      return std::format(
-          "std::array<{}, {}>", ToCppType(*array_data.element_type),
-          array_data.size);
-    }
-  }
-  return "/* unknown type */";
-}
-
-auto ToCppUnsignedType(const common::Type& type) -> std::string {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return "/* unknown type */";
-  }
-  auto data = std::get<common::IntegralData>(type.data);
-  size_t width = data.bit_width;
-  if (IsWideWidth(width)) {
-    // Always return unsigned lyra::sdk::WideBit<N>
-    return std::format("lyra::sdk::WideBit<{}>", width);
-  }
-  // Always return unsigned Bit<N> regardless of original signedness
-  return std::format("Bit<{}>", width);
 }
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {

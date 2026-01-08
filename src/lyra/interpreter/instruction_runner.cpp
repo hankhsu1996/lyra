@@ -1387,19 +1387,19 @@ auto RunInstruction(
         auto& tf = simulation_context.time_format;
 
         if (!instr.operands.empty()) {
-          tf.units =
-              static_cast<int8_t>(get_temp(instr.operands[0]).AsNarrow().AsInt64());
+          tf.units = static_cast<int8_t>(
+              get_temp(instr.operands[0]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 2) {
-          tf.precision =
-              static_cast<int>(get_temp(instr.operands[1]).AsNarrow().AsInt64());
+          tf.precision = static_cast<int>(
+              get_temp(instr.operands[1]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 3) {
           tf.suffix = get_temp(instr.operands[2]).AsString();
         }
         if (instr.operands.size() >= 4) {
-          tf.min_width =
-              static_cast<int>(get_temp(instr.operands[3]).AsNarrow().AsInt64());
+          tf.min_width = static_cast<int>(
+              get_temp(instr.operands[3]).AsNarrow().AsInt64());
         }
 
         return InstructionResult::Continue();
@@ -1501,10 +1501,11 @@ auto RunInstruction(
         assert(!instr.operands.empty());
         const auto& src = get_temp(instr.operands[0]);
         auto src_data = std::get<common::IntegralData>(src.type.data);
-        double real_value = src_data.is_signed
-                                ? static_cast<double>(ExtractInt64FromSource(src))
-                                : static_cast<double>(static_cast<uint64_t>(
-                                      ExtractInt64FromSource(src)));
+        double real_value =
+            src_data.is_signed
+                ? static_cast<double>(ExtractInt64FromSource(src))
+                : static_cast<double>(
+                      static_cast<uint64_t>(ExtractInt64FromSource(src)));
         temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
         return InstructionResult::Continue();
       }

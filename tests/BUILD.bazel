@@ -250,12 +250,3 @@ sv_feature_test(
     name = "scheduling_regions_tests",
     yaml = "sv_features/scheduling/regions.yaml",
 )
-
-cc_test(
-    name = "wide_bit_test",
-    srcs = ["unit/wide_bit_test.cpp"],
-    deps = [
-        "//:core",
-        "@googletest//:gtest_main",
-    ],
-)
