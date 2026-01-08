@@ -232,11 +232,8 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           // This is consistent with codegen model (no binding indirection).
           // Use internalSymbol which is the actual storage (same as port init)
           const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
-          std::string port_name(port_sym.name);
           mir::AssignmentTarget target(
-              port_sym.internalSymbol,             // target symbol
-              {submod.instance_symbol},            // instance symbols
-              {submod.instance_name, port_name});  // string path
+              port_sym.internalSymbol, {submod.instance_symbol});
           auto driver_stmt = std::make_unique<mir::AssignStatement>(
               std::move(target), std::move(signal_expr));
           auto process = CreateImplicitAlwaysComb(

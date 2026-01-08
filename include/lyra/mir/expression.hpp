@@ -216,12 +216,9 @@ struct AssignmentTarget {
       element_index;              // Optional: index for element select
   std::optional<Type> base_type;  // Type of base variable (for element select)
 
-  // For hierarchical targets: symbol-based (for interpreter)
-  SymbolRef hier_target_symbol{nullptr};
-  std::vector<SymbolRef> hier_instance_symbols;
-
-  // For hierarchical targets: string-based (for codegen)
-  std::vector<std::string> hierarchical_path;
+  // For hierarchical targets
+  SymbolRef target_symbol{nullptr};
+  std::vector<SymbolRef> instance_path;
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
@@ -244,16 +241,12 @@ struct AssignmentTarget {
         base_type(std::move(type)) {
   }
 
-  // Constructor for hierarchical reference assignment (symbol-based)
-  AssignmentTarget(
-      SymbolRef target, std::vector<SymbolRef> instances,
-      std::vector<std::string> path)
+  // Constructor for hierarchical reference assignment
+  AssignmentTarget(SymbolRef target, std::vector<SymbolRef> instances)
       : symbol(nullptr),
         element_index(nullptr),
-        hier_target_symbol(target),
-        hier_instance_symbols(std::move(instances)),
-        hierarchical_path(std::move(path)) {
-    assert(!hierarchical_path.empty() && "Hierarchical path must not be empty");
+        target_symbol(target),
+        instance_path(std::move(instances)) {
   }
 
   [[nodiscard]] auto IsElementSelect() const -> bool {
@@ -265,12 +258,18 @@ struct AssignmentTarget {
   }
 
   [[nodiscard]] auto IsHierarchical() const -> bool {
-    return hier_target_symbol != nullptr;
+    return target_symbol != nullptr;
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
     if (IsHierarchical()) {
-      return fmt::format("{}", fmt::join(hierarchical_path, "."));
+      std::string result;
+      for (const auto& inst_sym : instance_path) {
+        result += inst_sym->name;
+        result += ".";
+      }
+      result += target_symbol->name;
+      return result;
     }
     if (element_index) {
       return fmt::format("{}[{}]", symbol->name, element_index->ToString());
@@ -451,25 +450,24 @@ class HierarchicalReferenceExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kHierarchicalReference;
 
-  // For interpreter: symbol pointers (globally unique, no string lookup needed)
-  SymbolRef target_symbol;                  // Target variable symbol
-  std::vector<SymbolRef> instance_symbols;  // Instance traversal path
-
-  // For codegen: string path (needed for C++ code generation)
-  std::vector<std::string> path;  // e.g., ["child", "a"]
+  SymbolRef target_symbol;               // Target variable symbol
+  std::vector<SymbolRef> instance_path;  // Instance traversal path
 
   HierarchicalReferenceExpression(
-      SymbolRef target, std::vector<SymbolRef> instances,
-      std::vector<std::string> path, Type type)
+      SymbolRef target, std::vector<SymbolRef> instances, Type type)
       : Expression(kKindValue, std::move(type)),
         target_symbol(target),
-        instance_symbols(std::move(instances)),
-        path(std::move(path)) {
-    assert(!this->path.empty() && "Hierarchical path must not be empty");
+        instance_path(std::move(instances)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("{}", fmt::join(path, "."));
+    std::string result;
+    for (const auto& inst_sym : instance_path) {
+      result += inst_sym->name;
+      result += ".";
+    }
+    result += target_symbol->name;
+    return result;
   }
 
   void Accept(MirVisitor& visitor) const override {

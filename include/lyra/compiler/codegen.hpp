@@ -102,7 +102,9 @@ class Codegen {
   void EmitSliceShift(
       const mir::Expression& start_expr, int32_t lower_bound,
       int32_t width_offset);
-  void EmitHierarchicalPath(const std::vector<std::string>& path);
+  void EmitHierarchicalPath(
+      const std::vector<mir::SymbolRef>& instance_path,
+      mir::SymbolRef target_symbol);
 
   // Get C++ member access path for a trigger (e.g., "u_child_.value")
   [[nodiscard]] auto GetTriggerPath(const common::Trigger& trigger) const

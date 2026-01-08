@@ -106,9 +106,8 @@ Same as output ports—reference member in codegen, port binding in interpreter.
 
 ```cpp
 HierarchicalReferenceExpression {
-  instance_symbols: [&u_child_symbol]  // For interpreter navigation
-  target_symbol: &value_symbol         // The variable to read
-  path: ["u_child", "value"]           // For codegen emission
+  instance_path: [&u_child_symbol]  // Instance traversal path
+  target_symbol: &value_symbol      // The variable to read
 }
 ```
 
@@ -116,25 +115,24 @@ HierarchicalReferenceExpression {
 
 ```cpp
 AssignmentTarget {
-  hier_instance_symbols: [&u_child_symbol]  // For interpreter
-  hier_target_symbol: &port_symbol          // Target variable
-  hierarchical_path: ["u_child", "port"]    // For codegen
+  instance_path: [&u_child_symbol]  // Instance traversal path
+  target_symbol: &port_symbol       // Target variable
 }
 ```
 
-Both representations carry symbol-based paths (for interpreter) and string-based paths (for codegen).
+Both use symbol-based paths only. Codegen reconstructs string names on-demand from `symbol->name`.
 
 ### Codegen: Hierarchical Access
 
-**Emit hierarchical path**: `["u_child", "value"]` → `u_child_.value`
+**Emit hierarchical path**: Converts symbol path to C++ member access.
 
 ```cpp
-void EmitHierarchicalPath(const vector<string>& path) {
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (i > 0) out_ << ".";
-    out_ << path[i];
-    if (i < path.size() - 1) out_ << "_";  // Instance names get _ suffix
+void EmitHierarchicalPath(
+    const vector<SymbolRef>& instance_path, SymbolRef target_symbol) {
+  for (const auto& inst_sym : instance_path) {
+    out_ << inst_sym->name << "_.";  // Instance names get _ suffix
   }
+  out_ << target_symbol->name;
 }
 ```
 

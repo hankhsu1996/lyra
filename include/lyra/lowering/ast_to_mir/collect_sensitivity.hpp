@@ -84,7 +84,7 @@ class SensitivityCollector : public mir::MirVisitor {
 
   void Visit(const mir::HierarchicalReferenceExpression& expression) override {
     // Add hierarchical reference with instance path for sensitivity tracking
-    items_.push_back({expression.target_symbol, expression.instance_symbols});
+    items_.push_back({expression.target_symbol, expression.instance_path});
   }
 
   void Visit(const mir::VariableDeclarationStatement& statement) override {

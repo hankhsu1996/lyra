@@ -1298,7 +1298,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kHierarchicalReference: {
       const auto& hier = mir::As<mir::HierarchicalReferenceExpression>(expr);
-      EmitHierarchicalPath(hier.path);
+      EmitHierarchicalPath(hier.instance_path, hier.target_symbol);
       break;
     }
     case mir::Expression::Kind::kTernary: {
@@ -1497,7 +1497,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
 
 void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
   if (target.IsHierarchical()) {
-    EmitHierarchicalPath(target.hierarchical_path);
+    EmitHierarchicalPath(target.instance_path, target.target_symbol);
     return;
   }
 
@@ -1547,19 +1547,15 @@ void Codegen::EmitSliceShift(
   out_ << ")";
 }
 
-void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
-  // Emit hierarchical path: ["child", "signal"] -> child_.signal
-  // Instance names (all but last) get _ suffix, variable name (last) does not
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (i > 0) {
-      out_ << ".";
-    }
-    out_ << path[i];
-    // Only instance names (not the final variable) get _ suffix
-    if (i < path.size() - 1) {
-      out_ << "_";
-    }
+void Codegen::EmitHierarchicalPath(
+    const std::vector<mir::SymbolRef>& instance_path,
+    mir::SymbolRef target_symbol) {
+  // Emit hierarchical path: [child_sym], value_sym -> child_.value
+  // Instance names get _ suffix, target variable does not
+  for (const auto& inst_sym : instance_path) {
+    out_ << inst_sym->name << "_.";
   }
+  out_ << target_symbol->name;
 }
 
 void Codegen::Indent() {
