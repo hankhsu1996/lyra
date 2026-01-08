@@ -1,0 +1,43 @@
+feature: regions
+description: Tests for overall region ordering per IEEE 1800-2023 Section 4.4
+
+cases:
+  - name: display_before_nba
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          x <= 20;
+          $display("x=%0d", x);  // Active: sees 10
+          #1;
+        end
+      endmodule
+    expect:
+      output: "x=10\n"
+      variables:
+        x: 20
+      time: 1
+
+  # Tests that Active -> Inactive -> NBA order is correct
+  # Block 1: trace=1, #0 suspends to Inactive, then trace = trace*10+2
+  # Block 2: trace<=100 schedules NBA, #1 suspends to delay queue
+  # Sequence: trace=1 -> NBA(100) -> trace=100*10+2 = 1002
+  - name: active_inactive_nba_order
+    sv: |
+      module Test;
+        int trace;
+        initial begin
+          trace = 1;         // Active: trace=1
+          #0;                // Suspends to Inactive
+          trace = trace * 10 + 2;  // After NBA: trace = 100*10+2 = 1002
+        end
+        initial begin
+          trace <= 100;      // Schedules NBA
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        trace: 1002
+      time: 1

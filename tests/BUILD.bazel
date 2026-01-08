@@ -225,3 +225,18 @@ sv_feature_test(
     name = "hierarchy_hierarchical_sensitivity_tests",
     yaml = "sv_features/hierarchy/hierarchical_sensitivity.yaml",
 )
+
+sv_feature_test(
+    name = "scheduling_zero_delay_tests",
+    yaml = "sv_features/scheduling/zero_delay.yaml",
+)
+
+sv_feature_test(
+    name = "scheduling_nba_ordering_tests",
+    yaml = "sv_features/scheduling/nba_ordering.yaml",
+)
+
+sv_feature_test(
+    name = "scheduling_regions_tests",
+    yaml = "sv_features/scheduling/regions.yaml",
+)

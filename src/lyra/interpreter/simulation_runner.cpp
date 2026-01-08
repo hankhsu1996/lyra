@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
-#include <queue>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -101,39 +100,31 @@ void SimulationRunner::Run() {
 }
 
 void SimulationRunner::ExecuteTimeSlot() {
-  ExecuteRegion(RegionType::kPreponed);
-  ExecuteRegion(RegionType::kPreActive);
+  // Preponed region: #1step sampling (stub - not implemented)
+  ExecuteRegion(Region::kPreponed);
 
+  // Main iteration loop (LRM 4.5)
   while (HasPendingActivity()) {
-    // Phase 1: Active phase group
+    // Active group iteration: Active -> Inactive -> NBA
     while (HasActivityInActiveGroup()) {
-      ExecuteRegion(RegionType::kActive);
-
-      if (!inactive_queue_.empty()) {
-        MoveToActive(inactive_queue_);
-      } else if (!nba_queue_.empty()) {
-        ExecuteRegion(RegionType::kNba);
-        // NBA commits might trigger more Active events
-      }
+      ExecuteRegion(Region::kActive);
+      ExecuteRegion(Region::kInactive);
+      ExecuteRegion(Region::kNBA);
     }
 
-    // Phase 2: Reactive phase group
+    // Observed region: assertion evaluation (stub - not implemented)
+    ExecuteRegion(Region::kObserved);
+
+    // Reactive group iteration (stub - for program blocks)
     while (HasActivityInReactiveGroup()) {
-      ExecuteRegion(RegionType::kReactive);
-
-      if (!inactive_queue_.empty()) {
-        MoveToActive(inactive_queue_);
-      }
-    }
-
-    // Phase 3: Pre-Postponed region (optional)
-    if (IsAllRegionEmpty()) {
-      ExecuteRegion(RegionType::kPrePostponed);
+      ExecuteRegion(Region::kReactive);
+      ExecuteRegion(Region::kReInactive);
+      ExecuteRegion(Region::kReNBA);
     }
   }
 
-  // Final Phase: Postponed
-  ExecuteRegion(RegionType::kPostponed);
+  // Postponed region: $strobe, $monitor
+  ExecuteRegion(Region::kPostponed);
 }
 
 auto SimulationRunner::HasPendingActivity() const -> bool {
@@ -146,38 +137,37 @@ auto SimulationRunner::HasActivityInActiveGroup() const -> bool {
          !nba_queue_.empty();
 }
 
-auto SimulationRunner::HasActivityInReactiveGroup() const -> bool {
-  return !active_queue_.empty() || !inactive_queue_.empty();
+auto SimulationRunner::HasActivityInReactiveGroup() -> bool {
+  // Stub: Reactive group not implemented yet (for program blocks)
+  return false;
 }
 
 auto SimulationRunner::IsAllRegionEmpty() const -> bool {
   return active_queue_.empty() && inactive_queue_.empty() && nba_queue_.empty();
 }
 
-void SimulationRunner::MoveToActive(std::queue<ScheduledEvent>& source) {
-  std::queue<ScheduledEvent> tmp;
-  std::swap(tmp, source);
-  while (!tmp.empty()) {
-    active_queue_.push(tmp.front());
-    tmp.pop();
-  }
-}
-
-void SimulationRunner::ExecuteRegion(RegionType region) {
+void SimulationRunner::ExecuteRegion(Region region) {
   switch (region) {
-    case RegionType::kActive:
+    case Region::kActive:
+      // Invariant: Process all events until queue is empty.
+      // Events may schedule more events to inactive_queue_ or nba_queue_.
       while (!active_queue_.empty()) {
         ExecuteOneEvent();
       }
       break;
 
-    case RegionType::kReactive:
-      while (!active_queue_.empty()) {
-        ExecuteOneEvent();
+    case Region::kInactive:
+      // Invariant: Active queue is empty (all Active events processed).
+      // Move #0 delayed events to active for next iteration.
+      while (!inactive_queue_.empty()) {
+        active_queue_.push(inactive_queue_.front());
+        inactive_queue_.pop();
       }
       break;
 
-    case RegionType::kNba: {
+    case Region::kNBA: {
+      // Invariant: Active and inactive queues are empty.
+      // Commit all nonblocking assignments and wake triggered processes.
       std::vector<ModifiedVariable> modified_variables;
 
       while (!nba_queue_.empty()) {
@@ -200,7 +190,9 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
       break;
     }
 
-    case RegionType::kPostponed:
+    case Region::kPostponed:
+      // Invariant: All active group activity complete for this time slot.
+      // Execute $strobe, $monitor, etc. which observe final variable values.
       while (!postponed_queue_.empty()) {
         const auto& action = postponed_queue_.front();
         action.action();
@@ -208,8 +200,13 @@ void SimulationRunner::ExecuteRegion(RegionType region) {
       }
       break;
 
-    default:
-      // Other regions not implemented yet
+    // Stub regions - not implemented yet
+    case Region::kPreponed:
+    case Region::kObserved:
+    case Region::kReactive:
+    case Region::kReInactive:
+    case Region::kReNBA:
+      // No-op for now
       break;
   }
 }
@@ -364,6 +361,7 @@ void SimulationRunner::ExecuteOneEvent() {
 
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
+      // Schedule for future time slot
       auto delay_time =
           simulation_context_.get().current_time + result.delay_amount;
       ScheduledEvent delayed_event{
@@ -372,6 +370,17 @@ void SimulationRunner::ExecuteOneEvent() {
           .block_index = result.block_index,
           .instruction_index = result.resume_instruction_index};
       delay_queue_[delay_time].push_back(std::move(delayed_event));
+      break;
+    }
+
+    case ProcessResult::Kind::kScheduleInactive: {
+      // Schedule for Inactive region (same time slot, #0 delay)
+      ScheduledEvent inactive_event{
+          .process = process,
+          .instance = instance,
+          .block_index = result.block_index,
+          .instruction_index = result.resume_instruction_index};
+      inactive_queue_.push(std::move(inactive_event));
       break;
     }
 
@@ -406,6 +415,7 @@ void SimulationRunner::ExecuteOneEvent() {
       }
       break;
     }
+
     case ProcessResult::Kind::kFinish: {
       finish_requested_ = true;
       if (result.is_stop) {

@@ -43,11 +43,10 @@ void WriteFile(const fs::path& path, const std::string& content) {
 
 // Write embedded SDK headers to output directory
 void WriteSdkHeaders(const fs::path& output_dir) {
-  fs::path sdk_dest = output_dir / "include" / "lyra" / "sdk";
-  fs::create_directories(sdk_dest);
-
-  for (const auto& [filename, content] : lyra::embedded::kSdkFiles) {
-    WriteFile(sdk_dest / filename, content);
+  for (const auto& [relpath, content] : lyra::embedded::kEmbeddedFiles) {
+    fs::path dest = output_dir / "include" / relpath;
+    fs::create_directories(dest.parent_path());
+    WriteFile(dest, content);
   }
 }
 

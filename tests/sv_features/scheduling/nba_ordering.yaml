@@ -1,0 +1,56 @@
+feature: nba_ordering
+description: Tests for non-blocking assignment (NBA region) behavior per IEEE 1800-2023 Section 4.4
+
+cases:
+  - name: nba_after_inactive
+    sv: |
+      module Test;
+        int x, seen_before, seen_after;
+        initial begin
+          x <= 99;
+          seen_before = x;  // Active region: see old value
+          #0;               // Inactive region
+          seen_after = x;   // After NBA: see new value
+        end
+      endmodule
+    expect:
+      variables:
+        x: 99
+        seen_before: 0
+        seen_after: 99
+
+  - name: multiple_nba_last_wins
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x <= 1;
+          x <= 2;
+          x <= 3;  // Last wins
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 3
+      time: 1
+
+  - name: nba_triggers_active
+    sv: |
+      module Test;
+        int x, triggered;
+        initial begin
+          @(x);           // Wait for x to change
+          triggered = 1;
+          #1;
+        end
+        initial begin
+          x <= 5;         // NBA triggers the wait
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+        triggered: 1
+      time: 1

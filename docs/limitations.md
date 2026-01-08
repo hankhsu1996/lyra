@@ -74,6 +74,18 @@ Not yet supported:
 - `$unit` compilation unit timescale
 - Real number delays (e.g., `#1.5`)
 
+## Scheduling Regions
+
+Per IEEE 1800-2023 Section 4.4, some regions are not yet implemented:
+
+- `Preponed` - `#1step` sampling not supported
+- `Observed` - assertion/property evaluation not supported
+- `Reactive` - program blocks not supported
+- `ReInactive` - `#0` in reactive context not supported
+- `ReNBA` - `<=` in reactive context not supported
+
+See [scheduling.md](scheduling.md) for implemented regions.
+
 ## Runtime Behavior
 
 - **Bounds checking**: Out-of-bounds array/vector accesses produce undefined behavior instead of X values. SystemVerilog specifies that out-of-bounds reads return X and out-of-bounds writes are ignored, but Lyra does not currently implement this check. This applies to:

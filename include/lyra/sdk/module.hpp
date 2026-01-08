@@ -125,6 +125,10 @@ class Module {
     nba_queue_.clear();
   }
 
+  [[nodiscard]] auto HasPendingNba() const -> bool {
+    return !nba_queue_.empty();
+  }
+
   // Collect all modules in hierarchy (self + all descendants)
   void CollectAllModules(std::vector<Module*>& all_modules) {
     all_modules.push_back(this);

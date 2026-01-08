@@ -14,6 +14,22 @@ inline thread_local Scheduler* current_scheduler = nullptr;
 // NOLINTBEGIN(readability-identifier-naming)
 // Coroutine awaitable requires specific naming convention from C++ standard
 
+/// ZeroDelay - schedules to Inactive region (same time slot)
+/// Used for #0 delays per IEEE 1800 Section 4.4
+class ZeroDelay {
+ public:
+  static auto await_ready() -> bool {
+    return false;
+  }
+
+  void await_suspend(std::coroutine_handle<> handle) const;
+
+  static void await_resume() {
+  }
+};
+
+/// Delay - schedules to delay queue (future time slot)
+/// For zero delays, use ZeroDelay instead
 class Delay {
  public:
   explicit Delay(uint64_t amount) : amount_(amount) {
