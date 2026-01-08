@@ -1,8 +1,10 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -32,6 +34,17 @@ auto LowerExpression(const slang::ast::Expression& expression)
   switch (expression.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
       const auto& literal = expression.as<slang::ast::IntegerLiteral>();
+      auto mir_literal_result = LowerLiteral(literal);
+      if (!mir_literal_result) {
+        throw DiagnosticException(std::move(mir_literal_result.error()));
+      }
+      return std::make_unique<mir::LiteralExpression>(
+          std::move(*mir_literal_result));
+    }
+
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
+      const auto& literal =
+          expression.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
       auto mir_literal_result = LowerLiteral(literal);
       if (!mir_literal_result) {
         throw DiagnosticException(std::move(mir_literal_result.error()));
@@ -214,7 +227,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
         // Reverse indices: we collected outer-to-inner, need inner-to-outer
         // For data[i][j], we collected [j, i], need [i, j]
-        std::reverse(indices.begin(), indices.end());
+        std::ranges::reverse(indices);
 
         const auto& array_symbol =
             current->as<slang::ast::NamedValueExpression>().symbol;

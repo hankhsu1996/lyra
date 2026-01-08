@@ -1,0 +1,101 @@
+feature: unbased_unsized_literal
+description: Tests for unbased unsized integer literals ('0, '1)
+
+cases:
+  - name: all_zeros_8bit
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [7:0] a;
+          a = '0;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: all_ones_8bit
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [7:0] a;
+          a = '1;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 255
+
+  - name: all_zeros_32bit
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [31:0] a;
+          a = '0;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: all_ones_32bit
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [31:0] a;
+          a = '1;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1
+
+  - name: signed_int_all_ones
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int a;
+          a = '1;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1
+
+  - name: unsigned_all_ones_16bit
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          bit [15:0] a;
+          a = '1;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 65535
+
+  - name: assignment_in_expression
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [7:0] a;
+          a = '1 & 8'hF0;
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 240

@@ -1,8 +1,8 @@
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -18,17 +18,11 @@
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
-    -> Result<common::Literal> {
-  const auto& sv_int = literal.getValue();
+namespace {
 
-  // Reject four-state values with unknown bits
-  if (sv_int.hasUnknown()) {
-    return std::unexpected(
-        Diagnostic::Error(
-            literal.sourceRange, "unsupported literal with unknown bits"));
-  }
-
+// Helper to convert SVInt to Literal (shared by IntegerLiteral and
+// UnbasedUnsizedIntegerLiteral)
+auto SVIntToLiteral(const slang::SVInt& sv_int) -> common::Literal {
   auto width = sv_int.getBitWidth();
   auto is_signed = sv_int.isSigned();
 
@@ -54,6 +48,22 @@ auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
   return common::Literal::IntegralWide(std::move(wide_value), width, is_signed);
 }
 
+}  // namespace
+
+auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
+    -> Result<common::Literal> {
+  const auto& sv_int = literal.getValue();
+
+  // Reject four-state values with unknown bits
+  if (sv_int.hasUnknown()) {
+    return std::unexpected(
+        Diagnostic::Error(
+            literal.sourceRange, "unsupported literal with unknown bits"));
+  }
+
+  return SVIntToLiteral(sv_int);
+}
+
 auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
   auto value = std::string(literal.getValue());
   return common::Literal::String(std::move(value));
@@ -67,6 +77,22 @@ auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal {
     }
   }
   return common::Literal::Real(literal.getValue());
+}
+
+auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
+    -> Result<common::Literal> {
+  // Check for X/Z values which are not supported (four-state)
+  auto bit_value = literal.getLiteralValue();
+  if (bit_value.value == slang::logic_t::X_VALUE ||
+      bit_value.value == slang::logic_t::Z_VALUE) {
+    return std::unexpected(
+        Diagnostic::Error(
+            literal.sourceRange,
+            "unsupported unbased unsized literal with X or Z value"));
+  }
+
+  // getValue() returns fully-expanded SVInt sized to context type
+  return SVIntToLiteral(literal.getValue());
 }
 
 auto ExtractMaskAndValue(
