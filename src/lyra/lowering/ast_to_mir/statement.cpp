@@ -26,6 +26,7 @@
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/operators.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -69,6 +70,111 @@ auto ExtractTrigger(const slang::ast::SignalEventControl& signal_event)
 
   return common::Trigger{
       .edge_kind = edge_kind, .variable = &variable, .instance_path = {}};
+}
+
+// Lower a foreach loop to an equivalent for loop
+auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
+    -> std::unique_ptr<mir::Statement> {
+  // Check for multi-dimensional arrays (not yet supported)
+  if (foreach_loop.loopDims.size() > 1) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            foreach_loop.sourceRange,
+            "foreach with multiple dimensions is not yet supported"));
+  }
+
+  // Check for empty loopDims (shouldn't happen, but be safe)
+  if (foreach_loop.loopDims.empty()) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            foreach_loop.sourceRange, "foreach loop has no dimensions"));
+  }
+
+  const auto& dim = foreach_loop.loopDims[0];
+
+  // Check for skipped dimension (loopVar == nullptr)
+  if (dim.loopVar == nullptr) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            foreach_loop.sourceRange,
+            "skipped dimensions in foreach are not yet supported"));
+  }
+
+  // Check for dynamic arrays (range is nullopt)
+  if (!dim.range.has_value()) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            foreach_loop.sourceRange,
+            "foreach over dynamic arrays is not yet supported"));
+  }
+
+  const auto& range = dim.range.value();
+  const auto* loop_var = dim.loopVar;
+
+  // Get the iterator variable type
+  slang::SourceRange source_range(loop_var->location, loop_var->location);
+  auto type_result = LowerType(loop_var->getType(), source_range);
+  if (!type_result) {
+    throw DiagnosticException(std::move(type_result.error()));
+  }
+  const auto& var_type = *type_result;
+
+  // Determine iteration direction and bounds
+  // isLittleEndian() returns true when left >= right (e.g., [3:0])
+  bool is_descending = range.isLittleEndian();
+  int32_t start_value = range.left;
+  int32_t end_value = range.right;
+
+  // Create a block to hold variable declaration and for loop
+  auto block = std::make_unique<mir::BlockStatement>();
+
+  // 1. Create iterator variable declaration (without initializer)
+  //    Slang puts the IteratorSymbol in the enclosing block's members,
+  //    not as a statement, so we need to create the declaration here.
+  auto var_decl = LowerVariableDeclaration(*loop_var);
+  block->statements.push_back(std::move(var_decl));
+
+  // 2. Create initializer: i = start_value
+  auto start_literal = std::make_unique<mir::LiteralExpression>(
+      common::Literal::IntegralSigned(start_value, 32));
+  auto init_assign = std::make_unique<mir::AssignmentExpression>(
+      mir::SymbolRef(loop_var), std::move(start_literal), false);
+  std::vector<std::unique_ptr<mir::Statement>> initializers;
+  initializers.push_back(
+      std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
+
+  // 3. Create condition: i >= end (descending) or i <= end (ascending)
+  auto cond_var_ref =
+      std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+  auto end_literal = std::make_unique<mir::LiteralExpression>(
+      common::Literal::IntegralSigned(end_value, 32));
+  mir::BinaryOperator cmp_op = is_descending
+                                   ? mir::BinaryOperator::kGreaterThanEqual
+                                   : mir::BinaryOperator::kLessThanEqual;
+  auto condition = std::make_unique<mir::BinaryExpression>(
+      cmp_op, std::move(cond_var_ref), std::move(end_literal));
+
+  // 4. Create step: i-- (descending) or i++ (ascending)
+  auto step_var_ref =
+      std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+  mir::UnaryOperator step_op = is_descending
+                                   ? mir::UnaryOperator::kPostdecrement
+                                   : mir::UnaryOperator::kPostincrement;
+  auto step_expr =
+      std::make_unique<mir::UnaryExpression>(step_op, std::move(step_var_ref));
+  std::vector<std::unique_ptr<mir::Expression>> steps;
+  steps.push_back(std::move(step_expr));
+
+  // 5. Lower the body
+  auto body = LowerStatement(foreach_loop.body);
+
+  // 6. Create ForStatement
+  auto for_stmt = std::make_unique<mir::ForStatement>(
+      std::move(initializers), std::move(condition), std::move(steps),
+      std::move(body));
+
+  block->statements.push_back(std::move(for_stmt));
+  return block;
 }
 
 }  // namespace
@@ -295,6 +401,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
       auto body = LowerStatement(repeat_loop.body);
       return std::make_unique<mir::RepeatStatement>(
           std::move(count), std::move(body));
+    }
+
+    case StatementKind::ForeachLoop: {
+      const auto& foreach_loop =
+          statement.as<slang::ast::ForeachLoopStatement>();
+      return LowerForeachLoop(foreach_loop);
     }
 
     case StatementKind::Case: {

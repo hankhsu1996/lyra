@@ -1331,10 +1331,18 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         }
       } else {
         // Array element access: array[index]
+        // For non-zero-based arrays (e.g., int arr[2:5]), subtract lower_bound
+        int32_t lower_bound = select.value->type.GetElementLower();
         EmitExpression(*select.value, kPrecPrimary);
-        // Cast index to size_t to avoid Bit<N> → bool → size_t issues
         out_ << "[static_cast<size_t>(";
+        if (lower_bound != 0) {
+          // Cast to int to avoid ambiguous operator- with Bit<N>
+          out_ << "static_cast<int>(";
+        }
         EmitExpression(*select.selector, kPrecLowest);
+        if (lower_bound != 0) {
+          out_ << ") - " << lower_bound;
+        }
         out_ << ")]";
       }
       break;
@@ -1588,12 +1596,28 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     out_ << "_";
   }
   if (target.IsElementSelect()) {
+    // For non-zero-based unpacked arrays, subtract lower_bound from first index
+    // TODO(hankhsu): Handle multi-dimensional non-zero-based arrays properly
+    int32_t lower_bound = 0;
+    if (target.base_type.has_value() &&
+        target.base_type->kind == common::Type::Kind::kUnpackedArray) {
+      lower_bound = target.base_type->GetElementLower();
+    }
+
     // Emit all indices (for multi-dimensional arrays)
+    bool first = true;
     for (const auto& idx : target.indices) {
-      // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
       out_ << "[static_cast<size_t>(";
+      // Apply lower_bound adjustment only for first index (1D case)
+      if (first && lower_bound != 0) {
+        out_ << "static_cast<int>(";
+      }
       EmitExpression(*idx, kPrecLowest);
+      if (first && lower_bound != 0) {
+        out_ << ") - " << lower_bound;
+      }
       out_ << ")]";
+      first = false;
     }
   }
 }
