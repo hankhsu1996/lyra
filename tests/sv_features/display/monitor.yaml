@@ -1,0 +1,378 @@
+feature: monitor
+description: Tests for $monitor system task
+
+# Supports both interpreter and C++ codegen backends.
+#
+# Limitations:
+# 1. Same-time-slot: When $monitor is replaced or $monitoroff is called in the
+#    same time slot as a value change, the old monitor's change may not be
+#    detected. This is because CheckMonitor runs at end of time slot.
+
+cases:
+  - name: monitor_basic
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $monitor("x=%0d", x);
+          #1 x = 2;
+          #1 x = 3;
+        end
+      endmodule
+    expect:
+      output: "x=1\nx=2\nx=3\n"
+
+  - name: monitor_no_change_no_print
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $monitor("x=%0d", x);
+          #1 x = 5;
+          #1 x = 10;
+        end
+      endmodule
+    expect:
+      output: "x=5\nx=10\n"
+
+  - name: monitor_replaces_previous
+    # Note: In this test, a=2 and $monitor("b=%0d", b) happen in the same time slot.
+    # The monitor is replaced before CheckMonitor runs, so a=2 is not detected.
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1; b = 1;
+          $monitor("a=%0d", a);
+          #1 a = 2;
+          $monitor("b=%0d", b);
+          #1 b = 2;
+        end
+      endmodule
+    expect:
+      output: "a=1\nb=1\nb=2\n"
+
+  - name: monitoroff_monitoron
+    # Note: $monitoroff takes effect before CheckMonitor runs.
+    # x=2 and $monitoroff happen in the same time slot, so x=2 change is not printed.
+    # x=3 happens while monitor is disabled. $monitoron re-enables at time 2.
+    # x=3 is detected as a change when $monitoron is in the same time slot.
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $monitor("x=%0d", x);
+          #1 x = 2;
+          $monitoroff;
+          #1 x = 3;
+          $monitoron;
+          #1 x = 4;
+        end
+      endmodule
+    expect:
+      output: "x=1\nx=3\nx=4\n"
+
+  - name: monitor_multiple_vars
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1; b = 10;
+          $monitor("a=%0d b=%0d", a, b);
+          #1 a = 2;
+          #1 b = 20;
+          #1 a = 3;
+        end
+      endmodule
+    expect:
+      output: "a=1 b=10\na=2 b=10\na=2 b=20\na=3 b=20\n"
+
+  - name: monitorb_binary
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'b10101010;
+          $monitorb(x);
+          #1 x = 8'b11110000;
+        end
+      endmodule
+    expect:
+      output: "10101010\n11110000\n"
+
+  - name: monitoro_octal
+    sv: |
+      module Test;
+        logic [8:0] x;
+        initial begin
+          x = 9'o755;
+          $monitoro(x);
+          #1 x = 9'o123;
+        end
+      endmodule
+    expect:
+      output: "755\n123\n"
+
+  - name: monitorh_hex
+    sv: |
+      module Test;
+        logic [15:0] x;
+        initial begin
+          x = 16'hBEEF;
+          $monitorh(x);
+          #1 x = 16'hCAFE;
+        end
+      endmodule
+    expect:
+      output: "beef\ncafe\n"
+
+  - name: monitor_empty
+    sv: |
+      module Test;
+        initial $monitor();
+      endmodule
+    expect:
+      output: "\n"
+
+  - name: monitor_vs_display_timing
+    # Demonstrates timing difference:
+    # - $display prints immediately in Active region
+    # - $monitor prints at end of time slot (Postponed region) when values change
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          $monitor("M x=%0d", x);  // Immediate print (x=0)
+          $display("D1 x=%0d", x); // Active region (x=0)
+          x = 1;
+          $display("D2 x=%0d", x); // Active region (x=1)
+          x = 2;
+          $display("D3 x=%0d", x); // Active region (x=2)
+          // End of time 0: monitor sees x changed 0->2, prints
+        end
+      endmodule
+    expect:
+      output: "M x=0\nD1 x=0\nD2 x=1\nD3 x=2\nM x=2\n"
+
+  - name: monitor_multiple_vars_simultaneous_change
+    # Tests that when multiple monitored variables change in the same time step,
+    # the monitor prints exactly once with all new values.
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 1; b = 2; c = 3;
+          $monitor("a=%0d b=%0d c=%0d", a, b, c);
+          #1 begin
+            a = 10;
+            b = 20;
+            c = 30;
+          end
+        end
+      endmodule
+    expect:
+      output: "a=1 b=2 c=3\na=10 b=20 c=30\n"
+
+  - name: monitor_constant_only
+    # Format string with no variables - prints once, never again (no values to track)
+    sv: |
+      module Test;
+        initial begin
+          $monitor("constant message");
+          #1 $display("after delay");
+        end
+      endmodule
+    expect:
+      output: "constant message\nafter delay\n"
+
+  - name: monitor_single_var
+    # Explicit test for single variable monitoring
+    sv: |
+      module Test;
+        logic [3:0] x;
+        initial begin
+          x = 4'b0101;
+          $monitor("x=%b", x);
+          #1 x = 4'b1010;
+          #1 x = 4'b1111;
+        end
+      endmodule
+    expect:
+      output: "x=101\nx=1010\nx=1111\n"
+
+  - name: monitoron_monitoroff_multiple_cycles
+    # Tests multiple enable/disable cycles.
+    # Note: Due to the known limitation, $monitoroff in the same time slot as a
+    # value change prevents that change from being printed. So x=1 and x=3 are
+    # skipped. When $monitoron runs, it detects the accumulated change.
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          $monitor("x=%0d", x);
+          #1 x = 1;
+          $monitoroff;
+          #1 x = 2;
+          $monitoron;
+          #1 x = 3;
+          $monitoroff;
+          #1 x = 4;
+          $monitoron;
+          #1 x = 5;
+        end
+      endmodule
+    expect:
+      output: "x=0\nx=2\nx=4\nx=5\n"
+
+  - name: monitoron_monitoroff_no_active_monitor
+    # $monitoron/$monitoroff are no-ops when no monitor is active
+    sv: |
+      module Test;
+        initial begin
+          $monitoron;
+          $monitoroff;
+          $display("done");
+        end
+      endmodule
+    expect:
+      output: "done\n"
+
+  - name: monitor_real_type
+    # Tests monitoring real (floating-point) values
+    sv: |
+      module Test;
+        real r;
+        initial begin
+          r = 3.14;
+          $monitor("r=%f", r);
+          #1 r = 2.71;
+          #1 r = 1.0;
+        end
+      endmodule
+    expect:
+      output: "r=3.140000\nr=2.710000\nr=1.000000\n"
+
+  - name: monitor_complex_expression
+    # Tests monitoring a complex expression (a + b).
+    # The expression is re-evaluated at each time slot.
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1; b = 2;
+          $monitor("sum=%0d", a + b);
+          #1 a = 3;
+          #1 b = 4;
+        end
+      endmodule
+    expect:
+      output: "sum=3\nsum=5\nsum=7\n"
+
+  - name: monitor_complex_expression_multiply
+    # Tests monitoring a multiplication expression
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 2; y = 3;
+          $monitor("product=%0d", x * y);
+          #1 x = 4;
+          #1 y = 5;
+        end
+      endmodule
+    expect:
+      output: "product=6\nproduct=12\nproduct=20\n"
+
+  - name: monitor_mixed_vars_and_expressions
+    # Tests monitoring both simple variables and complex expressions
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1; b = 2;
+          $monitor("a=%0d b=%0d sum=%0d", a, b, a + b);
+          #1 a = 10;
+          #1 b = 20;
+        end
+      endmodule
+    expect:
+      output: "a=1 b=2 sum=3\na=10 b=2 sum=12\na=10 b=20 sum=30\n"
+
+  # NOTE: Ternary expressions in $monitor are not yet supported.
+  # The current expression block implementation doesn't handle control flow.
+  # TODO(hankhsu): Add ternary expression support in expression blocks.
+
+  - name: monitor_nested_expression
+    # Tests monitoring a nested arithmetic expression
+    # (1+2)*(3-4) = -3, (2+2)*(3-4) = -4, (2+2)*(5-4) = 4
+    sv: |
+      module Test;
+        int a, b, c, d;
+        initial begin
+          a = 1; b = 2; c = 3; d = 4;
+          $monitor("result=%0d", (a + b) * (c - d));
+          #1 a = 2;
+          #1 c = 5;
+        end
+      endmodule
+    expect:
+      output: "result=-3\nresult=-4\nresult=4\n"
+
+  - name: monitor_comparison_operators
+    # Tests monitoring comparison operator expressions
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5; b = 5;
+          $monitor("eq=%0d gt=%0d lt=%0d", a == b, a > b, a < b);
+          #1 a = 10;
+          #1 b = 20;
+        end
+      endmodule
+    expect:
+      output: "eq=1 gt=0 lt=0\neq=0 gt=1 lt=0\neq=0 gt=0 lt=1\n"
+
+  # NOTE: Logical operators (&&, ||) in $monitor are not yet fully supported
+  # in codegen due to short-circuit evaluation generating control flow.
+
+  # NOTE: Bitwise operators in $monitor expressions have codegen type issues
+  # that need investigation. Working in interpreter.
+
+  - name: monitor_real_arithmetic
+    # Tests monitoring real arithmetic expressions
+    sv: |
+      module Test;
+        real x, y;
+        initial begin
+          x = 2.5; y = 1.5;
+          $monitor("sum=%f product=%f", x + y, x * y);
+          #1 x = 3.0;
+          #1 y = 2.0;
+        end
+      endmodule
+    expect:
+      output: "sum=4.000000 product=3.750000\nsum=4.500000 product=4.500000\nsum=5.000000 product=6.000000\n"
+
+  - name: monitor_unary_operators
+    # Tests monitoring unary operator expressions
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $monitor("neg=%0d not=%0d", -x, !x);
+          #1 x = 0;
+          #1 x = -3;
+        end
+      endmodule
+    expect:
+      output: "neg=-5 not=0\nneg=0 not=1\nneg=3 not=0\n"
+
+  # NOTE: Shift operators in $monitor expressions have codegen issues
+  # that need investigation.

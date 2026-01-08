@@ -38,7 +38,7 @@ struct TimeFormatState {
       int8_t global_precision) const -> std::string {
     int8_t effective_units = (units == kUnitsUnset) ? global_precision : units;
     int exponent = module_unit_power - effective_units;
-    double scaled = static_cast<double>(time_in_module_unit);
+    auto scaled = static_cast<double>(time_in_module_unit);
 
     if (exponent > 0) {
       scaled *= std::pow(10.0, exponent);
@@ -60,6 +60,32 @@ struct TimeFormatState {
 struct Waiter {
   std::coroutine_handle<> handle;
   std::function<bool()> check_triggered;  // Type-erased trigger check
+};
+
+/// State for active $monitor.
+/// Only one monitor can be active at a time.
+///
+/// The check_and_print lambda is expected to:
+/// - Capture `this` (the module) for member variable access
+/// - Capture previous values as mutable copies for change detection
+/// - Compare current vs previous values and print if changed
+/// - Update previous values after printing
+///
+/// Lifetime: The module instance must outlive the scheduler (guaranteed by
+/// Module::Run which creates scheduler on stack).
+struct MonitorState {
+  explicit MonitorState(std::function<void()> check_fn)
+      : check_and_print(std::move(check_fn)) {
+  }
+
+  MonitorState(const MonitorState&) = delete;
+  MonitorState(MonitorState&&) = default;
+  auto operator=(const MonitorState&) -> MonitorState& = delete;
+  auto operator=(MonitorState&&) -> MonitorState& = default;
+  ~MonitorState() = default;
+
+  bool enabled = true;
+  std::function<void()> check_and_print;  // Mutable lambda with captured state
 };
 
 class Scheduler {
@@ -113,6 +139,21 @@ class Scheduler {
   // Schedule action for Postponed region ($strobe, $monitor)
   void SchedulePostponed(std::function<void()> action) {
     postponed_queue_.push_back(std::move(action));
+  }
+
+  // Register a new monitor (replaces any existing).
+  // Uses perfect forwarding to avoid intermediate std::function construction
+  // when passing a lambda directly.
+  template <typename F>
+  void SetMonitor(F&& check_and_print) {
+    active_monitor_.emplace(std::forward<F>(check_and_print));
+  }
+
+  // Enable/disable monitor output ($monitoron/$monitoroff)
+  void SetMonitorEnabled(bool enabled) {
+    if (active_monitor_) {
+      active_monitor_->enabled = enabled;
+    }
   }
 
   void RegisterWait(
@@ -276,6 +317,9 @@ class Scheduler {
 
     // Postponed region: $strobe, $monitor
     ExecuteRegion(Region::kPostponed);
+
+    // $monitor: check for value changes and print if needed
+    CheckMonitor();
   }
 
   // Check triggers and schedule to active (not immediate resume)
@@ -350,6 +394,17 @@ class Scheduler {
   std::vector<std::coroutine_handle<>> active_handles_;  // Active region
   std::queue<std::coroutine_handle<>> inactive_queue_;   // Inactive region
   std::vector<std::function<void()>> postponed_queue_;   // Postponed region
+
+  // $monitor state
+  std::optional<MonitorState> active_monitor_;
+
+  // Check $monitor for value changes and print if needed
+  void CheckMonitor() {
+    if (active_monitor_ && active_monitor_->enabled &&
+        active_monitor_->check_and_print) {
+      active_monitor_->check_and_print();
+    }
+  }
 };
 
 // Implementation of Delay::await_suspend (needs Scheduler definition)

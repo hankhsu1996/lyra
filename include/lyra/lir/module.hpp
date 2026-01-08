@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,17 @@
 #include "lyra/lir/process.hpp"
 
 namespace lyra::lir {
+
+/// A sequence of instructions that evaluates an expression and produces a
+/// value. Used by $monitor to re-evaluate arguments at each time slot.
+///
+/// Note: This is $monitor-specific. The interpreter re-executes these LIR
+/// instructions at each time slot to detect value changes. The codegen backend
+/// uses a different approach (C++ lambdas) and ignores these blocks.
+struct MonitorExpressionBlock {
+  std::vector<Instruction> instructions;
+  TempRef result;  // Temp holding final value
+};
 
 // Port direction for module interfaces
 enum class PortDirection { kInput, kOutput, kInout };
@@ -50,6 +62,21 @@ struct Module {
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;
   std::shared_ptr<LirContext> context;
+
+  // Expression blocks for $monitor re-evaluation
+  std::vector<MonitorExpressionBlock> monitor_expression_blocks;
+
+  /// Get a monitor expression block by index with bounds checking.
+  [[nodiscard]] auto GetMonitorExpressionBlock(size_t index) const
+      -> const MonitorExpressionBlock& {
+    if (index >= monitor_expression_blocks.size()) {
+      throw std::out_of_range(
+          fmt::format(
+              "monitor expression block index {} out of range (size: {})",
+              index, monitor_expression_blocks.size()));
+    }
+    return monitor_expression_blocks[index];
+  }
 
   [[nodiscard]] auto ToString(
       common::FormatMode mode = common::FormatMode::kPlain,
