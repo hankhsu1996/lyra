@@ -182,6 +182,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "system_tasks_mem_io_tests",
+    yaml = "sv_features/system_tasks/mem_io.yaml",
+)
+
+sv_feature_test(
     name = "timing_timescale_tests",
     yaml = "sv_features/timing/timescale.yaml",
 )

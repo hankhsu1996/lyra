@@ -25,8 +25,9 @@ auto LowerStatement(const slang::ast::Statement& statement)
 auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
     -> std::unique_ptr<mir::VariableDeclarationStatement>;
 
-// Wraps an expression into a MIR ExpressionStatement.
+// Wraps an expression into a MIR Statement (may produce specialized
+// statements).
 auto LowerExpressionStatement(const slang::ast::Expression& expr)
-    -> std::unique_ptr<mir::ExpressionStatement>;
+    -> std::unique_ptr<mir::Statement>;
 
 }  // namespace lyra::lowering::ast_to_mir

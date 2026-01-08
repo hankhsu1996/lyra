@@ -1,13 +1,18 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -313,6 +318,284 @@ auto FormatDisplay(
     }
   }
   return result;
+}
+
+[[noreturn]] void ThrowMemIoError(const std::string& message) {
+  throw DiagnosticException(Diagnostic::Error({}, message));
+}
+
+auto ResolveMemPath(
+    const std::string& filename, const SimulationContext& simulation_context)
+    -> std::filesystem::path {
+  std::filesystem::path path(filename);
+  if (path.is_relative()) {
+    if (simulation_context.base_dir.has_value()) {
+      path = *simulation_context.base_dir / path;
+    } else if (const char* env = std::getenv("LYRA_PROJECT_ROOT")) {
+      path = std::filesystem::path(env) / path;
+    } else {
+      path = std::filesystem::current_path() / path;
+    }
+  }
+  return path;
+}
+
+struct MemTargetInfo {
+  bool is_unpacked = false;
+  size_t element_width = 0;
+  size_t element_count = 0;
+  int32_t lower_bound = 0;
+};
+
+auto GetMemTargetInfo(const RuntimeValue& value, const common::Type& type)
+    -> MemTargetInfo {
+  if (type.kind == common::Type::Kind::kUnpackedArray) {
+    const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
+    if (array_data.element_type->kind != common::Type::Kind::kIntegral) {
+      ThrowMemIoError("readmem/writemem target element must be integral");
+    }
+    return {
+        .is_unpacked = true,
+        .element_width = array_data.element_type->GetBitWidth(),
+        .element_count = value.AsArray().size(),
+        .lower_bound = array_data.lower_bound,
+    };
+  }
+
+  if (type.kind == common::Type::Kind::kIntegral) {
+    const auto& integral = std::get<common::IntegralData>(type.data);
+    if (integral.element_type != nullptr) {
+      return {
+          .is_unpacked = false,
+          .element_width = integral.element_type->GetBitWidth(),
+          .element_count = integral.element_count,
+          .lower_bound = integral.element_lower,
+      };
+    }
+    return {
+        .is_unpacked = false,
+        .element_width = integral.bit_width,
+        .element_count = 1,
+        .lower_bound = 0,
+    };
+  }
+
+  ThrowMemIoError("readmem/writemem target must be an array");
+}
+
+auto ParseMemDigit(char ch, bool is_hex) -> int {
+  if (ch == '_') {
+    return -1;
+  }
+  if (!is_hex) {
+    if (ch == '0') {
+      return 0;
+    }
+    if (ch == '1') {
+      return 1;
+    }
+    if (ch == 'x' || ch == 'X' || ch == 'z' || ch == 'Z') {
+      ThrowMemIoError("readmem does not support X/Z digits");
+    }
+    ThrowMemIoError(std::string("invalid binary digit: ") + ch);
+  }
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return 10 + (ch - 'a');
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return 10 + (ch - 'A');
+  }
+  if (ch == 'x' || ch == 'X' || ch == 'z' || ch == 'Z') {
+    ThrowMemIoError("readmem does not support X/Z digits");
+  }
+  ThrowMemIoError(std::string("invalid hex digit: ") + ch);
+}
+
+auto ParseMemAddress(std::string_view token, bool is_hex) -> uint64_t {
+  if (token.empty()) {
+    ThrowMemIoError("readmem address token is empty");
+  }
+  uint64_t value = 0;
+  size_t bit_pos = 0;
+  int bits_per_digit = is_hex ? 4 : 1;
+  for (size_t i = token.size(); i > 0; --i) {
+    int digit = ParseMemDigit(token[i - 1], is_hex);
+    if (digit < 0) {
+      continue;
+    }
+    for (int b = 0; b < bits_per_digit; ++b) {
+      if (digit & (1 << b)) {
+        if (bit_pos >= 64) {
+          ThrowMemIoError("readmem address exceeds 64-bit range");
+        }
+        value |= (1ULL << bit_pos);
+      }
+      ++bit_pos;
+    }
+  }
+  return value;
+}
+
+auto ParseMemTokenToValue(std::string_view token, size_t bit_width, bool is_hex)
+    -> RuntimeValue {
+  if (token.empty()) {
+    ThrowMemIoError("readmem value token is empty");
+  }
+
+  const size_t word_count = common::wide_ops::WordsForBits(bit_width);
+  std::vector<uint64_t> words(word_count, 0);
+  size_t bit_pos = 0;
+  int bits_per_digit = is_hex ? 4 : 1;
+
+  for (size_t i = token.size(); i > 0; --i) {
+    int digit = ParseMemDigit(token[i - 1], is_hex);
+    if (digit < 0) {
+      continue;
+    }
+    for (int b = 0; b < bits_per_digit; ++b) {
+      if (bit_pos >= bit_width) {
+        break;
+      }
+      bool set = (digit & (1 << b)) != 0;
+      if (set) {
+        size_t word = bit_pos / 64;
+        size_t bit = bit_pos % 64;
+        words[word] |= (1ULL << bit);
+      }
+      ++bit_pos;
+    }
+    if (bit_pos >= bit_width) {
+      break;
+    }
+  }
+
+  if (bit_width <= 64) {
+    return RuntimeValue::IntegralUnsigned(
+        words.empty() ? 0 : words[0], bit_width);
+  }
+  common::WideBit wide(std::move(words));
+  return RuntimeValue::IntegralWide(std::move(wide), bit_width);
+}
+
+auto ExtractPackedElement(
+    const RuntimeValue& value, size_t index, size_t element_width)
+    -> RuntimeValue {
+  size_t start_bit = index * element_width;
+  if (element_width <= 64) {
+    uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(element_width));
+    uint64_t extracted = 0;
+    if (value.IsWide()) {
+      auto shifted = value.AsWideBit().ShiftRightLogical(start_bit);
+      extracted = shifted.GetWord(0) & mask;
+    } else {
+      extracted = (value.AsNarrow().AsUInt64() >> start_bit) & mask;
+    }
+    return RuntimeValue::IntegralUnsigned(extracted, element_width);
+  }
+
+  auto wide_value = value.IsWide() ? value.AsWideBit()
+                                   : common::WideBit::FromUInt64(
+                                         value.AsNarrow().AsUInt64(), 2);
+  auto extracted = wide_value.ExtractSlice(start_bit, element_width);
+  return RuntimeValue::IntegralWide(std::move(extracted), element_width);
+}
+
+auto StorePackedElement(
+    const RuntimeValue& current, size_t index, size_t element_width,
+    const RuntimeValue& new_value) -> RuntimeValue {
+  const auto& current_data = std::get<common::IntegralData>(current.type.data);
+  size_t storage_width = current_data.bit_width;
+  bool storage_is_wide = current.IsWide();
+  bool element_is_wide = element_width > 64;
+  size_t shift = index * element_width;
+
+  if (!storage_is_wide && !element_is_wide) {
+    uint64_t elem_mask =
+        common::MakeBitMask(static_cast<uint32_t>(element_width));
+    uint64_t clear_mask = ~(elem_mask << shift);
+    uint64_t merged = (current.AsNarrow().AsUInt64() & clear_mask) |
+                      ((new_value.AsNarrow().AsUInt64() & elem_mask) << shift);
+    return current_data.is_signed
+               ? RuntimeValue::IntegralSigned(
+                     static_cast<int64_t>(merged), storage_width)
+               : RuntimeValue::IntegralUnsigned(merged, storage_width);
+  }
+
+  size_t storage_words = common::wide_ops::WordsForBits(storage_width);
+  auto current_wide = storage_is_wide
+                          ? current.AsWideBit()
+                          : common::WideBit::FromUInt64(
+                                current.AsNarrow().AsUInt64(), storage_words);
+  auto value_wide = element_is_wide
+                        ? new_value.AsWideBit()
+                        : common::WideBit::FromUInt64(
+                              new_value.AsNarrow().AsUInt64(), storage_words);
+  auto merged = current_wide.InsertSlice(value_wide, shift, element_width);
+  return RuntimeValue::IntegralWide(
+      std::move(merged), storage_width, current_data.is_signed);
+}
+
+auto FormatMemValue(const RuntimeValue& value, size_t bit_width, bool is_hex)
+    -> std::string {
+  if (bit_width == 0) {
+    return "0";
+  }
+  std::string result;
+  if (is_hex) {
+    size_t digits = (bit_width + 3) / 4;
+    result.resize(digits, '0');
+    for (size_t d = 0; d < digits; ++d) {
+      size_t nibble = digits - 1 - d;
+      int val = 0;
+      for (int b = 0; b < 4; ++b) {
+        size_t bit_index = nibble * 4 + b;
+        if (bit_index >= bit_width) {
+          continue;
+        }
+        bool bit = value.MatchIntegral(
+            [&](RuntimeValue::NarrowIntegral n) {
+              return ((n.AsUInt64() >> bit_index) & 1ULL) != 0;
+            },
+            [&](const common::WideBit& w) { return w.GetBit(bit_index) != 0; });
+        if (bit) {
+          val |= (1 << b);
+        }
+      }
+      result[d] = "0123456789abcdef"[val];
+    }
+    return result;
+  }
+
+  result.resize(bit_width, '0');
+  for (size_t i = 0; i < bit_width; ++i) {
+    size_t bit_index = bit_width - 1 - i;
+    bool bit = value.MatchIntegral(
+        [&](RuntimeValue::NarrowIntegral n) {
+          return ((n.AsUInt64() >> bit_index) & 1ULL) != 0;
+        },
+        [&](const common::WideBit& w) { return w.GetBit(bit_index) != 0; });
+    result[i] = bit ? '1' : '0';
+  }
+  return result;
+}
+
+auto FormatMemAddress(uint64_t address, bool is_hex) -> std::string {
+  if (is_hex) {
+    return fmt::format("{:x}", address);
+  }
+  if (address == 0) {
+    return "0";
+  }
+  std::string out;
+  while (address != 0) {
+    out.push_back((address & 1ULL) ? '1' : '0');
+    address >>= 1U;
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
 }
 
 // Execute unary math function (real -> real)
@@ -882,6 +1165,216 @@ auto RunInstruction(
             std::move(merged), storage_width, current_data.is_signed);
       }
       store_variable(instr.operands[0], result, false);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kReadMem: {
+      if (instr.operands.size() < 2 || instr.operands.size() > 4) {
+        ThrowMemIoError("$readmem expects 2-4 operands");
+      }
+      const auto filename_value = get_temp(instr.operands[1]);
+      if (!filename_value.IsString()) {
+        ThrowMemIoError("$readmem filename must be a string");
+      }
+      auto target_value = read_variable(instr.operands[0]);
+      auto info = GetMemTargetInfo(target_value, target_value.type);
+
+      std::optional<int64_t> start_addr;
+      std::optional<int64_t> end_addr;
+      if (instr.operands.size() >= 3) {
+        auto start_val = get_temp(instr.operands[2]);
+        if (!start_val.IsTwoState() || start_val.IsWide()) {
+          ThrowMemIoError("$readmem start address must be narrow integral");
+        }
+        start_addr = start_val.AsNarrow().AsInt64();
+      }
+      if (instr.operands.size() == 4) {
+        auto end_val = get_temp(instr.operands[3]);
+        if (!end_val.IsTwoState() || end_val.IsWide()) {
+          ThrowMemIoError("$readmem end address must be narrow integral");
+        }
+        end_addr = end_val.AsNarrow().AsInt64();
+      }
+
+      if (info.element_count == 0 || info.element_width == 0) {
+        ThrowMemIoError("$readmem target has zero size");
+      }
+
+      int64_t min_addr = info.lower_bound;
+      int64_t max_addr =
+          info.lower_bound + static_cast<int64_t>(info.element_count) - 1;
+      int64_t current_addr = start_addr.value_or(min_addr);
+      int64_t final_addr = end_addr.value_or(max_addr);
+
+      if (current_addr < min_addr || current_addr > max_addr) {
+        ThrowMemIoError("$readmem start address out of bounds");
+      }
+      if (final_addr < min_addr || final_addr > max_addr) {
+        ThrowMemIoError("$readmem end address out of bounds");
+      }
+
+      auto path = ResolveMemPath(filename_value.AsString(), simulation_context);
+      std::ifstream in(path);
+      if (!in) {
+        ThrowMemIoError("failed to open memory file: " + path.string());
+      }
+
+      std::string content(
+          (std::istreambuf_iterator<char>(in)),
+          std::istreambuf_iterator<char>());
+
+      auto write_value = [&](int64_t addr, const RuntimeValue& value) {
+        if (addr < min_addr || addr > max_addr) {
+          ThrowMemIoError("$readmem address out of bounds");
+        }
+        size_t index = static_cast<size_t>(addr - min_addr);
+        if (info.is_unpacked) {
+          target_value.SetElement(index, value);
+        } else {
+          auto current = read_variable(instr.operands[0]);
+          auto merged =
+              StorePackedElement(current, index, info.element_width, value);
+          store_variable(instr.operands[0], merged, false);
+        }
+      };
+
+      auto is_hex = instr.mem_format == lir::MemFileFormat::kHex;
+      size_t i = 0;
+      while (i < content.size() && current_addr <= final_addr) {
+        char ch = content[i];
+        if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+          ++i;
+          continue;
+        }
+        if (ch == '/' && i + 1 < content.size()) {
+          if (content[i + 1] == '/') {
+            i += 2;
+            while (i < content.size() && content[i] != '\n') {
+              ++i;
+            }
+            continue;
+          }
+          if (content[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < content.size() &&
+                   !(content[i] == '*' && content[i + 1] == '/')) {
+              ++i;
+            }
+            i = std::min(i + 2, content.size());
+            continue;
+          }
+        }
+        if (ch == '@') {
+          ++i;
+          size_t start = i;
+          while (i < content.size() &&
+                 std::isspace(static_cast<unsigned char>(content[i])) == 0) {
+            if (content[i] == '/' && i + 1 < content.size() &&
+                (content[i + 1] == '/' || content[i + 1] == '*')) {
+              break;
+            }
+            ++i;
+          }
+          auto token = std::string_view(content).substr(start, i - start);
+          uint64_t addr = ParseMemAddress(token, is_hex);
+          current_addr = static_cast<int64_t>(addr);
+          if (current_addr < min_addr || current_addr > max_addr) {
+            ThrowMemIoError("$readmem address directive out of bounds");
+          }
+          continue;
+        }
+
+        size_t start = i;
+        while (i < content.size() &&
+               std::isspace(static_cast<unsigned char>(content[i])) == 0) {
+          if (content[i] == '/' && i + 1 < content.size() &&
+              (content[i + 1] == '/' || content[i + 1] == '*')) {
+            break;
+          }
+          ++i;
+        }
+        auto token = std::string_view(content).substr(start, i - start);
+        auto value = ParseMemTokenToValue(token, info.element_width, is_hex);
+        write_value(current_addr, value);
+        ++current_addr;
+      }
+
+      if (info.is_unpacked) {
+        store_variable(instr.operands[0], target_value, false);
+      }
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kWriteMem: {
+      if (instr.operands.size() < 2 || instr.operands.size() > 4) {
+        ThrowMemIoError("$writemem expects 2-4 operands");
+      }
+      const auto filename_value = get_temp(instr.operands[1]);
+      if (!filename_value.IsString()) {
+        ThrowMemIoError("$writemem filename must be a string");
+      }
+      auto target_value = read_variable(instr.operands[0]);
+      auto info = GetMemTargetInfo(target_value, target_value.type);
+
+      std::optional<int64_t> start_addr;
+      std::optional<int64_t> end_addr;
+      if (instr.operands.size() >= 3) {
+        auto start_val = get_temp(instr.operands[2]);
+        if (!start_val.IsTwoState() || start_val.IsWide()) {
+          ThrowMemIoError("$writemem start address must be narrow integral");
+        }
+        start_addr = start_val.AsNarrow().AsInt64();
+      }
+      if (instr.operands.size() == 4) {
+        auto end_val = get_temp(instr.operands[3]);
+        if (!end_val.IsTwoState() || end_val.IsWide()) {
+          ThrowMemIoError("$writemem end address must be narrow integral");
+        }
+        end_addr = end_val.AsNarrow().AsInt64();
+      }
+
+      if (info.element_count == 0 || info.element_width == 0) {
+        ThrowMemIoError("$writemem target has zero size");
+      }
+
+      int64_t min_addr = info.lower_bound;
+      int64_t max_addr =
+          info.lower_bound + static_cast<int64_t>(info.element_count) - 1;
+      int64_t current_addr = start_addr.value_or(min_addr);
+      int64_t final_addr = end_addr.value_or(max_addr);
+
+      if (current_addr < min_addr || current_addr > max_addr) {
+        ThrowMemIoError("$writemem start address out of bounds");
+      }
+      if (final_addr < min_addr || final_addr > max_addr) {
+        ThrowMemIoError("$writemem end address out of bounds");
+      }
+
+      auto path = ResolveMemPath(filename_value.AsString(), simulation_context);
+      std::ofstream out(path);
+      if (!out) {
+        ThrowMemIoError(
+            "failed to open memory file for write: " + path.string());
+      }
+
+      auto is_hex = instr.mem_format == lir::MemFileFormat::kHex;
+      if (start_addr.has_value()) {
+        out << "@"
+            << FormatMemAddress(static_cast<uint64_t>(*start_addr), is_hex)
+            << "\n";
+      }
+
+      for (int64_t addr = current_addr; addr <= final_addr; ++addr) {
+        size_t index = static_cast<size_t>(addr - min_addr);
+        RuntimeValue element;
+        if (info.is_unpacked) {
+          element = target_value.GetElement(index);
+        } else {
+          element =
+              ExtractPackedElement(target_value, index, info.element_width);
+        }
+        out << FormatMemValue(element, info.element_width, is_hex) << "\n";
+      }
       return InstructionResult::Continue();
     }
 

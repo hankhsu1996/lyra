@@ -1,6 +1,8 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,7 +24,8 @@ class Compiler {
  private:
   static auto CompileAndRun(
       const std::vector<std::unique_ptr<mir::Module>>& modules,
-      const std::vector<std::string>& variables_to_read) -> CompilerResult;
+      const std::vector<std::string>& variables_to_read,
+      std::optional<std::filesystem::path> base_dir) -> CompilerResult;
 };
 
 }  // namespace lyra::compiler

@@ -36,6 +36,18 @@ auto WriteTempFiles(const std::vector<SourceFile>& files)
   return paths;
 }
 
+auto FilterSvFiles(const std::vector<std::string>& paths)
+    -> std::vector<std::string> {
+  std::vector<std::string> sv_paths;
+  for (const auto& path : paths) {
+    auto ext = std::filesystem::path(path).extension().string();
+    if (ext == ".sv" || ext == ".v") {
+      sv_paths.push_back(path);
+    }
+  }
+  return sv_paths;
+}
+
 void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
   if (expected.IsExact()) {
     EXPECT_EQ(actual, expected.exact.value());
@@ -61,7 +73,8 @@ TEST_P(SvFeatureTest, Interpreter) {
   interpreter::InterpreterResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
-    result = interpreter::Interpreter::RunFromFiles(paths);
+    auto sv_paths = FilterSvFiles(paths);
+    result = interpreter::Interpreter::RunFromFiles(sv_paths);
   } else {
     result = interpreter::Interpreter::RunFromSource(tc.sv_code);
   }
@@ -98,7 +111,8 @@ TEST_P(SvFeatureTest, CppCodegen) {
   compiler::CompilerResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
-    result = compiler::Compiler::RunFromFiles(paths, vars);
+    auto sv_paths = FilterSvFiles(paths);
+    result = compiler::Compiler::RunFromFiles(sv_paths, vars);
   } else {
     result = compiler::Compiler::RunFromSource(tc.sv_code, vars);
   }

@@ -20,6 +20,8 @@ class Statement;
 class VariableDeclarationStatement;
 class AssignStatement;
 class ExpressionStatement;
+class ReadMemStatement;
+class WriteMemStatement;
 class WaitEventStatement;
 class DelayStatement;
 class ConditionalStatement;
@@ -57,6 +59,8 @@ class MirVisitor {
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;
   virtual void Visit(const ExpressionStatement&) = 0;
+  virtual void Visit(const ReadMemStatement&) = 0;
+  virtual void Visit(const WriteMemStatement&) = 0;
   virtual void Visit(const WaitEventStatement&) = 0;
   virtual void Visit(const DelayStatement&) = 0;
   virtual void Visit(const ConditionalStatement&) = 0;
