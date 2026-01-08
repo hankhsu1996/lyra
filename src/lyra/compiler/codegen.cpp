@@ -7,6 +7,7 @@
 #include <functional>
 #include <ios>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -234,6 +235,20 @@ auto Codegen::IsSigned(const common::Type& type) -> bool {
 }
 
 auto Codegen::ToCppType(const common::Type& type) -> std::string {
+  // Handle user-defined type aliases (typedef)
+  if (type.alias_name) {
+    // Get the C++ definition for this alias by computing it without the alias
+    // name
+    common::Type underlying = type;
+    underlying.alias_name = std::nullopt;
+    std::string cpp_def = ToCppType(underlying);
+
+    // Register the alias for later emission
+    user_type_aliases_[*type.alias_name] = cpp_def;
+
+    return *type.alias_name;
+  }
+
   switch (type.kind) {
     case common::Type::Kind::kVoid:
       return "void";
@@ -315,6 +330,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   indent_ = 0;
   port_symbols_.clear();
   used_type_aliases_ = TypeAlias::kNone;
+  user_type_aliases_.clear();
   used_features_ = CodegenFeature::kNone;
 
   // Store timescale info for delay scaling
@@ -416,7 +432,13 @@ void Codegen::EmitTypeAliases() {
   if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
     Line("using ShortReal = float;");
   }
-  if (used_type_aliases_ != TypeAlias::kNone) {
+
+  // Emit user-defined type aliases (typedef)
+  for (const auto& [name, def] : user_type_aliases_) {
+    Line(std::format("using {} = {};", name, def));
+  }
+
+  if (used_type_aliases_ != TypeAlias::kNone || !user_type_aliases_.empty()) {
     Line("");
   }
 }

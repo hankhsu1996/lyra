@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <variant>
@@ -50,6 +51,11 @@ struct Type {
 
   Kind kind{};
   std::variant<std::monostate, IntegralData, UnpackedArrayData> data{};
+
+  // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
+  // bit[7:0] Byte) This is metadata for codegen readability, not part of
+  // semantic type equality.
+  std::optional<std::string> alias_name;
 
   static auto FromSlang(const slang::ast::Type& type) -> Type {
     if (type.isString()) {
@@ -247,7 +253,11 @@ struct Type {
     return std::get<IntegralData>(data).bit_width;
   }
 
-  auto operator==(const Type& other) const -> bool = default;
+  // Explicit operator== that ignores alias_name (it's display metadata, not
+  // semantic)
+  auto operator==(const Type& other) const -> bool {
+    return kind == other.kind && data == other.data;
+  }
 
   [[nodiscard]] auto Hash() const -> std::size_t {
     std::size_t h = 0;
@@ -276,9 +286,11 @@ struct Type {
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
+    std::string structural_str;
     switch (kind) {
       case Kind::kVoid:
-        return "void";
+        structural_str = "void";
+        break;
       case Kind::kIntegral: {
         const auto& ts = std::get<IntegralData>(data);
         std::string base_name = ts.is_four_state ? "logic" : "bit";
@@ -288,24 +300,38 @@ struct Type {
           // Packed array: show dimensions
           auto msb =
               static_cast<int32_t>(ts.element_count) + ts.element_lower - 1;
-          return fmt::format(
+          structural_str = fmt::format(
               "{}[{}:{}]{}", ts.element_type->ToString(), msb, ts.element_lower,
               sign_str);
+        } else {
+          // Scalar: just show bit width
+          structural_str =
+              fmt::format("{}[{}]{}", base_name, ts.bit_width, sign_str);
         }
-        // Scalar: just show bit width
-        return fmt::format("{}[{}]{}", base_name, ts.bit_width, sign_str);
+        break;
       }
       case Kind::kReal:
-        return "real";
+        structural_str = "real";
+        break;
       case Kind::kShortReal:
-        return "shortreal";
+        structural_str = "shortreal";
+        break;
       case Kind::kString:
-        return "string";
+        structural_str = "string";
+        break;
       case Kind::kUnpackedArray: {
         const auto& arr = std::get<UnpackedArrayData>(data);
-        return fmt::format("{}[{}]", arr.element_type->ToString(), arr.size);
+        structural_str =
+            fmt::format("{}[{}]", arr.element_type->ToString(), arr.size);
+        break;
       }
     }
+
+    // Include alias name if present
+    if (alias_name) {
+      return fmt::format("{} ({})", *alias_name, structural_str);
+    }
+    return structural_str;
   }
 };
 
