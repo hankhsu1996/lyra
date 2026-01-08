@@ -33,6 +33,15 @@ struct Trigger {
     }
   }
 
+  // Factory for local signal (no hierarchical path)
+  static auto AnyChange(const SymbolRef& variable) -> Trigger {
+    return Trigger{
+        .edge_kind = EdgeKind::kAnyChange,
+        .variable = variable,
+        .instance_path = {}};
+  }
+
+  // Factory for hierarchical signal
   static auto AnyChange(
       const SymbolRef& variable, std::vector<SymbolRef> instance_path)
       -> Trigger {

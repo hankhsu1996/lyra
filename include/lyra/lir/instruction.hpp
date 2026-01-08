@@ -319,43 +319,29 @@ struct Instruction {
 
       case InstructionKind::kLoadVariable:
         if (!instance_path.empty()) {
-          // Build path string from symbols for display
-          std::string path;
-          for (const auto& sym : instance_path) {
-            if (!path.empty()) path += ".";
-            path += sym->name;
-          }
-          path += ".";
-          path += target_symbol->name;
-          return fmt::format("load  {}, {}", result.value(), path);
+          return fmt::format(
+              "load  {}, {}", result.value(),
+              common::FormatHierarchicalPath(instance_path, target_symbol));
         }
         return fmt::format(
             "load  {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kStoreVariable:
         if (!instance_path.empty()) {
-          std::string path;
-          for (const auto& sym : instance_path) {
-            if (!path.empty()) path += ".";
-            path += sym->name;
-          }
-          path += ".";
-          path += target_symbol->name;
-          return fmt::format("store {}, {}", path, operands[0].ToString());
+          return fmt::format(
+              "store {}, {}",
+              common::FormatHierarchicalPath(instance_path, target_symbol),
+              operands[0].ToString());
         }
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 
       case InstructionKind::kStoreVariableNonBlocking:
         if (!instance_path.empty()) {
-          std::string path;
-          for (const auto& sym : instance_path) {
-            if (!path.empty()) path += ".";
-            path += sym->name;
-          }
-          path += ".";
-          path += target_symbol->name;
-          return fmt::format("nba   {}, {}", path, operands[0].ToString());
+          return fmt::format(
+              "nba   {}, {}",
+              common::FormatHierarchicalPath(instance_path, target_symbol),
+              operands[0].ToString());
         }
         return fmt::format(
             "nba   {}, {}", operands[0].ToString(), operands[1].ToString());

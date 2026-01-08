@@ -263,13 +263,7 @@ struct AssignmentTarget {
 
   [[nodiscard]] auto ToString() const -> std::string {
     if (IsHierarchical()) {
-      std::string result;
-      for (const auto& inst_sym : instance_path) {
-        result += inst_sym->name;
-        result += ".";
-      }
-      result += target_symbol->name;
-      return result;
+      return common::FormatHierarchicalPath(instance_path, target_symbol);
     }
     if (element_index) {
       return fmt::format("{}[{}]", symbol->name, element_index->ToString());
@@ -461,13 +455,7 @@ class HierarchicalReferenceExpression : public Expression {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    std::string result;
-    for (const auto& inst_sym : instance_path) {
-      result += inst_sym->name;
-      result += ".";
-    }
-    result += target_symbol->name;
-    return result;
+    return common::FormatHierarchicalPath(instance_path, target_symbol);
   }
 
   void Accept(MirVisitor& visitor) const override {
