@@ -1,6 +1,26 @@
-# Limitations
+#Limitations
 
 Current SystemVerilog features not yet supported.
+
+## Data Types
+
+Supported:
+
+- Integral types (`bit`, `logic`, `reg`, `byte`, `shortint`, `int`, `longint`)
+- Arbitrary-width bit vectors (1-bit to 200+ bits)
+- Packed multi-dimensional arrays with non-zero lower bounds
+- Unpacked fixed-size arrays
+- `real`, `shortreal`, `string`
+- `typedef` / type aliases
+- `enum` types (named and anonymous)
+- Enum methods: `first()`, `last()`, `next()`, `prev()`, `num()`, `name()` (IEEE 1800-2023 §6.19.5)
+
+Not yet supported:
+
+- `struct` (packed and unpacked)
+- `union` (packed and unpacked)
+- `class` types
+- Dynamic arrays, associative arrays, queues
 
 ## Nets
 
@@ -27,11 +47,9 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 ## Expressions
 
-- Concatenation (`{a, b, c}`)
 - Replication (`{4{byte}}`)
 - Struct member access (`.field`)
 - `inside` operator
-- Unsized literals (`'0`, `'1`, `'x`)
 
 ## Operators
 
@@ -42,7 +60,10 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 Supported:
 
-- `$display`, `$write` - formatted output (including `%t` format specifier)
+- `$display`, `$displayb`, `$displayo`, `$displayh` - formatted output with newline (including `%t` format specifier)
+- `$write`, `$writeb`, `$writeo`, `$writeh` - formatted output without newline
+- `$strobe`, `$strobeb`, `$strobeo`, `$strobeh` - postponed region output
+- `$monitor`, `$monitorb`, `$monitoro`, `$monitorh`, `$monitoron`, `$monitoroff` - value change monitoring
 - `$finish`, `$stop`, `$exit` - simulation control
 - `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
 - `$timeformat` - configure `%t` output format
@@ -53,7 +74,6 @@ Supported:
 
 Not yet supported:
 
-- `$monitor` - continuous monitoring
 - `$random`, `$urandom` - random number generation
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
@@ -90,3 +110,7 @@ See [scheduling.md](scheduling.md) for implemented regions.
 - **Bounds checking**: Out-of-bounds array/vector accesses produce undefined behavior instead of X values. SystemVerilog specifies that out-of-bounds reads return X and out-of-bounds writes are ignored, but Lyra does not currently implement this check. This applies to:
   - Array element access (`arr[i]` where `i` is out of range)
   - Bit/part select (`vec[i]`, `vec[i+:w]`, `vec[i-:w]` where the selection extends beyond the vector bounds)
+
+## $monitor Limitations
+
+- **Same-time-slot operations**: When `$monitor` is replaced or `$monitoroff` is called in the same time slot as a value change, that change may not be detected. This is due to CheckMonitor running at the end of the time slot after all instructions have executed.

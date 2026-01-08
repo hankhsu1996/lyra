@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -82,13 +83,24 @@ enum class InstructionKind {
   // Type operations
   kConversion,
 
+  // Concatenation
+  kConcatenation,
+
   // Control flow
   kComplete,
   kWaitEvent,
   kDelay,
   kSystemCall,
+  kMethodCall,  // Generic method call (enum methods, future: string/class
+                // methods)
   kJump,
   kBranch
+};
+
+// Enum member info for method call runtime helpers
+struct EnumMemberInfo {
+  std::string name;
+  int64_t value;
 };
 
 struct Instruction {
@@ -112,6 +124,21 @@ struct Instruction {
   // symbol) target_symbol: the final variable symbol to access
   std::vector<SymbolRef> instance_path{};
   SymbolRef target_symbol{nullptr};
+
+  // Method call: method name and metadata
+  // For enum methods: method_name is "next", "prev", or "name"
+  // operands[0] = receiver
+  std::string method_name{};
+  int64_t method_step{1};  // For next(N)/prev(N), default 1
+  std::vector<EnumMemberInfo> enum_members{};
+
+  // For $monitor: how to re-evaluate each argument at end of each time step.
+  // Parallel to operands - std::nullopt for format string literal.
+  // Each argument is an index into Module::monitor_expression_blocks.
+  struct MonitoredArg {
+    size_t expression_block_index;
+  };
+  std::vector<std::optional<MonitoredArg>> monitored_args{};
 
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
@@ -322,6 +349,37 @@ struct Instruction {
         std::move(name), std::move(operands), result, std::move(result_type));
   }
 
+  // Method call instruction (enum methods, future: string/class methods)
+  // For enum methods: receiver is operands[0]
+  static auto MethodCall(
+      std::string method, TempRef receiver, TempRef result,
+      common::Type result_type, int64_t step,
+      std::vector<EnumMemberInfo> members) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kMethodCall,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = {Operand::Temp(receiver)},
+        .method_name = std::move(method),
+        .method_step = step,
+        .enum_members = std::move(members)};
+  }
+
+  // System call with monitored arguments (for $monitor)
+  static auto SystemCallWithMonitor(
+      std::string name, std::vector<TempRef> args,
+      std::vector<std::optional<MonitoredArg>> monitored) -> Instruction {
+    std::vector<Operand> operands;
+    for (auto& arg : args) {
+      operands.push_back(Operand::Temp(arg));
+    }
+    return Instruction{
+        .kind = InstructionKind::kSystemCall,
+        .operands = std::move(operands),
+        .system_call_name = std::move(name),
+        .monitored_args = std::move(monitored)};
+  }
+
   static auto Complete() -> Instruction {
     return Instruction{
         .kind = InstructionKind::kComplete,
@@ -343,6 +401,23 @@ struct Instruction {
         .operands = {
             Operand::Temp(condition), Operand::Label(true_label),
             Operand::Label(false_label)}};
+  }
+
+  // Concatenation: result = {op0, op1, ...}
+  // Operands are ordered MSB to LSB (first operand is most significant)
+  static auto Concatenation(
+      TempRef result, std::vector<TempRef> operands, common::Type result_type)
+      -> Instruction {
+    std::vector<Operand> ops;
+    ops.reserve(operands.size());
+    for (auto& op : operands) {
+      ops.push_back(Operand::Temp(op));
+    }
+    return Instruction{
+        .kind = InstructionKind::kConcatenation,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = std::move(ops)};
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
@@ -577,6 +652,17 @@ struct Instruction {
         return fmt::format(
             "cvt   {}, {}", result.value(), operands[0].ToString());
 
+      case InstructionKind::kConcatenation: {
+        std::string args;
+        for (size_t i = 0; i < operands.size(); ++i) {
+          if (i > 0) {
+            args += ", ";
+          }
+          args += operands[i].ToString();
+        }
+        return fmt::format("cat   {}, {{{}}}", result.value(), args);
+      }
+
       case InstructionKind::kWaitEvent: {
         std::string result = "wait  ";
         for (size_t i = 0; i < wait_triggers.size(); ++i) {
@@ -607,6 +693,18 @@ struct Instruction {
           }
           return fmt::format("call  {} {}", system_call_name, args);
         }
+
+      case InstructionKind::kMethodCall:
+        // Show step parameter only for next/prev with non-default step
+        // name() method doesn't take a step parameter
+        if (method_step != 1 && method_name != "name") {
+          return fmt::format(
+              "mcall {}, {}.{}({})", result.value(), operands[0].ToString(),
+              method_name, method_step);
+        }
+        return fmt::format(
+            "mcall {}, {}.{}()", result.value(), operands[0].ToString(),
+            method_name);
 
       case InstructionKind::kJump:
         if (operands.size() == 1) {

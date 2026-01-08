@@ -748,6 +748,179 @@ template <std::size_t W1, bool S1, std::size_t W2, bool S2>
   return static_cast<bool>(lhs) || static_cast<bool>(rhs);
 }
 
+namespace detail {
+
+// Helper to get bit width from any operand type
+template <typename T>
+constexpr auto GetBitWidth() -> std::size_t {
+  if constexpr (requires { T::kWidth; }) {
+    return T::kWidth;  // WideBit or Bit with static kWidth member
+  } else if constexpr (std::is_integral_v<T>) {
+    return sizeof(T) * 8;
+  } else {
+    return 0;
+  }
+}
+
+// Helper to get value from operand, masked to its actual width.
+// This handles sign-extension correctly - a signed int8_t with value -1
+// returns 0xFF, not 0xFFFFFFFFFFFFFFFF.
+template <typename T>
+constexpr auto GetMaskedValue(const T& operand) -> uint64_t {
+  constexpr std::size_t kWidth = GetBitWidth<T>();
+  uint64_t value = 0;
+  if constexpr (requires { operand.Value(); }) {
+    value = operand.Value();
+  } else if constexpr (std::is_integral_v<T>) {
+    value = static_cast<uint64_t>(operand);
+  }
+  // Mask to operand width to handle sign-extension
+  if constexpr (kWidth < 64) {
+    value &= (1ULL << kWidth) - 1;
+  }
+  return value;
+}
+
+// Helper to insert bits from any operand type into WideBit at a position
+template <std::size_t ResultWidth, typename T>
+constexpr void InsertBits(
+    WideBit<ResultWidth>& result, const T& operand, std::size_t bit_pos) {
+  constexpr std::size_t kResultWords = WordsForBits(ResultWidth);
+  constexpr std::size_t kOperandWidth = GetBitWidth<T>();
+
+  // For narrow operands (<= 64 bits), just insert the single value
+  if constexpr (kOperandWidth <= 64) {
+    // Use GetMaskedValue to handle sign-extension correctly
+    uint64_t value = GetMaskedValue(operand);
+    std::size_t word_idx = bit_pos / 64;
+    std::size_t bit_offset = bit_pos % 64;
+
+    if (word_idx < kResultWords) {
+      result.SetWord(
+          word_idx, result.GetWord(word_idx) | (value << bit_offset));
+      // Handle overflow into next word
+      if (bit_offset > 0 && word_idx + 1 < kResultWords) {
+        result.SetWord(
+            word_idx + 1,
+            result.GetWord(word_idx + 1) | (value >> (64 - bit_offset)));
+      }
+    }
+  } else {
+    // Wide operand - copy all words
+    constexpr std::size_t kOperandWords = WordsForBits(kOperandWidth);
+    std::size_t start_word = bit_pos / 64;
+    std::size_t bit_offset = bit_pos % 64;
+
+    for (std::size_t i = 0; i < kOperandWords && start_word + i < kResultWords;
+         ++i) {
+      uint64_t word = operand.GetWord(i);
+      std::size_t dst_idx = start_word + i;
+
+      if (bit_offset == 0) {
+        result.SetWord(dst_idx, result.GetWord(dst_idx) | word);
+      } else {
+        result.SetWord(dst_idx, result.GetWord(dst_idx) | (word << bit_offset));
+        if (dst_idx + 1 < kResultWords) {
+          result.SetWord(
+              dst_idx + 1,
+              result.GetWord(dst_idx + 1) | (word >> (64 - bit_offset)));
+        }
+      }
+    }
+  }
+}
+
+// Recursive helper to process operands right-to-left (wide result)
+template <std::size_t ResultWidth, typename First, typename... Rest>
+constexpr void WideConcatHelper(
+    WideBit<ResultWidth>& result, std::size_t bit_pos, const First& first,
+    const Rest&... rest) {
+  // Process remaining operands first (they go at lower bit positions)
+  if constexpr (sizeof...(rest) > 0) {
+    WideConcatHelper(result, bit_pos, rest...);
+    // Update bit_pos for this operand
+    std::size_t rest_width = (GetBitWidth<Rest>() + ...);
+    InsertBits(result, first, bit_pos + rest_width);
+  } else {
+    // Last operand (rightmost, LSB position)
+    InsertBits(result, first, bit_pos);
+  }
+}
+
+// Narrow concatenation helper - base case (single operand)
+template <typename First>
+constexpr auto NarrowConcatHelper(const First& first) -> uint64_t {
+  return GetMaskedValue(first);
+}
+
+// Narrow concatenation helper - recursive case
+template <typename First, typename... Rest>
+  requires(sizeof...(Rest) > 0)
+constexpr auto NarrowConcatHelper(const First& first, const Rest&... rest)
+    -> uint64_t {
+  // Process rest first (they are at lower bit positions)
+  uint64_t rest_result = NarrowConcatHelper(rest...);
+  // Calculate shift for first operand (sum of remaining operand widths)
+  constexpr std::size_t kRestWidth = (GetBitWidth<Rest>() + ...);
+  // Get first value masked to its width
+  uint64_t first_value = GetMaskedValue(first);
+  return rest_result | (first_value << kRestWidth);
+}
+
+// Wrapper for narrow concatenation results that preserves width information.
+// This is needed for nested concatenations: in {concat8, concat8}, the inner
+// results need to report their 8-bit width, not uint64_t's 64-bit width.
+template <std::size_t Width>
+struct NarrowConcatResult {
+  static_assert(Width > 0 && Width <= 64, "Width must be 1-64");
+  static constexpr std::size_t kWidth = Width;
+
+  uint64_t value;
+
+  constexpr NarrowConcatResult() : value{0} {
+  }
+  explicit constexpr NarrowConcatResult(uint64_t v) : value{v} {
+  }
+
+  // Implicit conversion to integral types for assignment
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  constexpr operator uint64_t() const {
+    return value;
+  }
+
+  // Value() method for GetMaskedValue
+  [[nodiscard]] constexpr auto Value() const -> uint64_t {
+    return value;
+  }
+};
+
+}  // namespace detail
+
+// Concatenation function - handles both narrow (<= 64 bit) and wide (> 64 bit)
+// results. Usage: Concat<96>(a, b, c) where a is MSB.
+// Operands can be WideBit, Bit, or integral types.
+// Returns NarrowConcatResult<N> for narrow, WideBit<N> for wide results.
+// NarrowConcatResult carries width info for correct nested concatenation.
+template <std::size_t ResultWidth, typename... Args>
+[[nodiscard]] constexpr auto Concat(const Args&... args) {
+  if constexpr (ResultWidth <= 64) {
+    // Narrow path: return NarrowConcatResult to preserve width information
+    if constexpr (sizeof...(args) == 0) {
+      return detail::NarrowConcatResult<ResultWidth>{0};
+    } else {
+      return detail::NarrowConcatResult<ResultWidth>{
+          detail::NarrowConcatHelper(args...)};
+    }
+  } else {
+    // Wide path: return WideBit<ResultWidth>
+    WideBit<ResultWidth> result;
+    if constexpr (sizeof...(args) > 0) {
+      detail::WideConcatHelper(result, 0, args...);
+    }
+    return result;
+  }
+}
+
 }  // namespace lyra::sdk
 
 // Include Bit after WideBit is fully defined to resolve circular dependency.

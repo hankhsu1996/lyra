@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
+#include "lyra/lir/module.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
@@ -48,6 +50,38 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto instruction =
           Instruction::Basic(IK::kLoadVariable, result, identifier.symbol);
       builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kEnumValue: {
+      // Emit enum value as its integer constant
+      const auto& enum_val = mir::As<mir::EnumValueExpression>(expression);
+      auto result = builder.AllocateTemp("enum", enum_val.type);
+      auto literal = builder.InternLiteral(
+          Literal::IntegralSigned(enum_val.value, enum_val.type.GetBitWidth()));
+      auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kEnumMethod: {
+      const auto& em = mir::As<mir::EnumMethodExpression>(expression);
+      auto receiver = LowerExpression(*em.receiver, builder);
+      auto result = builder.AllocateTemp("enum_method", em.type);
+
+      // Convert MIR enum members to LIR enum members
+      std::vector<lir::EnumMemberInfo> lir_members;
+      lir_members.reserve(em.members.size());
+      for (const auto& m : em.members) {
+        lir_members.push_back({.name = m.name, .value = m.value});
+      }
+
+      // Generate a single method call instruction - the interpreter handles
+      // the lookup logic at runtime
+      builder.AddInstruction(
+          Instruction::MethodCall(
+              mir::ToString(em.method), receiver, result, em.type, em.step,
+              std::move(lir_members)));
       return result;
     }
 
@@ -240,12 +274,19 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Supported system calls are validated in AST→MIR
       assert(common::IsSystemFunctionSupported(system_call.name));
 
-      auto is_mem_io =
+      bool is_mem_io =
           system_call.name == "$readmemh" || system_call.name == "$readmemb" ||
           system_call.name == "$writememh" || system_call.name == "$writememb";
 
+      // Check if this is a $monitor variant that needs symbol tracking
+      bool is_monitor =
+          (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
+           system_call.name == "$monitoro" || system_call.name == "$monitorh");
+
       std::vector<Operand> operands;
       std::vector<TempRef> arguments;
+      std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
+
       if (is_mem_io) {
         if (system_call.arguments.size() < 2 ||
             system_call.arguments.size() > 4) {
@@ -268,10 +309,50 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           operands.push_back(Operand::Temp(temp));
         }
       } else {
+        // Check if first argument is a format string (for $monitor)
+        // Format strings are string literals containing '%' and should not
+        // be tracked for value changes.
+        bool first_is_format_string = false;
+        if (is_monitor && !system_call.arguments.empty()) {
+          const auto& first_arg = system_call.arguments[0];
+          if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
+            const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
+            if (lit.literal.value.IsString() &&
+                lit.literal.value.AsString().find('%') != std::string::npos) {
+              first_is_format_string = true;
+            }
+          }
+        }
+
+        size_t arg_index = 0;
         for (const auto& argument : system_call.arguments) {
           if (argument) {
-            arguments.push_back(LowerExpression(*argument, builder));
+            // For $monitor, skip format string tracking but still lower it
+            bool is_format_string =
+                is_monitor && first_is_format_string && arg_index == 0;
+
+            if (is_monitor && !is_format_string) {
+              // Capture instructions for re-evaluation at each time slot
+              size_t before_count = builder.GetCurrentBlockInstructionCount();
+              TempRef result = LowerExpression(*argument, builder);
+              arguments.push_back(result);
+
+              // Copy the instructions that computed this argument
+              auto instructions = builder.CopyInstructionsSince(before_count);
+              size_t block_idx = builder.AddMonitorExpressionBlock(
+                  lir::MonitorExpressionBlock{
+                      .instructions = std::move(instructions),
+                      .result = result});
+
+              // Store the expression block index for re-evaluation
+              monitored_args.emplace_back(
+                  Instruction::MonitoredArg{
+                      .expression_block_index = block_idx});
+            } else {
+              arguments.push_back(LowerExpression(*argument, builder));
+            }
           }
+          ++arg_index;
         }
       }
 
@@ -295,6 +376,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Pass result temp to store the return value
         auto instruction = Instruction::SystemCall(
             system_call.name, std::move(arguments), result, system_call.type);
+        builder.AddInstruction(std::move(instruction));
+      } else if (is_monitor) {
+        // $monitor with tracked symbols
+        auto instruction = Instruction::SystemCallWithMonitor(
+            system_call.name, std::move(arguments), std::move(monitored_args));
         builder.AddInstruction(std::move(instruction));
       } else {
         // No result for system tasks
@@ -385,6 +471,20 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto instruction = Instruction::LoadHierarchical(
           result, hier_ref.instance_path, hier_ref.target_symbol,
           expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
+    case mir::Expression::Kind::kConcatenation: {
+      const auto& concat = mir::As<mir::ConcatenationExpression>(expression);
+      std::vector<TempRef> operand_temps;
+      operand_temps.reserve(concat.operands.size());
+      for (const auto& operand : concat.operands) {
+        operand_temps.push_back(LowerExpression(*operand, builder));
+      }
+      auto result = builder.AllocateTemp("cat", expression.type);
+      auto instruction = Instruction::Concatenation(
+          result, std::move(operand_temps), expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
     }

@@ -72,16 +72,16 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   if (name == "$writeh") {
     return {.default_format = 'h', .append_newline = false};
   }
-  if (name == "$displayb" || name == "$strobeb") {
+  if (name == "$displayb" || name == "$strobeb" || name == "$monitorb") {
     return {.default_format = 'b', .append_newline = true};
   }
-  if (name == "$displayo" || name == "$strobeo") {
+  if (name == "$displayo" || name == "$strobeo" || name == "$monitoro") {
     return {.default_format = 'o', .append_newline = true};
   }
-  if (name == "$displayh" || name == "$strobeh") {
+  if (name == "$displayh" || name == "$strobeh" || name == "$monitorh") {
     return {.default_format = 'h', .append_newline = true};
   }
-  // $display, $strobe (default)
+  // $display, $strobe, $monitor (default)
   return {.default_format = 'd', .append_newline = true};
 }
 
@@ -1557,6 +1557,29 @@ auto RunInstruction(
                       src.type, target_type)));
     }
 
+    // Concatenation: result = {op0, op1, ...}
+    // Operands are ordered MSB to LSB (first operand is most significant)
+    case lir::InstructionKind::kConcatenation: {
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+
+      const auto& result_type = instr.result_type.value();
+      size_t result_width = result_type.GetBitWidth();
+
+      // Collect operand values
+      std::vector<RuntimeValue> operand_values;
+      operand_values.reserve(instr.operands.size());
+      for (const auto& operand : instr.operands) {
+        operand_values.push_back(get_temp(operand));
+      }
+
+      // RuntimeValue::Concatenate handles narrow/wide dispatch internally
+      temp_table.Write(
+          instr.result.value(),
+          RuntimeValue::Concatenate(operand_values, result_width));
+      return InstructionResult::Continue();
+    }
+
     // Control flow
     case lir::InstructionKind::kComplete: {
       return InstructionResult::Complete();
@@ -1754,6 +1777,108 @@ auto RunInstruction(
                     simulation_context.display_output << "\n";
                   }
                 }});
+        return InstructionResult::Continue();
+      }
+
+      // Handle monitor variants - register for value change tracking
+      if (instr.system_call_name == "$monitor" ||
+          instr.system_call_name == "$monitorb" ||
+          instr.system_call_name == "$monitoro" ||
+          instr.system_call_name == "$monitorh") {
+        auto props = GetDisplayVariantProps(instr.system_call_name);
+
+        // Collect argument values
+        std::vector<RuntimeValue> arg_values;
+        for (const auto& operand : instr.operands) {
+          arg_values.push_back(get_temp(operand));
+        }
+
+        // Build format string (same logic as $display)
+        std::string format_string;
+        std::vector<RuntimeValue> format_args;
+
+        if (!arg_values.empty() && arg_values[0].IsString()) {
+          auto fmt_str = arg_values[0].AsString();
+          if (fmt_str.find('%') != std::string::npos) {
+            format_string = fmt_str;
+            format_args.assign(arg_values.begin() + 1, arg_values.end());
+          }
+        }
+
+        // If no format string, generate one
+        if (format_string.empty()) {
+          for (const auto& value : arg_values) {
+            if (value.IsString()) {
+              format_string += "%s";
+            } else if (value.IsReal() || value.IsShortReal()) {
+              format_string += "%f";
+            } else {
+              format_string += "%";
+              format_string += props.default_format;
+            }
+          }
+          format_args = std::move(arg_values);
+        }
+
+        // Build monitored variables list from instruction metadata
+        std::vector<MonitoredVariable> variables;
+        for (const auto& arg : instr.monitored_args) {
+          if (arg) {
+            variables.push_back(
+                MonitoredVariable{
+                    .expression_block_index = arg->expression_block_index});
+          }
+        }
+
+        // Get time format context
+        auto module_unit_power = simulation_context.timescale
+                                     ? simulation_context.timescale->unit_power
+                                     : common::TimeScale::kDefaultUnitPower;
+        TimeFormatContext time_ctx{
+            .time_format = simulation_context.time_format,
+            .module_unit_power = module_unit_power,
+            .global_precision_power =
+                simulation_context.global_precision_power};
+
+        // Print immediately on first call (IEEE 1800 §21.2.3)
+        simulation_context.display_output
+            << FormatDisplay(format_string, format_args, &time_ctx);
+        if (props.append_newline) {
+          simulation_context.display_output << "\n";
+        }
+
+        // Set up the active monitor (replaces any previous monitor)
+        // Use std::move since format_string and format_args are no longer
+        // needed
+        simulation_context.active_monitor = MonitorState{
+            .enabled = true,
+            .format_string = std::move(format_string),
+            .default_format = props.default_format,
+            .append_newline = props.append_newline,
+            .variables = std::move(variables),
+            .previous_values = std::move(format_args),
+            .instance = instance_context,
+            .time_format = simulation_context.time_format,
+            .module_unit_power = module_unit_power,
+            .global_precision_power =
+                simulation_context.global_precision_power};
+
+        return InstructionResult::Continue();
+      }
+
+      // Handle $monitoron - enable monitoring
+      if (instr.system_call_name == "$monitoron") {
+        if (simulation_context.active_monitor) {
+          simulation_context.active_monitor->enabled = true;
+        }
+        return InstructionResult::Continue();
+      }
+
+      // Handle $monitoroff - disable monitoring
+      if (instr.system_call_name == "$monitoroff") {
+        if (simulation_context.active_monitor) {
+          simulation_context.active_monitor->enabled = false;
+        }
         return InstructionResult::Continue();
       }
 
@@ -2031,6 +2156,70 @@ auto RunInstruction(
 
       // Supported system calls are validated in AST→MIR
       assert(false && "unsupported system call should be rejected in AST→MIR");
+    }
+
+    case lir::InstructionKind::kMethodCall: {
+      // Generic method call - currently handles enum methods (next, prev, name)
+      // Future: string methods, class methods
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+      assert(!instr.operands.empty());
+
+      const auto& receiver = get_temp(instr.operands[0]);
+      int64_t current_value = receiver.AsNarrow().AsInt64();
+      const auto& members = instr.enum_members;
+
+      // Find current position in enum member list
+      size_t current_pos = 0;
+      bool found = false;
+      for (size_t i = 0; i < members.size(); ++i) {
+        if (members[i].value == current_value) {
+          current_pos = i;
+          found = true;
+          break;
+        }
+      }
+
+      RuntimeValue result;
+      if (instr.method_name == "next") {
+        if (found) {
+          // next(N): move forward N positions with wrap-around
+          auto step = static_cast<size_t>(instr.method_step);
+          size_t target_pos = (current_pos + step) % members.size();
+          result = RuntimeValue::IntegralSigned(
+              members[target_pos].value, instr.result_type->GetBitWidth());
+        } else {
+          // Invalid value: return 0 (implementation-defined per IEEE 1800-2023)
+          result =
+              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
+        }
+      } else if (instr.method_name == "prev") {
+        if (found) {
+          // prev(N): move backward N positions with wrap-around
+          // Add members.size() before subtracting to avoid underflow
+          size_t step = static_cast<size_t>(instr.method_step) % members.size();
+          size_t target_pos =
+              (current_pos + members.size() - step) % members.size();
+          result = RuntimeValue::IntegralSigned(
+              members[target_pos].value, instr.result_type->GetBitWidth());
+        } else {
+          // Invalid value: return 0 (implementation-defined per IEEE 1800-2023)
+          result =
+              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
+        }
+      } else if (instr.method_name == "name") {
+        if (found) {
+          result = RuntimeValue::String(members[current_pos].name);
+        } else {
+          // Invalid value: return empty string (implementation-defined)
+          result = RuntimeValue::String("");
+        }
+      } else {
+        assert(false && "unsupported method call");
+      }
+
+      temp_table.Write(instr.result.value(), result);
+      return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kJump: {

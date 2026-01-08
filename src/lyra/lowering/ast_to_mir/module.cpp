@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -147,6 +148,11 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   }
 
   for (const auto& symbol : body.members()) {
+    // Skip TypeAlias - handled in LowerType which unwraps to canonical type
+    if (symbol.kind == slang::ast::SymbolKind::TypeAlias) {
+      continue;
+    }
+
     // Lower variables (skip port variables)
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
       // Skip if this variable is a port

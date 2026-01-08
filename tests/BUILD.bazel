@@ -67,6 +67,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "operators_concat_tests",
+    yaml = "sv_features/operators/concat.yaml",
+)
+
+sv_feature_test(
     name = "processes_initial_tests",
     yaml = "sv_features/processes/initial.yaml",
 )
@@ -167,6 +172,21 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_typedef_tests",
+    yaml = "sv_features/datatypes/typedef.yaml",
+)
+
+sv_feature_test(
+    name = "datatypes_enum_tests",
+    yaml = "sv_features/datatypes/enum.yaml",
+)
+
+sv_feature_test(
+    name = "datatypes_enum_methods_tests",
+    yaml = "sv_features/datatypes/enum_methods.yaml",
+)
+
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
@@ -174,6 +194,11 @@ sv_feature_test(
 sv_feature_test(
     name = "display_strobe_tests",
     yaml = "sv_features/display/strobe.yaml",
+)
+
+sv_feature_test(
+    name = "display_monitor_tests",
+    yaml = "sv_features/display/monitor.yaml",
 )
 
 sv_feature_test(

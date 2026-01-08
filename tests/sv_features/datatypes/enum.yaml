@@ -1,0 +1,218 @@
+feature: enum
+description: Tests for enum types
+
+cases:
+  - name: enum_basic_assignment
+    description: Basic enum declaration and assignment
+    sv: |
+      module Test;
+        typedef enum {IDLE, RUN, STOP} state_t;
+        state_t state;
+        int result;
+        initial begin
+          state = IDLE;
+          result = state;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: enum_sequential_values
+    description: Enum values are sequential starting from 0
+    sv: |
+      module Test;
+        typedef enum {A, B, C, D} val_t;
+        val_t v;
+        int r0, r1, r2, r3;
+        initial begin
+          v = A; r0 = v;
+          v = B; r1 = v;
+          v = C; r2 = v;
+          v = D; r3 = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 0
+        r1: 1
+        r2: 2
+        r3: 3
+
+  - name: enum_explicit_values
+    description: Enum with explicit values
+    sv: |
+      module Test;
+        typedef enum {A = 1, B = 5, C = 10} val_t;
+        val_t v;
+        int r0, r1, r2;
+        initial begin
+          v = A; r0 = v;
+          v = B; r1 = v;
+          v = C; r2 = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 5
+        r2: 10
+
+  - name: enum_mixed_values
+    description: Enum with mix of explicit and implicit values
+    sv: |
+      module Test;
+        typedef enum {A = 5, B, C = 20, D} val_t;
+        val_t v;
+        int r0, r1, r2, r3;
+        initial begin
+          v = A; r0 = v;
+          v = B; r1 = v;
+          v = C; r2 = v;
+          v = D; r3 = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 5
+        r1: 6
+        r2: 20
+        r3: 21
+
+  - name: enum_comparison
+    description: Enum comparison operations
+    sv: |
+      module Test;
+        typedef enum {IDLE, RUN, STOP} state_t;
+        state_t state;
+        int r0, r1, r2;
+        initial begin
+          state = RUN;
+          r0 = (state == RUN) ? 1 : 0;
+          r1 = (state == IDLE) ? 1 : 0;
+          r2 = (state != STOP) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 0
+        r2: 1
+
+  - name: enum_arithmetic
+    description: Enum in arithmetic operations
+    sv: |
+      module Test;
+        typedef enum {A = 10, B = 20} val_t;
+        val_t v;
+        int result;
+        initial begin
+          v = A;
+          result = v + 5;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: enum_explicit_base_type
+    description: Enum with explicit base type
+    sv: |
+      module Test;
+        typedef enum logic [2:0] {RED, GREEN, BLUE} color_t;
+        color_t color;
+        int result;
+        initial begin
+          color = BLUE;
+          result = color;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: enum_display
+    description: Display enum values
+    sv: |
+      module Test;
+        typedef enum {OFF, ON} switch_t;
+        switch_t sw;
+        initial begin
+          sw = OFF;
+          $display("%0d", sw);
+          sw = ON;
+          $display("%0d", sw);
+        end
+      endmodule
+    expect:
+      stdout: |
+        0
+        1
+
+  - name: enum_range_count
+    description: Enum range with count syntax name[N] creates N values
+    sv: |
+      module Test;
+        // sub[5] creates sub0, sub1, sub2, sub3, sub4
+        typedef enum {sub[5]} op_t;
+        op_t op;
+        int r0, r1, r2, r3, r4;
+        initial begin
+          op = sub0; r0 = op;
+          op = sub1; r1 = op;
+          op = sub2; r2 = op;
+          op = sub3; r3 = op;
+          op = sub4; r4 = op;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 0
+        r1: 1
+        r2: 2
+        r3: 3
+        r4: 4
+
+  - name: enum_range_bounds
+    description: Enum range with bounds syntax name[N:M] creates values nameN to nameM
+    sv: |
+      module Test;
+        // jmp[6:8] creates jmp6, jmp7, jmp8
+        typedef enum {jmp[6:8]} op_t;
+        op_t op;
+        int r6, r7, r8;
+        initial begin
+          op = jmp6; r6 = op;
+          op = jmp7; r7 = op;
+          op = jmp8; r8 = op;
+        end
+      endmodule
+    expect:
+      variables:
+        r6: 0
+        r7: 1
+        r8: 2
+
+  - name: enum_range_mixed
+    description: Enum with explicit value followed by ranges
+    sv: |
+      module Test;
+        // add=10, sub[5] creates sub0..sub4 (values 11-15), jmp[6:8] creates jmp6..jmp8 (16-18)
+        typedef enum {add=10, sub[5], jmp[6:8]} opcode_t;
+        opcode_t op;
+        int r_add, r_sub0, r_sub4, r_jmp6, r_jmp8;
+        initial begin
+          op = add;  r_add = op;
+          op = sub0; r_sub0 = op;
+          op = sub4; r_sub4 = op;
+          op = jmp6; r_jmp6 = op;
+          op = jmp8; r_jmp8 = op;
+        end
+      endmodule
+    expect:
+      variables:
+        r_add: 10
+        r_sub0: 11
+        r_sub4: 15
+        r_jmp6: 16
+        r_jmp8: 18

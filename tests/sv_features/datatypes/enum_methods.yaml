@@ -1,0 +1,224 @@
+feature: enum_methods
+description: Tests for enum methods (IEEE 1800-2023 Section 6.19.5)
+
+cases:
+  # Compile-time methods - slang evaluates at compile time
+
+  - name: enum_first
+    description: first() returns the first enum value
+    sv: |
+      module Test;
+        typedef enum {A=5, B=10, C=15} t;
+        t v;
+        int r;
+        initial begin
+          v = B;
+          r = v.first();
+        end
+      endmodule
+    expect:
+      variables:
+        r: 5
+
+  - name: enum_last
+    description: last() returns the last enum value
+    sv: |
+      module Test;
+        typedef enum {A=5, B=10, C=15} t;
+        t v;
+        int r;
+        initial begin
+          v = A;
+          r = v.last();
+        end
+      endmodule
+    expect:
+      variables:
+        r: 15
+
+  - name: enum_num
+    description: num() returns the count of enum values
+    sv: |
+      module Test;
+        typedef enum {A, B, C, D, E} t;
+        t v;
+        int r;
+        initial begin
+          v = A;
+          r = v.num();
+        end
+      endmodule
+    expect:
+      variables:
+        r: 5
+
+  - name: enum_num_auto_values
+    description: num() works with auto-increment values
+    sv: |
+      module Test;
+        typedef enum {X=10, Y, Z} t;
+        t v;
+        int r;
+        initial begin
+          v = Y;
+          r = v.num();
+        end
+      endmodule
+    expect:
+      variables:
+        r: 3
+
+  # Runtime methods - need lookup at runtime
+
+  - name: enum_next
+    description: next() returns the next enum value
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10} t;
+        t v;
+        int r;
+        initial begin
+          v = A;
+          v = v.next();
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 5
+
+  - name: enum_next_wrap
+    description: next() wraps around at the end
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10} t;
+        t v;
+        int r;
+        initial begin
+          v = C;
+          v = v.next();
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 0
+
+  - name: enum_prev
+    description: prev() returns the previous enum value
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10} t;
+        t v;
+        int r;
+        initial begin
+          v = C;
+          v = v.prev();
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 5
+
+  - name: enum_prev_wrap
+    description: prev() wraps around at the beginning
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10} t;
+        t v;
+        int r;
+        initial begin
+          v = A;
+          v = v.prev();
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 10
+
+  - name: enum_next_step
+    description: next(N) skips N values forward
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10, D=15, E=20} t;
+        t v;
+        int r;
+        initial begin
+          v = A;
+          v = v.next(2);
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 10
+
+  - name: enum_next_step_wrap
+    description: next(N) wraps around when stepping past the end
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10, D=15, E=20} t;
+        t v;
+        int r;
+        initial begin
+          v = D;
+          v = v.next(3);
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 5
+
+  - name: enum_prev_step
+    description: prev(N) skips N values backward
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10, D=15, E=20} t;
+        t v;
+        int r;
+        initial begin
+          v = E;
+          v = v.prev(2);
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 10
+
+  - name: enum_prev_step_wrap
+    description: prev(N) wraps around when stepping past the beginning
+    sv: |
+      module Test;
+        typedef enum {A=0, B=5, C=10, D=15, E=20} t;
+        t v;
+        int r;
+        initial begin
+          v = B;
+          v = v.prev(3);
+          r = v;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 15
+
+  - name: enum_name
+    description: name() returns the string name of the current value
+    sv: |
+      module Test;
+        typedef enum {IDLE, RUN, STOP} state_t;
+        state_t s;
+        string name;
+        initial begin
+          s = RUN;
+          name = s.name();
+          $display("%s", name);
+        end
+      endmodule
+    expect:
+      stdout: |
+        RUN

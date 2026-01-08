@@ -5,6 +5,7 @@ namespace lyra::mir {
 class Expression;
 class LiteralExpression;
 class IdentifierExpression;
+class EnumValueExpression;
 class UnaryExpression;
 class BinaryExpression;
 class TernaryExpression;
@@ -15,6 +16,8 @@ class ElementSelectExpression;
 class RangeSelectExpression;
 class IndexedRangeSelectExpression;
 class HierarchicalReferenceExpression;
+class EnumMethodExpression;
+class ConcatenationExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -43,6 +46,7 @@ class MirVisitor {
 
   virtual void Visit(const LiteralExpression&) = 0;
   virtual void Visit(const IdentifierExpression&) = 0;
+  virtual void Visit(const EnumValueExpression&) = 0;
   virtual void Visit(const UnaryExpression&) = 0;
   virtual void Visit(const BinaryExpression&) = 0;
   virtual void Visit(const TernaryExpression&) = 0;
@@ -53,6 +57,8 @@ class MirVisitor {
   virtual void Visit(const RangeSelectExpression&) = 0;
   virtual void Visit(const IndexedRangeSelectExpression&) = 0;
   virtual void Visit(const HierarchicalReferenceExpression&) = 0;
+  virtual void Visit(const EnumMethodExpression&) = 0;
+  virtual void Visit(const ConcatenationExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

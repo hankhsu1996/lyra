@@ -1,6 +1,6 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*)
 ---
 
 # Pull Request
@@ -13,6 +13,7 @@ Create a PR following the project format.
 - **Git status:** !`git status --short`
 - **Commits on this branch:** !`git log --oneline main..HEAD`
 - **Full diff from main:** !`git diff main..HEAD --stat`
+- **Commits behind main:** !`git fetch origin main --quiet && git rev-list --count HEAD..origin/main`
 
 ## PR Format
 
@@ -41,8 +42,9 @@ Code examples should support explanations, not replace them. Include both the "w
 ## Instructions
 
 1. Check context above; ensure working tree is clean
-2. Push if needed: `git push -u origin <branch>`
-3. Create PR: `gh pr create --title "..." --body "..."`
-4. Return the PR URL to the user
+2. If commits behind main > 0, rebase first: `git rebase origin/main`
+3. Push if needed: `git push -u origin <branch>`
+4. Create PR: `gh pr create --title "..." --body "..."`
+5. Return the PR URL to the user
 
 If updating an existing PR, push the new commits and update the PR body with `gh pr edit`.
