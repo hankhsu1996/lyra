@@ -13,6 +13,7 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/wide_bit.hpp"
 #include "lyra/lir/context.hpp"
 
 namespace lyra {
@@ -89,13 +90,20 @@ struct RuntimeValue {
         .value = ValueVariant(common::ValueStorage(value))};
   }
 
+  // Factory for wide integral values (>64 bits)
+  static auto IntegralWide(
+      common::WideBit value, size_t bit_width, bool is_signed = false)
+      -> RuntimeValue {
+    value.MaskToWidth(bit_width);
+    return RuntimeValue{
+        .type = is_signed ? common::Type::IntegralSigned(bit_width)
+                          : common::Type::IntegralUnsigned(bit_width),
+        .value = ValueVariant(common::ValueStorage(std::move(value)))};
+  }
+
   // Scalar accessors - assumes value holds ValueStorage
   [[nodiscard]] auto AsScalar() const -> const common::ValueStorage& {
     return std::get<common::ValueStorage>(value);
-  }
-
-  [[nodiscard]] auto AsInt64() const -> int64_t {
-    return AsScalar().AsInt64();
   }
 
   [[nodiscard]] auto AsDouble() const -> double {
@@ -106,17 +114,17 @@ struct RuntimeValue {
     return AsScalar().AsFloat();
   }
 
-  [[nodiscard]] auto AsUInt64() const -> uint64_t {
-    return static_cast<uint64_t>(AsScalar().AsInt64()) &
-           common::MakeBitMask(GetBitWidth());
-  }
-
-  [[nodiscard]] auto AsBool() const -> bool {
-    return AsScalar().AsInt64() != 0;
-  }
-
   [[nodiscard]] auto AsString() const -> const std::string& {
     return AsScalar().AsString();
+  }
+
+  // Wide bit accessors
+  [[nodiscard]] auto IsWide() const -> bool {
+    return IsTwoState() && GetBitWidth() > 64;
+  }
+
+  [[nodiscard]] auto AsWideBit() const -> const common::WideBit& {
+    return AsScalar().AsWideBit();
   }
 
   // Array accessors - assumes value holds ArrayStorage
@@ -179,6 +187,58 @@ struct RuntimeValue {
     return std::get<common::IntegralData>(type.data).bit_width;
   }
 
+  [[nodiscard]] auto IsSigned() const -> bool {
+    if (type.kind != common::Type::Kind::kIntegral) {
+      return false;
+    }
+    return std::get<common::IntegralData>(type.data).is_signed;
+  }
+
+  // Safe narrow integral value wrapper.
+  // Use this instead of AsInt64()/AsUInt64() for type-safe access.
+  struct NarrowIntegral {
+    int64_t raw;
+    uint32_t bit_width;
+    bool is_signed;
+
+    [[nodiscard]] auto AsInt64() const -> int64_t {
+      return raw;
+    }
+
+    [[nodiscard]] auto AsUInt64() const -> uint64_t {
+      return static_cast<uint64_t>(raw) & common::MakeBitMask(bit_width);
+    }
+  };
+
+  // Safe accessor for narrow (<=64 bit) integral values.
+  // Asserts that the value is not wide - use MatchIntegral for wide-safe
+  // access.
+  [[nodiscard]] auto AsNarrow() const -> NarrowIntegral {
+    assert(
+        IsTwoState() && !IsWide() && "Use MatchIntegral for wide-safe access");
+    return {
+        .raw = AsScalar().AsInt64(),
+        .bit_width = GetBitWidth(),
+        .is_signed = IsSigned()};
+  }
+
+  // Pattern matching for integral values - forces handling both narrow and wide
+  // cases. This is the preferred way to access integral values as it prevents
+  // crashes from forgetting to check IsWide().
+  //
+  // Example:
+  //   auto result = value.MatchIntegral(
+  //       [](NarrowIntegral n) { return n.AsInt64() == 0; },
+  //       [](const common::WideBit& w) { return w.IsZero(); });
+  template <typename NarrowFn, typename WideFn>
+  auto MatchIntegral(NarrowFn narrow_fn, WideFn wide_fn) const {
+    assert(IsTwoState() && "MatchIntegral requires integral type");
+    if (IsWide()) {
+      return wide_fn(AsWideBit());
+    }
+    return narrow_fn(AsNarrow());
+  }
+
   // Note: Can't use default comparison because ArrayStorage is shared_ptr
   // and we want value equality for arrays
   [[nodiscard]] auto operator==(const RuntimeValue& rhs) const -> bool {
@@ -199,6 +259,12 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       return {};
     case common::Type::Kind::kIntegral: {
       auto data = std::get<common::IntegralData>(type.data);
+      if (data.bit_width > 64) {
+        // Wide value - use WideBit storage
+        return IntegralWide(
+            common::WideBit::FromBitWidth(data.bit_width), data.bit_width,
+            data.is_signed);
+      }
       if (data.is_signed) {
         return IntegralSigned(0, data.bit_width);
       }

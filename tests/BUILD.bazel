@@ -147,6 +147,16 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_wide_packed_2d_tests",
+    yaml = "sv_features/datatypes/wide_packed_2d.yaml",
+)
+
+sv_feature_test(
+    name = "datatypes_packed_3d_tests",
+    yaml = "sv_features/datatypes/packed_3d.yaml",
+)
+
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
@@ -239,4 +249,13 @@ sv_feature_test(
 sv_feature_test(
     name = "scheduling_regions_tests",
     yaml = "sv_features/scheduling/regions.yaml",
+)
+
+cc_test(
+    name = "wide_bit_test",
+    srcs = ["unit/wide_bit_test.cpp"],
+    deps = [
+        "//:core",
+        "@googletest//:gtest_main",
+    ],
 )

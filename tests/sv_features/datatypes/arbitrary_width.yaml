@@ -559,6 +559,42 @@ cases:
         lsb: 0
         msb: 1
 
+  - name: negative_range_slice_across_zero
+    interpreter_only: true
+    sv: |
+      module Test;
+        bit [3:-4] c;  // 8 bits: indices 3,2,1,0,-1,-2,-3,-4
+        int result;
+        initial begin
+          c = 8'b11001010;  // bits at positions 3,2,1,0,-1,-2,-3,-4
+          result = c[1:-2];  // Extract bits at positions 1,0,-1,-2 = 0010
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2  # 0b0010
+
+  - name: negative_range_2d_element_access
+    interpreter_only: true
+    sv: |
+      module Test;
+        bit [1:-1][7:0] b;  // 3 elements with indices 1, 0, -1
+        int r1, r0, r_neg1;
+        initial begin
+          b[1] = 8'hAA;
+          b[0] = 8'hBB;
+          b[-1] = 8'hCC;
+          r1 = b[1];
+          r0 = b[0];
+          r_neg1 = b[-1];
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 170    # 0xAA
+        r0: 187    # 0xBB
+        r_neg1: 204  # 0xCC
+
   # Element assignment tests
   - name: element_assign_set_bit
     sv: |
@@ -639,3 +675,324 @@ cases:
     expect:
       variables:
         result: 4  # bit 2 of storage set = 0b000100
+
+  # Wide bit vector tests (>64 bits)
+  # These tests use simple values that fit in the first word to avoid
+  # complex multi-word literal parsing issues.
+
+  - name: wide_65_basic
+    sv: |
+      module Test;
+        bit [64:0] a;
+        longint result;
+        initial begin
+          a = 65'd123456789;  // Simple value in low word
+          result = a[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 123456789
+
+  - name: wide_65_add_no_overflow
+    sv: |
+      module Test;
+        bit [64:0] a, b, c;
+        longint result;
+        initial begin
+          a = 65'd100;
+          b = 65'd200;
+          c = a + b;
+          result = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 300
+
+  - name: wide_128_add
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        longint lo;
+        initial begin
+          a = 128'd1000000000000;
+          b = 128'd2000000000000;
+          c = a + b;
+          lo = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 3000000000000
+
+  - name: wide_128_subtract
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        longint lo;
+        initial begin
+          a = 128'd5000000000000;
+          b = 128'd2000000000000;
+          c = a - b;
+          lo = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 3000000000000
+
+  - name: wide_128_bitwise_and
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        longint lo;
+        initial begin
+          a = 128'd255;  // 0xFF
+          b = 128'd15;   // 0x0F
+          c = a & b;
+          lo = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 15
+
+  - name: wide_128_bitwise_or
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        longint lo;
+        initial begin
+          a = 128'd240;  // 0xF0
+          b = 128'd15;   // 0x0F
+          c = a | b;
+          lo = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 255
+
+  - name: wide_128_bitwise_xor
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        longint lo;
+        initial begin
+          a = 128'd255;  // 0xFF
+          b = 128'd15;   // 0x0F
+          c = a ^ b;
+          lo = c[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 240
+
+  - name: wide_128_bitwise_not
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        int lo;
+        initial begin
+          a = 128'd0;
+          b = ~a;
+          lo = b[31:0];  // Extract low 32 bits
+        end
+      endmodule
+    expect:
+      variables:
+        lo: -1  # All 1s in 32 bits = -1 as signed int
+
+  - name: wide_128_shift_left
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        longint lo, hi;
+        initial begin
+          a = 128'd1;
+          b = a << 64;  // Shift 1 to bit 64
+          lo = b[63:0];
+          hi = b[127:64];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 0
+        hi: 1
+
+  - name: wide_128_shift_right
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        longint lo;
+        initial begin
+          a = 128'd256;  // 0x100
+          b = a >> 4;    // Shift right by 4
+          lo = b[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 16
+
+  - name: wide_96_basic
+    sv: |
+      module Test;
+        bit [95:0] a;
+        longint lo;
+        initial begin
+          a = 96'd9876543210;
+          lo = a[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 9876543210
+
+  - name: wide_200_basic
+    sv: |
+      module Test;
+        bit [199:0] a;
+        longint lo;
+        initial begin
+          a = 200'd42;
+          lo = a[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 42
+
+  # Signed wide bit vector tests (>64 bits)
+  - name: wide_128_signed_basic
+    sv: |
+      module Test;
+        logic signed [127:0] a;
+        longint lo;
+        initial begin
+          a = 128'd12345;  // Simple positive value
+          lo = a[63:0];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: 12345
+
+  # Wide reduction operation tests (>64 bits)
+  - name: reduction_xor_wide
+    sv: |
+      module Test;
+        logic [127:0] a;
+        int result;
+        initial begin
+          a = 128'h1;  // Single bit set in low word
+          result = ^a; // XOR reduction = 1 (odd popcount)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_wide
+    sv: |
+      module Test;
+        logic [127:0] a;
+        int result;
+        initial begin
+          a = 128'd1 << 64;  // Bit 64 set (in second word)
+          result = |a;  // OR reduction = 1 (any bit set)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_and_wide
+    sv: |
+      module Test;
+        logic [127:0] a;
+        int result;
+        initial begin
+          a = ~128'd0;  // All bits 1
+          result = &a;  // AND reduction = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # Wide multiplication tests (>64 bits)
+  - name: wide_128_multiply_max
+    sv: |
+      module Test;
+        logic [127:0] a, b, result;
+        initial begin
+          // (2^64 - 1) * (2^64 - 1) = 2^128 - 2^65 + 1
+          // = 0xFFFFFFFFFFFFFFFE_0000000000000001
+          a = 128'hFFFFFFFFFFFFFFFF;  // 2^64 - 1
+          b = 128'hFFFFFFFFFFFFFFFF;  // 2^64 - 1
+          result = a * b;
+          $display("result = %h", result);
+        end
+      endmodule
+    expect:
+      output: "result = 0xfffffffffffffffe0000000000000001\n"
+
+  # Unary minus with wide types
+  - name: wide_unary_minus_one
+    sv: |
+      module Test;
+        logic signed [127:0] a, result;
+        initial begin
+          a = 1;
+          result = -a;
+          $display("result = %h", result);
+        end
+      endmodule
+    expect:
+      output: "result = 0xffffffffffffffffffffffffffffffff\n"
+
+  - name: wide_unary_minus_neg_one
+    sv: |
+      module Test;
+        logic signed [127:0] a, result;
+        initial begin
+          a = -1;  // Test negating a negative wide value
+          result = -a;
+          $display("result = %h", result);
+        end
+      endmodule
+    expect:
+      output: "result = 0x1\n"
+
+  # Wide to narrow conversion
+  - name: wide_to_narrow_neg_one
+    sv: |
+      module Test;
+        logic signed [127:0] wide_val;
+        logic signed [31:0] narrow_val;
+        initial begin
+          wide_val = -1;
+          narrow_val = wide_val;
+          $display("narrow = %0d", narrow_val);
+        end
+      endmodule
+    expect:
+      output: "narrow = -1\n"
+
+  - name: wide_to_narrow_truncation
+    sv: |
+      module Test;
+        logic [127:0] wide_val;
+        logic [31:0] narrow_val;
+        initial begin
+          wide_val = 128'hDEADBEEF_12345678;  // Lower 32 bits: 0x12345678
+          narrow_val = wide_val;
+          $display("narrow = %0d", narrow_val);
+        end
+      endmodule
+    expect:
+      output: "narrow = 305419896\n"
+

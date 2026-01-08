@@ -9,6 +9,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/meta_util.hpp"
+#include "lyra/common/wide_bit.hpp"
 
 namespace lyra::common {
 
@@ -28,8 +29,8 @@ auto Match(Variant&& v, Matchers&&... matchers) {
 
 class ValueStorage {
  public:
-  using Storage =
-      std::variant<std::monostate, int64_t, double, float, std::string>;
+  using Storage = std::variant<
+      std::monostate, int64_t, double, float, std::string, WideBit>;
 
   ValueStorage() = default;
   explicit ValueStorage(std::monostate v) : value_(v) {
@@ -42,6 +43,8 @@ class ValueStorage {
   }
   explicit ValueStorage(std::string v) : value_(std::move(v)) {
   }
+  explicit ValueStorage(WideBit v) : value_(std::move(v)) {
+  }
 
   static auto Void() -> ValueStorage {
     return ValueStorage(std::monostate{});
@@ -53,7 +56,8 @@ class ValueStorage {
         [](int64_t v) { return std::to_string(v); },
         [](double v) { return fmt::format("{:.17g}", v); },
         [](float v) { return fmt::format("{:.9g}", v); },
-        [](const std::string& v) { return "\"" + v + "\""; });
+        [](const std::string& v) { return "\"" + v + "\""; },
+        [](const WideBit& v) { return v.ToHexString(); });
   }
 
   template <typename T>
@@ -81,6 +85,10 @@ class ValueStorage {
     return Is<std::string>();
   }
 
+  [[nodiscard]] auto IsWideBit() const -> bool {
+    return Is<WideBit>();
+  }
+
   template <typename T>
   [[nodiscard]] auto As() const -> const T& {
     assert(Is<T>() && "Bad variant access");
@@ -101,6 +109,15 @@ class ValueStorage {
 
   [[nodiscard]] auto AsString() const -> const std::string& {
     return As<std::string>();
+  }
+
+  [[nodiscard]] auto AsWideBit() const -> const WideBit& {
+    return As<WideBit>();
+  }
+
+  [[nodiscard]] auto AsWideBit() -> WideBit& {
+    assert(Is<WideBit>() && "Bad variant access");
+    return std::get<WideBit>(value_);
   }
 
   auto Raw() -> auto& {
@@ -127,6 +144,8 @@ class ValueStorage {
             return std::hash<float>{}(val);
           } else if constexpr (std::is_same_v<T, std::string>) {
             return std::hash<std::string>{}(val);
+          } else if constexpr (std::is_same_v<T, WideBit>) {
+            return val.Hash();
           } else {
             static_assert(
                 kAlwaysFalse<T>, "Unhandled type in ValueStorage::Hash()");

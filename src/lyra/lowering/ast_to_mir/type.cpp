@@ -41,16 +41,6 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
       return element_result;
     }
 
-    auto total_width = type.getBitWidth();
-    if (total_width > 64) {
-      return std::unexpected(
-          Diagnostic::Error(
-              source_range,
-              fmt::format(
-                  "unsupported packed array width {} (must be 1-64)",
-                  total_width)));
-    }
-
     bool is_signed = type.isSigned();
     bool is_four_state = type.isFourState();
     return Type::PackedArray(
@@ -62,14 +52,6 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     auto width = type.getBitWidth();
     bool is_signed = type.isSigned();
     bool is_four_state = type.isFourState();
-
-    if (width > 64) {
-      return std::unexpected(
-          Diagnostic::Error(
-              source_range,
-              fmt::format(
-                  "unsupported integral type width {} (must be 1-64)", width)));
-    }
 
     // Get range info for non-zero-based indexing (e.g., bit [63:32])
     auto range = type.getFixedRange();

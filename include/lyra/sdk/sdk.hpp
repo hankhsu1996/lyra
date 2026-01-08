@@ -11,3 +11,4 @@
 #include "lyra/sdk/task.hpp"
 #include "lyra/sdk/time_utils.hpp"
 #include "lyra/sdk/wait_event.hpp"
+#include "lyra/sdk/wide_bit.hpp"

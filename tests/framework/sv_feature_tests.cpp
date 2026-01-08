@@ -67,7 +67,8 @@ TEST_P(SvFeatureTest, Interpreter) {
   }
 
   for (const auto& [var, expected] : tc.expected_values) {
-    EXPECT_EQ(result.ReadVariable(var).AsInt64(), expected)
+    // Test expected values are always narrow
+    EXPECT_EQ(result.ReadVariable(var).AsNarrow().AsInt64(), expected)
         << "Variable: " << var;
   }
 

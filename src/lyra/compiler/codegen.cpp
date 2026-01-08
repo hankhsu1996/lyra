@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/sv_format.hpp"
@@ -86,6 +87,86 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
       return kPrecMultiplicative;
   }
   return kPrecPrimary;
+}
+
+auto IsSigned(const common::Type& type) -> bool {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return false;
+  }
+  return std::get<common::IntegralData>(type.data).is_signed;
+}
+
+// Returns true if bit width requires WideBit (> 64 bits)
+constexpr auto IsWideWidth(size_t width) -> bool {
+  return width > 64;
+}
+
+auto ToCppType(const common::Type& type) -> std::string {
+  switch (type.kind) {
+    case common::Type::Kind::kVoid:
+      return "void";
+    case common::Type::Kind::kReal:
+      return "Real";
+    case common::Type::Kind::kShortReal:
+      return "ShortReal";
+    case common::Type::Kind::kString:
+      return "std::string";
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+
+      if (IsWideWidth(width)) {
+        // Wide integers use lyra::sdk::WideBit<N>
+        if (is_signed) {
+          return std::format("lyra::sdk::WideBit<{}, true>", width);
+        }
+        return std::format("lyra::sdk::WideBit<{}>", width);
+      }
+
+      // Use LRM-aligned type aliases for standard signed integer types
+      if (is_signed) {
+        if (width == 8) {
+          return "Byte";
+        }
+        if (width == 16) {
+          return "ShortInt";
+        }
+        if (width == 32) {
+          return "Int";
+        }
+        if (width == 64) {
+          return "LongInt";
+        }
+        // Non-standard signed widths use Bit<N, true>
+        return std::format("Bit<{}, true>", width);
+      }
+
+      // Unsigned types use Bit<N>
+      return std::format("Bit<{}>", width);
+    }
+    case common::Type::Kind::kUnpackedArray: {
+      const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
+      return std::format(
+          "std::array<{}, {}>", ToCppType(*array_data.element_type),
+          array_data.size);
+    }
+  }
+  return "/* unknown type */";
+}
+
+auto ToCppUnsignedType(const common::Type& type) -> std::string {
+  if (type.kind != common::Type::Kind::kIntegral) {
+    return "/* unknown type */";
+  }
+  auto data = std::get<common::IntegralData>(type.data);
+  size_t width = data.bit_width;
+  if (IsWideWidth(width)) {
+    // Always return unsigned lyra::sdk::WideBit<N>
+    return std::format("lyra::sdk::WideBit<{}>", width);
+  }
+  // Always return unsigned Bit<N> regardless of original signedness
+  return std::format("Bit<{}>", width);
 }
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
@@ -195,6 +276,16 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   return {.default_format = 'd', .use_println = true};  // $display (default)
 }
 
+// Get element bit width after applying N indices to a multi-dimensional type
+auto GetElementWidthAfterIndices(
+    const common::Type& base_type, size_t num_indices) -> size_t {
+  const common::Type* current = &base_type;
+  for (size_t i = 0; i < num_indices; ++i) {
+    current = &current->GetElementType();
+  }
+  return current->GetBitWidth();
+}
+
 }  // namespace
 
 auto Codegen::IsSigned(const common::Type& type) -> bool {
@@ -221,8 +312,12 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       size_t width = data.bit_width;
       bool is_signed = data.is_signed;
 
-      if (width > 64) {
-        return "/* TODO: wide integer */";
+      if (IsWideWidth(width)) {
+        // Wide integers use lyra::sdk::WideBit<N>
+        if (is_signed) {
+          return std::format("lyra::sdk::WideBit<{}, true>", width);
+        }
+        return std::format("lyra::sdk::WideBit<{}>", width);
       }
 
       // Use LRM-aligned type aliases for standard signed integer types
@@ -268,8 +363,9 @@ auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {
   }
   auto data = std::get<common::IntegralData>(type.data);
   size_t width = data.bit_width;
-  if (width > 64) {
-    return "/* TODO: wide integer */";
+  if (IsWideWidth(width)) {
+    // Always return unsigned lyra::sdk::WideBit<N>
+    return std::format("lyra::sdk::WideBit<{}>", width);
   }
   // Always return unsigned Bit<N> regardless of original signedness
   used_type_aliases_ |= TypeAlias::kBit;
@@ -605,27 +701,40 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       out_ << std::string(indent_ * 2, ' ');
 
       if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
-        // Packed element assignment: vec[idx] = val
-        // Generate: vec = (vec & ~(1ULL << adj_idx)) | ((val & 1ULL) <<
-        // adj_idx)
+        // Packed element assignment: vec[idx] = val (possibly multi-dim)
         const auto& base_type = assign.target.base_type.value();
         size_t total_width = base_type.GetBitWidth();
-        int32_t lower_bound = base_type.GetElementLower();
-        size_t element_width = base_type.GetElementWidth();
+        size_t element_width = GetElementWidthAfterIndices(
+            base_type, assign.target.indices.size());
 
-        used_type_aliases_ |= TypeAlias::kBit;
-        uint64_t mask = (1ULL << element_width) - 1;
-        out_ << assign.target.symbol->name << " = ("
-             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
-             << mask << "ULL} << ";
-        EmitPackedBitPosition(
-            *assign.target.element_index, lower_bound, element_width);
-        out_ << ")) | ((Bit<" << total_width << ">{";
-        EmitExpression(*assign.value);
-        out_ << ".Value() & " << mask << "ULL} << ";
-        EmitPackedBitPosition(
-            *assign.target.element_index, lower_bound, element_width);
-        out_ << "));\n";
+        bool storage_is_wide = IsWideWidth(total_width);
+        bool element_is_wide = IsWideWidth(element_width);
+
+        if (storage_is_wide || element_is_wide) {
+          // Wide storage or wide element - use InsertSlice
+          // Generate: vec = vec.InsertSlice(val, bit_position, element_width)
+          out_ << assign.target.symbol->name << " = "
+               << assign.target.symbol->name << ".InsertSlice(";
+          EmitExpression(*assign.value);
+          out_ << ", ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << ", " << element_width << ");\n";
+        } else {
+          // Narrow storage and narrow element - use mask-and-merge
+          // Generate: vec = (vec & ~(mask << adj_idx)) | ((val & mask) <<
+          // adj_idx)
+          used_type_aliases_ |= TypeAlias::kBit;
+          uint64_t mask = common::MakeBitMask(element_width);
+          out_ << assign.target.symbol->name << " = ("
+               << assign.target.symbol->name << " & ~(Bit<" << total_width
+               << ">{" << mask << "ULL} << ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << ")) | ((Bit<" << total_width << ">{";
+          EmitExpression(*assign.value);
+          out_ << ".Value() & " << mask << "ULL} << ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << "));\n";
+        }
       } else {
         EmitAssignmentTarget(assign.target);
         out_ << " = ";
@@ -1104,9 +1213,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       const auto& lit = mir::As<mir::LiteralExpression>(expr);
       // Emit literals with their proper SDK type
       if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
-        // Emit as typed literal: Type{value}
-        out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
-             << "}";
+        auto integral_data =
+            std::get<common::IntegralData>(lit.literal.type.data);
+        // For wide types, use parentheses to avoid parsing ambiguity with >
+        // For narrow types, use braces for uniform initialization
+        if (IsWideWidth(integral_data.bit_width)) {
+          out_ << ToCppType(lit.literal.type) << "(" << lit.literal.ToString()
+               << ")";
+        } else {
+          out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
+               << "}";
+        }
       } else {
         // Non-integral types (string, etc.)
         out_ << lit.literal.ToString();
@@ -1178,27 +1295,40 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
-        // Packed element assignment as expression
+        // Packed element assignment as expression (possibly multi-dim)
         // Result is the assigned value (the RHS)
-        out_ << "(";
         const auto& base_type = assign.target.base_type.value();
         size_t total_width = base_type.GetBitWidth();
-        int32_t lower_bound = base_type.GetElementLower();
-        size_t element_width = base_type.GetElementWidth();
+        size_t element_width = GetElementWidthAfterIndices(
+            base_type, assign.target.indices.size());
 
-        used_type_aliases_ |= TypeAlias::kBit;
-        uint64_t mask = (1ULL << element_width) - 1;
-        out_ << assign.target.symbol->name << " = ("
-             << assign.target.symbol->name << " & ~(Bit<" << total_width << ">{"
-             << mask << "ULL} << ";
-        EmitPackedBitPosition(
-            *assign.target.element_index, lower_bound, element_width);
-        out_ << ")) | ((Bit<" << total_width << ">{";
-        EmitExpression(*assign.value, kPrecLowest);
-        out_ << ".Value() & " << mask << "ULL} << ";
-        EmitPackedBitPosition(
-            *assign.target.element_index, lower_bound, element_width);
-        out_ << ")), ";
+        bool storage_is_wide = IsWideWidth(total_width);
+        bool element_is_wide = IsWideWidth(element_width);
+
+        out_ << "(";
+        if (storage_is_wide || element_is_wide) {
+          // Wide storage or wide element - use InsertSlice
+          out_ << assign.target.symbol->name << " = "
+               << assign.target.symbol->name << ".InsertSlice(";
+          EmitExpression(*assign.value, kPrecLowest);
+          out_ << ", ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << ", " << element_width << ")";
+        } else {
+          // Narrow storage and narrow element - use mask-and-merge
+          used_type_aliases_ |= TypeAlias::kBit;
+          uint64_t mask = common::MakeBitMask(element_width);
+          out_ << assign.target.symbol->name << " = ("
+               << assign.target.symbol->name << " & ~(Bit<" << total_width
+               << ">{" << mask << "ULL} << ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << ")) | ((Bit<" << total_width << ">{";
+          EmitExpression(*assign.value, kPrecLowest);
+          out_ << ".Value() & " << mask << "ULL} << ";
+          EmitCompositePackedBitPosition(assign.target.indices, base_type);
+          out_ << "))";
+        }
+        out_ << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else {
@@ -1233,22 +1363,43 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           out_ << ")";
         } else {
           // Multi-bit element selection from 2D packed array
-          // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
-          // ((index - lb) * width)) & mask)
-          // Need to cast to uint64_t first to avoid ambiguous operator& with
-          // Bit<N>
-          out_ << "static_cast<" << ToCppType(expr.type)
-               << ">((static_cast<uint64_t>(";
-          EmitExpression(*select.value, kPrecLowest);
-          out_ << ") >> ((static_cast<size_t>(";
-          EmitExpression(*select.selector, kPrecLowest);
-          if (lower_bound != 0) {
-            out_ << ") - " << lower_bound;
+          size_t source_width = select.value->type.GetBitWidth();
+          bool source_is_wide = IsWideWidth(source_width);
+          bool element_is_wide = IsWideWidth(element_width);
+
+          if (source_is_wide || element_is_wide) {
+            // Wide source or wide element - use ExtractSlice
+            // Generate: value.ExtractSlice((index - lb) * width, width)
+            EmitExpression(*select.value, kPrecPrimary);
+            out_ << ".ExtractSlice((static_cast<size_t>(";
+            EmitExpression(*select.selector, kPrecLowest);
+            if (lower_bound != 0) {
+              out_ << ") - " << lower_bound;
+            } else {
+              out_ << ")";
+            }
+            out_ << ") * " << element_width << ", " << element_width << ")";
           } else {
-            out_ << ")";
+            // Narrow source and narrow element - use uint64_t shift/mask
+            // Generate: static_cast<ResultType>((static_cast<uint64_t>(value)
+            // >>
+            // ((index - lb) * width)) & mask)
+            // Need to cast to uint64_t first to avoid ambiguous operator& with
+            // Bit<N>
+            out_ << "static_cast<" << ToCppType(expr.type)
+                 << ">((static_cast<uint64_t>(";
+            EmitExpression(*select.value, kPrecLowest);
+            out_ << ") >> ((static_cast<size_t>(";
+            EmitExpression(*select.selector, kPrecLowest);
+            if (lower_bound != 0) {
+              out_ << ") - " << lower_bound;
+            } else {
+              out_ << ")";
+            }
+            out_ << ") * " << element_width << ")) & "
+                 << std::format("0x{:X}ULL", common::MakeBitMask(element_width))
+                 << ")";
           }
-          out_ << ") * " << element_width << ")) & "
-               << std::format("0x{:X}ULL", (1ULL << element_width) - 1) << ")";
         }
       } else {
         // Array element access: array[index]
@@ -1263,6 +1414,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kRangeSelect: {
       const auto& range = mir::As<mir::RangeSelectExpression>(expr);
       size_t result_width = expr.type.GetBitWidth();
+      size_t source_width = range.value->type.GetBitWidth();
 
       // Compute LSB (minimum of left and right bounds)
       int32_t lsb = std::min(range.left, range.right);
@@ -1272,35 +1424,29 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         lsb -= range.value->type.GetElementLower();
       }
 
-      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >> lsb)
-      // & mask) Need to cast to uint64_t first to avoid ambiguous operator&
-      // with Bit<N>
-      out_ << "static_cast<" << ToCppType(expr.type)
-           << ">((static_cast<uint64_t>(";
-      EmitExpression(*range.value, kPrecLowest);
-      out_ << ") >> " << lsb << ") & "
-           << std::format("0x{:X}ULL", (1ULL << result_width) - 1) << ")";
+      uint64_t mask = common::MakeBitMask(result_width);
+      auto emit_shift = [&]() { out_ << lsb; };
+      EmitSliceExtract(
+          expr.type, *range.value, emit_shift, mask, IsWideWidth(source_width));
       break;
     }
     case mir::Expression::Kind::kIndexedRangeSelect: {
       const auto& indexed = mir::As<mir::IndexedRangeSelectExpression>(expr);
       size_t result_width = expr.type.GetBitWidth();
-      uint64_t mask = (1ULL << result_width) - 1;
+      size_t source_width = indexed.value->type.GetBitWidth();
+      uint64_t mask = common::MakeBitMask(result_width);
       int32_t lower = indexed.value->type.GetElementLower();
-
-      // Generate: static_cast<ResultType>((static_cast<uint64_t>(value) >>
-      // shift) & mask)
-      out_ << "static_cast<" << ToCppType(expr.type)
-           << ">((static_cast<uint64_t>(";
-      EmitExpression(*indexed.value, kPrecLowest);
-      out_ << ") >> ";
 
       // Ascending (+:): shift by start - lower
       // Descending (-:): shift by start - (width-1) - lower
       int32_t width_offset = indexed.is_ascending ? 0 : (indexed.width - 1);
-      EmitSliceShift(*indexed.start, lower, width_offset);
 
-      out_ << ") & " << std::format("0x{:X}ULL", mask) << ")";
+      auto emit_shift = [&]() {
+        EmitSliceShift(*indexed.start, lower, width_offset);
+      };
+      EmitSliceExtract(
+          expr.type, *indexed.value, emit_shift, mask,
+          IsWideWidth(source_width));
       break;
     }
     case mir::Expression::Kind::kHierarchicalReference: {
@@ -1514,10 +1660,13 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     out_ << "_";
   }
   if (target.IsElementSelect()) {
-    // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
-    out_ << "[static_cast<size_t>(";
-    EmitExpression(*target.element_index, kPrecLowest);
-    out_ << ")]";
+    // Emit all indices (for multi-dimensional arrays)
+    for (const auto& idx : target.indices) {
+      // Cast index to size_t to avoid Bit<N> → bool → size_t conversion issues
+      out_ << "[static_cast<size_t>(";
+      EmitExpression(*idx, kPrecLowest);
+      out_ << ")]";
+    }
   }
 }
 
@@ -1535,6 +1684,86 @@ void Codegen::EmitPackedBitPosition(
     EmitExpression(index_expr, kPrecLowest);
     out_ << ") * " << element_width << ")";
   }
+}
+
+void Codegen::EmitCompositePackedBitPosition(
+    const std::vector<std::unique_ptr<mir::Expression>>& indices,
+    const common::Type& base_type) {
+  // For multi-dimensional packed arrays like bit[A][B][C] with indices [i][j]:
+  // Composite index = i * B + j
+  // Bit position = composite_index * result_element_width
+  size_t element_width = GetElementWidthAfterIndices(base_type, indices.size());
+  int32_t lower_bound = base_type.GetElementLower();
+
+  if (indices.size() == 1) {
+    // Single index - delegate to existing method
+    EmitPackedBitPosition(*indices[0], lower_bound, element_width);
+    return;
+  }
+
+  // Multiple indices - emit composite index calculation
+  // ((idx0 * count1 + idx1) * count2 + idx2) * ... * element_width
+  out_ << "(";
+
+  // Build up the composite index
+  const common::Type* current = &base_type;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    if (i > 0) {
+      out_ << " + ";
+    }
+    if (i < indices.size() - 1) {
+      out_ << "(";
+    }
+
+    // Emit this index
+    out_ << "static_cast<size_t>(";
+    EmitExpression(*indices[i], kPrecLowest);
+    out_ << ")";
+
+    // Multiply by remaining dimensions' sizes
+    const common::Type* temp = current;
+    for (size_t j = i + 1; j < indices.size(); ++j) {
+      temp = &temp->GetElementType();
+      out_ << " * " << temp->GetElementCount();
+    }
+
+    if (i < indices.size() - 1) {
+      out_ << ")";
+    }
+    current = &current->GetElementType();
+  }
+
+  // Adjust for outermost lower bound (TODO: handle per-dimension bounds)
+  if (lower_bound != 0) {
+    out_ << " - " << lower_bound;
+  }
+
+  // Multiply by element width
+  out_ << ") * " << element_width;
+}
+
+void Codegen::EmitSliceExtract(
+    const common::Type& result_type, const mir::Expression& value,
+    const std::function<void()>& emit_shift, uint64_t mask, bool is_wide) {
+  // Emit slice extraction: static_cast<ResultType>(...shift & mask...)
+  // For wide types: shift the WideBit first, then cast to uint64_t
+  // For normal types: cast to uint64_t first, then shift
+  // This is because WideBit shift accesses all words, while uint64_t truncates.
+  out_ << "static_cast<" << ToCppType(result_type) << ">(";
+  if (is_wide) {
+    out_ << "static_cast<uint64_t>(";
+    EmitExpression(value, kPrecLowest);
+    out_ << " >> ";
+    emit_shift();
+    out_ << ")";
+  } else {
+    out_ << "(static_cast<uint64_t>(";
+    EmitExpression(value, kPrecLowest);
+    out_ << ") >> ";
+    emit_shift();
+    out_ << ")";
+  }
+  out_ << " & " << std::format("0x{:X}ULL", mask) << ")";
 }
 
 void Codegen::EmitSliceShift(

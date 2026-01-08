@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -192,33 +193,41 @@ auto LowerExpression(const slang::ast::Expression& expression)
             &target, std::move(value), is_non_blocking);
       }
 
-      // Element select assignment (arr[i] = value)
+      // Element select assignment (arr[i] = value or arr[i][j] = value)
       if (left.kind == slang::ast::ExpressionKind::ElementSelect) {
-        const auto& element_select =
-            left.as<slang::ast::ElementSelectExpression>();
-        const auto& array_expr = element_select.value();
+        // Collect all indices from nested element selects (for multi-dim)
+        std::vector<std::unique_ptr<mir::Expression>> indices;
+        const slang::ast::Expression* current = &left;
 
-        // For now, we only support direct array variable access
-        if (array_expr.kind != slang::ast::ExpressionKind::NamedValue) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  array_expr.sourceRange,
-                  "only direct array variable assignment is supported"));
+        while (current->kind == slang::ast::ExpressionKind::ElementSelect) {
+          const auto& es = current->as<slang::ast::ElementSelectExpression>();
+          indices.push_back(LowerExpression(es.selector()));
+          current = &es.value();
         }
 
+        // Now current should be a NamedValue (the base variable)
+        if (current->kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  current->sourceRange, "unsupported assignment target"));
+        }
+
+        // Reverse indices: we collected outer-to-inner, need inner-to-outer
+        // For data[i][j], we collected [j, i], need [i, j]
+        std::reverse(indices.begin(), indices.end());
+
         const auto& array_symbol =
-            array_expr.as<slang::ast::NamedValueExpression>().symbol;
-        auto index = LowerExpression(element_select.selector());
+            current->as<slang::ast::NamedValueExpression>().symbol;
 
         // Lower base type to distinguish packed vs unpacked
         auto base_type_result =
-            LowerType(array_symbol.getType(), array_expr.sourceRange);
+            LowerType(array_symbol.getType(), current->sourceRange);
         if (!base_type_result) {
           throw DiagnosticException(std::move(base_type_result.error()));
         }
 
         mir::AssignmentTarget target(
-            &array_symbol, std::move(index), *base_type_result);
+            &array_symbol, std::move(indices), *base_type_result);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }

@@ -8,9 +8,9 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
-#include "lyra/common/bit_utils.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/value_storage.hpp"
+#include "lyra/common/wide_bit.hpp"
 
 namespace lyra::common {
 
@@ -27,8 +27,8 @@ struct Literal {
   }
 
   static auto Int(int32_t v) -> Literal {
-    int64_t extended = common::SignExtend(static_cast<uint64_t>(v), 32);
-    return {common::Type::Int(), ValueStorage(extended)};
+    // Direct cast to int64_t automatically sign extends correctly
+    return {common::Type::Int(), ValueStorage(static_cast<int64_t>(v))};
   }
 
   static auto UInt(uint32_t v) -> Literal {
@@ -51,6 +51,15 @@ struct Literal {
     return {
         common::Type::IntegralUnsigned(width),
         ValueStorage(static_cast<int64_t>(v))};
+  }
+
+  // Factory for wide integral values (>64 bits)
+  static auto IntegralWide(WideBit value, size_t width, bool is_signed)
+      -> Literal {
+    return {
+        is_signed ? common::Type::IntegralSigned(width)
+                  : common::Type::IntegralUnsigned(width),
+        ValueStorage(std::move(value))};
   }
 
   static auto String(std::string v) -> Literal {

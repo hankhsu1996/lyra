@@ -58,22 +58,23 @@ auto LowerStatement(
       }
 
       if (target.IsElementSelect()) {
-        auto index = LowerExpression(*target.element_index, builder);
-
         if (target.IsPacked()) {
-          // Packed element assignment: vec[index] = value
-          const auto& two_state =
-              std::get<common::IntegralData>(target.base_type->data);
-          size_t element_width = target.base_type->GetElementWidth();
-
-          auto adjusted_index =
-              AdjustForNonZeroLower(index, two_state.element_lower, builder);
+          // Packed element assignment (possibly multi-dimensional)
+          const auto& base_type = *target.base_type;
+          size_t element_width =
+              GetElementWidthAfterIndices(base_type, target.indices.size());
+          auto composite_index =
+              ComputeCompositeIndex(target.indices, base_type, builder);
+          auto adjusted_index = AdjustForNonZeroLower(
+              composite_index, base_type.GetElementLower(), builder);
 
           auto instruction = Instruction::StorePackedElement(
               target.symbol, adjusted_index, result_value, element_width);
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment: array[index] = value
+          assert(target.indices.size() == 1);
+          auto index = LowerExpression(*target.indices[0], builder);
           auto instruction = Instruction::StoreUnpackedElement(
               target.symbol, index, result_value);
           builder.AddInstruction(std::move(instruction));

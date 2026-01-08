@@ -88,19 +88,24 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       if (assignment.target.IsElementSelect()) {
-        auto index = LowerExpression(*assignment.target.element_index, builder);
-
         if (assignment.target.IsPacked()) {
-          // Packed element assignment: vec[index] = value
-          size_t element_width = assignment.target.base_type->GetElementWidth();
-          int32_t lower = assignment.target.base_type->GetElementLower();
-          auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
+          // Packed element assignment (possibly multi-dimensional)
+          const auto& base_type = *assignment.target.base_type;
+          size_t element_width = GetElementWidthAfterIndices(
+              base_type, assignment.target.indices.size());
+          auto composite_index = ComputeCompositeIndex(
+              assignment.target.indices, base_type, builder);
+          auto adjusted_index = AdjustForNonZeroLower(
+              composite_index, base_type.GetElementLower(), builder);
 
           auto instruction = Instruction::StorePackedElement(
               assignment.target.symbol, adjusted_index, value, element_width);
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment: array[index] = value
+          // Only single index supported for unpacked arrays
+          assert(assignment.target.indices.size() == 1);
+          auto index = LowerExpression(*assignment.target.indices[0], builder);
           auto instruction = Instruction::StoreUnpackedElement(
               assignment.target.symbol, index, value);
           builder.AddInstruction(std::move(instruction));
