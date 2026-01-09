@@ -1658,6 +1658,37 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
+      } else if (assign.target.IsStructFieldAssignment()) {
+        // Struct field assignment: my_struct.field = value
+        const auto& base_type = assign.target.base_type.value();
+        size_t total_width = base_type.GetBitWidth();
+        size_t field_width = *assign.target.field_bit_width;
+        uint64_t bit_offset = *assign.target.field_bit_offset;
+
+        bool storage_is_wide = IsWideWidth(total_width);
+        bool field_is_wide = IsWideWidth(field_width);
+
+        out_ << "(";
+        if (storage_is_wide || field_is_wide) {
+          // Wide storage or wide field - use InsertSlice
+          out_ << assign.target.symbol->name << " = "
+               << assign.target.symbol->name << ".InsertSlice(";
+          EmitExpression(*assign.value, kPrecLowest);
+          out_ << ", " << bit_offset << ", " << field_width << ")";
+        } else {
+          // Narrow storage and narrow field - use mask-and-merge
+          used_type_aliases_ |= TypeAlias::kBit;
+          uint64_t mask = common::MakeBitMask(field_width);
+          out_ << assign.target.symbol->name << " = ("
+               << assign.target.symbol->name << " & ~(Bit<" << total_width
+               << ">{" << mask << "ULL} << " << bit_offset << ")) | ((Bit<"
+               << total_width << ">{";
+          EmitExpression(*assign.value, kPrecLowest);
+          out_ << ".Value() & " << mask << "ULL} << " << bit_offset << "))";
+        }
+        out_ << ", ";
+        EmitExpression(*assign.value, kPrecLowest);
+        out_ << ")";
       } else {
         EmitAssignmentTarget(assign.target);
         out_ << " = ";
@@ -1787,6 +1818,31 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kHierarchicalReference: {
       const auto& hier = mir::As<mir::HierarchicalReferenceExpression>(expr);
       EmitHierarchicalPath(hier.instance_path, hier.target_symbol);
+      break;
+    }
+    case mir::Expression::Kind::kMemberAccess: {
+      // Struct field access: struct_val.field_name
+      // Implemented as bit extraction using ExtractBits or shift-and-mask
+      const auto& member = mir::As<mir::MemberAccessExpression>(expr);
+      size_t source_width = member.value->type.GetBitWidth();
+      size_t field_width = member.bit_width;
+      uint64_t bit_offset = member.bit_offset;
+
+      bool source_is_wide = IsWideWidth(source_width);
+      bool field_is_wide = IsWideWidth(field_width);
+
+      if (source_is_wide || field_is_wide) {
+        // Wide source or wide field - use ExtractSlice
+        EmitExpression(*member.value, kPrecPrimary);
+        out_ << ".ExtractSlice(" << bit_offset << ", " << field_width << ")";
+      } else {
+        // Narrow source and narrow field - use shift-and-mask
+        uint64_t mask = common::MakeBitMask(field_width);
+        out_ << "static_cast<" << ToCppType(expr.type) << ">(("
+             << "static_cast<uint64_t>(";
+        EmitExpression(*member.value, kPrecLowest);
+        out_ << ") >> " << bit_offset << ") & " << mask << "ULL)";
+      }
       break;
     }
     case mir::Expression::Kind::kTernary: {

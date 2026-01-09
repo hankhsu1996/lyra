@@ -290,6 +290,38 @@ auto LowerExpression(const slang::ast::Expression& expression)
             std::move(target), std::move(value), is_non_blocking);
       }
 
+      // Struct field assignment (my_struct.field = value)
+      if (left.kind == slang::ast::ExpressionKind::MemberAccess) {
+        const auto& member_access =
+            left.as<slang::ast::MemberAccessExpression>();
+        const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
+
+        // Get the struct variable (for now, require simple NamedValue)
+        const auto& struct_expr = member_access.value();
+        if (struct_expr.kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  struct_expr.sourceRange,
+                  "only simple struct variables supported as assignment "
+                  "target"));
+        }
+
+        const auto& struct_symbol =
+            struct_expr.as<slang::ast::NamedValueExpression>().symbol;
+
+        auto struct_type_result = LowerType(
+            struct_expr.type->getCanonicalType(), struct_expr.sourceRange);
+        if (!struct_type_result) {
+          throw DiagnosticException(std::move(struct_type_result.error()));
+        }
+
+        mir::AssignmentTarget target(
+            &struct_symbol, std::string(field.name), field.bitOffset,
+            field.getType().getBitWidth(), *struct_type_result);
+        return std::make_unique<mir::AssignmentExpression>(
+            std::move(target), std::move(value), is_non_blocking);
+      }
+
       throw DiagnosticException(
           Diagnostic::Error(
               left.sourceRange, fmt::format(

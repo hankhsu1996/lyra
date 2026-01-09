@@ -1,6 +1,5 @@
 #include "lyra/interpreter/instruction_runner.hpp"
 
-#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cctype>
@@ -12,6 +11,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -938,7 +938,7 @@ auto RunInstruction(
               "interpreter",
               std::format("{} address out of bounds", task_name));
         }
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto index = static_cast<size_t>(addr - min_addr);
         if (info.is_unpacked) {
           target_value.SetElement(index, value);
         } else {
@@ -984,7 +984,7 @@ auto RunInstruction(
       }
 
       for (int64_t addr = current_addr; addr <= final_addr; ++addr) {
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto index = static_cast<size_t>(addr - min_addr);
         RuntimeValue element;
         if (info.is_unpacked) {
           element = target_value.GetElement(index);
@@ -1137,60 +1137,10 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadPackedElement: {
-      // Load element/bit from packed vector: result = value[index]
-      assert(instr.operands.size() == 2);
-      assert(instr.operands[0].IsTemp());
-      assert(instr.result.has_value());
-      assert(instr.result_type.has_value());
-
-      auto value = get_temp(instr.operands[0]);
-      assert(value.IsTwoState());
-
-      auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "packed element index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-
-      // Get element width from result type
-      const auto& result_type = instr.result_type.value();
-      assert(result_type.kind == common::Type::Kind::kIntegral);
-      auto result_data = std::get<common::IntegralData>(result_type.data);
-      size_t element_width = result_data.bit_width;
-
-      // Compute bit position: start_bit = index * element_width
-      size_t start_bit = index * element_width;
-
-      // Extract element
-      RuntimeValue result;
-      if (element_width <= 64) {
-        // Narrow element - extract as uint64_t
-        uint64_t mask =
-            common::MakeBitMask(static_cast<uint32_t>(element_width));
-        uint64_t extracted = 0;
-        if (value.IsWide()) {
-          auto shifted = value.AsWideBit().ShiftRightLogical(start_bit);
-          extracted = shifted.GetWord(0) & mask;
-        } else {
-          extracted = (value.AsNarrow().AsUInt64() >> start_bit) & mask;
-        }
-        result = RuntimeValue::IntegralUnsigned(extracted, element_width);
-      } else {
-        // Wide element - extract as WideBit
-        auto wide_value = value.IsWide() ? value.AsWideBit()
-                                         : common::WideBit::FromUInt64(
-                                               value.AsNarrow().AsUInt64(), 2);
-        auto extracted = wide_value.ExtractSlice(start_bit, element_width);
-        result =
-            RuntimeValue::IntegralWide(std::move(extracted), element_width);
-      }
-      temp_table.Write(instr.result.value(), result);
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kLoadPackedSlice: {
-      // Load slice from packed vector: result = value[msb:lsb]
+    case lir::InstructionKind::kLoadPackedBits: {
+      // Load bits from packed vector: result = value[bit_offset +: width]
       // operands[0] = value (packed vector)
-      // operands[1] = lsb (shift amount)
+      // operands[1] = bit_offset (pre-computed)
       // result_type contains the width
       assert(instr.operands.size() == 2);
       assert(instr.operands[0].IsTemp());
@@ -1199,37 +1149,36 @@ auto RunInstruction(
       assert(instr.result_type.has_value());
 
       auto value = get_temp(instr.operands[0]);
-      auto lsb_value = get_temp(instr.operands[1]);
-      assert(!lsb_value.IsWide() && "slice index cannot be wide");
-      auto lsb = static_cast<size_t>(lsb_value.AsNarrow().AsInt64());
+      auto offset_value = get_temp(instr.operands[1]);
+      assert(!offset_value.IsWide() && "bit offset cannot be wide");
+      auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
 
       const auto& result_type = instr.result_type.value();
       assert(result_type.kind == common::Type::Kind::kIntegral);
       auto result_data = std::get<common::IntegralData>(result_type.data);
       size_t width = result_data.bit_width;
 
-      // Extract slice
       RuntimeValue result;
       if (width <= 64) {
-        // Narrow slice - extract as uint64_t
+        // Narrow - extract as uint64_t
         uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
         uint64_t extracted = 0;
         if (value.IsWide()) {
-          auto shifted = value.AsWideBit().ShiftRightLogical(lsb);
+          auto shifted = value.AsWideBit().ShiftRightLogical(bit_offset);
           extracted = shifted.GetWord(0) & mask;
         } else {
-          extracted = (value.AsNarrow().AsUInt64() >> lsb) & mask;
+          extracted = (value.AsNarrow().AsUInt64() >> bit_offset) & mask;
         }
         result = result_data.is_signed
                      ? RuntimeValue::IntegralSigned(
                            static_cast<int64_t>(extracted), width)
                      : RuntimeValue::IntegralUnsigned(extracted, width);
       } else {
-        // Wide slice - extract as WideBit
+        // Wide - extract as WideBit
         auto wide_value = value.IsWide() ? value.AsWideBit()
                                          : common::WideBit::FromUInt64(
                                                value.AsNarrow().AsUInt64(), 2);
-        auto extracted = wide_value.ExtractSlice(lsb, width);
+        auto extracted = wide_value.ExtractSlice(bit_offset, width);
         result = RuntimeValue::IntegralWide(
             std::move(extracted), width, result_data.is_signed);
       }
@@ -1237,12 +1186,12 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStorePackedElement: {
-      // Store element to packed vector: variable[index] = value
+    case lir::InstructionKind::kStorePackedBits: {
+      // Store bits to packed vector: variable[bit_offset +: width] = value
       // operands[0] = variable (packed vector)
-      // operands[1] = index
+      // operands[1] = bit_offset (pre-computed)
       // operands[2] = value to store
-      // result_type contains element width
+      // result_type contains slice width
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
       assert(instr.operands[1].IsTemp());
@@ -1252,52 +1201,49 @@ auto RunInstruction(
       auto current = read_variable(instr.operands[0]);
       assert(current.IsTwoState());
 
-      auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "packed element index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
+      auto offset_value = get_temp(instr.operands[1]);
+      assert(!offset_value.IsWide() && "bit offset cannot be wide");
+      auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
 
       auto new_value = get_temp(instr.operands[2]);
 
-      // Get element width from result_type (the element being stored)
-      const auto& elem_type = instr.result_type.value();
-      size_t element_width = elem_type.GetBitWidth();
+      // Get slice width from result_type
+      const auto& slice_type = instr.result_type.value();
+      size_t slice_width = slice_type.GetBitWidth();
 
       // Get storage width and signedness
       const auto& current_data =
           std::get<common::IntegralData>(current.type.data);
       size_t storage_width = current_data.bit_width;
       bool storage_is_wide = current.IsWide();
-      bool element_is_wide = element_width > 64;
-
-      // Compute bit position
-      size_t shift = index * element_width;
+      bool slice_is_wide = slice_width > 64;
 
       RuntimeValue result;
-      if (!storage_is_wide && !element_is_wide) {
-        // Narrow storage, narrow element - existing mask-and-merge logic
-        uint64_t elem_mask =
-            common::MakeBitMask(static_cast<uint32_t>(element_width));
-        uint64_t clear_mask = ~(elem_mask << shift);
+      if (!storage_is_wide && !slice_is_wide) {
+        // Narrow storage, narrow slice - mask-and-merge
+        uint64_t slice_mask =
+            common::MakeBitMask(static_cast<uint32_t>(slice_width));
+        uint64_t clear_mask = ~(slice_mask << bit_offset);
         uint64_t merged =
             (current.AsNarrow().AsUInt64() & clear_mask) |
-            ((new_value.AsNarrow().AsUInt64() & elem_mask) << shift);
+            ((new_value.AsNarrow().AsUInt64() & slice_mask) << bit_offset);
         result = current_data.is_signed
                      ? RuntimeValue::IntegralSigned(
                            static_cast<int64_t>(merged), storage_width)
                      : RuntimeValue::IntegralUnsigned(merged, storage_width);
       } else {
-        // Wide storage or wide element - use WideBit InsertSlice
+        // Wide storage or wide slice - use WideBit InsertSlice
         size_t storage_words = common::wide_ops::WordsForBits(storage_width);
         auto current_wide =
             storage_is_wide ? current.AsWideBit()
                             : common::WideBit::FromUInt64(
                                   current.AsNarrow().AsUInt64(), storage_words);
-        auto value_wide = element_is_wide ? new_value.AsWideBit()
-                                          : common::WideBit::FromUInt64(
-                                                new_value.AsNarrow().AsUInt64(),
-                                                storage_words);
+        auto value_wide =
+            slice_is_wide ? new_value.AsWideBit()
+                          : common::WideBit::FromUInt64(
+                                new_value.AsNarrow().AsUInt64(), storage_words);
         auto merged =
-            current_wide.InsertSlice(value_wide, shift, element_width);
+            current_wide.InsertSlice(value_wide, bit_offset, slice_width);
         result = RuntimeValue::IntegralWide(
             std::move(merged), storage_width, current_data.is_signed);
       }

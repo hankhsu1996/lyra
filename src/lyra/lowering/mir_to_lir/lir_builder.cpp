@@ -198,7 +198,7 @@ void ValidateMonitorExpressionBlock(const lir::MonitorExpressionBlock& block) {
       case IK::kStoreVariable:
       case IK::kStoreVariableNonBlocking:
       case IK::kStoreUnpackedElement:
-      case IK::kStorePackedElement:
+      case IK::kStorePackedBits:
         throw common::InternalError(
             "AddMonitorExpressionBlock",
             "expression block contains store instruction - expressions must be "
