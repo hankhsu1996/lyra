@@ -1,0 +1,172 @@
+feature: functions
+description: Tests for user-defined functions (basic usage)
+
+cases:
+  - name: function_simple_return
+    sv: |
+      module Test;
+        int result;
+
+        function int get_value();
+          return 42;
+        endfunction
+
+        initial begin
+          result = get_value();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: function_with_parameter
+    sv: |
+      module Test;
+        int result;
+
+        function int double_it(int x);
+          return x * 2;
+        endfunction
+
+        initial begin
+          result = double_it(21);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: function_multiple_parameters
+    sv: |
+      module Test;
+        int result;
+
+        function int add(int a, int b);
+          return a + b;
+        endfunction
+
+        initial begin
+          result = add(17, 25);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: function_local_variable
+    sv: |
+      module Test;
+        int result;
+
+        function int compute(int x);
+          int temp;
+          temp = x + 10;
+          return temp * 2;
+        endfunction
+
+        initial begin
+          result = compute(11);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: function_void
+    sv: |
+      module Test;
+        int counter;
+
+        function void increment();
+          counter = counter + 1;
+        endfunction
+
+        initial begin
+          counter = 0;
+          increment();
+          increment();
+          increment();
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 3
+
+  - name: function_in_expression
+    sv: |
+      module Test;
+        int result;
+
+        function int square(int x);
+          return x * x;
+        endfunction
+
+        initial begin
+          result = square(3) + square(4);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 25
+
+  - name: function_conditional_return
+    sv: |
+      module Test;
+        int result;
+
+        function int max(int a, int b);
+          if (a > b)
+            return a;
+          else
+            return b;
+        endfunction
+
+        initial begin
+          result = max(15, 27);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 27
+
+  - name: function_early_return
+    sv: |
+      module Test;
+        int result;
+
+        function int check(int x);
+          if (x < 0)
+            return -1;
+          if (x == 0)
+            return 0;
+          return 1;
+        endfunction
+
+        initial begin
+          result = check(5) + check(0) * 10 + check(-3) * 100;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -99
+
+  - name: function_modifies_module_variable
+    sv: |
+      module Test;
+        int global_counter;
+        int result;
+
+        function int increment_and_return();
+          global_counter = global_counter + 1;
+          return global_counter;
+        endfunction
+
+        initial begin
+          global_counter = 10;
+          result = increment_and_return();
+        end
+      endmodule
+    expect:
+      variables:
+        global_counter: 11
+        result: 11

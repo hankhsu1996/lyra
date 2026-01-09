@@ -17,8 +17,8 @@ using ResultKind = InstructionResult::Kind;
 
 auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
-    SimulationContext& simulation_context, ProcessContext& process_context,
-    ProcessEffect& effect,
+    const lir::Module& module, SimulationContext& simulation_context,
+    ProcessContext& process_context, ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context)
     -> BasicBlockResult {
   const auto& instructions = block.instructions;
@@ -27,7 +27,8 @@ auto RunBlock(
     const auto& instr = instructions[i];
 
     auto instruction_result = RunInstruction(
-        instr, simulation_context, process_context, effect, instance_context);
+        instr, module, simulation_context, process_context, effect,
+        instance_context);
 
     switch (instruction_result.kind) {
       case ResultKind::kComplete:
@@ -42,6 +43,14 @@ auto RunBlock(
         return BasicBlockResult::Finish(instruction_result.is_stop);
       case ResultKind::kJump:
         return BasicBlockResult::Jump(instruction_result.target_label);
+      case ResultKind::kCallFunction:
+        return BasicBlockResult::CallFunction(
+            instruction_result.target_label, i + 1,
+            std::move(instruction_result.call_frame));
+      case ResultKind::kReturnFromFunction:
+        return BasicBlockResult::ReturnFromFunction(
+            instruction_result.return_block_index,
+            instruction_result.return_instruction_index);
     }
   }
   throw DiagnosticException(

@@ -94,7 +94,11 @@ enum class InstructionKind {
   kMethodCall,  // Generic method call (enum methods, future: string/class
                 // methods)
   kJump,
-  kBranch
+  kBranch,
+
+  // Function call/return
+  kCall,    // Call user-defined function
+  kReturn,  // Return from function
 };
 
 // Enum member info for method call runtime helpers
@@ -113,8 +117,11 @@ struct Instruction {
   // Operand values used by the instruction
   std::vector<Operand> operands{};
 
-  // System call name
+  // System call name (for kSystemCall)
   std::string system_call_name{};
+
+  // Function call name (for kCall)
+  std::string called_function_name{};
 
   // Event name
   std::vector<common::Trigger> wait_triggers{};
@@ -420,6 +427,32 @@ struct Instruction {
         .operands = std::move(ops)};
   }
 
+  // User-defined function call: result = function(args...)
+  // Arguments are stored in operands, result (if any) in result field
+  static auto Call(
+      std::string function_name, std::vector<Operand> arguments,
+      std::optional<TempRef> result_temp,
+      std::optional<common::Type> result_type_val) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kCall,
+        .result = result_temp,
+        .result_type = result_type_val,
+        .operands = std::move(arguments),
+        .called_function_name = std::move(function_name)};
+  }
+
+  // Return from function: return value (if any)
+  // Return value operand (if any) is stored in operands[0]
+  static auto Return(std::optional<TempRef> value = std::nullopt)
+      -> Instruction {
+    Instruction instr;
+    instr.kind = InstructionKind::kReturn;
+    if (value) {
+      instr.operands.push_back(Operand::Temp(*value));
+    }
+    return instr;
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       // Memory operations
@@ -720,6 +753,35 @@ struct Instruction {
               operands[1].ToString(), operands[2].ToString());
         } else {
           return "(invalid branch)";
+        }
+
+      case InstructionKind::kCall:
+        if (result) {
+          std::string args;
+          for (size_t i = 0; i < operands.size(); ++i) {
+            if (i > 0) {
+              args += ", ";
+            }
+            args += operands[i].ToString();
+          }
+          return fmt::format(
+              "call  {}, {}({})", result.value(), called_function_name, args);
+        } else {
+          std::string args;
+          for (size_t i = 0; i < operands.size(); ++i) {
+            if (i > 0) {
+              args += ", ";
+            }
+            args += operands[i].ToString();
+          }
+          return fmt::format("call  {}({})", called_function_name, args);
+        }
+
+      case InstructionKind::kReturn:
+        if (operands.empty()) {
+          return "ret";
+        } else {
+          return fmt::format("ret   {}", operands[0].ToString());
         }
     }
   }

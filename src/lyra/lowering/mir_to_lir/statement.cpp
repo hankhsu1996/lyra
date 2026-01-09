@@ -30,7 +30,9 @@ auto LowerStatement(
       const auto& declaration =
           mir::As<mir::VariableDeclarationStatement>(statement);
 
-      builder.AddProcessVariable(declaration.variable);
+      // Register variable in the current context (process or function).
+      // The builder handles context-specific behavior internally.
+      builder.RegisterLocalVariable(declaration.variable);
 
       if (declaration.initializer) {
         auto result = LowerExpression(*declaration.initializer, builder);
@@ -515,6 +517,18 @@ auto LowerStatement(
         if (statement) {
           LowerStatement(*statement, builder, lowering_context);
         }
+      }
+      break;
+    }
+
+    case mir::Statement::Kind::kReturn: {
+      const auto& ret = mir::As<mir::ReturnStatement>(statement);
+
+      if (ret.value) {
+        auto value_temp = LowerExpression(*ret.value, builder);
+        builder.AddInstruction(Instruction::Return(value_temp));
+      } else {
+        builder.AddInstruction(Instruction::Return());
       }
       break;
     }

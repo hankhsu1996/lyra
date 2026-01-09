@@ -56,14 +56,15 @@ void LirBuilder::AddSubmodule(const lir::SubmoduleInstance& submodule) {
 }
 
 void LirBuilder::BeginProcess(const std::string& name) {
-  assert(!current_process_);
+  assert(procedural_context_ == ProceduralContext::kModule);
+  procedural_context_ = ProceduralContext::kProcess;
   current_process_ = std::make_shared<lir::Process>();
   current_process_->name = name;
   current_blocks_.clear();
 }
 
 void LirBuilder::EndProcess() {
-  assert(current_process_);
+  assert(procedural_context_ == ProceduralContext::kProcess);
 
   AddInstruction(lir::Instruction::Complete());
 
@@ -81,15 +82,50 @@ void LirBuilder::EndProcess() {
 
   processes_.push_back(std::move(current_process_));
   current_process_ = nullptr;
+  procedural_context_ = ProceduralContext::kModule;
 }
 
-void LirBuilder::AddProcessVariable(const common::Variable& variable) {
-  assert(current_process_);
-  current_process_->variables.push_back(variable);
+void LirBuilder::RegisterLocalVariable(const common::Variable& variable) {
+  switch (procedural_context_) {
+    case ProceduralContext::kProcess:
+      assert(current_process_);
+      current_process_->variables.push_back(variable);
+      break;
+    case ProceduralContext::kFunction:
+      // Function local variables are pre-registered in MIR's
+      // FunctionDefinition.local_variables, so nothing to do here.
+      break;
+    case ProceduralContext::kModule:
+      assert(false && "variable declaration outside procedural context");
+      break;
+  }
+}
+
+void LirBuilder::BeginFunction(const std::string& /*name*/) {
+  assert(procedural_context_ == ProceduralContext::kModule);
+  procedural_context_ = ProceduralContext::kFunction;
+  function_blocks_.clear();
+}
+
+void LirBuilder::EndFunction() {
+  assert(procedural_context_ == ProceduralContext::kFunction);
+
+  // End the current block if any (EndBlock handles adding implicit returns)
+  if (current_block_) {
+    EndBlock();
+  }
+
+  procedural_context_ = ProceduralContext::kModule;
+}
+
+auto LirBuilder::TakeFunctionBlocks()
+    -> std::vector<std::unique_ptr<lir::BasicBlock>> {
+  return std::move(function_blocks_);
 }
 
 void LirBuilder::StartBlock(lir::LabelRef label) {
-  assert(current_process_);
+  // Must be in a procedural context (process or function)
+  assert(procedural_context_ != ProceduralContext::kModule);
 
   if (current_block_) {
     EndBlock();
@@ -100,10 +136,28 @@ void LirBuilder::StartBlock(lir::LabelRef label) {
 }
 
 void LirBuilder::EndBlock() {
-  assert(current_process_);
+  // Must be in a procedural context (process or function)
+  assert(procedural_context_ != ProceduralContext::kModule);
   assert(current_block_);
 
-  current_blocks_.push_back(std::move(current_block_));
+  // For function blocks, ensure they end with a terminator
+  if (procedural_context_ == ProceduralContext::kFunction) {
+    bool needs_return = true;
+    if (!current_block_->instructions.empty()) {
+      auto last_kind = current_block_->instructions.back().kind;
+      if (last_kind == lir::InstructionKind::kReturn ||
+          last_kind == lir::InstructionKind::kJump ||
+          last_kind == lir::InstructionKind::kBranch) {
+        needs_return = false;
+      }
+    }
+    if (needs_return) {
+      current_block_->instructions.push_back(lir::Instruction::Return());
+    }
+    function_blocks_.push_back(std::move(current_block_));
+  } else {
+    current_blocks_.push_back(std::move(current_block_));
+  }
   current_block_ = nullptr;
 }
 

@@ -511,6 +511,17 @@ auto LowerStatement(const slang::ast::Statement& statement)
       return std::make_unique<mir::BlockStatement>();  // No-op
     }
 
+    case StatementKind::Return: {
+      const auto& return_stmt = statement.as<slang::ast::ReturnStatement>();
+
+      std::unique_ptr<mir::Expression> return_value = nullptr;
+      if (return_stmt.expr != nullptr) {
+        return_value = LowerExpression(*return_stmt.expr);
+      }
+
+      return std::make_unique<mir::ReturnStatement>(std::move(return_value));
+    }
+
     case StatementKind::Invalid:
       // Slang produces InvalidStatement when it detects semantic issues.
       // Slang should have already reported a diagnostic explaining the problem.

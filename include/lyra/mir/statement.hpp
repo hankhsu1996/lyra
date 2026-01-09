@@ -41,6 +41,9 @@ class Statement {
 
     // Statement blocks
     kBlock,
+
+    // Return statement
+    kReturn,
   };
 
   Kind kind;
@@ -89,6 +92,8 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Continue";
     case Statement::Kind::kBlock:
       return "Block";
+    case Statement::Kind::kReturn:
+      return "Return";
   }
 }
 
@@ -489,6 +494,30 @@ class BlockStatement : public Statement {
       result += stmt->ToString(indent);
     }
     return result;
+  }
+};
+
+class ReturnStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kReturn;
+
+  // Return value expression (nullptr for void functions)
+  std::unique_ptr<Expression> value;
+
+  explicit ReturnStatement(std::unique_ptr<Expression> val = nullptr)
+      : Statement(kKindValue), value(std::move(val)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    if (value) {
+      return std::format(
+          "{}return {}\n", common::Indent(indent), value->ToString());
+    }
+    return std::format("{}return\n", common::Indent(indent));
   }
 };
 

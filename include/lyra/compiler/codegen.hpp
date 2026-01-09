@@ -96,6 +96,7 @@ class Codegen {
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
+  void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);

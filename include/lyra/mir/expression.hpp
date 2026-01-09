@@ -42,6 +42,7 @@ class Expression {
     kIndexedRangeSelect,
     kHierarchicalReference,
     kConcatenation,
+    kFunctionCall,
   };
 
   Kind kind;
@@ -92,6 +93,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "HierarchicalReference";
     case Expression::Kind::kConcatenation:
       return "Concatenation";
+    case Expression::Kind::kFunctionCall:
+      return "FunctionCall";
   }
   std::abort();
 }
@@ -591,6 +594,37 @@ class ConcatenationExpression : public Expression {
       op_strs.push_back(op->ToString());
     }
     return fmt::format("{{{}}}", fmt::join(op_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// User-defined function call expression
+// Distinguished from SystemCallExpression which handles $display, $time, etc.
+class FunctionCallExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kFunctionCall;
+
+  std::string function_name;
+  std::vector<std::unique_ptr<Expression>> arguments;
+
+  FunctionCallExpression(
+      std::string name, std::vector<std::unique_ptr<Expression>> args,
+      Type return_type)
+      : Expression(kKindValue, std::move(return_type)),
+        function_name(std::move(name)),
+        arguments(std::move(args)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    std::vector<std::string> arg_strs;
+    arg_strs.reserve(arguments.size());
+    for (const auto& arg : arguments) {
+      arg_strs.push_back(arg ? arg->ToString() : "<null>");
+    }
+    return fmt::format("{}({})", function_name, fmt::join(arg_strs, ", "));
   }
 
   void Accept(MirVisitor& visitor) const override {

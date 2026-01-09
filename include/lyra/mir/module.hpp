@@ -8,6 +8,7 @@
 #include "lyra/common/indent.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/process.hpp"
@@ -45,12 +46,54 @@ struct ModuleVariable {
   std::unique_ptr<Expression> initializer;  // nullptr if no initializer
 };
 
+/// Function parameter for user-defined functions.
+/// Wrapped in a struct (rather than using Variable directly) for extensibility:
+/// future support for output/inout/ref arguments will require additional fields
+/// like direction, pass-by-reference semantics, etc.
+struct FunctionParameter {
+  common::Variable variable;
+};
+
+// Function definition
+struct FunctionDefinition {
+  std::string name;
+  common::Type return_type;
+  std::vector<FunctionParameter> parameters;
+  std::vector<common::Variable> local_variables;
+  std::unique_ptr<Statement> body;
+
+  [[nodiscard]] auto ToString(int indent = 0) const -> std::string {
+    std::string result = common::Indent(indent) + "function " + name + "(";
+    bool first = true;
+    for (const auto& param : parameters) {
+      if (!first) {
+        result += ", ";
+      }
+      first = false;
+      result += std::string(param.variable.symbol->name);
+    }
+    result += ")\n";
+
+    for (const auto& var : local_variables) {
+      result += common::Indent(indent + 1) + "var " +
+                std::string(var.symbol->name) + "\n";
+    }
+
+    if (body) {
+      result += body->ToString(indent + 1);
+    }
+
+    return result;
+  }
+};
+
 class Module {
  public:
   std::string name;
   std::optional<common::TimeScale> timescale;
   std::vector<Port> ports;
   std::vector<ModuleVariable> variables;
+  std::vector<FunctionDefinition> functions;
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;
 
@@ -93,6 +136,13 @@ class Module {
         result += "\n";
       }
       result += "\n";
+    }
+
+    // Print functions
+    if (!functions.empty()) {
+      for (const auto& func : functions) {
+        result += func.ToString(indent + 1) + "\n";
+      }
     }
 
     // Print submodule instances

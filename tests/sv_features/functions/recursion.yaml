@@ -1,0 +1,155 @@
+feature: functions_recursion
+description: Tests for recursive function calls
+
+cases:
+  - name: factorial_basic
+    sv: |
+      module Test;
+        int result;
+
+        function int factorial(int n);
+          if (n <= 1)
+            return 1;
+          return n * factorial(n - 1);
+        endfunction
+
+        initial begin
+          result = factorial(5);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 120
+
+  - name: factorial_zero
+    sv: |
+      module Test;
+        int result;
+
+        function int factorial(int n);
+          if (n <= 1)
+            return 1;
+          return n * factorial(n - 1);
+        endfunction
+
+        initial begin
+          result = factorial(0);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: factorial_one
+    sv: |
+      module Test;
+        int result;
+
+        function int factorial(int n);
+          if (n <= 1)
+            return 1;
+          return n * factorial(n - 1);
+        endfunction
+
+        initial begin
+          result = factorial(1);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: fibonacci_basic
+    sv: |
+      module Test;
+        int result;
+
+        function int fib(int n);
+          if (n <= 1)
+            return n;
+          return fib(n - 1) + fib(n - 2);
+        endfunction
+
+        initial begin
+          result = fib(10);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 55
+
+  - name: fibonacci_zero
+    sv: |
+      module Test;
+        int result;
+
+        function int fib(int n);
+          if (n <= 1)
+            return n;
+          return fib(n - 1) + fib(n - 2);
+        endfunction
+
+        initial begin
+          result = fib(0);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: fibonacci_one
+    sv: |
+      module Test;
+        int result;
+
+        function int fib(int n);
+          if (n <= 1)
+            return n;
+          return fib(n - 1) + fib(n - 2);
+        endfunction
+
+        initial begin
+          result = fib(1);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: recursive_sum
+    sv: |
+      module Test;
+        int result;
+
+        function int sum_to_n(int n);
+          if (n <= 0)
+            return 0;
+          return n + sum_to_n(n - 1);
+        endfunction
+
+        initial begin
+          result = sum_to_n(10);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 55
+
+  - name: recursive_power
+    sv: |
+      module Test;
+        int result;
+
+        function int power(int base, int exp);
+          if (exp == 0)
+            return 1;
+          return base * power(base, exp - 1);
+        endfunction
+
+        initial begin
+          result = power(2, 8);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 256

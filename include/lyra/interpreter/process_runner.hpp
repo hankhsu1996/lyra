@@ -7,16 +7,19 @@
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_result.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
 
 // Execute an entire process, or until a delay/finish
 // instance_context can be nullptr for flat (non-hierarchical) modules
+// module: the LIR module containing function definitions for kCall
 auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
-    std::size_t instruction_index, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect,
+    std::size_t instruction_index, const lir::Module& module,
+    SimulationContext& simulation_context, ProcessContext& process_context,
+    ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context = nullptr)
     -> ProcessResult;
 

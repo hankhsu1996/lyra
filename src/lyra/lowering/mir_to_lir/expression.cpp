@@ -475,6 +475,42 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(std::move(instruction));
       return result;
     }
+
+    case mir::Expression::Kind::kFunctionCall: {
+      const auto& call = mir::As<mir::FunctionCallExpression>(expression);
+
+      // Lower arguments
+      std::vector<Operand> arg_operands;
+      arg_operands.reserve(call.arguments.size());
+      for (const auto& arg : call.arguments) {
+        auto arg_temp = LowerExpression(*arg, builder);
+        arg_operands.push_back(Operand::Temp(arg_temp));
+      }
+
+      // Allocate result temp if non-void
+      std::optional<TempRef> result_temp;
+      std::optional<common::Type> result_type;
+      if (call.type.kind != common::Type::Kind::kVoid) {
+        result_temp = builder.AllocateTemp("call", call.type);
+        result_type = call.type;
+      }
+
+      // Emit call instruction
+      auto instr = Instruction::Call(
+          call.function_name, std::move(arg_operands), result_temp,
+          result_type);
+      builder.AddInstruction(std::move(instr));
+
+      if (result_temp) {
+        return *result_temp;
+      }
+      // Void functions: LowerExpression requires a TempRef return, so we
+      // allocate a dummy temp. The caller (typically ExpressionStatement)
+      // discards it. This is wasteful but harmless - a proper fix would be
+      // changing LowerExpression to return std::optional<TempRef>, which
+      // requires updating many call sites.
+      return builder.AllocateTemp("void", common::Type::Void());
+    }
   }
 }
 
