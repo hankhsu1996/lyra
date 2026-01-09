@@ -17,6 +17,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -652,6 +653,18 @@ auto LowerExpression(const slang::ast::Expression& expression)
                         "task call '{}' is not yet supported", func->name)));
           }
 
+          // Build qualified function name (e.g., "MyPkg::add" for package
+          // functions)
+          std::string qualified_name = std::string(func->name);
+          const slang::ast::Scope* parent_scope = func->getParentScope();
+          if (parent_scope != nullptr) {
+            const auto& parent_symbol = parent_scope->asSymbol();
+            if (parent_symbol.kind == slang::ast::SymbolKind::Package) {
+              qualified_name =
+                  std::string(parent_symbol.name) + "::" + qualified_name;
+            }
+          }
+
           // Lower arguments
           std::vector<std::unique_ptr<mir::Expression>> arguments;
           for (const auto* arg : call_expression.arguments()) {
@@ -666,7 +679,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
           }
 
           return std::make_unique<mir::FunctionCallExpression>(
-              std::string(func->name), std::move(arguments),
+              std::move(qualified_name), std::move(arguments),
               *return_type_result);
         }
       }

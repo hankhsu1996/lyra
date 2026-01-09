@@ -655,16 +655,14 @@ auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
   return actual_idx;
 }
 
-// Handle kCall instruction: look up function, prepare frame for caller to push.
-auto HandleCall(
-    const lir::Instruction& instr, const lir::Module& module,
-    TempTable& temp_table) -> InstructionResult {
-  // Find the function in the module
-  const auto* func = module.FindFunction(instr.called_function_name);
+// Handle kCall instruction: use resolved function pointer, prepare frame.
+auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
+    -> InstructionResult {
+  const auto* func = instr.callee;
   if (func == nullptr) {
     throw common::InternalError(
         "kCall",
-        fmt::format("function '{}' not found", instr.called_function_name));
+        fmt::format("function '{}' not resolved", instr.called_function_name));
   }
 
   // Create call frame (return address will be set by process_runner)
@@ -725,9 +723,8 @@ auto HandleReturn(
 
 // Execute a single instruction in the given context
 auto RunInstruction(
-    const lir::Instruction& instr, const lir::Module& module,
-    SimulationContext& simulation_context, ProcessContext& process_context,
-    ProcessEffect& effect,
+    const lir::Instruction& instr, SimulationContext& simulation_context,
+    ProcessContext& process_context, ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context)
     -> InstructionResult {
   // Use function-local temp table when inside a function, otherwise use
@@ -2408,7 +2405,7 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kCall:
-      return HandleCall(instr, module, temp_table);
+      return HandleCall(instr, temp_table);
 
     case lir::InstructionKind::kReturn:
       return HandleReturn(instr, process_context, temp_table);

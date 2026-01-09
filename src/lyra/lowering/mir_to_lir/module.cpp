@@ -204,10 +204,22 @@ auto LowerModules(std::span<const std::unique_ptr<mir::Module>> modules)
   return result;
 }
 
-auto LowerPackageInitProcess(
-    std::span<const std::unique_ptr<mir::Package>> packages,
-    std::shared_ptr<lir::LirContext> context) -> std::shared_ptr<lir::Process> {
-  // Check if any packages have initializers
+auto LowerPackages(std::span<const std::unique_ptr<mir::Package>> packages)
+    -> PackageLoweringResult {
+  PackageLoweringResult result;
+  result.context = std::make_shared<lir::LirContext>();
+
+  if (packages.empty()) {
+    return result;
+  }
+
+  // Use a single builder for all package lowering
+  LirBuilder builder("__packages", result.context);
+  builder.BeginModule();
+
+  LoweringContext lowering_context;
+
+  // Check if any packages have variable initializers
   bool has_initializers = false;
   for (const auto& pkg : packages) {
     for (const auto& var : pkg->variables) {
@@ -221,33 +233,71 @@ auto LowerPackageInitProcess(
     }
   }
 
-  if (!has_initializers) {
-    return nullptr;
+  // Lower variable initializers into a single init process
+  if (has_initializers) {
+    builder.BeginProcess("__pkg_var_init");
+    builder.StartBlock(builder.MakeLabel("entry"));
+
+    for (const auto& pkg : packages) {
+      for (const auto& var : pkg->variables) {
+        if (var.initializer) {
+          auto init_result = LowerExpression(*var.initializer, builder);
+          auto store_instr = lir::Instruction::StoreVariable(
+              var.variable.symbol, init_result, false);
+          builder.AddInstruction(std::move(store_instr));
+        }
+      }
+    }
+
+    builder.EndProcess();
   }
 
-  // Use builder with a synthetic module to create the init process
-  LirBuilder builder("__packages", std::move(context));
-  builder.BeginModule();
-  builder.BeginProcess("__pkg_var_init");
-  builder.StartBlock(builder.MakeLabel("entry"));
-
+  // Lower all package functions
   for (const auto& pkg : packages) {
-    for (const auto& var : pkg->variables) {
-      if (var.initializer) {
-        auto result = LowerExpression(*var.initializer, builder);
-        auto store_instr =
-            lir::Instruction::StoreVariable(var.variable.symbol, result, false);
-        builder.AddInstruction(std::move(store_instr));
+    for (const auto& mir_func : pkg->functions) {
+      auto lir_func = std::make_unique<lir::Function>();
+
+      // Use qualified name: "PkgName::FuncName"
+      lir_func->name = pkg->name + "::" + mir_func.name;
+      lir_func->return_type = mir_func.return_type;
+
+      // Copy parameters
+      for (const auto& param : mir_func.parameters) {
+        lir_func->parameters.push_back(lir::FunctionParameter{param.variable});
       }
+
+      // Copy local variables
+      lir_func->local_variables = mir_func.local_variables;
+
+      // Lower function body to basic blocks
+      builder.BeginFunction(lir_func->name);
+
+      auto entry_label = builder.MakeLabel("entry");
+      builder.StartBlock(entry_label);
+
+      if (mir_func.body) {
+        LowerStatement(*mir_func.body, builder, lowering_context);
+      }
+
+      builder.EndFunction();
+
+      lir_func->blocks = builder.TakeFunctionBlocks();
+      if (!lir_func->blocks.empty()) {
+        lir_func->entry_label = lir_func->blocks.front()->label;
+      }
+
+      result.functions.push_back(std::move(lir_func));
     }
   }
 
-  builder.EndProcess();
   auto module = builder.EndModule();
 
-  // Extract the process from the synthetic module
-  assert(!module->processes.empty());
-  return module->processes[0];
+  // Extract init process if created
+  if (has_initializers && !module->processes.empty()) {
+    result.init_process = module->processes[0];
+  }
+
+  return result;
 }
 
 }  // namespace lyra::lowering::mir_to_lir

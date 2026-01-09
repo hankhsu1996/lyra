@@ -661,11 +661,13 @@ class ReplicationExpression : public Expression {
 
 // User-defined function call expression
 // Distinguished from SystemCallExpression which handles $display, $time, etc.
+// function_name holds the full qualified name (e.g., "MyPkg::add" for package
+// functions, or just "add" for module-local functions).
 class FunctionCallExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kFunctionCall;
 
-  std::string function_name;
+  std::string function_name;  // Full qualified name (e.g., "MyPkg::add")
   std::vector<std::unique_ptr<Expression>> arguments;
 
   FunctionCallExpression(

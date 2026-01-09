@@ -64,6 +64,7 @@ class SimulationRunner {
       const std::vector<std::unique_ptr<mir::Package>>& packages,
       std::shared_ptr<lir::Process> package_init_process,
       std::shared_ptr<lir::LirContext> package_lir_context,
+      std::vector<std::unique_ptr<lir::Function>> package_functions,
       SimulationContext& context);
 
   void Run();
@@ -132,6 +133,11 @@ class SimulationRunner {
   // Both process and context must be kept alive together
   std::shared_ptr<lir::Process> package_init_process_;
   std::shared_ptr<lir::LirContext> package_lir_context_;
+
+  // Package functions storage - owns the lowered functions.
+  // These must stay alive because kCall instructions hold raw pointers (callee)
+  // to these functions. Ownership transferred from LowerPackages result.
+  std::vector<std::unique_ptr<lir::Function>> package_functions_;
 
   // Top instance context (root of instance hierarchy)
   std::shared_ptr<InstanceContext> top_instance_;

@@ -13,6 +13,7 @@
 #include "lyra/common/variable.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::mir {
 
@@ -55,7 +56,9 @@ struct FunctionParameter {
   common::Variable variable;
 };
 
-// Function definition
+/// Function definition for user-defined functions.
+/// Used by both modules (module-local functions) and packages (package
+/// functions).
 struct FunctionDefinition {
   std::string name;
   common::Type return_type;

@@ -1,0 +1,228 @@
+feature: package_functions
+description: Tests for functions defined in packages (LRM 26)
+
+cases:
+  - name: package_function_basic
+    sv: |
+      package Pkg;
+        function int times_two(int x);
+          return x * 2;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", times_two(21));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_with_params
+    sv: |
+      package Pkg;
+        function int add(int a, int b);
+          return a + b;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", add(10, 32));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_qualified_call
+    sv: |
+      package Pkg;
+        function int triple(int x);
+          return x * 3;
+        endfunction
+      endpackage
+      module Test;
+        initial begin
+          $display("%0d", Pkg::triple(14));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_multiple
+    sv: |
+      package Pkg;
+        function int add(int a, int b);
+          return a + b;
+        endfunction
+        function int multiply(int a, int b);
+          return a * b;
+        endfunction
+        function int subtract(int a, int b);
+          return a - b;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", add(10, 5));
+          $display("%0d", multiply(3, 7));
+          $display("%0d", subtract(50, 8));
+        end
+      endmodule
+    expect:
+      output: "15\n21\n42\n"
+
+  - name: package_function_chained_calls
+    sv: |
+      package Pkg;
+        function int add(int a, int b);
+          return a + b;
+        endfunction
+        function int times_two(int x);
+          return x * 2;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", times_two(add(10, 11)));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_local_vars
+    sv: |
+      package Pkg;
+        function int compute(int x);
+          int temp;
+          temp = x + 10;
+          return temp * 2;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", compute(11));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_conditional
+    sv: |
+      package Pkg;
+        function int max(int a, int b);
+          if (a > b)
+            return a;
+          else
+            return b;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", max(42, 10));
+          $display("%0d", max(5, 42));
+        end
+      endmodule
+    expect:
+      output: "42\n42\n"
+
+  - name: package_function_recursive
+    sv: |
+      package Pkg;
+        function int factorial(int n);
+          if (n <= 1)
+            return 1;
+          else
+            return n * factorial(n - 1);
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", factorial(5));
+        end
+      endmodule
+    expect:
+      output: "120\n"
+
+  - name: multiple_packages_functions
+    sv: |
+      package PkgA;
+        function int add_one(int x);
+          return x + 1;
+        endfunction
+      endpackage
+      package PkgB;
+        function int times_two(int x);
+          return x * 2;
+        endfunction
+      endpackage
+      module Test;
+        import PkgA::*;
+        import PkgB::*;
+        initial begin
+          $display("%0d", times_two(add_one(20)));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_calls_another
+    sv: |
+      package Pkg;
+        function int helper(int x);
+          return x + 5;
+        endfunction
+        function int compute(int x);
+          return helper(x) * 2;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", compute(16));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: module_and_package_functions
+    sv: |
+      package Pkg;
+        function int pkg_func(int x);
+          return x * 2;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        function int mod_func(int x);
+          return x + 10;
+        endfunction
+        initial begin
+          $display("%0d", pkg_func(mod_func(11)));
+        end
+      endmodule
+    expect:
+      output: "42\n"
+
+  - name: package_function_void
+    sv: |
+      package Pkg;
+        int result;
+        function void set_value(int x);
+          result = x;
+        endfunction
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          set_value(42);
+          $display("%0d", result);
+        end
+      endmodule
+    expect:
+      output: "42\n"
