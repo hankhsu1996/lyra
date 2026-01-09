@@ -1,30 +1,33 @@
-"""Macro for defining SystemVerilog feature tests."""
+"""Macro for creating SystemVerilog feature test targets."""
 
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
-
-def sv_feature_test(name, yaml, size = "large", deps = []):
+def sv_feature_test(name, yaml, size = "large"):
     """Creates a test target that runs SV feature tests from a YAML file.
 
+    This creates a thin sh_test wrapper around the unified sv_feature_tests
+    binary, filtering to run only tests from the specified YAML file.
+
     Args:
-        name: Name of the test target
-        yaml: Path to the YAML test file (relative to tests/)
-        size: Test size (small, medium, large)
-        deps: Additional dependencies
+        name: Test target name (e.g., "operators_binary_tests")
+        yaml: Path to YAML file (e.g., "sv_features/operators/binary.yaml")
+        size: Test size (default "large")
     """
-    cc_test(
+
+    # Extract category from yaml path for gtest filter
+    # e.g., "sv_features/operators/binary.yaml" -> "operators_binary"
+    parts = yaml.replace("sv_features/", "").replace(".yaml", "").split("/")
+    filter_pattern = "_".join(parts) + "_*"
+
+    native.sh_test(
         name = name,
-        size = size,
-        srcs = ["framework/sv_feature_tests.cpp"],
+        srcs = ["framework/run_sv_test.sh"],
+        args = [
+            "$(rootpath :sv_feature_tests_bin)",
+            "*" + filter_pattern,
+        ],
         data = [
+            ":sv_feature_tests_bin",
             yaml,
             "//:embedded_headers",
         ],
-        env = {
-            "SV_TEST_YAML": "$(rootpath " + yaml + ")",
-        },
-        deps = [
-            "//:core",
-            "//tests:test_framework",
-            "@googletest//:gtest",
-        ] + deps,
+        size = size,
     )

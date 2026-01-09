@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,51 @@
 
 namespace lyra::test {
 namespace {
+
+// Extract category from YAML path for test name prefixing.
+// e.g., "tests/sv_features/operators/binary.yaml" -> "operators_binary"
+auto ExtractCategory(const std::filesystem::path& yaml_path) -> std::string {
+  auto stem = yaml_path.stem().string();
+  auto parent = yaml_path.parent_path().filename().string();
+  return parent + "_" + stem;
+}
+
+// Get YAML file paths to load test cases from.
+// Priority:
+// 1. SV_TEST_YAML env var (single file, for backward compatibility)
+// 2. Discover all YAML files in runfiles sv_features directory
+auto GetYamlPaths() -> std::vector<std::filesystem::path> {
+  // Check for single YAML file (backward compatibility)
+  if (const char* yaml_path = std::getenv("SV_TEST_YAML")) {
+    return {yaml_path};
+  }
+
+  // Discover all YAML files from runfiles
+  // Bazel sets TEST_SRCDIR to runfiles root
+  const char* test_srcdir = std::getenv("TEST_SRCDIR");
+  const char* test_workspace = std::getenv("TEST_WORKSPACE");
+
+  if (test_srcdir == nullptr || test_workspace == nullptr) {
+    throw std::runtime_error(
+        "Neither SV_TEST_YAML nor TEST_SRCDIR/TEST_WORKSPACE set");
+  }
+
+  std::filesystem::path runfiles_dir =
+      std::filesystem::path(test_srcdir) / test_workspace;
+  std::filesystem::path yaml_dir = runfiles_dir / "tests" / "sv_features";
+
+  std::vector<std::filesystem::path> yaml_paths;
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(yaml_dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+      yaml_paths.push_back(entry.path());
+    }
+  }
+
+  // Sort for deterministic test order
+  std::ranges::sort(yaml_paths);
+  return yaml_paths;
+}
 
 class ScopedCurrentPath {
  public:
@@ -33,14 +79,6 @@ class ScopedCurrentPath {
  private:
   std::filesystem::path previous_;
 };
-
-auto GetYamlPath() -> std::string {
-  const char* yaml_path = std::getenv("SV_TEST_YAML");
-  if (yaml_path == nullptr) {
-    throw std::runtime_error("SV_TEST_YAML environment variable not set");
-  }
-  return yaml_path;
-}
 
 auto WriteTempFiles(const std::vector<SourceFile>& files)
     -> std::vector<std::string> {
@@ -157,7 +195,24 @@ TEST_P(SvFeatureTest, CppCodegen) {
 }
 
 auto LoadTestCases() -> std::vector<TestCase> {
-  return LoadTestCasesFromYaml(GetYamlPath());
+  std::vector<TestCase> all_cases;
+  auto yaml_paths = GetYamlPaths();
+
+  for (const auto& yaml_path : yaml_paths) {
+    auto cases = LoadTestCasesFromYaml(yaml_path.string());
+    auto category = ExtractCategory(yaml_path);
+
+    // Prefix test names with category for uniqueness across YAML files
+    for (auto& tc : cases) {
+      tc.name = category + "_" + tc.name;
+    }
+
+    all_cases.insert(
+        all_cases.end(), std::make_move_iterator(cases.begin()),
+        std::make_move_iterator(cases.end()));
+  }
+
+  return all_cases;
 }
 
 INSTANTIATE_TEST_SUITE_P(
