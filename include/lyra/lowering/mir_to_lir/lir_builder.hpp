@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,16 @@ class LirBuilder {
   void EndFunction();
   auto TakeFunctionBlocks() -> std::vector<std::unique_ptr<lir::BasicBlock>>;
 
+  // Synthetic function interface (for synthesizing functions while in process)
+  // This allows nested function creation during process lowering.
+  void BeginSyntheticFunction(const std::string& name);
+  auto EndSyntheticFunction() -> std::string;  // Returns function name
+
+  // Synthetic process interface (for synthesizing processes while in process)
+  // Used for monitor check processes which are invoked by scheduler.
+  void BeginSyntheticProcess(const std::string& name);
+  auto EndSyntheticProcess() -> std::string;  // Returns process name
+
   // Context-aware variable registration
   // In process context: registers variable in process's local_variables
   // In function context: no-op (function locals are pre-registered in MIR)
@@ -69,19 +80,7 @@ class LirBuilder {
 
   // Additional helpers
   auto MakeLabel(const std::string& hint) -> lir::LabelRef;
-
-  // Add a monitor expression block and return its index.
-  // Used by $monitor to store re-evaluable expressions.
-  auto AddMonitorExpressionBlock(lir::MonitorExpressionBlock block) -> size_t;
-
-  // Get the current number of instructions in the current block.
-  // Used to mark the start of an expression for capture.
-  [[nodiscard]] auto GetCurrentBlockInstructionCount() const -> size_t;
-
-  // Copy instructions added since the given start index.
-  // Used to capture instructions for MonitorExpressionBlocks.
-  [[nodiscard]] auto CopyInstructionsSince(size_t start_index) const
-      -> std::vector<lir::Instruction>;
+  auto MakeSyntheticFunctionName(const std::string& hint) -> std::string;
 
  private:
   auto InternLabel(const std::string& name) -> lir::LabelRef;
@@ -98,10 +97,22 @@ class LirBuilder {
 
   int label_counter_ = 0;
   int temp_counter_ = 0;
+  int synthetic_function_counter_ = 0;
 
   // Current procedural context
   ProceduralContext procedural_context_ = ProceduralContext::kModule;
   std::vector<std::unique_ptr<lir::BasicBlock>> function_blocks_;
+
+  // Saved state for synthetic function (allows nesting within process)
+  struct SavedProcessState {
+    ProceduralContext context;
+    std::shared_ptr<lir::Process> process;
+    std::unique_ptr<lir::BasicBlock> block;
+    std::vector<std::unique_ptr<lir::BasicBlock>> blocks;
+  };
+  std::optional<SavedProcessState> saved_process_state_;
+  std::string synthetic_function_name_;
+  std::string synthetic_process_name_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

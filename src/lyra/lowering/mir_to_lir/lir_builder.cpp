@@ -1,7 +1,6 @@
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 
 #include <cassert>
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -9,7 +8,6 @@
 
 #include <fmt/core.h>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
@@ -34,7 +32,11 @@ void LirBuilder::BeginModule() {
 
 auto LirBuilder::EndModule() -> std::unique_ptr<lir::Module> {
   assert(module_);
-  module_->processes = std::move(processes_);
+  // Append regular processes to any synthetic processes already added
+  for (auto& process : processes_) {
+    module_->processes.push_back(std::move(process));
+  }
+  processes_.clear();
   return std::move(module_);
 }
 
@@ -123,6 +125,102 @@ auto LirBuilder::TakeFunctionBlocks()
   return std::move(function_blocks_);
 }
 
+void LirBuilder::BeginSyntheticFunction(const std::string& name) {
+  // Must be in a process context to nest a synthetic function
+  assert(procedural_context_ == ProceduralContext::kProcess);
+  assert(!saved_process_state_.has_value());
+
+  // Save current process state
+  saved_process_state_ = SavedProcessState{
+      .context = procedural_context_,
+      .process = std::move(current_process_),
+      .block = std::move(current_block_),
+      .blocks = std::move(current_blocks_),
+  };
+
+  // Switch to function context
+  procedural_context_ = ProceduralContext::kFunction;
+  function_blocks_.clear();
+  synthetic_function_name_ = name;
+}
+
+auto LirBuilder::EndSyntheticFunction() -> std::string {
+  assert(procedural_context_ == ProceduralContext::kFunction);
+  assert(saved_process_state_.has_value());
+
+  // End the current block if any
+  if (current_block_) {
+    EndBlock();
+  }
+
+  // Create the function and add to module
+  lir::Function func;
+  func.name = synthetic_function_name_;
+  func.return_type = common::Type::Void();
+  func.blocks = std::move(function_blocks_);
+  if (!func.blocks.empty()) {
+    func.entry_label = func.blocks[0]->label;
+  }
+  module_->functions.push_back(std::move(func));
+
+  // Restore process state
+  procedural_context_ = saved_process_state_->context;
+  current_process_ = std::move(saved_process_state_->process);
+  current_block_ = std::move(saved_process_state_->block);
+  current_blocks_ = std::move(saved_process_state_->blocks);
+  saved_process_state_.reset();
+
+  return synthetic_function_name_;
+}
+
+void LirBuilder::BeginSyntheticProcess(const std::string& name) {
+  assert(procedural_context_ == ProceduralContext::kProcess);
+  assert(!saved_process_state_.has_value());
+
+  // Save current process state
+  saved_process_state_ = SavedProcessState{
+      .context = procedural_context_,
+      .process = std::move(current_process_),
+      .block = std::move(current_block_),
+      .blocks = std::move(current_blocks_),
+  };
+
+  // Start new process (stay in kProcess context)
+  // Mark as callback so it won't be auto-scheduled
+  current_process_ = std::make_shared<lir::Process>();
+  current_process_->name = name;
+  current_process_->is_callback = true;
+  current_blocks_.clear();
+  synthetic_process_name_ = name;
+}
+
+auto LirBuilder::EndSyntheticProcess() -> std::string {
+  assert(procedural_context_ == ProceduralContext::kProcess);
+  assert(saved_process_state_.has_value());
+
+  // End current block if any (don't auto-add terminators - caller must add)
+  if (current_block_) {
+    current_blocks_.push_back(std::move(current_block_));
+    current_block_ = nullptr;
+  }
+
+  // Finalize process and add directly to module
+  current_process_->blocks.reserve(current_blocks_.size());
+  for (auto& block : current_blocks_) {
+    current_process_->blocks.push_back(std::move(block));
+  }
+  module_->processes.push_back(std::move(current_process_));
+
+  // Restore original process state
+  procedural_context_ = saved_process_state_->context;
+  current_process_ = std::move(saved_process_state_->process);
+  current_block_ = std::move(saved_process_state_->block);
+  current_blocks_ = std::move(saved_process_state_->blocks);
+  saved_process_state_.reset();
+
+  return synthetic_process_name_;
+}
+
 void LirBuilder::StartBlock(lir::LabelRef label) {
   // Must be in a procedural context (process or function)
   assert(procedural_context_ != ProceduralContext::kModule);
@@ -177,6 +275,11 @@ auto LirBuilder::MakeLabel(const std::string& hint) -> lir::LabelRef {
   return InternLabel(name);
 }
 
+auto LirBuilder::MakeSyntheticFunctionName(const std::string& hint)
+    -> std::string {
+  return "__" + hint + "_" + std::to_string(synthetic_function_counter_++);
+}
+
 auto LirBuilder::InternLabel(const std::string& name) -> lir::LabelRef {
   return context_->InternLabel(name);
 }
@@ -184,66 +287,6 @@ auto LirBuilder::InternLabel(const std::string& name) -> lir::LabelRef {
 auto LirBuilder::InternLiteral(const common::Literal& literal)
     -> lir::LiteralRef {
   return context_->InternLiteral(literal);
-}
-
-namespace {
-
-/// Validates that a MonitorExpressionBlock contains no side effects.
-/// Expression blocks are re-evaluated at each time slot, so they must be pure.
-void ValidateMonitorExpressionBlock(const lir::MonitorExpressionBlock& block) {
-  using IK = lir::InstructionKind;
-
-  for (const auto& instr : block.instructions) {
-    switch (instr.kind) {
-      case IK::kStoreVariable:
-      case IK::kStoreVariableNonBlocking:
-      case IK::kStoreUnpackedElement:
-      case IK::kStorePackedBits:
-        throw common::InternalError(
-            "AddMonitorExpressionBlock",
-            "expression block contains store instruction - expressions must be "
-            "side-effect free");
-
-      case IK::kSystemCall:
-        // System calls are not allowed in expression blocks
-        throw common::InternalError(
-            "AddMonitorExpressionBlock",
-            fmt::format(
-                "expression block contains system call '{}' - expressions must "
-                "be side-effect free",
-                instr.system_call_name));
-
-      default:
-        // All other instructions are allowed (loads, literals, arithmetic,
-        // etc.)
-        break;
-    }
-  }
-}
-
-}  // namespace
-
-auto LirBuilder::AddMonitorExpressionBlock(lir::MonitorExpressionBlock block)
-    -> size_t {
-  assert(module_);
-  ValidateMonitorExpressionBlock(block);
-  size_t index = module_->monitor_expression_blocks.size();
-  module_->monitor_expression_blocks.push_back(std::move(block));
-  return index;
-}
-
-auto LirBuilder::GetCurrentBlockInstructionCount() const -> size_t {
-  assert(current_block_);
-  return current_block_->instructions.size();
-}
-
-auto LirBuilder::CopyInstructionsSince(size_t start_index) const
-    -> std::vector<lir::Instruction> {
-  assert(current_block_);
-  auto& instrs = current_block_->instructions;
-  assert(start_index <= instrs.size());
-  return {
-      instrs.begin() + static_cast<std::ptrdiff_t>(start_index), instrs.end()};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

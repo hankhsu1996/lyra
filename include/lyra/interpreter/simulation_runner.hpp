@@ -12,7 +12,6 @@
 #include "lyra/common/simulation_region.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
-#include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
@@ -103,12 +102,6 @@ class SimulationRunner {
 
   // $monitor support: check for value changes at end of time slot
   void CheckMonitor();
-
-  // Evaluate an expression block and return the result.
-  // Used by $monitor to re-evaluate complex expressions at each time slot.
-  auto EvaluateMonitorExpressionBlock(
-      const lir::MonitorExpressionBlock& block,
-      const std::shared_ptr<InstanceContext>& instance) -> RuntimeValue;
 
   // Global queues
   DelayQueue delay_queue_;

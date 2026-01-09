@@ -1,12 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <ostream>
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <fmt/core.h>
@@ -19,24 +18,13 @@
 
 namespace lyra::lir {
 
-/// A sequence of instructions that evaluates an expression and produces a
-/// value. Used by $monitor to re-evaluate arguments at each time slot.
-///
-/// Note: This is $monitor-specific. The interpreter re-executes these LIR
-/// instructions at each time slot to detect value changes. The codegen backend
-/// uses a different approach (C++ lambdas) and ignores these blocks.
-struct MonitorExpressionBlock {
-  std::vector<Instruction> instructions;
-  TempRef result;  // Temp holding final value
-};
-
 // Port direction for module interfaces
 enum class PortDirection { kInput, kOutput, kInout };
 
 // Module port declaration
 struct Port {
   common::Variable variable;
-  PortDirection direction;
+  PortDirection direction{};
 };
 
 // Output port binding: maps child's output port to parent's signal storage.
@@ -130,31 +118,20 @@ struct Module {
   std::vector<std::shared_ptr<Process>> processes;
   std::shared_ptr<LirContext> context;
 
-  // Expression blocks for $monitor re-evaluation
-  std::vector<MonitorExpressionBlock> monitor_expression_blocks;
-
-  /// Get a monitor expression block by index with bounds checking.
-  [[nodiscard]] auto GetMonitorExpressionBlock(size_t index) const
-      -> const MonitorExpressionBlock& {
-    if (index >= monitor_expression_blocks.size()) {
-      throw std::out_of_range(
-          fmt::format(
-              "monitor expression block index {} out of range (size: {})",
-              index, monitor_expression_blocks.size()));
-    }
-    return monitor_expression_blocks[index];
-  }
-
   /// Find a function by name. Returns nullptr if not found.
-  /// Uses a lazily-built index for O(1) lookup after first call.
   [[nodiscard]] auto FindFunction(std::string_view name_view) const
       -> const Function* {
-    BuildFunctionIndexIfNeeded();
-    auto it = function_index_.find(std::string(name_view));
-    if (it != function_index_.end()) {
-      return &functions[it->second];
-    }
-    return nullptr;
+    auto it = std::ranges::find_if(
+        functions, [name_view](const auto& f) { return f.name == name_view; });
+    return it != functions.end() ? &*it : nullptr;
+  }
+
+  /// Find a process by name. Returns nullptr if not found.
+  [[nodiscard]] auto FindProcess(std::string_view name_view) const
+      -> std::shared_ptr<Process> {
+    auto it = std::ranges::find_if(
+        processes, [name_view](const auto& p) { return p->name == name_view; });
+    return it != processes.end() ? *it : nullptr;
   }
 
   [[nodiscard]] auto ToString(
@@ -237,9 +214,8 @@ struct Module {
             out += ", ";
           }
           first = false;
-          out += fmt::format(
-              ".{}(0x{:x})", binding.port_name,
-              reinterpret_cast<std::uintptr_t>(binding.signal));
+          out +=
+              fmt::format(".{}({})", binding.port_name, binding.signal->name);
         }
         out += ")\n";
       }
@@ -259,20 +235,6 @@ struct Module {
 
     return out;
   }
-
- private:
-  void BuildFunctionIndexIfNeeded() const {
-    if (function_index_built_) {
-      return;
-    }
-    for (size_t i = 0; i < functions.size(); ++i) {
-      function_index_[functions[i].name] = i;
-    }
-    function_index_built_ = true;
-  }
-
-  mutable std::unordered_map<std::string, size_t> function_index_;
-  mutable bool function_index_built_ = false;
 };
 
 inline auto operator<<(std::ostream& os, const Module& module)

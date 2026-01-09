@@ -996,7 +996,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               if (i > first_arg_idx) {
                 out_ << " || ";
               }
-              EmitExpression(*syscall.arguments[i]);
+              // Use kPrecEquality so ternary expressions get parenthesized
+              EmitExpression(*syscall.arguments[i], kPrecEquality);
               out_ << " != " << prev_names[i - first_arg_idx];
             }
           }

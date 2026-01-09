@@ -89,6 +89,20 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   return {.default_format = 'd', .append_newline = true};
 }
 
+auto IsTruthy(const RuntimeValue& value) -> bool {
+  if (value.IsReal()) {
+    return value.AsDouble() != 0.0;
+  }
+  if (value.IsShortReal()) {
+    return value.AsFloat() != 0.0F;
+  }
+  assert(value.IsTwoState());
+  if (value.IsWide()) {
+    return !value.AsWideBit().IsZero();
+  }
+  return value.AsNarrow().raw != 0;
+}
+
 // Format a RuntimeValue according to a format specifier.
 // spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal,
 // 's' = string, 'f' = real
@@ -1961,20 +1975,6 @@ auto RunInstruction(
           format_string += BuildFormatString(format_args, props.default_format);
         }
 
-        // Build monitored variables list from instruction metadata
-        // Skip the first arg if it was used as a format string
-        size_t first_monitor_idx = fmt_info.is_string_literal ? 1 : 0;
-        std::vector<MonitoredVariable> variables;
-        for (size_t i = first_monitor_idx; i < instr.monitored_args.size();
-             ++i) {
-          const auto& arg = instr.monitored_args[i];
-          if (arg) {
-            variables.push_back(
-                MonitoredVariable{
-                    .expression_block_index = arg->expression_block_index});
-          }
-        }
-
         // Get time format context
         auto module_unit_power = simulation_context.timescale
                                      ? simulation_context.timescale->unit_power
@@ -1992,21 +1992,19 @@ auto RunInstruction(
           simulation_context.display_output << "\n";
         }
 
-        // Set up the active monitor (replaces any previous monitor)
-        // Use std::move since format_string and format_args are no longer
-        // needed
+        // Set up monitor state as a closure with captured prev values.
+        // This matches codegen's mutable lambda capture semantics.
+        CallFrame closure;
+        for (size_t i = 0; i < format_args.size(); ++i) {
+          std::string capture_name = "__capture_prev_" + std::to_string(i);
+          closure.captures[capture_name] = std::move(format_args[i]);
+        }
+
         simulation_context.active_monitor = MonitorState{
             .enabled = true,
-            .format_string = std::move(format_string),
-            .default_format = props.default_format,
-            .append_newline = props.append_newline,
-            .variables = std::move(variables),
-            .previous_values = std::move(format_args),
             .instance = instance_context,
-            .time_format = simulation_context.time_format,
-            .module_unit_power = module_unit_power,
-            .global_precision_power =
-                simulation_context.global_precision_power};
+            .check_process_name = instr.monitor_check_function_name,
+            .closure = std::move(closure)};
 
         return InstructionResult::Continue();
       }
@@ -2386,22 +2384,8 @@ auto RunInstruction(
       const auto& false_target =
           std::get<lir::LabelRef>(instr.operands[2].value);
 
-      bool condition_result = false;
-      if (condition.IsReal()) {
-        condition_result = condition.AsDouble() != 0.0;
-      } else if (condition.IsShortReal()) {
-        condition_result = condition.AsFloat() != 0.0F;
-      } else {
-        assert(condition.IsTwoState());
-        if (condition.IsWide()) {
-          condition_result = !condition.AsWideBit().IsZero();
-        } else {
-          condition_result = condition.AsNarrow().raw != 0;
-        }
-      }
-
-      const auto& next_label = condition_result ? true_target : false_target;
-      return InstructionResult::Jump(next_label);
+      return InstructionResult::Jump(
+          IsTruthy(condition) ? true_target : false_target);
     }
 
     case lir::InstructionKind::kCall:
@@ -2409,6 +2393,43 @@ auto RunInstruction(
 
     case lir::InstructionKind::kReturn:
       return HandleReturn(instr, process_context, temp_table);
+
+    case lir::InstructionKind::kLoadCapture: {
+      // Load value from the closure's captures.
+      // Used by closures (e.g., $monitor check processes) to load captured
+      // values.
+      if (!simulation_context.active_monitor.has_value()) {
+        throw common::InternalError(
+            "kLoadCapture", "no active monitor (closure context)");
+      }
+      auto& captures = simulation_context.active_monitor->closure.captures;
+
+      auto it = captures.find(instr.capture_name);
+      if (it == captures.end()) {
+        throw common::InternalError(
+            "kLoadCapture",
+            std::format("capture '{}' not found", instr.capture_name));
+      }
+
+      temp_table.Write(instr.result.value(), it->second);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStoreCapture: {
+      // Store value to the closure's captures.
+      // Used by closures (e.g., $monitor check processes) to update captured
+      // values.
+      if (!simulation_context.active_monitor.has_value()) {
+        throw common::InternalError(
+            "kStoreCapture", "no active monitor (closure context)");
+      }
+
+      auto& captures = simulation_context.active_monitor->closure.captures;
+      auto value = get_temp(instr.operands[0]);
+
+      captures[instr.capture_name] = value;
+      return InstructionResult::Continue();
+    }
   }
 }
 

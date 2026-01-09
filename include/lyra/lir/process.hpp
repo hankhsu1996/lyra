@@ -24,6 +24,10 @@ struct Process {
   // List of basic blocks
   std::vector<std::unique_ptr<BasicBlock>> blocks;
 
+  // If true, this process is a callback (e.g., monitor check) and shouldn't be
+  // auto-scheduled at simulation start. It's only called on demand.
+  bool is_callback = false;
+
   [[nodiscard]] auto ToString(
       common::FormatMode mode = common::FormatMode::kPlain,
       int indentation_level = 0) const -> std::string {

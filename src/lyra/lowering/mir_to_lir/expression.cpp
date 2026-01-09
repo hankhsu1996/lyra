@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -13,7 +14,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
-#include "lyra/lir/module.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
@@ -28,6 +28,15 @@ using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
+
+// Forward declaration for synthesizing $monitor check processes
+// format_literal: optional format string literal (nullptr if no format string)
+// display_call: display variant to use ($display, $displayb, $displayo,
+// $displayh)
+auto SynthesizeMonitorCheckProcess(
+    const std::vector<const mir::Expression*>& monitored_exprs,
+    const mir::Expression* format_literal, const std::string& display_call,
+    LirBuilder& builder) -> std::string;
 
 auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     -> lir::TempRef {
@@ -353,7 +362,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       std::vector<Operand> operands;
       std::vector<TempRef> arguments;
-      std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
 
       auto lower_system_call_operand =
           [&](const mir::Expression& argument) -> Operand {
@@ -375,52 +383,72 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Check if first argument is a format string (for $monitor)
         // Format strings are string literals containing '%' and should not
         // be tracked for value changes.
-        bool first_is_format_string = false;
+        // Note: Short strings may be encoded as integers, so we check
+        // is_string_literal flag rather than value.IsString().
+        const mir::Expression* format_literal = nullptr;
         if (!system_call.arguments.empty()) {
           const auto& first_arg = system_call.arguments[0];
           if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
             const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
-            if (lit.literal.value.IsString() &&
-                lit.literal.value.AsString().find('%') != std::string::npos) {
-              first_is_format_string = true;
+            if (lit.literal.is_string_literal) {
+              format_literal = first_arg.get();
             }
           }
         }
 
+        // Collect pointers to monitored expressions for synthesis
+        std::vector<const mir::Expression*> monitored_exprs;
+
         size_t arg_index = 0;
         for (const auto& argument : system_call.arguments) {
           if (argument) {
-            // For $monitor, skip format string tracking but still lower it
-            bool is_format_string = first_is_format_string && arg_index == 0;
+            bool is_format_string =
+                (format_literal != nullptr) && arg_index == 0;
 
             if (!is_format_string) {
-              // Capture instructions for re-evaluation at each time slot
-              size_t before_count = builder.GetCurrentBlockInstructionCount();
+              // Collect expression for check function synthesis
+              monitored_exprs.push_back(argument.get());
+
+              // Lower expression at call site for initial print
               TempRef result = LowerExpression(*argument, builder);
               arguments.push_back(result);
-
-              // Copy the instructions that computed this argument
-              auto instructions = builder.CopyInstructionsSince(before_count);
-              size_t block_idx = builder.AddMonitorExpressionBlock(
-                  lir::MonitorExpressionBlock{
-                      .instructions = std::move(instructions),
-                      .result = result});
-
-              // Store the expression block index for re-evaluation
-              monitored_args.emplace_back(
-                  Instruction::MonitoredArg{
-                      .expression_block_index = block_idx});
             } else {
+              // Format string - just lower it
               arguments.push_back(LowerExpression(*argument, builder));
             }
           }
           ++arg_index;
         }
-      } else {
-        for (const auto& argument : system_call.arguments) {
-          if (argument) {
-            operands.push_back(lower_system_call_operand(*argument));
-          }
+
+        // Determine display variant based on monitor variant
+        // $monitor → $display, $monitorb → $displayb, etc.
+        std::string display_call;
+        if (system_call.name == "$monitor") {
+          display_call = "$display";
+        } else if (system_call.name == "$monitorb") {
+          display_call = "$displayb";
+        } else if (system_call.name == "$monitoro") {
+          display_call = "$displayo";
+        } else if (system_call.name == "$monitorh") {
+          display_call = "$displayh";
+        } else {
+          display_call = "$display";  // fallback
+        }
+
+        // Synthesize the check process for periodic re-evaluation
+        std::string check_process_name = SynthesizeMonitorCheckProcess(
+            monitored_exprs, format_literal, display_call, builder);
+
+        auto instruction = Instruction::SystemCallWithMonitor(
+            system_call.name, std::move(arguments),
+            std::move(check_process_name));
+        instruction.first_operand_is_string_literal = (format_literal != nullptr);
+        builder.AddInstruction(std::move(instruction));
+        return builder.AllocateTemp("sys", system_call.type);
+      }
+      for (const auto& argument : system_call.arguments) {
+        if (argument) {
+          operands.push_back(lower_system_call_operand(*argument));
         }
       }
 
@@ -444,13 +472,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Pass result temp to store the return value
         auto instruction = Instruction::SystemCall(
             system_call.name, std::move(operands), result, system_call.type);
-        instruction.first_operand_is_string_literal =
-            first_operand_is_string_literal;
-        builder.AddInstruction(std::move(instruction));
-      } else if (is_monitor) {
-        // $monitor with tracked symbols
-        auto instruction = Instruction::SystemCallWithMonitor(
-            system_call.name, std::move(arguments), std::move(monitored_args));
         instruction.first_operand_is_string_literal =
             first_operand_is_string_literal;
         builder.AddInstruction(std::move(instruction));
@@ -814,15 +835,13 @@ auto LowerTernaryExpression(
     const mir::TernaryExpression& expression, LirBuilder& builder) -> TempRef {
   auto condition = LowerExpression(*expression.condition, builder);
 
-  // Generate unique labels for the various blocks
+  // Use branches for proper short-circuit evaluation
   auto true_label = builder.MakeLabel("ternary.true");
   auto false_label = builder.MakeLabel("ternary.false");
   auto end_label = builder.MakeLabel("ternary.end");
 
-  // Create a temporary variable to hold the result
   auto result = builder.AllocateTemp("ternary", expression.type);
 
-  // Branch based on condition
   auto branch = Instruction::Branch(condition, true_label, false_label);
   builder.AddInstruction(std::move(branch));
 
@@ -830,7 +849,6 @@ auto LowerTernaryExpression(
   builder.StartBlock(true_label);
   auto true_value = LowerExpression(*expression.true_expression, builder);
 
-  // Copy the true value to the result temp
   auto copy_true = Instruction::Basic(IK::kMove, result, true_value);
   builder.AddInstruction(std::move(copy_true));
 
@@ -842,7 +860,6 @@ auto LowerTernaryExpression(
   builder.StartBlock(false_label);
   auto false_value = LowerExpression(*expression.false_expression, builder);
 
-  // Copy the false value to the result temp
   auto copy_false = Instruction::Basic(IK::kMove, result, false_value);
   builder.AddInstruction(std::move(copy_false));
 
@@ -853,7 +870,6 @@ auto LowerTernaryExpression(
   // End block - control rejoins here
   builder.StartBlock(end_label);
 
-  // Return the result temporary
   return result;
 }
 
@@ -911,6 +927,113 @@ auto LowerIncrementDecrementExpression(
   }
   // Post-operations return the original value
   return load_temp;
+}
+
+auto SynthesizeMonitorCheckProcess(
+    const std::vector<const mir::Expression*>& monitored_exprs,
+    const mir::Expression* format_literal, const std::string& display_call,
+    LirBuilder& builder) -> std::string {
+  // Generate unique process name
+  std::string process_name = builder.MakeSyntheticFunctionName("monitor_check");
+
+  // Begin synthetic process (saves current process state)
+  builder.BeginSyntheticProcess(process_name);
+
+  builder.StartBlock(builder.MakeLabel("entry"));
+
+  // Handle empty monitor case: $monitor() with no expressions
+  // Just complete immediately - nothing to track for changes
+  if (monitored_exprs.empty()) {
+    builder.AddInstruction(Instruction::Complete());
+    return builder.EndSyntheticProcess();
+  }
+
+  // Generate capture names for prev values (matches $monitor handler)
+  auto make_capture_name = [](size_t i) {
+    return "__capture_prev_" + std::to_string(i);
+  };
+
+  // Phase 1: Evaluate all monitored expressions
+  std::vector<TempRef> current_temps;
+  current_temps.reserve(monitored_exprs.size());
+  for (const auto* expr : monitored_exprs) {
+    current_temps.push_back(LowerExpression(*expr, builder));
+  }
+
+  // Phase 2: Load previous values from captures and compare
+  std::vector<TempRef> change_flags;
+  change_flags.reserve(monitored_exprs.size());
+
+  for (size_t i = 0; i < monitored_exprs.size(); ++i) {
+    const auto& expr_type = monitored_exprs[i]->type;
+
+    // Load previous value from capture
+    TempRef prev = builder.AllocateTemp("prev", expr_type);
+    builder.AddInstruction(
+        Instruction::LoadCapture(prev, make_capture_name(i), expr_type));
+
+    // Compare: changed_i = (current != prev)
+    TempRef changed = builder.AllocateTemp("chg", Type::Bool());
+    builder.AddInstruction(
+        Instruction::Basic(
+            IK::kBinaryNotEqual, changed,
+            {Operand::Temp(current_temps[i]), Operand::Temp(prev)}));
+    change_flags.push_back(changed);
+  }
+
+  // Phase 3: OR all change flags together
+  TempRef any_changed = change_flags[0];
+  for (size_t i = 1; i < change_flags.size(); ++i) {
+    TempRef new_changed = builder.AllocateTemp("any", Type::Bool());
+    builder.AddInstruction(
+        Instruction::Basic(
+            IK::kBinaryLogicalOr, new_changed,
+            {Operand::Temp(any_changed), Operand::Temp(change_flags[i])}));
+    any_changed = new_changed;
+  }
+
+  // Phase 4: Branch - if any changed, print and update; else return
+  auto print_label = builder.MakeLabel("do_print");
+  auto end_label = builder.MakeLabel("end");
+  builder.AddInstruction(
+      Instruction::Branch(any_changed, print_label, end_label));
+  builder.EndBlock();
+
+  // do_print block: emit $display and store new prev values
+  builder.StartBlock(print_label);
+
+  // Build operands for $display: format string (if any) + current values
+  std::vector<Operand> display_operands;
+  if (format_literal != nullptr) {
+    TempRef fmt_temp = LowerExpression(*format_literal, builder);
+    display_operands.push_back(Operand::Temp(fmt_temp));
+  }
+  for (const auto& temp : current_temps) {
+    display_operands.push_back(Operand::Temp(temp));
+  }
+
+  // Use the provided display variant ($display, $displayb, $displayo,
+  // $displayh)
+  auto display_instr =
+      Instruction::SystemCall(display_call, std::move(display_operands));
+  display_instr.first_operand_is_string_literal = (format_literal != nullptr);
+  builder.AddInstruction(std::move(display_instr));
+
+  // Store current values as new prev values in captures
+  for (size_t i = 0; i < current_temps.size(); ++i) {
+    builder.AddInstruction(
+        Instruction::StoreCapture(current_temps[i], make_capture_name(i)));
+  }
+
+  builder.AddInstruction(Instruction::Jump(end_label));
+  builder.EndBlock();
+
+  // end block: complete (process terminator)
+  builder.StartBlock(end_label);
+  builder.AddInstruction(Instruction::Complete());
+
+  // End synthetic process (restores process state, adds process to module)
+  return builder.EndSyntheticProcess();
 }
 
 }  // namespace lyra::lowering::mir_to_lir

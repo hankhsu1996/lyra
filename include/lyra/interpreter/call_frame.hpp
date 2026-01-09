@@ -36,6 +36,12 @@ struct CallFrame {
   /// Function-local temp storage (for reentrant/recursive calls)
   /// Each call frame has its own temps to avoid conflicts
   TempTable temp_table;
+
+  /// Captured variables for closures (e.g., $monitor prev values).
+  /// Unlike local_variables (which use slang symbols), captures use string
+  /// names. For persistent closures, this map persists across calls, matching
+  /// C++ mutable lambda capture semantics.
+  std::unordered_map<std::string, RuntimeValue> captures;
 };
 
 }  // namespace lyra::interpreter
