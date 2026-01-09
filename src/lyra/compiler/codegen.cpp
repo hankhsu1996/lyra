@@ -2165,14 +2165,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       // Integral concatenation
       size_t result_width = expr.type.GetBitWidth();
 
-      // Debug assertion: sum of operand widths must equal result width
-      [[maybe_unused]] size_t operand_width_sum = 0;
+      // Invariant check: operand widths must sum to result width
+      size_t operand_width_sum = 0;
       for (const auto& op : concat.operands) {
         operand_width_sum += op->type.GetBitWidth();
       }
-      assert(
-          operand_width_sum == result_width &&
-          "concatenation operand widths don't sum to result width");
+      if (operand_width_sum != result_width) {
+        throw common::InternalError(
+            "codegen",
+            fmt::format(
+                "concatenation operand widths don't sum to result width: "
+                "result={}, sum={}",
+                result_width, operand_width_sum));
+      }
 
       // SDK Concat<N>() handles both narrow and wide internally:
       // - Narrow (<=64 bits): returns uint64_t, handles sign-extension masking

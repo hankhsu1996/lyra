@@ -262,8 +262,8 @@ class BinaryExpression : public Expression {
 
   BinaryExpression(
       BinaryOperator op, std::unique_ptr<Expression> left,
-      std::unique_ptr<Expression> right)
-      : Expression(kKindValue, left->type),
+      std::unique_ptr<Expression> right, Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
         op(op),
         left(std::move(left)),
         right(std::move(right)) {
