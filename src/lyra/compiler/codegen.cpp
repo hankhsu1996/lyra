@@ -140,21 +140,11 @@ auto IntegralLiteralToString(const common::Literal& lit) -> std::string {
 }
 
 // Extract format string info from a MIR expression.
-// Handles BitPackedStringExpression, string literals, and bit-packed strings.
+// Handles string literals and bit-packed strings (via is_string_literal flag).
 auto ExtractFormatString(const mir::Expression& expr)
     -> common::FormatStringInfo {
   common::FormatStringInfo info;
 
-  // Handle BitPackedStringExpression - use original string directly
-  if (expr.kind == mir::Expression::Kind::kBitPackedString) {
-    const auto& bps = mir::As<mir::BitPackedStringExpression>(expr);
-    info.text = bps.original_string;
-    info.is_string_literal = true;
-    info.has_format_specifiers = info.text.find('%') != std::string::npos;
-    return info;
-  }
-
-  // Handle LiteralExpression
   if (expr.kind != mir::Expression::Kind::kLiteral) {
     return info;
   }
@@ -163,7 +153,8 @@ auto ExtractFormatString(const mir::Expression& expr)
     info.text = lit.literal.value.AsString();
     info.is_string_literal = true;
   } else if (lit.literal.is_string_literal) {
-    // Legacy path: bit-packed string using flag (will be removed)
+    // Bit-packed string: slang typed it as integral but it came from a string
+    // literal. Convert back to string for format detection.
     info.text = IntegralLiteralToString(lit.literal);
     info.is_string_literal = true;
   }
@@ -1180,20 +1171,12 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
           const auto& target_type = target_expr.type;
 
-          // Helper to emit filename, extracting original string for BitPacked
+          // Helper to emit filename, converting integral to string if needed
           auto emit_filename = [&]() {
             const auto& filename_arg = *syscall.arguments[0];
 
-            // BitPackedString: use original string directly
-            if (filename_arg.kind == mir::Expression::Kind::kBitPackedString) {
-              const auto& bps =
-                  mir::As<mir::BitPackedStringExpression>(filename_arg);
-              out_ << "\"" << common::EscapeForCppString(bps.original_string)
-                   << "\"";
-              return;
-            }
-
-            // Legacy: integral literal (bit-packed string via flag)
+            // Integral literal (bit-packed string): convert to string at
+            // runtime
             if (filename_arg.kind == mir::Expression::Kind::kLiteral &&
                 filename_arg.type.kind == common::Type::Kind::kIntegral) {
               out_ << "lyra::sdk::IntToString(";
@@ -2235,23 +2218,6 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*call.arguments[i], kPrecLowest);
       }
       out_ << ")";
-      break;
-    }
-
-    case mir::Expression::Kind::kBitPackedString: {
-      // BitPackedString wraps a string literal used in bit context.
-      // Emit as an integral literal with the packed value.
-      const auto& bps = mir::As<mir::BitPackedStringExpression>(expr);
-      auto integral_data = std::get<common::IntegralData>(bps.type.data);
-      // For wide types, use parentheses to avoid parsing ambiguity with >
-      // For narrow types, use braces for uniform initialization
-      if (IsWideWidth(integral_data.bit_width)) {
-        out_ << ToCppType(bps.type) << "(" << bps.packed_value.ToString()
-             << ")";
-      } else {
-        out_ << ToCppType(bps.type) << "{" << bps.packed_value.ToString()
-             << "}";
-      }
       break;
     }
 

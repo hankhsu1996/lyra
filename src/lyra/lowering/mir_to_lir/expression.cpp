@@ -337,8 +337,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           first_operand_is_string_literal =
               lit.literal.is_string_literal ||
               lit.literal.type.kind == common::Type::Kind::kString;
-        } else if (first_arg.kind == mir::Expression::Kind::kBitPackedString) {
-          first_operand_is_string_literal = true;
         }
       }
 
@@ -356,14 +354,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         if (argument.kind == mir::Expression::Kind::kLiteral) {
           const auto& lit = mir::As<mir::LiteralExpression>(argument);
           auto literal_ref = builder.InternLiteral(lit.literal);
-          return Operand::Literal(literal_ref);
-        }
-        // For BitPackedString, create literal with is_string_literal flag
-        if (argument.kind == mir::Expression::Kind::kBitPackedString) {
-          const auto& bps = mir::As<mir::BitPackedStringExpression>(argument);
-          auto literal =
-              Literal::FromTypeAndValue(bps.type, bps.packed_value, true);
-          auto literal_ref = builder.InternLiteral(literal);
           return Operand::Literal(literal_ref);
         }
         auto temp = LowerExpression(argument, builder);
@@ -630,23 +620,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(
           Instruction::LoadPackedBits(
               result, value, offset_temp, expression.type));
-      return result;
-    }
-
-    case mir::Expression::Kind::kBitPackedString: {
-      // BitPackedString wraps a string literal used in bit context.
-      // For LIR, we emit the packed integral value as a literal.
-      // The is_string_literal flag is set to true so the interpreter can
-      // detect format strings at runtime.
-      const auto& bps = mir::As<mir::BitPackedStringExpression>(expression);
-      auto result = builder.AllocateTemp("bitpacked", bps.type);
-
-      // Create a literal with the packed value, marking it as from string
-      auto packed_literal =
-          Literal::FromTypeAndValue(bps.type, bps.packed_value, true);
-      auto literal_ref = builder.InternLiteral(packed_literal);
-      auto instruction = Instruction::Basic(IK::kLiteral, result, literal_ref);
-      builder.AddInstruction(std::move(instruction));
       return result;
     }
   }

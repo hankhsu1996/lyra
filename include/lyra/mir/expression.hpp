@@ -45,7 +45,6 @@ class Expression {
     kReplication,
     kFunctionCall,
     kMemberAccess,
-    kBitPackedString,
   };
 
   Kind kind;
@@ -102,8 +101,6 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "FunctionCall";
     case Expression::Kind::kMemberAccess:
       return "MemberAccess";
-    case Expression::Kind::kBitPackedString:
-      return "BitPackedString";
   }
   std::abort();
 }
@@ -717,38 +714,6 @@ class MemberAccessExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}.{}", value->ToString(), field_name);
-  }
-
-  void Accept(MirVisitor& visitor) const override {
-    visitor.Visit(*this);
-  }
-};
-
-// Represents a string literal used in bit concatenation context.
-// Wraps the original string value while having an integral type.
-// This allows downstream code (codegen, interpreter) to access the original
-// string without needing to convert from the bit-packed integral
-// representation.
-//
-// Example: In `{8'h48, "ello"}`, the "ello" StringLiteral is typed as bit[32]
-// by slang. We wrap it in BitPackedStringExpression to preserve the original
-// string "ello" while carrying the integral type for concatenation.
-class BitPackedStringExpression : public Expression {
- public:
-  static constexpr Kind kKindValue = Kind::kBitPackedString;
-
-  std::string original_string;        // The original string literal value
-  common::ValueStorage packed_value;  // The bit-packed integral value
-
-  BitPackedStringExpression(
-      std::string original, common::ValueStorage packed, Type integral_type)
-      : Expression(kKindValue, std::move(integral_type)),
-        original_string(std::move(original)),
-        packed_value(std::move(packed)) {
-  }
-
-  [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("BitPacked(\"{}\")", original_string);
   }
 
   void Accept(MirVisitor& visitor) const override {
