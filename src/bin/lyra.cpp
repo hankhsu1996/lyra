@@ -389,6 +389,14 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
           std::cout << "  typedef " << type_decl.name << " = "
                     << type_decl.type.ToString() << "\n";
         }
+        for (const auto& var : pkg->variables) {
+          std::cout << "  var " << var.variable.symbol->name << ": "
+                    << var.variable.type.ToString();
+          if (var.initializer) {
+            std::cout << " = " << var.initializer->ToString();
+          }
+          std::cout << "\n";
+        }
         std::cout << "endpackage\n\n";
       }
     }

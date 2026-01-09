@@ -158,3 +158,45 @@ cases:
       endmodule
     expect:
       output: "1\n"
+
+  - name: package_variable_basic
+    sv: |
+      package Pkg;
+        logic [7:0] counter = 8'hAB;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%h", counter);
+        end
+      endmodule
+    expect:
+      output: "ab\n"
+
+  - name: package_variable_modify
+    sv: |
+      package Pkg;
+        logic [7:0] counter = 0;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          counter = counter + 1;
+          $display("%0d", counter);
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: package_variable_qualified
+    sv: |
+      package Pkg;
+        int value = 42;
+      endpackage
+      module Test;
+        initial begin
+          $display("%0d", Pkg::value);
+        end
+      endmodule
+    expect:
+      output: "42\n"

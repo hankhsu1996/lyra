@@ -14,6 +14,9 @@
 #include <unordered_set>
 #include <vector>
 
+#include <slang/ast/Scope.h>
+#include <slang/ast/Symbol.h>
+
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -1462,6 +1465,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kIdentifier: {
       const auto& ident = mir::As<mir::IdentifierExpression>(expr);
+      // Check if symbol is from a package (needs qualified access)
+      const auto* parent_scope = ident.symbol->getParentScope();
+      if (parent_scope != nullptr) {
+        const auto& parent_symbol = parent_scope->asSymbol();
+        if (parent_symbol.kind == slang::ast::SymbolKind::Package) {
+          out_ << parent_symbol.name << "::";
+        }
+      }
       out_ << ident.symbol->name;
       // Append underscore for port reference members (Google style)
       if (port_symbols_.contains(ident.symbol)) {
@@ -2255,6 +2266,21 @@ auto Codegen::GeneratePackages(
                 "inline constexpr {} {}{{{}}};", type_decl.name, member.name,
                 member.value));
       }
+    }
+
+    // Emit package variables
+    for (const auto& var : pkg->variables) {
+      std::string type_str = ToCppType(var.variable.type);
+      Indent();
+      out_ << "inline " << type_str << " " << var.variable.symbol->name;
+      if (var.initializer) {
+        out_ << "{";
+        EmitExpression(*var.initializer);
+        out_ << "}";
+      } else {
+        out_ << "{}";
+      }
+      out_ << ";\n";
     }
 
     indent_--;

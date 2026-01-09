@@ -7,9 +7,12 @@
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/text/SourceLocation.h>
 
+#include "lyra/common/diagnostic.hpp"
+#include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/package.hpp"
 
@@ -51,6 +54,31 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       package->types.push_back(
           {std::string(alias.name), *type_result, std::move(enum_members)});
+    }
+
+    if (member.kind == slang::ast::SymbolKind::Variable) {
+      const auto& var_symbol = member.as<slang::ast::VariableSymbol>();
+
+      slang::SourceRange source_range(var_symbol.location, var_symbol.location);
+      auto type_result = LowerType(var_symbol.getType(), source_range);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      common::Variable variable{
+          .symbol = &var_symbol,
+          .type = *type_result,
+      };
+
+      std::unique_ptr<mir::Expression> init_expr = nullptr;
+      if (const auto* initializer = var_symbol.getInitializer()) {
+        init_expr = LowerExpression(*initializer);
+      }
+
+      package->variables.push_back(
+          mir::PackageVariable{
+              .variable = std::move(variable),
+              .initializer = std::move(init_expr)});
     }
   }
 

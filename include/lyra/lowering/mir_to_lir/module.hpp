@@ -8,11 +8,14 @@
 
 namespace lyra::mir {
 class Module;
-}
+class Package;
+}  // namespace lyra::mir
 
 namespace lyra::lir {
+class LirContext;
 class Module;
-}
+class Process;
+}  // namespace lyra::lir
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -37,5 +40,18 @@ auto LowerModule(
 /// @return Vector of lowered LIR modules
 auto LowerModules(std::span<const std::unique_ptr<mir::Module>> modules)
     -> std::vector<std::unique_ptr<lir::Module>>;
+
+/// Lowers package variable initializers into a synthetic LIR process.
+///
+/// Creates a process that initializes all package variables. The process
+/// should be executed before module elaboration with nullptr instance context
+/// to store values in the global variable table.
+///
+/// @param packages The MIR packages containing variables to initialize
+/// @param context Shared LIR context for temp/literal allocation
+/// @return The init process, or nullptr if no initializers exist
+auto LowerPackageInitProcess(
+    std::span<const std::unique_ptr<mir::Package>> packages,
+    std::shared_ptr<lir::LirContext> context) -> std::shared_ptr<lir::Process>;
 
 }  // namespace lyra::lowering::mir_to_lir

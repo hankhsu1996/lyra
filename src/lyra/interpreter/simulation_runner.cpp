@@ -47,6 +47,9 @@ SimulationRunner::SimulationRunner(
 // Multi-module constructor (hierarchical designs)
 SimulationRunner::SimulationRunner(
     const std::vector<std::unique_ptr<lir::Module>>& modules,
+    const std::vector<std::unique_ptr<mir::Package>>& packages,
+    std::shared_ptr<lir::Process> package_init_process,
+    std::shared_ptr<lir::LirContext> package_lir_context,
     SimulationContext& context)
     : delay_queue_(),
       active_queue_(),
@@ -56,6 +59,9 @@ SimulationRunner::SimulationRunner(
       top_module_(
           *modules.back()),  // Last module is the top (dependency order)
       module_map_(),
+      packages_(),
+      package_init_process_(std::move(package_init_process)),
+      package_lir_context_(std::move(package_lir_context)),
       simulation_context_(context),
       trigger_manager_(context) {
   // Initialize timescale for $time/$stime/$realtime scaling
@@ -67,6 +73,10 @@ SimulationRunner::SimulationRunner(
   // Build module map for lookup
   for (const auto& module : modules) {
     module_map_.emplace(module->name, std::cref(*module));
+  }
+  // Store package references
+  for (const auto& pkg : packages) {
+    packages_.emplace_back(std::cref(*pkg));
   }
 }
 
@@ -410,6 +420,30 @@ auto SimulationRunner::EvaluateMonitorExpressionBlock(
   return temp_context.temp_table.Read(block.result);
 }
 
+void SimulationRunner::InitializePackageVariables() {
+  // First, create storage with default values
+  for (const auto& pkg_ref : packages_) {
+    const auto& pkg = pkg_ref.get();
+    for (const auto& var : pkg.variables) {
+      RuntimeValue default_value =
+          RuntimeValue::DefaultValueForType(var.variable.type);
+      simulation_context_.get().variable_table.CreateVariable(
+          var.variable.symbol, std::move(default_value));
+    }
+  }
+
+  // Then execute the init process (if any) to set actual values
+  if (package_init_process_) {
+    ProcessContext process_context;
+    ProcessEffect process_effect;
+    // Use top module for function lookup (package init has no function calls)
+    RunProcess(
+        package_init_process_, 0, 0, top_module_.get(),
+        simulation_context_.get(), process_context, process_effect,
+        nullptr);  // nullptr = global storage
+  }
+}
+
 void SimulationRunner::InitializeModuleVariables(
     const lir::Module& module,
     const std::shared_ptr<InstanceContext>& instance) {
@@ -448,6 +482,9 @@ auto SimulationRunner::LookupModule(const std::string& name) const
 
 void SimulationRunner::ElaborateHierarchy() {
   const auto& top = top_module_.get();
+
+  // Initialize package variables in global storage (before module variables)
+  InitializePackageVariables();
 
   // Create top module instance context (no port bindings)
   auto top_instance = std::make_shared<InstanceContext>(

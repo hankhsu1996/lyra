@@ -14,8 +14,10 @@
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::interpreter {
 
@@ -53,6 +55,9 @@ class SimulationRunner {
   // Multi-module constructor (for hierarchical designs)
   SimulationRunner(
       const std::vector<std::unique_ptr<lir::Module>>& modules,
+      const std::vector<std::unique_ptr<mir::Package>>& packages,
+      std::shared_ptr<lir::Process> package_init_process,
+      std::shared_ptr<lir::LirContext> package_lir_context,
       SimulationContext& context);
 
   void Run();
@@ -68,6 +73,7 @@ class SimulationRunner {
   void ElaborateSubmodules(
       const lir::Module& parent, const std::string& parent_path,
       const std::shared_ptr<InstanceContext>& parent_instance);
+  void InitializePackageVariables();
   static void InitializeModuleVariables(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);
@@ -112,6 +118,14 @@ class SimulationRunner {
   std::reference_wrapper<const lir::Module> top_module_;
   std::unordered_map<std::string, std::reference_wrapper<const lir::Module>>
       module_map_;
+
+  // Package storage for initializing package variables
+  std::vector<std::reference_wrapper<const mir::Package>> packages_;
+
+  // Package variable init process (LIR lowered from package initializers)
+  // Both process and context must be kept alive together
+  std::shared_ptr<lir::Process> package_init_process_;
+  std::shared_ptr<lir::LirContext> package_lir_context_;
 
   // Top instance context (root of instance hierarchy)
   std::shared_ptr<InstanceContext> top_instance_;
