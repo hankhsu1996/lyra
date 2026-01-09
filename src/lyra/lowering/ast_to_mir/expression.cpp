@@ -16,6 +16,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -91,6 +92,24 @@ auto LowerExpression(const slang::ast::Expression& expression)
         return std::make_unique<mir::EnumValueExpression>(
             *type_result, std::move(enum_name), std::string(enum_val.name),
             value);
+      }
+
+      // Handle parameter references - evaluate to constant value
+      if (named_value.symbol.kind == slang::ast::SymbolKind::Parameter) {
+        const auto& param =
+            named_value.symbol.as<slang::ast::ParameterSymbol>();
+        const auto& cv = param.getValue();
+        auto literal_result = ConstantValueToLiteral(cv);
+        if (!literal_result) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  fmt::format(
+                      "unsupported parameter '{}': {}", param.name,
+                      literal_result.error().message)));
+        }
+        return std::make_unique<mir::LiteralExpression>(
+            std::move(*literal_result));
       }
 
       // Regular variable reference

@@ -320,3 +320,8 @@ sv_feature_test(
     name = "packages_basic_tests",
     yaml = "sv_features/packages/basic.yaml",
 )
+
+sv_feature_test(
+    name = "constants_parameters_tests",
+    yaml = "sv_features/constants/parameters.yaml",
+)

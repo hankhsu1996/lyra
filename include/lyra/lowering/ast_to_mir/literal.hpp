@@ -8,7 +8,8 @@
 
 namespace slang {
 class SVInt;
-}
+class ConstantValue;
+}  // namespace slang
 
 namespace slang::ast {
 class IntegerLiteral;
@@ -31,6 +32,11 @@ auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal;
 
 // Lowers a slang AST UnbasedUnsizedIntegerLiteral into a MIR Literal.
 auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
+    -> Result<common::Literal>;
+
+// Converts a slang ConstantValue to a MIR Literal.
+// Used for elaboration-time constants like parameters.
+auto ConstantValueToLiteral(const slang::ConstantValue& cv)
     -> Result<common::Literal>;
 
 /// Extracts (value, mask) from an SVInt for casez/casex pattern matching.

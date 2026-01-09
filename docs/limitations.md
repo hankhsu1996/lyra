@@ -43,9 +43,25 @@ Not yet supported:
 - Classes in packages
 - The `std` built-in package
 
+## Constants
+
+Supported:
+
+- `parameter` and `localparam` declarations within modules
+- Parameters with explicit types (`parameter int`, `parameter logic [7:0]`)
+- Parameters with implicit types (inferred from value)
+- Parameters used in expressions and display statements
+
+Not yet supported:
+
+- Parameterized modules with parameter port lists (`module m #(parameter int WIDTH = 8)`)
+- Parameter override at instantiation (`mod #(16) u1()`, `mod #(.WIDTH(16)) u1()`)
+- Type parameters (`parameter type T = int`)
+- `defparam` statements
+- `specparam` (timing parameters)
+
 ## Modules
 
-- Parameterized modules (`parameter`, `localparam`, `#(...)`)
 - Generate blocks (`generate`, `genvar`)
 
 ## Subroutines (Tasks and Functions)
