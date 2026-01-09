@@ -12,6 +12,7 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>

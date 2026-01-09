@@ -8,7 +8,10 @@ load("//tools:embed.bzl", "embed_headers")
 # Headers embedded in generated C++ projects
 filegroup(
     name = "embedded_headers",
-    srcs = glob(["include/lyra/sdk/*.hpp"]) + ["include/lyra/common/simulation_region.hpp"],
+    srcs = glob(["include/lyra/sdk/*.hpp"]) + [
+        "include/lyra/common/mem_io.hpp",
+        "include/lyra/common/simulation_region.hpp",
+    ],
     visibility = ["//visibility:public"],
 )
 

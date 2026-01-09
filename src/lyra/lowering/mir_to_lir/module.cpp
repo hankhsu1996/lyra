@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <span>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"

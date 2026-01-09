@@ -402,11 +402,17 @@ void Codegen::EmitHeader(
     Line("#include <print>");
     has_system_headers = true;
   }
+  if ((used_features_ & CodegenFeature::kMemIo) != CodegenFeature::kNone) {
+    has_system_headers = true;
+  }
   if (has_system_headers) {
     Line("");
   }
   // Lyra SDK header
   Line("#include <lyra/sdk/sdk.hpp>");
+  if ((used_features_ & CodegenFeature::kMemIo) != CodegenFeature::kNone) {
+    Line("#include <lyra/sdk/mem_io.hpp>");
+  }
 
   // Include headers for submodule types
   std::unordered_set<std::string> included;
@@ -972,6 +978,88 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                   "power), lyra::sdk::PowerToString(lyra::sdk::global_"
                   "precision_power));\n";
           break;
+        }
+        if (syscall.name == "$readmemh" || syscall.name == "$readmemb" ||
+            syscall.name == "$writememh" || syscall.name == "$writememb") {
+          used_features_ |= CodegenFeature::kMemIo;
+          bool is_read =
+              syscall.name == "$readmemh" || syscall.name == "$readmemb";
+          bool is_hex =
+              syscall.name == "$readmemh" || syscall.name == "$writememh";
+          bool has_start = syscall.arguments.size() >= 3;
+          bool has_end = syscall.arguments.size() == 4;
+
+          if (syscall.arguments.size() < 2 || syscall.arguments.size() > 4) {
+            throw common::InternalError(
+                "codegen", "mem I/O expects 2-4 arguments");
+          }
+
+          const auto& target_expr = *syscall.arguments[1];
+          if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
+            throw common::InternalError(
+                "codegen", "mem I/O target must be a named variable");
+          }
+
+          const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
+          const auto& target_type = target_expr.type;
+
+          if (target_type.kind == common::Type::Kind::kUnpackedArray) {
+            const auto& arr =
+                std::get<common::UnpackedArrayData>(target_type.data);
+            Indent();
+            out_ << "lyra::sdk::"
+                 << (is_read ? "ReadMemArray(" : "WriteMemArray(")
+                 << target.symbol->name << ", " << arr.lower_bound << ", ";
+            EmitExpression(*syscall.arguments[0]);
+            out_ << ", " << (has_start ? "true" : "false") << ", ";
+            if (has_start) {
+              EmitExpression(*syscall.arguments[2]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (has_end ? "true" : "false") << ", ";
+            if (has_end) {
+              EmitExpression(*syscall.arguments[3]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+            break;
+          }
+
+          if (target_type.kind == common::Type::Kind::kIntegral) {
+            const auto& integral =
+                std::get<common::IntegralData>(target_type.data);
+            size_t element_width = integral.element_type
+                                       ? integral.element_type->GetBitWidth()
+                                       : integral.bit_width;
+            size_t element_count =
+                integral.element_type ? integral.element_count : 1;
+            int32_t lower_bound = integral.element_lower;
+            Indent();
+            out_ << "lyra::sdk::"
+                 << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")
+                 << target.symbol->name << ", " << element_width << ", "
+                 << element_count << ", " << lower_bound << ", ";
+            EmitExpression(*syscall.arguments[0]);
+            out_ << ", " << (has_start ? "true" : "false") << ", ";
+            if (has_start) {
+              EmitExpression(*syscall.arguments[2]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (has_end ? "true" : "false") << ", ";
+            if (has_end) {
+              EmitExpression(*syscall.arguments[3]);
+            } else {
+              out_ << "0";
+            }
+            out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+            break;
+          }
+
+          throw common::InternalError(
+              "codegen", "mem I/O target must be an unpacked or packed array");
         }
         throw DiagnosticException(
             Diagnostic::Error(

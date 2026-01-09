@@ -70,11 +70,11 @@ Supported:
 - `$timeunit`, `$timeprecision` - query module timescale
 - `$timeunit($root)`, `$timeprecision($root)` - query global precision
 - `$printtimescale`, `$printtimescale($root)` - print timescale info
+- `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
 
 Not yet supported:
 
 - `$random`, `$urandom` - random number generation
-- `$readmemh`, `$readmemb` - file I/O
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
 - `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants

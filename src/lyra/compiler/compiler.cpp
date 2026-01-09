@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -171,7 +172,8 @@ auto Compiler::CompileAndRun(
   }
 
   // Run
-  auto [run_status, run_output] = ExecuteCommand(bin_path.string());
+  std::string run_cmd = bin_path.string();
+  auto [run_status, run_output] = ExecuteCommand(run_cmd);
   if (run_status != 0) {
     result.error_message_ =
         "Execution failed with status " + std::to_string(run_status);

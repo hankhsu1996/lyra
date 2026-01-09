@@ -65,7 +65,6 @@ auto Interpreter::RunWithCompilation(
   }
 
   auto context = std::make_unique<SimulationContext>();
-
   // Use multi-module constructor for hierarchical support
   SimulationRunner runner(lir_modules, *context);
   runner.Run();

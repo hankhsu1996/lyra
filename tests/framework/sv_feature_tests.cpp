@@ -2,6 +2,8 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,21 @@
 
 namespace lyra::test {
 namespace {
+
+class ScopedCurrentPath {
+ public:
+  explicit ScopedCurrentPath(const std::filesystem::path& path)
+      : previous_(std::filesystem::current_path()) {
+    std::filesystem::current_path(path);
+  }
+
+  ~ScopedCurrentPath() {
+    std::filesystem::current_path(previous_);
+  }
+
+ private:
+  std::filesystem::path previous_;
+};
 
 auto GetYamlPath() -> std::string {
   const char* yaml_path = std::getenv("SV_TEST_YAML");
@@ -34,6 +51,18 @@ auto WriteTempFiles(const std::vector<SourceFile>& files)
     paths.push_back(path.string());
   }
   return paths;
+}
+
+auto FilterSvFiles(const std::vector<std::string>& paths)
+    -> std::vector<std::string> {
+  auto filtered = paths | std::views::filter([](const auto& path) {
+                    auto ext = std::filesystem::path(path).extension();
+                    return ext == ".sv" || ext == ".svh" || ext == ".v" ||
+                           ext == ".vh";
+                  });
+  std::vector<std::string> sv_paths;
+  std::ranges::copy(filtered, std::back_inserter(sv_paths));
+  return sv_paths;
 }
 
 void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
@@ -61,7 +90,10 @@ TEST_P(SvFeatureTest, Interpreter) {
   interpreter::InterpreterResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
-    result = interpreter::Interpreter::RunFromFiles(paths);
+    auto sv_paths = FilterSvFiles(paths);
+    ScopedCurrentPath current_dir(
+        std::filesystem::path(paths.front()).parent_path());
+    result = interpreter::Interpreter::RunFromFiles(sv_paths);
   } else {
     result = interpreter::Interpreter::RunFromSource(tc.sv_code);
   }
@@ -98,7 +130,10 @@ TEST_P(SvFeatureTest, CppCodegen) {
   compiler::CompilerResult result;
   if (tc.IsMultiFile()) {
     auto paths = WriteTempFiles(tc.files);
-    result = compiler::Compiler::RunFromFiles(paths, vars);
+    auto sv_paths = FilterSvFiles(paths);
+    ScopedCurrentPath current_dir(
+        std::filesystem::path(paths.front()).parent_path());
+    result = compiler::Compiler::RunFromFiles(sv_paths, vars);
   } else {
     result = compiler::Compiler::RunFromSource(tc.sv_code, vars);
   }

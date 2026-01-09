@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -28,20 +29,21 @@ auto SVIntToLiteral(const slang::SVInt& sv_int) -> common::Literal {
 
   if (sv_int.isSingleWord()) {
     // Standard case: fits in 64 bits
-    auto raw = sv_int.getRawPtr()[0];
+    std::span<const uint64_t> raw(sv_int.getRawPtr(), 1);
+    auto raw_word = raw.front();
 
     if (is_signed) {
-      int64_t extended = lyra::common::SignExtend(raw, width);
+      int64_t extended = lyra::common::SignExtend(raw_word, width);
       return common::Literal::IntegralSigned(extended, width);
     }
-    uint64_t masked = raw & lyra::common::MakeBitMask(width);
+    uint64_t masked = raw_word & lyra::common::MakeBitMask(width);
     return common::Literal::IntegralUnsigned(masked, width);
   }
 
   // Wide literal (>64 bits): use WideBit
   size_t num_words = sv_int.getNumWords();
-  std::vector<uint64_t> words(
-      sv_int.getRawPtr(), sv_int.getRawPtr() + num_words);
+  std::span<const uint64_t> raw(sv_int.getRawPtr(), num_words);
+  std::vector<uint64_t> words(raw.begin(), raw.end());
   common::WideBit wide_value(std::move(words));
   wide_value.MaskToWidth(width);
 
@@ -104,7 +106,8 @@ auto ExtractMaskAndValue(
   uint64_t mask = 0;
   uint64_t value = 0;
 
-  for (uint32_t i = 0; i < width; ++i) {
+  auto width_u32 = static_cast<uint32_t>(width);
+  for (uint32_t i = 0; i < width_u32; ++i) {
     auto bit = sv_int[i];
     bool is_wildcard = false;
 

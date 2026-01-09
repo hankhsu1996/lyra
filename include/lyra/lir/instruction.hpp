@@ -326,6 +326,18 @@ struct Instruction {
   // For system tasks (no return value): result = std::nullopt
   // For system functions (return value): result = temp to store result
   static auto SystemCall(
+      std::string name, std::vector<Operand> operands,
+      std::optional<TempRef> result = std::nullopt,
+      std::optional<common::Type> result_type = std::nullopt) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kSystemCall,
+        .result = result,
+        .result_type = result_type,
+        .operands = std::move(operands),
+        .system_call_name = std::move(name)};
+  }
+
+  static auto SystemCall(
       std::string name, std::vector<TempRef> args,
       std::optional<TempRef> result = std::nullopt,
       std::optional<common::Type> result_type = std::nullopt) -> Instruction {
@@ -333,12 +345,8 @@ struct Instruction {
     for (auto& arg : args) {
       operands.push_back(Operand::Temp(arg));
     }
-    return Instruction{
-        .kind = InstructionKind::kSystemCall,
-        .result = result,
-        .result_type = result_type,
-        .operands = std::move(operands),
-        .system_call_name = std::move(name)};
+    return SystemCall(
+        std::move(name), std::move(operands), result, std::move(result_type));
   }
 
   // Method call instruction (enum methods, future: string/class methods)

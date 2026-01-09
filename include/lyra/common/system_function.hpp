@@ -18,6 +18,7 @@ enum class SystemFunctionCategory : uint8_t {
   kMathUnary,       // $ln, $sqrt, $sin, etc. (1 arg -> real)
   kMathBinary,      // $pow, $atan2, $hypot (2 args -> real)
   kMathIntegral,    // $clog2 (integral -> integral)
+  kMemIo,           // $readmemh/$readmemb/$writememh/$writememb
 };
 
 /// Return type specification
@@ -73,6 +74,10 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$timeformat", .category = Cat::kTimeFormat, .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale_root", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$readmemh", .category = Cat::kMemIo, .min_args = 2, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$readmemb", .category = Cat::kMemIo, .min_args = 2, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$writememh", .category = Cat::kMemIo, .min_args = 2, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$writememb", .category = Cat::kMemIo, .min_args = 2, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
 
   // Time Query Functions
   {.name = "$time", .category = Cat::kTimeQuery, .min_args = 0, .max_args = 0, .return_type = Ret::kIntegral64, .cpp_function = ""},

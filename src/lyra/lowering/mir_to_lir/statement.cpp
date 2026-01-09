@@ -20,6 +20,7 @@ using Literal = common::Literal;
 using Operand = lir::Operand;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
+using TempRef = lir::TempRef;
 
 auto LowerStatement(
     const mir::Statement& statement, LirBuilder& builder,
