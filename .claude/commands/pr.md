@@ -24,30 +24,40 @@ Create a PR following the project format.
 
 **Body:**
 
-Focus on **design decisions and architectural reasoning**, not just what changed. The diff shows what changed; the PR description explains why and how it fits into the system.
+Always start with `## Summary` as a paragraph (not bullet points) describing what the PR does.
 
-Key elements for a good PR:
+After Summary, add sections only if they add value. All sections are optional:
 
-1. **Design rationale**: Explain the approach taken and why. If the implementation is minimal, explain why existing infrastructure was sufficient. If new abstractions were added, explain why they were necessary.
+- `## Design` - For non-trivial design decisions, architectural reasoning
+- `## Testing` - Only if testing approach is non-obvious or worth highlighting
+- Other sections as appropriate for the PR
 
-2. **Integration with existing code**: How does this change leverage or extend existing patterns? What code paths are reused? This shows architectural understanding.
+Simple fixes may need only Summary. Don't force sections that have nothing meaningful to say.
 
-3. **What was added vs what was NOT needed**: Explicitly stating what didn't need to change is often more informative than listing what did. It demonstrates understanding of the architecture and helps reviewers verify correctness.
+**What makes a good PR description:**
 
-4. **The "why it works"**: If something works with surprisingly little code, explain the underlying reason. This is often the most valuable part of a PR description.
+- **Design rationale**: Explain the approach and why. If minimal, explain why existing infrastructure was sufficient.
+- **What didn't change**: Often more informative than listing what did. Shows architectural understanding.
+- **Alternatives explored**: If complexity was considered and rejected, mention it briefly.
+- **Why it works**: If something works with little code, explain the underlying reason.
 
-Adapt content to fit the PR type:
+**Formatting:**
 
-- **Feature PRs**: Design decisions, how it integrates with existing systems, what infrastructure is reused
-- **Bug fix PRs**: Root cause analysis, why the fix is correct, any broader implications
-- **Chore/docs PRs**: Brief explanation of what changed
+- Summary: paragraph, not bullet points
+- Other sections: bullet points, checkboxes, or prose as appropriate
+- Use h3 subsections within sections if content is substantial
 
-Avoid:
+**Adapt to PR type:**
 
+- **Feature PRs**: Summary + Design with rationale
+- **Bug fix PRs**: Summary + root cause analysis
+- **Chore/docs PRs**: Summary only, keep brief
+
+**Avoid:**
+
+- Bullet points in Summary
 - Listing files changed (GitHub shows this)
-- Detailed test plans (unless testing approach is non-obvious)
 - Internal planning concepts ("Phase 1", "Step 2")
-- Restating the obvious from the diff
 
 ## Instructions
 
