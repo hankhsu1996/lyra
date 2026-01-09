@@ -22,6 +22,7 @@
 #include "lyra/lowering/mir_to_lir/statement.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -201,6 +202,52 @@ auto LowerModules(std::span<const std::unique_ptr<mir::Module>> modules)
     result.push_back(LowerModule(*module, global_precision));
   }
   return result;
+}
+
+auto LowerPackageInitProcess(
+    std::span<const std::unique_ptr<mir::Package>> packages,
+    std::shared_ptr<lir::LirContext> context) -> std::shared_ptr<lir::Process> {
+  // Check if any packages have initializers
+  bool has_initializers = false;
+  for (const auto& pkg : packages) {
+    for (const auto& var : pkg->variables) {
+      if (var.initializer) {
+        has_initializers = true;
+        break;
+      }
+    }
+    if (has_initializers) {
+      break;
+    }
+  }
+
+  if (!has_initializers) {
+    return nullptr;
+  }
+
+  // Use builder with a synthetic module to create the init process
+  LirBuilder builder("__packages", std::move(context));
+  builder.BeginModule();
+  builder.BeginProcess("__pkg_var_init");
+  builder.StartBlock(builder.MakeLabel("entry"));
+
+  for (const auto& pkg : packages) {
+    for (const auto& var : pkg->variables) {
+      if (var.initializer) {
+        auto result = LowerExpression(*var.initializer, builder);
+        auto store_instr =
+            lir::Instruction::StoreVariable(var.variable.symbol, result, false);
+        builder.AddInstruction(std::move(store_instr));
+      }
+    }
+  }
+
+  builder.EndProcess();
+  auto module = builder.EndModule();
+
+  // Extract the process from the synthetic module
+  assert(!module->processes.empty());
+  return module->processes[0];
 }
 
 }  // namespace lyra::lowering::mir_to_lir

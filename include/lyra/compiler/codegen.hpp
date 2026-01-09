@@ -15,6 +15,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::compiler {
 
@@ -82,7 +83,24 @@ inline auto operator&(CodegenFeature lhs, CodegenFeature rhs)
 
 class Codegen {
  public:
-  auto Generate(const mir::Module& module) -> std::string;
+  // Generate module class code (without header guards or includes)
+  // @param skip_sdk_aliases If true, skip emitting SDK type aliases (Bit, Int,
+  // etc.)
+  //        inside the class - used when packages.hpp provides them at file
+  //        scope
+  auto Generate(const mir::Module& module, bool skip_sdk_aliases = false)
+      -> std::string;
+
+  // Generate packages header content (namespaces with type definitions)
+  auto GeneratePackages(
+      const std::vector<std::unique_ptr<mir::Package>>& packages)
+      -> std::string;
+
+  // Generate complete module header with #pragma once and conditional includes
+  // @param module The module to generate code for
+  // @param has_packages Whether to include packages.hpp
+  auto GenerateModuleHeader(const mir::Module& module, bool has_packages)
+      -> std::string;
 
   // Get global precision power after Generate() has been called
   // Used by main.cpp generation to initialize lyra::sdk::global_precision_power
@@ -91,8 +109,7 @@ class Codegen {
   }
 
  private:
-  void EmitHeader(
-      const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays);
+  void EmitHeader(const mir::Module& module, bool uses_arrays);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
@@ -157,6 +174,10 @@ class Codegen {
 
   // Track which codegen features are used for conditional emission
   CodegenFeature used_features_ = CodegenFeature::kNone;
+
+  // When true, skip emitting SDK type aliases (they're at file scope from
+  // packages.hpp)
+  bool skip_sdk_aliases_ = false;
 
   // Type conversion helpers (record usage in used_type_aliases_)
   auto ToCppType(const common::Type& type) -> std::string;

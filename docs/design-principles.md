@@ -66,6 +66,14 @@ The fix: ask "where does this responsibility naturally belong?" and move it ther
 
 Before implementing, find how similar problems are solved elsewhere in the codebase. Mirror existing patterns unless there is a clear reason to diverge.
 
+Signs you need this:
+
+- Writing new code for behavior that existing infrastructure already provides
+- Creating a parallel mechanism when an existing one can be extended
+- The new code looks simpler but doesn't integrate with the rest of the system
+
+The fix: extend or compose existing infrastructure rather than building alongside it.
+
 ## Be Consistent
 
 Consistency reduces cognitive load. Use the same conventions everywhere: naming (dashes vs underscores), formatting, patterns, terminology. When adding something new, match what exists.

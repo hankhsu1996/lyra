@@ -15,8 +15,10 @@
 #include "lyra/interpreter/interpreter_result.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
+#include "lyra/lowering/mir_to_lir/module.hpp"
 
 namespace lyra::interpreter {
 
@@ -43,18 +45,21 @@ auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
     const std::string& top, const InterpreterOptions& options)
     -> InterpreterResult {
-  const auto& root = compilation->getRoot();
-
   // Get modules from AST. If top is specified, returns hierarchy in order.
   // If top is empty, returns all modules (for backwards compatibility).
-  auto modules = AstToMir(root, top);
+  auto lowering_result = AstToMir(*compilation, top);
 
   // Lower all modules to LIR
   std::vector<std::unique_ptr<lir::Module>> lir_modules;
-  lir_modules.reserve(modules.size());
-  for (const auto& mir : modules) {
+  lir_modules.reserve(lowering_result.modules.size());
+  for (const auto& mir : lowering_result.modules) {
     lir_modules.push_back(MirToLir(*mir));
   }
+
+  // Lower package initializers to LIR
+  auto pkg_lir_context = std::make_shared<lir::LirContext>();
+  auto package_init_process = lowering::mir_to_lir::LowerPackageInitProcess(
+      lowering_result.packages, pkg_lir_context);
 
   if (options.dump_lir) {
     std::cout << "[ Dumped LIR - " << lir_modules.size() << " modules ]\n";
@@ -66,7 +71,9 @@ auto Interpreter::RunWithCompilation(
 
   auto context = std::make_unique<SimulationContext>();
   // Use multi-module constructor for hierarchical support
-  SimulationRunner runner(lir_modules, *context);
+  SimulationRunner runner(
+      lir_modules, lowering_result.packages, package_init_process,
+      pkg_lir_context, *context);
   runner.Run();
 
   return InterpreterResult{

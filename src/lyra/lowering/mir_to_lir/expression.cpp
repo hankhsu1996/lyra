@@ -529,6 +529,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return builder.AllocateTemp("void", common::Type::Void());
     }
   }
+  // All expression kinds must be handled above - if we reach here, a new
+  // expression kind was added without updating this function
+  throw common::InternalError(
+      "LowerExpression",
+      "unhandled MIR expression kind in MIR-to-LIR lowering");
 }
 
 auto LowerUnaryExpression(

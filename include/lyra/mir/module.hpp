@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/indent.hpp"
@@ -96,6 +97,11 @@ class Module {
   std::vector<FunctionDefinition> functions;
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;
+
+  // Package imports
+  std::vector<std::string> wildcard_imports;  // "import pkg::*"
+  std::vector<std::pair<std::string, std::string>>
+      explicit_imports;  // "import pkg::X" -> {pkg, X}
 
   [[nodiscard]] auto ToString(int indent = 0) const -> std::string {
     std::string result = common::Indent(indent) + "module " + name;

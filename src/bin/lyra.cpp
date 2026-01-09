@@ -251,8 +251,8 @@ auto EmitCommandInternal(
       return 1;
     }
 
-    const auto& root = compilation->getRoot();
-    auto modules = lyra::lowering::ast_to_mir::AstToMir(root, top);
+    auto lowering_result =
+        lyra::lowering::ast_to_mir::AstToMir(*compilation, top);
 
     // Create output directory structure
     fs::path out_path(out_dir);
@@ -262,20 +262,26 @@ auto EmitCommandInternal(
     // Copy SDK headers
     WriteSdkHeaders(out_path);
 
-    // Generate header file for each module
     lyra::compiler::Codegen codegen;
-    for (const auto& mir : modules) {
-      std::string code = codegen.Generate(*mir);
-      std::string header_file = mir->name + ".hpp";
-      fs::path module_path = design_dir / header_file;
 
-      // Wrap code with pragma once
-      std::string header_code = "#pragma once\n\n" + code;
+    // Generate packages header if there are packages
+    bool has_packages = !lowering_result.packages.empty();
+    if (has_packages) {
+      std::string packages_code =
+          codegen.GeneratePackages(lowering_result.packages);
+      WriteFile(design_dir / "packages.hpp", packages_code);
+    }
+
+    // Generate header file for each module
+    for (const auto& mir : lowering_result.modules) {
+      std::string header_code =
+          codegen.GenerateModuleHeader(*mir, has_packages);
+      fs::path module_path = design_dir / (mir->name + ".hpp");
       WriteFile(module_path, header_code);
     }
 
     // Use top module (last in list) for main.cpp
-    const auto& top_module = *modules.back();
+    const auto& top_module = *lowering_result.modules.back();
     std::string header_file = top_module.name + ".hpp";
 
     // Generate main.cpp with global precision for %t formatting
@@ -371,11 +377,31 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
       return 1;
     }
 
-    const auto& root = compilation->getRoot();
     // Empty top = get all modules for dump
-    auto modules = lyra::lowering::ast_to_mir::AstToMir(root, "");
+    auto lowering_result =
+        lyra::lowering::ast_to_mir::AstToMir(*compilation, "");
 
-    for (const auto& mir : modules) {
+    // Dump packages first (for MIR format)
+    if (format == DumpFormat::kMir) {
+      for (const auto& pkg : lowering_result.packages) {
+        std::cout << "package " << pkg->name << "\n";
+        for (const auto& type_decl : pkg->types) {
+          std::cout << "  typedef " << type_decl.name << " = "
+                    << type_decl.type.ToString() << "\n";
+        }
+        for (const auto& var : pkg->variables) {
+          std::cout << "  var " << var.variable.symbol->name << ": "
+                    << var.variable.type.ToString();
+          if (var.initializer) {
+            std::cout << " = " << var.initializer->ToString();
+          }
+          std::cout << "\n";
+        }
+        std::cout << "endpackage\n\n";
+      }
+    }
+
+    for (const auto& mir : lowering_result.modules) {
       switch (format) {
         case DumpFormat::kCpp: {
           lyra::compiler::Codegen codegen;

@@ -5,22 +5,29 @@
 #include <vector>
 
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace slang::ast {
-class RootSymbol;
+class Compilation;
 }
 
 namespace lyra::lowering::ast_to_mir {
 
-// Lowers AST to MIR Modules.
+/// Result of lowering AST to MIR.
+struct LoweringResult {
+  std::vector<std::unique_ptr<mir::Package>> packages;
+  std::vector<std::unique_ptr<mir::Module>> modules;
+};
+
+// Lowers AST to MIR Modules and Packages.
 //
 // If `top` is specified: returns modules in hierarchy starting from top.
-//   (Currently returns just the top module; will traverse instantiations
-//   later.)
 // If `top` is empty: returns all top-level instances (for dump command).
 //
+// Packages are always returned (all non-std packages in the compilation).
+//
 // Throws DiagnosticException if top module not found.
-auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
-    -> std::vector<std::unique_ptr<mir::Module>>;
+auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
+    -> LoweringResult;
 
 }  // namespace lyra::lowering::ast_to_mir

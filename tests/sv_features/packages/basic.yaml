@@ -1,0 +1,202 @@
+feature: packages
+description: Tests for SystemVerilog package support (LRM 26)
+
+cases:
+  - name: package_typedef_basic
+    sv: |
+      package Pkg;
+        typedef logic [7:0] Byte;
+      endpackage
+      module Test;
+        import Pkg::*;
+        Byte x;
+        initial begin
+          x = 8'hAB;
+          $display("%h", x);
+        end
+      endmodule
+    expect:
+      output: "ab\n"
+
+  - name: package_typedef_signed
+    sv: |
+      package Pkg;
+        typedef logic signed [7:0] SignedByte;
+      endpackage
+      module Test;
+        import Pkg::*;
+        SignedByte x;
+        initial begin
+          x = -10;
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      output: "-10\n"
+
+  - name: package_typedef_multiple
+    sv: |
+      package Pkg;
+        typedef logic [7:0] Byte;
+        typedef logic [15:0] Word;
+        typedef logic [31:0] DWord;
+      endpackage
+      module Test;
+        import Pkg::*;
+        Byte b;
+        Word w;
+        DWord d;
+        initial begin
+          b = 8'hAB;
+          w = 16'h1234;
+          d = 32'hDEADBEEF;
+          $display("%h %h %h", b, w, d);
+        end
+      endmodule
+    expect:
+      output: "ab 1234 deadbeef\n"
+
+  - name: package_enum_basic
+    sv: |
+      package Pkg;
+        typedef enum logic [1:0] { IDLE, RUN, DONE } State;
+      endpackage
+      module Test;
+        import Pkg::*;
+        State s;
+        initial begin
+          s = RUN;
+          $display("%0d", s);
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: package_enum_all_values
+    sv: |
+      package Pkg;
+        typedef enum logic [1:0] { A, B, C, D } Val;
+      endpackage
+      module Test;
+        import Pkg::*;
+        Val v;
+        initial begin
+          v = A; $display("%0d", v);
+          v = B; $display("%0d", v);
+          v = C; $display("%0d", v);
+          v = D; $display("%0d", v);
+        end
+      endmodule
+    expect:
+      output: "0\n1\n2\n3\n"
+
+  - name: package_enum_explicit_values
+    sv: |
+      package Pkg;
+        typedef enum logic [3:0] { START = 1, MIDDLE = 5, END = 10 } Pos;
+      endpackage
+      module Test;
+        import Pkg::*;
+        Pos p;
+        initial begin
+          p = START; $display("%0d", p);
+          p = MIDDLE; $display("%0d", p);
+          p = END; $display("%0d", p);
+        end
+      endmodule
+    expect:
+      output: "1\n5\n10\n"
+
+  - name: multiple_packages
+    sv: |
+      package PkgA;
+        typedef logic [7:0] TypeA;
+      endpackage
+      package PkgB;
+        typedef logic [15:0] TypeB;
+      endpackage
+      module Test;
+        import PkgA::*;
+        import PkgB::*;
+        TypeA a;
+        TypeB b;
+        initial begin
+          a = 8'hAA;
+          b = 16'hBBBB;
+          $display("%h %h", a, b);
+        end
+      endmodule
+    expect:
+      output: "aa bbbb\n"
+
+  - name: package_qualified_access
+    sv: |
+      package Pkg;
+        typedef logic [15:0] Word;
+      endpackage
+      module Test;
+        Pkg::Word w;
+        initial begin
+          w = 16'h1234;
+          $display("%h", w);
+        end
+      endmodule
+    expect:
+      output: "1234\n"
+
+  - name: package_qualified_enum
+    sv: |
+      package Pkg;
+        typedef enum logic [1:0] { OFF, ON, BUSY } Status;
+      endpackage
+      module Test;
+        Pkg::Status s;
+        initial begin
+          s = Pkg::ON;
+          $display("%0d", s);
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: package_variable_basic
+    sv: |
+      package Pkg;
+        logic [7:0] counter = 8'hAB;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%h", counter);
+        end
+      endmodule
+    expect:
+      output: "ab\n"
+
+  - name: package_variable_modify
+    sv: |
+      package Pkg;
+        logic [7:0] counter = 0;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          counter = counter + 1;
+          $display("%0d", counter);
+        end
+      endmodule
+    expect:
+      output: "1\n"
+
+  - name: package_variable_qualified
+    sv: |
+      package Pkg;
+        int value = 42;
+      endpackage
+      module Test;
+        initial begin
+          $display("%0d", Pkg::value);
+        end
+      endmodule
+    expect:
+      output: "42\n"

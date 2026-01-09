@@ -12,6 +12,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -271,6 +272,17 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       module->submodules.push_back(std::move(submod));
       continue;
     }
+  }
+
+  // Extract package imports
+  for (const auto& import :
+       body.membersOfType<slang::ast::WildcardImportSymbol>()) {
+    module->wildcard_imports.emplace_back(import.packageName);
+  }
+  for (const auto& import :
+       body.membersOfType<slang::ast::ExplicitImportSymbol>()) {
+    module->explicit_imports.emplace_back(
+        std::string(import.packageName), std::string(import.importName));
   }
 
   return module;

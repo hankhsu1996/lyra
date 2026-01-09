@@ -1,0 +1,18 @@
+#pragma once
+
+#include <memory>
+
+#include "lyra/mir/package.hpp"
+
+namespace slang::ast {
+class PackageSymbol;
+}
+
+namespace lyra::lowering::ast_to_mir {
+
+// Lowers a slang PackageSymbol to an MIR Package.
+// Currently extracts typedef and enum type declarations.
+auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
+    -> std::unique_ptr<mir::Package>;
+
+}  // namespace lyra::lowering::ast_to_mir

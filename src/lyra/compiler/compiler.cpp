@@ -25,6 +25,7 @@
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::compiler {
 
@@ -83,6 +84,7 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
 
 auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
+    const std::vector<std::unique_ptr<mir::Package>>& packages,
     const std::vector<std::string>& variables_to_read)
     // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
     -> CompilerResult {
@@ -95,11 +97,20 @@ auto Compiler::CompileAndRun(
   auto cpp_path = tmp_dir / "test_main.cpp";
   auto bin_path = tmp_dir / "sim";
 
-  // Generate header for each module
   Codegen codegen;
+
+  // Generate packages header if there are packages
+  bool has_packages = !packages.empty();
+  if (has_packages) {
+    std::string packages_code = codegen.GeneratePackages(packages);
+    auto packages_path = design_dir / "packages.hpp";
+    std::ofstream out(packages_path);
+    out << packages_code;
+  }
+
+  // Generate header for each module
   for (const auto& mir : modules) {
-    std::string generated = codegen.Generate(*mir);
-    std::string header_code = "#pragma once\n\n" + generated;
+    std::string header_code = codegen.GenerateModuleHeader(*mir, has_packages);
     auto header_path = design_dir / (mir->name + ".hpp");
     std::ofstream out(header_path);
     out << header_code;
@@ -240,10 +251,10 @@ auto Compiler::RunFromSource(
   }
 
   // Lower to MIR (empty top = all modules in dependency order, last is top)
-  const auto& root = compilation->getRoot();
-  auto modules = lowering::ast_to_mir::AstToMir(root, "");
+  auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
-  return CompileAndRun(modules, variables_to_read);
+  return CompileAndRun(
+      lowering_result.modules, lowering_result.packages, variables_to_read);
 }
 
 auto Compiler::RunFromFiles(
@@ -260,10 +271,10 @@ auto Compiler::RunFromFiles(
   }
 
   // Lower to MIR (empty top = all modules in dependency order, last is top)
-  const auto& root = compilation->getRoot();
-  auto modules = lowering::ast_to_mir::AstToMir(root, "");
+  auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
-  return CompileAndRun(modules, variables_to_read);
+  return CompileAndRun(
+      lowering_result.modules, lowering_result.packages, variables_to_read);
 }
 
 }  // namespace lyra::compiler

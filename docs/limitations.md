@@ -30,6 +30,19 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 - No multi-driver resolution / strength
 - `inout` ports not supported (require nets)
 
+## Packages
+
+Basic package support: typedef and enum declarations with imports.
+
+Not yet supported:
+- Functions in packages
+- Tasks in packages
+- Parameters/localparams in packages
+- Variables in packages
+- Package exports (`export pkg::*`)
+- Classes in packages
+- The `std` built-in package
+
 ## Modules
 
 - Parameterized modules (`parameter`, `localparam`, `#(...)`)
