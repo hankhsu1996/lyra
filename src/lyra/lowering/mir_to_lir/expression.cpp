@@ -56,8 +56,19 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Emit enum value as its integer constant
       const auto& enum_val = mir::As<mir::EnumValueExpression>(expression);
       auto result = builder.AllocateTemp("enum", enum_val.type);
-      auto literal = builder.InternLiteral(
-          Literal::IntegralSigned(enum_val.value, enum_val.type.GetBitWidth()));
+
+      // Respect the enum's base type signedness
+      const auto& integral_data =
+          std::get<common::IntegralData>(enum_val.type.data);
+      auto width = enum_val.type.GetBitWidth();
+      auto literal =
+          integral_data.is_signed
+              ? builder.InternLiteral(
+                    Literal::IntegralSigned(enum_val.value, width))
+              : builder.InternLiteral(
+                    Literal::IntegralUnsigned(
+                        static_cast<uint64_t>(enum_val.value), width));
+
       auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
       builder.AddInstruction(std::move(instruction));
       return result;
