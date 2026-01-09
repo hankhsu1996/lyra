@@ -32,14 +32,18 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 ## Packages
 
-Basic package support: typedef and enum declarations with imports.
+Supported:
+
+- `typedef` and `enum` declarations
+- Functions in packages
+- Variables in packages
+- `import Pkg::*` (wildcard import)
+- `Pkg::item` (qualified access)
 
 Not yet supported:
 
-- Functions in packages
 - Tasks in packages
 - Parameters/localparams in packages
-- Variables in packages
 - Package exports (`export pkg::*`)
 - Classes in packages
 - The `std` built-in package
@@ -70,6 +74,7 @@ Not yet supported:
 Supported:
 
 - Function definitions inside modules
+- Function definitions inside packages
 - `automatic` lifetime (default for functions)
 - `input` arguments (pass by value)
 - Return values via `return` statement or function name assignment
@@ -85,7 +90,6 @@ Not yet supported:
 - Default argument values (`arg = default`)
 - Named argument binding (`.arg(value)`)
 - `static` lifetime functions
-- Package functions (packages not supported)
 - Class methods (classes not supported)
 - Interface functions
 - Constant functions (elaboration-time evaluation)

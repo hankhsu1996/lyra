@@ -596,7 +596,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         result_type = call.type;
       }
 
-      // Emit call instruction
+      // Emit call instruction (function_name is already qualified for package
+      // functions)
       auto instr = Instruction::Call(
           call.function_name, std::move(arg_operands), result_temp,
           result_type);

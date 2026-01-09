@@ -8,15 +8,14 @@
 
 #include <slang/ast/Compilation.h>
 
-#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/indent.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter_options.hpp"
 #include "lyra/interpreter/interpreter_result.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
-#include "lyra/lir/context.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
+#include "lyra/lowering/mir_to_lir/link.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
 #include "lyra/lowering/mir_to_lir/module.hpp"
 
@@ -56,10 +55,14 @@ auto Interpreter::RunWithCompilation(
     lir_modules.push_back(MirToLir(*mir));
   }
 
-  // Lower package initializers to LIR
-  auto pkg_lir_context = std::make_shared<lir::LirContext>();
-  auto package_init_process = lowering::mir_to_lir::LowerPackageInitProcess(
-      lowering_result.packages, pkg_lir_context);
+  // Lower packages to LIR (init process + functions)
+  auto pkg_result =
+      lowering::mir_to_lir::LowerPackages(lowering_result.packages);
+
+  // Link phase: resolve function call references to pointers.
+  // Must be called after all lowering completes and before simulation starts.
+  // kCall instructions require resolved callee pointers at runtime.
+  lowering::mir_to_lir::LinkFunctionCalls(lir_modules, pkg_result.functions);
 
   if (options.dump_lir) {
     std::cout << "[ Dumped LIR - " << lir_modules.size() << " modules ]\n";
@@ -72,8 +75,8 @@ auto Interpreter::RunWithCompilation(
   auto context = std::make_unique<SimulationContext>();
   // Use multi-module constructor for hierarchical support
   SimulationRunner runner(
-      lir_modules, lowering_result.packages, package_init_process,
-      pkg_lir_context, *context);
+      lir_modules, lowering_result.packages, pkg_result.init_process,
+      pkg_result.context, std::move(pkg_result.functions), *context);
   runner.Run();
 
   return InterpreterResult{

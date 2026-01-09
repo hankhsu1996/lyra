@@ -2215,6 +2215,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kFunctionCall: {
       const auto& call = mir::As<mir::FunctionCallExpression>(expr);
+      // function_name is already qualified for package functions (e.g.,
+      // "MyPkg::add")
       out_ << call.function_name << "(";
       for (size_t i = 0; i < call.arguments.size(); ++i) {
         if (i > 0) {
@@ -2514,6 +2516,11 @@ auto Codegen::GeneratePackages(
         out_ << "{}";
       }
       out_ << ";\n";
+    }
+
+    // Emit package functions
+    for (const auto& func : pkg->functions) {
+      EmitFunction(func);
     }
 
     indent_--;

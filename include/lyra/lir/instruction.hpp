@@ -15,6 +15,9 @@
 
 namespace lyra::lir {
 
+// Forward declaration for callee pointer
+struct Function;
+
 enum class InstructionKind {
   // Memory operations
   kLiteral,
@@ -119,8 +122,9 @@ struct Instruction {
   // System call name (for kSystemCall)
   std::string system_call_name{};
 
-  // Function call name (for kCall)
-  std::string called_function_name{};
+  // Function call (for kCall)
+  std::string called_function_name{};  // For error messages and ToString()
+  const Function* callee{nullptr};     // Resolved by LinkFunctionCalls
 
   // Event name
   std::vector<common::Trigger> wait_triggers{};

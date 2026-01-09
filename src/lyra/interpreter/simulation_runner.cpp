@@ -50,6 +50,7 @@ SimulationRunner::SimulationRunner(
     const std::vector<std::unique_ptr<mir::Package>>& packages,
     std::shared_ptr<lir::Process> package_init_process,
     std::shared_ptr<lir::LirContext> package_lir_context,
+    std::vector<std::unique_ptr<lir::Function>> package_functions,
     SimulationContext& context)
     : delay_queue_(),
       active_queue_(),
@@ -62,6 +63,7 @@ SimulationRunner::SimulationRunner(
       packages_(),
       package_init_process_(std::move(package_init_process)),
       package_lir_context_(std::move(package_lir_context)),
+      package_functions_(std::move(package_functions)),
       simulation_context_(context),
       trigger_manager_(context) {
   // Initialize timescale for $time/$stime/$realtime scaling
@@ -78,6 +80,8 @@ SimulationRunner::SimulationRunner(
   for (const auto& pkg : packages) {
     packages_.emplace_back(std::cref(*pkg));
   }
+  // package_functions_ keeps the functions alive; linking was done at lowering
+  // time
 }
 
 void SimulationRunner::Run() {
@@ -412,8 +416,7 @@ auto SimulationRunner::EvaluateMonitorExpressionBlock(
   // Execute each instruction in the expression block
   for (const auto& instr : block.instructions) {
     RunInstruction(
-        instr, top_module_.get(), simulation_context_.get(), temp_context,
-        temp_effect, instance);
+        instr, simulation_context_.get(), temp_context, temp_effect, instance);
   }
 
   // Return the result stored in the designated temp
@@ -436,11 +439,9 @@ void SimulationRunner::InitializePackageVariables() {
   if (package_init_process_) {
     ProcessContext process_context;
     ProcessEffect process_effect;
-    // Use top module for function lookup (package init has no function calls)
     RunProcess(
-        package_init_process_, 0, 0, top_module_.get(),
-        simulation_context_.get(), process_context, process_effect,
-        nullptr);  // nullptr = global storage
+        package_init_process_, 0, 0, simulation_context_.get(), process_context,
+        process_effect, nullptr);  // nullptr = global storage
   }
 }
 
@@ -566,12 +567,6 @@ void SimulationRunner::ExecuteOneEvent() {
   active_queue_.pop();
 
   const auto& origin = event.origin;
-  // Get module from instance; fall back to top module for package init (null
-  // instance)
-  const auto& module =
-      (origin.instance != nullptr) && (origin.instance->module != nullptr)
-          ? *origin.instance->module
-          : top_module_.get();
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
@@ -584,9 +579,8 @@ void SimulationRunner::ExecuteOneEvent() {
   ProcessEffect process_effect;
 
   auto result = RunProcess(
-      origin.process, block_index, instruction_index, module,
-      simulation_context_.get(), process_context, process_effect,
-      origin.instance);
+      origin.process, block_index, instruction_index, simulation_context_.get(),
+      process_context, process_effect, origin.instance);
 
   simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", origin.process->name, result.Summary()));

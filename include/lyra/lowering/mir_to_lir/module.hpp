@@ -13,6 +13,7 @@ class Package;
 
 namespace lyra::lir {
 class LirContext;
+struct Function;
 class Module;
 class Process;
 }  // namespace lyra::lir
@@ -41,17 +42,29 @@ auto LowerModule(
 auto LowerModules(std::span<const std::unique_ptr<mir::Module>> modules)
     -> std::vector<std::unique_ptr<lir::Module>>;
 
-/// Lowers package variable initializers into a synthetic LIR process.
+/// Result of lowering packages to LIR.
+struct PackageLoweringResult {
+  /// Process that initializes all package variables.
+  /// nullptr if no packages have variable initializers.
+  std::shared_ptr<lir::Process> init_process;
+
+  /// Functions defined in packages, with qualified names (e.g., "MyPkg::add").
+  std::vector<std::unique_ptr<lir::Function>> functions;
+
+  /// Shared LIR context used for lowering.
+  std::shared_ptr<lir::LirContext> context;
+};
+
+/// Lowers MIR Packages into LIR (init process + functions).
 ///
-/// Creates a process that initializes all package variables. The process
-/// should be executed before module elaboration with nullptr instance context
-/// to store values in the global variable table.
+/// This is the package equivalent of LowerModules. It handles all package
+/// contents: variable initializers become a single init process, and functions
+/// are lowered with qualified names (e.g., "MyPkg::add").
 ///
-/// @param packages The MIR packages containing variables to initialize
-/// @param context Shared LIR context for temp/literal allocation
-/// @return The init process, or nullptr if no initializers exist
-auto LowerPackageInitProcess(
-    std::span<const std::unique_ptr<mir::Package>> packages,
-    std::shared_ptr<lir::LirContext> context) -> std::shared_ptr<lir::Process>;
+/// @param packages The MIR packages to lower
+/// @return Lowering result containing init process, functions, and shared
+/// context
+auto LowerPackages(std::span<const std::unique_ptr<mir::Package>> packages)
+    -> PackageLoweringResult;
 
 }  // namespace lyra::lowering::mir_to_lir

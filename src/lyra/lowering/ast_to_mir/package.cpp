@@ -7,12 +7,14 @@
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/function.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/package.hpp"
 
@@ -79,6 +81,20 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
           mir::PackageVariable{
               .variable = std::move(variable),
               .initializer = std::move(init_expr)});
+    }
+
+    if (member.kind == slang::ast::SymbolKind::Subroutine) {
+      const auto& subroutine = member.as<slang::ast::SubroutineSymbol>();
+
+      // Tasks not supported in packages (same as module functions)
+      if (subroutine.subroutineKind == slang::ast::SubroutineKind::Task) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                slang::SourceRange(subroutine.location, subroutine.location),
+                "tasks in packages are not yet supported"));
+      }
+
+      package->functions.push_back(LowerFunction(subroutine));
     }
   }
 

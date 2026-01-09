@@ -17,8 +17,8 @@ using ResultKind = InstructionResult::Kind;
 
 auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
-    const lir::Module& module, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect,
+    SimulationContext& simulation_context, ProcessContext& process_context,
+    ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context)
     -> BasicBlockResult {
   const auto& instructions = block.instructions;
@@ -27,8 +27,7 @@ auto RunBlock(
     const auto& instr = instructions[i];
 
     auto instruction_result = RunInstruction(
-        instr, module, simulation_context, process_context, effect,
-        instance_context);
+        instr, simulation_context, process_context, effect, instance_context);
 
     switch (instruction_result.kind) {
       case ResultKind::kComplete:
