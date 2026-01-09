@@ -24,6 +24,7 @@
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operators.hpp"
+#include "lyra/mir/package.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/statement.hpp"
 
@@ -337,13 +338,15 @@ auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {
   return std::format("Bit<{}>", width);
 }
 
-auto Codegen::Generate(const mir::Module& module) -> std::string {
+auto Codegen::Generate(const mir::Module& module, bool skip_sdk_aliases)
+    -> std::string {
   out_.str("");
   indent_ = 0;
   port_symbols_.clear();
   used_type_aliases_ = TypeAlias::kNone;
   user_type_aliases_.clear();
   used_features_ = CodegenFeature::kNone;
+  skip_sdk_aliases_ = skip_sdk_aliases;
 
   // Store timescale info for delay scaling
   timescale_ = module.timescale;
@@ -370,7 +373,7 @@ auto Codegen::Generate(const mir::Module& module) -> std::string {
   out_.swap(class_out);  // Restore empty output stream
 
   // Now emit header (we know used_features_ from EmitClass)
-  EmitHeader(module.submodules, UsesArrayType(module));
+  EmitHeader(module, UsesArrayType(module));
 
   // Append class content
   out_ << class_content;
@@ -385,8 +388,7 @@ auto Codegen::DelayMultiplier() const -> uint64_t {
   return common::TimeScale::Default().DelayMultiplier(global_precision_power_);
 }
 
-void Codegen::EmitHeader(
-    const std::vector<mir::SubmoduleInstance>& submodules, bool uses_arrays) {
+void Codegen::EmitHeader(const mir::Module& module, bool uses_arrays) {
   // System headers
   bool has_system_headers = false;
   if (uses_arrays) {
@@ -416,7 +418,7 @@ void Codegen::EmitHeader(
 
   // Include headers for submodule types
   std::unordered_set<std::string> included;
-  for (const auto& submod : submodules) {
+  for (const auto& submod : module.submodules) {
     if (!included.contains(submod.module_type)) {
       Line("#include \"" + submod.module_type + ".hpp\"");
       included.insert(submod.module_type);
@@ -424,39 +426,63 @@ void Codegen::EmitHeader(
   }
 
   Line("");
+
+  // Emit using directives for package imports
+  for (const auto& pkg_name : module.wildcard_imports) {
+    Line(std::format("using namespace {};", pkg_name));
+  }
+  for (const auto& [pkg, sym] : module.explicit_imports) {
+    Line(std::format("using {}::{};", pkg, sym));
+  }
+  if (!module.wildcard_imports.empty() || !module.explicit_imports.empty()) {
+    Line("");
+  }
 }
 
 void Codegen::EmitTypeAliases() {
-  // Only emit type aliases that were actually used
-  if ((used_type_aliases_ & TypeAlias::kBit) != TypeAlias::kNone) {
-    Line("template <std::size_t N, bool S = false>");
-    Line("using Bit = lyra::sdk::Bit<N, S>;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kInt) != TypeAlias::kNone) {
-    Line("using Int = lyra::sdk::Int;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kLongInt) != TypeAlias::kNone) {
-    Line("using LongInt = lyra::sdk::LongInt;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kShortInt) != TypeAlias::kNone) {
-    Line("using ShortInt = lyra::sdk::ShortInt;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kByte) != TypeAlias::kNone) {
-    Line("using Byte = lyra::sdk::Byte;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kReal) != TypeAlias::kNone) {
-    Line("using Real = double;");
-  }
-  if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
-    Line("using ShortReal = float;");
+  bool any_emitted = false;
+
+  // Emit SDK type aliases unless they're already at file scope (from
+  // packages.hpp)
+  if (!skip_sdk_aliases_) {
+    if ((used_type_aliases_ & TypeAlias::kBit) != TypeAlias::kNone) {
+      Line("template <std::size_t N, bool S = false>");
+      Line("using Bit = lyra::sdk::Bit<N, S>;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kInt) != TypeAlias::kNone) {
+      Line("using Int = lyra::sdk::Int;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kLongInt) != TypeAlias::kNone) {
+      Line("using LongInt = lyra::sdk::LongInt;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kShortInt) != TypeAlias::kNone) {
+      Line("using ShortInt = lyra::sdk::ShortInt;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kByte) != TypeAlias::kNone) {
+      Line("using Byte = lyra::sdk::Byte;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kReal) != TypeAlias::kNone) {
+      Line("using Real = double;");
+      any_emitted = true;
+    }
+    if ((used_type_aliases_ & TypeAlias::kShortReal) != TypeAlias::kNone) {
+      Line("using ShortReal = float;");
+      any_emitted = true;
+    }
   }
 
-  // Emit user-defined type aliases (typedef)
+  // Emit user-defined type aliases (typedef) - always needed for local typedefs
   for (const auto& [name, def] : user_type_aliases_) {
     Line(std::format("using {} = {};", name, def));
+    any_emitted = true;
   }
 
-  if (used_type_aliases_ != TypeAlias::kNone || !user_type_aliases_.empty()) {
+  if (any_emitted) {
     Line("");
   }
 }
@@ -2203,6 +2229,73 @@ void Codegen::EmitFormattedPrint(
     }
     out_ << ");\n";
   }
+}
+
+auto Codegen::GeneratePackages(
+    const std::vector<std::unique_ptr<mir::Package>>& packages) -> std::string {
+  out_.str("");
+  indent_ = 0;
+  used_type_aliases_ = TypeAlias::kNone;
+  user_type_aliases_.clear();
+
+  // Generate package namespaces
+  for (const auto& pkg : packages) {
+    Line(std::format("namespace {} {{", pkg->name));
+    indent_++;
+
+    for (const auto& type_decl : pkg->types) {
+      // Emit typedef
+      std::string cpp_type = ToCppType(type_decl.type);
+      Line(std::format("using {} = {};", type_decl.name, cpp_type));
+
+      // If enum, emit enum constants as constexpr values
+      for (const auto& member : type_decl.members) {
+        Line(
+            std::format(
+                "inline constexpr {} {}{{{}}};", type_decl.name, member.name,
+                member.value));
+      }
+    }
+
+    indent_--;
+    Line(std::format("}}  // namespace {}", pkg->name));
+    Line("");
+  }
+
+  // Generate header with all SDK type aliases at file scope.
+  // We emit ALL aliases (not just those used by packages) because modules that
+  // include packages.hpp will skip their own SDK aliases, relying on these.
+  std::ostringstream header;
+  header << "#pragma once\n\n";
+  header << "#include <lyra/sdk/sdk.hpp>\n\n";
+
+  // Always emit all SDK type aliases so modules can rely on them
+  header << "template <std::size_t N, bool S = false>\n";
+  header << "using Bit = lyra::sdk::Bit<N, S>;\n";
+  header << "using Int = lyra::sdk::Int;\n";
+  header << "using LongInt = lyra::sdk::LongInt;\n";
+  header << "using ShortInt = lyra::sdk::ShortInt;\n";
+  header << "using Byte = lyra::sdk::Byte;\n";
+  header << "using Real = double;\n";
+  header << "using ShortReal = float;\n";
+  header << "\n";
+
+  return header.str() + out_.str();
+}
+
+auto Codegen::GenerateModuleHeader(const mir::Module& module, bool has_packages)
+    -> std::string {
+  // When packages exist, skip SDK type aliases in the class - they're already
+  // at file scope in packages.hpp
+  std::string code = Generate(module, has_packages);
+
+  std::ostringstream header;
+  header << "#pragma once\n\n";
+  if (has_packages) {
+    header << "#include \"packages.hpp\"\n\n";
+  }
+  header << code;
+  return header.str();
 }
 
 }  // namespace lyra::compiler

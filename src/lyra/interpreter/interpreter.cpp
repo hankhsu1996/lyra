@@ -43,16 +43,14 @@ auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
     const std::string& top, const InterpreterOptions& options)
     -> InterpreterResult {
-  const auto& root = compilation->getRoot();
-
   // Get modules from AST. If top is specified, returns hierarchy in order.
   // If top is empty, returns all modules (for backwards compatibility).
-  auto modules = AstToMir(root, top);
+  auto lowering_result = AstToMir(*compilation, top);
 
   // Lower all modules to LIR
   std::vector<std::unique_ptr<lir::Module>> lir_modules;
-  lir_modules.reserve(modules.size());
-  for (const auto& mir : modules) {
+  lir_modules.reserve(lowering_result.modules.size());
+  for (const auto& mir : lowering_result.modules) {
     lir_modules.push_back(MirToLir(*mir));
   }
 

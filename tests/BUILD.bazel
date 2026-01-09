@@ -310,3 +310,8 @@ sv_feature_test(
     name = "functions_nested_calls_tests",
     yaml = "sv_features/functions/nested_calls.yaml",
 )
+
+sv_feature_test(
+    name = "packages_basic_tests",
+    yaml = "sv_features/packages/basic.yaml",
+)

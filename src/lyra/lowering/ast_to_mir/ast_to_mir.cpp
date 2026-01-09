@@ -12,6 +12,7 @@
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/module.hpp"
+#include "lyra/lowering/ast_to_mir/package.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -47,9 +48,20 @@ void CollectModulesRecursive(
 
 }  // namespace
 
-auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
-    -> std::vector<std::unique_ptr<mir::Module>> {
-  std::vector<std::unique_ptr<mir::Module>> modules;
+auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
+    -> LoweringResult {
+  LoweringResult result;
+
+  // Phase 1: Lower all packages (except built-in std package)
+  for (const auto* pkg : compilation.getPackages()) {
+    if (pkg->name == "std") {
+      continue;  // Skip built-in std package
+    }
+    result.packages.push_back(LowerPackage(*pkg));
+  }
+
+  // Phase 2: Lower modules
+  const auto& root = compilation.getRoot();
 
   // Collect all top-level instances
   std::vector<const slang::ast::InstanceSymbol*> top_instances;
@@ -69,8 +81,8 @@ auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
       if (!top.empty()) {
         if (instance_symbol.body.name == top) {
           std::unordered_set<std::string> processed;
-          CollectModulesRecursive(instance_symbol, modules, processed);
-          return modules;  // Returns all modules in dependency order
+          CollectModulesRecursive(instance_symbol, result.modules, processed);
+          return result;  // Returns all modules in dependency order
         }
         continue;  // Skip non-matching modules
       }
@@ -79,7 +91,7 @@ auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
     }
   }
 
-  if (!top.empty() && modules.empty()) {
+  if (!top.empty() && result.modules.empty()) {
     throw DiagnosticException(
         Diagnostic::Error(
             slang::SourceRange{},
@@ -95,14 +107,14 @@ auto AstToMir(const slang::ast::RootSymbol& root, const std::string& top)
   // If multiple, collect all without hierarchy (for dump command)
   if (top_instances.size() == 1) {
     std::unordered_set<std::string> processed;
-    CollectModulesRecursive(*top_instances[0], modules, processed);
+    CollectModulesRecursive(*top_instances[0], result.modules, processed);
   } else {
     for (const auto* instance : top_instances) {
-      modules.push_back(LowerModule(*instance));
+      result.modules.push_back(LowerModule(*instance));
     }
   }
 
-  return modules;
+  return result;
 }
 
 }  // namespace lyra::lowering::ast_to_mir
