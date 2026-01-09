@@ -18,6 +18,7 @@ class IndexedRangeSelectExpression;
 class HierarchicalReferenceExpression;
 class EnumMethodExpression;
 class ConcatenationExpression;
+class FunctionCallExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -34,6 +35,7 @@ class CaseStatement;
 class BreakStatement;
 class ContinueStatement;
 class BlockStatement;
+class ReturnStatement;
 
 class MirVisitor {
  public:
@@ -59,6 +61,7 @@ class MirVisitor {
   virtual void Visit(const HierarchicalReferenceExpression&) = 0;
   virtual void Visit(const EnumMethodExpression&) = 0;
   virtual void Visit(const ConcatenationExpression&) = 0;
+  virtual void Visit(const FunctionCallExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;
@@ -74,6 +77,7 @@ class MirVisitor {
   virtual void Visit(const BreakStatement&) = 0;
   virtual void Visit(const ContinueStatement&) = 0;
   virtual void Visit(const BlockStatement&) = 0;
+  virtual void Visit(const ReturnStatement&) = 0;
 };
 
 }  // namespace lyra::mir

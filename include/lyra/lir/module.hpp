@@ -6,6 +6,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <fmt/core.h>
@@ -53,12 +54,78 @@ struct SubmoduleInstance {
   std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 
+/// Function parameter for user-defined functions.
+/// Wrapped in a struct (rather than using Variable directly) for extensibility:
+/// future support for output/inout/ref arguments will require additional fields
+/// like direction, pass-by-reference semantics, etc.
+struct FunctionParameter {
+  common::Variable variable;
+};
+
+// Function definition (user-defined functions)
+struct Function {
+  std::string name;
+  common::Type return_type;
+  std::vector<FunctionParameter> parameters;
+  std::vector<common::Variable> local_variables;
+  std::vector<std::unique_ptr<BasicBlock>> blocks;
+  LabelRef entry_label{nullptr};  // First block's label
+
+  [[nodiscard]] auto FindBlockIndexByLabel(LabelRef label) const
+      -> std::optional<size_t> {
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      if (blocks[i]->label == label) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto ToString(
+      common::FormatMode mode = common::FormatMode::kPlain,
+      int indentation_level = 0) const -> std::string {
+    std::string out;
+    std::string indent = (mode == common::FormatMode::kContextual)
+                             ? common::Indent(indentation_level)
+                             : "";
+
+    // Function header
+    out += fmt::format("{}function {}(", indent, name);
+    for (size_t i = 0; i < parameters.size(); ++i) {
+      if (i > 0) {
+        out += ", ";
+      }
+      out += std::string(parameters[i].variable.symbol->name);
+    }
+    out += ")\n";
+
+    // Local variables
+    if (!local_variables.empty()) {
+      out += fmt::format("{}  locals:", indent);
+      for (const auto& local : local_variables) {
+        out += fmt::format(" {}", local.symbol->name);
+      }
+      out += "\n";
+    }
+
+    // Basic blocks
+    for (const auto& block : blocks) {
+      if (block) {
+        out += block->ToString(mode, indentation_level + 1);
+      }
+    }
+
+    return out;
+  }
+};
+
 struct Module {
   std::string name;
   std::optional<common::TimeScale> timescale;
   int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
   std::vector<Port> ports;
   std::vector<common::Variable> variables;
+  std::vector<Function> functions;
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;
   std::shared_ptr<LirContext> context;
@@ -76,6 +143,18 @@ struct Module {
               index, monitor_expression_blocks.size()));
     }
     return monitor_expression_blocks[index];
+  }
+
+  /// Find a function by name. Returns nullptr if not found.
+  /// Uses a lazily-built index for O(1) lookup after first call.
+  [[nodiscard]] auto FindFunction(std::string_view name_view) const
+      -> const Function* {
+    BuildFunctionIndexIfNeeded();
+    auto it = function_index_.find(std::string(name_view));
+    if (it != function_index_.end()) {
+      return &functions[it->second];
+    }
+    return nullptr;
   }
 
   [[nodiscard]] auto ToString(
@@ -166,6 +245,11 @@ struct Module {
       }
     }
 
+    // Functions
+    for (const auto& func : functions) {
+      out += func.ToString(mode, indentation_level + 1);
+    }
+
     // Processes
     for (const auto& process : processes) {
       if (process) {
@@ -175,6 +259,20 @@ struct Module {
 
     return out;
   }
+
+ private:
+  void BuildFunctionIndexIfNeeded() const {
+    if (function_index_built_) {
+      return;
+    }
+    for (size_t i = 0; i < functions.size(); ++i) {
+      function_index_[functions[i].name] = i;
+    }
+    function_index_built_ = true;
+  }
+
+  mutable std::unordered_map<std::string, size_t> function_index_;
+  mutable bool function_index_built_ = false;
 };
 
 inline auto operator<<(std::ostream& os, const Module& module)

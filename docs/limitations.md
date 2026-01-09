@@ -35,11 +35,36 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 - Parameterized modules (`parameter`, `localparam`, `#(...)`)
 - Generate blocks (`generate`, `genvar`)
 
+## Subroutines (Tasks and Functions)
+
+Supported:
+
+- Function definitions inside modules
+- `automatic` lifetime (default for functions)
+- `input` arguments (pass by value)
+- Return values via `return` statement or function name assignment
+- Void functions (called as statements)
+- Recursive functions
+- Nested function calls (function calling another function)
+- Local variables inside function body
+
+Not yet supported:
+
+- `task` definitions (require timing controls)
+- `output`, `inout`, `ref` arguments
+- Default argument values (`arg = default`)
+- Named argument binding (`.arg(value)`)
+- `static` lifetime functions
+- Package functions (packages not supported)
+- Class methods (classes not supported)
+- Interface functions
+- Constant functions (elaboration-time evaluation)
+- DPI import/export functions
+
 ## Statements
 
 - `case inside` - pattern matching
 - `foreach` - dynamic arrays only (multi-dimensional and skipped dimensions supported)
-- `return` - function returns
 - `wait(expr)` - wait statements
 - `->` - event triggers
 - `fork`/`join` - parallel blocks

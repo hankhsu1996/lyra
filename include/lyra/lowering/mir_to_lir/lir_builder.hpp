@@ -15,6 +15,15 @@
 
 namespace lyra::lowering::mir_to_lir {
 
+/// Procedural context in which code is being lowered. Determines how local
+/// variables and control flow are handled.
+enum class ProceduralContext {
+  kModule,    // Module-level (not in any procedural block)
+  kProcess,   // Inside a process (initial/always block)
+  kFunction,  // Inside a user-defined function
+  // Future: kTask, kForkJoin
+};
+
 class LirBuilder {
  public:
   explicit LirBuilder(
@@ -30,7 +39,21 @@ class LirBuilder {
   // Process interface
   void BeginProcess(const std::string& name);
   void EndProcess();
-  void AddProcessVariable(const common::Variable& variable);
+
+  // Function interface (for user-defined functions)
+  void BeginFunction(const std::string& name);
+  void EndFunction();
+  auto TakeFunctionBlocks() -> std::vector<std::unique_ptr<lir::BasicBlock>>;
+
+  // Context-aware variable registration
+  // In process context: registers variable in process's local_variables
+  // In function context: no-op (function locals are pre-registered in MIR)
+  void RegisterLocalVariable(const common::Variable& variable);
+
+  // Query current procedural context
+  [[nodiscard]] auto GetProceduralContext() const -> ProceduralContext {
+    return procedural_context_;
+  }
 
   // Basic block interface
   void StartBlock(lir::LabelRef label);
@@ -75,6 +98,10 @@ class LirBuilder {
 
   int label_counter_ = 0;
   int temp_counter_ = 0;
+
+  // Current procedural context
+  ProceduralContext procedural_context_ = ProceduralContext::kModule;
+  std::vector<std::unique_ptr<lir::BasicBlock>> function_blocks_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

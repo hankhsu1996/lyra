@@ -592,6 +592,11 @@ void Codegen::EmitClass(const mir::Module& module) {
   Line("}");
   Line("");
 
+  // User-defined functions (helper methods, emitted before processes)
+  for (const auto& function : module.functions) {
+    EmitFunction(function);
+  }
+
   // Process methods
   for (const auto& process : module.processes) {
     EmitProcess(*process);
@@ -660,6 +665,34 @@ void Codegen::EmitProcess(const mir::Process& process) {
     EmitStatement(*process.body);
   }
   Line("co_return;");
+  indent_--;
+  Line("}");
+  Line("");
+}
+
+void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
+  Indent();
+  out_ << "auto " << function.name << "(";
+
+  // Parameters
+  bool first = true;
+  for (const auto& param : function.parameters) {
+    if (!first) {
+      out_ << ", ";
+    }
+    first = false;
+    out_ << ToCppType(param.variable.type) << " "
+         << param.variable.symbol->name;
+  }
+
+  out_ << ") -> " << ToCppType(function.return_type) << " {\n";
+  indent_++;
+
+  // Body (local variables are emitted via VariableDeclarationStatement)
+  if (function.body) {
+    EmitStatement(*function.body);
+  }
+
   indent_--;
   Line("}");
   Line("");
@@ -1322,6 +1355,18 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       out_ << ";\n";
       break;
     }
+    case mir::Statement::Kind::kReturn: {
+      const auto& ret = mir::As<mir::ReturnStatement>(stmt);
+      if (ret.value) {
+        Indent();
+        out_ << "return ";
+        EmitExpression(*ret.value);
+        out_ << ";\n";
+      } else {
+        Line("return;");
+      }
+      break;
+    }
     default:
       throw DiagnosticException(
           Diagnostic::Error(
@@ -1895,6 +1940,18 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           out_ << ", ";
         }
         EmitExpression(*concat.operands[i], kPrecLowest);
+      }
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kFunctionCall: {
+      const auto& call = mir::As<mir::FunctionCallExpression>(expr);
+      out_ << call.function_name << "(";
+      for (size_t i = 0; i < call.arguments.size(); ++i) {
+        if (i > 0) {
+          out_ << ", ";
+        }
+        EmitExpression(*call.arguments[i], kPrecLowest);
       }
       out_ << ")";
       break;

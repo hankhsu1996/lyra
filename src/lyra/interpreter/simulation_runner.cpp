@@ -402,7 +402,8 @@ auto SimulationRunner::EvaluateMonitorExpressionBlock(
   // Execute each instruction in the expression block
   for (const auto& instr : block.instructions) {
     RunInstruction(
-        instr, simulation_context_.get(), temp_context, temp_effect, instance);
+        instr, top_module_.get(), simulation_context_.get(), temp_context,
+        temp_effect, instance);
   }
 
   // Return the result stored in the designated temp
@@ -542,8 +543,8 @@ void SimulationRunner::ExecuteOneEvent() {
   ProcessEffect process_effect;
 
   auto result = RunProcess(
-      process, block_index, instruction_index, simulation_context_.get(),
-      process_context, process_effect, instance);
+      process, block_index, instruction_index, top_module_.get(),
+      simulation_context_.get(), process_context, process_effect, instance);
 
   simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", process->name, result.Summary()));

@@ -17,6 +17,7 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
@@ -571,6 +572,43 @@ auto LowerExpression(const slang::ast::Expression& expression)
             effective_name, std::move(arguments), *return_type_result);
       }
 
+      // Check if this is a user-defined function call
+      if (call_expression.subroutine.index() == 0) {
+        const auto* func = std::get<0>(call_expression.subroutine);
+        if (func != nullptr &&
+            func->kind == slang::ast::SymbolKind::Subroutine) {
+          const auto& subroutine_sym = func->as<slang::ast::SubroutineSymbol>();
+
+          // Tasks not yet supported
+          if (subroutine_sym.subroutineKind ==
+              slang::ast::SubroutineKind::Task) {
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    expression.sourceRange,
+                    fmt::format(
+                        "task call '{}' is not yet supported", func->name)));
+          }
+
+          // Lower arguments
+          std::vector<std::unique_ptr<mir::Expression>> arguments;
+          for (const auto* arg : call_expression.arguments()) {
+            arguments.push_back(LowerExpression(*arg));
+          }
+
+          // Get return type
+          auto return_type_result =
+              LowerType(*call_expression.type, expression.sourceRange);
+          if (!return_type_result) {
+            throw DiagnosticException(std::move(return_type_result.error()));
+          }
+
+          return std::make_unique<mir::FunctionCallExpression>(
+              std::string(func->name), std::move(arguments),
+              *return_type_result);
+        }
+      }
+
+      // Fallback: unsupported subroutine call
       throw DiagnosticException(
           Diagnostic::Error(
               expression.sourceRange,

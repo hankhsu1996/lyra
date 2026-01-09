@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
@@ -23,6 +24,7 @@
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/function.hpp"
 #include "lyra/lowering/ast_to_mir/process.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -195,6 +197,24 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
           symbol.as<slang::ast::ProceduralBlockSymbol>();
       auto process = LowerProcess(procedural_block);
       module->processes.push_back(std::move(process));
+      continue;
+    }
+
+    // Lower function definitions
+    if (symbol.kind == slang::ast::SymbolKind::Subroutine) {
+      const auto& subroutine = symbol.as<slang::ast::SubroutineSymbol>();
+
+      // Skip tasks (require timing controls, not yet supported)
+      if (subroutine.subroutineKind == slang::ast::SubroutineKind::Task) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                slang::SourceRange(subroutine.location, subroutine.location),
+                fmt::format(
+                    "task '{}' is not yet supported", subroutine.name)));
+      }
+
+      auto func = LowerFunction(subroutine);
+      module->functions.push_back(std::move(func));
       continue;
     }
 

@@ -19,6 +19,7 @@
 #include "lyra/lowering/mir_to_lir/expression.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/lowering/mir_to_lir/process.hpp"
+#include "lyra/lowering/mir_to_lir/statement.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/module.hpp"
 
@@ -130,7 +131,49 @@ auto LowerModule(
     builder.AddSubmodule(lir_submod);
   }
 
+  // Lower user-defined functions
+  // Note: We collect lowered functions first, then add to module after
+  // EndModule
+  std::vector<lir::Function> lowered_functions;
+  for (const auto& mir_func : module.functions) {
+    lir::Function lir_func;
+    lir_func.name = mir_func.name;
+    lir_func.return_type = mir_func.return_type;
+
+    // Copy parameters
+    for (const auto& param : mir_func.parameters) {
+      lir_func.parameters.push_back(lir::FunctionParameter{param.variable});
+    }
+
+    // Copy local variables
+    lir_func.local_variables = mir_func.local_variables;
+
+    // Lower function body to basic blocks
+    builder.BeginFunction(mir_func.name);
+
+    auto entry_label = builder.MakeLabel("entry");
+    builder.StartBlock(entry_label);
+
+    if (mir_func.body) {
+      LowerStatement(*mir_func.body, builder, lowering_context);
+    }
+
+    builder.EndFunction();
+
+    lir_func.blocks = builder.TakeFunctionBlocks();
+    if (!lir_func.blocks.empty()) {
+      lir_func.entry_label = lir_func.blocks.front()->label;
+    }
+
+    lowered_functions.push_back(std::move(lir_func));
+  }
+
   auto lir_module = builder.EndModule();
+
+  // Add lowered functions to the module
+  for (auto& func : lowered_functions) {
+    lir_module->functions.push_back(std::move(func));
+  }
 
   // Set timescale info on the LIR module for runtime use
   lir_module->timescale = module.timescale;
