@@ -197,8 +197,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
       auto left = LowerExpression(binary_expression.left());
       auto right = LowerExpression(binary_expression.right());
 
+      // Get result type from slang (important for comparison operators which
+      // return 1-bit, not the operand type)
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
       return std::make_unique<mir::BinaryExpression>(
-          mir_operator, std::move(left), std::move(right));
+          mir_operator, std::move(left), std::move(right), *type_result);
     }
 
     case slang::ast::ExpressionKind::ConditionalOp: {

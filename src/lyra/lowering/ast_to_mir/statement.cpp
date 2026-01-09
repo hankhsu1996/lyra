@@ -163,8 +163,11 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
     mir::BinaryOperator cmp_op = is_descending
                                      ? mir::BinaryOperator::kGreaterThanEqual
                                      : mir::BinaryOperator::kLessThanEqual;
+    // Synthetic MIR construction (not from slang AST) - comparison operators
+    // return 1-bit per IEEE 1800-2023 11.4.4
     auto condition = std::make_unique<mir::BinaryExpression>(
-        cmp_op, std::move(cond_var_ref), std::move(end_literal));
+        cmp_op, std::move(cond_var_ref), std::move(end_literal),
+        common::Type::Bool());
 
     // Create step: var-- (descending) or var++ (ascending)
     auto step_var_ref =
