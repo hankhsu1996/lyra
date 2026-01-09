@@ -29,8 +29,9 @@ void TriggerManager::RegisterWaitingProcess(
   ProcessInstanceVarKey piv_key{
       .process = process, .instance = watch_instance, .variable = variable};
   wait_set_[piv_key] = {
-      .process_instance = process_instance,  // For resumption
-      .watch_instance = watch_instance,      // For reading values
+      .process_instance =
+          process_instance,              // For resumption (module via ->module)
+      .watch_instance = watch_instance,  // For reading values
       .block_index = block_index,
       .instruction_index = instruction_index,
       .edge_kind = edge_kind};
@@ -88,9 +89,9 @@ auto TriggerManager::CheckTriggers(
       if (ShouldTrigger(old_value, new_value, wait_info.edge_kind)) {
         events_to_trigger.push_back(
             ScheduledEvent{
-                .process = pi_key.process,
-                .instance = wait_info.process_instance,  // Resume with
-                                                         // process's instance
+                .origin =
+                    {.process = pi_key.process,
+                     .instance = wait_info.process_instance},
                 .block_index = wait_info.block_index,
                 .instruction_index = wait_info.instruction_index});
         triggered_keys.insert(pi_key);

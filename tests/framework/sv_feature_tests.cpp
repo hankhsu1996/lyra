@@ -17,6 +17,10 @@ namespace {
 
 class ScopedCurrentPath {
  public:
+  ScopedCurrentPath(const ScopedCurrentPath&) = default;
+  ScopedCurrentPath(ScopedCurrentPath&&) = delete;
+  auto operator=(const ScopedCurrentPath&) -> ScopedCurrentPath& = default;
+  auto operator=(ScopedCurrentPath&&) -> ScopedCurrentPath& = delete;
   explicit ScopedCurrentPath(const std::filesystem::path& path)
       : previous_(std::filesystem::current_path()) {
     std::filesystem::current_path(path);
@@ -55,11 +59,11 @@ auto WriteTempFiles(const std::vector<SourceFile>& files)
 
 auto FilterSvFiles(const std::vector<std::string>& paths)
     -> std::vector<std::string> {
-  auto filtered = paths | std::views::filter([](const auto& path) {
-                    auto ext = std::filesystem::path(path).extension();
-                    return ext == ".sv" || ext == ".svh" || ext == ".v" ||
-                           ext == ".vh";
-                  });
+  auto filtered =
+      paths | std::views::filter([](const auto& path) {
+        auto ext = std::filesystem::path(path).extension();
+        return ext == ".sv" || ext == ".svh" || ext == ".v" || ext == ".vh";
+      });
   std::vector<std::string> sv_paths;
   std::ranges::copy(filtered, std::back_inserter(sv_paths));
   return sv_paths;

@@ -464,8 +464,7 @@ void SimulationRunner::ScheduleModuleProcesses(
     const std::shared_ptr<InstanceContext>& instance) {
   for (const auto& process : module.processes) {
     active_queue_.push(
-        {.process = process,
-         .instance = instance,
+        {.origin = {.process = process, .instance = instance},
          .block_index = 0,
          .instruction_index = 0});
   }
@@ -488,7 +487,7 @@ void SimulationRunner::ElaborateHierarchy() {
 
   // Create top module instance context (no port bindings)
   auto top_instance = std::make_shared<InstanceContext>(
-      top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
+      top.name, std::unordered_map<common::SymbolRef, PortBinding>{}, &top);
 
   // Initialize top module variables in per-instance storage
   InitializeModuleVariables(top, top_instance);
@@ -545,8 +544,8 @@ void SimulationRunner::ElaborateSubmodules(
               target_instance ? target_instance : parent_instance};
     }
 
-    auto child_instance =
-        std::make_shared<InstanceContext>(instance_path, std::move(bindings));
+    auto child_instance = std::make_shared<InstanceContext>(
+        instance_path, std::move(bindings), child);
 
     // Store child in parent for hierarchical access
     parent_instance->children[submod.instance_symbol] = child_instance;
@@ -566,25 +565,31 @@ void SimulationRunner::ExecuteOneEvent() {
   ScheduledEvent event = active_queue_.front();
   active_queue_.pop();
 
-  auto& process = event.process;
-  auto& instance = event.instance;
+  const auto& origin = event.origin;
+  // Get module from instance; fall back to top module for package init (null
+  // instance)
+  const auto& module =
+      (origin.instance != nullptr) && (origin.instance->module != nullptr)
+          ? *origin.instance->module
+          : top_module_.get();
   std::size_t block_index = event.block_index;
   std::size_t instruction_index = event.instruction_index;
 
   simulation_context_.get().tracer.Record(
       fmt::format(
-          "{} | Start at block {} instruction {}", process->name,
-          process->blocks[block_index]->label, instruction_index));
+          "{} | Start at block {} instruction {}", origin.process->name,
+          origin.process->blocks[block_index]->label, instruction_index));
 
   ProcessContext process_context;
   ProcessEffect process_effect;
 
   auto result = RunProcess(
-      process, block_index, instruction_index, top_module_.get(),
-      simulation_context_.get(), process_context, process_effect, instance);
+      origin.process, block_index, instruction_index, module,
+      simulation_context_.get(), process_context, process_effect,
+      origin.instance);
 
   simulation_context_.get().tracer.Record(
-      fmt::format("{} | {}", process->name, result.Summary()));
+      fmt::format("{} | {}", origin.process->name, result.Summary()));
 
   WakeWaitingProcesses(process_effect.GetModifiedVariables());
 
@@ -601,8 +606,7 @@ void SimulationRunner::ExecuteOneEvent() {
       auto delay_time =
           simulation_context_.get().current_time + result.delay_amount;
       ScheduledEvent delayed_event{
-          .process = process,
-          .instance = instance,
+          .origin = event.origin,
           .block_index = result.block_index,
           .instruction_index = result.resume_instruction_index};
       delay_queue_[delay_time].push_back(std::move(delayed_event));
@@ -612,8 +616,7 @@ void SimulationRunner::ExecuteOneEvent() {
     case ProcessResult::Kind::kScheduleInactive: {
       // Schedule for Inactive region (same time slot, #0 delay)
       ScheduledEvent inactive_event{
-          .process = process,
-          .instance = instance,
+          .origin = event.origin,
           .block_index = result.block_index,
           .instruction_index = result.resume_instruction_index};
       inactive_queue_.push(std::move(inactive_event));
@@ -624,7 +627,7 @@ void SimulationRunner::ExecuteOneEvent() {
       for (const auto& trigger : result.triggers) {
         // Unified trigger resolution:
         // 1. Traverse instance_path (empty for local triggers)
-        auto watch_instance = instance;
+        auto watch_instance = origin.instance;
         for (const auto& inst_sym : trigger.instance_path) {
           watch_instance = watch_instance->LookupChild(inst_sym);
           if (!watch_instance) {
@@ -641,10 +644,10 @@ void SimulationRunner::ExecuteOneEvent() {
           }
 
           // Register with both:
-          // - instance: where the process runs (for resumption)
+          // - origin.instance: where the process runs (module via ->module)
           // - watch_instance: where the variable lives (for trigger detection)
           trigger_manager_.RegisterWaitingProcess(
-              process, instance, watch_instance, target_symbol,
+              origin.process, origin.instance, watch_instance, target_symbol,
               trigger.edge_kind, result.block_index,
               result.resume_instruction_index);
         }
