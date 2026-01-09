@@ -214,8 +214,7 @@ inline auto ParseMemFile(
       uint64_t addr = ParseMemAddress(token, is_hex, on_error);
       current_addr = static_cast<int64_t>(addr);
       if (current_addr < min_addr || current_addr > max_addr) {
-        on_error(std::format(
-            "{} address directive out of bounds", task_name));
+        on_error(std::format("{} address directive out of bounds", task_name));
       }
       continue;
     }

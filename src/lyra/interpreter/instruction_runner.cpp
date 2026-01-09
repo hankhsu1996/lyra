@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -768,8 +768,7 @@ auto RunInstruction(
     std::string_view task_name = is_read ? "$readmem" : "$writemem";
     if (instr.operands.size() < 2 || instr.operands.size() > 4) {
       throw common::InternalError(
-          "interpreter",
-          std::format("{} expects 2-4 operands", task_name));
+          "interpreter", std::format("{} expects 2-4 operands", task_name));
     }
     const auto filename_value = get_operand_value(instr.operands[0]);
     if (!filename_value.IsString()) {
@@ -792,8 +791,7 @@ auto RunInstruction(
       if (!start_val.IsTwoState() || start_val.IsWide()) {
         throw common::InternalError(
             "interpreter",
-            std::format(
-                "{} start address must be narrow integral", task_name));
+            std::format("{} start address must be narrow integral", task_name));
       }
       start_addr = start_val.AsNarrow().AsInt64();
     }
@@ -825,7 +823,8 @@ auto RunInstruction(
     }
     if (final_addr < min_addr || final_addr > max_addr) {
       throw common::InternalError(
-          "interpreter", std::format("{} end address out of bounds", task_name));
+          "interpreter",
+          std::format("{} end address out of bounds", task_name));
     }
 
     auto path = common::mem_io::ResolveMemPath(filename_value.AsString());
@@ -833,8 +832,8 @@ auto RunInstruction(
       std::ifstream in(path);
       if (!in) {
         throw common::InternalError(
-            "interpreter", std::format(
-                               "failed to open memory file: {}", path.string()));
+            "interpreter",
+            std::format("failed to open memory file: {}", path.string()));
       }
 
       std::string content(
@@ -852,8 +851,8 @@ auto RunInstruction(
         if (info.is_unpacked) {
           target_value.SetElement(index, value);
         } else {
-          packed_value =
-              StorePackedElement(packed_value, index, info.element_width, value);
+          packed_value = StorePackedElement(
+              packed_value, index, info.element_width, value);
         }
       };
 

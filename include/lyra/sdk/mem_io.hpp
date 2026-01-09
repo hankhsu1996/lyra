@@ -223,8 +223,7 @@ auto WriteMemArray(
   }
 
   detail::WriteMemFile(
-      out, has_start, current_addr, final_addr, is_hex,
-      [&](int64_t addr) {
+      out, has_start, current_addr, final_addr, is_hex, [&](int64_t addr) {
         size_t index = static_cast<size_t>(addr - min_addr);
         return detail::FormatMemValue(array[index], is_hex);
       });
@@ -258,8 +257,7 @@ auto WriteMemPacked(
   }
 
   detail::WriteMemFile(
-      out, has_start, current_addr, final_addr, is_hex,
-      [&](int64_t addr) {
+      out, has_start, current_addr, final_addr, is_hex, [&](int64_t addr) {
         size_t index = static_cast<size_t>(addr - min_addr);
         size_t base_bit = index * element_width;
         auto elem_words = std::vector<uint64_t>((element_width + 63) / 64, 0);
