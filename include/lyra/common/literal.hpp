@@ -17,6 +17,7 @@ namespace lyra::common {
 struct Literal {
   common::Type type{};
   common::ValueStorage value{};
+  bool is_string_literal = false;
 
   static auto Void() -> Literal {
     return {common::Type::Void(), ValueStorage::Void()};
@@ -63,7 +64,7 @@ struct Literal {
   }
 
   static auto String(std::string v) -> Literal {
-    return {common::Type::String(), ValueStorage(std::move(v))};
+    return Literal{common::Type::String(), ValueStorage(std::move(v)), true};
   }
 
   static auto Real(double v) -> Literal {
@@ -72,6 +73,14 @@ struct Literal {
 
   static auto ShortReal(float v) -> Literal {
     return {common::Type::ShortReal(), ValueStorage(v)};
+  }
+
+  // Generic factory for creating a literal from type and value.
+  // Used by MIR-to-LIR when handling BitPackedStringExpression.
+  static auto FromTypeAndValue(
+      common::Type type, ValueStorage value, bool is_string_literal = false)
+      -> Literal {
+    return Literal{std::move(type), std::move(value), is_string_literal};
   }
 
   auto operator==(const Literal& other) const -> bool = default;
@@ -93,8 +102,8 @@ struct Literal {
   }
 
  private:
-  Literal(common::Type t, ValueStorage v)
-      : type(std::move(t)), value(std::move(v)) {
+  Literal(common::Type t, ValueStorage v, bool is_str = false)
+      : type(std::move(t)), value(std::move(v)), is_string_literal(is_str) {
   }
 };
 

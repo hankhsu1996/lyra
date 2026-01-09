@@ -35,6 +35,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 Basic package support: typedef and enum declarations with imports.
 
 Not yet supported:
+
 - Functions in packages
 - Tasks in packages
 - Parameters/localparams in packages
@@ -108,6 +109,7 @@ Not yet supported:
 
 - Case equality (`===`, `!==`)
 - Wildcard equality (`==?`, `!=?`)
+- Variable-count replication (`{n{expr}}` where `n` is not a constant)
 
 ## System Tasks/Functions
 

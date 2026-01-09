@@ -57,6 +57,10 @@ auto LowerExpression(const slang::ast::Expression& expression)
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
+      // LowerLiteral handles both string and integral contexts:
+      // - Integral context (bit[N]): returns integral literal with
+      // is_string_literal=true
+      // - String context: returns string literal
       const auto& literal = expression.as<slang::ast::StringLiteral>();
       auto mir_literal = LowerLiteral(literal);
       return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));

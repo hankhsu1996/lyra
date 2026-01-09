@@ -178,3 +178,16 @@ cases:
     expect:
       variables:
         result: 0xABCD
+
+  - name: replicate_nested
+    description: Nested replication (replication of replication)
+    sv: |
+      module Test;
+        bit [23:0] result;
+        initial begin
+          result = {2{{3{4'hA}}}};  // 2 * 3 = 6 nibbles = 24 bits
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0xAAAAAA

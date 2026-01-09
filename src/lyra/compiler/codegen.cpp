@@ -19,7 +19,9 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/format_string.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/string_utils.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/trigger.hpp"
@@ -101,6 +103,64 @@ auto GetBinaryPrecedence(mir::BinaryOperator op) -> int {
 // Returns true if bit width requires WideBit (> 64 bits)
 constexpr auto IsWideWidth(size_t width) -> bool {
   return width > 64;
+}
+
+// Convert an integral literal to string (for bit-packed format strings).
+// Each 8 bits forms one character, MSB first, null bytes are skipped.
+auto IntegralLiteralToString(const common::Literal& lit) -> std::string {
+  std::string result;
+  if (lit.type.kind != common::Type::Kind::kIntegral) {
+    return result;
+  }
+  auto data = std::get<common::IntegralData>(lit.type.data);
+  size_t width = data.bit_width;
+
+  if (lit.value.IsInt64()) {
+    auto bits = static_cast<uint64_t>(lit.value.AsInt64());
+    for (size_t i = width; i >= 8; i -= 8) {
+      auto ch = static_cast<uint8_t>((bits >> (i - 8)) & 0xFF);
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  } else if (lit.value.IsWideBit()) {
+    const auto& wide = lit.value.AsWideBit();
+    for (size_t i = width; i >= 8; i -= 8) {
+      size_t byte_start = i - 8;
+      uint8_t ch = 0;
+      for (size_t b = 0; b < 8; ++b) {
+        ch |= static_cast<uint8_t>(wide.GetBit(byte_start + b) << b);
+      }
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  }
+  return result;
+}
+
+// Extract format string info from a MIR expression.
+// Handles string literals and bit-packed strings (via is_string_literal flag).
+auto ExtractFormatString(const mir::Expression& expr)
+    -> common::FormatStringInfo {
+  common::FormatStringInfo info;
+
+  if (expr.kind != mir::Expression::Kind::kLiteral) {
+    return info;
+  }
+  const auto& lit = mir::As<mir::LiteralExpression>(expr);
+  if (lit.literal.type.kind == common::Type::Kind::kString) {
+    info.text = lit.literal.value.AsString();
+    info.is_string_literal = true;
+  } else if (lit.literal.is_string_literal) {
+    // Bit-packed string: slang typed it as integral but it came from a string
+    // literal. Convert back to string for format detection.
+    info.text = IntegralLiteralToString(lit.literal);
+    info.is_string_literal = true;
+  }
+  info.has_format_specifiers =
+      info.is_string_literal && info.text.find('%') != std::string::npos;
+  return info;
 }
 
 auto ToCppOperator(mir::BinaryOperator op) -> const char* {
@@ -852,24 +912,27 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             break;
           }
 
-          // Check if first arg is a format string (string literal with %)
-          std::string sv_fmt;
-          size_t first_arg_idx = 0;
-          if (syscall.arguments[0]->kind == mir::Expression::Kind::kLiteral) {
-            const auto& lit =
-                mir::As<mir::LiteralExpression>(*syscall.arguments[0]);
-            if (lit.literal.type.kind == common::Type::Kind::kString) {
-              auto fmt_str = lit.literal.value.AsString();
-              if (fmt_str.find('%') != std::string::npos) {
-                sv_fmt = fmt_str;
-                first_arg_idx = 1;
-              }
-            }
+          // Extract format string info from first argument
+          auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+          size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+
+          // Print prefix (string literal without format specifiers)
+          if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+            Indent();
+            out_ << "std::print(std::cout, \"{}\", \""
+                 << common::EscapeForCppString(fmt_info.text) << "\");\n";
           }
 
-          EmitFormattedPrint(
-              syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-              props.default_format);
+          // Print arguments with format string
+          std::string sv_fmt =
+              fmt_info.has_format_specifiers ? fmt_info.text : "";
+          if (first_arg_idx < syscall.arguments.size()) {
+            EmitFormattedPrint(
+                syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+                props.default_format);
+          } else {
+            Line("std::println(std::cout, \"\");");
+          }
           indent_--;
           Line("});");
           break;
@@ -886,20 +949,15 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             break;
           }
 
-          // Parse format string if present
-          std::string sv_fmt;
-          size_t first_arg_idx = 0;
-          if (syscall.arguments[0]->kind == mir::Expression::Kind::kLiteral) {
-            const auto& lit =
-                mir::As<mir::LiteralExpression>(*syscall.arguments[0]);
-            if (lit.literal.type.kind == common::Type::Kind::kString) {
-              auto fmt_str = lit.literal.value.AsString();
-              if (fmt_str.find('%') != std::string::npos) {
-                sv_fmt = fmt_str;
-                first_arg_idx = 1;
-              }
-            }
-          }
+          // Extract format string info from first argument
+          auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+          size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+          std::string sv_fmt =
+              fmt_info.has_format_specifiers ? fmt_info.text : "";
+          std::string prefix_str =
+              (fmt_info.is_string_literal && !fmt_info.has_format_specifiers)
+                  ? fmt_info.text
+                  : "";
 
           // Generate block scope for previous value captures
           Line("{");
@@ -927,22 +985,37 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           indent_++;
 
           // Generate comparison: if (arg1 != prev_0 || arg2 != prev_1 || ...)
+          // When no variables, use 'false' - nothing to track means never
+          // prints again
           Indent();
           out_ << "if (";
-          for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
-            if (i > first_arg_idx) {
-              out_ << " || ";
+          if (prev_names.empty()) {
+            out_ << "false";
+          } else {
+            for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
+              if (i > first_arg_idx) {
+                out_ << " || ";
+              }
+              EmitExpression(*syscall.arguments[i]);
+              out_ << " != " << prev_names[i - first_arg_idx];
             }
-            EmitExpression(*syscall.arguments[i]);
-            out_ << " != " << prev_names[i - first_arg_idx];
           }
           out_ << ") {\n";
           indent_++;
 
           // Generate print statement inside the if block
-          EmitFormattedPrint(
-              syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-              props.default_format);
+          if (!prefix_str.empty()) {
+            Indent();
+            out_ << "std::print(std::cout, \"{}\", \""
+                 << common::EscapeForCppString(prefix_str) << "\");\n";
+          }
+          if (first_arg_idx < syscall.arguments.size()) {
+            EmitFormattedPrint(
+                syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+                props.default_format);
+          } else {
+            Line("std::println(std::cout, \"\");");
+          }
 
           // Update previous values
           for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
@@ -958,9 +1031,18 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           Line("});");  // End lambda and SetMonitor call
 
           // Print immediately on first call (IEEE 1800 §21.2.3)
-          EmitFormattedPrint(
-              syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-              props.default_format);
+          if (!prefix_str.empty()) {
+            Indent();
+            out_ << "std::print(std::cout, \"{}\", \""
+                 << common::EscapeForCppString(prefix_str) << "\");\n";
+          }
+          if (first_arg_idx < syscall.arguments.size()) {
+            EmitFormattedPrint(
+                syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+                props.default_format);
+          } else {
+            Line("std::println(std::cout, \"\");");
+          }
 
           indent_--;
           Line("}");  // End block scope
@@ -994,24 +1076,28 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             break;
           }
 
-          // Check if first arg is a format string (string literal with %)
-          std::string sv_fmt;
-          size_t first_arg_idx = 0;
-          if (syscall.arguments[0]->kind == mir::Expression::Kind::kLiteral) {
-            const auto& lit =
-                mir::As<mir::LiteralExpression>(*syscall.arguments[0]);
-            if (lit.literal.type.kind == common::Type::Kind::kString) {
-              auto fmt_str = lit.literal.value.AsString();
-              if (fmt_str.find('%') != std::string::npos) {
-                sv_fmt = fmt_str;
-                first_arg_idx = 1;
-              }
-            }
+          // Extract format string info from first argument
+          auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+          size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+
+          // Print prefix (string literal without format specifiers)
+          if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+            Indent();
+            out_ << "std::print(std::cout, \"{}\", \""
+                 << common::EscapeForCppString(fmt_info.text) << "\");\n";
           }
 
-          EmitFormattedPrint(
-              syscall.arguments, first_arg_idx, sv_fmt, print_fn,
-              props.default_format);
+          // Print remaining args with format string
+          std::string sv_fmt =
+              fmt_info.has_format_specifiers ? fmt_info.text : "";
+          if (first_arg_idx < syscall.arguments.size()) {
+            EmitFormattedPrint(
+                syscall.arguments, first_arg_idx, sv_fmt, print_fn,
+                props.default_format);
+          } else if (props.use_println) {
+            // No more args, but need newline
+            Line("std::println(std::cout, \"\");");
+          }
           break;
         }
         if (syscall.name == "$timeformat") {
@@ -1085,6 +1171,24 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
           const auto& target_type = target_expr.type;
 
+          // Helper to emit filename, converting integral to string if needed
+          auto emit_filename = [&]() {
+            const auto& filename_arg = *syscall.arguments[0];
+
+            // Integral literal (bit-packed string): convert to string at
+            // runtime
+            if (filename_arg.kind == mir::Expression::Kind::kLiteral &&
+                filename_arg.type.kind == common::Type::Kind::kIntegral) {
+              out_ << "lyra::sdk::IntToString(";
+              EmitExpression(filename_arg);
+              out_ << ")";
+              return;
+            }
+
+            // Default: emit expression directly (e.g., string variable)
+            EmitExpression(filename_arg);
+          };
+
           if (target_type.kind == common::Type::Kind::kUnpackedArray) {
             const auto& arr =
                 std::get<common::UnpackedArrayData>(target_type.data);
@@ -1092,7 +1196,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             out_ << "lyra::sdk::"
                  << (is_read ? "ReadMemArray(" : "WriteMemArray(")
                  << target.symbol->name << ", " << arr.lower_bound << ", ";
-            EmitExpression(*syscall.arguments[0]);
+            emit_filename();
             out_ << ", " << (has_start ? "true" : "false") << ", ";
             if (has_start) {
               EmitExpression(*syscall.arguments[2]);
@@ -1123,7 +1227,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
                  << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")
                  << target.symbol->name << ", " << element_width << ", "
                  << element_count << ", " << lower_bound << ", ";
-            EmitExpression(*syscall.arguments[0]);
+            emit_filename();
             out_ << ", " << (has_start ? "true" : "false") << ", ";
             if (has_start) {
               EmitExpression(*syscall.arguments[2]);
@@ -1946,6 +2050,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kConversion: {
       const auto& conv = mir::As<mir::ConversionExpression>(expr);
+
+      // Integral to string conversion (LRM 6.16)
+      if (conv.value->type.kind == common::Type::Kind::kIntegral &&
+          conv.target_type.kind == common::Type::Kind::kString) {
+        out_ << "lyra::sdk::IntToString(";
+        EmitExpression(*conv.value, kPrecLowest);
+        out_ << ")";
+        break;
+      }
+
+      // Default conversion
       out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
       EmitExpression(*conv.value, kPrecLowest);
       out_ << ")";
@@ -2033,6 +2148,21 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kConcatenation: {
       const auto& concat = mir::As<mir::ConcatenationExpression>(expr);
+
+      // String concatenation: emit (op0 + op1 + ...)
+      if (expr.type.kind == common::Type::Kind::kString) {
+        out_ << "(";
+        for (size_t i = 0; i < concat.operands.size(); ++i) {
+          if (i > 0) {
+            out_ << " + ";
+          }
+          EmitExpression(*concat.operands[i], kPrecLowest);
+        }
+        out_ << ")";
+        break;
+      }
+
+      // Integral concatenation
       size_t result_width = expr.type.GetBitWidth();
 
       // Debug assertion: sum of operand widths must equal result width
@@ -2059,6 +2189,16 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kReplication: {
       const auto& rep = mir::As<mir::ReplicationExpression>(expr);
+
+      // String replication: emit helper function
+      if (expr.type.kind == common::Type::Kind::kString) {
+        out_ << "lyra::sdk::ReplicateString(";
+        EmitExpression(*rep.operand, kPrecLowest);
+        out_ << ", " << rep.count << ")";
+        break;
+      }
+
+      // Integral replication
       size_t result_width = expr.type.GetBitWidth();
 
       // SDK Replicate<ResultWidth, Count>(value) expands to Concat internally
@@ -2080,6 +2220,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       out_ << ")";
       break;
     }
+
     default:
       throw DiagnosticException(
           Diagnostic::Error(
