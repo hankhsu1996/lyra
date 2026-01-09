@@ -44,6 +44,7 @@ class Expression {
     kConcatenation,
     kReplication,
     kFunctionCall,
+    kMemberAccess,
   };
 
   Kind kind;
@@ -98,6 +99,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Replication";
     case Expression::Kind::kFunctionCall:
       return "FunctionCall";
+    case Expression::Kind::kMemberAccess:
+      return "MemberAccess";
   }
   std::abort();
 }
@@ -310,6 +313,7 @@ class ElementSelectExpression;
 // - Local variable (symbol only)
 // - Array element (symbol + indices for multi-dim packed arrays)
 // - Hierarchical reference (path like "child.port")
+// - Struct field (symbol + field offset/width)
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable (nullptr for hierarchical)
   std::vector<std::unique_ptr<Expression>>
@@ -319,6 +323,11 @@ struct AssignmentTarget {
   // For hierarchical targets
   SymbolRef target_symbol{nullptr};
   std::vector<SymbolRef> instance_path;
+
+  // For struct field assignment (my_struct.field = value)
+  std::optional<uint64_t> field_bit_offset;  // LSB position of field
+  std::optional<size_t> field_bit_width;     // Width of field in bits
+  std::string field_name;                    // Name of field (for display)
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
@@ -357,6 +366,18 @@ struct AssignmentTarget {
         instance_path(std::move(instances)) {
   }
 
+  // Constructor for struct field assignment
+  AssignmentTarget(
+      SymbolRef sym, std::string name, uint64_t bit_offset, size_t bit_width,
+      Type struct_type)
+      : symbol(std::move(sym)),
+        indices(),
+        base_type(std::move(struct_type)),
+        field_bit_offset(bit_offset),
+        field_bit_width(bit_width),
+        field_name(std::move(name)) {
+  }
+
   [[nodiscard]] auto IsElementSelect() const -> bool {
     return !indices.empty();
   }
@@ -369,9 +390,16 @@ struct AssignmentTarget {
     return target_symbol != nullptr;
   }
 
+  [[nodiscard]] auto IsStructFieldAssignment() const -> bool {
+    return field_bit_offset.has_value();
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     if (IsHierarchical()) {
       return common::FormatHierarchicalPath(instance_path, target_symbol);
+    }
+    if (IsStructFieldAssignment()) {
+      return fmt::format("{}.{}", symbol->name, field_name);
     }
     if (indices.empty()) {
       return std::string(symbol->name);
@@ -655,6 +683,37 @@ class FunctionCallExpression : public Expression {
       arg_strs.push_back(arg ? arg->ToString() : "<null>");
     }
     return fmt::format("{}({})", function_name, fmt::join(arg_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Member access expression for packed structs: struct_val.field_name
+// At MIR level, we preserve the field metadata for downstream phases
+// At LIR level, this becomes LoadPackedBits (bit extraction)
+class MemberAccessExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kMemberAccess;
+
+  std::unique_ptr<Expression> value;  // The struct being accessed
+  std::string field_name;             // Name of the field
+  uint64_t bit_offset;                // LSB position within the struct
+  size_t bit_width;                   // Width of the field in bits
+
+  MemberAccessExpression(
+      std::unique_ptr<Expression> value, std::string field_name,
+      uint64_t bit_offset, size_t bit_width, Type field_type)
+      : Expression(kKindValue, std::move(field_type)),
+        value(std::move(value)),
+        field_name(std::move(field_name)),
+        bit_offset(bit_offset),
+        bit_width(bit_width) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{}.{}", value->ToString(), field_name);
   }
 
   void Accept(MirVisitor& visitor) const override {

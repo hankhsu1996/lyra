@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
@@ -122,6 +121,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         return value;
       }
 
+      if (assignment.target.IsStructFieldAssignment()) {
+        // Struct field assignment: my_struct.field = value
+        // Create literal for field bit offset
+        auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
+        auto offset_literal = builder.InternLiteral(
+            common::Literal::Int(
+                static_cast<int32_t>(*assignment.target.field_bit_offset)));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+        // Create slice type with field width
+        auto slice_type = common::Type::IntegralUnsigned(
+            static_cast<uint32_t>(*assignment.target.field_bit_width));
+
+        // Emit StorePackedBits instruction
+        auto instruction = Instruction::StorePackedBits(
+            assignment.target.symbol, offset_temp, value, slice_type);
+        builder.AddInstruction(std::move(instruction));
+        return value;
+      }
+
       if (assignment.target.IsElementSelect()) {
         if (assignment.target.IsPacked()) {
           // Packed element assignment (possibly multi-dimensional)
@@ -133,8 +153,22 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           auto adjusted_index = AdjustForNonZeroLower(
               composite_index, base_type.GetElementLower(), builder);
 
-          auto instruction = Instruction::StorePackedElement(
-              assignment.target.symbol, adjusted_index, value, element_width);
+          // Compute bit_offset = adjusted_index * element_width
+          auto bit_offset = builder.AllocateTemp("bit_offset", Type::Int());
+          auto width_literal = builder.InternLiteral(
+              Literal::Int(static_cast<int32_t>(element_width)));
+          auto width_temp = builder.AllocateTemp("width", Type::Int());
+          builder.AddInstruction(
+              Instruction::Basic(IK::kLiteral, width_temp, width_literal));
+          builder.AddInstruction(
+              Instruction::Basic(
+                  IK::kBinaryMultiply, bit_offset,
+                  {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
+
+          auto slice_type =
+              Type::IntegralUnsigned(static_cast<uint32_t>(element_width));
+          auto instruction = Instruction::StorePackedBits(
+              assignment.target.symbol, bit_offset, value, slice_type);
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment
@@ -233,8 +267,21 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         int32_t lower = select.value->type.GetElementLower();
         auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
 
-        auto instruction = Instruction::LoadPackedElement(
-            result, value, adjusted_index, expression.type);
+        // Compute bit_offset = adjusted_index * element_width
+        size_t element_width = expression.type.GetBitWidth();
+        auto bit_offset = builder.AllocateTemp("bit_offset", Type::Int());
+        auto width_literal = builder.InternLiteral(
+            Literal::Int(static_cast<int32_t>(element_width)));
+        auto width_temp = builder.AllocateTemp("width", Type::Int());
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, width_temp, width_literal));
+        builder.AddInstruction(
+            Instruction::Basic(
+                IK::kBinaryMultiply, bit_offset,
+                {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
+
+        auto instruction = Instruction::LoadPackedBits(
+            result, value, bit_offset, expression.type);
         builder.AddInstruction(std::move(instruction));
         return result;
       }
@@ -283,7 +330,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       std::vector<TempRef> arguments;
       std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
 
-      auto LowerSystemCallOperand =
+      auto lower_system_call_operand =
           [&](const mir::Expression& argument) -> Operand {
         if (argument.kind == mir::Expression::Kind::kIdentifier) {
           const auto& ident = mir::As<mir::IdentifierExpression>(argument);
@@ -341,7 +388,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       } else {
         for (const auto& argument : system_call.arguments) {
           if (argument) {
-            operands.push_back(LowerSystemCallOperand(*argument));
+            operands.push_back(lower_system_call_operand(*argument));
           }
         }
       }
@@ -406,8 +453,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(std::move(lsb_instruction));
 
       auto result = builder.AllocateTemp("slice", expression.type);
-      auto instruction = Instruction::LoadPackedSlice(
-          result, value, lsb_temp, expression.type);
+      auto instruction =
+          Instruction::LoadPackedBits(result, value, lsb_temp, expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
     }
@@ -446,7 +493,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       auto result = builder.AllocateTemp("slice", expression.type);
       builder.AddInstruction(
-          Instruction::LoadPackedSlice(
+          Instruction::LoadPackedBits(
               result, value, lsb_temp, expression.type));
       return result;
     }
@@ -527,6 +574,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // changing LowerExpression to return std::optional<TempRef>, which
       // requires updating many call sites.
       return builder.AllocateTemp("void", common::Type::Void());
+    }
+
+    case mir::Expression::Kind::kMemberAccess: {
+      const auto& member = mir::As<mir::MemberAccessExpression>(expression);
+      assert(member.value);
+
+      auto value = LowerExpression(*member.value, builder);
+
+      // Create a literal for the bit offset (LSB position)
+      auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+      auto offset_literal = builder.InternLiteral(
+          Literal::Int(static_cast<int32_t>(member.bit_offset)));
+      builder.AddInstruction(
+          Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+      // Use LoadPackedBits to extract the field bits
+      auto result = builder.AllocateTemp("field", expression.type);
+      builder.AddInstruction(
+          Instruction::LoadPackedBits(
+              result, value, offset_temp, expression.type));
+      return result;
     }
   }
   // All expression kinds must be handled above - if we reach here, a new

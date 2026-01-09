@@ -1,10 +1,14 @@
 #include "lyra/lowering/mir_to_lir/statement.hpp"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
@@ -71,8 +75,25 @@ auto LowerStatement(
           auto adjusted_index = AdjustForNonZeroLower(
               composite_index, base_type.GetElementLower(), builder);
 
-          auto instruction = Instruction::StorePackedElement(
-              target.symbol, adjusted_index, result_value, element_width);
+          // Compute bit_offset = adjusted_index * element_width
+          auto bit_offset =
+              builder.AllocateTemp("bit_offset", common::Type::Int());
+          auto width_literal = builder.InternLiteral(
+              common::Literal::Int(static_cast<int32_t>(element_width)));
+          auto width_temp = builder.AllocateTemp("width", common::Type::Int());
+          builder.AddInstruction(
+              Instruction::Basic(
+                  lir::InstructionKind::kLiteral, width_temp, width_literal));
+          builder.AddInstruction(
+              Instruction::Basic(
+                  lir::InstructionKind::kBinaryMultiply, bit_offset,
+                  {lir::Operand::Temp(adjusted_index),
+                   lir::Operand::Temp(width_temp)}));
+
+          auto slice_type = common::Type::IntegralUnsigned(
+              static_cast<uint32_t>(element_width));
+          auto instruction = Instruction::StorePackedBits(
+              target.symbol, bit_offset, result_value, slice_type);
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment: array[index] = value

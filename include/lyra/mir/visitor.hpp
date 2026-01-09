@@ -20,6 +20,7 @@ class EnumMethodExpression;
 class ConcatenationExpression;
 class ReplicationExpression;
 class FunctionCallExpression;
+class MemberAccessExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -64,6 +65,7 @@ class MirVisitor {
   virtual void Visit(const ConcatenationExpression&) = 0;
   virtual void Visit(const ReplicationExpression&) = 0;
   virtual void Visit(const FunctionCallExpression&) = 0;
+  virtual void Visit(const MemberAccessExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

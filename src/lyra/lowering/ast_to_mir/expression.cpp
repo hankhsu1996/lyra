@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -305,6 +306,38 @@ auto LowerExpression(const slang::ast::Expression& expression)
         }
 
         mir::AssignmentTarget target(target_symbol, std::move(instance_path));
+        return std::make_unique<mir::AssignmentExpression>(
+            std::move(target), std::move(value), is_non_blocking);
+      }
+
+      // Struct field assignment (my_struct.field = value)
+      if (left.kind == slang::ast::ExpressionKind::MemberAccess) {
+        const auto& member_access =
+            left.as<slang::ast::MemberAccessExpression>();
+        const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
+
+        // Get the struct variable (for now, require simple NamedValue)
+        const auto& struct_expr = member_access.value();
+        if (struct_expr.kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  struct_expr.sourceRange,
+                  "only simple struct variables supported as assignment "
+                  "target"));
+        }
+
+        const auto& struct_symbol =
+            struct_expr.as<slang::ast::NamedValueExpression>().symbol;
+
+        auto struct_type_result = LowerType(
+            struct_expr.type->getCanonicalType(), struct_expr.sourceRange);
+        if (!struct_type_result) {
+          throw DiagnosticException(std::move(struct_type_result.error()));
+        }
+
+        mir::AssignmentTarget target(
+            &struct_symbol, std::string(field.name), field.bitOffset,
+            field.getType().getBitWidth(), *struct_type_result);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -725,6 +758,66 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       return std::make_unique<mir::ReplicationExpression>(
           std::move(operand), *count, *type_result);
+    }
+
+    case slang::ast::ExpressionKind::MemberAccess: {
+      const auto& member_access =
+          expression.as<slang::ast::MemberAccessExpression>();
+      auto value = LowerExpression(member_access.value());
+
+      // Get field info from the FieldSymbol
+      const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
+      uint64_t bit_offset = field.bitOffset;
+      size_t bit_width = field.getType().getBitWidth();
+
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::MemberAccessExpression>(
+          std::move(value), std::string(field.name), bit_offset, bit_width,
+          *type_result);
+    }
+
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      // Both pattern types provide elements() in field declaration order.
+      // Packed struct literal = concatenation of fields (first = MSB).
+      auto lower_struct_literal =
+          [&](std::span<const slang::ast::Expression* const> elements) {
+            if (!expression.type->isStruct()) {
+              throw DiagnosticException(
+                  Diagnostic::Error(
+                      expression.sourceRange,
+                      "only packed struct assignment patterns are supported"));
+            }
+
+            std::vector<std::unique_ptr<mir::Expression>> operands;
+            operands.reserve(elements.size());
+            for (const auto* element : elements) {
+              operands.push_back(LowerExpression(*element));
+            }
+
+            auto type_result =
+                LowerType(*expression.type, expression.sourceRange);
+            if (!type_result) {
+              throw DiagnosticException(std::move(type_result.error()));
+            }
+
+            return std::make_unique<mir::ConcatenationExpression>(
+                std::move(operands), *type_result);
+          };
+
+      if (expression.kind ==
+          slang::ast::ExpressionKind::SimpleAssignmentPattern) {
+        return lower_struct_literal(
+            expression.as<slang::ast::SimpleAssignmentPatternExpression>()
+                .elements());
+      }
+      return lower_struct_literal(
+          expression.as<slang::ast::StructuredAssignmentPatternExpression>()
+              .elements());
     }
 
     case slang::ast::ExpressionKind::Invalid:

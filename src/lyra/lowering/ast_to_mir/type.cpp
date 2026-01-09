@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <vector>
 
 #include <fmt/format.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -42,6 +44,33 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     }
     // Real and RealTime both map to real (64-bit)
     return Type::Real();
+  }
+
+  // Check for packed struct before isIntegral() (PackedStructType is an
+  // IntegralType)
+  if (type.kind == slang::ast::SymbolKind::PackedStructType) {
+    const auto& struct_type = type.as<slang::ast::PackedStructType>();
+
+    // Build field metadata
+    std::vector<common::PackedStructField> fields;
+    for (const auto& field :
+         struct_type.membersOfType<slang::ast::FieldSymbol>()) {
+      auto field_type_result = LowerType(field.getType(), source_range);
+      if (!field_type_result) {
+        return field_type_result;
+      }
+
+      fields.push_back(
+          common::PackedStructField{
+              .name = std::string(field.name),
+              .bit_offset = field.bitOffset,
+              .bit_width = field.getType().getBitWidth(),
+              .field_type = std::make_shared<Type>(*field_type_result)});
+    }
+
+    return Type::PackedStruct(
+        std::move(fields), struct_type.bitWidth, struct_type.isSigned,
+        struct_type.isFourState);
   }
 
   // Check for multi-dimensional packed arrays before isIntegral()

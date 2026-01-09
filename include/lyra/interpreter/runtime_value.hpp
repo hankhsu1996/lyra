@@ -13,6 +13,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/bit_utils.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
@@ -338,7 +339,23 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       }
       return Array(type, std::move(elements));
     }
+    case common::Type::Kind::kPackedStruct: {
+      // Packed structs are bitvectors - initialize to all zeros
+      auto data = std::get<common::PackedStructData>(type.data);
+      if (data.bit_width > 64) {
+        return IntegralWide(
+            common::WideBit::FromBitWidth(data.bit_width), data.bit_width,
+            data.is_signed);
+      }
+      if (data.is_signed) {
+        return IntegralSigned(0, data.bit_width);
+      }
+      return IntegralUnsigned(0, data.bit_width);
+    }
   }
+  throw common::InternalError(
+      "DefaultValueForType",
+      fmt::format("unhandled type kind: {}", type.ToString()));
 }
 
 inline auto operator<<(std::ostream& os, const RuntimeValue& value)

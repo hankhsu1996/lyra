@@ -27,9 +27,8 @@ enum class InstructionKind {
                           // value
   kStoreUnpackedElementToTemp,  // Store to unpacked array temp: temp[index] =
                                 // value
-  kLoadPackedElement,           // Bit/element select from packed: vec[index]
-  kLoadPackedSlice,             // Range/part-select from packed: vec[msb:lsb]
-  kStorePackedElement,          // Store to packed element: vec[index] = value
+  kLoadPackedBits,              // Extract bits from packed: vec[offset+:width]
+  kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
 
   // Move operation
   kMove,
@@ -250,39 +249,29 @@ struct Instruction {
             Operand::Temp(value)}};
   }
 
-  // Load element/bit from packed vector: result = value[index]
-  static auto LoadPackedElement(
-      TempRef result, TempRef value, TempRef index, common::Type element_type)
-      -> Instruction {
+  // Load bits from packed vector: result = value[bit_offset +: width]
+  // bit_offset is pre-computed (index * element_width for arrays, or literal
+  // for struct fields). Width comes from result_type.
+  static auto LoadPackedBits(
+      TempRef result, TempRef value, TempRef bit_offset,
+      common::Type result_type) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadPackedElement,
-        .result = result,
-        .result_type = std::move(element_type),
-        .operands = {Operand::Temp(value), Operand::Temp(index)}};
-  }
-
-  // Load slice from packed vector: result = value[msb:lsb]
-  // lsb_temp is the shift amount, width from result_type
-  static auto LoadPackedSlice(
-      TempRef result, TempRef value, TempRef lsb_temp, common::Type result_type)
-      -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kLoadPackedSlice,
+        .kind = InstructionKind::kLoadPackedBits,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = {Operand::Temp(value), Operand::Temp(lsb_temp)}};
+        .operands = {Operand::Temp(value), Operand::Temp(bit_offset)}};
   }
 
-  // Store element to packed vector: variable[index] = value
-  // element_width stored in result_type for interpreter
-  static auto StorePackedElement(
-      SymbolRef variable, TempRef index, TempRef value, size_t element_width)
-      -> Instruction {
+  // Store bits to packed vector: variable[bit_offset +: width] = value
+  // bit_offset is pre-computed. Width comes from slice_type.
+  static auto StorePackedBits(
+      SymbolRef variable, TempRef bit_offset, TempRef value,
+      common::Type slice_type) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kStorePackedElement,
-        .result_type = common::Type::IntegralUnsigned(element_width),
+        .kind = InstructionKind::kStorePackedBits,
+        .result_type = std::move(slice_type),
         .operands = {
-            Operand::Variable(variable), Operand::Temp(index),
+            Operand::Variable(variable), Operand::Temp(bit_offset),
             Operand::Temp(value)}};
   }
 
@@ -509,20 +498,15 @@ struct Instruction {
             "stuet {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
-      case InstructionKind::kLoadPackedElement:
+      case InstructionKind::kLoadPackedBits:
         return fmt::format(
-            "ldpel {}, {}[{}]", result.value(), operands[0].ToString(),
+            "ldpb  {}, {}[{}+:]", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
-      case InstructionKind::kLoadPackedSlice:
+      case InstructionKind::kStorePackedBits:
         return fmt::format(
-            "ldpsl {}, {}[{}:]", result.value(), operands[0].ToString(),
-            operands[1].ToString());
-
-      case InstructionKind::kStorePackedElement:
-        return fmt::format(
-            "stpel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
-            operands[2].ToString());
+            "stpb  {}[{}+:], {}", operands[0].ToString(),
+            operands[1].ToString(), operands[2].ToString());
 
       case InstructionKind::kMove:
         return fmt::format(
