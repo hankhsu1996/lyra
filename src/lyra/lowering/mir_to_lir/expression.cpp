@@ -326,6 +326,22 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
            system_call.name == "$monitoro" || system_call.name == "$monitorh");
 
+      // Check if first argument is a string literal (for format string or
+      // filename detection). This info is preserved in the instruction since
+      // the operand may be lowered to a temp.
+      bool first_operand_is_string_literal = false;
+      if (!system_call.arguments.empty() && system_call.arguments[0]) {
+        const auto& first_arg = *system_call.arguments[0];
+        if (first_arg.kind == mir::Expression::Kind::kLiteral) {
+          const auto& lit = mir::As<mir::LiteralExpression>(first_arg);
+          first_operand_is_string_literal =
+              lit.literal.is_string_literal ||
+              lit.literal.type.kind == common::Type::Kind::kString;
+        } else if (first_arg.kind == mir::Expression::Kind::kBitPackedString) {
+          first_operand_is_string_literal = true;
+        }
+      }
+
       std::vector<Operand> operands;
       std::vector<TempRef> arguments;
       std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
@@ -335,6 +351,20 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         if (argument.kind == mir::Expression::Kind::kIdentifier) {
           const auto& ident = mir::As<mir::IdentifierExpression>(argument);
           return Operand::Variable(ident.symbol);
+        }
+        // For literal expressions, keep as literal operand to preserve metadata
+        if (argument.kind == mir::Expression::Kind::kLiteral) {
+          const auto& lit = mir::As<mir::LiteralExpression>(argument);
+          auto literal_ref = builder.InternLiteral(lit.literal);
+          return Operand::Literal(literal_ref);
+        }
+        // For BitPackedString, create literal with is_string_literal flag
+        if (argument.kind == mir::Expression::Kind::kBitPackedString) {
+          const auto& bps = mir::As<mir::BitPackedStringExpression>(argument);
+          auto literal =
+              Literal::FromTypeAndValue(bps.type, bps.packed_value, true);
+          auto literal_ref = builder.InternLiteral(literal);
+          return Operand::Literal(literal_ref);
         }
         auto temp = LowerExpression(argument, builder);
         return Operand::Temp(temp);
@@ -413,16 +443,22 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Pass result temp to store the return value
         auto instruction = Instruction::SystemCall(
             system_call.name, std::move(operands), result, system_call.type);
+        instruction.first_operand_is_string_literal =
+            first_operand_is_string_literal;
         builder.AddInstruction(std::move(instruction));
       } else if (is_monitor) {
         // $monitor with tracked symbols
         auto instruction = Instruction::SystemCallWithMonitor(
             system_call.name, std::move(arguments), std::move(monitored_args));
+        instruction.first_operand_is_string_literal =
+            first_operand_is_string_literal;
         builder.AddInstruction(std::move(instruction));
       } else {
         // No result for system tasks
         auto instruction =
             Instruction::SystemCall(system_call.name, std::move(operands));
+        instruction.first_operand_is_string_literal =
+            first_operand_is_string_literal;
         builder.AddInstruction(std::move(instruction));
       }
 
@@ -594,6 +630,23 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(
           Instruction::LoadPackedBits(
               result, value, offset_temp, expression.type));
+      return result;
+    }
+
+    case mir::Expression::Kind::kBitPackedString: {
+      // BitPackedString wraps a string literal used in bit context.
+      // For LIR, we emit the packed integral value as a literal.
+      // The is_string_literal flag is set to true so the interpreter can
+      // detect format strings at runtime.
+      const auto& bps = mir::As<mir::BitPackedStringExpression>(expression);
+      auto result = builder.AllocateTemp("bitpacked", bps.type);
+
+      // Create a literal with the packed value, marking it as from string
+      auto packed_literal =
+          Literal::FromTypeAndValue(bps.type, bps.packed_value, true);
+      auto literal_ref = builder.InternLiteral(packed_literal);
+      auto instruction = Instruction::Basic(IK::kLiteral, result, literal_ref);
+      builder.AddInstruction(std::move(instruction));
       return result;
     }
   }

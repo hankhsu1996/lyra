@@ -24,6 +24,7 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/format_string.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mem_io.hpp"
 #include "lyra/common/symbol.hpp"
@@ -559,6 +560,79 @@ auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
   return wide;
 }
 
+// Convert integral RuntimeValue to string per LRM 6.16.
+// Each 8 bits forms one character, MSB first, null bytes are skipped.
+auto IntegralToString(const RuntimeValue& val) -> std::string {
+  std::string result;
+  size_t width = std::get<common::IntegralData>(val.type.data).bit_width;
+
+  if (val.IsWide()) {
+    const auto& wide = val.AsWideBit();
+    // Extract bytes from MSB to LSB
+    for (size_t i = width; i >= 8; i -= 8) {
+      size_t byte_start = i - 8;
+      // Extract 8-bit value by reading bits
+      uint8_t ch = 0;
+      for (size_t b = 0; b < 8; ++b) {
+        ch |= static_cast<uint8_t>(wide.GetBit(byte_start + b) << b);
+      }
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  } else {
+    uint64_t bits = val.AsNarrow().AsUInt64();
+    for (size_t i = width; i >= 8; i -= 8) {
+      auto ch = static_cast<uint8_t>((bits >> (i - 8)) & 0xFF);
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  }
+  return result;
+}
+
+// Extract format string info from a RuntimeValue (first arg of $display etc).
+// The is_string_literal flag comes from the instruction's
+// first_operand_is_string_literal field, computed at MIR-to-LIR time.
+auto ExtractFormatString(const RuntimeValue& val, bool is_string_literal)
+    -> common::FormatStringInfo {
+  common::FormatStringInfo info;
+  if (val.IsString()) {
+    info.text = val.AsString();
+    info.is_string_literal = true;
+  } else if (is_string_literal && val.IsTwoState()) {
+    info.text = IntegralToString(val);
+    info.is_string_literal = true;
+  }
+  info.has_format_specifiers =
+      info.is_string_literal && info.text.find('%') != std::string::npos;
+  return info;
+}
+
+// Get format specifier for a single value based on its type.
+auto GetFormatSpecifier(const RuntimeValue& val, char default_format) -> char {
+  if (val.IsString()) {
+    return 's';
+  }
+  if (val.IsReal() || val.IsShortReal()) {
+    return 'f';
+  }
+  return default_format;
+}
+
+// Build format string from a list of values using default format for integrals.
+auto BuildFormatString(
+    const std::vector<RuntimeValue>& values, char default_format)
+    -> std::string {
+  std::string fmt;
+  for (const auto& val : values) {
+    fmt += '%';
+    fmt += GetFormatSpecifier(val, default_format);
+  }
+  return fmt;
+}
+
 // Compute the actual array index after adjusting for lower bound and checking
 // bounds. Returns the adjusted index or throws DiagnosticException if out of
 // bounds.
@@ -861,8 +935,14 @@ auto RunInstruction(
       throw common::InternalError(
           "interpreter", std::format("{} expects 2-4 operands", task_name));
     }
+    bool filename_is_string_literal = instr.first_operand_is_string_literal;
     const auto filename_value = get_operand_value(instr.operands[0]);
-    if (!filename_value.IsString()) {
+    std::string filename;
+    if (filename_value.IsString()) {
+      filename = filename_value.AsString();
+    } else if (filename_is_string_literal && filename_value.IsTwoState()) {
+      filename = IntegralToString(filename_value);
+    } else {
       throw common::InternalError(
           "interpreter",
           std::format("{} filename must be a string", task_name));
@@ -918,7 +998,7 @@ auto RunInstruction(
           std::format("{} end address out of bounds", task_name));
     }
 
-    auto path = common::mem_io::ResolveMemPath(filename_value.AsString());
+    auto path = common::mem_io::ResolveMemPath(filename);
     auto handle_read_mem = [&]() -> InstructionResult {
       std::ifstream in(path);
       if (!in) {
@@ -1589,12 +1669,21 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
+      // Integral to string conversion (LRM 6.16)
+      if (src.type.kind == common::Type::Kind::kIntegral &&
+          target_type.kind == common::Type::Kind::kString) {
+        temp_table.Write(
+            instr.result.value(), RuntimeValue::String(IntegralToString(src)));
+        return InstructionResult::Continue();
+      }
+
       throw DiagnosticException(
           Diagnostic::Error(
-              {}, fmt::format(
-                      "conversion only supports two-state/real/shortreal "
-                      "types, got: {} -> {}",
-                      src.type, target_type)));
+              {},
+              fmt::format(
+                  "conversion only supports two-state/real/shortreal/string "
+                  "types, got: {} -> {}",
+                  src.type, target_type)));
     }
 
     // Concatenation: result = {op0, op1, ...}
@@ -1604,6 +1693,24 @@ auto RunInstruction(
       assert(instr.result_type.has_value());
 
       const auto& result_type = instr.result_type.value();
+
+      // String concatenation: collect strings and join
+      if (result_type.kind == common::Type::Kind::kString) {
+        std::string result;
+        for (const auto& operand : instr.operands) {
+          const auto& val = get_temp(operand);
+          if (val.IsString()) {
+            result += val.AsString();
+          } else {
+            // Integral operand - convert per LRM (8 bits = 1 char)
+            result += IntegralToString(val);
+          }
+        }
+        temp_table.Write(instr.result.value(), RuntimeValue::String(result));
+        return InstructionResult::Continue();
+      }
+
+      // Integral concatenation: existing path
       size_t result_width = result_type.GetBitWidth();
 
       // Collect operand values
@@ -1706,42 +1813,33 @@ auto RunInstruction(
             .global_precision_power =
                 simulation_context.global_precision_power};
 
-        // Check if first operand is a format string (string with %)
-        const auto& first = get_operand_value(instr.operands[0]);
-        if (first.IsString()) {
-          auto fmt_str = first.AsString();
-          if (fmt_str.find('%') != std::string::npos) {
-            // Format string case: use specifiers from format string
-            std::vector<RuntimeValue> args;
-            for (size_t i = 1; i < instr.operands.size(); ++i) {
-              args.push_back(get_operand_value(instr.operands[i]));
-            }
-            simulation_context.display_output
-                << FormatDisplay(fmt_str, args, &time_ctx);
-            if (props.append_newline) {
-              simulation_context.display_output << "\n";
-            }
-            return InstructionResult::Continue();
-          }
+        // Extract format string info from first operand
+        bool first_is_string_literal = instr.first_operand_is_string_literal;
+        auto fmt_info = ExtractFormatString(
+            get_operand_value(instr.operands[0]), first_is_string_literal);
+
+        // Collect arguments (skip first if it was a format string/prefix)
+        std::vector<RuntimeValue> args;
+        size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+        for (size_t i = first_arg_idx; i < instr.operands.size(); ++i) {
+          args.push_back(get_operand_value(instr.operands[i]));
         }
 
-        // No format specifiers - generate format string with variant's default
-        std::string gen_fmt;
-        std::vector<RuntimeValue> args;
-        for (const auto& operand : instr.operands) {
-          const auto& value = get_operand_value(operand);
-          if (value.IsString()) {
-            gen_fmt += "%s";
-          } else if (value.IsReal() || value.IsShortReal()) {
-            gen_fmt += "%f";
-          } else {
-            gen_fmt += "%";
-            gen_fmt += props.default_format;
-          }
-          args.push_back(value);
+        // Print prefix (string literal without format specifiers)
+        if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+          simulation_context.display_output << fmt_info.text;
         }
-        simulation_context.display_output
-            << FormatDisplay(gen_fmt, args, &time_ctx);
+
+        // Format and print arguments
+        std::string format_str =
+            fmt_info.has_format_specifiers
+                ? fmt_info.text
+                : BuildFormatString(args, props.default_format);
+        if (!args.empty()) {
+          simulation_context.display_output
+              << FormatDisplay(format_str, args, &time_ctx);
+        }
+
         if (props.append_newline) {
           simulation_context.display_output << "\n";
         }
@@ -1754,6 +1852,10 @@ auto RunInstruction(
           instr.system_call_name == "$strobeo" ||
           instr.system_call_name == "$strobeh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
+
+        // Check if first operand is a string literal (from instruction
+        // metadata)
+        bool first_is_string_literal = instr.first_operand_is_string_literal;
 
         // Collect argument values now (they'll be read in Postponed region)
         std::vector<RuntimeValue> arg_values;
@@ -1774,7 +1876,8 @@ auto RunInstruction(
         effect.RecordPostponedAction(
             PostponedAction{
                 .action = [&simulation_context, props,
-                           arg_values = std::move(arg_values), time_ctx]() {
+                           arg_values = std::move(arg_values), time_ctx,
+                           first_is_string_literal]() {
                   // Empty call - just print newline if needed
                   if (arg_values.empty()) {
                     if (props.append_newline) {
@@ -1783,36 +1886,34 @@ auto RunInstruction(
                     return;
                   }
 
-                  // Check if first operand is a format string
-                  const auto& first = arg_values[0];
-                  if (first.IsString()) {
-                    auto fmt_str = first.AsString();
-                    if (fmt_str.find('%') != std::string::npos) {
-                      std::vector<RuntimeValue> format_args(
-                          arg_values.begin() + 1, arg_values.end());
-                      simulation_context.display_output
-                          << FormatDisplay(fmt_str, format_args, &time_ctx);
-                      if (props.append_newline) {
-                        simulation_context.display_output << "\n";
-                      }
-                      return;
-                    }
+                  // Extract format string info from first argument
+                  auto fmt_info = ExtractFormatString(
+                      arg_values[0], first_is_string_literal);
+
+                  // Collect arguments (skip first if it was a format
+                  // string/prefix)
+                  std::vector<RuntimeValue> args;
+                  size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+                  for (size_t i = first_arg_idx; i < arg_values.size(); ++i) {
+                    args.push_back(arg_values[i]);
                   }
 
-                  // No format specifiers - generate format string
-                  std::string gen_fmt;
-                  for (const auto& value : arg_values) {
-                    if (value.IsString()) {
-                      gen_fmt += "%s";
-                    } else if (value.IsReal() || value.IsShortReal()) {
-                      gen_fmt += "%f";
-                    } else {
-                      gen_fmt += "%";
-                      gen_fmt += props.default_format;
-                    }
+                  // Print prefix (string literal without format specifiers)
+                  if (fmt_info.is_string_literal &&
+                      !fmt_info.has_format_specifiers) {
+                    simulation_context.display_output << fmt_info.text;
                   }
-                  simulation_context.display_output
-                      << FormatDisplay(gen_fmt, arg_values, &time_ctx);
+
+                  // Format and print arguments
+                  std::string format_str =
+                      fmt_info.has_format_specifiers
+                          ? fmt_info.text
+                          : BuildFormatString(args, props.default_format);
+                  if (!args.empty()) {
+                    simulation_context.display_output
+                        << FormatDisplay(format_str, args, &time_ctx);
+                  }
+
                   if (props.append_newline) {
                     simulation_context.display_output << "\n";
                   }
@@ -1827,42 +1928,49 @@ auto RunInstruction(
           instr.system_call_name == "$monitorh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
 
+        // Check if first operand is a string literal (from instruction
+        // metadata)
+        bool first_is_string_literal = instr.first_operand_is_string_literal;
+
         // Collect argument values
         std::vector<RuntimeValue> arg_values;
         for (const auto& operand : instr.operands) {
           arg_values.push_back(get_operand_value(operand));
         }
 
-        // Build format string (same logic as $display)
-        std::string format_string;
-        std::vector<RuntimeValue> format_args;
-
-        if (!arg_values.empty() && arg_values[0].IsString()) {
-          auto fmt_str = arg_values[0].AsString();
-          if (fmt_str.find('%') != std::string::npos) {
-            format_string = fmt_str;
-            format_args.assign(arg_values.begin() + 1, arg_values.end());
-          }
+        // Extract format string info from first argument
+        common::FormatStringInfo fmt_info;
+        if (!arg_values.empty()) {
+          fmt_info =
+              ExtractFormatString(arg_values[0], first_is_string_literal);
         }
 
-        // If no format string, generate one
-        if (format_string.empty()) {
-          for (const auto& value : arg_values) {
-            if (value.IsString()) {
-              format_string += "%s";
-            } else if (value.IsReal() || value.IsShortReal()) {
-              format_string += "%f";
-            } else {
-              format_string += "%";
-              format_string += props.default_format;
-            }
+        // Collect format arguments (skip first if it was a format
+        // string/prefix)
+        std::vector<RuntimeValue> format_args;
+        size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+        for (size_t i = first_arg_idx; i < arg_values.size(); ++i) {
+          format_args.push_back(arg_values[i]);
+        }
+
+        // Build format string: prefix (if any) + format specifiers
+        std::string format_string;
+        if (fmt_info.has_format_specifiers) {
+          format_string = fmt_info.text;
+        } else {
+          if (fmt_info.is_string_literal) {
+            format_string = fmt_info.text;  // Use as prefix
           }
-          format_args = std::move(arg_values);
+          format_string += BuildFormatString(format_args, props.default_format);
         }
 
         // Build monitored variables list from instruction metadata
+        // Skip the first arg if it was used as a format string
+        size_t first_monitor_idx = fmt_info.is_string_literal ? 1 : 0;
         std::vector<MonitoredVariable> variables;
-        for (const auto& arg : instr.monitored_args) {
+        for (size_t i = first_monitor_idx; i < instr.monitored_args.size();
+             ++i) {
+          const auto& arg = instr.monitored_args[i];
           if (arg) {
             variables.push_back(
                 MonitoredVariable{

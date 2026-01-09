@@ -68,6 +68,19 @@ auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
 }
 
 auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
+  // In bit concatenation contexts, string literals have integral type (bit[N]).
+  // Use the integer interpretation for those cases.
+  if (literal.type->isIntegral()) {
+    const auto& int_val = literal.getIntValue();
+    if (int_val.isInteger()) {
+      auto result = SVIntToLiteral(int_val.integer());
+      result.is_string_literal = true;
+      return result;
+    }
+  }
+
+  // String type context - return as string literal (String() sets
+  // is_string_literal = true)
   auto value = std::string(literal.getValue());
   return common::Literal::String(std::move(value));
 }

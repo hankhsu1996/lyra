@@ -58,6 +58,30 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& literal = expression.as<slang::ast::StringLiteral>();
+
+      // In bit concatenation contexts, string literals have integral type.
+      // Create BitPackedStringExpression to preserve the original string
+      // while carrying the integral type for concatenation.
+      if (literal.type->isIntegral()) {
+        const auto& int_val = literal.getIntValue();
+        if (int_val.isInteger()) {
+          // Get the integral type
+          auto type_result = LowerType(*literal.type, literal.sourceRange);
+          if (!type_result) {
+            throw DiagnosticException(std::move(type_result.error()));
+          }
+
+          // Get the packed value using SVIntToLiteral helper
+          auto packed_literal = LowerLiteral(literal);  // Returns integral
+          auto original_string = std::string(literal.getValue());
+
+          return std::make_unique<mir::BitPackedStringExpression>(
+              std::move(original_string), std::move(packed_literal.value),
+              std::move(*type_result));
+        }
+      }
+
+      // String type context - use regular LiteralExpression
       auto mir_literal = LowerLiteral(literal);
       return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
     }

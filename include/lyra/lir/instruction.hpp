@@ -146,6 +146,10 @@ struct Instruction {
   };
   std::vector<std::optional<MonitoredArg>> monitored_args{};
 
+  // For system calls: true if the first operand is a string literal
+  // (format string or filename). Computed at MIR-to-LIR lowering time.
+  bool first_operand_is_string_literal = false;
+
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
       -> Instruction {

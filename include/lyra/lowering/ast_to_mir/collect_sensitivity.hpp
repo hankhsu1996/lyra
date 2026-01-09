@@ -116,6 +116,10 @@ class SensitivityCollector : public mir::MirVisitor {
     expression.value->Accept(*this);
   }
 
+  void Visit(const mir::BitPackedStringExpression& /*unused*/) override {
+    // BitPackedString is a constant literal, no variable involved
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);
