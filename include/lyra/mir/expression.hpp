@@ -42,6 +42,7 @@ class Expression {
     kIndexedRangeSelect,
     kHierarchicalReference,
     kConcatenation,
+    kReplication,
     kFunctionCall,
   };
 
@@ -93,6 +94,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "HierarchicalReference";
     case Expression::Kind::kConcatenation:
       return "Concatenation";
+    case Expression::Kind::kReplication:
+      return "Replication";
     case Expression::Kind::kFunctionCall:
       return "FunctionCall";
   }
@@ -594,6 +597,33 @@ class ConcatenationExpression : public Expression {
       op_strs.push_back(op->ToString());
     }
     return fmt::format("{{{}}}", fmt::join(op_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Replication expression: {n{expr}}
+// Replicates the operand n times. Result width = operand width * count.
+// Note: In slang AST, operand is wrapped in a Concatenation node even for
+// single operands.
+class ReplicationExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kReplication;
+
+  std::unique_ptr<Expression> operand;  // Expression to replicate
+  size_t count;                         // Number of replications
+
+  ReplicationExpression(
+      std::unique_ptr<Expression> op, size_t count, Type result_type)
+      : Expression(kKindValue, std::move(result_type)),
+        operand(std::move(op)),
+        count(count) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    return fmt::format("{{{}{{{}}}}}", count, operand->ToString());
   }
 
   void Accept(MirVisitor& visitor) const override {

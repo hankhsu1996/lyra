@@ -476,6 +476,23 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return result;
     }
 
+    case mir::Expression::Kind::kReplication: {
+      const auto& rep = mir::As<mir::ReplicationExpression>(expression);
+
+      // Lower operand once (ensures single evaluation per LRM)
+      auto operand_temp = LowerExpression(*rep.operand, builder);
+
+      // Create vector with operand repeated count times
+      std::vector<TempRef> operand_temps(rep.count, operand_temp);
+
+      // Emit as concatenation instruction
+      auto result = builder.AllocateTemp("rep", expression.type);
+      auto instruction = Instruction::Concatenation(
+          result, std::move(operand_temps), expression.type);
+      builder.AddInstruction(std::move(instruction));
+      return result;
+    }
+
     case mir::Expression::Kind::kFunctionCall: {
       const auto& call = mir::As<mir::FunctionCallExpression>(expression);
 

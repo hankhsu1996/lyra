@@ -72,7 +72,6 @@ Not yet supported:
 
 ## Expressions
 
-- Replication (`{4{byte}}`)
 - Struct member access (`.field`)
 - `inside` operator
 
