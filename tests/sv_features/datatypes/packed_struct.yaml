@@ -1,0 +1,328 @@
+feature: packed_struct
+description: Packed struct support - field access, assignment, and literals
+
+cases:
+  - name: struct_field_read
+    description: Read individual struct fields
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = 16'hAABB;
+          result_a = s.a;  // MSB field [15:8]
+          result_b = s.b;  // LSB field [7:0]
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 170  # 0xAA
+        result_b: 187  # 0xBB
+
+  - name: struct_field_write
+    description: Write individual struct fields
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = 0;
+          s.a = 8'hAA;
+          s.b = 8'hBB;
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43707  # 0xAABB
+
+  - name: struct_literal_positional
+    description: Struct literal with positional values
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{8'hCC, 8'hDD};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 52445  # 0xCCDD
+
+  - name: struct_literal_named
+    description: Struct literal with named fields
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{a: 8'hEE, b: 8'hFF};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 61183  # 0xEEFF
+
+  - name: struct_literal_named_reverse_order
+    description: Named fields can be in any order
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{b: 8'h11, a: 8'h22};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8721  # 0x2211 - a is MSB
+
+  - name: struct_three_fields
+    description: Struct with three fields
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] x;
+          logic [7:0] y;
+          logic [7:0] z;
+        } vec3_t;
+        vec3_t v;
+        int result_x, result_y, result_z, result_total;
+        initial begin
+          v = '{8'h12, 8'h34, 8'h56};
+          result_x = v.x;
+          result_y = v.y;
+          result_z = v.z;
+          result_total = v;
+        end
+      endmodule
+    expect:
+      variables:
+        result_x: 18   # 0x12
+        result_y: 52   # 0x34
+        result_z: 86   # 0x56
+        result_total: 1193046  # 0x123456
+
+  - name: struct_single_bit_field
+    description: Struct with single-bit field
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [6:0] data;
+          logic flag;
+        } flagged_t;
+        flagged_t f;
+        int result_data, result_flag, result_total;
+        initial begin
+          f = '{7'h55, 1'b1};
+          result_data = f.data;
+          result_flag = f.flag;
+          result_total = f;
+        end
+      endmodule
+    expect:
+      variables:
+        result_data: 85  # 0x55
+        result_flag: 1
+        result_total: 171  # 0xAB = (0x55 << 1) | 1
+
+  - name: struct_field_modify
+    description: Modify one field without affecting others
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = 16'hFFFF;
+          s.a = 8'h00;  // Only change MSB field
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 255  # 0x00FF
+
+  - name: struct_field_arithmetic
+    description: Arithmetic with struct fields
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{8'd10, 8'd20};
+          result = s.a + s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: struct_typedef_alias
+    description: Typedef alias for struct type
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] x;
+          logic [7:0] y;
+        } point_t;
+        typedef point_t coord_t;  // Alias
+        coord_t p;
+        int result;
+        initial begin
+          p = '{8'h12, 8'h34};
+          result = p.x + p.y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 70  # 0x12 + 0x34
+
+  - name: struct_inline_declaration
+    description: Struct without typedef
+    sv: |
+      module Test;
+        struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } s;
+        int result;
+        initial begin
+          s = '{8'hAA, 8'hBB};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43707  # 0xAABB
+
+  - name: struct_bit_select_from_field
+    description: Bit selection from struct field
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{8'hF0, 8'h0F};
+          result = s.a[7] + s.a[0] + s.b[7] + s.b[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2  # 1 + 0 + 0 + 1
+
+  - name: struct_part_select_from_field
+    description: Part select from struct field
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] data;
+        } byte_t;
+        byte_t b;
+        int result;
+        initial begin
+          b.data = 8'hAB;
+          result = b.data[7:4];  // Upper nibble
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10  # 0xA
+
+  - name: struct_wide_field
+    description: Struct with wide field (>32 bits)
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [31:0] high;
+          logic [31:0] low;
+        } wide_t;
+        wide_t w;
+        int result_high, result_low;
+        initial begin
+          w.high = 32'h12345678;
+          w.low = 32'hABCDEF00;
+          result_high = w.high;
+          result_low = w.low;
+        end
+      endmodule
+    expect:
+      variables:
+        result_high: 305419896   # 0x12345678
+        result_low: -1412567296  # 0xABCDEF00 as signed
+
+  - name: struct_copy
+    description: Copy one struct to another
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s1, s2;
+        int result;
+        initial begin
+          s1 = '{8'hAA, 8'hBB};
+          s2 = s1;  // Copy
+          result = s2;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43707  # 0xAABB
+
+  - name: struct_comparison
+    description: Struct equality comparison
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s1, s2;
+        int result;
+        initial begin
+          s1 = '{8'hAA, 8'hBB};
+          s2 = '{8'hAA, 8'hBB};
+          result = (s1 == s2) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+

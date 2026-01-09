@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -758,6 +759,46 @@ auto LowerExpression(const slang::ast::Expression& expression)
       return std::make_unique<mir::MemberAccessExpression>(
           std::move(value), std::string(field.name), bit_offset, bit_width,
           *type_result);
+    }
+
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      // Both pattern types provide elements() in field declaration order.
+      // Packed struct literal = concatenation of fields (first = MSB).
+      auto lower_struct_literal =
+          [&](std::span<const slang::ast::Expression* const> elements) {
+            if (!expression.type->isStruct()) {
+              throw DiagnosticException(
+                  Diagnostic::Error(
+                      expression.sourceRange,
+                      "only packed struct assignment patterns are supported"));
+            }
+
+            std::vector<std::unique_ptr<mir::Expression>> operands;
+            operands.reserve(elements.size());
+            for (const auto* element : elements) {
+              operands.push_back(LowerExpression(*element));
+            }
+
+            auto type_result =
+                LowerType(*expression.type, expression.sourceRange);
+            if (!type_result) {
+              throw DiagnosticException(std::move(type_result.error()));
+            }
+
+            return std::make_unique<mir::ConcatenationExpression>(
+                std::move(operands), *type_result);
+          };
+
+      if (expression.kind ==
+          slang::ast::ExpressionKind::SimpleAssignmentPattern) {
+        return lower_struct_literal(
+            expression.as<slang::ast::SimpleAssignmentPatternExpression>()
+                .elements());
+      }
+      return lower_struct_literal(
+          expression.as<slang::ast::StructuredAssignmentPatternExpression>()
+              .elements());
     }
 
     case slang::ast::ExpressionKind::Invalid:
