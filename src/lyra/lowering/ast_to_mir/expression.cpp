@@ -656,10 +656,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& concat_expr =
           expression.as<slang::ast::ConcatenationExpression>();
 
-      // Lower all operands
+      // Lower all operands, skipping void-type operands (zero replications)
       std::vector<std::unique_ptr<mir::Expression>> operands;
       operands.reserve(concat_expr.operands().size());
       for (const auto* operand : concat_expr.operands()) {
+        if (operand->type->isVoid()) {
+          // Skip zero-width operands (e.g., {0{x}} inside concatenation)
+          continue;
+        }
         operands.push_back(LowerExpression(*operand));
       }
 
@@ -671,6 +675,37 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       return std::make_unique<mir::ConcatenationExpression>(
           std::move(operands), *type_result);
+    }
+
+    case slang::ast::ExpressionKind::Replication: {
+      const auto& rep_expr = expression.as<slang::ast::ReplicationExpression>();
+
+      // Get count - slang guarantees it's a constant integer and already
+      // evaluated
+      const auto* count_const = rep_expr.count().getConstant();
+      if (count_const == nullptr || !count_const->isInteger()) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange, "replication count must be constant"));
+      }
+      auto count = count_const->integer().as<size_t>();
+      if (!count) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange, "replication count out of range"));
+      }
+
+      // Lower the inner expression (concat() returns the replicated expression)
+      auto operand = LowerExpression(rep_expr.concat());
+
+      // Get the result type from slang
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::ReplicationExpression>(
+          std::move(operand), *count, *type_result);
     }
 
     case slang::ast::ExpressionKind::Invalid:

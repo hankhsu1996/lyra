@@ -921,6 +921,27 @@ template <std::size_t ResultWidth, typename... Args>
   }
 }
 
+namespace detail {
+
+// Helper for Replicate - expands value into Count copies and calls Concat
+template <std::size_t ResultWidth, typename T, std::size_t... Is>
+[[nodiscard]] constexpr auto ReplicateImpl(
+    const T& value, std::index_sequence<Is...> /*unused*/) {
+  // (void(Is), value)... expands to (value, value, value, ...) Count times
+  return Concat<ResultWidth>((static_cast<void>(Is), value)...);
+}
+
+}  // namespace detail
+
+// Replication function - replicates a value Count times.
+// Usage: Replicate<32, 4>(byte_val) replicates an 8-bit value 4 times.
+// Equivalent to Concat<32>(val, val, val, val) but more concise.
+template <std::size_t ResultWidth, std::size_t Count, typename T>
+[[nodiscard]] constexpr auto Replicate(const T& value) {
+  return detail::ReplicateImpl<ResultWidth>(
+      value, std::make_index_sequence<Count>{});
+}
+
 }  // namespace lyra::sdk
 
 // Include Bit after WideBit is fully defined to resolve circular dependency.

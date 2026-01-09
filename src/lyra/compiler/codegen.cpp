@@ -1944,6 +1944,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       out_ << ")";
       break;
     }
+    case mir::Expression::Kind::kReplication: {
+      const auto& rep = mir::As<mir::ReplicationExpression>(expr);
+      size_t result_width = expr.type.GetBitWidth();
+
+      // SDK Replicate<ResultWidth, Count>(value) expands to Concat internally
+      out_ << "lyra::sdk::Replicate<" << result_width << ", " << rep.count
+           << ">(";
+      EmitExpression(*rep.operand, kPrecLowest);
+      out_ << ")";
+      break;
+    }
     case mir::Expression::Kind::kFunctionCall: {
       const auto& call = mir::As<mir::FunctionCallExpression>(expr);
       out_ << call.function_name << "(";
