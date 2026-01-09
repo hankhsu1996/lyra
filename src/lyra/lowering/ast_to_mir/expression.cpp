@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,81 +28,6 @@
 #include "lyra/mir/operators.hpp"
 
 namespace lyra::lowering::ast_to_mir {
-
-namespace {
-
-auto IsMemIoSystemCall(std::string_view name) -> bool {
-  return name == "$readmemh" || name == "$readmemb" || name == "$writememh" ||
-         name == "$writememb";
-}
-
-auto ValidateMemIoCall(const slang::ast::CallExpression& call_expression)
-    -> void {
-  auto name = call_expression.getSubroutineName();
-  if (!IsMemIoSystemCall(name)) {
-    return;
-  }
-
-  const auto& args = call_expression.arguments();
-  if (args.size() < 2 || args.size() > 4) {
-    throw DiagnosticException(
-        Diagnostic::Error(
-            call_expression.sourceRange,
-            fmt::format(
-                "{} expects 2-4 arguments, got {}", name, args.size())));
-  }
-
-  const auto& target_expr = *args[1];
-  if (target_expr.kind != slang::ast::ExpressionKind::NamedValue) {
-    throw DiagnosticException(
-        Diagnostic::Error(
-            target_expr.sourceRange,
-            fmt::format("{} target must be a named variable", name)));
-  }
-
-  const auto& named_value = target_expr.as<slang::ast::NamedValueExpression>();
-  auto target_type_result =
-      LowerType(named_value.symbol.getType(), target_expr.sourceRange);
-  if (!target_type_result) {
-    throw DiagnosticException(std::move(target_type_result.error()));
-  }
-  const auto& target_type = *target_type_result;
-  if (target_type.kind != common::Type::Kind::kUnpackedArray &&
-      target_type.kind != common::Type::Kind::kIntegral) {
-    throw DiagnosticException(
-        Diagnostic::Error(
-            target_expr.sourceRange,
-            fmt::format(
-                "{} target must be an unpacked or packed array", name)));
-  }
-
-  if (args.size() >= 3) {
-    auto start_type_result = LowerType(*args[2]->type, args[2]->sourceRange);
-    if (!start_type_result) {
-      throw DiagnosticException(std::move(start_type_result.error()));
-    }
-    if (start_type_result->kind != common::Type::Kind::kIntegral) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              args[2]->sourceRange,
-              fmt::format("{} start address must be integral", name)));
-    }
-  }
-  if (args.size() == 4) {
-    auto end_type_result = LowerType(*args[3]->type, args[3]->sourceRange);
-    if (!end_type_result) {
-      throw DiagnosticException(std::move(end_type_result.error()));
-    }
-    if (end_type_result->kind != common::Type::Kind::kIntegral) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              args[3]->sourceRange,
-              fmt::format("{} end address must be integral", name)));
-    }
-  }
-}
-
-}  // namespace
 
 auto LowerExpression(const slang::ast::Expression& expression)
     -> std::unique_ptr<mir::Expression> {
@@ -610,8 +534,6 @@ auto LowerExpression(const slang::ast::Expression& expression)
                   expression.sourceRange,
                   fmt::format("unsupported system call '{}'", name)));
         }
-
-        ValidateMemIoCall(call_expression);
 
         // Handle $timeunit($root), $timeprecision($root),
         // $printtimescale($root) Transform to $timeunit_root /

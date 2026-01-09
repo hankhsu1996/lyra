@@ -274,10 +274,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // Supported system calls are validated in AST→MIR
       assert(common::IsSystemFunctionSupported(system_call.name));
 
-      bool is_mem_io =
-          system_call.name == "$readmemh" || system_call.name == "$readmemb" ||
-          system_call.name == "$writememh" || system_call.name == "$writememb";
-
       // Check if this is a $monitor variant that needs symbol tracking
       bool is_monitor =
           (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
@@ -287,33 +283,22 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       std::vector<TempRef> arguments;
       std::vector<std::optional<Instruction::MonitoredArg>> monitored_args;
 
-      if (is_mem_io) {
-        if (system_call.arguments.size() < 2 ||
-            system_call.arguments.size() > 4) {
-          throw common::InternalError(
-              "lowering", "mem I/O system call has unexpected arity");
+      auto LowerSystemCallOperand =
+          [&](const mir::Expression& argument) -> Operand {
+        if (argument.kind == mir::Expression::Kind::kIdentifier) {
+          const auto& ident = mir::As<mir::IdentifierExpression>(argument);
+          return Operand::Variable(ident.symbol);
         }
-        auto filename = LowerExpression(*system_call.arguments[0], builder);
-        operands.push_back(Operand::Temp(filename));
+        auto temp = LowerExpression(argument, builder);
+        return Operand::Temp(temp);
+      };
 
-        const auto& target_expr = *system_call.arguments[1];
-        if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
-          throw common::InternalError(
-              "lowering", "mem I/O target must be an identifier");
-        }
-        const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
-        operands.push_back(Operand::Variable(target.symbol));
-
-        for (size_t i = 2; i < system_call.arguments.size(); ++i) {
-          auto temp = LowerExpression(*system_call.arguments[i], builder);
-          operands.push_back(Operand::Temp(temp));
-        }
-      } else {
+      if (is_monitor) {
         // Check if first argument is a format string (for $monitor)
         // Format strings are string literals containing '%' and should not
         // be tracked for value changes.
         bool first_is_format_string = false;
-        if (is_monitor && !system_call.arguments.empty()) {
+        if (!system_call.arguments.empty()) {
           const auto& first_arg = system_call.arguments[0];
           if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
             const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
@@ -328,10 +313,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         for (const auto& argument : system_call.arguments) {
           if (argument) {
             // For $monitor, skip format string tracking but still lower it
-            bool is_format_string =
-                is_monitor && first_is_format_string && arg_index == 0;
+            bool is_format_string = first_is_format_string && arg_index == 0;
 
-            if (is_monitor && !is_format_string) {
+            if (!is_format_string) {
               // Capture instructions for re-evaluation at each time slot
               size_t before_count = builder.GetCurrentBlockInstructionCount();
               TempRef result = LowerExpression(*argument, builder);
@@ -354,17 +338,23 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           }
           ++arg_index;
         }
+      } else {
+        for (const auto& argument : system_call.arguments) {
+          if (argument) {
+            operands.push_back(LowerSystemCallOperand(*argument));
+          }
+        }
       }
 
       // Add default argument (1) for $finish and $stop if not provided
       // $exit takes no arguments per LRM
       if ((system_call.name == "$finish" || system_call.name == "$stop") &&
-          arguments.empty() && !is_mem_io) {
+          operands.empty() && !is_monitor) {
         auto temp = builder.AllocateTemp("sys", system_call.type);
         auto const_one = builder.InternLiteral(Literal::Int(1));
         auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);
         builder.AddInstruction(std::move(instruction));
-        arguments.push_back(temp);
+        operands.push_back(Operand::Temp(temp));
       }
 
       // System functions return a value, system tasks do not
@@ -375,7 +365,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       if (is_function) {
         // Pass result temp to store the return value
         auto instruction = Instruction::SystemCall(
-            system_call.name, std::move(arguments), result, system_call.type);
+            system_call.name, std::move(operands), result, system_call.type);
         builder.AddInstruction(std::move(instruction));
       } else if (is_monitor) {
         // $monitor with tracked symbols
@@ -385,10 +375,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       } else {
         // No result for system tasks
         auto instruction =
-            is_mem_io
-                ? Instruction::SystemCall(system_call.name, std::move(operands))
-                : Instruction::SystemCall(
-                      system_call.name, std::move(arguments));
+            Instruction::SystemCall(system_call.name, std::move(operands));
         builder.AddInstruction(std::move(instruction));
       }
 

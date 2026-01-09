@@ -556,7 +556,7 @@ auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
 }
 
 auto LowerExpressionStatement(const slang::ast::Expression& expr)
-    -> std::unique_ptr<mir::Statement> {
+    -> std::unique_ptr<mir::ExpressionStatement> {
   auto lowered_expr = LowerExpression(expr);
   return std::make_unique<mir::ExpressionStatement>(std::move(lowered_expr));
 }

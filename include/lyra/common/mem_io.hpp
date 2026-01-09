@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -166,6 +167,72 @@ inline auto FormatMemAddress(uint64_t address, bool is_hex) -> std::string {
   }
   std::reverse(out.begin(), out.end());
   return out;
+}
+
+template <typename ErrorFn, typename StoreElementFn>
+inline auto ParseMemFile(
+    std::string_view content, bool is_hex, int64_t min_addr, int64_t max_addr,
+    int64_t& current_addr, int64_t final_addr, std::string_view task_name,
+    ErrorFn&& on_error, StoreElementFn&& store) -> void {
+  size_t i = 0;
+  while (i < content.size() && current_addr <= final_addr) {
+    char ch = content[i];
+    if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+      ++i;
+      continue;
+    }
+    if (ch == '/' && i + 1 < content.size()) {
+      if (content[i + 1] == '/') {
+        i += 2;
+        while (i < content.size() && content[i] != '\n') {
+          ++i;
+        }
+        continue;
+      }
+      if (content[i + 1] == '*') {
+        i += 2;
+        while (i + 1 < content.size() &&
+               !(content[i] == '*' && content[i + 1] == '/')) {
+          ++i;
+        }
+        i = std::min(i + 2, content.size());
+        continue;
+      }
+    }
+    if (ch == '@') {
+      ++i;
+      size_t start = i;
+      while (i < content.size() &&
+             std::isspace(static_cast<unsigned char>(content[i])) == 0) {
+        if (content[i] == '/' && i + 1 < content.size() &&
+            (content[i + 1] == '/' || content[i + 1] == '*')) {
+          break;
+        }
+        ++i;
+      }
+      auto token = std::string_view(content).substr(start, i - start);
+      uint64_t addr = ParseMemAddress(token, is_hex, on_error);
+      current_addr = static_cast<int64_t>(addr);
+      if (current_addr < min_addr || current_addr > max_addr) {
+        on_error(std::format(
+            "{} address directive out of bounds", task_name));
+      }
+      continue;
+    }
+
+    size_t start = i;
+    while (i < content.size() &&
+           std::isspace(static_cast<unsigned char>(content[i])) == 0) {
+      if (content[i] == '/' && i + 1 < content.size() &&
+          (content[i + 1] == '/' || content[i + 1] == '*')) {
+        break;
+      }
+      ++i;
+    }
+    auto token = std::string_view(content).substr(start, i - start);
+    store(token, current_addr);
+    ++current_addr;
+  }
 }
 
 }  // namespace lyra::common::mem_io

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <format>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -23,6 +24,7 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/mem_io.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/system_function.hpp"
@@ -321,10 +323,6 @@ auto FormatDisplay(
   return result;
 }
 
-[[noreturn]] void ThrowMemIoError(std::string_view message) {
-  throw DiagnosticException(Diagnostic::Error({}, std::string(message)));
-}
-
 struct MemTargetInfo {
   bool is_unpacked = false;
   size_t element_width = 0;
@@ -337,7 +335,8 @@ auto GetMemTargetInfo(const RuntimeValue& value, const common::Type& type)
   if (type.kind == common::Type::Kind::kUnpackedArray) {
     const auto& array_data = std::get<common::UnpackedArrayData>(type.data);
     if (array_data.element_type->kind != common::Type::Kind::kIntegral) {
-      ThrowMemIoError("readmem/writemem target element must be integral");
+      throw common::InternalError(
+          "interpreter", "readmem/writemem target element must be integral");
     }
     return {
         .is_unpacked = true,
@@ -365,14 +364,16 @@ auto GetMemTargetInfo(const RuntimeValue& value, const common::Type& type)
     };
   }
 
-  ThrowMemIoError("readmem/writemem target must be an array");
+  throw common::InternalError(
+      "interpreter", "readmem/writemem target must be an array");
 }
 
 auto ParseMemTokenToValue(std::string_view token, size_t bit_width, bool is_hex)
     -> RuntimeValue {
   auto words = common::mem_io::ParseMemTokenToWords(
-      token, bit_width, is_hex,
-      [](std::string_view message) { ThrowMemIoError(message); });
+      token, bit_width, is_hex, [](std::string_view message) {
+        throw common::InternalError("interpreter", std::string(message));
+      });
 
   if (bit_width <= 64) {
     return RuntimeValue::IntegralUnsigned(
@@ -748,17 +749,38 @@ auto RunInstruction(
     return InstructionResult::Continue();
   };
 
-  auto handle_mem_io = [&](bool is_read, bool is_hex) -> InstructionResult {
-    auto task_name = is_read ? "$readmem" : "$writemem";
-    if (instr.operands.size() < 2 || instr.operands.size() > 4) {
-      ThrowMemIoError(std::string(task_name) + " expects 2-4 operands");
+  auto get_operand_value = [&](const lir::Operand& operand) -> RuntimeValue {
+    if (operand.IsTemp()) {
+      return get_temp(operand);
     }
-    const auto filename_value = get_temp(instr.operands[0]);
+    if (operand.IsVariable()) {
+      return read_variable(operand);
+    }
+    if (operand.IsLiteral()) {
+      const auto& literal = std::get<lir::LiteralRef>(operand.value);
+      return RuntimeValue::FromLiteral(literal);
+    }
+    throw common::InternalError(
+        "interpreter", "unexpected operand kind for system call");
+  };
+
+  auto handle_mem_io = [&](bool is_read, bool is_hex) -> InstructionResult {
+    std::string_view task_name = is_read ? "$readmem" : "$writemem";
+    if (instr.operands.size() < 2 || instr.operands.size() > 4) {
+      throw common::InternalError(
+          "interpreter",
+          std::format("{} expects 2-4 operands", task_name));
+    }
+    const auto filename_value = get_operand_value(instr.operands[0]);
     if (!filename_value.IsString()) {
-      ThrowMemIoError(std::string(task_name) + " filename must be a string");
+      throw common::InternalError(
+          "interpreter",
+          std::format("{} filename must be a string", task_name));
     }
     if (!instr.operands[1].IsVariable()) {
-      ThrowMemIoError(std::string(task_name) + " target must be a variable");
+      throw common::InternalError(
+          "interpreter",
+          std::format("{} target must be a variable", task_name));
     }
     auto target_value = read_variable(instr.operands[1]);
     auto info = GetMemTargetInfo(target_value, target_value.type);
@@ -766,24 +788,28 @@ auto RunInstruction(
     std::optional<int64_t> start_addr;
     std::optional<int64_t> end_addr;
     if (instr.operands.size() >= 3) {
-      auto start_val = get_temp(instr.operands[2]);
+      auto start_val = get_operand_value(instr.operands[2]);
       if (!start_val.IsTwoState() || start_val.IsWide()) {
-        ThrowMemIoError(
-            std::string(task_name) + " start address must be narrow integral");
+        throw common::InternalError(
+            "interpreter",
+            std::format(
+                "{} start address must be narrow integral", task_name));
       }
       start_addr = start_val.AsNarrow().AsInt64();
     }
     if (instr.operands.size() == 4) {
-      auto end_val = get_temp(instr.operands[3]);
+      auto end_val = get_operand_value(instr.operands[3]);
       if (!end_val.IsTwoState() || end_val.IsWide()) {
-        ThrowMemIoError(
-            std::string(task_name) + " end address must be narrow integral");
+        throw common::InternalError(
+            "interpreter",
+            std::format("{} end address must be narrow integral", task_name));
       }
       end_addr = end_val.AsNarrow().AsInt64();
     }
 
     if (info.element_count == 0 || info.element_width == 0) {
-      ThrowMemIoError(std::string(task_name) + " target has zero size");
+      throw common::InternalError(
+          "interpreter", std::format("{} target has zero size", task_name));
     }
 
     int64_t min_addr = info.lower_bound;
@@ -793,130 +819,95 @@ auto RunInstruction(
     int64_t final_addr = end_addr.value_or(max_addr);
 
     if (current_addr < min_addr || current_addr > max_addr) {
-      ThrowMemIoError(std::string(task_name) + " start address out of bounds");
+      throw common::InternalError(
+          "interpreter",
+          std::format("{} start address out of bounds", task_name));
     }
     if (final_addr < min_addr || final_addr > max_addr) {
-      ThrowMemIoError(std::string(task_name) + " end address out of bounds");
+      throw common::InternalError(
+          "interpreter", std::format("{} end address out of bounds", task_name));
     }
 
     auto path = common::mem_io::ResolveMemPath(filename_value.AsString());
-    if (is_read) {
+    auto handle_read_mem = [&]() -> InstructionResult {
       std::ifstream in(path);
       if (!in) {
-        ThrowMemIoError("failed to open memory file: " + path.string());
+        throw common::InternalError(
+            "interpreter", std::format(
+                               "failed to open memory file: {}", path.string()));
       }
 
       std::string content(
           (std::istreambuf_iterator<char>(in)),
           std::istreambuf_iterator<char>());
 
+      RuntimeValue packed_value = target_value;
       auto write_value = [&](int64_t addr, const RuntimeValue& value) {
         if (addr < min_addr || addr > max_addr) {
-          ThrowMemIoError(std::string(task_name) + " address out of bounds");
+          throw common::InternalError(
+              "interpreter",
+              std::format("{} address out of bounds", task_name));
         }
         size_t index = static_cast<size_t>(addr - min_addr);
         if (info.is_unpacked) {
           target_value.SetElement(index, value);
         } else {
-          auto current = read_variable(instr.operands[1]);
-          auto merged =
-              StorePackedElement(current, index, info.element_width, value);
-          store_variable(instr.operands[1], merged, false);
+          packed_value =
+              StorePackedElement(packed_value, index, info.element_width, value);
         }
       };
 
-      size_t i = 0;
-      while (i < content.size() && current_addr <= final_addr) {
-        char ch = content[i];
-        if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
-          ++i;
-          continue;
-        }
-        if (ch == '/' && i + 1 < content.size()) {
-          if (content[i + 1] == '/') {
-            i += 2;
-            while (i < content.size() && content[i] != '\n') {
-              ++i;
-            }
-            continue;
-          }
-          if (content[i + 1] == '*') {
-            i += 2;
-            while (i + 1 < content.size() &&
-                   !(content[i] == '*' && content[i + 1] == '/')) {
-              ++i;
-            }
-            i = std::min(i + 2, content.size());
-            continue;
-          }
-        }
-        if (ch == '@') {
-          ++i;
-          size_t start = i;
-          while (i < content.size() &&
-                 std::isspace(static_cast<unsigned char>(content[i])) == 0) {
-            if (content[i] == '/' && i + 1 < content.size() &&
-                (content[i + 1] == '/' || content[i + 1] == '*')) {
-              break;
-            }
-            ++i;
-          }
-          auto token = std::string_view(content).substr(start, i - start);
-          uint64_t addr = common::mem_io::ParseMemAddress(
-              token, is_hex,
-              [](std::string_view message) { ThrowMemIoError(message); });
-          current_addr = static_cast<int64_t>(addr);
-          if (current_addr < min_addr || current_addr > max_addr) {
-            ThrowMemIoError(
-                std::string(task_name) + " address directive out of bounds");
-          }
-          continue;
-        }
-
-        size_t start = i;
-        while (i < content.size() &&
-               std::isspace(static_cast<unsigned char>(content[i])) == 0) {
-          if (content[i] == '/' && i + 1 < content.size() &&
-              (content[i + 1] == '/' || content[i + 1] == '*')) {
-            break;
-          }
-          ++i;
-        }
-        auto token = std::string_view(content).substr(start, i - start);
-        auto value = ParseMemTokenToValue(token, info.element_width, is_hex);
-        write_value(current_addr, value);
-        ++current_addr;
-      }
+      common::mem_io::ParseMemFile(
+          content, is_hex, min_addr, max_addr, current_addr, final_addr,
+          task_name,
+          [](std::string_view message) {
+            throw common::InternalError("interpreter", std::string(message));
+          },
+          [&](std::string_view token, int64_t addr) {
+            auto value =
+                ParseMemTokenToValue(token, info.element_width, is_hex);
+            write_value(addr, value);
+          });
 
       if (info.is_unpacked) {
         store_variable(instr.operands[1], target_value, false);
+      } else {
+        store_variable(instr.operands[1], packed_value, false);
       }
       return InstructionResult::Continue();
-    }
+    };
 
-    std::ofstream out(path);
-    if (!out) {
-      ThrowMemIoError("failed to open memory file for write: " + path.string());
-    }
-
-    if (start_addr.has_value()) {
-      out << "@"
-          << common::mem_io::FormatMemAddress(
-                 static_cast<uint64_t>(*start_addr), is_hex)
-          << "\n";
-    }
-
-    for (int64_t addr = current_addr; addr <= final_addr; ++addr) {
-      size_t index = static_cast<size_t>(addr - min_addr);
-      RuntimeValue element;
-      if (info.is_unpacked) {
-        element = target_value.GetElement(index);
-      } else {
-        element = ExtractPackedElement(target_value, index, info.element_width);
+    auto handle_write_mem = [&]() -> InstructionResult {
+      std::ofstream out(path);
+      if (!out) {
+        throw common::InternalError(
+            "interpreter",
+            std::format(
+                "failed to open memory file for write: {}", path.string()));
       }
-      out << FormatMemValue(element, info.element_width, is_hex) << "\n";
-    }
-    return InstructionResult::Continue();
+
+      if (start_addr.has_value()) {
+        out << "@"
+            << common::mem_io::FormatMemAddress(
+                   static_cast<uint64_t>(*start_addr), is_hex)
+            << "\n";
+      }
+
+      for (int64_t addr = current_addr; addr <= final_addr; ++addr) {
+        size_t index = static_cast<size_t>(addr - min_addr);
+        RuntimeValue element;
+        if (info.is_unpacked) {
+          element = target_value.GetElement(index);
+        } else {
+          element =
+              ExtractPackedElement(target_value, index, info.element_width);
+        }
+        out << FormatMemValue(element, info.element_width, is_hex) << "\n";
+      }
+      return InstructionResult::Continue();
+    };
+
+    return is_read ? handle_read_mem() : handle_write_mem();
   };
 
   switch (instr.kind) {
@@ -1613,7 +1604,7 @@ auto RunInstruction(
         if (!instr.operands.empty()) {
           // Diagnostic level is never wide
           level = static_cast<int>(
-              get_temp(instr.operands[0]).AsNarrow().AsUInt64());
+              get_operand_value(instr.operands[0]).AsNarrow().AsUInt64());
         }
 
         // Print diagnostics based on level (VCS style)
@@ -1667,14 +1658,14 @@ auto RunInstruction(
                 simulation_context.global_precision_power};
 
         // Check if first operand is a format string (string with %)
-        const auto& first = get_temp(instr.operands[0]);
+        const auto& first = get_operand_value(instr.operands[0]);
         if (first.IsString()) {
           auto fmt_str = first.AsString();
           if (fmt_str.find('%') != std::string::npos) {
             // Format string case: use specifiers from format string
             std::vector<RuntimeValue> args;
             for (size_t i = 1; i < instr.operands.size(); ++i) {
-              args.push_back(get_temp(instr.operands[i]));
+              args.push_back(get_operand_value(instr.operands[i]));
             }
             simulation_context.display_output
                 << FormatDisplay(fmt_str, args, &time_ctx);
@@ -1689,7 +1680,7 @@ auto RunInstruction(
         std::string gen_fmt;
         std::vector<RuntimeValue> args;
         for (const auto& operand : instr.operands) {
-          const auto& value = get_temp(operand);
+          const auto& value = get_operand_value(operand);
           if (value.IsString()) {
             gen_fmt += "%s";
           } else if (value.IsReal() || value.IsShortReal()) {
@@ -1718,7 +1709,7 @@ auto RunInstruction(
         // Collect argument values now (they'll be read in Postponed region)
         std::vector<RuntimeValue> arg_values;
         for (const auto& operand : instr.operands) {
-          arg_values.push_back(get_temp(operand));
+          arg_values.push_back(get_operand_value(operand));
         }
 
         // Create time format context
@@ -1790,7 +1781,7 @@ auto RunInstruction(
         // Collect argument values
         std::vector<RuntimeValue> arg_values;
         for (const auto& operand : instr.operands) {
-          arg_values.push_back(get_temp(operand));
+          arg_values.push_back(get_operand_value(operand));
         }
 
         // Build format string (same logic as $display)
@@ -1934,18 +1925,18 @@ auto RunInstruction(
 
         if (!instr.operands.empty()) {
           tf.units = static_cast<int8_t>(
-              get_temp(instr.operands[0]).AsNarrow().AsInt64());
+              get_operand_value(instr.operands[0]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 2) {
           tf.precision = static_cast<int>(
-              get_temp(instr.operands[1]).AsNarrow().AsInt64());
+              get_operand_value(instr.operands[1]).AsNarrow().AsInt64());
         }
         if (instr.operands.size() >= 3) {
-          tf.suffix = get_temp(instr.operands[2]).AsString();
+          tf.suffix = get_operand_value(instr.operands[2]).AsString();
         }
         if (instr.operands.size() >= 4) {
           tf.min_width = static_cast<int>(
-              get_temp(instr.operands[3]).AsNarrow().AsInt64());
+              get_operand_value(instr.operands[3]).AsNarrow().AsInt64());
         }
 
         return InstructionResult::Continue();
@@ -2016,7 +2007,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(instr.result_type.has_value());
         assert(instr.operands.size() == 1);
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         // $signed: reinterpret bits as signed, preserving bit width
         auto target_data =
             std::get<common::IntegralData>(instr.result_type->data);
@@ -2030,7 +2021,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(instr.result_type.has_value());
         assert(instr.operands.size() == 1);
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         // $unsigned: reinterpret bits as unsigned, preserving bit width
         auto target_data =
             std::get<common::IntegralData>(instr.result_type->data);
@@ -2045,7 +2036,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$itor") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto src_data = std::get<common::IntegralData>(src.type.data);
         double real_value =
             src_data.is_signed
@@ -2061,7 +2052,7 @@ auto RunInstruction(
         assert(instr.result.has_value());
         assert(instr.result_type.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto target_data =
             std::get<common::IntegralData>(instr.result_type->data);
         auto raw_value = static_cast<int64_t>(src.AsDouble());
@@ -2078,7 +2069,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$realtobits") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto bits = std::bit_cast<uint64_t>(src.AsDouble());
         temp_table.Write(
             instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 64));
@@ -2089,7 +2080,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$bitstoreal") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto real_value = std::bit_cast<double>(src.AsNarrow().AsUInt64());
         temp_table.Write(instr.result.value(), RuntimeValue::Real(real_value));
         return InstructionResult::Continue();
@@ -2099,7 +2090,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$shortrealtobits") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto bits = std::bit_cast<uint32_t>(src.AsFloat());
         temp_table.Write(
             instr.result.value(), RuntimeValue::IntegralUnsigned(bits, 32));
@@ -2110,7 +2101,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$bitstoshortreal") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         auto bits = static_cast<uint32_t>(src.AsNarrow().AsUInt64());
         auto shortreal_value = std::bit_cast<float>(bits);
         temp_table.Write(
@@ -2122,7 +2113,7 @@ auto RunInstruction(
       if (instr.system_call_name == "$clog2") {
         assert(instr.result.has_value());
         assert(!instr.operands.empty());
-        const auto& src = get_temp(instr.operands[0]);
+        const auto& src = get_operand_value(instr.operands[0]);
         uint64_t n = src.AsNarrow().AsUInt64();
         int result = (n == 0) ? 0 : std::bit_width(n - 1);
         temp_table.Write(
@@ -2138,7 +2129,7 @@ auto RunInstruction(
         if (func_info->category == Category::kMathUnary) {
           assert(instr.result.has_value());
           assert(instr.operands.size() == 1);
-          double arg = get_temp(instr.operands[0]).AsDouble();
+          double arg = get_operand_value(instr.operands[0]).AsDouble();
           double result = ExecuteMathUnary(instr.system_call_name, arg);
           temp_table.Write(instr.result.value(), RuntimeValue::Real(result));
           return InstructionResult::Continue();
@@ -2146,8 +2137,8 @@ auto RunInstruction(
         if (func_info->category == Category::kMathBinary) {
           assert(instr.result.has_value());
           assert(instr.operands.size() == 2);
-          double a = get_temp(instr.operands[0]).AsDouble();
-          double b = get_temp(instr.operands[1]).AsDouble();
+          double a = get_operand_value(instr.operands[0]).AsDouble();
+          double b = get_operand_value(instr.operands[1]).AsDouble();
           double result = ExecuteMathBinary(instr.system_call_name, a, b);
           temp_table.Write(instr.result.value(), RuntimeValue::Real(result));
           return InstructionResult::Continue();

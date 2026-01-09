@@ -990,15 +990,14 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           bool has_end = syscall.arguments.size() == 4;
 
           if (syscall.arguments.size() < 2 || syscall.arguments.size() > 4) {
-            throw DiagnosticException(
-                Diagnostic::Error({}, "mem I/O expects 2-4 arguments"));
+            throw common::InternalError(
+                "codegen", "mem I/O expects 2-4 arguments");
           }
 
           const auto& target_expr = *syscall.arguments[1];
           if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
-            throw DiagnosticException(
-                Diagnostic::Error(
-                    {}, "mem I/O target must be a named variable"));
+            throw common::InternalError(
+                "codegen", "mem I/O target must be a named variable");
           }
 
           const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
@@ -1059,9 +1058,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             break;
           }
 
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  {}, "mem I/O target must be an unpacked or packed array"));
+          throw common::InternalError(
+              "codegen", "mem I/O target must be an unpacked or packed array");
         }
         throw DiagnosticException(
             Diagnostic::Error(

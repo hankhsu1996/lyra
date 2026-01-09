@@ -2,6 +2,8 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -53,13 +55,13 @@ auto WriteTempFiles(const std::vector<SourceFile>& files)
 
 auto FilterSvFiles(const std::vector<std::string>& paths)
     -> std::vector<std::string> {
+  auto filtered = paths | std::views::filter([](const auto& path) {
+                    auto ext = std::filesystem::path(path).extension();
+                    return ext == ".sv" || ext == ".svh" || ext == ".v" ||
+                           ext == ".vh";
+                  });
   std::vector<std::string> sv_paths;
-  for (const auto& path : paths) {
-    auto ext = std::filesystem::path(path).extension().string();
-    if (ext == ".sv" || ext == ".v") {
-      sv_paths.push_back(path);
-    }
-  }
+  std::ranges::copy(filtered, std::back_inserter(sv_paths));
   return sv_paths;
 }
 
