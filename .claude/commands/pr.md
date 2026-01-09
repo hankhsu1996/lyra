@@ -21,23 +21,33 @@ Create a PR following the project format.
 
 - Start with verb, capitalized
 - Do NOT use colon format like "Fix: xxx"
-- Example: "Fix cpp-lint CI to use Clang 20"
 
 **Body:**
 
-Include a Summary section. Use prose for cohesive changes; use bullets only when listing unrelated items. Beyond that, adapt the content to fit the PR type:
+Focus on **design decisions and architectural reasoning**, not just what changed. The diff shows what changed; the PR description explains why and how it fits into the system.
 
-- **Feature PRs:** Background/motivation, what was implemented, test plan if applicable
-- **Bug fix PRs:** Root cause analysis, how it was fixed, any refactoring done
-- **Chore/docs PRs:** Brief explanation of what changed
+Key elements for a good PR:
 
-Don't force a test plan if it doesn't make sense. Write what's useful for reviewers.
+1. **Design rationale**: Explain the approach taken and why. If the implementation is minimal, explain why existing infrastructure was sufficient. If new abstractions were added, explain why they were necessary.
 
-Don't list files changed - GitHub already shows this in the diff. Focus on conceptual changes.
+2. **Integration with existing code**: How does this change leverage or extend existing patterns? What code paths are reused? This shows architectural understanding.
 
-Code examples should support explanations, not replace them. Include both the "why" and the "what".
+3. **What was added vs what was NOT needed**: Explicitly stating what didn't need to change is often more informative than listing what did. It demonstrates understanding of the architecture and helps reviewers verify correctness.
 
-**Important:** Never include internal planning concepts like "Phase 1", "Phase 2", or similar milestone labels. PRs describe results, not the journey. Reviewers care about what the code does, not how the implementation was planned or tracked internally.
+4. **The "why it works"**: If something works with surprisingly little code, explain the underlying reason. This is often the most valuable part of a PR description.
+
+Adapt content to fit the PR type:
+
+- **Feature PRs**: Design decisions, how it integrates with existing systems, what infrastructure is reused
+- **Bug fix PRs**: Root cause analysis, why the fix is correct, any broader implications
+- **Chore/docs PRs**: Brief explanation of what changed
+
+Avoid:
+
+- Listing files changed (GitHub shows this)
+- Detailed test plans (unless testing approach is non-obvious)
+- Internal planning concepts ("Phase 1", "Step 2")
+- Restating the obvious from the diff
 
 ## Instructions
 

@@ -1,0 +1,221 @@
+feature: parameters
+description: Tests for parameter and localparam constants (IEEE 1800-2017 Section 6.20)
+
+cases:
+  - name: basic_parameter_int
+    description: Basic integer parameter
+    sv: |
+      module Test;
+        parameter int WIDTH = 8;
+        int x;
+        initial begin
+          x = WIDTH;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 8
+
+  - name: basic_localparam_int
+    description: Basic integer localparam
+    sv: |
+      module Test;
+        localparam int DEPTH = 16;
+        int x;
+        initial begin
+          x = DEPTH;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+
+  - name: localparam_depends_on_param
+    description: Localparam computed from parameter
+    sv: |
+      module Test;
+        parameter int WIDTH = 8;
+        localparam int DEPTH = WIDTH * 2;
+        int x;
+        initial begin
+          x = DEPTH;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+
+  - name: param_in_expression
+    description: Parameters used in arithmetic expression
+    sv: |
+      module Test;
+        parameter int A = 5;
+        parameter int B = 3;
+        int x;
+        initial begin
+          x = A + B;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 8
+
+  - name: param_implicit_type
+    description: Parameter with implicit type (inferred from value)
+    sv: |
+      module Test;
+        parameter MASK = 8'hFF;
+        int x;
+        initial begin
+          x = MASK;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 255
+
+  - name: param_logic_type
+    description: Parameter with logic type
+    sv: |
+      module Test;
+        parameter logic [7:0] PATTERN = 8'hAB;
+        int x;
+        initial begin
+          x = PATTERN;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 171
+
+  - name: param_negative_value
+    description: Parameter with negative value
+    sv: |
+      module Test;
+        parameter int OFFSET = -10;
+        int x;
+        initial begin
+          x = OFFSET;
+        end
+      endmodule
+    expect:
+      variables:
+        x: -10
+
+  - name: param_chain_dependency
+    description: Chain of dependent parameters
+    sv: |
+      module Test;
+        parameter int A = 2;
+        localparam int B = A * 3;
+        localparam int C = B + 4;
+        int x;
+        initial begin
+          x = C;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: param_in_display
+    description: Parameter used in $display
+    sv: |
+      module Test;
+        parameter int VALUE = 42;
+        initial begin
+          $display("VALUE=%0d", VALUE);
+        end
+      endmodule
+    expect:
+      output: "VALUE=42\n"
+
+  - name: param_multiple_display
+    description: Multiple parameters in $display
+    sv: |
+      module Test;
+        parameter int X = 10;
+        parameter int Y = 20;
+        localparam int SUM = X + Y;
+        initial begin
+          $display("X=%0d Y=%0d SUM=%0d", X, Y, SUM);
+        end
+      endmodule
+    expect:
+      output: "X=10 Y=20 SUM=30\n"
+
+  - name: param_comparison
+    description: Parameter used in comparison
+    sv: |
+      module Test;
+        parameter int THRESHOLD = 100;
+        int x;
+        int result;
+        initial begin
+          x = 50;
+          if (x < THRESHOLD)
+            result = 1;
+          else
+            result = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: param_real_type
+    description: Real parameter
+    sv: |
+      module Test;
+        parameter real PI = 3.14159;
+        real x;
+        initial begin
+          x = PI;
+          $display("%f", x);
+        end
+      endmodule
+    expect:
+      output: "3.141590\n"
+
+  - name: param_zero_value
+    description: Parameter with zero value
+    sv: |
+      module Test;
+        parameter int ZERO = 0;
+        int x;
+        initial begin
+          x = ZERO;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 0
+
+  - name: param_large_value
+    description: Parameter with large value
+    sv: |
+      module Test;
+        parameter int BIG = 1000000;
+        int x;
+        initial begin
+          x = BIG;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1000000
+
+  - name: param_bitwise_ops
+    description: Parameter used in bitwise operations
+    sv: |
+      module Test;
+        parameter int MASK = 8'hF0;
+        parameter int DATA = 8'hAB;
+        int x;
+        initial begin
+          x = DATA & MASK;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 160

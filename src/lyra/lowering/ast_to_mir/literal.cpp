@@ -9,6 +9,7 @@
 
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/types/AllTypes.h>
+#include <slang/numeric/ConstantValue.h>
 #include <slang/numeric/SVInt.h>
 
 #include "lyra/common/bit_utils.hpp"
@@ -97,6 +98,33 @@ auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
   return SVIntToLiteral(literal.getValue());
 }
 
+auto ConstantValueToLiteral(const slang::ConstantValue& cv)
+    -> Result<common::Literal> {
+  if (cv.isInteger()) {
+    const auto& sv_int = cv.integer();
+    if (sv_int.hasUnknown()) {
+      return std::unexpected(
+          Diagnostic::Error({}, "unsupported constant with unknown bits"));
+    }
+    return SVIntToLiteral(sv_int);
+  }
+
+  if (cv.isReal()) {
+    return common::Literal::Real(cv.real());
+  }
+
+  if (cv.isShortReal()) {
+    return common::Literal::ShortReal(cv.shortReal());
+  }
+
+  if (cv.isString()) {
+    return common::Literal::String(std::string(cv.str()));
+  }
+
+  return std::unexpected(
+      Diagnostic::Error({}, "unsupported constant value type"));
+}
+
 auto ExtractMaskAndValue(
     const slang::SVInt& sv_int, mir::CaseCondition condition)
     -> std::pair<int64_t, int64_t> {
@@ -108,7 +136,7 @@ auto ExtractMaskAndValue(
 
   auto width_u32 = static_cast<uint32_t>(width);
   for (uint32_t i = 0; i < width_u32; ++i) {
-    auto bit = sv_int[i];
+    auto bit = sv_int[static_cast<int32_t>(i)];
     bool is_wildcard = false;
 
     if (condition == mir::CaseCondition::kWildcardXZ) {
