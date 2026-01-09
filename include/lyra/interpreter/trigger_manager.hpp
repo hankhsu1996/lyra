@@ -10,6 +10,7 @@
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -17,7 +18,8 @@ namespace lyra::interpreter {
 // Forward declarations
 struct ScheduledEvent;
 
-// Info about a waiting process including its instance context
+// Info about a waiting process including its instance context.
+// Module for function lookup is accessed via process_instance->module.
 struct WaitingProcessInfo {
   std::shared_ptr<InstanceContext> process_instance;  // Where process runs
   std::shared_ptr<InstanceContext> watch_instance;    // Where variable lives
@@ -91,8 +93,9 @@ class TriggerManager {
   }
 
   // Register a process to wait on variable changes
-  // process_instance: where the process runs (for resumption)
-  // watch_instance: where the variable lives (for trigger detection)
+  // process_instance: where the process runs (module via
+  // process_instance->module) watch_instance: where the variable lives (for
+  // trigger detection)
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
       const std::shared_ptr<InstanceContext>& process_instance,

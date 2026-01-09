@@ -10,6 +10,10 @@
 #include "lyra/common/variable.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 
+namespace lyra::lir {
+class Module;
+}
+
 namespace lyra::interpreter {
 
 // Forward declaration for PortBinding
@@ -23,11 +27,16 @@ struct PortBinding {
 
 // Represents a module instance's context (like C++ 'this' pointer).
 // Each instance has:
+// - Module: the module this instance was created from (for function lookup)
 // - Port bindings: maps port symbols to (parent_signal, parent_instance)
 // - Variable storage: per-instance storage for module variables
 // - Child instances: for hierarchical port access
 struct InstanceContext {
   std::string instance_path;  // e.g., "top.counter1"
+
+  // Module this instance was created from (non-owning; modules outlive
+  // instances)
+  const lir::Module* module = nullptr;
 
   // Port bindings: port symbol → (target_symbol, target_instance)
   std::unordered_map<common::SymbolRef, PortBinding> port_bindings;
@@ -43,8 +52,11 @@ struct InstanceContext {
 
   InstanceContext(
       std::string path,
-      std::unordered_map<common::SymbolRef, PortBinding> bindings)
-      : instance_path(std::move(path)), port_bindings(std::move(bindings)) {
+      std::unordered_map<common::SymbolRef, PortBinding> bindings,
+      const lir::Module* mod = nullptr)
+      : instance_path(std::move(path)),
+        module(mod),
+        port_bindings(std::move(bindings)) {
   }
 
   // Resolve symbol through port bindings.

@@ -31,9 +31,15 @@ constexpr SimulationTime kMaxSimulationTime = 1'000'000;
 
 using ProcessPtr = std::shared_ptr<lir::Process>;
 
-struct ScheduledEvent {
+// Identifies where a process runs.
+// Module for function lookup is accessed via instance->module.
+struct ProcessOrigin {
   ProcessPtr process;
   std::shared_ptr<InstanceContext> instance;  // Like C++ 'this' pointer
+};
+
+struct ScheduledEvent {
+  ProcessOrigin origin;
   std::size_t block_index = 0;
   std::size_t instruction_index = 0;
 };
