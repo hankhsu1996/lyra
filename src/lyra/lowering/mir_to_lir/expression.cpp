@@ -528,6 +528,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       // requires updating many call sites.
       return builder.AllocateTemp("void", common::Type::Void());
     }
+
+    case mir::Expression::Kind::kMemberAccess: {
+      const auto& member = mir::As<mir::MemberAccessExpression>(expression);
+      assert(member.value);
+
+      auto value = LowerExpression(*member.value, builder);
+
+      // Create a literal for the bit offset (LSB position)
+      auto offset_temp = builder.AllocateTemp("offset", Type::Int());
+      auto offset_literal = builder.InternLiteral(
+          Literal::Int(static_cast<int32_t>(member.bit_offset)));
+      builder.AddInstruction(
+          Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+
+      // Use LoadPackedSlice to extract the field bits
+      auto result = builder.AllocateTemp("field", expression.type);
+      builder.AddInstruction(
+          Instruction::LoadPackedSlice(
+              result, value, offset_temp, expression.type));
+      return result;
+    }
   }
   // All expression kinds must be handled above - if we reach here, a new
   // expression kind was added without updating this function

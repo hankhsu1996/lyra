@@ -708,6 +708,26 @@ auto LowerExpression(const slang::ast::Expression& expression)
           std::move(operand), *count, *type_result);
     }
 
+    case slang::ast::ExpressionKind::MemberAccess: {
+      const auto& member_access =
+          expression.as<slang::ast::MemberAccessExpression>();
+      auto value = LowerExpression(member_access.value());
+
+      // Get field info from the FieldSymbol
+      const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
+      uint64_t bit_offset = field.bitOffset;
+      size_t bit_width = field.getType().getBitWidth();
+
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::MemberAccessExpression>(
+          std::move(value), std::string(field.name), bit_offset, bit_width,
+          *type_result);
+    }
+
     case slang::ast::ExpressionKind::Invalid:
       // Slang produces InvalidExpression when it detects semantic issues.
       // Slang should have already reported a diagnostic explaining the problem.

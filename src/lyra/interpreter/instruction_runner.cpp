@@ -1477,22 +1477,36 @@ auto RunInstruction(
         return InstructionResult::Continue();
       }
 
-      if (src.type.kind == common::Type::Kind::kIntegral &&
-          target_type.kind == common::Type::Kind::kIntegral) {
-        auto two_state_data = std::get<common::IntegralData>(target_type.data);
+      // Helper to check if a type is integral-like (bitvector)
+      auto is_integral_like = [](common::Type::Kind kind) {
+        return kind == common::Type::Kind::kIntegral ||
+               kind == common::Type::Kind::kPackedStruct;
+      };
+
+      if (is_integral_like(src.type.kind) &&
+          is_integral_like(target_type.kind)) {
+        // Get bit width and signedness for the target type
+        size_t target_width = target_type.GetBitWidth();
+        bool target_signed =
+            target_type.IsPackedStruct()
+                ? std::get<common::PackedStructData>(target_type.data).is_signed
+                : std::get<common::IntegralData>(target_type.data).is_signed;
+
+        // Get source signedness for sign extension
+        bool src_signed =
+            src.type.IsPackedStruct()
+                ? std::get<common::PackedStructData>(src.type.data).is_signed
+                : std::get<common::IntegralData>(src.type.data).is_signed;
 
         // Wide target type - create WideBit and sign-extend if needed
-        if (two_state_data.bit_width > 64) {
+        if (target_width > 64) {
           common::WideBit wide = src.IsWide() ? src.AsWideBit() : [&]() {
-            auto src_data = std::get<common::IntegralData>(src.type.data);
             return CreateWideFromInt64(
-                src.AsNarrow().AsInt64(), two_state_data.bit_width,
-                src_data.is_signed);
+                src.AsNarrow().AsInt64(), target_width, src_signed);
           }();
 
           RuntimeValue result = RuntimeValue::IntegralWide(
-              std::move(wide), two_state_data.bit_width,
-              two_state_data.is_signed);
+              std::move(wide), target_width, target_signed);
           temp_table.Write(instr.result.value(), result);
           return InstructionResult::Continue();
         }
@@ -1501,12 +1515,11 @@ auto RunInstruction(
         int64_t raw_value = ExtractInt64FromSource(src);
 
         // Apply sign/bitwidth conversion
-        RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::IntegralSigned(
-                                        raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::IntegralUnsigned(
-                                        static_cast<uint64_t>(raw_value),
-                                        two_state_data.bit_width);
+        RuntimeValue result =
+            target_signed
+                ? RuntimeValue::IntegralSigned(raw_value, target_width)
+                : RuntimeValue::IntegralUnsigned(
+                      static_cast<uint64_t>(raw_value), target_width);
 
         temp_table.Write(instr.result.value(), result);
         return InstructionResult::Continue();

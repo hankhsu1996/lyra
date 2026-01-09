@@ -322,8 +322,28 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
           "std::array<{}, {}>", ToCppType(*array_data.element_type),
           array_data.size);
     }
+    case common::Type::Kind::kPackedStruct: {
+      // Packed structs are bitvectors - same as kIntegral
+      auto data = std::get<common::PackedStructData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+
+      if (IsWideWidth(width)) {
+        if (is_signed) {
+          return std::format("lyra::sdk::WideBit<{}, true>", width);
+        }
+        return std::format("lyra::sdk::WideBit<{}>", width);
+      }
+
+      used_type_aliases_ |= TypeAlias::kBit;
+      if (is_signed) {
+        return std::format("Bit<{}, true>", width);
+      }
+      return std::format("Bit<{}>", width);
+    }
   }
-  return "/* unknown type */";
+  throw common::InternalError(
+      "ToCppType", std::format("unhandled type kind: {}", type.ToString()));
 }
 
 auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {

@@ -1,6 +1,9 @@
 build --action_env=CC=clang
 build --action_env=CXX=clang++
 build --cxxopt='-std=c++23'
+build --cxxopt='-Wall'
+build --cxxopt='-Wextra'
+build --cxxopt='-Wno-unused-parameter'
 build --incompatible_strict_action_env
 build --disk_cache=~/.cache/bazel-disk
 build --local_resources=cpu=HOST_CPUS*0.7

@@ -6,6 +6,7 @@
 #include <ostream>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <fmt/core.h>
 #include <slang/ast/types/Type.h>
@@ -39,6 +40,29 @@ struct UnpackedArrayData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+// Field metadata for packed structs
+struct PackedStructField {
+  std::string name;
+  uint64_t bit_offset;  // LSB position within the struct
+  size_t bit_width;
+  std::shared_ptr<Type> field_type;
+
+  auto operator==(const PackedStructField& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
+// Packed struct data - stores fields with their bit offsets
+// Packed structs are contiguous bitvectors with named field access
+struct PackedStructData {
+  size_t bit_width;  // Total struct width
+  bool is_signed = false;
+  bool is_four_state = false;
+  std::vector<PackedStructField> fields;
+
+  auto operator==(const PackedStructData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 struct Type {
   enum class Kind {
     kVoid,
@@ -46,11 +70,14 @@ struct Type {
     kReal,
     kShortReal,
     kString,
-    kUnpackedArray
+    kUnpackedArray,
+    kPackedStruct
   };
 
   Kind kind{};
-  std::variant<std::monostate, IntegralData, UnpackedArrayData> data{};
+  std::variant<
+      std::monostate, IntegralData, UnpackedArrayData, PackedStructData>
+      data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
   // bit[7:0] Byte). This is metadata for codegen readability, not part of
@@ -59,7 +86,7 @@ struct Type {
 
   static auto FromSlang(const slang::ast::Type& type) -> Type {
     if (type.isString()) {
-      return Type{.kind = Kind::kString};
+      return Type{.kind = Kind::kString, .alias_name = std::nullopt};
     }
     if (type.isFloating()) {
       return Type::Real();
@@ -75,7 +102,7 @@ struct Type {
   }
 
   static auto Void() -> Type {
-    return Type{.kind = Kind::kVoid};
+    return Type{.kind = Kind::kVoid, .alias_name = std::nullopt};
   }
 
   static auto Integral(
@@ -83,13 +110,15 @@ struct Type {
       int32_t element_lower = 0) -> Type {
     return Type{
         .kind = Kind::kIntegral,
-        .data = IntegralData{
-            .bit_width = bit_width,
-            .is_signed = is_signed,
-            .is_four_state = is_four_state,
-            .element_type = nullptr,
-            .element_count = 0,
-            .element_lower = element_lower}};
+        .data =
+            IntegralData{
+                .bit_width = bit_width,
+                .is_signed = is_signed,
+                .is_four_state = is_four_state,
+                .element_type = nullptr,
+                .element_count = 0,
+                .element_lower = element_lower},
+        .alias_name = std::nullopt};
   }
 
   static auto IntegralSigned(size_t bit_width) -> Type {
@@ -115,13 +144,15 @@ struct Type {
 
     return Type{
         .kind = Kind::kIntegral,
-        .data = IntegralData{
-            .bit_width = total_width,
-            .is_signed = is_signed,
-            .is_four_state = is_four_state,
-            .element_type = std::make_shared<Type>(std::move(element_type)),
-            .element_count = element_count,
-            .element_lower = element_lower}};
+        .data =
+            IntegralData{
+                .bit_width = total_width,
+                .is_signed = is_signed,
+                .is_four_state = is_four_state,
+                .element_type = std::make_shared<Type>(std::move(element_type)),
+                .element_count = element_count,
+                .element_lower = element_lower},
+        .alias_name = std::nullopt};
   }
 
   static auto Int() -> Type {
@@ -145,25 +176,42 @@ struct Type {
   }
 
   static auto String() -> Type {
-    return Type{.kind = Kind::kString};
+    return Type{.kind = Kind::kString, .alias_name = std::nullopt};
   }
 
   static auto Real() -> Type {
-    return Type{.kind = Kind::kReal};
+    return Type{.kind = Kind::kReal, .alias_name = std::nullopt};
   }
 
   static auto ShortReal() -> Type {
-    return Type{.kind = Kind::kShortReal};
+    return Type{.kind = Kind::kShortReal, .alias_name = std::nullopt};
   }
 
   static auto UnpackedArray(Type element, size_t size, int32_t lower_bound = 0)
       -> Type {
     return Type{
         .kind = Kind::kUnpackedArray,
-        .data = UnpackedArrayData{
-            .element_type = std::make_shared<Type>(element),
-            .size = size,
-            .lower_bound = lower_bound}};
+        .data =
+            UnpackedArrayData{
+                .element_type = std::make_shared<Type>(element),
+                .size = size,
+                .lower_bound = lower_bound},
+        .alias_name = std::nullopt};
+  }
+
+  // Create a packed struct type
+  static auto PackedStruct(
+      std::vector<PackedStructField> fields, size_t bit_width, bool is_signed,
+      bool is_four_state) -> Type {
+    return Type{
+        .kind = Kind::kPackedStruct,
+        .data =
+            PackedStructData{
+                .bit_width = bit_width,
+                .is_signed = is_signed,
+                .is_four_state = is_four_state,
+                .fields = std::move(fields)},
+        .alias_name = std::nullopt};
   }
 
   // Is this a scalar integral (no packed array structure)?
@@ -180,6 +228,20 @@ struct Type {
       return false;
     }
     return std::get<IntegralData>(data).element_type != nullptr;
+  }
+
+  // Is this a packed struct?
+  [[nodiscard]] auto IsPackedStruct() const -> bool {
+    return kind == Kind::kPackedStruct;
+  }
+
+  // Get struct fields (only valid for packed structs)
+  [[nodiscard]] auto GetStructFields() const
+      -> const std::vector<PackedStructField>& {
+    if (kind != Kind::kPackedStruct) {
+      throw std::runtime_error("Type is not a packed struct");
+    }
+    return std::get<PackedStructData>(data).fields;
   }
 
   // Get element type for indexing (works for both packed and unpacked arrays)
@@ -245,12 +307,15 @@ struct Type {
     throw std::runtime_error("Type is not indexable");
   }
 
-  // Get total bit width for integral types
+  // Get total bit width for integral types and packed structs
   [[nodiscard]] auto GetBitWidth() const -> size_t {
-    if (kind != Kind::kIntegral) {
-      throw std::runtime_error("Type is not integral");
+    if (kind == Kind::kIntegral) {
+      return std::get<IntegralData>(data).bit_width;
     }
-    return std::get<IntegralData>(data).bit_width;
+    if (kind == Kind::kPackedStruct) {
+      return std::get<PackedStructData>(data).bit_width;
+    }
+    throw std::runtime_error("Type does not have bit width");
   }
 
   // Explicit operator== that ignores alias_name (it's display metadata, not
@@ -325,6 +390,15 @@ struct Type {
             fmt::format("{}[{}]", arr.element_type->ToString(), arr.size);
         break;
       }
+      case Kind::kPackedStruct: {
+        const auto& ps = std::get<PackedStructData>(data);
+        std::string base_name = ps.is_four_state ? "logic" : "bit";
+        const auto* sign_str = ps.is_signed ? " signed" : "";
+        structural_str = fmt::format(
+            "struct packed{}[{}]{}", sign_str, ps.bit_width,
+            ps.fields.empty() ? "" : " {...}");
+        break;
+      }
     }
 
     // Include alias name if present
@@ -379,6 +453,38 @@ inline auto UnpackedArrayData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto PackedStructField::operator==(const PackedStructField& other) const
+    -> bool {
+  return name == other.name && bit_offset == other.bit_offset &&
+         bit_width == other.bit_width && *field_type == *other.field_type;
+}
+
+inline auto PackedStructField::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= std::hash<std::string>{}(name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<uint64_t>{}(bit_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= field_type->Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  return h;
+}
+
+inline auto PackedStructData::operator==(const PackedStructData& other) const
+    -> bool {
+  return bit_width == other.bit_width && is_signed == other.is_signed &&
+         is_four_state == other.is_four_state && fields == other.fields;
+}
+
+inline auto PackedStructData::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<bool>{}(is_signed) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<bool>{}(is_four_state) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  for (const auto& field : fields) {
+    h ^= field.Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  }
+  return h;
+}
+
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -393,7 +499,10 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "string";
     case Type::Kind::kUnpackedArray:
       return "unpacked_array";
+    case Type::Kind::kPackedStruct:
+      return "packed_struct";
   }
+  std::abort();
 }
 
 inline auto operator<<(std::ostream& os, Type::Kind kind) -> std::ostream& {
