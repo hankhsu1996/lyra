@@ -1175,18 +1175,24 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
           const auto& target_type = target_expr.type;
 
-          // Helper to emit filename, converting integral to string if needed
+          // Helper to emit filename as C++ string literal
           auto emit_filename = [&]() {
             const auto& filename_arg = *syscall.arguments[0];
 
-            // Integral literal (bit-packed string): convert to string at
-            // runtime
-            if (filename_arg.kind == mir::Expression::Kind::kLiteral &&
-                filename_arg.type.kind == common::Type::Kind::kIntegral) {
-              out_ << "lyra::sdk::IntToString(";
-              EmitExpression(filename_arg);
-              out_ << ")";
-              return;
+            if (filename_arg.kind == mir::Expression::Kind::kLiteral) {
+              const auto& lit = mir::As<mir::LiteralExpression>(filename_arg);
+
+              // String literal: extract string at codegen time, emit directly
+              if (lit.literal.IsStringLiteral()) {
+                std::string str;
+                if (lit.literal.type.kind == common::Type::Kind::kString) {
+                  str = lit.literal.value.AsString();
+                } else {
+                  str = IntegralLiteralToString(lit.literal);
+                }
+                out_ << "\"" << common::EscapeForCppString(str) << "\"";
+                return;
+              }
             }
 
             // Default: emit expression directly (e.g., string variable)
