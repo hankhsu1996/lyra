@@ -13,11 +13,17 @@
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_runner.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
+#include "lyra/lir/process.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::interpreter {
 
