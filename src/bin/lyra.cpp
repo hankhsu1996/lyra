@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -164,6 +165,33 @@ auto EnsureToolchain() -> bool {
   return true;
 }
 
+// Clean up stale CMake cache if the project was moved or rebuilt in a
+// different location. CMakeCache.txt stores absolute paths, so we need to
+// detect and remove it when the paths no longer match.
+void CleanStaleCMakeCache(const fs::path& out_path) {
+  auto cache_file = out_path / "build" / "CMakeCache.txt";
+  if (!fs::exists(cache_file)) {
+    return;
+  }
+
+  std::ifstream file(cache_file);
+  std::string line;
+  std::string cached_dir;
+
+  while (std::getline(file, line)) {
+    constexpr std::string_view kPrefix = "CMAKE_CACHEFILE_DIR:INTERNAL=";
+    if (line.starts_with(kPrefix)) {
+      cached_dir = line.substr(kPrefix.size());
+      break;
+    }
+  }
+
+  auto expected_dir = (out_path / "build").string();
+  if (!cached_dir.empty() && cached_dir != expected_dir) {
+    fs::remove_all(out_path / "build");
+  }
+}
+
 // Generate main.cpp
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file,
@@ -223,6 +251,8 @@ auto RunCommand(bool use_interpreter) -> int {
     if (result != 0) {
       return result;
     }
+
+    CleanStaleCMakeCache(out_path);
 
     std::string cmd = std::format(
         "cd {} && cmake --preset default > /dev/null && "
@@ -453,6 +483,8 @@ auto BuildCommand() -> int {
     if (result != 0) {
       return result;
     }
+
+    CleanStaleCMakeCache(out_path);
 
     // cmake build (suppress stdout, keep stderr for errors)
     std::string cmd = std::format(
