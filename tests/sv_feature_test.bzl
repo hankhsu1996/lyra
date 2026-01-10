@@ -60,4 +60,7 @@ def sv_feature_test(name, yaml, size = "large"):
         binary = ":sv_feature_tests_bin",
         filter = filter_pattern,
         size = size,
+        # Exclude from "bazel test //..." to avoid running tests twice
+        # (sv_feature_tests already runs all tests with sharding)
+        tags = ["manual"],
     )

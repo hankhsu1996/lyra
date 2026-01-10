@@ -60,12 +60,12 @@ cc_test(
 # SystemVerilog Feature Tests
 # =============================================================================
 #
-# Two ways to run:
+# Run options:
 #
-# 1. Run ALL tests (with sharding for speed):
+# 1. Run ALL tests (CI uses this):
 #    bazel test //tests:sv_feature_tests
 #
-# 2. Run a single category:
+# 2. Run a single category (local dev, tagged "manual" so excluded from //...):
 #    bazel test //tests:operators_binary_tests
 #
 # 3. Run with custom filter:
