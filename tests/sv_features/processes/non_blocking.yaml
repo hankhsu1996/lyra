@@ -132,3 +132,25 @@ cases:
         q1: 10
         q2: 10
       time: 20
+
+  - name: array_element_write
+    description: NBA to array element should update the specific element
+    sv: |
+      module Test;
+        logic [7:0] arr[4];
+        initial begin
+          arr[0] = 8'd10;
+          arr[1] = 8'd20;
+          arr[2] = 8'd30;
+          arr[3] = 8'd40;
+          #1;
+          arr[1] <= 8'd99;
+          $display("before: %0d", arr[1]);
+          #1;
+          $display("after: %0d", arr[1]);
+        end
+      endmodule
+    expect:
+      stdout: |
+        before: 20
+        after: 99
