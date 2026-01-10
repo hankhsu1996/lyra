@@ -1,0 +1,269 @@
+feature: datatypes_dynamic_arrays
+description: Dynamic arrays with runtime-sized allocation (IEEE 1800-2023 Section 7.5)
+
+cases:
+  - name: declaration_empty
+    description: Empty dynamic array declaration has size 0
+    sv: |
+      module Test;
+        int size;
+        initial begin
+          int arr[];
+          size = arr.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 0
+
+  - name: basic_allocation
+    description: Allocate array with new[N]
+    sv: |
+      module Test;
+        int size;
+        initial begin
+          int arr[];
+          arr = new[5];
+          size = arr.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 5
+
+  - name: element_write_read
+    description: Write and read array elements by index
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          a = arr[0];
+          b = arr[1];
+          c = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+        c: 30
+
+  - name: variable_index
+    description: Access elements with variable index
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[];
+          int idx;
+          arr = new[4];
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          arr[3] = 400;
+          idx = 2;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 300
+
+  - name: size_method
+    description: size() returns current array size
+    sv: |
+      module Test;
+        int s1;
+        int s2;
+        initial begin
+          int arr[];
+          arr = new[3];
+          s1 = arr.size();
+          arr = new[7];
+          s2 = arr.size();
+        end
+      endmodule
+    expect:
+      variables:
+        s1: 3
+        s2: 7
+
+  - name: delete_method
+    description: delete() clears the array
+    sv: |
+      module Test;
+        int sz_before;
+        int sz_after;
+        initial begin
+          int arr[];
+          arr = new[5];
+          sz_before = arr.size();
+          arr.delete();
+          sz_after = arr.size();
+        end
+      endmodule
+    expect:
+      variables:
+        sz_before: 5
+        sz_after: 0
+
+  - name: realloc_after_delete
+    description: Array can be reallocated after delete
+    sv: |
+      module Test;
+        int s1;
+        int s2;
+        int s3;
+        int val;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 42;
+          s1 = arr.size();
+          arr.delete();
+          s2 = arr.size();
+          arr = new[2];
+          arr[0] = 99;
+          s3 = arr.size();
+          val = arr[0];
+        end
+      endmodule
+    expect:
+      variables:
+        s1: 3
+        s2: 0
+        s3: 2
+        val: 99
+
+  - name: loop_with_size
+    description: Use size() in loop condition
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[];
+          arr = new[4];
+          arr[0] = 1;
+          arr[1] = 2;
+          arr[2] = 3;
+          arr[3] = 4;
+          sum = 0;
+          for (int i = 0; i < arr.size(); i++) begin
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 10
+
+  - name: sum_elements
+    description: Sum all elements using index loop
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[];
+          int n;
+          arr = new[5];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 40;
+          arr[4] = 50;
+          sum = 0;
+          n = arr.size();
+          for (int i = 0; i < n; i++) begin
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 150
+
+  - name: display_output
+    description: Display dynamic array values
+    sv: |
+      module Test;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          $display("size=%0d, arr[1]=%0d", arr.size(), arr[1]);
+        end
+      endmodule
+    expect:
+      output: "size=3, arr[1]=200\n"
+
+  - name: module_level_decl
+    description: Dynamic array declared at module level
+    sv: |
+      module Test;
+        int arr[];
+        int size;
+        initial begin
+          arr = new[4];
+          arr[0] = 5;
+          size = arr.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 4
+
+  - name: default_values
+    description: Newly allocated elements have default value 0
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        initial begin
+          int arr[];
+          arr = new[3];
+          a = arr[0];
+          b = arr[1];
+          c = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 0
+        b: 0
+        c: 0
+
+  - name: new_with_copy
+    description: Allocate with copy from existing array
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        initial begin
+          int src[];
+          int dst[];
+          src = new[3];
+          src[0] = 100;
+          src[1] = 200;
+          src[2] = 300;
+          dst = new[5](src);
+          a = dst[0];
+          b = dst[2];
+          c = dst[4];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 100
+        b: 300
+        c: 0

@@ -32,6 +32,8 @@ enum class InstructionKind {
                                 // value
   kLoadPackedBits,              // Extract bits from packed: vec[offset+:width]
   kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
+  kNewDynamicArray,  // Allocate/resize dynamic array: new[size] or
+                     // new[size](init)
 
   // Move operation
   kMove,
@@ -283,6 +285,23 @@ struct Instruction {
         .operands = {
             Operand::Variable(variable), Operand::Temp(bit_offset),
             Operand::Temp(value)}};
+  }
+
+  // Create new dynamic array: result = new[size] or new[size](init)
+  // operands[0] = size temp
+  // operands[1] = init array temp (optional)
+  static auto NewDynamicArray(
+      TempRef result, TempRef size, common::Type result_type,
+      std::optional<TempRef> init = std::nullopt) -> Instruction {
+    std::vector<Operand> ops = {Operand::Temp(size)};
+    if (init) {
+      ops.push_back(Operand::Temp(*init));
+    }
+    return Instruction{
+        .kind = InstructionKind::kNewDynamicArray,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = std::move(ops)};
   }
 
   // Store to hierarchical target: instance.signal = value
@@ -542,6 +561,15 @@ struct Instruction {
         return fmt::format(
             "stpb  {}[{}+:], {}", operands[0].ToString(),
             operands[1].ToString(), operands[2].ToString());
+
+      case InstructionKind::kNewDynamicArray:
+        if (operands.size() > 1) {
+          return fmt::format(
+              "newarr {}, new[{}]({})", result.value(), operands[0].ToString(),
+              operands[1].ToString());
+        }
+        return fmt::format(
+            "newarr {}, new[{}]", result.value(), operands[0].ToString());
 
       case InstructionKind::kMove:
         return fmt::format(

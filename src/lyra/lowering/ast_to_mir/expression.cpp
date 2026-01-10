@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,8 +25,11 @@
 #include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/builtin_method.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/literal.hpp"
 #include "lyra/common/system_function.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -533,8 +537,10 @@ auto LowerExpression(const slang::ast::Expression& expression)
           }
 
           // Runtime enum methods (next, prev, name)
-          if (subroutine_name == "next" || subroutine_name == "prev" ||
-              subroutine_name == "name") {
+          // Validate method using registry
+          const auto* method_info = common::FindBuiltinMethod(
+              common::BuiltinTypeKind::kEnum, subroutine_name);
+          if (method_info != nullptr) {
             auto receiver = LowerExpression(first_arg);
 
             // Collect enum member info for codegen
@@ -547,7 +553,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
             // Get step argument for next(N) / prev(N), default is 1
             // IEEE 1800-2023 requires step to be a constant expression
-            int64_t step = 1;
+            std::vector<std::unique_ptr<mir::Expression>> args;
             if (call_expression.arguments().size() > 1) {
               const auto* step_cv =
                   call_expression.arguments()[1]->getConstant();
@@ -560,14 +566,11 @@ auto LowerExpression(const slang::ast::Expression& expression)
                             "expression",
                             subroutine_name)));
               }
-              step = step_cv->integer().as<int64_t>().value_or(1);
-            }
-
-            mir::EnumMethod method = mir::EnumMethod::kNext;
-            if (subroutine_name == "prev") {
-              method = mir::EnumMethod::kPrev;
-            } else if (subroutine_name == "name") {
-              method = mir::EnumMethod::kName;
+              int64_t step = step_cv->integer().as<int64_t>().value_or(1);
+              // Store step as literal argument
+              args.push_back(
+                  std::make_unique<mir::LiteralExpression>(
+                      common::Literal::IntegralSigned(step, 32)));
             }
 
             auto type_result =
@@ -576,9 +579,9 @@ auto LowerExpression(const slang::ast::Expression& expression)
               throw DiagnosticException(std::move(type_result.error()));
             }
 
-            return std::make_unique<mir::EnumMethodExpression>(
-                *type_result, method, std::move(receiver), step,
-                std::move(members));
+            return std::make_unique<mir::MethodCallExpression>(
+                *type_result, std::move(receiver), std::string(subroutine_name),
+                std::move(args), std::move(members));
           }
 
           // Unknown enum method
@@ -586,6 +589,22 @@ auto LowerExpression(const slang::ast::Expression& expression)
               Diagnostic::Error(
                   expression.sourceRange,
                   fmt::format("unknown enum method '{}'", subroutine_name)));
+        }
+
+        // Handle dynamic array built-in methods: size() and delete()
+        // These are type methods, validated using the builtin method registry
+        if (first_arg.type->kind == slang::ast::SymbolKind::DynamicArrayType) {
+          const auto* method_info = common::FindBuiltinMethod(
+              common::BuiltinTypeKind::kDynamicArray, subroutine_name);
+          if (method_info != nullptr) {
+            auto receiver = LowerExpression(first_arg);
+            auto return_type = (method_info->return_type ==
+                                common::BuiltinMethodReturnType::kInt)
+                                   ? common::Type::Int()
+                                   : common::Type::Void();
+            return std::make_unique<mir::MethodCallExpression>(
+                return_type, std::move(receiver), std::string(subroutine_name));
+          }
         }
       }
 
@@ -842,6 +861,21 @@ auto LowerExpression(const slang::ast::Expression& expression)
       return lower_struct_literal(
           expression.as<slang::ast::StructuredAssignmentPatternExpression>()
               .elements());
+    }
+
+    case slang::ast::ExpressionKind::NewArray: {
+      const auto& new_array = expression.as<slang::ast::NewArrayExpression>();
+      auto size = LowerExpression(new_array.sizeExpr());
+      std::unique_ptr<mir::Expression> init = nullptr;
+      if (new_array.initExpr() != nullptr) {
+        init = LowerExpression(*new_array.initExpr());
+      }
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+      return std::make_unique<mir::NewArrayExpression>(
+          *type_result, std::move(size), std::move(init));
     }
 
     case slang::ast::ExpressionKind::Invalid:
