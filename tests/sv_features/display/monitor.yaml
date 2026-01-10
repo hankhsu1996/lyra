@@ -303,9 +303,35 @@ cases:
     expect:
       output: "a=1 b=2 sum=3\na=10 b=2 sum=12\na=10 b=20 sum=30\n"
 
-  # NOTE: Ternary expressions in $monitor are not yet supported.
-  # The current expression block implementation doesn't handle control flow.
-  # TODO(hankhsu): Add ternary expression support in expression blocks.
+  - name: monitor_ternary_expression
+    # Tests monitoring a ternary (conditional) expression
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $monitor("result=%0d", x > 3 ? 1 : 0);
+          #1 x = 2;
+          #1 x = 10;
+        end
+      endmodule
+    expect:
+      output: "result=1\nresult=0\nresult=1\n"
+
+  - name: monitor_nested_ternary
+    # Tests monitoring nested ternary expressions
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $monitor("result=%0d", x > 10 ? 2 : (x > 3 ? 1 : 0));
+          #1 x = 2;
+          #1 x = 15;
+        end
+      endmodule
+    expect:
+      output: "result=1\nresult=0\nresult=2\n"
 
   - name: monitor_nested_expression
     # Tests monitoring a nested arithmetic expression
@@ -338,8 +364,20 @@ cases:
     expect:
       output: "eq=1 gt=0 lt=0\neq=0 gt=1 lt=0\neq=0 gt=0 lt=1\n"
 
-  # NOTE: Logical operators (&&, ||) in $monitor are not yet fully supported
-  # in codegen due to short-circuit evaluation generating control flow.
+  - name: monitor_logical_operators
+    # Tests monitoring logical operator expressions (&&, ||)
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 1; b = 0;
+          $monitor("and=%0d or=%0d", a && b, a || b);
+          #1 a = 0;
+          #1 b = 1;
+        end
+      endmodule
+    expect:
+      output: "and=0 or=1\nand=0 or=0\nand=0 or=1\n"
 
   # NOTE: Bitwise operators in $monitor expressions have codegen type issues
   # that need investigation. Working in interpreter.

@@ -21,6 +21,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/literal.hpp"
 #include "lyra/common/string_utils.hpp"
 #include "lyra/common/sv_format.hpp"
 #include "lyra/common/system_function.hpp"
@@ -919,8 +920,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // Print prefix (string literal without format specifiers)
           if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
             Indent();
-            out_ << "std::print(std::cout, \"{}\", \""
-                 << common::EscapeForCppString(fmt_info.text) << "\");\n";
+            out_ << R"(std::print(std::cout, "{}", ")"
+                 << common::EscapeForCppString(fmt_info.text) << R"(");)"
+                 << "\n";
           }
 
           // Print arguments with format string
@@ -996,7 +998,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               if (i > first_arg_idx) {
                 out_ << " || ";
               }
-              EmitExpression(*syscall.arguments[i]);
+              // Use kPrecEquality so ternary expressions get parenthesized
+              EmitExpression(*syscall.arguments[i], kPrecEquality);
               out_ << " != " << prev_names[i - first_arg_idx];
             }
           }
@@ -1006,8 +1009,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // Generate print statement inside the if block
           if (!prefix_str.empty()) {
             Indent();
-            out_ << "std::print(std::cout, \"{}\", \""
-                 << common::EscapeForCppString(prefix_str) << "\");\n";
+            out_ << R"(std::print(std::cout, "{}", ")"
+                 << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
           }
           if (first_arg_idx < syscall.arguments.size()) {
             EmitFormattedPrint(
@@ -1033,8 +1036,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // Print immediately on first call (IEEE 1800 §21.2.3)
           if (!prefix_str.empty()) {
             Indent();
-            out_ << "std::print(std::cout, \"{}\", \""
-                 << common::EscapeForCppString(prefix_str) << "\");\n";
+            out_ << R"(std::print(std::cout, "{}", ")"
+                 << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
           }
           if (first_arg_idx < syscall.arguments.size()) {
             EmitFormattedPrint(
@@ -1083,8 +1086,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // Print prefix (string literal without format specifiers)
           if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
             Indent();
-            out_ << "std::print(std::cout, \"{}\", \""
-                 << common::EscapeForCppString(fmt_info.text) << "\");\n";
+            out_ << R"(std::print(std::cout, "{}", ")"
+                 << common::EscapeForCppString(fmt_info.text) << R"(");)"
+                 << "\n";
           }
 
           // Print remaining args with format string

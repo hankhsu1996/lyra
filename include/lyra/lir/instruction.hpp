@@ -101,6 +101,10 @@ enum class InstructionKind {
   // Function call/return
   kCall,    // Call user-defined function
   kReturn,  // Return from function
+
+  // Closure captures (persistent local variables for closures like $monitor)
+  kLoadCapture,   // Load from closure's captures map
+  kStoreCapture,  // Store to closure's captures map
 };
 
 // Enum member info for method call runtime helpers
@@ -142,13 +146,11 @@ struct Instruction {
   int64_t method_step{1};  // For next(N)/prev(N), default 1
   std::vector<EnumMemberInfo> enum_members{};
 
-  // For $monitor: how to re-evaluate each argument at end of each time step.
-  // Parallel to operands - std::nullopt for format string literal.
-  // Each argument is an index into Module::monitor_expression_blocks.
-  struct MonitoredArg {
-    size_t expression_block_index;
-  };
-  std::vector<std::optional<MonitoredArg>> monitored_args{};
+  // For $monitor: name of synthesized check function.
+  std::string monitor_check_function_name{};
+
+  // For kLoadCapture/kStoreCapture: capture variable name
+  std::string capture_name{};
 
   // For system calls: true if the first operand is a string literal
   // (format string or filename). Computed at MIR-to-LIR lowering time.
@@ -369,10 +371,10 @@ struct Instruction {
         .enum_members = std::move(members)};
   }
 
-  // System call with monitored arguments (for $monitor)
+  // System call for $monitor with check function name
   static auto SystemCallWithMonitor(
-      std::string name, std::vector<TempRef> args,
-      std::vector<std::optional<MonitoredArg>> monitored) -> Instruction {
+      std::string name, std::vector<TempRef> args, std::string check_function)
+      -> Instruction {
     std::vector<Operand> operands;
     for (auto& arg : args) {
       operands.push_back(Operand::Temp(arg));
@@ -381,7 +383,7 @@ struct Instruction {
         .kind = InstructionKind::kSystemCall,
         .operands = std::move(operands),
         .system_call_name = std::move(name),
-        .monitored_args = std::move(monitored)};
+        .monitor_check_function_name = std::move(check_function)};
   }
 
   static auto Complete() -> Instruction {
@@ -447,6 +449,31 @@ struct Instruction {
     if (value) {
       instr.operands.push_back(Operand::Temp(*value));
     }
+    return instr;
+  }
+
+  /// Load value from closure's captures.
+  /// result: temp to store the loaded value
+  /// name: capture variable name
+  static auto LoadCapture(
+      TempRef result, std::string name, common::Type value_type)
+      -> Instruction {
+    Instruction instr;
+    instr.kind = InstructionKind::kLoadCapture;
+    instr.result = result;
+    instr.result_type = std::move(value_type);
+    instr.capture_name = std::move(name);
+    return instr;
+  }
+
+  /// Store value to closure's captures.
+  /// value: temp holding the value to store
+  /// name: capture variable name
+  static auto StoreCapture(TempRef value, std::string name) -> Instruction {
+    Instruction instr;
+    instr.kind = InstructionKind::kStoreCapture;
+    instr.operands.push_back(Operand::Temp(value));
+    instr.capture_name = std::move(name);
     return instr;
   }
 
@@ -775,6 +802,13 @@ struct Instruction {
         } else {
           return fmt::format("ret   {}", operands[0].ToString());
         }
+
+      case InstructionKind::kLoadCapture:
+        return fmt::format("load_capture {}, {}", result.value(), capture_name);
+
+      case InstructionKind::kStoreCapture:
+        return fmt::format(
+            "store_capture {}, {}", capture_name, operands[0].ToString());
     }
   }
 };

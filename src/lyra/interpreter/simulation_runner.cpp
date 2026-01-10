@@ -1,8 +1,7 @@
 #include "lyra/interpreter/simulation_runner.hpp"
 
-#include <cctype>
+#include <cassert>
 #include <cstddef>
-#include <format>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,12 +12,18 @@
 #include <fmt/core.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/interpreter/instruction_runner.hpp"
+#include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_runner.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
+#include "lyra/lir/process.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::interpreter {
 
@@ -231,196 +236,34 @@ void SimulationRunner::ExecuteRegion(Region region) {
   }
 }
 
-namespace {
-
-// Format an integral value in the specified base
-auto FormatIntegral(const RuntimeValue& val, char spec) -> std::string {
-  if (!val.IsTwoState()) {
-    return val.ToString();
-  }
-
-  if (val.IsWide()) {
-    // Wide values (>64 bits)
-    const auto& wb = val.AsWideBit();
-    switch (spec) {
-      case 'o':
-        return wb.ToOctalString();
-      case 'x':
-      case 'h':
-        return wb.ToHexString();
-      case 'b': {
-        // WideBit doesn't have ToBinString, convert via hex
-        auto hex = wb.ToHexString();
-        std::string bin;
-        for (char c : hex) {
-          int digit = (c >= 'a') ? (c - 'a' + 10) : (c - '0');
-          for (int bit = 3; bit >= 0; --bit) {
-            bool is_set = ((digit >> bit) & 1) != 0;
-            bin += is_set ? '1' : '0';
-          }
-        }
-        // Remove leading zeros
-        auto first_one = bin.find('1');
-        return first_one == std::string::npos ? "0" : bin.substr(first_one);
-      }
-      case 'd':
-      default:
-        // For wide values, use hex as decimal would be very long
-        return wb.ToHexString();
-    }
-  }
-
-  // Narrow values (<=64 bits)
-  auto narrow = val.AsNarrow();
-  uint64_t uval = narrow.AsUInt64();
-
-  switch (spec) {
-    case 'b': {
-      if (uval == 0) {
-        return "0";
-      }
-      std::string bin;
-      while (uval > 0) {
-        bin = ((uval & 1) != 0U ? '1' : '0') + bin;
-        uval >>= 1;
-      }
-      return bin;
-    }
-    case 'o':
-      return std::format("{:o}", uval);
-    case 'x':
-    case 'h':
-      return std::format("{:x}", uval);
-    case 'd':
-    default:
-      if (narrow.is_signed) {
-        return std::to_string(narrow.AsInt64());
-      }
-      return std::to_string(uval);
-  }
-}
-
-// Simple format string substitution for $monitor output.
-// Handles basic %d, %h, %b, %o, %s specifiers.
-auto FormatMonitorOutput(
-    const std::string& fmt, const std::vector<RuntimeValue>& args,
-    char default_format) -> std::string {
-  std::string result;
-  size_t arg_idx = 0;
-  size_t i = 0;
-
-  while (i < fmt.size()) {
-    if (fmt[i] == '%' && i + 1 < fmt.size()) {
-      char spec = fmt[i + 1];
-      if (spec == '%') {
-        result += '%';
-        i += 2;
-        continue;
-      }
-
-      // Skip width specifiers like %0d
-      size_t spec_start = i + 1;
-      while (spec_start < fmt.size() &&
-             (std::isdigit(fmt[spec_start]) != 0 || fmt[spec_start] == '-')) {
-        ++spec_start;
-      }
-      if (spec_start < fmt.size()) {
-        spec = fmt[spec_start];
-      }
-
-      if (arg_idx < args.size()) {
-        const auto& val = args[arg_idx++];
-
-        if (spec == 's' && val.IsString()) {
-          result += val.AsString();
-        } else if (spec == 'f' && (val.IsReal() || val.IsShortReal())) {
-          result +=
-              std::to_string(val.IsReal() ? val.AsDouble() : val.AsFloat());
-        } else if (val.IsTwoState()) {
-          result += FormatIntegral(val, spec);
-        } else {
-          result += val.ToString();
-        }
-      }
-      i = spec_start + 1;
-    } else {
-      result += fmt[i++];
-    }
-  }
-
-  // If no format specifiers found but we have args, use default format
-  if (result.empty() && !args.empty()) {
-    for (size_t j = 0; j < args.size(); ++j) {
-      if (j > 0) {
-        result += " ";
-      }
-      const auto& val = args[j];
-      if (val.IsString()) {
-        result += val.AsString();
-      } else if (val.IsTwoState()) {
-        result += FormatIntegral(val, default_format);
-      } else {
-        result += val.ToString();
-      }
-    }
-  }
-
-  return result;
-}
-
-}  // namespace
-
 void SimulationRunner::CheckMonitor() {
   auto& monitor = simulation_context_.get().active_monitor;
-  if (!monitor || !monitor->enabled || monitor->variables.empty()) {
+  if (!monitor || !monitor->enabled) {
     return;
   }
 
-  // Re-evaluate all monitored expressions
-  std::vector<RuntimeValue> current_values;
-  current_values.reserve(monitor->variables.size());
-
-  for (const auto& var : monitor->variables) {
-    const auto& block =
-        top_module_.get().GetMonitorExpressionBlock(var.expression_block_index);
-    current_values.push_back(
-        EvaluateMonitorExpressionBlock(block, monitor->instance));
-  }
-
-  // Check if any value changed
-  if (current_values == monitor->previous_values) {
+  // Call synthesized check process - it handles everything:
+  // evaluate expressions, compare with previous, print if changed, update prev
+  auto process = top_module_.get().FindProcess(monitor->check_process_name);
+  if (process == nullptr) {
     return;
   }
 
-  // Values changed - print the monitor output using format string
-  auto& out = simulation_context_.get().display_output;
-  out << FormatMonitorOutput(
-      monitor->format_string, current_values, monitor->default_format);
+  // Create temporary context for process execution
+  ProcessContext context;
+  ProcessEffect effect;
 
-  if (monitor->append_newline) {
-    out << "\n";
+  // Execute check process using standard process runner
+  auto result = RunProcess(
+      process, 0, 0, simulation_context_.get(), context, effect,
+      monitor->instance);
+
+  // Monitor check should always complete (no delay/wait).
+  // If this fails, the synthesized process contains delay/wait instructions.
+  if (result.kind != ProcessResult::Kind::kComplete) {
+    throw common::InternalError(
+        "CheckMonitor", "monitor check process did not complete");
   }
-
-  // Update previous values
-  monitor->previous_values = std::move(current_values);
-}
-
-auto SimulationRunner::EvaluateMonitorExpressionBlock(
-    const lir::MonitorExpressionBlock& block,
-    const std::shared_ptr<InstanceContext>& instance) -> RuntimeValue {
-  // Create temporary context for evaluation
-  ProcessContext temp_context;
-  ProcessEffect
-      temp_effect;  // Discarded - expressions shouldn't have side effects
-
-  // Execute each instruction in the expression block
-  for (const auto& instr : block.instructions) {
-    RunInstruction(
-        instr, simulation_context_.get(), temp_context, temp_effect, instance);
-  }
-
-  // Return the result stored in the designated temp
-  return temp_context.temp_table.Read(block.result);
 }
 
 void SimulationRunner::InitializePackageVariables() {
@@ -464,6 +307,10 @@ void SimulationRunner::ScheduleModuleProcesses(
     const lir::Module& module,
     const std::shared_ptr<InstanceContext>& instance) {
   for (const auto& process : module.processes) {
+    // Skip callback processes (e.g., monitor check) - they're called on demand
+    if (process->is_callback) {
+      continue;
+    }
     active_queue_.push(
         {.origin = {.process = process, .instance = instance},
          .block_index = 0,

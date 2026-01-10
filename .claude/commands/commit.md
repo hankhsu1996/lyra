@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(clang-format:*), Bash(clang-tidy:*), Bash(npx prettier:*), Bash(buildifier:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(clang-tidy:*), Bash(run-clang-tidy:*), Bash(npx prettier:*), Bash(buildifier:*), AskUserQuestion
 ---
 
 # Commit
@@ -59,11 +59,7 @@ Bullet points should describe **what changed**, not background context or why th
 
 ## Branch Rules
 
-If on main, create a feature branch first (prefer `switch` over `checkout`):
-
-```bash
-git switch -c <type>/<short-description>
-```
+**CRITICAL: Never commit directly to main.** If on main, you MUST ask the user for a branch name before proceeding. Use AskUserQuestion to get the branch name.
 
 **Branch name format:** `<type>/<short-description>`
 
@@ -80,7 +76,7 @@ git switch -c <type>/<short-description>
 
 ## Instructions
 
-1. Check context above; create feature branch if on main
+1. **Check branch first** - If on main, ask user for branch name and create it before any other steps
 2. Format changed files if needed (C++, markdown, Bazel)
 3. Run linters (clang-tidy for C++) and **fix all warnings before proceeding**
 4. Stage files with `git add <files>` (do NOT use `git add -A`)

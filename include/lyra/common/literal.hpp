@@ -101,6 +101,14 @@ struct Literal {
     return h;
   }
 
+  /// Returns true if this literal represents a string literal in source.
+  /// Checks both the explicit flag and type, since string literals may be
+  /// stored as either Type::kString or as packed integers (bit[N]) depending
+  /// on context. See docs/string-types.md for details.
+  [[nodiscard]] auto IsStringLiteral() const -> bool {
+    return is_string_literal || type.kind == Type::Kind::kString;
+  }
+
  private:
   Literal(common::Type t, ValueStorage v, bool is_str = false)
       : type(std::move(t)), value(std::move(v)), is_string_literal(is_str) {
