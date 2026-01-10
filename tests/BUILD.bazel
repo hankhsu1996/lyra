@@ -56,24 +56,14 @@ cc_test(
     ],
 )
 
-# =============================================================================
 # SystemVerilog Feature Tests
-# =============================================================================
 #
 # Run options:
-#
-# 1. Run ALL tests (CI uses this):
-#    bazel test //tests:sv_feature_tests
-#
-# 2. Run a single category (local dev, tagged "manual" so excluded from //...):
-#    bazel test //tests:operators_binary_tests
-#
-# 3. Run with custom filter:
-#    bazel test //tests:sv_feature_tests --test_arg=--gtest_filter='*addition*'
-#
-# =============================================================================
+#   bazel test //tests:sv_feature_tests              # All tests (CI uses this)
+#   bazel test //tests:operators_binary_tests        # Single category (manual tag)
+#   bazel test //tests:sv_feature_tests --test_arg=--gtest_filter='*addition*'
 
-# Shared binary for all SV feature tests (built once, used by all wrappers)
+# Shared binary (built once, used by all wrappers)
 cc_binary(
     name = "sv_feature_tests_bin",
     srcs = ["framework/sv_feature_tests.cpp"],
