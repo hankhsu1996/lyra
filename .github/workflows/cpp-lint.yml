@@ -19,13 +19,20 @@ jobs:
       - name: Get changed C++ files
         id: changed-files
         run: |
-          FILES=$(git diff --name-only origin/main...HEAD -- '*.cpp' '*.hpp' | tr '\n' ' ')
-          echo "files=$FILES" >> $GITHUB_OUTPUT
-          if [ -z "$FILES" ]; then
-            echo "No C++ files changed"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # On push to main, lint all files
+            FILES=$(find src include -name '*.cpp' -o -name '*.hpp' | tr '\n' ' ')
+            echo "Push event: linting all files"
           else
-            echo "Changed files: $FILES"
+            # On PR, lint only changed files
+            FILES=$(git diff --name-only origin/main...HEAD -- '*.cpp' '*.hpp' | tr '\n' ' ')
+            if [ -z "$FILES" ]; then
+              echo "No C++ files changed"
+            else
+              echo "Changed files: $FILES"
+            fi
           fi
+          echo "files=$FILES" >> $GITHUB_OUTPUT
 
       - name: Setup Bazel
         if: steps.changed-files.outputs.files != ''
