@@ -40,6 +40,13 @@ struct UnpackedArrayData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+struct DynamicArrayData {
+  std::shared_ptr<Type> element_type;
+
+  auto operator==(const DynamicArrayData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 // Field metadata for packed structs
 struct PackedStructField {
   std::string name;
@@ -71,12 +78,14 @@ struct Type {
     kShortReal,
     kString,
     kUnpackedArray,
+    kDynamicArray,
     kPackedStruct
   };
 
   Kind kind{};
   std::variant<
-      std::monostate, IntegralData, UnpackedArrayData, PackedStructData>
+      std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
+      PackedStructData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -199,6 +208,15 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  static auto DynamicArray(Type element) -> Type {
+    return Type{
+        .kind = Kind::kDynamicArray,
+        .data =
+            DynamicArrayData{
+                .element_type = std::make_shared<Type>(std::move(element))},
+        .alias_name = std::nullopt};
+  }
+
   // Create a packed struct type
   static auto PackedStruct(
       std::vector<PackedStructField> fields, size_t bit_width, bool is_signed,
@@ -235,6 +253,11 @@ struct Type {
     return kind == Kind::kPackedStruct;
   }
 
+  // Is this a dynamic array?
+  [[nodiscard]] auto IsDynamicArray() const -> bool {
+    return kind == Kind::kDynamicArray;
+  }
+
   // Get struct fields (only valid for packed structs)
   [[nodiscard]] auto GetStructFields() const
       -> const std::vector<PackedStructField>& {
@@ -244,7 +267,8 @@ struct Type {
     return std::get<PackedStructData>(data).fields;
   }
 
-  // Get element type for indexing (works for both packed and unpacked arrays)
+  // Get element type for indexing (works for packed, unpacked, and dynamic
+  // arrays)
   [[nodiscard]] auto GetElementType() const -> const Type& {
     if (kind == Kind::kIntegral) {
       const auto& integral = std::get<IntegralData>(data);
@@ -255,6 +279,9 @@ struct Type {
     }
     if (kind == Kind::kUnpackedArray) {
       return *std::get<UnpackedArrayData>(data).element_type;
+    }
+    if (kind == Kind::kDynamicArray) {
+      return *std::get<DynamicArrayData>(data).element_type;
     }
     throw std::runtime_error("Type is not indexable");
   }
@@ -271,6 +298,10 @@ struct Type {
     if (kind == Kind::kUnpackedArray) {
       return std::get<UnpackedArrayData>(data).size;
     }
+    if (kind == Kind::kDynamicArray) {
+      throw std::runtime_error(
+          "Dynamic arrays have no compile-time element count");
+    }
     throw std::runtime_error("Type is not indexable");
   }
 
@@ -282,6 +313,10 @@ struct Type {
     }
     if (kind == Kind::kUnpackedArray) {
       return std::get<UnpackedArrayData>(data).lower_bound;
+    }
+    if (kind == Kind::kDynamicArray) {
+      // Dynamic arrays are always 0-based
+      return 0;
     }
     throw std::runtime_error("Type is not indexable");
   }
@@ -303,6 +338,10 @@ struct Type {
         return std::get<IntegralData>(elem.data).bit_width;
       }
       throw std::runtime_error("Unpacked array element is not integral");
+    }
+    if (kind == Kind::kDynamicArray) {
+      throw std::runtime_error(
+          "Dynamic arrays have no compile-time element width");
     }
     throw std::runtime_error("Type is not indexable");
   }
@@ -390,6 +429,11 @@ struct Type {
             fmt::format("{}[{}]", arr.element_type->ToString(), arr.size);
         break;
       }
+      case Kind::kDynamicArray: {
+        const auto& arr = std::get<DynamicArrayData>(data);
+        structural_str = fmt::format("{}$[]", arr.element_type->ToString());
+        break;
+      }
       case Kind::kPackedStruct: {
         const auto& ps = std::get<PackedStructData>(data);
         std::string base_name = ps.is_four_state ? "logic" : "bit";
@@ -453,6 +497,15 @@ inline auto UnpackedArrayData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto DynamicArrayData::operator==(const DynamicArrayData& other) const
+    -> bool {
+  return *element_type == *other.element_type;
+}
+
+inline auto DynamicArrayData::Hash() const -> std::size_t {
+  return element_type->Hash();
+}
+
 inline auto PackedStructField::operator==(const PackedStructField& other) const
     -> bool {
   return name == other.name && bit_offset == other.bit_offset &&
@@ -499,6 +552,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "string";
     case Type::Kind::kUnpackedArray:
       return "unpacked_array";
+    case Type::Kind::kDynamicArray:
+      return "dynamic_array";
     case Type::Kind::kPackedStruct:
       return "packed_struct";
   }

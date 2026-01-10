@@ -131,6 +131,9 @@ class Codegen {
       const std::vector<mir::SymbolRef>& instance_path,
       mir::SymbolRef target_symbol);
   void EmitHierarchicalPath(const std::vector<std::string>& path);
+  void EmitMethodCall(const mir::MethodCallExpression& mc);
+  void EmitEnumNavMethod(const mir::MethodCallExpression& mc, bool is_next);
+  void EmitEnumNameMethod(const mir::MethodCallExpression& mc);
   void EmitSliceExtract(
       const common::Type& result_type, const mir::Expression& value,
       const std::function<void()>& emit_shift, uint64_t mask, bool is_wide);

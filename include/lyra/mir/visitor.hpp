@@ -16,11 +16,12 @@ class ElementSelectExpression;
 class RangeSelectExpression;
 class IndexedRangeSelectExpression;
 class HierarchicalReferenceExpression;
-class EnumMethodExpression;
 class ConcatenationExpression;
 class ReplicationExpression;
 class FunctionCallExpression;
 class MemberAccessExpression;
+class NewArrayExpression;
+class MethodCallExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -61,11 +62,12 @@ class MirVisitor {
   virtual void Visit(const RangeSelectExpression&) = 0;
   virtual void Visit(const IndexedRangeSelectExpression&) = 0;
   virtual void Visit(const HierarchicalReferenceExpression&) = 0;
-  virtual void Visit(const EnumMethodExpression&) = 0;
   virtual void Visit(const ConcatenationExpression&) = 0;
   virtual void Visit(const ReplicationExpression&) = 0;
   virtual void Visit(const FunctionCallExpression&) = 0;
   virtual void Visit(const MemberAccessExpression&) = 0;
+  virtual void Visit(const NewArrayExpression&) = 0;
+  virtual void Visit(const MethodCallExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

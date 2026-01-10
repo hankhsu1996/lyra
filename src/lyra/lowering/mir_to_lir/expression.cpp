@@ -83,27 +83,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       return result;
     }
 
-    case mir::Expression::Kind::kEnumMethod: {
-      const auto& em = mir::As<mir::EnumMethodExpression>(expression);
-      auto receiver = LowerExpression(*em.receiver, builder);
-      auto result = builder.AllocateTemp("enum_method", em.type);
-
-      // Convert MIR enum members to LIR enum members
-      std::vector<lir::EnumMemberInfo> lir_members;
-      lir_members.reserve(em.members.size());
-      for (const auto& m : em.members) {
-        lir_members.push_back({.name = m.name, .value = m.value});
-      }
-
-      // Generate a single method call instruction - the interpreter handles
-      // the lookup logic at runtime
-      builder.AddInstruction(
-          Instruction::MethodCall(
-              mir::ToString(em.method), receiver, result, em.type, em.step,
-              std::move(lir_members)));
-      return result;
-    }
-
     case mir::Expression::Kind::kUnary: {
       const auto& unary = mir::As<mir::UnaryExpression>(expression);
       assert(unary.operand);
@@ -650,6 +629,48 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       builder.AddInstruction(
           Instruction::LoadPackedBits(
               result, value, offset_temp, expression.type));
+      return result;
+    }
+
+    case mir::Expression::Kind::kNewArray: {
+      const auto& new_arr = mir::As<mir::NewArrayExpression>(expression);
+      auto size = LowerExpression(*new_arr.size_expr, builder);
+      auto result = builder.AllocateTemp("new_array", expression.type);
+
+      if (new_arr.init_expr) {
+        auto init = LowerExpression(*new_arr.init_expr, builder);
+        builder.AddInstruction(
+            Instruction::NewDynamicArray(result, size, expression.type, init));
+      } else {
+        builder.AddInstruction(
+            Instruction::NewDynamicArray(result, size, expression.type));
+      }
+      return result;
+    }
+
+    case mir::Expression::Kind::kMethodCall: {
+      const auto& mc = mir::As<mir::MethodCallExpression>(expression);
+      auto receiver = LowerExpression(*mc.receiver, builder);
+      auto result = builder.AllocateTemp("method_call", expression.type);
+
+      // Convert MIR enum members to LIR enum members (if present)
+      std::vector<lir::EnumMemberInfo> lir_members;
+      lir_members.reserve(mc.enum_members.size());
+      for (const auto& m : mc.enum_members) {
+        lir_members.push_back({.name = m.name, .value = m.value});
+      }
+
+      // Get step from args (for enum next/prev)
+      int64_t step = 1;
+      if (!mc.args.empty()) {
+        const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
+        step = step_expr.literal.value.AsInt64();
+      }
+
+      builder.AddInstruction(
+          Instruction::MethodCall(
+              mc.method_name, receiver, result, expression.type, step,
+              std::move(lir_members)));
       return result;
     }
   }

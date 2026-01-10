@@ -30,7 +30,6 @@ class Expression {
     kLiteral,
     kIdentifier,
     kEnumValue,
-    kEnumMethod,
     kUnary,
     kBinary,
     kTernary,
@@ -45,6 +44,8 @@ class Expression {
     kReplication,
     kFunctionCall,
     kMemberAccess,
+    kNewArray,
+    kMethodCall,
   };
 
   Kind kind;
@@ -71,8 +72,6 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "Identifier";
     case Expression::Kind::kEnumValue:
       return "EnumValue";
-    case Expression::Kind::kEnumMethod:
-      return "EnumMethod";
     case Expression::Kind::kUnary:
       return "Unary";
     case Expression::Kind::kBinary:
@@ -101,6 +100,10 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "FunctionCall";
     case Expression::Kind::kMemberAccess:
       return "MemberAccess";
+    case Expression::Kind::kNewArray:
+      return "NewArray";
+    case Expression::Kind::kMethodCall:
+      return "MethodCall";
   }
   std::abort();
 }
@@ -173,63 +176,10 @@ class EnumValueExpression : public Expression {
   }
 };
 
-// Enum member info for runtime enum method calls
+// Enum member info for MethodCallExpression on enum types
 struct EnumMemberInfo {
   std::string name;
   int64_t value;
-};
-
-// Enum method type for runtime calls
-enum class EnumMethod {
-  kNext,
-  kPrev,
-  kName,
-};
-
-inline auto ToString(EnumMethod method) -> std::string {
-  switch (method) {
-    case EnumMethod::kNext:
-      return "next";
-    case EnumMethod::kPrev:
-      return "prev";
-    case EnumMethod::kName:
-      return "name";
-  }
-  return "unknown";
-}
-
-// Represents a runtime enum method call (next, prev, name)
-// The receiver is the enum variable, and members contain all enum values
-// for codegen to generate the lookup switch.
-class EnumMethodExpression : public Expression {
- public:
-  static constexpr Kind kKindValue = Kind::kEnumMethod;
-  EnumMethod method;
-  std::unique_ptr<Expression> receiver;  // The enum variable
-  int64_t step;                          // For next(N) and prev(N), default 1
-  std::vector<EnumMemberInfo> members;   // Cached enum member info for codegen
-
-  EnumMethodExpression(
-      Type type, EnumMethod method, std::unique_ptr<Expression> receiver,
-      int64_t step, std::vector<EnumMemberInfo> members)
-      : Expression(kKindValue, std::move(type)),
-        method(method),
-        receiver(std::move(receiver)),
-        step(step),
-        members(std::move(members)) {
-  }
-
-  [[nodiscard]] auto ToString() const -> std::string override {
-    if (step != 1 && method != EnumMethod::kName) {
-      return fmt::format(
-          "{}.{}({})", receiver->ToString(), mir::ToString(method), step);
-    }
-    return fmt::format("{}.{}()", receiver->ToString(), mir::ToString(method));
-  }
-
-  void Accept(MirVisitor& visitor) const override {
-    visitor.Visit(*this);
-  }
 };
 
 class UnaryExpression : public Expression {
@@ -716,6 +666,84 @@ class MemberAccessExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     return fmt::format("{}.{}", value->ToString(), field_name);
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Dynamic array new[] constructor: new[size] or new[size](init)
+class NewArrayExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kNewArray;
+
+  std::unique_ptr<Expression> size_expr;  // Required: array size
+  std::unique_ptr<Expression> init_expr;  // Optional: initializer array
+
+  NewArrayExpression(
+      Type type, std::unique_ptr<Expression> size,
+      std::unique_ptr<Expression> init)
+      : Expression(kKindValue, std::move(type)),
+        size_expr(std::move(size)),
+        init_expr(std::move(init)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    if (init_expr) {
+      return fmt::format(
+          "new[{}]({})", size_expr->ToString(), init_expr->ToString());
+    }
+    return fmt::format("new[{}]", size_expr->ToString());
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Unified method call expression for all built-in type methods.
+// The receiver's type determines the method semantics.
+//
+// Design note: enum_members is only populated for enum receivers. This couples
+// enum-specific data to the unified expression, but avoids the complexity of
+// std::variant for receiver-type-specific data. The tradeoff is acceptable
+// because: (1) only enums need extra data for codegen, (2) empty vector has
+// minimal overhead, (3) simpler than a visitor pattern for 2 receiver types.
+class MethodCallExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kMethodCall;
+
+  std::unique_ptr<Expression> receiver;
+  std::string method_name;
+  std::vector<std::unique_ptr<Expression>> args;
+
+  // Only populated for enum receivers (needed for switch codegen)
+  std::vector<EnumMemberInfo> enum_members;
+
+  MethodCallExpression(
+      Type type, std::unique_ptr<Expression> receiver, std::string method_name,
+      std::vector<std::unique_ptr<Expression>> args = {},
+      std::vector<EnumMemberInfo> enum_members = {})
+      : Expression(kKindValue, std::move(type)),
+        receiver(std::move(receiver)),
+        method_name(std::move(method_name)),
+        args(std::move(args)),
+        enum_members(std::move(enum_members)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    if (args.empty()) {
+      return fmt::format("{}.{}()", receiver->ToString(), method_name);
+    }
+    std::vector<std::string> arg_strs;
+    arg_strs.reserve(args.size());
+    for (const auto& arg : args) {
+      arg_strs.push_back(arg->ToString());
+    }
+    return fmt::format(
+        "{}.{}({})", receiver->ToString(), method_name,
+        fmt::join(arg_strs, ", "));
   }
 
   void Accept(MirVisitor& visitor) const override {

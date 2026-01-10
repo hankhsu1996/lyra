@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -99,6 +101,16 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     int32_t lower_bound = range.lower();
 
     return Type::Integral(width, is_signed, is_four_state, lower_bound);
+  }
+
+  // Check for dynamic arrays before fixed-size unpacked arrays
+  if (type.kind == slang::ast::SymbolKind::DynamicArrayType) {
+    const auto& dyn_array = type.as<slang::ast::DynamicArrayType>();
+    auto element_result = LowerType(dyn_array.elementType, source_range);
+    if (!element_result) {
+      return element_result;
+    }
+    return Type::DynamicArray(*element_result);
   }
 
   if (type.isUnpackedArray()) {

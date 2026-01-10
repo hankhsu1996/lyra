@@ -181,7 +181,8 @@ struct RuntimeValue {
 
   // Array accessors - assumes value holds ArrayStorage
   [[nodiscard]] auto IsArray() const -> bool {
-    return type.kind == common::Type::Kind::kUnpackedArray;
+    return type.kind == common::Type::Kind::kUnpackedArray ||
+           type.kind == common::Type::Kind::kDynamicArray;
   }
 
   [[nodiscard]] auto AsArray() const -> const std::vector<RuntimeValue>& {
@@ -339,6 +340,9 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       }
       return Array(type, std::move(elements));
     }
+    case common::Type::Kind::kDynamicArray:
+      // Dynamic arrays default to empty (size 0)
+      return Array(type, {});
     case common::Type::Kind::kPackedStruct: {
       // Packed structs are bitvectors - initialize to all zeros
       auto data = std::get<common::PackedStructData>(type.data);

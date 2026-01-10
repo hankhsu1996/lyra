@@ -652,9 +652,13 @@ auto BuildFormatString(
 // bounds.
 auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
     -> size_t {
-  const auto& array_data =
-      std::get<common::UnpackedArrayData>(array_value.type.data);
-  int32_t lower_bound = array_data.lower_bound;
+  // Dynamic arrays always have lower_bound 0
+  int32_t lower_bound = 0;
+  if (array_value.type.kind == common::Type::Kind::kUnpackedArray) {
+    const auto& array_data =
+        std::get<common::UnpackedArrayData>(array_value.type.data);
+    lower_bound = array_data.lower_bound;
+  }
 
   auto actual_idx = static_cast<size_t>(sv_index - lower_bound);
 
@@ -1228,6 +1232,46 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kNewDynamicArray: {
+      // Allocate/resize dynamic array: new[size] or new[size](init)
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+      assert(!instr.operands.empty());
+
+      auto size_val = get_operand_value(instr.operands[0]);
+      auto size = static_cast<size_t>(size_val.AsNarrow().AsInt64());
+
+      const auto& dyn_data =
+          std::get<common::DynamicArrayData>(instr.result_type->data);
+      const auto& elem_type = *dyn_data.element_type;
+
+      std::vector<RuntimeValue> elements;
+      elements.reserve(size);
+
+      if (instr.operands.size() > 1) {
+        // Resize with init: copy existing elements, fill remainder with default
+        const auto& init = get_operand_value(instr.operands[1]);
+        const auto& init_arr = init.AsArray();
+        for (size_t i = 0; i < size; ++i) {
+          if (i < init_arr.size()) {
+            elements.push_back(init_arr[i]);
+          } else {
+            elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
+          }
+        }
+      } else {
+        // Default init
+        for (size_t i = 0; i < size; ++i) {
+          elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
+        }
+      }
+
+      temp_table.Write(
+          instr.result.value(),
+          RuntimeValue::Array(*instr.result_type, std::move(elements)));
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kLoadPackedBits: {
       // Load bits from packed vector: result = value[bit_offset +: width]
       // operands[0] = value (packed vector)
@@ -1685,6 +1729,14 @@ auto RunInstruction(
           target_type.kind == common::Type::Kind::kString) {
         temp_table.Write(
             instr.result.value(), RuntimeValue::String(IntegralToString(src)));
+        return InstructionResult::Continue();
+      }
+
+      // Dynamic array to dynamic array: pass through unchanged
+      // This handles cases where slang inserts a conversion expression for
+      // type-compatible arrays (e.g., in new[size](init) expressions)
+      if (src.type.IsDynamicArray() && target_type.IsDynamicArray()) {
+        temp_table.Write(instr.result.value(), src);
         return InstructionResult::Continue();
       }
 
@@ -2302,12 +2354,41 @@ auto RunInstruction(
     }
 
     case lir::InstructionKind::kMethodCall: {
-      // Generic method call - currently handles enum methods (next, prev, name)
-      // Future: string methods, class methods
+      // Generic method call - handles enum methods (next, prev, name) and
+      // array methods (size, delete).
+      //
+      // Note: Unlike codegen which uses registry-driven dispatch, we use string
+      // comparison here. This is acceptable because: (1) only 5 methods total,
+      // (2) string comparison is fast for short strings, (3) simpler than
+      // pulling in registry dependency for runtime dispatch.
       assert(instr.result.has_value());
       assert(instr.result_type.has_value());
       assert(!instr.operands.empty());
 
+      // Array methods have empty enum_members
+      if (instr.enum_members.empty()) {
+        // RuntimeValue uses shared_ptr for array storage, so modifications
+        // through this copy will affect the original variable
+        auto receiver = get_temp(instr.operands[0]);
+
+        if (instr.method_name == "size") {
+          auto size = static_cast<int32_t>(receiver.AsArray().size());
+          temp_table.Write(
+              instr.result.value(), RuntimeValue::IntegralSigned(size, 32));
+        } else if (instr.method_name == "delete") {
+          // Shared ptr semantics: clearing temp clears original variable
+          receiver.AsArray().clear();
+          // delete() returns void, write a dummy value
+          temp_table.Write(
+              instr.result.value(),
+              RuntimeValue::DefaultValueForType(*instr.result_type));
+        } else {
+          assert(false && "unsupported array method call");
+        }
+        return InstructionResult::Continue();
+      }
+
+      // Enum methods
       const auto& receiver = get_temp(instr.operands[0]);
       int64_t current_value = receiver.AsNarrow().AsInt64();
       const auto& members = instr.enum_members;

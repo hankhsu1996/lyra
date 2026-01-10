@@ -18,6 +18,7 @@
 #include <slang/ast/Symbol.h>
 
 #include "lyra/common/bit_utils.hpp"
+#include "lyra/common/builtin_method.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -382,6 +383,11 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       return std::format(
           "std::array<{}, {}>", ToCppType(*array_data.element_type),
           array_data.size);
+    }
+    case common::Type::Kind::kDynamicArray: {
+      const auto& array_data = std::get<common::DynamicArrayData>(type.data);
+      return std::format(
+          "std::vector<{}>", ToCppType(*array_data.element_type));
     }
     case common::Type::Kind::kPackedStruct: {
       // Packed structs are bitvectors - same as kIntegral
@@ -1620,64 +1626,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       out_ << ToCppType(ev.type) << "{" << ev.value << "}";
       break;
     }
-    case mir::Expression::Kind::kEnumMethod: {
-      const auto& em = mir::As<mir::EnumMethodExpression>(expr);
-      switch (em.method) {
-        case mir::EnumMethod::kNext:
-        case mir::EnumMethod::kPrev: {
-          // Generate inline lambda with switch
-          // Cast to int64_t since Bit<N,S> is a class type that can't be used
-          // directly in switch
-          out_ << "[&]() -> " << ToCppType(em.type)
-               << " { switch (static_cast<int64_t>(";
-          EmitExpression(*em.receiver, kPrecLowest);
-          out_ << ")) {";
-          for (size_t i = 0; i < em.members.size(); ++i) {
-            size_t target_idx = 0;
-            if (em.method == mir::EnumMethod::kNext) {
-              // next(N): move forward N positions with wrap-around
-              // E.g., for enum {A, B, C, D, E} at position 3 (D), next(3) goes
-              // to position (3+3) % 5 = 1 (B)
-              target_idx =
-                  (i + static_cast<size_t>(em.step)) % em.members.size();
-            } else {
-              // prev(N): move backward N positions with wrap-around
-              // We add members.size() before subtracting to avoid underflow
-              // when step > i. The inner modulo handles step >= size.
-              // E.g., for enum {A, B, C, D, E} at position 1 (B), prev(3) goes
-              // to position (1 + 5 - 3) % 5 = 3 (D)
-              target_idx =
-                  (i + em.members.size() -
-                   (static_cast<size_t>(em.step) % em.members.size())) %
-                  em.members.size();
-            }
-            out_ << " case " << em.members[i].value << ": return "
-                 << ToCppType(em.type) << "{" << em.members[target_idx].value
-                 << "};";
-          }
-          // Default case: when receiver has an invalid value (not matching any
-          // enum member), the behavior is implementation-defined per IEEE
-          // 1800-2023. We return the type's default value (0).
-          out_ << " default: return " << ToCppType(em.type) << "{};";
-          out_ << " } }()";
-          break;
-        }
-        case mir::EnumMethod::kName: {
-          // Generate inline lambda returning string
-          out_ << "[&]() -> std::string { switch (static_cast<int64_t>(";
-          EmitExpression(*em.receiver, kPrecLowest);
-          out_ << ")) {";
-          for (const auto& m : em.members) {
-            out_ << " case " << m.value << ": return \"" << m.name << "\";";
-          }
-          // Default case: when receiver has an invalid value (not matching any
-          // enum member), the behavior is implementation-defined per IEEE
-          // 1800-2023. We return an empty string.
-          out_ << " default: return \"\";";
-          out_ << " } }()";
-          break;
-        }
-      }
+    case mir::Expression::Kind::kMethodCall: {
+      const auto& mc = mir::As<mir::MethodCallExpression>(expr);
+      EmitMethodCall(mc);
       break;
     }
     case mir::Expression::Kind::kBinary: {
@@ -2238,6 +2189,31 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       break;
     }
 
+    case mir::Expression::Kind::kNewArray: {
+      const auto& new_arr = mir::As<mir::NewArrayExpression>(expr);
+      const auto& arr_data =
+          std::get<common::DynamicArrayData>(new_arr.type.data);
+      auto elem_type = ToCppType(*arr_data.element_type);
+
+      if (new_arr.init_expr) {
+        // new[size](init) - resize with copy semantics
+        out_ << "lyra::sdk::DynArrayResize<" << elem_type
+             << ">(static_cast<size_t>(";
+        EmitExpression(*new_arr.size_expr, kPrecLowest);
+        out_ << "), ";
+        EmitExpression(*new_arr.init_expr, kPrecLowest);
+        out_ << ")";
+      } else {
+        // new[size] - default initialized
+        // Cast size to size_t to ensure we call the vector(size_type)
+        // constructor
+        out_ << "std::vector<" << elem_type << ">(static_cast<size_t>(";
+        EmitExpression(*new_arr.size_expr, kPrecLowest);
+        out_ << "))";
+      }
+      break;
+    }
+
     default:
       throw DiagnosticException(
           Diagnostic::Error(
@@ -2406,6 +2382,103 @@ void Codegen::EmitHierarchicalPath(
     out_ << inst_sym->name << "_.";
   }
   out_ << target_symbol->name;
+}
+
+void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
+  // Dispatch by receiver type using the builtin method registry
+  const auto& receiver_type = mc.receiver->type;
+
+  // Determine builtin type kind for registry lookup
+  common::BuiltinTypeKind type_kind{};
+  if (!mc.enum_members.empty()) {
+    type_kind = common::BuiltinTypeKind::kEnum;
+  } else if (receiver_type.IsDynamicArray()) {
+    type_kind = common::BuiltinTypeKind::kDynamicArray;
+  } else {
+    throw common::InternalError(
+        "Codegen::EmitMethodCall",
+        std::format(
+            "unsupported receiver type '{}'", receiver_type.ToString()));
+  }
+
+  // Look up method in registry
+  const auto* method_info =
+      common::FindBuiltinMethod(type_kind, mc.method_name);
+  if (method_info == nullptr) {
+    throw common::InternalError(
+        "Codegen::EmitMethodCall",
+        std::format(
+            "unknown method '{}' on type '{}'", mc.method_name,
+            receiver_type.ToString()));
+  }
+
+  // Dispatch based on category from registry
+  using Cat = common::BuiltinMethodCategory;
+  switch (method_info->category) {
+    case Cat::kEnumNext:
+      EmitEnumNavMethod(mc, true);
+      return;
+    case Cat::kEnumPrev:
+      EmitEnumNavMethod(mc, false);
+      return;
+    case Cat::kEnumName:
+      EmitEnumNameMethod(mc);
+      return;
+    case Cat::kArrayQuery:
+    case Cat::kArrayMutate:
+      // Use return_type to decide if cast is needed
+      if (method_info->return_type == common::BuiltinMethodReturnType::kInt) {
+        out_ << "static_cast<Int>(";
+        EmitExpression(*mc.receiver, kPrecLowest);
+        out_ << method_info->cpp_expr << ")";
+      } else {
+        EmitExpression(*mc.receiver, kPrecLowest);
+        out_ << method_info->cpp_expr;
+      }
+      return;
+  }
+}
+
+void Codegen::EmitEnumNavMethod(
+    const mir::MethodCallExpression& mc, bool is_next) {
+  // Get step from args (default 1 if no args)
+  int64_t step = 1;
+  if (!mc.args.empty()) {
+    const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
+    step = step_expr.literal.value.AsInt64();
+  }
+
+  // Generate inline lambda with switch
+  out_ << "[&]() -> " << ToCppType(mc.type)
+       << " { switch (static_cast<int64_t>(";
+  EmitExpression(*mc.receiver, kPrecLowest);
+  out_ << ")) {";
+  for (size_t i = 0; i < mc.enum_members.size(); ++i) {
+    size_t target_idx = 0;
+    if (is_next) {
+      target_idx = (i + static_cast<size_t>(step)) % mc.enum_members.size();
+    } else {
+      target_idx = (i + mc.enum_members.size() -
+                    (static_cast<size_t>(step) % mc.enum_members.size())) %
+                   mc.enum_members.size();
+    }
+    out_ << " case " << mc.enum_members[i].value << ": return "
+         << ToCppType(mc.type) << "{" << mc.enum_members[target_idx].value
+         << "};";
+  }
+  out_ << " default: return " << ToCppType(mc.type) << "{};";
+  out_ << " } }()";
+}
+
+void Codegen::EmitEnumNameMethod(const mir::MethodCallExpression& mc) {
+  out_ << "[&]() -> std::string { switch (static_cast<int64_t>(";
+  EmitExpression(*mc.receiver, kPrecLowest);
+  out_ << ")) {";
+  for (const auto& m : mc.enum_members) {
+    out_ << " case " << m.value << ": return \"" << m.name << "\";";
+  }
+  out_ << " default: return \"\";";
+  out_ << " } }()";
 }
 
 void Codegen::Indent() {
