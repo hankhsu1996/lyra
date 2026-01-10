@@ -114,12 +114,10 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and codegen backends.
 
-Test targets follow the pattern `//tests:<category>_<feature>_tests`:
-
 ```bash
-bazel test //tests:control_flow_loops_tests      # Run loop tests
-bazel test //tests:datatypes_arrays_tests        # Run array tests
-bazel query '//tests/...:*' --output=label       # List all test targets
+bazel test //tests:sv_feature_tests              # Run ALL tests (sharded)
+bazel test //tests:control_flow_loops_tests      # Run single category
+bazel test //tests:datatypes_arrays_tests        # Run single category
 ```
 
 ## Code Style

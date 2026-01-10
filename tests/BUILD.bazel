@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("//tests:sv_feature_test.bzl", "sv_feature_test")
 
 cc_library(
@@ -56,6 +56,42 @@ cc_test(
     ],
 )
 
+# SystemVerilog Feature Tests
+#
+# Run options:
+#   bazel test //tests:sv_feature_tests              # All tests (CI uses this)
+#   bazel test //tests:operators_binary_tests        # Single category (manual tag)
+#   bazel test //tests:sv_feature_tests --test_arg=--gtest_filter='*addition*'
+
+# Shared binary (built once, used by all wrappers)
+cc_binary(
+    name = "sv_feature_tests_bin",
+    srcs = ["framework/sv_feature_tests.cpp"],
+    data = glob(["sv_features/**/*.yaml"]) + ["//:embedded_headers"],
+    deps = [
+        "//:core",
+        "//tests:test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# Full test suite with sharding (for CI or running everything)
+cc_test(
+    name = "sv_feature_tests",
+    size = "large",
+    srcs = ["framework/sv_feature_tests.cpp"],
+    data = glob(["sv_features/**/*.yaml"]) + ["//:embedded_headers"],
+    shard_count = 10,
+    deps = [
+        "//:core",
+        "//tests:test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# Individual category targets (thin wrappers around sv_feature_tests_bin)
+
+# Operators
 sv_feature_test(
     name = "operators_binary_tests",
     yaml = "sv_features/operators/binary.yaml",
@@ -76,6 +112,7 @@ sv_feature_test(
     yaml = "sv_features/operators/replicate.yaml",
 )
 
+# Processes
 sv_feature_test(
     name = "processes_initial_tests",
     yaml = "sv_features/processes/initial.yaml",
@@ -96,6 +133,7 @@ sv_feature_test(
     yaml = "sv_features/processes/wait_event.yaml",
 )
 
+# Control flow
 sv_feature_test(
     name = "control_flow_conditionals_tests",
     yaml = "sv_features/control_flow/conditionals.yaml",
@@ -116,6 +154,7 @@ sv_feature_test(
     yaml = "sv_features/control_flow/foreach.yaml",
 )
 
+# Datatypes
 sv_feature_test(
     name = "datatypes_variables_tests",
     yaml = "sv_features/datatypes/variables.yaml",
@@ -202,6 +241,12 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_math_tests",
+    yaml = "sv_features/datatypes/math.yaml",
+)
+
+# Display
+sv_feature_test(
     name = "display_basic_tests",
     yaml = "sv_features/display/basic.yaml",
 )
@@ -216,6 +261,7 @@ sv_feature_test(
     yaml = "sv_features/display/monitor.yaml",
 )
 
+# System tasks
 sv_feature_test(
     name = "system_tasks_simulation_control_tests",
     yaml = "sv_features/system_tasks/simulation_control.yaml",
@@ -231,6 +277,7 @@ sv_feature_test(
     yaml = "sv_features/system_tasks/mem_io.yaml",
 )
 
+# Timing
 sv_feature_test(
     name = "timing_timescale_tests",
     yaml = "sv_features/timing/timescale.yaml",
@@ -251,6 +298,7 @@ sv_feature_test(
     yaml = "sv_features/timing/printtimescale.yaml",
 )
 
+# Hierarchy
 sv_feature_test(
     name = "hierarchy_local_variables_tests",
     yaml = "sv_features/hierarchy/local_variables.yaml",
@@ -282,11 +330,6 @@ sv_feature_test(
 )
 
 sv_feature_test(
-    name = "datatypes_math_tests",
-    yaml = "sv_features/datatypes/math.yaml",
-)
-
-sv_feature_test(
     name = "hierarchy_hierarchical_reads_tests",
     yaml = "sv_features/hierarchy/hierarchical_reads.yaml",
 )
@@ -296,6 +339,7 @@ sv_feature_test(
     yaml = "sv_features/hierarchy/hierarchical_sensitivity.yaml",
 )
 
+# Scheduling
 sv_feature_test(
     name = "scheduling_zero_delay_tests",
     yaml = "sv_features/scheduling/zero_delay.yaml",
@@ -311,6 +355,7 @@ sv_feature_test(
     yaml = "sv_features/scheduling/regions.yaml",
 )
 
+# Functions
 sv_feature_test(
     name = "functions_basic_tests",
     yaml = "sv_features/functions/basic.yaml",
@@ -326,11 +371,13 @@ sv_feature_test(
     yaml = "sv_features/functions/nested_calls.yaml",
 )
 
+# Packages
 sv_feature_test(
     name = "packages_basic_tests",
     yaml = "sv_features/packages/basic.yaml",
 )
 
+# Constants
 sv_feature_test(
     name = "packages_functions_tests",
     yaml = "sv_features/packages/functions.yaml",
