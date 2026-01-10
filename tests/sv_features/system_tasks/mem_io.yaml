@@ -131,6 +131,35 @@ cases:
         c2: 51
         c3: 68
 
+  - name: readmemh_long_filename
+    description: Tests $readmemh with filename > 8 chars (regression for wide string literal bug)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] mem [0:3];
+            logic [7:0] d0, d1, d2, d3;
+            initial begin
+              $readmemh("long_filename.hex", mem);
+              d0 = mem[0];
+              d1 = mem[1];
+              d2 = mem[2];
+              d3 = mem[3];
+            end
+          endmodule
+      - name: long_filename.hex
+        content: |
+          aa
+          bb
+          cc
+          dd
+    expect:
+      variables:
+        d0: 170
+        d1: 187
+        d2: 204
+        d3: 221
+
   - name: packed_array_basic
     files:
       - name: test.sv

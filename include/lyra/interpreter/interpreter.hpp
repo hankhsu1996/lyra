@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@ class Interpreter {
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,
+      std::shared_ptr<slang::SourceManager> source_manager,
       const std::string& top, const InterpreterOptions& options)
       -> InterpreterResult;
 };

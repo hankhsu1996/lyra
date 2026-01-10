@@ -111,3 +111,17 @@ It supports hierarchical modules via instance contexts (see `docs/interpreter-hi
 5. Run executable
 
 Each stage is independent and testable.
+
+## Slang Data Ownership
+
+Slang's `SourceManager` owns the memory backing source text, and many slang types (including `symbol->name`) return `string_view` into this memory.
+
+**Current state**: We use `slang::ast::Symbol*` directly throughout MIR/LIR. This creates a hidden dependency: any code accessing symbol names requires the `SourceManager` to remain alive.
+
+**Consequence**: `InterpreterResult` stores a `shared_ptr<SourceManager>` to keep this memory valid. This is a lifetime hack, not a conceptual fit.
+
+**Future direction**: MIR/LIR should own their data. At the slang → MIR boundary (`AstToMir`), we should copy symbol information into our own types with owned `std::string` names. This would:
+
+- Eliminate hidden lifetime dependencies on slang
+- Make the slang boundary explicit and complete
+- Allow slang resources to be released after lowering
