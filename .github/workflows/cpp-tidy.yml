@@ -1,0 +1,49 @@
+name: C++ Tidy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  tidy:
+    name: Run clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Install Clang 20 toolchain
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          . /etc/lsb-release
+          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20 clang-tidy-20
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo update-alternatives --set clang++ /usr/bin/clang++-20
+          sudo update-alternatives --set clang /usr/bin/clang-20
+
+      - name: Print tool versions
+        run: |
+          clang++ --version
+          clang-tidy-20 --version
+
+      - name: Build
+        run: bazel build //...
+
+      - name: Generate compile_commands.json
+        run: bazel run @hedron_compile_commands//:refresh_all
+
+      - name: Run clang-tidy
+        run: |
+          CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
+          echo "Files to check: $CPP_FILES"
+          run-clang-tidy-20 -p . -j $(nproc) -header-filter='^.*(src|include)/lyra/.*' $CPP_FILES
