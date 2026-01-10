@@ -16,20 +16,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+
       - name: Get changed C++ files
         id: changed-files
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # On push to main, lint all files
             FILES=$(find src include -name '*.cpp' -o -name '*.hpp' | tr '\n' ' ')
             echo "Push event: linting all files"
           else
-            # On PR, lint only changed files
-            FILES=$(git diff --name-only origin/main...HEAD -- '*.cpp' '*.hpp' | tr '\n' ' ')
+            echo "All changed files:"
+            git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD
+            FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD -- '*.cpp' '*.hpp' | tr '\n' ' ')
             if [ -z "$FILES" ]; then
               echo "No C++ files changed"
             else
-              echo "Changed files: $FILES"
+              echo "C++ files to lint: $FILES"
             fi
           fi
           echo "files=$FILES" >> $GITHUB_OUTPUT
