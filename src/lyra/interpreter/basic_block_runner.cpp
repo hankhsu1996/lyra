@@ -1,13 +1,15 @@
 #include "lyra/interpreter/basic_block_runner.hpp"
 
 #include <cstddef>
+#include <memory>
+#include <utility>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/interpreter/basic_block_result.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/instruction_runner.hpp"
-#include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/basic_block.hpp"
 
@@ -17,7 +19,7 @@ using ResultKind = InstructionResult::Kind;
 
 auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
-    SimulationContext& simulation_context, ProcessContext& process_context,
+    SimulationContext& simulation_context, ProcessFrame& frame,
     ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context)
     -> BasicBlockResult {
@@ -27,7 +29,7 @@ auto RunBlock(
     const auto& instr = instructions[i];
 
     auto instruction_result = RunInstruction(
-        instr, simulation_context, process_context, effect, instance_context);
+        instr, simulation_context, frame, effect, instance_context);
 
     switch (instruction_result.kind) {
       case ResultKind::kComplete:

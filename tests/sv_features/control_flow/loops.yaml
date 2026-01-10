@@ -502,3 +502,41 @@ cases:
     expect:
       variables:
         sum: 9
+
+  - name: repeat_with_event_control
+    description: |
+      Test that repeat loop counter survives across event control suspension.
+      This verifies ProcessFrame persistence (the coroutine frame fix).
+    sv: |
+      module Test;
+        logic clk = 0;
+        int counter = 0;
+        always #5 clk = ~clk;
+        initial begin
+          repeat (3) @(posedge clk) begin
+            counter = counter + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 3
+
+  - name: repeat_with_delay
+    description: |
+      Test that repeat loop counter survives across delay suspension.
+    sv: |
+      module Test;
+        int counter = 0;
+        initial begin
+          repeat (4) begin
+            #10;
+            counter = counter + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 4

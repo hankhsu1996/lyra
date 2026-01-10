@@ -2,13 +2,17 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/interpreter/basic_block_runner.hpp"
-#include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/process_result.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/lir/basic_block.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -16,10 +20,10 @@ namespace lyra::interpreter {
 auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect,
+    ProcessFrame& frame, ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context) -> ProcessResult {
   for (const auto& variable : process->variables) {
-    process_context.variable_table.InitializeVariable(variable);
+    frame.variable_table.InitializeVariable(variable);
   }
 
   // Track which blocks we're currently executing (process or function)
@@ -30,7 +34,7 @@ auto RunProcess(
     // get the basic block
     const auto& block = *(*current_blocks)[block_index];
     auto block_result = RunBlock(
-        block, instruction_index, simulation_context, process_context, effect,
+        block, instruction_index, simulation_context, frame, effect,
         instance_context);
 
     switch (block_result.kind) {
@@ -59,7 +63,7 @@ auto RunProcess(
       case BasicBlockResult::Kind::kJump: {
         // Jump within current context (process or function)
         std::optional<size_t> target_idx;
-        const auto* current_func = process_context.CurrentFunction();
+        const auto* current_func = frame.CurrentFunction();
         if (current_func != nullptr) {
           target_idx =
               current_func->FindBlockIndexByLabel(block_result.target_label);
@@ -83,13 +87,14 @@ auto RunProcess(
         }
 
         // Complete the frame with return address and push to stack
-        auto& frame = *block_result.call_frame;
-        frame.return_block_index = block_index;
-        frame.return_instruction_index = block_result.resume_instruction_index;
-        process_context.call_stack.push_back(std::move(frame));
+        auto& call_frame = *block_result.call_frame;
+        call_frame.return_block_index = block_index;
+        call_frame.return_instruction_index =
+            block_result.resume_instruction_index;
+        frame.call_stack.push_back(std::move(call_frame));
 
         // CurrentFunction() now returns the function we're calling
-        const auto* func = process_context.CurrentFunction();
+        const auto* func = frame.CurrentFunction();
 
         // Find the target block in the function
         auto target_idx =
@@ -109,7 +114,7 @@ auto RunProcess(
       case BasicBlockResult::Kind::kReturnFromFunction: {
         // Switch back to caller's blocks (process or parent function).
         // CurrentFunction() reflects the caller after kReturn popped the frame.
-        const auto* caller_func = process_context.CurrentFunction();
+        const auto* caller_func = frame.CurrentFunction();
         if (caller_func == nullptr) {
           // Returning to process
           current_blocks = &process->blocks;
