@@ -18,7 +18,7 @@ jobs:
         uses: bazel-contrib/setup-bazel@0.14.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
+          disk-cache: false
           repository-cache: true
 
       - name: Install Clang 20 toolchain
