@@ -12,6 +12,7 @@
 #include "lyra/common/simulation_region.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
@@ -37,10 +38,14 @@ struct ProcessOrigin {
   std::shared_ptr<InstanceContext> instance;  // Like C++ 'this' pointer
 };
 
+/// ScheduledEvent represents a process scheduled to execute.
+/// The `frame` field is the coroutine frame - it persists across suspension
+/// so that local variables (temps) survive delay/event waits.
 struct ScheduledEvent {
   ProcessOrigin origin;
   std::size_t block_index = 0;
   std::size_t instruction_index = 0;
+  ProcessFrame frame;  // Coroutine frame - persists across suspension
 };
 
 using DelayQueue = std::map<SimulationTime, std::vector<ScheduledEvent>>;

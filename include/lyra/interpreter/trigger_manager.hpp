@@ -8,9 +8,9 @@
 #include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
-#include "lyra/lir/module.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -18,14 +18,16 @@ namespace lyra::interpreter {
 // Forward declarations
 struct ScheduledEvent;
 
-// Info about a waiting process including its instance context.
-// Module for function lookup is accessed via process_instance->module.
+/// Info about a waiting process including its instance context.
+/// Module for function lookup is accessed via process_instance->module.
+/// The `frame` field is the coroutine frame - it persists across suspension.
 struct WaitingProcessInfo {
   std::shared_ptr<InstanceContext> process_instance;  // Where process runs
   std::shared_ptr<InstanceContext> watch_instance;    // Where variable lives
   std::size_t block_index;
   std::size_t instruction_index;
   common::EdgeKind edge_kind;
+  ProcessFrame frame;  // Coroutine frame - persists across suspension
 };
 
 // Composite key for (process, instance) pairs - used for triggering
@@ -92,16 +94,17 @@ class TriggerManager {
   explicit TriggerManager(SimulationContext& context) : context_(context) {
   }
 
-  // Register a process to wait on variable changes
+  // Register a process to wait on variable changes.
   // process_instance: where the process runs (module via
   // process_instance->module) watch_instance: where the variable lives (for
-  // trigger detection)
+  // trigger detection) frame: the coroutine frame to preserve across suspension
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
       const std::shared_ptr<InstanceContext>& process_instance,
       const std::shared_ptr<InstanceContext>& watch_instance,
       const SymbolRef& variable, common::EdgeKind edge_kind,
-      std::size_t block_index, std::size_t instruction_index);
+      std::size_t block_index, std::size_t instruction_index,
+      ProcessFrame frame);
 
   // Process variable changes and return processes that should be triggered
   auto CheckTriggers(const std::vector<ModifiedVariable>& modified_variables)

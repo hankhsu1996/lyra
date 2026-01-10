@@ -5,9 +5,13 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
+#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
 #include "lyra/interpreter/variable_table.hpp"
@@ -20,7 +24,8 @@ void TriggerManager::RegisterWaitingProcess(
     const std::shared_ptr<InstanceContext>& process_instance,
     const std::shared_ptr<InstanceContext>& watch_instance,
     const SymbolRef& variable, common::EdgeKind edge_kind,
-    std::size_t block_index, std::size_t instruction_index) {
+    std::size_t block_index, std::size_t instruction_index,
+    ProcessFrame frame) {
   // Use watch_instance in the key since that's where we detect changes
   ProcessInstanceKey pi_key{.process = process, .instance = watch_instance};
   wait_map_[variable].insert(pi_key);
@@ -34,7 +39,8 @@ void TriggerManager::RegisterWaitingProcess(
       .watch_instance = watch_instance,  // For reading values
       .block_index = block_index,
       .instruction_index = instruction_index,
-      .edge_kind = edge_kind};
+      .edge_kind = edge_kind,
+      .frame = std::move(frame)};  // Preserve coroutine frame
 }
 
 auto TriggerManager::CheckTriggers(
@@ -84,7 +90,7 @@ auto TriggerManager::CheckTriggers(
         continue;
       }
 
-      const auto& wait_info = info_it->second;
+      auto& wait_info = info_it->second;
 
       if (ShouldTrigger(old_value, new_value, wait_info.edge_kind)) {
         events_to_trigger.push_back(
@@ -93,7 +99,9 @@ auto TriggerManager::CheckTriggers(
                     {.process = pi_key.process,
                      .instance = wait_info.process_instance},
                 .block_index = wait_info.block_index,
-                .instruction_index = wait_info.instruction_index});
+                .instruction_index = wait_info.instruction_index,
+                .frame =
+                    std::move(wait_info.frame)});  // Preserve coroutine frame
         triggered_keys.insert(pi_key);
         to_remove.insert(pi_key);
       }
