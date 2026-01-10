@@ -1720,12 +1720,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kAssignment: {
       const auto& assign = mir::As<mir::AssignmentExpression>(expr);
       if (assign.is_non_blocking) {
-        // TODO(hankhsu): Support NBA for array elements
-        out_ << "this->ScheduleNba(&" << assign.target.symbol->name;
-        // Append underscore for port reference members (Google style)
-        if (port_symbols_.contains(assign.target.symbol)) {
-          out_ << "_";
+        if (assign.target.IsPacked() && assign.target.IsElementSelect()) {
+          throw common::InternalError(
+              "Codegen", "NBA to packed array element not yet supported");
         }
+        out_ << "this->ScheduleNba(&";
+        EmitAssignmentTarget(assign.target);
         out_ << ", ";
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
