@@ -29,7 +29,9 @@ auto Interpreter::RunFromSource(
     const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromString(code);
-  return RunWithCompilation(std::move(compilation), top, options);
+  auto source_manager = slang_frontend.GetSourceManagerPtr();
+  return RunWithCompilation(
+      std::move(compilation), std::move(source_manager), top, options);
 }
 
 auto Interpreter::RunFromFiles(
@@ -37,11 +39,14 @@ auto Interpreter::RunFromFiles(
     const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
   auto compilation = slang_frontend.LoadFromFiles(paths);
-  return RunWithCompilation(std::move(compilation), top, options);
+  auto source_manager = slang_frontend.GetSourceManagerPtr();
+  return RunWithCompilation(
+      std::move(compilation), std::move(source_manager), top, options);
 }
 
 auto Interpreter::RunWithCompilation(
     std::unique_ptr<slang::ast::Compilation> compilation,
+    std::shared_ptr<slang::SourceManager> source_manager,
     const std::string& top, const InterpreterOptions& options)
     -> InterpreterResult {
   // Get modules from AST. If top is specified, returns hierarchy in order.
@@ -83,7 +88,8 @@ auto Interpreter::RunWithCompilation(
       .compilation = std::move(compilation),
       .context = std::move(context),
       .lir_context = lir_modules.back()->context,  // Last is top module
-      .top_instance = runner.GetTopInstance()};
+      .top_instance = runner.GetTopInstance(),
+      .source_manager = std::move(source_manager)};
 }
 
 }  // namespace lyra::interpreter

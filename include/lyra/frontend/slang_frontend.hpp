@@ -39,6 +39,11 @@ class SlangFrontend {
     return *source_manager_;
   }
 
+  [[nodiscard]] auto GetSourceManagerPtr() const
+      -> std::shared_ptr<slang::SourceManager> {
+    return source_manager_;
+  }
+
  private:
   std::shared_ptr<slang::SourceManager> source_manager_;
   std::vector<std::shared_ptr<slang::syntax::SyntaxTree>> owned_trees_;
