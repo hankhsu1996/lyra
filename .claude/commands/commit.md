@@ -53,13 +53,15 @@ Skip formatting if files are already clean (no diff after format).
 
 Bullet points should describe **what changed**, not background context or why the old state was bad.
 
-**IMPORTANT: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By". These duplicate badly when squash-merging.
+**CRITICAL: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By", no author credits. These duplicate badly when squash-merging. The commit message should ONLY contain the summary line and bullet points.
 
 **IMPORTANT: Focus on features, not implementation journey.** Don't reference internal tracking like "Phase 1", "Step 2", or planning documents.
 
 ## Branch Rules
 
 **CRITICAL: Never commit directly to main.** If on main, you MUST ask the user for a branch name before proceeding. Use AskUserQuestion to get the branch name.
+
+**CRITICAL: Use `git switch`, NOT `git checkout`.** To create a new branch: `git switch -c <branch-name>`
 
 **Branch name format:** `<type>/<short-description>`
 
