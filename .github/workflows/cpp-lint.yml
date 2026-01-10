@@ -13,8 +13,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed C++ files
+        id: changed-files
+        run: |
+          FILES=$(git diff --name-only origin/main...HEAD -- '*.cpp' '*.hpp' | tr '\n' ' ')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          if [ -z "$FILES" ]; then
+            echo "No C++ files changed"
+          else
+            echo "Changed files: $FILES"
+          fi
 
       - name: Setup Bazel
+        if: steps.changed-files.outputs.files != ''
         uses: bazel-contrib/setup-bazel@0.14.0
         with:
           bazelisk-cache: true
@@ -22,6 +36,7 @@ jobs:
           repository-cache: true
 
       - name: Install Clang 20 toolchain
+        if: steps.changed-files.outputs.files != ''
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           . /etc/lsb-release
@@ -34,23 +49,32 @@ jobs:
           sudo update-alternatives --set clang /usr/bin/clang-20
 
       - name: Verify tool versions
+        if: steps.changed-files.outputs.files != ''
         run: |
           clang++ --version
           clang-format-20 --version
           clang-tidy-20 --version
+          which run-clang-tidy-20
 
       - name: Check clang-format
+        if: steps.changed-files.outputs.files != ''
         run: |
-          find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
+          echo ${{ steps.changed-files.outputs.files }} | xargs clang-format-20 --dry-run --Werror
 
       - name: Build (for headers)
+        if: steps.changed-files.outputs.files != ''
         run: |
           bazel build //...
 
       - name: Generate compile_commands.json
+        if: steps.changed-files.outputs.files != ''
         run: |
           bazel run @hedron_compile_commands//:refresh_all
 
       - name: Run clang-tidy
+        if: steps.changed-files.outputs.files != ''
         run: |
-          find src include -name '*.cpp' | xargs -P $(nproc) -I {} clang-tidy-20 -p . --header-filter='^.*(src|include)/lyra/.*' {}
+          CPP_FILES=$(echo ${{ steps.changed-files.outputs.files }} | tr ' ' '\n' | grep '\.cpp$' | tr '\n' ' ')
+          if [ -n "$CPP_FILES" ]; then
+            run-clang-tidy-20 -p . -j $(nproc) -header-filter='^.*(src|include)/lyra/.*' $CPP_FILES
+          fi
