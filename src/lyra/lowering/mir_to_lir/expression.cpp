@@ -354,9 +354,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         const auto& first_arg = *system_call.arguments[0];
         if (first_arg.kind == mir::Expression::Kind::kLiteral) {
           const auto& lit = mir::As<mir::LiteralExpression>(first_arg);
-          first_operand_is_string_literal =
-              lit.literal.is_string_literal ||
-              lit.literal.type.kind == common::Type::Kind::kString;
+          first_operand_is_string_literal = lit.literal.IsStringLiteral();
         }
       }
 
@@ -381,16 +379,14 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       if (is_monitor) {
         // Check if first argument is a format string (for $monitor)
-        // Format strings are string literals containing '%' and should not
-        // be tracked for value changes.
-        // Note: Short strings may be encoded as integers, so we check
-        // is_string_literal flag rather than value.IsString().
+        // Format strings are string literals and should not be tracked for
+        // value changes.
         const mir::Expression* format_literal = nullptr;
         if (!system_call.arguments.empty()) {
           const auto& first_arg = system_call.arguments[0];
           if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
             const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
-            if (lit.literal.is_string_literal) {
+            if (lit.literal.IsStringLiteral()) {
               format_literal = first_arg.get();
             }
           }
@@ -442,7 +438,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         auto instruction = Instruction::SystemCallWithMonitor(
             system_call.name, std::move(arguments),
             std::move(check_process_name));
-        instruction.first_operand_is_string_literal = (format_literal != nullptr);
+        instruction.first_operand_is_string_literal =
+            (format_literal != nullptr);
         builder.AddInstruction(std::move(instruction));
         return builder.AllocateTemp("sys", system_call.type);
       }
