@@ -1,14 +1,60 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include "lyra/sdk/bit.hpp"
 #include "lyra/sdk/wide_bit.hpp"
 
 namespace lyra::sdk {
+
+// FixedString: A structural type for compile-time string template parameters.
+// C++20 requires template non-type parameters to be "structural types" (all
+// members public). std::string doesn't qualify, but this fixed-size wrapper
+// does.
+//
+// Usage:
+//   template <FixedString Name>
+//   class Module { ... };
+//
+//   Module<"hello"> m;  // Implicit conversion from string literal
+//
+template <std::size_t N>
+struct FixedString {
+  // C-style array required for structural type (std::array has private members)
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+  char value[N]{};
+
+  // Implicit conversion required for template parameter syntax:
+  // Module<"hello"> relies on implicit conversion from const char(&)[N]
+  // NOLINTNEXTLINE(google-explicit-constructor,cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+  constexpr FixedString(const char (&str)[N]) {
+    std::copy_n(str, N, value);
+  }
+
+  // Runtime access as string_view (excludes null terminator)
+  [[nodiscard]] constexpr auto Str() const noexcept -> std::string_view {
+    return {value, N > 0 ? N - 1 : 0};
+  }
+
+  // Runtime access as std::string
+  [[nodiscard]] auto ToString() const -> std::string {
+    return std::string(value, N > 0 ? N - 1 : 0);
+  }
+
+  // Comparison for template parameter matching
+  [[nodiscard]] constexpr auto operator==(const FixedString&) const
+      -> bool = default;
+};
+
+// Deduction guide: FixedString{"hello"} deduces FixedString<6>
+template <std::size_t N>
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+FixedString(const char (&)[N]) -> FixedString<N>;
 
 // String replication: creates count copies of the input string.
 // Used for string replication operator {n{s}} per LRM 11.4.12.2.

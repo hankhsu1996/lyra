@@ -136,7 +136,9 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
 }
 
 auto Codegen::ToCppRawType(const common::Type& type) -> std::string {
-  // Returns raw C++ type without SDK aliases (for template parameters)
+  // Returns C++ structural types suitable for template parameters.
+  // C++20 requires non-type template parameters to be "structural types"
+  // (public members only). std::string doesn't qualify, so we use FixedString.
   switch (type.kind) {
     case common::Type::Kind::kVoid:
       return "void";
@@ -145,7 +147,8 @@ auto Codegen::ToCppRawType(const common::Type& type) -> std::string {
     case common::Type::Kind::kShortReal:
       return "float";
     case common::Type::Kind::kString:
-      return "std::string";
+      // FixedString is a structural type; size is deduced from the literal
+      return "lyra::sdk::FixedString";
     case common::Type::Kind::kIntegral: {
       auto data = std::get<common::IntegralData>(type.data);
       size_t width = data.bit_width;
