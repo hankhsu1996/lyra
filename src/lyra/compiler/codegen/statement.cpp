@@ -88,13 +88,20 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         }
       }
       // Check if expression is an assignment that produces an unused value
-      // (struct field or packed element assignment uses comma expression)
+      // (packed struct field or packed element assignment uses comma
+      // expression)
       bool needs_void_cast = false;
       if (expr_stmt.expression->kind == mir::Expression::Kind::kAssignment) {
         const auto& assign =
             mir::As<mir::AssignmentExpression>(*expr_stmt.expression);
+        // Only packed structs need void cast; unpacked structs use direct
+        // assignment
+        bool is_packed_struct_field =
+            assign.target.IsStructFieldAssignment() &&
+            assign.target.base_type &&
+            !assign.target.base_type->IsUnpackedStruct();
         needs_void_cast =
-            assign.target.IsStructFieldAssignment() ||
+            is_packed_struct_field ||
             (assign.target.IsPacked() && assign.target.IsElementSelect());
       }
       Indent();

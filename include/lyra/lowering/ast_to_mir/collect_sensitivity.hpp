@@ -1,6 +1,5 @@
 #pragma once
 
-#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/symbol.hpp"
@@ -123,6 +122,12 @@ class SensitivityCollector : public mir::MirVisitor {
     expression.receiver->Accept(*this);
     for (const auto& arg : expression.args) {
       arg->Accept(*this);
+    }
+  }
+
+  void Visit(const mir::UnpackedStructLiteralExpression& expression) override {
+    for (const auto& field_value : expression.field_values) {
+      field_value->Accept(*this);
     }
   }
 

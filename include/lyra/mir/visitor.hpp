@@ -22,6 +22,7 @@ class FunctionCallExpression;
 class MemberAccessExpression;
 class NewArrayExpression;
 class MethodCallExpression;
+class UnpackedStructLiteralExpression;
 
 class Statement;
 class VariableDeclarationStatement;
@@ -68,6 +69,7 @@ class MirVisitor {
   virtual void Visit(const MemberAccessExpression&) = 0;
   virtual void Visit(const NewArrayExpression&) = 0;
   virtual void Visit(const MethodCallExpression&) = 0;
+  virtual void Visit(const UnpackedStructLiteralExpression&) = 0;
 
   virtual void Visit(const VariableDeclarationStatement&) = 0;
   virtual void Visit(const AssignStatement&) = 0;

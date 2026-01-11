@@ -99,8 +99,8 @@ auto LowerStatement(
           // Unpacked array element assignment: array[index] = value
           assert(target.indices.size() == 1);
           auto index = LowerExpression(*target.indices[0], builder);
-          auto instruction = Instruction::StoreUnpackedElement(
-              target.symbol, index, result_value);
+          auto instruction = Instruction::StoreElement(
+              lir::Operand::Variable(target.symbol), index, result_value);
           builder.AddInstruction(std::move(instruction));
         }
         break;

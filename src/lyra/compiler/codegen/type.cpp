@@ -116,6 +116,20 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       }
       return std::format("Bit<{}>", width);
     }
+    case common::Type::Kind::kUnpackedStruct: {
+      // Unpacked structs are emitted as C++ structs
+      // Generate a unique struct type name based on the field signature
+      const auto& struct_data = std::get<common::UnpackedStructData>(type.data);
+
+      // Build field list as part of the struct definition
+      std::string struct_def = "struct { ";
+      for (const auto& field : struct_data.fields) {
+        struct_def +=
+            std::format("{} {}; ", ToCppType(*field.field_type), field.name);
+      }
+      struct_def += "}";
+      return struct_def;
+    }
   }
   throw common::InternalError(
       "ToCppType", std::format("unhandled type kind: {}", type.ToString()));

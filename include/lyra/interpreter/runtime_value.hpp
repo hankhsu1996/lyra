@@ -186,6 +186,10 @@ struct RuntimeValue {
            type.kind == common::Type::Kind::kDynamicArray;
   }
 
+  [[nodiscard]] auto IsUnpackedStruct() const -> bool {
+    return type.kind == common::Type::Kind::kUnpackedStruct;
+  }
+
   [[nodiscard]] auto AsArray() const -> const std::vector<RuntimeValue>& {
     return *std::get<ArrayStorage>(value);
   }
@@ -202,10 +206,22 @@ struct RuntimeValue {
     AsArray()[index] = std::move(element);
   }
 
+  // Struct field accessors - unpacked structs use ArrayStorage indexed by field
+  // position
+  [[nodiscard]] auto GetField(size_t field_index) const -> const RuntimeValue& {
+    assert(IsUnpackedStruct() && "GetField requires unpacked struct");
+    return (*std::get<ArrayStorage>(value))[field_index];
+  }
+
+  auto SetField(size_t field_index, RuntimeValue field_value) -> void {
+    assert(IsUnpackedStruct() && "SetField requires unpacked struct");
+    (*std::get<ArrayStorage>(value))[field_index] = std::move(field_value);
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
-    if (IsArray()) {
+    if (IsArray() || IsUnpackedStruct()) {
       std::string result = "{";
-      const auto& arr = AsArray();
+      const auto& arr = *std::get<ArrayStorage>(value);
       for (size_t i = 0; i < arr.size(); ++i) {
         if (i > 0) {
           result += ", ";
@@ -294,13 +310,14 @@ struct RuntimeValue {
   }
 
   // Note: Can't use default comparison because ArrayStorage is shared_ptr
-  // and we want value equality for arrays
+  // and we want value equality for arrays and structs
   [[nodiscard]] auto operator==(const RuntimeValue& rhs) const -> bool {
     if (type != rhs.type) {
       return false;
     }
-    if (IsArray()) {
-      return AsArray() == rhs.AsArray();
+    if (IsArray() || IsUnpackedStruct()) {
+      return *std::get<ArrayStorage>(value) ==
+             *std::get<ArrayStorage>(rhs.value);
     }
     return AsScalar() == rhs.AsScalar();
   }
@@ -381,6 +398,19 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
         return IntegralSigned(0, data.bit_width);
       }
       return IntegralUnsigned(0, data.bit_width);
+    }
+    case common::Type::Kind::kUnpackedStruct: {
+      // Unpacked structs use ArrayStorage indexed by field position
+      const auto& struct_data = std::get<common::UnpackedStructData>(type.data);
+      std::vector<RuntimeValue> fields;
+      fields.reserve(struct_data.fields.size());
+      for (const auto& field : struct_data.fields) {
+        fields.push_back(DefaultValueForType(*field.field_type));
+      }
+      return RuntimeValue{
+          .type = type,
+          .value =
+              std::make_shared<std::vector<RuntimeValue>>(std::move(fields))};
     }
   }
   throw common::InternalError(

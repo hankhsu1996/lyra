@@ -151,6 +151,26 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
         *element_result, array_type.range.width(), array_type.range.lower());
   }
 
+  // Handle unpacked struct
+  if (type.kind == slang::ast::SymbolKind::UnpackedStructType) {
+    const auto& struct_type = type.as<slang::ast::UnpackedStructType>();
+
+    std::vector<common::UnpackedStructField> fields;
+    for (const auto* field : struct_type.fields) {
+      auto field_type_result = LowerType(field->getType(), source_range);
+      if (!field_type_result) {
+        return field_type_result;
+      }
+
+      fields.push_back(
+          common::UnpackedStructField{
+              .name = std::string(field->name),
+              .field_type = std::make_shared<Type>(*field_type_result)});
+    }
+
+    return Type::UnpackedStruct(std::move(fields));
+  }
+
   return std::unexpected(
       Diagnostic::Error(
           source_range, fmt::format("unsupported type '{}'", type.toString())));

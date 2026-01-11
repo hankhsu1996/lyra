@@ -40,6 +40,7 @@
 #include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -1172,103 +1173,137 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadUnpackedElement: {
-      // Load element from unpacked array variable: result = array[index]
+    case lir::InstructionKind::kLoadElement: {
+      // Polymorphic load: result = base[index]
+      // base can be variable or temp, value can be array or struct
       assert(instr.operands.size() == 2);
-      assert(instr.operands[0].IsVariable());
       assert(instr.result.has_value());
 
-      auto array_value = read_variable(instr.operands[0]);
-      assert(array_value.IsArray());
+      RuntimeValue base_value;
+      if (instr.operands[0].IsVariable()) {
+        base_value = read_variable(instr.operands[0]);
+      } else {
+        base_value = get_temp(instr.operands[0]);
+      }
 
       auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "array index cannot be wide");
-      auto actual_idx =
-          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+      assert(!index_value.IsWide() && "element index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
 
-      temp_table.Write(
-          instr.result.value(), array_value.GetElement(actual_idx));
+      if (base_value.IsArray()) {
+        auto actual_idx =
+            ComputeArrayIndex(base_value, static_cast<int64_t>(index));
+        temp_table.Write(
+            instr.result.value(), base_value.GetElement(actual_idx));
+      } else {
+        assert(base_value.IsUnpackedStruct());
+        temp_table.Write(instr.result.value(), base_value.GetField(index));
+      }
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreUnpackedElement: {
-      // Store element to unpacked array variable: array[index] = value
+    case lir::InstructionKind::kStoreElement: {
+      // Polymorphic store: base[index] = value
+      // base can be variable or temp, value can be array or struct
       assert(instr.operands.size() == 3);
-      assert(instr.operands[0].IsVariable());
-
-      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-
-      // Check if this is a local variable (no triggers needed)
-      bool is_local = false;
-      if (!frame.call_stack.empty()) {
-        auto& call_frame = frame.call_stack.back();
-        is_local = call_frame.local_variables.contains(symbol);
-      }
-      if (!is_local) {
-        is_local = process_variable_table.Exists(symbol);
-      }
-
-      // RuntimeValue uses shared_ptr for array storage, so modifications
-      // through this copy will affect the original in the variable table
-      auto array_value = read_variable(instr.operands[0]);
-      assert(array_value.IsArray());
-
-      // For non-local variables, snapshot old value BEFORE modification.
-      // This is critical: arrays use shared_ptr, so in-place modification
-      // would make old and new values identical if we snapshot after.
-      if (!is_local) {
-        auto [target_symbol, target_instance] = resolve_binding(symbol);
-        if (target_instance != nullptr) {
-          target_instance->UpdatePrevious(target_symbol, array_value);
-        } else if (instance_context != nullptr) {
-          instance_context->UpdatePrevious(symbol, array_value);
-        }
-        // Note: global table case handled below
-      }
 
       auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "array index cannot be wide");
-      auto actual_idx =
-          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+      assert(!index_value.IsWide() && "element index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
+      auto element_value = get_temp(instr.operands[2]);
 
-      array_value.SetElement(actual_idx, get_temp(instr.operands[2]));
+      if (instr.operands[0].IsVariable()) {
+        // Store to variable - needs sensitivity tracking
+        const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
 
-      // Record modification for trigger system
-      if (!is_local) {
-        auto [target_symbol, target_instance] = resolve_binding(symbol);
-        if (target_instance != nullptr) {
-          effect.RecordVariableModification(target_symbol, target_instance);
-        } else if (instance_context != nullptr) {
-          effect.RecordVariableModification(symbol, instance_context);
+        // Check if this is a local variable (no triggers needed)
+        bool is_local = false;
+        if (!frame.call_stack.empty()) {
+          auto& call_frame = frame.call_stack.back();
+          is_local = call_frame.local_variables.contains(symbol);
+        }
+        if (!is_local) {
+          is_local = process_variable_table.Exists(symbol);
+        }
+
+        // Read aggregate value (shared_ptr semantics - modifications affect
+        // original)
+        auto aggregate_value = read_variable(instr.operands[0]);
+
+        // Snapshot old value BEFORE modification for non-local variables
+        if (!is_local) {
+          auto [target_symbol, target_instance] = resolve_binding(symbol);
+          if (target_instance != nullptr) {
+            target_instance->UpdatePrevious(target_symbol, aggregate_value);
+          } else if (instance_context != nullptr) {
+            instance_context->UpdatePrevious(symbol, aggregate_value);
+          }
+        }
+
+        // Perform the element store
+        if (aggregate_value.IsArray()) {
+          auto actual_idx =
+              ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
+          aggregate_value.SetElement(actual_idx, element_value);
         } else {
-          effect.RecordVariableModification(symbol);
+          assert(aggregate_value.IsUnpackedStruct());
+          aggregate_value.SetField(index, element_value);
+        }
+
+        // Record modification for trigger system
+        if (!is_local) {
+          auto [target_symbol, target_instance] = resolve_binding(symbol);
+          if (target_instance != nullptr) {
+            effect.RecordVariableModification(target_symbol, target_instance);
+          } else if (instance_context != nullptr) {
+            effect.RecordVariableModification(symbol, instance_context);
+          } else {
+            effect.RecordVariableModification(symbol);
+          }
+        }
+      } else {
+        // Store to temp - no sensitivity tracking needed
+        auto aggregate_value = get_temp(instr.operands[0]);
+
+        if (aggregate_value.IsArray()) {
+          auto actual_idx =
+              ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
+          aggregate_value.SetElement(actual_idx, element_value);
+        } else {
+          assert(aggregate_value.IsUnpackedStruct());
+          aggregate_value.SetField(index, element_value);
         }
       }
 
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreUnpackedElementNonBlocking: {
-      // NBA to unpacked array element: array[index] <= value
-      // Queue the write to be applied in NBA region
+    case lir::InstructionKind::kStoreElementNonBlocking: {
+      // NBA to element: base[index] <= value
+      // Always targets a variable (NBA must write to storage)
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
 
       const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-      auto array_value = read_variable(instr.operands[0]);
-      assert(array_value.IsArray());
+      auto aggregate_value = read_variable(instr.operands[0]);
 
       auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "array index cannot be wide");
-      auto actual_idx =
-          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+      assert(!index_value.IsWide() && "element index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
+
+      // For arrays, compute actual index with bounds handling
+      size_t actual_idx = index;
+      if (aggregate_value.IsArray()) {
+        actual_idx =
+            ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
+      }
 
       auto element_value = get_temp(instr.operands[2]);
 
       // Resolve binding for port outputs
       auto [target_symbol, target_instance] = resolve_binding(symbol);
 
-      // Queue NBA action with array index
+      // Queue NBA action with element index
       if (target_instance != nullptr) {
         effect.RecordNbaAction(
             {.variable = target_symbol,
@@ -1292,43 +1327,14 @@ auto RunInstruction(
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadUnpackedElementFromTemp: {
-      // Load element from unpacked array in temp: result = array_temp[index]
-      // Used for multi-dimensional array access (e.g., arr[i][j])
-      assert(instr.operands.size() == 2);
-      assert(instr.operands[0].IsTemp());
+    case lir::InstructionKind::kCreateAggregate: {
+      // Create default-initialized aggregate (struct or array)
       assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
 
-      auto array_value = get_temp(instr.operands[0]);
-      assert(array_value.IsArray());
-
-      auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "array index cannot be wide");
-      auto actual_idx =
-          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
-
-      temp_table.Write(
-          instr.result.value(), array_value.GetElement(actual_idx));
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kStoreUnpackedElementToTemp: {
-      // Store element to unpacked array in temp: array_temp[index] = value
-      // Used for multi-dimensional array writes (copy-modify-store pattern)
-      assert(instr.operands.size() == 3);
-      assert(instr.operands[0].IsTemp());
-
-      // RuntimeValue uses shared_ptr for array storage, so modifications
-      // through this copy will affect the original in the temp table
-      auto array_value = get_temp(instr.operands[0]);
-      assert(array_value.IsArray());
-
-      auto index_value = get_temp(instr.operands[1]);
-      assert(!index_value.IsWide() && "array index cannot be wide");
-      auto actual_idx =
-          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
-
-      array_value.SetElement(actual_idx, get_temp(instr.operands[2]));
+      auto aggregate_value =
+          RuntimeValue::DefaultValueForType(*instr.result_type);
+      temp_table.Write(instr.result.value(), std::move(aggregate_value));
       return InstructionResult::Continue();
     }
 

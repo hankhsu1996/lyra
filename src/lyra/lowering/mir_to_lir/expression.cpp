@@ -121,7 +121,27 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       if (assignment.target.IsStructFieldAssignment()) {
-        // Struct field assignment: my_struct.field = value
+        // Check if this is an unpacked struct field assignment
+        // Unpacked structs have base_type of kUnpackedStruct
+        if (assignment.target.base_type &&
+            assignment.target.base_type->IsUnpackedStruct()) {
+          // Unpacked struct field assignment: struct_var.field = value
+          // Emit literal for field index, then use unified StoreElement
+          size_t field_index = *assignment.target.field_bit_offset;
+          auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+          auto index_literal = builder.InternLiteral(
+              common::Literal::Int(static_cast<int32_t>(field_index)));
+          builder.AddInstruction(
+              Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+
+          auto instruction = Instruction::StoreElement(
+              Operand::Variable(assignment.target.symbol), index_temp, value,
+              assignment.is_non_blocking);
+          builder.AddInstruction(std::move(instruction));
+          return value;
+        }
+
+        // Packed struct field assignment: my_struct.field = value
         // Create literal for field bit offset
         auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
         auto offset_literal = builder.InternLiteral(
@@ -181,9 +201,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
           if (num_indices == 1) {
             // 1D: simple store
-            auto instruction = Instruction::StoreUnpackedElement(
-                assignment.target.symbol, index_temps[0], value,
-                assignment.is_non_blocking);
+            auto instruction = Instruction::StoreElement(
+                Operand::Variable(assignment.target.symbol), index_temps[0],
+                value, assignment.is_non_blocking);
             builder.AddInstruction(std::move(instruction));
           } else {
             // Multi-dimensional: copy-modify-store pattern
@@ -200,15 +220,15 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
               if (i == 0) {
                 // First level: load from variable
-                auto instr = Instruction::LoadUnpackedElement(
-                    temp, assignment.target.symbol, index_temps[i],
-                    element_type);
+                auto instr = Instruction::LoadElement(
+                    temp, Operand::Variable(assignment.target.symbol),
+                    index_temps[i], element_type);
                 builder.AddInstruction(std::move(instr));
               } else {
                 // Subsequent levels: load from temp
-                auto instr = Instruction::LoadUnpackedElementFromTemp(
-                    temp, intermediate_temps.back(), index_temps[i],
-                    element_type);
+                auto instr = Instruction::LoadElement(
+                    temp, Operand::Temp(intermediate_temps.back()),
+                    index_temps[i], element_type);
                 builder.AddInstruction(std::move(instr));
               }
 
@@ -217,8 +237,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
             }
 
             // Store value to the innermost array using the last index
-            auto store_instr = Instruction::StoreUnpackedElementToTemp(
-                intermediate_temps.back(), index_temps.back(), value);
+            auto store_instr = Instruction::StoreElement(
+                Operand::Temp(intermediate_temps.back()), index_temps.back(),
+                value);
             builder.AddInstruction(std::move(store_instr));
 
             // Store back intermediate arrays in reverse order (3D+).
@@ -229,16 +250,16 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
             auto num_intermediates =
                 static_cast<int>(intermediate_temps.size());
             for (int i = num_intermediates - 1; i >= 1; --i) {
-              auto instr = Instruction::StoreUnpackedElementToTemp(
-                  intermediate_temps[i - 1], index_temps[i],
+              auto instr = Instruction::StoreElement(
+                  Operand::Temp(intermediate_temps[i - 1]), index_temps[i],
                   intermediate_temps[i]);
               builder.AddInstruction(std::move(instr));
             }
 
             // Store back to the base variable
-            auto final_store = Instruction::StoreUnpackedElement(
-                assignment.target.symbol, index_temps[0], intermediate_temps[0],
-                assignment.is_non_blocking);
+            auto final_store = Instruction::StoreElement(
+                Operand::Variable(assignment.target.symbol), index_temps[0],
+                intermediate_temps[0], assignment.is_non_blocking);
             builder.AddInstruction(std::move(final_store));
           }
         }
@@ -291,16 +312,16 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         // Direct variable access: arr[i]
         const auto& array_id =
             mir::As<mir::IdentifierExpression>(*select.value);
-        auto instruction = Instruction::LoadUnpackedElement(
-            result, array_id.symbol, index, expression.type);
+        auto instruction = Instruction::LoadElement(
+            result, Operand::Variable(array_id.symbol), index, expression.type);
         builder.AddInstruction(std::move(instruction));
         return result;
       }
 
       // Nested access (e.g., arr[i][j]): recursively lower the array expression
       auto array_temp = LowerExpression(*select.value, builder);
-      auto instruction = Instruction::LoadUnpackedElementFromTemp(
-          result, array_temp, index, expression.type);
+      auto instruction = Instruction::LoadElement(
+          result, Operand::Temp(array_temp), index, expression.type);
       builder.AddInstruction(std::move(instruction));
       return result;
     }
@@ -615,6 +636,29 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& member = mir::As<mir::MemberAccessExpression>(expression);
       assert(member.value);
 
+      // Check if this is an unpacked struct access
+      if (member.value->type.IsUnpackedStruct()) {
+        auto value = LowerExpression(*member.value, builder);
+        auto result = builder.AllocateTemp("field", expression.type);
+
+        // For unpacked struct: bit_offset is reused as field_index
+        size_t field_index = member.bit_offset;
+
+        // Emit literal for field index
+        auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+        auto index_literal = builder.InternLiteral(
+            Literal::Int(static_cast<int32_t>(field_index)));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+
+        // Use unified LoadElement with temp operand
+        builder.AddInstruction(
+            Instruction::LoadElement(
+                result, Operand::Temp(value), index_temp, expression.type));
+        return result;
+      }
+
+      // Packed struct: use bit extraction
       auto value = LowerExpression(*member.value, builder);
 
       // Create a literal for the bit offset (LSB position)
@@ -671,6 +715,32 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           Instruction::MethodCall(
               mc.method_name, receiver, result, expression.type, step,
               std::move(lir_members)));
+      return result;
+    }
+
+    case mir::Expression::Kind::kUnpackedStructLiteral: {
+      const auto& lit =
+          mir::As<mir::UnpackedStructLiteralExpression>(expression);
+      // Create struct literal by storing field values into a new struct
+      auto result = builder.AllocateTemp("struct_lit", expression.type);
+      builder.AddInstruction(
+          Instruction::CreateAggregate(result, expression.type));
+
+      for (size_t i = 0; i < lit.field_values.size(); ++i) {
+        auto field_value = LowerExpression(*lit.field_values[i], builder);
+
+        // Emit literal for field index
+        auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+        auto index_literal =
+            builder.InternLiteral(Literal::Int(static_cast<int32_t>(i)));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+
+        // Use unified StoreElement with temp operand
+        builder.AddInstruction(
+            Instruction::StoreElement(
+                Operand::Temp(result), index_temp, field_value));
+      }
       return result;
     }
   }

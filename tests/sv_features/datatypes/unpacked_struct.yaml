@@ -1,0 +1,393 @@
+feature: unpacked_struct
+description: Unpacked struct support - field access, assignment, and literals
+
+cases:
+  - name: struct_field_read
+    description: Read individual struct fields
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s.a = 10;
+          s.b = 20;
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 10
+        result_b: 20
+
+  - name: struct_field_write
+    description: Write individual struct fields
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s.a = 100;
+          s.b = 200;
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 100
+        result_b: 200
+
+  - name: struct_literal_positional
+    description: Struct literal with positional values
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{30, 40};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 30
+        result_b: 40
+
+  - name: struct_literal_named
+    description: Struct literal with named fields
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{a: 50, b: 60};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 50
+        result_b: 60
+
+  - name: struct_literal_named_reverse_order
+    description: Named fields can be in any order
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{b: 80, a: 70};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 70
+        result_b: 80
+
+  - name: struct_three_fields
+    description: Struct with three fields
+    sv: |
+      module Test;
+        typedef struct {
+          int x;
+          int y;
+          int z;
+        } vec3_t;
+        vec3_t v;
+        int result_x, result_y, result_z, result_sum;
+        initial begin
+          v = '{10, 20, 30};
+          result_x = v.x;
+          result_y = v.y;
+          result_z = v.z;
+          result_sum = v.x + v.y + v.z;
+        end
+      endmodule
+    expect:
+      variables:
+        result_x: 10
+        result_y: 20
+        result_z: 30
+        result_sum: 60
+
+  - name: struct_mixed_types
+    description: Struct with different field types
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          bit [7:0] b;
+          logic [15:0] c;
+        } mixed_t;
+        mixed_t m;
+        int result_a, result_b, result_c;
+        initial begin
+          m = '{1000, 8'hFF, 16'hABCD};
+          result_a = m.a;
+          result_b = m.b;
+          result_c = m.c;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 1000
+        result_b: 255
+        result_c: 43981
+
+  - name: struct_field_modify
+    description: Modify one field without affecting others
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{100, 200};
+          s.a = 999;
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 999
+        result_b: 200
+
+  - name: struct_field_arithmetic
+    description: Arithmetic with struct fields
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_sum, result_diff, result_prod;
+        initial begin
+          s = '{15, 5};
+          result_sum = s.a + s.b;
+          result_diff = s.a - s.b;
+          result_prod = s.a * s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_sum: 20
+        result_diff: 10
+        result_prod: 75
+
+  - name: struct_typedef_alias
+    description: Typedef alias for struct type
+    sv: |
+      module Test;
+        typedef struct {
+          int x;
+          int y;
+        } point_t;
+        typedef point_t coord_t;
+        coord_t p;
+        int result_sum;
+        initial begin
+          p = '{5, 10};
+          result_sum = p.x + p.y;
+        end
+      endmodule
+    expect:
+      variables:
+        result_sum: 15
+
+  - name: struct_copy
+    description: Copy one struct to another
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s1, s2;
+        int result_a, result_b;
+        initial begin
+          s1 = '{42, 84};
+          s2 = s1;
+          result_a = s2.a;
+          result_b = s2.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 42
+        result_b: 84
+
+  - name: struct_copy_independence
+    description: Copied structs are independent (value semantics)
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s1, s2;
+        int result_s1_a, result_s2_a;
+        initial begin
+          s1 = '{10, 20};
+          s2 = s1;
+          s1.a = 999;
+          result_s1_a = s1.a;
+          result_s2_a = s2.a;
+        end
+      endmodule
+    expect:
+      variables:
+        result_s1_a: 999
+        result_s2_a: 10
+
+  - name: struct_default_init
+    description: Struct fields default to zero
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 0
+        result_b: 0
+
+  - name: struct_bit_field
+    description: Struct with bit vector field
+    sv: |
+      module Test;
+        typedef struct {
+          bit [31:0] data;
+          bit [7:0] tag;
+        } tagged_t;
+        tagged_t t;
+        int result_data, result_tag;
+        initial begin
+          t = '{32'hDEADBEEF, 8'hAB};
+          result_data = t.data;
+          result_tag = t.tag;
+        end
+      endmodule
+    expect:
+      variables:
+        result_data: -559038737
+        result_tag: 171
+
+  - name: struct_field_in_expression
+    description: Struct fields used in complex expressions
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{6, 7};
+          result = (s.a * 2) + (s.b * 3);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 33
+
+  - name: struct_field_as_condition
+    description: Struct field used as condition
+    sv: |
+      module Test;
+        typedef struct {
+          int flag;
+          int value;
+        } flagged_t;
+        flagged_t f;
+        int result;
+        initial begin
+          f = '{1, 100};
+          result = f.flag ? f.value : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: struct_reassignment
+    description: Multiple assignments to same struct
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{1, 2};
+          s = '{3, 4};
+          s = '{5, 6};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 5
+        result_b: 6
+
+  - name: struct_multiple_variables
+    description: Multiple struct variables of same type
+    sv: |
+      module Test;
+        typedef struct {
+          int x;
+          int y;
+        } point_t;
+        point_t p1, p2, p3;
+        int result;
+        initial begin
+          p1 = '{1, 2};
+          p2 = '{3, 4};
+          p3 = '{5, 6};
+          result = p1.x + p2.y + p3.x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10

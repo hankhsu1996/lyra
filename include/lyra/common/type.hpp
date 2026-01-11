@@ -70,6 +70,24 @@ struct PackedStructData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+// Field metadata for unpacked structs
+struct UnpackedStructField {
+  std::string name;
+  std::shared_ptr<Type> field_type;
+
+  auto operator==(const UnpackedStructField& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
+// Unpacked struct data - stores fields as independent members (no bit packing)
+// Unpacked structs are aggregates of heterogeneous values
+struct UnpackedStructData {
+  std::vector<UnpackedStructField> fields;
+
+  auto operator==(const UnpackedStructData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 struct Type {
   enum class Kind {
     kVoid,
@@ -79,13 +97,14 @@ struct Type {
     kString,
     kUnpackedArray,
     kDynamicArray,
-    kPackedStruct
+    kPackedStruct,
+    kUnpackedStruct
   };
 
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
-      PackedStructData>
+      PackedStructData, UnpackedStructData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -232,6 +251,14 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  // Create an unpacked struct type
+  static auto UnpackedStruct(std::vector<UnpackedStructField> fields) -> Type {
+    return Type{
+        .kind = Kind::kUnpackedStruct,
+        .data = UnpackedStructData{.fields = std::move(fields)},
+        .alias_name = std::nullopt};
+  }
+
   // Is this a scalar integral (no packed array structure)?
   [[nodiscard]] auto IsScalar() const -> bool {
     if (kind != Kind::kIntegral) {
@@ -264,13 +291,27 @@ struct Type {
     return kind == Kind::kDynamicArray;
   }
 
+  // Is this an unpacked struct?
+  [[nodiscard]] auto IsUnpackedStruct() const -> bool {
+    return kind == Kind::kUnpackedStruct;
+  }
+
   // Get struct fields (only valid for packed structs)
-  [[nodiscard]] auto GetStructFields() const
+  [[nodiscard]] auto GetPackedStructFields() const
       -> const std::vector<PackedStructField>& {
     if (kind != Kind::kPackedStruct) {
       throw std::runtime_error("Type is not a packed struct");
     }
     return std::get<PackedStructData>(data).fields;
+  }
+
+  // Get struct fields (only valid for unpacked structs)
+  [[nodiscard]] auto GetUnpackedStructFields() const
+      -> const std::vector<UnpackedStructField>& {
+    if (kind != Kind::kUnpackedStruct) {
+      throw std::runtime_error("Type is not an unpacked struct");
+    }
+    return std::get<UnpackedStructData>(data).fields;
   }
 
   // Get element type for indexing (works for packed, unpacked, and dynamic
@@ -453,6 +494,12 @@ struct Type {
             ps.fields.empty() ? "" : " {...}");
         break;
       }
+      case Kind::kUnpackedStruct: {
+        const auto& us = std::get<UnpackedStructData>(data);
+        structural_str =
+            fmt::format("struct{}", us.fields.empty() ? "" : " {...}");
+        break;
+      }
     }
 
     // Include alias name if present
@@ -548,6 +595,31 @@ inline auto PackedStructData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto UnpackedStructField::operator==(
+    const UnpackedStructField& other) const -> bool {
+  return name == other.name && *field_type == *other.field_type;
+}
+
+inline auto UnpackedStructField::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= std::hash<std::string>{}(name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= field_type->Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  return h;
+}
+
+inline auto UnpackedStructData::operator==(
+    const UnpackedStructData& other) const -> bool {
+  return fields == other.fields;
+}
+
+inline auto UnpackedStructData::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  for (const auto& field : fields) {
+    h ^= field.Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  }
+  return h;
+}
+
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -566,6 +638,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "dynamic_array";
     case Type::Kind::kPackedStruct:
       return "packed_struct";
+    case Type::Kind::kUnpackedStruct:
+      return "unpacked_struct";
   }
   std::abort();
 }

@@ -236,6 +236,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_unpacked_struct_tests",
+    yaml = "sv_features/datatypes/unpacked_struct.yaml",
+)
+
+sv_feature_test(
     name = "datatypes_enum_tests",
     yaml = "sv_features/datatypes/enum.yaml",
 )

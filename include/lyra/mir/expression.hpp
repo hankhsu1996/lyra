@@ -46,6 +46,7 @@ class Expression {
     kMemberAccess,
     kNewArray,
     kMethodCall,
+    kUnpackedStructLiteral,
   };
 
   Kind kind;
@@ -104,6 +105,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "NewArray";
     case Expression::Kind::kMethodCall:
       return "MethodCall";
+    case Expression::Kind::kUnpackedStructLiteral:
+      return "UnpackedStructLiteral";
   }
   std::abort();
 }
@@ -744,6 +747,34 @@ class MethodCallExpression : public Expression {
     return fmt::format(
         "{}.{}({})", receiver->ToString(), method_name,
         fmt::join(arg_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Unpacked struct literal expression: '{field0, field1, ...}
+// Creates an unpacked struct value from field values in declaration order.
+class UnpackedStructLiteralExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kUnpackedStructLiteral;
+
+  std::vector<std::unique_ptr<Expression>> field_values;
+
+  UnpackedStructLiteralExpression(
+      Type type, std::vector<std::unique_ptr<Expression>> field_values)
+      : Expression(kKindValue, std::move(type)),
+        field_values(std::move(field_values)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    std::vector<std::string> value_strs;
+    value_strs.reserve(field_values.size());
+    for (const auto& v : field_values) {
+      value_strs.push_back(v->ToString());
+    }
+    return fmt::format("'{{{}}}", fmt::join(value_strs, ", "));
   }
 
   void Accept(MirVisitor& visitor) const override {

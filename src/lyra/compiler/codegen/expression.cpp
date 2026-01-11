@@ -179,36 +179,45 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else if (assign.target.IsStructFieldAssignment()) {
-        // Struct field assignment: my_struct.field = value
         const auto& base_type = assign.target.base_type.value();
-        size_t total_width = base_type.GetBitWidth();
-        size_t field_width = *assign.target.field_bit_width;
-        uint64_t bit_offset = *assign.target.field_bit_offset;
 
-        bool storage_is_wide = IsWideWidth(total_width);
-        bool field_is_wide = IsWideWidth(field_width);
-
-        out_ << "(";
-        if (storage_is_wide || field_is_wide) {
-          // Wide storage or wide field - use InsertSlice
-          out_ << assign.target.symbol->name << " = "
-               << assign.target.symbol->name << ".InsertSlice(";
-          EmitExpression(*assign.value, kPrecLowest);
-          out_ << ", " << bit_offset << ", " << field_width << ")";
+        // Check if this is an unpacked struct field assignment
+        if (base_type.IsUnpackedStruct()) {
+          // Unpacked struct field: direct member assignment
+          out_ << assign.target.symbol->name << "." << assign.target.field_name
+               << " = ";
+          EmitExpression(*assign.value, kPrecAssign);
         } else {
-          // Narrow storage and narrow field - use mask-and-merge
-          used_type_aliases_ |= TypeAlias::kBit;
-          uint64_t mask = common::MakeBitMask(field_width);
-          out_ << assign.target.symbol->name << " = ("
-               << assign.target.symbol->name << " & ~(Bit<" << total_width
-               << ">{" << mask << "ULL} << " << bit_offset << ")) | ((Bit<"
-               << total_width << ">{";
+          // Packed struct field assignment: my_struct.field = value
+          size_t total_width = base_type.GetBitWidth();
+          size_t field_width = *assign.target.field_bit_width;
+          uint64_t bit_offset = *assign.target.field_bit_offset;
+
+          bool storage_is_wide = IsWideWidth(total_width);
+          bool field_is_wide = IsWideWidth(field_width);
+
+          out_ << "(";
+          if (storage_is_wide || field_is_wide) {
+            // Wide storage or wide field - use InsertSlice
+            out_ << assign.target.symbol->name << " = "
+                 << assign.target.symbol->name << ".InsertSlice(";
+            EmitExpression(*assign.value, kPrecLowest);
+            out_ << ", " << bit_offset << ", " << field_width << ")";
+          } else {
+            // Narrow storage and narrow field - use mask-and-merge
+            used_type_aliases_ |= TypeAlias::kBit;
+            uint64_t mask = common::MakeBitMask(field_width);
+            out_ << assign.target.symbol->name << " = ("
+                 << assign.target.symbol->name << " & ~(Bit<" << total_width
+                 << ">{" << mask << "ULL} << " << bit_offset << ")) | ((Bit<"
+                 << total_width << ">{";
+            EmitExpression(*assign.value, kPrecLowest);
+            out_ << ".Value() & " << mask << "ULL} << " << bit_offset << "))";
+          }
+          out_ << ", ";
           EmitExpression(*assign.value, kPrecLowest);
-          out_ << ".Value() & " << mask << "ULL} << " << bit_offset << "))";
+          out_ << ")";
         }
-        out_ << ", ";
-        EmitExpression(*assign.value, kPrecLowest);
-        out_ << ")";
       } else {
         EmitAssignmentTarget(assign.target);
         out_ << " = ";
@@ -342,9 +351,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       break;
     }
     case mir::Expression::Kind::kMemberAccess: {
-      // Struct field access: struct_val.field_name
-      // Implemented as bit extraction using ExtractBits or shift-and-mask
       const auto& member = mir::As<mir::MemberAccessExpression>(expr);
+
+      // For unpacked structs: direct field access
+      if (member.value->type.IsUnpackedStruct()) {
+        EmitExpression(*member.value, kPrecPrimary);
+        out_ << "." << member.field_name;
+        break;
+      }
+
+      // Packed struct field access: struct_val.field_name
+      // Implemented as bit extraction using ExtractBits or shift-and-mask
       size_t source_width = member.value->type.GetBitWidth();
       size_t field_width = member.bit_width;
       uint64_t bit_offset = member.bit_offset;
@@ -667,6 +684,26 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*new_arr.size_expr, kPrecLowest);
         out_ << "))";
       }
+      break;
+    }
+
+    case mir::Expression::Kind::kUnpackedStructLiteral: {
+      // Unpacked struct literal: '{field0, field1, ...}
+      // Emit as C++ aggregate initialization: {.a = val0, .b = val1}
+      const auto& lit = mir::As<mir::UnpackedStructLiteralExpression>(expr);
+      const auto& struct_data =
+          std::get<common::UnpackedStructData>(expr.type.data);
+
+      out_ << ToCppType(expr.type) << "{";
+      for (size_t i = 0; i < lit.field_values.size(); ++i) {
+        if (i > 0) {
+          out_ << ", ";
+        }
+        // Use designated initializers for clarity: .field = value
+        out_ << "." << struct_data.fields[i].name << " = ";
+        EmitExpression(*lit.field_values[i], kPrecLowest);
+      }
+      out_ << "}";
       break;
     }
 
