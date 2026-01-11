@@ -121,16 +121,18 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       if (assignment.target.IsStructFieldAssignment()) {
-        // Check if this is an unpacked struct field assignment
-        // Unpacked structs have base_type of kUnpackedStruct
+        // Check if this is an unpacked struct/union field assignment
         if (assignment.target.base_type &&
-            assignment.target.base_type->IsUnpackedStruct()) {
-          // Unpacked struct field assignment: struct_var.field = value
-          // Emit literal for field index, then use unified StoreElement
-          size_t field_index = *assignment.target.field_bit_offset;
+            (assignment.target.base_type->IsUnpackedStruct() ||
+             assignment.target.base_type->IsUnpackedUnion())) {
+          // Unpacked struct/union field assignment: var.field = value
+          // For struct: use field_index; For union: ALWAYS use 0
+          size_t storage_index = assignment.target.base_type->IsUnpackedUnion()
+                                     ? 0
+                                     : *assignment.target.field_bit_offset;
           auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
           auto index_literal = builder.InternLiteral(
-              common::Literal::Int(static_cast<int32_t>(field_index)));
+              common::Literal::Int(static_cast<int32_t>(storage_index)));
           builder.AddInstruction(
               Instruction::Basic(IK::kLiteral, index_temp, index_literal));
 
@@ -621,18 +623,21 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       const auto& member = mir::As<mir::MemberAccessExpression>(expression);
       assert(member.value);
 
-      // Check if this is an unpacked struct access
-      if (member.value->type.IsUnpackedStruct()) {
+      // Check if this is an unpacked struct/union access
+      if (member.value->type.IsUnpackedStruct() ||
+          member.value->type.IsUnpackedUnion()) {
         auto value = LowerExpression(*member.value, builder);
         auto result = builder.AllocateTemp("field", expression.type);
 
-        // For unpacked struct: bit_offset is reused as field_index
-        size_t field_index = member.bit_offset;
+        // For struct: bit_offset is reused as field_index
+        // For union: ALWAYS use index 0 (shared storage)
+        size_t storage_index =
+            member.value->type.IsUnpackedUnion() ? 0 : member.bit_offset;
 
-        // Emit literal for field index
+        // Emit literal for storage index
         auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
         auto index_literal = builder.InternLiteral(
-            Literal::Int(static_cast<int32_t>(field_index)));
+            Literal::Int(static_cast<int32_t>(storage_index)));
         builder.AddInstruction(
             Instruction::Basic(IK::kLiteral, index_temp, index_literal));
 

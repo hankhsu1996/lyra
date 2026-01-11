@@ -184,9 +184,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       } else if (assign.target.IsStructFieldAssignment()) {
         const auto& base_type = assign.target.base_type.value();
 
-        // Check if this is an unpacked struct field assignment
-        if (base_type.IsUnpackedStruct()) {
-          // Unpacked struct field: direct member assignment
+        // Check if this is an unpacked struct/union field assignment
+        if (base_type.IsUnpackedStruct() || base_type.IsUnpackedUnion()) {
+          // Unpacked struct/union field: direct member assignment
           out_ << assign.target.symbol->name << "." << assign.target.field_name
                << " = ";
           EmitExpression(*assign.value, kPrecAssign);
@@ -356,8 +356,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kMemberAccess: {
       const auto& member = mir::As<mir::MemberAccessExpression>(expr);
 
-      // For unpacked structs: direct field access
-      if (member.value->type.IsUnpackedStruct()) {
+      // For unpacked structs/unions: direct field access
+      if (member.value->type.IsUnpackedStruct() ||
+          member.value->type.IsUnpackedUnion()) {
         EmitExpression(*member.value, kPrecPrimary);
         out_ << "." << member.field_name;
         break;

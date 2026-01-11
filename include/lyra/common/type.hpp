@@ -88,6 +88,16 @@ struct UnpackedStructData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+// Unpacked union data - stores fields that share a single storage location
+// Unpacked unions allow accessing the same storage through different member
+// types
+struct UnpackedUnionData {
+  std::vector<UnpackedStructField> fields;  // Reuse field type from structs
+
+  auto operator==(const UnpackedUnionData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 struct Type {
   enum class Kind {
     kVoid,
@@ -98,13 +108,14 @@ struct Type {
     kUnpackedArray,
     kDynamicArray,
     kPackedStruct,
-    kUnpackedStruct
+    kUnpackedStruct,
+    kUnpackedUnion
   };
 
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
-      PackedStructData, UnpackedStructData>
+      PackedStructData, UnpackedStructData, UnpackedUnionData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -259,6 +270,14 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  // Create an unpacked union type
+  static auto UnpackedUnion(std::vector<UnpackedStructField> fields) -> Type {
+    return Type{
+        .kind = Kind::kUnpackedUnion,
+        .data = UnpackedUnionData{.fields = std::move(fields)},
+        .alias_name = std::nullopt};
+  }
+
   // Is this a scalar integral (no packed array structure)?
   [[nodiscard]] auto IsScalar() const -> bool {
     if (kind != Kind::kIntegral) {
@@ -296,6 +315,11 @@ struct Type {
     return kind == Kind::kUnpackedStruct;
   }
 
+  // Is this an unpacked union?
+  [[nodiscard]] auto IsUnpackedUnion() const -> bool {
+    return kind == Kind::kUnpackedUnion;
+  }
+
   // Get struct fields (only valid for packed structs)
   [[nodiscard]] auto GetPackedStructFields() const
       -> const std::vector<PackedStructField>& {
@@ -312,6 +336,15 @@ struct Type {
       throw std::runtime_error("Type is not an unpacked struct");
     }
     return std::get<UnpackedStructData>(data).fields;
+  }
+
+  // Get union fields (only valid for unpacked unions)
+  [[nodiscard]] auto GetUnpackedUnionFields() const
+      -> const std::vector<UnpackedStructField>& {
+    if (kind != Kind::kUnpackedUnion) {
+      throw std::runtime_error("Type is not an unpacked union");
+    }
+    return std::get<UnpackedUnionData>(data).fields;
   }
 
   // Get element type for indexing (works for packed, unpacked, and dynamic
@@ -500,6 +533,12 @@ struct Type {
             fmt::format("struct{}", us.fields.empty() ? "" : " {...}");
         break;
       }
+      case Kind::kUnpackedUnion: {
+        const auto& uu = std::get<UnpackedUnionData>(data);
+        structural_str =
+            fmt::format("union{}", uu.fields.empty() ? "" : " {...}");
+        break;
+      }
     }
 
     // Include alias name if present
@@ -620,6 +659,19 @@ inline auto UnpackedStructData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto UnpackedUnionData::operator==(const UnpackedUnionData& other) const
+    -> bool {
+  return fields == other.fields;
+}
+
+inline auto UnpackedUnionData::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  for (const auto& field : fields) {
+    h ^= field.Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  }
+  return h;
+}
+
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -640,6 +692,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "packed_struct";
     case Type::Kind::kUnpackedStruct:
       return "unpacked_struct";
+    case Type::Kind::kUnpackedUnion:
+      return "unpacked_union";
   }
   std::abort();
 }

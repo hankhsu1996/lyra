@@ -509,7 +509,7 @@ auto RunInstruction(
         temp_table.Write(
             instr.result.value(), base_value.GetElement(actual_idx));
       } else {
-        assert(base_value.IsUnpackedStruct());
+        assert(base_value.IsUnpackedStruct() || base_value.IsUnpackedUnion());
         temp_table.Write(instr.result.value(), base_value.GetField(index));
       }
       return InstructionResult::Continue();
@@ -559,7 +559,9 @@ auto RunInstruction(
               ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
           aggregate_value.SetElement(actual_idx, element_value);
         } else {
-          assert(aggregate_value.IsUnpackedStruct());
+          assert(
+              aggregate_value.IsUnpackedStruct() ||
+              aggregate_value.IsUnpackedUnion());
           aggregate_value.SetField(index, element_value);
         }
 
@@ -583,7 +585,9 @@ auto RunInstruction(
               ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
           aggregate_value.SetElement(actual_idx, element_value);
         } else {
-          assert(aggregate_value.IsUnpackedStruct());
+          assert(
+              aggregate_value.IsUnpackedStruct() ||
+              aggregate_value.IsUnpackedUnion());
           aggregate_value.SetField(index, element_value);
         }
       }

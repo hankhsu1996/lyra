@@ -130,6 +130,18 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       struct_def += "}";
       return struct_def;
     }
+    case common::Type::Kind::kUnpackedUnion: {
+      // Unpacked unions are emitted as C++ unions
+      const auto& union_data = std::get<common::UnpackedUnionData>(type.data);
+
+      std::string union_def = "union { ";
+      for (const auto& field : union_data.fields) {
+        union_def +=
+            std::format("{} {}; ", ToCppType(*field.field_type), field.name);
+      }
+      union_def += "}";
+      return union_def;
+    }
   }
   throw common::InternalError(
       "ToCppType", std::format("unhandled type kind: {}", type.ToString()));

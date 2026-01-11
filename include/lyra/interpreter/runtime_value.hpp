@@ -190,6 +190,10 @@ struct RuntimeValue {
     return type.kind == common::Type::Kind::kUnpackedStruct;
   }
 
+  [[nodiscard]] auto IsUnpackedUnion() const -> bool {
+    return type.kind == common::Type::Kind::kUnpackedUnion;
+  }
+
   [[nodiscard]] auto AsArray() const -> const std::vector<RuntimeValue>& {
     return *std::get<ArrayStorage>(value);
   }
@@ -206,20 +210,24 @@ struct RuntimeValue {
     AsArray()[index] = std::move(element);
   }
 
-  // Struct field accessors - unpacked structs use ArrayStorage indexed by field
-  // position
+  // Struct/union field accessors - use ArrayStorage indexed by position
+  // Structs: N slots (one per field); Unions: 1 slot (shared storage)
   [[nodiscard]] auto GetField(size_t field_index) const -> const RuntimeValue& {
-    assert(IsUnpackedStruct() && "GetField requires unpacked struct");
+    assert(
+        (IsUnpackedStruct() || IsUnpackedUnion()) &&
+        "GetField requires unpacked struct/union");
     return (*std::get<ArrayStorage>(value))[field_index];
   }
 
   auto SetField(size_t field_index, RuntimeValue field_value) -> void {
-    assert(IsUnpackedStruct() && "SetField requires unpacked struct");
+    assert(
+        (IsUnpackedStruct() || IsUnpackedUnion()) &&
+        "SetField requires unpacked struct/union");
     (*std::get<ArrayStorage>(value))[field_index] = std::move(field_value);
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
-    if (IsArray() || IsUnpackedStruct()) {
+    if (IsArray() || IsUnpackedStruct() || IsUnpackedUnion()) {
       std::string result = "{";
       const auto& arr = *std::get<ArrayStorage>(value);
       for (size_t i = 0; i < arr.size(); ++i) {
@@ -310,12 +318,12 @@ struct RuntimeValue {
   }
 
   // Note: Can't use default comparison because ArrayStorage is shared_ptr
-  // and we want value equality for arrays and structs
+  // and we want value equality for arrays, structs, and unions
   [[nodiscard]] auto operator==(const RuntimeValue& rhs) const -> bool {
     if (type != rhs.type) {
       return false;
     }
-    if (IsArray() || IsUnpackedStruct()) {
+    if (IsArray() || IsUnpackedStruct() || IsUnpackedUnion()) {
       return *std::get<ArrayStorage>(value) ==
              *std::get<ArrayStorage>(rhs.value);
     }
@@ -411,6 +419,17 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
           .type = type,
           .value =
               std::make_shared<std::vector<RuntimeValue>>(std::move(fields))};
+    }
+    case common::Type::Kind::kUnpackedUnion: {
+      // Unpacked unions use ArrayStorage with 1 element (shared storage)
+      // Initialize to first member's default value
+      const auto& union_data = std::get<common::UnpackedUnionData>(type.data);
+      std::vector<RuntimeValue> storage;
+      storage.push_back(DefaultValueForType(*union_data.fields[0].field_type));
+      return RuntimeValue{
+          .type = type,
+          .value =
+              std::make_shared<std::vector<RuntimeValue>>(std::move(storage))};
     }
   }
   throw common::InternalError(

@@ -1,0 +1,212 @@
+feature: unpacked_union
+description: Unpacked union support - member access and assignment
+
+cases:
+  - name: basic_same_member
+    description: Write and read same union member (int)
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result;
+        initial begin
+          n.i = 42;
+          result = n.i;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: basic_same_member_real
+    description: Write and read same union member (real)
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        initial begin
+          n.f = 3.14;
+          $display("%f", n.f);
+        end
+      endmodule
+    expect:
+      output: "3.140000\n"
+
+  - name: default_initialization
+    description: Union defaults to first member's default (int 0)
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result;
+        initial begin
+          result = n.i;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: default_initialization_real_first
+    description: Union with real as first member defaults to 0.0
+    sv: |
+      module Test;
+        typedef union {real f; int i;} num;
+        num n;
+        initial begin
+          $display("%f", n.f);
+        end
+      endmodule
+    expect:
+      output: "0.000000\n"
+
+  - name: two_int_fields
+    description: Union with two int fields, access each
+    sv: |
+      module Test;
+        typedef union {int a; int b;} two_ints;
+        two_ints u;
+        int result_a, result_b;
+        initial begin
+          u.a = 100;
+          result_a = u.a;
+          u.b = 200;
+          result_b = u.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 100
+        result_b: 200
+
+  - name: three_fields
+    description: Union with three fields (int, real, shortreal)
+    sv: |
+      module Test;
+        typedef union {int i; real r; shortreal sr;} multi;
+        multi m;
+        int result_i;
+        initial begin
+          m.i = 999;
+          result_i = m.i;
+          m.r = 2.718;
+          $display("%f", m.r);
+          m.sr = 1.5;
+          $display("%f", m.sr);
+        end
+      endmodule
+    expect:
+      variables:
+        result_i: 999
+      output: "2.718000\n1.500000\n"
+
+  - name: field_overwrite
+    description: Write to one member, then write to another
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result_i;
+        initial begin
+          n.i = 42;
+          result_i = n.i;
+          n.f = 3.14;
+          $display("%f", n.f);
+        end
+      endmodule
+    expect:
+      variables:
+        result_i: 42
+      output: "3.140000\n"
+
+  - name: multiple_writes_same_field
+    description: Multiple writes to same field
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result;
+        initial begin
+          n.i = 1;
+          n.i = 2;
+          n.i = 3;
+          result = n.i;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3
+
+  - name: union_copy
+    description: Copy one union variable to another
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n1, n2;
+        int result;
+        initial begin
+          n1.i = 77;
+          n2 = n1;
+          result = n2.i;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: union_copy_independence
+    description: Copied unions are independent (value semantics)
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n1, n2;
+        int result_n1, result_n2;
+        initial begin
+          n1.i = 100;
+          n2 = n1;
+          n1.i = 999;
+          result_n1 = n1.i;
+          result_n2 = n2.i;
+        end
+      endmodule
+    expect:
+      variables:
+        result_n1: 999
+        result_n2: 100
+
+  - name: field_arithmetic
+    description: Arithmetic operations using union field
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result_sum, result_prod;
+        initial begin
+          n.i = 10;
+          result_sum = n.i + 5;
+          result_prod = n.i * 3;
+        end
+      endmodule
+    expect:
+      variables:
+        result_sum: 15
+        result_prod: 30
+
+  - name: field_in_expression
+    description: Union field used in complex expressions
+    sv: |
+      module Test;
+        typedef union {int i; real f;} num;
+        num n;
+        int result;
+        initial begin
+          n.i = 6;
+          result = (n.i * 2) + (n.i / 2);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  # Note: struct_in_union and union_in_struct tests are skipped
+  # Known limitation: nested structs/unions not yet supported

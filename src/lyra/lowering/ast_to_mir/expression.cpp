@@ -354,11 +354,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
           throw DiagnosticException(std::move(struct_type_result.error()));
         }
 
-        // For unpacked structs, use field index instead of bit offset
-        // Use getCanonicalType() to handle typedef'd struct types
+        // For unpacked structs/unions, use field index instead of bit offset
+        // Use getCanonicalType() to handle typedef'd struct/union types
         const auto& value_type = member_access.value().type->getCanonicalType();
         bool is_unpacked_struct =
             value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+        bool is_unpacked_union =
+            value_type.kind == slang::ast::SymbolKind::UnpackedUnionType;
 
         uint64_t offset_or_index = 0;
         size_t width = 0;
@@ -375,6 +377,19 @@ auto LowerExpression(const slang::ast::Expression& expression)
           }
           offset_or_index = field_index;
           width = 0;  // Not used for unpacked structs
+        } else if (is_unpacked_union) {
+          // Compute field index for unpacked union
+          const auto& union_type =
+              value_type.as<slang::ast::UnpackedUnionType>();
+          size_t field_index = 0;
+          for (const auto* f : union_type.fields) {
+            if (f == &field) {
+              break;
+            }
+            ++field_index;
+          }
+          offset_or_index = field_index;
+          width = 0;  // Not used for unpacked unions
         } else {
           // Packed struct: use bit offset and width
           offset_or_index = field.bitOffset;
@@ -974,12 +989,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // For packed structs: bit_offset is LSB position, bit_width is field
-      // width. For unpacked structs: bit_offset is field index, bit_width is 0
-      // (unused).
-      // Use getCanonicalType() to handle typedef'd struct types
+      // width. For unpacked structs/unions: bit_offset is field index,
+      // bit_width is 0 (unused).
+      // Use getCanonicalType() to handle typedef'd struct/union types
       const auto& value_type = member_access.value().type->getCanonicalType();
       bool is_unpacked_struct =
           value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+      bool is_unpacked_union =
+          value_type.kind == slang::ast::SymbolKind::UnpackedUnionType;
 
       if (is_unpacked_struct) {
         // Compute field index for unpacked struct
@@ -987,6 +1004,21 @@ auto LowerExpression(const slang::ast::Expression& expression)
             value_type.as<slang::ast::UnpackedStructType>();
         size_t field_index = 0;
         for (const auto* f : struct_type.fields) {
+          if (f == &field) {
+            break;
+          }
+          ++field_index;
+        }
+        return std::make_unique<mir::MemberAccessExpression>(
+            std::move(value), std::string(field.name), field_index, 0,
+            *type_result);
+      }
+
+      if (is_unpacked_union) {
+        // Compute field index for unpacked union
+        const auto& union_type = value_type.as<slang::ast::UnpackedUnionType>();
+        size_t field_index = 0;
+        for (const auto* f : union_type.fields) {
           if (f == &field) {
             break;
           }
