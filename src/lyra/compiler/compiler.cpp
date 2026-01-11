@@ -65,9 +65,10 @@ auto MakeUniqueTempDir() -> std::filesystem::path {
 auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   std::array<char, 128> buffer{};
   std::string result;
-  // NOLINTNEXTLINE(misc-include-cleaner): popen/pclose are in <cstdio>
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(
-      popen(cmd.c_str(), "r"), pclose);
+  // clang-format off
+  // popen/pclose are POSIX functions provided by <cstdio>
+  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);  // NOLINT(misc-include-cleaner)
+  // clang-format on
   if (!pipe) {
     return {-1, "popen failed"};
   }
@@ -77,6 +78,50 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   int status = pclose(pipe.release());  // NOLINT(misc-include-cleaner)
   // NOLINTNEXTLINE(misc-include-cleaner): WEXITSTATUS is in <sys/wait.h>
   return {WEXITSTATUS(status), result};
+}
+
+// Generate precompiled header if it doesn't exist, return path to PCH file.
+// Returns empty path if PCH generation fails (caller should compile without).
+auto GetOrCreatePch(const std::filesystem::path& sdk_include)
+    -> std::filesystem::path {
+  // Use TEST_TMPDIR if available (Bazel test), else system temp
+  std::filesystem::path pch_dir;
+  const char* test_tmpdir = std::getenv("TEST_TMPDIR");
+  if (test_tmpdir != nullptr) {
+    pch_dir = test_tmpdir;
+  } else {
+    pch_dir = std::filesystem::temp_directory_path() / "lyra";
+  }
+  std::filesystem::create_directories(pch_dir);
+
+  auto pch_path = pch_dir / "lyra_test.pch";
+
+  // Skip regeneration if PCH already exists
+  if (std::filesystem::exists(pch_path)) {
+    return pch_path;
+  }
+
+  // Create header file for PCH (includes everything test main.cpp needs)
+  auto header_path = pch_dir / "lyra_test_pch.hpp";
+  {
+    std::ofstream out(header_path);
+    out << "#pragma once\n";
+    out << "#include <iostream>\n";
+    out << "#include <sstream>\n";
+    out << "#include <lyra/sdk/sdk.hpp>\n";
+  }
+
+  // Generate PCH
+  std::string gen_cmd = "clang++ -std=c++23 -x c++-header -I" +
+                        sdk_include.string() + " -o " + pch_path.string() +
+                        " " + header_path.string() + " 2>&1";
+  auto [status, output] = ExecuteCommand(gen_cmd);
+  if (status != 0) {
+    // PCH generation failed - return empty path (will compile without PCH)
+    return {};
+  }
+
+  return pch_path;
 }
 
 }  // namespace
@@ -167,14 +212,17 @@ auto Compiler::CompileAndRun(
     std::cerr << "=== Test Wrapper ===\n" << wrapper_code << "\n=== End ===\n";
   }
 
-  // Compile with SDK include path
-  // Include both tmp_dir (for test_main.cpp) and design_dir (for module
-  // headers)
+  // Compile with SDK include path and precompiled header for speed
   auto sdk_include = GetSdkIncludePath();
-  std::string compile_cmd = "clang++ -std=c++23 -I" + sdk_include.string() +
-                            " -I" + tmp_dir.string() + " -I" +
-                            design_dir.string() + " -o " + bin_path.string() +
-                            " " + cpp_path.string() + " 2>&1";
+  auto pch_path = GetOrCreatePch(sdk_include);
+
+  std::string compile_cmd = "clang++ -std=c++23 ";
+  if (!pch_path.empty()) {
+    compile_cmd += "-include-pch " + pch_path.string() + " ";
+  }
+  compile_cmd += "-I" + sdk_include.string() + " -I" + tmp_dir.string() +
+                 " -I" + design_dir.string() + " -o " + bin_path.string() +
+                 " " + cpp_path.string() + " 2>&1";
   auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
   if (compile_status != 0) {
     result.error_message_ = "Compilation failed: " + compile_output;
