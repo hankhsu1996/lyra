@@ -267,3 +267,119 @@ cases:
         a: 100
         b: 300
         c: 0
+
+  - name: multidim_basic
+    description: Basic 2D dynamic array allocation and access
+    sv: |
+      module Test;
+        int arr[][];
+        int v00;
+        int v01;
+        int v10;
+        int outer_size;
+        int inner0_size;
+        int inner1_size;
+        initial begin
+          arr = new[2];
+          arr[0] = new[3];
+          arr[1] = new[2];
+          arr[0][0] = 10;
+          arr[0][1] = 20;
+          arr[0][2] = 30;
+          arr[1][0] = 100;
+          arr[1][1] = 200;
+          v00 = arr[0][0];
+          v01 = arr[0][1];
+          v10 = arr[1][0];
+          outer_size = arr.size();
+          inner0_size = arr[0].size();
+          inner1_size = arr[1].size();
+        end
+      endmodule
+    expect:
+      variables:
+        v00: 10
+        v01: 20
+        v10: 100
+        outer_size: 2
+        inner0_size: 3
+        inner1_size: 2
+
+  - name: multidim_assignment_independence
+    description: Assignment creates independent copy (not shared reference)
+    sv: |
+      module Test;
+        int arr[][];
+        int copy[][];
+        int arr_val;
+        int copy_val;
+        initial begin
+          arr = new[1];
+          arr[0] = new[1];
+          arr[0][0] = 1;
+          copy = arr;
+          copy[0][0] = 999;
+          arr_val = arr[0][0];
+          copy_val = copy[0][0];
+        end
+      endmodule
+    expect:
+      variables:
+        arr_val: 1
+        copy_val: 999
+
+  - name: multidim_new_copy_independence
+    description: new[](init) creates independent copy
+    sv: |
+      module Test;
+        int arr[][];
+        int copy[][];
+        int arr_val;
+        int copy_val;
+        int copy_size;
+        int copy2_size;
+        initial begin
+          arr = new[1];
+          arr[0] = new[1];
+          arr[0][0] = 1;
+          copy = new[2](arr);
+          copy[0][0] = 999;
+          arr_val = arr[0][0];
+          copy_val = copy[0][0];
+          copy_size = copy.size();
+          copy2_size = copy[1].size();
+        end
+      endmodule
+    expect:
+      variables:
+        arr_val: 1
+        copy_val: 999
+        copy_size: 2
+        copy2_size: 0
+
+  - name: mixed_fixed_dynamic
+    description: Fixed-size array of dynamic arrays
+    sv: |
+      module Test;
+        int mixed[2][];
+        int v00;
+        int v10;
+        int s0;
+        int s1;
+        initial begin
+          mixed[0] = new[3];
+          mixed[1] = new[5];
+          mixed[0][0] = 42;
+          mixed[1][0] = 99;
+          v00 = mixed[0][0];
+          v10 = mixed[1][0];
+          s0 = mixed[0].size();
+          s1 = mixed[1].size();
+        end
+      endmodule
+    expect:
+      variables:
+        v00: 42
+        v10: 99
+        s0: 3
+        s1: 5

@@ -303,6 +303,20 @@ struct RuntimeValue {
     }
     return AsScalar() == rhs.AsScalar();
   }
+
+  // Deep copy for value semantics - recursively copies nested arrays.
+  // Non-array values are returned as-is (they already have value semantics).
+  [[nodiscard]] auto DeepCopy() const -> RuntimeValue {
+    if (!IsArray()) {
+      return *this;
+    }
+    std::vector<RuntimeValue> copied;
+    copied.reserve(AsArray().size());
+    for (const auto& elem : AsArray()) {
+      copied.push_back(elem.DeepCopy());
+    }
+    return Array(type, std::move(copied));
+  }
 };
 
 inline auto RuntimeValue::DefaultValueForType(const common::Type& type)

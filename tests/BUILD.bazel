@@ -181,6 +181,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_dynamic_arrays_tests",
+    yaml = "sv_features/datatypes/dynamic_arrays.yaml",
+)
+
+sv_feature_test(
     name = "datatypes_arbitrary_width_tests",
     yaml = "sv_features/datatypes/arbitrary_width.yaml",
 )
