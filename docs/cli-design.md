@@ -48,17 +48,17 @@ out_dir = "out"                # Optional: default "out"
 
 ## Commands
 
-| Command                  | Description                                   |
-| ------------------------ | --------------------------------------------- |
-| `lyra run`               | Build and run simulation (requires lyra.toml) |
-| `lyra run -i`            | Run with interpreter backend                  |
-| `lyra build`             | Generate C++ and compile (no run)             |
-| `lyra emit`              | Generate C++ project only                     |
-| `lyra check`             | Parse and validate                            |
-| `lyra init <name>`       | Create new project                            |
-| `lyra dump <fmt> <file>` | Debug: dump IR (cpp, mir, lir)                |
+| Command                  | Description                       |
+| ------------------------ | --------------------------------- |
+| `lyra run`               | Build and run simulation          |
+| `lyra run -i`            | Run with interpreter backend      |
+| `lyra build`             | Generate C++ and compile (no run) |
+| `lyra emit`              | Generate C++ project only         |
+| `lyra check`             | Parse and validate                |
+| `lyra init <name>`       | Create new project                |
+| `lyra dump <fmt> <file>` | Debug: dump IR (cpp, mir, lir)    |
 
-All commands except `dump` require a `lyra.toml` file. The CLI searches the current directory and parent directories for the config file.
+Commands can use either `lyra.toml` or CLI arguments (or both).
 
 ### Global Options
 
@@ -67,6 +67,49 @@ All commands except `dump` require a `lyra.toml` file. The CLI searches the curr
 | `-C <dir>` | Run as if lyra was started in `<dir>` |
 
 Example: `lyra -C path/to/project run`
+
+### Project Command Options
+
+The `run`, `build`, `emit`, and `check` commands accept these options:
+
+| Option                    | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `--top <module>`          | Top module name                              |
+| `-I, --include-directory` | Add include search path                      |
+| `-f <file>`               | Command file (paths relative to CWD)         |
+| `-F <file>`               | Command file (paths relative to file itself) |
+| `<files...>`              | Source files (positional)                    |
+
+### CLI Mode
+
+Commands work without `lyra.toml` when source files are provided:
+
+```bash
+# Check syntax without lyra.toml
+lyra check --top Top file.sv
+
+# Run simulation with interpreter
+lyra run -i --top Testbench pkg.sv dut.sv tb.sv
+
+# Include directories
+lyra check --top Top -I include/ src/*.sv
+
+# Command file with paths relative to CWD
+lyra run --top Top -f sources.f
+
+# Command file with paths relative to file itself (like slang -F)
+lyra run --top Top -F lib/sources.f
+```
+
+### Precedence Rules
+
+When both `lyra.toml` and CLI arguments are provided:
+
+| Setting   | Behavior                             |
+| --------- | ------------------------------------ |
+| `--top`   | CLI overrides lyra.toml              |
+| `-I`      | CLI merges with lyra.toml (additive) |
+| `<files>` | CLI replaces lyra.toml files         |
 
 ### Output Structure (`lyra emit` → `out/`)
 
@@ -153,4 +196,4 @@ include/lyra/
 - **C++ standard**: C++23 (for coroutines, `<print>`)
 - **Preferred compiler**: Clang (better C++23 support than GCC)
 - **Build system for output**: CMake with presets
-- **Config-first**: Commands use lyra.toml by default (no dual mode)
+- **Dual mode**: Commands work with lyra.toml, CLI arguments, or both

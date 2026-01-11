@@ -7,44 +7,64 @@ namespace {
 
 class ConfigTest : public CliTestFixture {};
 
-// Test: lyra run fails without lyra.toml
-TEST_F(ConfigTest, RunFailsWithoutConfig) {
+// Test: lyra run fails without config or files
+TEST_F(ConfigTest, RunFailsWithoutConfigOrFiles) {
   auto result = Run({"run"});
 
   EXPECT_FALSE(result.Success());
-  EXPECT_NE(result.combined_output.find("lyra.toml"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("no source files"), std::string::npos);
 }
 
-// Test: lyra run --interpret fails without lyra.toml
-TEST_F(ConfigTest, RunInterpretFailsWithoutConfig) {
+// Test: lyra run --interpret fails without config or files
+TEST_F(ConfigTest, RunInterpretFailsWithoutConfigOrFiles) {
   auto result = Run({"run", "--interpret"});
 
   EXPECT_FALSE(result.Success());
-  EXPECT_NE(result.combined_output.find("lyra.toml"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("no source files"), std::string::npos);
 }
 
-// Test: lyra build fails without lyra.toml
-TEST_F(ConfigTest, BuildFailsWithoutConfig) {
+// Test: lyra build fails without config or files
+TEST_F(ConfigTest, BuildFailsWithoutConfigOrFiles) {
   auto result = Run({"build"});
 
   EXPECT_FALSE(result.Success());
-  EXPECT_NE(result.combined_output.find("lyra.toml"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("no source files"), std::string::npos);
 }
 
-// Test: lyra emit fails without lyra.toml
-TEST_F(ConfigTest, EmitFailsWithoutConfig) {
+// Test: lyra emit fails without config or files
+TEST_F(ConfigTest, EmitFailsWithoutConfigOrFiles) {
   auto result = Run({"emit"});
 
   EXPECT_FALSE(result.Success());
-  EXPECT_NE(result.combined_output.find("lyra.toml"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("no source files"), std::string::npos);
 }
 
-// Test: lyra check fails without lyra.toml
-TEST_F(ConfigTest, CheckFailsWithoutConfig) {
+// Test: lyra check fails without config or files
+TEST_F(ConfigTest, CheckFailsWithoutConfigOrFiles) {
   auto result = Run({"check"});
 
   EXPECT_FALSE(result.Success());
-  EXPECT_NE(result.combined_output.find("lyra.toml"), std::string::npos);
+  EXPECT_NE(result.combined_output.find("no source files"), std::string::npos);
+}
+
+// Test: CLI mode requires --top when no lyra.toml
+TEST_F(ConfigTest, CliModeRequiresTop) {
+  WriteSvModule("test.sv", "Test");
+
+  auto result = Run({"check", "test.sv"});
+
+  EXPECT_FALSE(result.Success());
+  EXPECT_NE(
+      result.combined_output.find("--top is required"), std::string::npos);
+}
+
+// Test: CLI mode works with --top and files
+TEST_F(ConfigTest, CliModeWorksWithTopAndFiles) {
+  WriteSvModule("test.sv", "Test");
+
+  auto result = Run({"check", "--top", "Test", "test.sv"});
+
+  EXPECT_TRUE(result.Success()) << result.combined_output;
 }
 
 // Test: lyra run -i works with valid project

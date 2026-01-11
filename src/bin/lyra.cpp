@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -40,6 +41,213 @@ void WriteFile(const fs::path& path, const std::string& content) {
     throw std::runtime_error("Failed to create file: " + path.string());
   }
   out << content;
+}
+
+// CLI options for project commands
+struct CliOptions {
+  std::vector<std::string> files;
+  std::vector<std::string> incdir;
+  std::vector<std::string> cmdfiles_cwd;   // -f: paths relative to CWD
+  std::vector<std::string> cmdfiles_file;  // -F: paths relative to file
+  std::optional<std::string> top;
+};
+
+// Resolved configuration after merging CLI and lyra.toml
+struct ResolvedConfig {
+  std::string name;
+  std::string top;
+  std::vector<std::string> files;
+  std::vector<std::string> incdir;
+  std::string out_dir = "out";
+  fs::path root_dir;
+};
+
+// Parse a command file (one file per line, # and // comments)
+// relative_to_file: if true, resolve relative paths from file's directory (-F)
+//                   if false, resolve relative paths from CWD (-f)
+auto ParseCommandFile(const fs::path& path, bool relative_to_file)
+    -> std::vector<std::string> {
+  std::vector<std::string> files;
+  std::ifstream in(path);
+  if (!in) {
+    throw std::runtime_error(
+        std::format("cannot open command file: {}", path.string()));
+  }
+
+  // Base directory for relative path resolution
+  fs::path base;
+  if (relative_to_file) {
+    base = path.parent_path();
+    if (base.empty()) {
+      base = fs::current_path();
+    }
+  } else {
+    base = fs::current_path();
+  }
+
+  std::string line;
+  while (std::getline(in, line)) {
+    auto start = line.find_first_not_of(" \t");
+    if (start == std::string::npos) {
+      continue;
+    }
+    auto end = line.find_last_not_of(" \t\r\n");
+    line = line.substr(start, end - start + 1);
+
+    // Skip comments (# or //)
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    if (line.size() >= 2 && line[0] == '/' && line[1] == '/') {
+      continue;
+    }
+
+    fs::path p(line);
+    if (p.is_relative()) {
+      p = base / p;
+    }
+    files.push_back(fs::absolute(p).string());
+  }
+  return files;
+}
+
+// Resolve configuration from CLI options and optional lyra.toml
+auto ResolveConfig(const CliOptions& cli)
+    -> std::expected<ResolvedConfig, std::string> {
+  ResolvedConfig resolved;
+
+  // Try loading lyra.toml
+  auto config_path = lyra::config::FindConfig();
+  std::optional<lyra::config::ProjectConfig> toml;
+
+  if (config_path) {
+    try {
+      toml = lyra::config::LoadConfig(*config_path);
+      resolved.name = toml->name;
+      resolved.out_dir = toml->out_dir;
+      resolved.root_dir = toml->root_dir;
+    } catch (const lyra::DiagnosticException& e) {
+      return std::unexpected(e.GetDiagnostic().message);
+    }
+  } else {
+    resolved.name = "unnamed";
+    resolved.root_dir = fs::current_path();
+  }
+
+  // Expand command files
+  std::vector<std::string> cli_files = cli.files;
+
+  // -f: paths relative to CWD
+  for (const auto& f : cli.cmdfiles_cwd) {
+    try {
+      auto expanded = ParseCommandFile(f, false);
+      cli_files.insert(cli_files.end(), expanded.begin(), expanded.end());
+    } catch (const std::exception& e) {
+      return std::unexpected(e.what());
+    }
+  }
+
+  // -F: paths relative to command file
+  for (const auto& f : cli.cmdfiles_file) {
+    try {
+      auto expanded = ParseCommandFile(f, true);
+      cli_files.insert(cli_files.end(), expanded.begin(), expanded.end());
+    } catch (const std::exception& e) {
+      return std::unexpected(e.what());
+    }
+  }
+
+  // Resolve CLI files relative to current directory
+  for (auto& file : cli_files) {
+    fs::path p(file);
+    if (p.is_relative()) {
+      file = fs::absolute(p).string();
+    }
+  }
+
+  // Files: CLI replaces TOML
+  if (!cli_files.empty()) {
+    resolved.files = cli_files;
+  } else if (toml) {
+    resolved.files = toml->files;
+  }
+
+  if (resolved.files.empty()) {
+    return std::unexpected("no source files specified");
+  }
+
+  // Incdir: CLI merges with TOML
+  if (toml) {
+    resolved.incdir = toml->incdir;
+  }
+  for (const auto& inc : cli.incdir) {
+    fs::path p(inc);
+    if (p.is_relative()) {
+      p = fs::absolute(p);
+    }
+    resolved.incdir.push_back(p.string());
+  }
+
+  // Top: CLI overrides TOML
+  if (cli.top) {
+    resolved.top = *cli.top;
+  } else if (toml) {
+    resolved.top = toml->top;
+  }
+
+  if (resolved.top.empty()) {
+    return std::unexpected("--top is required when not using lyra.toml");
+  }
+
+  return resolved;
+}
+
+// Extract CLI options from a parsed argument parser
+auto ExtractCliOptions(const argparse::ArgumentParser& cmd) -> CliOptions {
+  CliOptions opts;
+  if (auto v = cmd.present<std::string>("--top")) {
+    opts.top = *v;
+  }
+  if (auto v = cmd.present<std::vector<std::string>>("-I")) {
+    opts.incdir = *v;
+  }
+  if (auto v = cmd.present<std::vector<std::string>>("-f")) {
+    opts.cmdfiles_cwd = *v;
+  }
+  if (auto v = cmd.present<std::vector<std::string>>("-F")) {
+    opts.cmdfiles_file = *v;
+  }
+  if (auto v = cmd.present<std::vector<std::string>>("files")) {
+    opts.files = *v;
+  }
+  return opts;
+}
+
+// Add common CLI options to a subparser
+void AddCliOptions(argparse::ArgumentParser& cmd) {
+  cmd.add_argument("--top")
+      .help("Top module name (overrides lyra.toml)")
+      .metavar("<module>");
+
+  cmd.add_argument("-I", "--include-directory")
+      .help("Add include search path (merges with lyra.toml)")
+      .metavar("<dir>")
+      .append();
+
+  cmd.add_argument("-f")
+      .help("Command file (paths relative to current directory)")
+      .metavar("<file>")
+      .append();
+
+  cmd.add_argument("-F")
+      .help("Command file (paths relative to file itself)")
+      .metavar("<file>")
+      .append();
+
+  cmd.add_argument("files")
+      .help("Source files (replaces lyra.toml files)")
+      .remaining()
+      .nargs(argparse::nargs_pattern::any);
 }
 
 // Write embedded SDK headers to output directory
@@ -219,17 +427,15 @@ auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
     const std::vector<std::string>& inc_dirs, const std::string& top) -> int;
 
-auto RunCommand(bool use_interpreter) -> int {
-  auto config_path = lyra::config::FindConfig();
-  if (!config_path) {
-    lyra::PrintDiagnostic(
-        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
+auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
+  auto config_result = ResolveConfig(cli);
+  if (!config_result) {
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, config_result.error()));
     return 1;
   }
+  const auto& config = *config_result;
 
   try {
-    auto config = lyra::config::LoadConfig(*config_path);
-
     if (use_interpreter) {
       // TODO(hankhsu): Add include directory support to interpreter
       auto result = lyra::interpreter::Interpreter::RunFromFiles(
@@ -348,16 +554,15 @@ auto EmitCommandInternal(
   }
 }
 
-auto EmitCommand() -> int {
-  auto config_path = lyra::config::FindConfig();
-  if (!config_path) {
-    lyra::PrintDiagnostic(
-        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
+auto EmitCommand(const CliOptions& cli) -> int {
+  auto config_result = ResolveConfig(cli);
+  if (!config_result) {
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, config_result.error()));
     return 1;
   }
+  const auto& config = *config_result;
 
   try {
-    auto config = lyra::config::LoadConfig(*config_path);
     auto out_path = config.root_dir / config.out_dir;
     return EmitCommandInternal(
         config.files, out_path.string(), config.incdir, config.top);
@@ -370,18 +575,16 @@ auto EmitCommand() -> int {
   }
 }
 
-auto CheckCommand() -> int {
-  auto config_path = lyra::config::FindConfig();
-  if (!config_path) {
-    lyra::PrintDiagnostic(
-        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
+auto CheckCommand(const CliOptions& cli) -> int {
+  auto config_result = ResolveConfig(cli);
+  if (!config_result) {
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, config_result.error()));
     return 1;
   }
+  const auto& config = *config_result;
 
   lyra::frontend::SlangFrontend frontend;
   try {
-    auto config = lyra::config::LoadConfig(*config_path);
-
     lyra::frontend::FrontendOptions options;
     options.include_dirs = config.incdir;
     auto compilation = frontend.LoadFromFiles(config.files, options);
@@ -469,13 +672,13 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
   }
 }
 
-auto BuildCommand() -> int {
-  auto config_path = lyra::config::FindConfig();
-  if (!config_path) {
-    lyra::PrintDiagnostic(
-        lyra::Diagnostic::Error({}, "no lyra.toml found in current directory"));
+auto BuildCommand(const CliOptions& cli) -> int {
+  auto config_result = ResolveConfig(cli);
+  if (!config_result) {
+    lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, config_result.error()));
     return 1;
   }
+  const auto& config = *config_result;
 
   // Check toolchain before build
   if (!EnsureToolchain()) {
@@ -483,7 +686,6 @@ auto BuildCommand() -> int {
   }
 
   try {
-    auto config = lyra::config::LoadConfig(*config_path);
     auto out_path = config.root_dir / config.out_dir;
 
     // emit
@@ -601,18 +803,21 @@ auto main(int argc, char* argv[]) -> int {
 
   // Subcommand: run
   argparse::ArgumentParser run_cmd("run");
-  run_cmd.add_description("Simulate design (requires lyra.toml)");
+  run_cmd.add_description("Simulate design");
   run_cmd.add_argument("--interpret", "-i")
       .flag()
       .help("Use interpreter instead of codegen");
+  AddCliOptions(run_cmd);
 
   // Subcommand: emit
   argparse::ArgumentParser emit_cmd("emit");
-  emit_cmd.add_description("Generate C++ code (requires lyra.toml)");
+  emit_cmd.add_description("Generate C++ code");
+  AddCliOptions(emit_cmd);
 
   // Subcommand: check
   argparse::ArgumentParser check_cmd("check");
-  check_cmd.add_description("Parse and validate (requires lyra.toml)");
+  check_cmd.add_description("Parse and validate");
+  AddCliOptions(check_cmd);
 
   // Subcommand: dump
   argparse::ArgumentParser dump_cmd("dump");
@@ -622,8 +827,8 @@ auto main(int argc, char* argv[]) -> int {
 
   // Subcommand: build
   argparse::ArgumentParser build_cmd("build");
-  build_cmd.add_description(
-      "Generate and build C++ project (requires lyra.toml)");
+  build_cmd.add_description("Generate and build C++ project");
+  AddCliOptions(build_cmd);
 
   // Subcommand: init
   argparse::ArgumentParser init_cmd("init");
@@ -664,16 +869,19 @@ auto main(int argc, char* argv[]) -> int {
   }
 
   if (program.is_subcommand_used("run")) {
+    auto cli = ExtractCliOptions(run_cmd);
     bool use_interpreter = run_cmd.get<bool>("--interpret");
-    return RunCommand(use_interpreter);
+    return RunCommand(cli, use_interpreter);
   }
 
   if (program.is_subcommand_used("emit")) {
-    return EmitCommand();
+    auto cli = ExtractCliOptions(emit_cmd);
+    return EmitCommand(cli);
   }
 
   if (program.is_subcommand_used("check")) {
-    return CheckCommand();
+    auto cli = ExtractCliOptions(check_cmd);
+    return CheckCommand(cli);
   }
 
   if (program.is_subcommand_used("dump")) {
@@ -704,7 +912,8 @@ auto main(int argc, char* argv[]) -> int {
   }
 
   if (program.is_subcommand_used("build")) {
-    return BuildCommand();
+    auto cli = ExtractCliOptions(build_cmd);
+    return BuildCommand(cli);
   }
 
   if (program.is_subcommand_used("init")) {
