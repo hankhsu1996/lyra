@@ -49,7 +49,7 @@ inline auto operator&(TypeAlias lhs, TypeAlias rhs) -> TypeAlias {
 }
 
 // Bit flags for tracking which codegen features are used
-enum class CodegenFeature : uint8_t {
+enum class CodegenFeature : uint16_t {
   kNone = 0,
   kCmath = 1 << 0,                 // #include <cmath> for std::pow
   kTimeDivisor = 1 << 1,           // delays, $time, $stime, $realtime
@@ -59,13 +59,14 @@ enum class CodegenFeature : uint8_t {
   kTimescaleStr = 1 << 5,          // $printtimescale
   kDisplay = 1 << 6,               // #include <iostream>, <print> for $display
   kMemIo = 1 << 7,                 // #include <filesystem>, <fstream>
+  kPlusargs = 1 << 8,  // plusargs.hpp for $test$plusargs, $value$plusargs
 };
 
 // Bitwise OR for combining CodegenFeature flags
 inline auto operator|(CodegenFeature lhs, CodegenFeature rhs)
     -> CodegenFeature {
   return static_cast<CodegenFeature>(
-      static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+      static_cast<uint16_t>(lhs) | static_cast<uint16_t>(rhs));
 }
 
 inline auto operator|=(CodegenFeature& lhs, CodegenFeature rhs)
@@ -78,7 +79,7 @@ inline auto operator|=(CodegenFeature& lhs, CodegenFeature rhs)
 inline auto operator&(CodegenFeature lhs, CodegenFeature rhs)
     -> CodegenFeature {
   return static_cast<CodegenFeature>(
-      static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
+      static_cast<uint16_t>(lhs) & static_cast<uint16_t>(rhs));
 }
 
 class Codegen {
@@ -121,6 +122,11 @@ class Codegen {
     return global_precision_power_;
   }
 
+  // Check if a codegen feature was used during generation
+  [[nodiscard]] auto HasFeature(CodegenFeature feature) const -> bool {
+    return (used_features_ & feature) != CodegenFeature::kNone;
+  }
+
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
@@ -130,7 +136,7 @@ class Codegen {
   void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
-  auto EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool;
+  void EmitSystemTask(const mir::SystemCallExpression& syscall);
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
   void EmitConstantExpression(
       const mir::Expression& expr);  // For template args
@@ -154,6 +160,10 @@ class Codegen {
   void EmitSliceExtract(
       const common::Type& result_type, const mir::Expression& value,
       const std::function<void()>& emit_shift, uint64_t mask, bool is_wide);
+
+  // Emit a string literal argument, handling integral-encoded string literals.
+  // Used for system calls like $test$plusargs, $value$plusargs, $readmemh.
+  void EmitStringLiteralArg(const mir::Expression& arg);
 
   // Emit a formatted print call (std::print/println) for
   // $display/$strobe/$monitor

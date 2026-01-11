@@ -28,6 +28,7 @@
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
+#include "lyra/interpreter/interpreter_options.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/lowering/mir_to_lir/mir_to_lir.hpp"
@@ -55,6 +56,7 @@ struct CliOptions {
   std::vector<std::string> cmdfiles_cwd;   // -f: paths relative to CWD
   std::vector<std::string> cmdfiles_file;  // -F: paths relative to file
   std::optional<std::string> top;
+  std::vector<std::string> plusargs;
 };
 
 // Resolved configuration after merging CLI and lyra.toml
@@ -227,6 +229,7 @@ auto ExtractCliOptions(const argparse::ArgumentParser& cmd) -> CliOptions {
   if (auto v = cmd.present<std::vector<std::string>>("files")) {
     opts.files = *v;
   }
+  // Plusargs are set manually from sim_args captured after "--"
   return opts;
 }
 
@@ -410,7 +413,7 @@ void CleanStaleCMakeCache(const fs::path& out_path) {
 // Generate main.cpp
 auto GenerateMain(
     const std::string& module_name, const std::string& header_file,
-    int8_t global_precision_power) -> std::string {
+    int8_t global_precision_power, bool uses_plusargs) -> std::string {
   std::string precision_init;
   if (global_precision_power !=
       lyra::common::TimeScale::kDefaultPrecisionPower) {
@@ -419,14 +422,29 @@ auto GenerateMain(
         "    lyra::sdk::global_precision_power = {};\n",
         static_cast<int>(global_precision_power));
   }
+
+  // Generate plusargs initialization if needed
+  std::string plusargs_include;
+  std::string plusargs_init;
+  std::string main_signature = "auto main() -> int";
+  if (uses_plusargs) {
+    plusargs_include = "#include <lyra/sdk/plusargs.hpp>\n";
+    plusargs_init =
+        "    lyra::sdk::InitPlusargs({argv, static_cast<size_t>(argc)});\n";
+    main_signature = "auto main(int argc, char* argv[]) -> int";
+  }
+
   return std::format(
-      "#include \"design/{}\"\n\n"
-      "auto main() -> int {{\n"
+      "#include \"design/{}\"\n"
+      "{}\n"
+      "{} {{\n"
+      "{}"
       "{}"
       "    {} dut;\n"
       "    return dut.Run().exit_code;\n"
       "}}\n",
-      header_file, precision_init, module_name);
+      header_file, plusargs_include, main_signature, plusargs_init,
+      precision_init, module_name);
 }
 
 // Forward declaration
@@ -445,8 +463,10 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
   try {
     if (use_interpreter) {
       // TODO(hankhsu): Add include directory support to interpreter
+      lyra::interpreter::InterpreterOptions options;
+      options.plusargs = cli.plusargs;
       auto result = lyra::interpreter::Interpreter::RunFromFiles(
-          config.files, config.top);
+          config.files, config.top, options);
       std::cout << result.CapturedOutput();
       // Return non-zero exit code if simulation was stopped via $stop
       return result.Stopped() ? 1 : 0;
@@ -480,7 +500,12 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
     // Run step (from project directory - keeps CWD so $readmemh paths resolve
     // relative to the project root, not the out/ directory)
     auto binary_path = out_path / "build" / "sim";
-    return std::system(binary_path.string().c_str());
+    // Pass plusargs to the simulation binary
+    std::string run_cmd = binary_path.string();
+    for (const auto& arg : cli.plusargs) {
+      run_cmd += " " + arg;
+    }
+    return std::system(run_cmd.c_str());
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
@@ -548,10 +573,13 @@ auto EmitCommandInternal(
     std::string header_file = top_module.name + ".hpp";
 
     // Generate main.cpp with global precision for %t formatting
+    bool uses_plusargs =
+        codegen.HasFeature(lyra::compiler::CodegenFeature::kPlusargs);
     WriteFile(
         out_path / "main.cpp",
         GenerateMain(
-            top_module.name, header_file, codegen.GetGlobalPrecisionPower()));
+            top_module.name, header_file, codegen.GetGlobalPrecisionPower(),
+            uses_plusargs));
 
     // Generate build configuration files
     WriteFile(out_path / "CMakeLists.txt", GenerateCMakeLists(top_module.name));
@@ -811,6 +839,21 @@ files = ["{}.sv"]
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
+  // Pre-process argv to extract simulation args after "--"
+  // argparse doesn't support "--" separator natively (see p-ranav/argparse#62)
+  std::span args(argv, static_cast<size_t>(argc));
+  std::vector<std::string> sim_args;
+  int filtered_argc = argc;
+  for (size_t i = 1; i < args.size(); ++i) {
+    if (std::string_view(args[i]) == "--") {
+      filtered_argc = static_cast<int>(i);
+      for (size_t j = i + 1; j < args.size(); ++j) {
+        sim_args.emplace_back(args[j]);
+      }
+      break;
+    }
+  }
+
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("SystemVerilog simulator");
 
@@ -821,7 +864,7 @@ auto main(int argc, char* argv[]) -> int {
 
   // Subcommand: run
   argparse::ArgumentParser run_cmd("run");
-  run_cmd.add_description("Simulate design");
+  run_cmd.add_description("Simulate design (use -- to pass simulation args)");
   run_cmd.add_argument("--interpret", "-i")
       .flag()
       .help("Use interpreter instead of codegen");
@@ -866,7 +909,7 @@ auto main(int argc, char* argv[]) -> int {
   program.add_subparser(init_cmd);
 
   try {
-    program.parse_args(argc, argv);
+    program.parse_args(filtered_argc, argv);
   } catch (const std::exception& err) {
     lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, err.what()));
     std::cerr << program;
@@ -888,6 +931,7 @@ auto main(int argc, char* argv[]) -> int {
 
   if (program.is_subcommand_used("run")) {
     auto cli = ExtractCliOptions(run_cmd);
+    cli.plusargs = sim_args;  // Simulation args captured after "--"
     bool use_interpreter = run_cmd.get<bool>("--interpret");
     return RunCommand(cli, use_interpreter);
   }

@@ -28,6 +28,7 @@ struct TestCase {
   std::string feature;
   std::string sv_code;
   std::vector<SourceFile> files;
+  std::vector<std::string> plusargs;
   std::map<std::string, int64_t> expected_values;
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_output;

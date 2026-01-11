@@ -447,6 +447,12 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         format_operand = Operand::Temp(format_temp);
       }
 
+      // Collect output targets for system calls like $value$plusargs
+      std::vector<lir::SymbolRef> output_targets;
+      for (const auto& target : system_call.output_targets) {
+        output_targets.push_back(target.symbol);
+      }
+
       // Create instruction - functions get result temp, tasks don't
       auto instruction =
           is_function
@@ -458,6 +464,7 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       instruction.format_string_is_literal = system_call.format_expr_is_literal;
       instruction.source_file = system_call.source_file;
       instruction.source_line = system_call.source_line;
+      instruction.output_targets = std::move(output_targets);
       builder.AddInstruction(std::move(instruction));
 
       return result;

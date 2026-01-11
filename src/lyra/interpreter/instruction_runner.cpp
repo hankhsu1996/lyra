@@ -45,6 +45,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
+#include "lyra/sdk/plusargs.hpp"
 #include "lyra/sdk/time_utils.hpp"
 
 namespace lyra::interpreter {
@@ -2544,6 +2545,76 @@ auto RunInstruction(
           double result = ExecuteMathBinary(instr.system_call_name, a, b);
           temp_table.Write(instr.result.value(), RuntimeValue::Real(result));
           return InstructionResult::Continue();
+        }
+        if (func_info->category == Category::kPlusargs) {
+          sdk::PlusargsQuery query(simulation_context.plusargs);
+
+          // Helper to get string from operand (handles hex-encoded literals)
+          auto get_string_operand =
+              [&](const RuntimeValue& val) -> std::string {
+            if (val.IsString()) {
+              return val.AsString();
+            }
+            // String literals are hex-encoded as integrals
+            return IntegralToString(val);
+          };
+
+          if (instr.system_call_name == "$test$plusargs") {
+            assert(instr.result.has_value());
+            assert(instr.operands.size() == 1);
+            const auto& query_val = get_operand_value(instr.operands[0]);
+            std::string query_str = get_string_operand(query_val);
+            int32_t result = query.TestPlusargs(query_str);
+            temp_table.Write(
+                instr.result.value(), RuntimeValue::IntegralSigned(result, 32));
+            return InstructionResult::Continue();
+          }
+
+          if (instr.system_call_name == "$value$plusargs") {
+            assert(instr.result.has_value());
+            assert(instr.operands.size() == 1);
+            assert(instr.output_targets.size() == 1);
+
+            const auto& format_val = get_operand_value(instr.operands[0]);
+            std::string format = get_string_operand(format_val);
+
+            // Determine format specifier to select appropriate query
+            auto pos = format.find('%');
+            char spec = (pos != std::string::npos && pos + 1 < format.size())
+                            ? format[pos + 1]
+                            : '\0';
+            // Handle %0d -> %d
+            if (spec == '0' && pos + 2 < format.size()) {
+              spec = format[pos + 2];
+            }
+
+            int32_t matched = 0;
+            if (spec == 'd' || spec == 'D') {
+              auto result = query.ValuePlusargsInt(format);
+              if (result.matched) {
+                matched = 1;
+                auto target_operand =
+                    lir::Operand::Variable(instr.output_targets[0]);
+                store_variable(
+                    target_operand,
+                    RuntimeValue::IntegralSigned(result.value, 32), false);
+              }
+            } else if (spec == 's' || spec == 'S') {
+              auto result = query.ValuePlusargsString(format);
+              if (result.matched) {
+                matched = 1;
+                auto target_operand =
+                    lir::Operand::Variable(instr.output_targets[0]);
+                store_variable(
+                    target_operand, RuntimeValue::String(result.value), false);
+              }
+            }
+
+            temp_table.Write(
+                instr.result.value(),
+                RuntimeValue::IntegralSigned(matched, 32));
+            return InstructionResult::Continue();
+          }
         }
       }
 

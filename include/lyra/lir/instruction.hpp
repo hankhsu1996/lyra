@@ -125,6 +125,7 @@ struct Instruction {
 
   // System call name (for kSystemCall)
   std::string system_call_name{};
+  std::vector<SymbolRef> output_targets{};
 
   // Function call (for kCall)
   std::string called_function_name{};  // For error messages and ToString()
@@ -759,19 +760,25 @@ struct Instruction {
       case InstructionKind::kDelay:
         return fmt::format("delay {}", operands[0].ToString());
 
-      case InstructionKind::kSystemCall:
-        if (operands.empty()) {
-          return fmt::format("call  {}", system_call_name);
-        } else {
-          std::string args;
-          for (size_t i = 0; i < operands.size(); ++i) {
-            if (i > 0) {
-              args += ", ";
-            }
-            args += operands[i].ToString();
+      case InstructionKind::kSystemCall: {
+        std::string args;
+        for (size_t i = 0; i < operands.size(); ++i) {
+          if (i > 0) {
+            args += ", ";
           }
-          return fmt::format("call  {} {}", system_call_name, args);
+          args += operands[i].ToString();
         }
+        for (const auto& target : output_targets) {
+          if (!args.empty()) {
+            args += ", ";
+          }
+          args += "out:" + std::string(target->name);
+        }
+        if (args.empty()) {
+          return fmt::format("call  {}", system_call_name);
+        }
+        return fmt::format("call  {} {}", system_call_name, args);
+      }
 
       case InstructionKind::kMethodCall:
         // Show step parameter only for next/prev with non-default step

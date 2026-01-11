@@ -8,6 +8,7 @@
 #include "lyra/sdk/delay.hpp"
 #include "lyra/sdk/dyn_array.hpp"
 #include "lyra/sdk/module.hpp"
+#include "lyra/sdk/plusargs.hpp"
 #include "lyra/sdk/scheduler.hpp"
 #include "lyra/sdk/string_convert.hpp"
 #include "lyra/sdk/task.hpp"

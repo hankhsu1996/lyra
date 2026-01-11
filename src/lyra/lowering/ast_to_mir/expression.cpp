@@ -649,6 +649,10 @@ auto LowerExpression(const slang::ast::Expression& expression)
                   fmt::format("unsupported system call '{}'", name)));
         }
 
+        // Get task/function distinction from slang
+        bool is_task = call_expression.getSubroutineKind() ==
+                       slang::ast::SubroutineKind::Task;
+
         // Handle $timeunit($root), $timeprecision($root),
         // $printtimescale($root) Transform to $timeunit_root /
         // $timeprecision_root / $printtimescale_root
@@ -681,6 +685,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
         std::unique_ptr<mir::Expression> format_expr;
         bool format_expr_is_literal = false;
         std::vector<std::unique_ptr<mir::Expression>> arguments;
+        std::vector<mir::AssignmentTarget> output_targets;
 
         // For severity tasks, capture source location as metadata
         std::optional<std::string> source_file;
@@ -736,9 +741,40 @@ auto LowerExpression(const slang::ast::Expression& expression)
                 LowerExpression(*call_expression.arguments()[i]));
           }
         } else if (!is_root_variant) {
-          // Non-display tasks: all go to arguments, no format_expr
-          for (const auto& arg : call_expression.arguments()) {
-            arguments.push_back(LowerExpression(*arg));
+          // Handle $value$plusargs specially: second argument is output target
+          if (name == "$value$plusargs") {
+            auto args = call_expression.arguments();
+            if (args.size() >= 1) {
+              // First arg is format string (input)
+              arguments.push_back(LowerExpression(*args[0]));
+            }
+            if (args.size() >= 2) {
+              // Second arg is output variable
+              const auto* output_arg = args[1];
+              if (output_arg->kind == slang::ast::ExpressionKind::NamedValue) {
+                const auto& named_value =
+                    output_arg->as<slang::ast::NamedValueExpression>();
+                // Get the type of the output variable for codegen
+                auto type_result = LowerType(
+                    named_value.symbol.getType(), output_arg->sourceRange);
+                if (!type_result) {
+                  throw DiagnosticException(std::move(type_result.error()));
+                }
+                mir::AssignmentTarget target(&named_value.symbol);
+                target.base_type = *type_result;
+                output_targets.push_back(std::move(target));
+              } else {
+                throw DiagnosticException(
+                    Diagnostic::Error(
+                        output_arg->sourceRange,
+                        "only simple variables supported as output argument"));
+              }
+            }
+          } else {
+            // Other non-display system calls: process all arguments normally
+            for (const auto* arg : call_expression.arguments()) {
+              arguments.push_back(LowerExpression(*arg));
+            }
           }
           // For mem_io tasks, check if first arg (filename) is a string literal
           // This is needed by interpreter to properly decode the filename
@@ -759,7 +795,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
           throw DiagnosticException(std::move(return_type_result.error()));
         }
         auto syscall = std::make_unique<mir::SystemCallExpression>(
-            effective_name, std::move(arguments), *return_type_result);
+            effective_name, std::move(arguments), std::move(output_targets),
+            *return_type_result, is_task);
         if (format_expr) {
           syscall->format_expr = std::move(format_expr);
         }

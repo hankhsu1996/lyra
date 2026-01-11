@@ -78,6 +78,8 @@ auto Interpreter::RunWithCompilation(
   }
 
   auto context = std::make_unique<SimulationContext>();
+  // Initialize plusargs from options
+  context->plusargs = sdk::PlusargsTable(options.plusargs);
   // Use multi-module constructor for hierarchical support
   SimulationRunner runner(
       lir_modules, lowering_result.packages, pkg_result.init_process,

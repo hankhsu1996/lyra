@@ -114,6 +114,9 @@ void Codegen::EmitHeader(const mir::Module& module, bool uses_arrays) {
   if ((used_features_ & CodegenFeature::kMemIo) != CodegenFeature::kNone) {
     Line("#include <lyra/sdk/mem_io.hpp>");
   }
+  if ((used_features_ & CodegenFeature::kPlusargs) != CodegenFeature::kNone) {
+    Line("#include <lyra/sdk/plusargs.hpp>");
+  }
 
   // Include headers for submodule types
   std::unordered_set<std::string> included;

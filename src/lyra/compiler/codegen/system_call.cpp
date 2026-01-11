@@ -6,7 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/string_utils.hpp"
 #include "lyra/common/sv_format.hpp"
@@ -23,7 +22,7 @@ using codegen::GetDisplayVariantProps;
 using codegen::IntegralLiteralToString;
 using codegen::kPrecEquality;
 
-auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
+void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
   // Simulation control tasks: $finish, $stop, $exit
   if (syscall.name == "$finish" || syscall.name == "$stop" ||
       syscall.name == "$exit") {
@@ -46,7 +45,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       // $finish (exit code 0)
       Line("co_await lyra::sdk::Finish(" + level_str + ");");
     }
-    return true;
+    return;
   }
 
   // Severity tasks: $fatal, $error, $warning, $info
@@ -143,7 +142,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       Line("std::println(std::cout, \"\");");
       indent_--;
       Line("});");
-      return true;
+      return;
     }
 
     // Extract format string info from format_expr
@@ -169,7 +168,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     }
     indent_--;
     Line("});");
-    return true;
+    return;
   }
 
   // Handle monitor variants - register for value change tracking
@@ -181,7 +180,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     // Empty call - print newline once (no values to monitor for changes)
     if (!syscall.format_expr && syscall.arguments.empty()) {
       Line("std::println(std::cout, \"\");");
-      return true;
+      return;
     }
 
     // Extract format string info from format_expr
@@ -281,17 +280,17 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
 
     indent_--;
     Line("}");  // End block scope
-    return true;
+    return;
   }
 
   // Handle $monitoron and $monitoroff
   if (syscall.name == "$monitoron") {
     Line("lyra::sdk::current_scheduler->SetMonitorEnabled(true);");
-    return true;
+    return;
   }
   if (syscall.name == "$monitoroff") {
     Line("lyra::sdk::current_scheduler->SetMonitorEnabled(false);");
-    return true;
+    return;
   }
 
   // Handle all display/write variants
@@ -310,7 +309,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
         Line("std::println(std::cout, \"\");");
       }
       // $write with no args does nothing
-      return true;
+      return;
     }
 
     // Extract format string info from format_expr
@@ -335,7 +334,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       // No more args, but need newline
       Line("std::println(std::cout, \"\");");
     }
-    return true;
+    return;
   }
 
   if (syscall.name == "$timeformat") {
@@ -363,7 +362,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       }
     }
     out_ << ");\n";
-    return true;
+    return;
   }
 
   if (syscall.name == "$printtimescale") {
@@ -374,7 +373,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     Line(
         "std::println(std::cout, \"Time scale of ({}) is {}\", "
         "kModuleName, kTimescaleStr);");
-    return true;
+    return;
   }
 
   if (syscall.name == "$printtimescale_root") {
@@ -385,7 +384,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
             "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
             "power), lyra::sdk::PowerToString(lyra::sdk::global_"
             "precision_power));\n";
-    return true;
+    return;
   }
 
   if (syscall.name == "$readmemh" || syscall.name == "$readmemb" ||
@@ -452,7 +451,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
         out_ << "0";
       }
       out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      return true;
+      return;
     }
 
     if (target_type.kind == common::Type::Kind::kIntegral) {
@@ -480,17 +479,16 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
         out_ << "0";
       }
       out_ << ", " << (is_hex ? "true" : "false") << ");\n";
-      return true;
+      return;
     }
 
     throw common::InternalError(
         "codegen", "mem I/O target must be an unpacked or packed array");
   }
 
-  // Unrecognized system call
-  throw DiagnosticException(
-      Diagnostic::Error(
-          {}, "C++ codegen: unsupported system call: " + syscall.name));
+  // Unrecognized system task - should have been rejected in AST-to-MIR lowering
+  throw common::InternalError(
+      "codegen", "unexpected system task: " + syscall.name);
 }
 
 void Codegen::EmitFormattedPrint(
