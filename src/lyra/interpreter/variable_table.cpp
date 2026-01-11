@@ -51,7 +51,9 @@ auto ModuleVariableTable::ReadPrevious(const SymbolRef& symbol) const
 
 void ModuleVariableTable::UpdatePrevious(
     const SymbolRef& symbol, const RuntimeValue& value) {
-  previous_variables_[symbol] = value;
+  // Deep copy to ensure independent storage for trigger detection.
+  // Arrays use shared_ptr internally, so shallow copy would alias.
+  previous_variables_[symbol] = value.DeepCopy();
 }
 
 auto ModuleVariableTable::Exists(const SymbolRef& symbol) const -> bool {

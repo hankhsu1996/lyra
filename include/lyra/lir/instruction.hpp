@@ -28,6 +28,8 @@ enum class InstructionKind {
   kLoadUnpackedElementFromTemp,  // Load from unpacked array temp: temp[index]
   kStoreUnpackedElement,  // Store to unpacked array variable: arr[index] =
                           // value
+  kStoreUnpackedElementNonBlocking,  // NBA to unpacked array: arr[index] <=
+                                     // value
   kStoreUnpackedElementToTemp,  // Store to unpacked array temp: temp[index] =
                                 // value
   kLoadPackedBits,              // Extract bits from packed: vec[offset+:width]
@@ -228,11 +230,15 @@ struct Instruction {
         .operands = {Operand::Variable(array), Operand::Temp(index)}};
   }
 
-  // Store element to unpacked array: array[index] = value
+  // Store element to unpacked array: array[index] = value (blocking)
+  // or array[index] <= value (non-blocking)
   static auto StoreUnpackedElement(
-      SymbolRef array, TempRef index, TempRef value) -> Instruction {
+      SymbolRef array, TempRef index, TempRef value,
+      bool is_non_blocking = false) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kStoreUnpackedElement,
+        .kind = is_non_blocking
+                    ? InstructionKind::kStoreUnpackedElementNonBlocking
+                    : InstructionKind::kStoreUnpackedElement,
         .operands = {
             Operand::Variable(array), Operand::Temp(index),
             Operand::Temp(value)}};
@@ -546,6 +552,11 @@ struct Instruction {
         return fmt::format(
             "stuel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
+
+      case InstructionKind::kStoreUnpackedElementNonBlocking:
+        return fmt::format(
+            "stuelnb {}[{}], {}", operands[0].ToString(),
+            operands[1].ToString(), operands[2].ToString());
 
       case InstructionKind::kStoreUnpackedElementToTemp:
         return fmt::format(

@@ -29,6 +29,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 - No net types (`wire`, `tri`, etc.)
 - No multi-driver resolution / strength
 - `inout` ports not supported (require nets)
+- No continuous assignments (`assign` statements)
 
 ## Packages
 

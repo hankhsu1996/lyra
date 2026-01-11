@@ -182,7 +182,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           if (num_indices == 1) {
             // 1D: simple store
             auto instruction = Instruction::StoreUnpackedElement(
-                assignment.target.symbol, index_temps[0], value);
+                assignment.target.symbol, index_temps[0], value,
+                assignment.is_non_blocking);
             builder.AddInstruction(std::move(instruction));
           } else {
             // Multi-dimensional: copy-modify-store pattern
@@ -236,8 +237,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
             // Store back to the base variable
             auto final_store = Instruction::StoreUnpackedElement(
-                assignment.target.symbol, index_temps[0],
-                intermediate_temps[0]);
+                assignment.target.symbol, index_temps[0], intermediate_temps[0],
+                assignment.is_non_blocking);
             builder.AddInstruction(std::move(final_store));
           }
         }

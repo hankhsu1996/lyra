@@ -101,7 +101,9 @@ struct InstanceContext {
   }
 
   void UpdatePrevious(common::SymbolRef symbol, const RuntimeValue& value) {
-    previous_variables[symbol] = value;
+    // Deep copy to ensure independent storage for trigger detection.
+    // Arrays use shared_ptr internally, so shallow copy would alias.
+    previous_variables[symbol] = value.DeepCopy();
   }
 
   [[nodiscard]] auto Exists(common::SymbolRef symbol) const -> bool {
@@ -122,8 +124,9 @@ struct InstanceContext {
   void InitializeVariable(const common::Variable& variable) {
     auto initial_value = RuntimeValue::DefaultValueForType(variable.type);
     // Initialize both current and previous values so triggers work correctly
-    // on first change (previous != current when first modified)
-    previous_variables[variable.symbol] = initial_value;
+    // on first change (previous != current when first modified).
+    // Use DeepCopy() to ensure independent storage for trigger detection.
+    previous_variables[variable.symbol] = initial_value.DeepCopy();
     CreateVariable(variable.symbol, std::move(initial_value));
   }
 };

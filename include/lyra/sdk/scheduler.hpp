@@ -324,7 +324,8 @@ class Scheduler {
 
   // Check triggers and schedule to active (not immediate resume)
   void CheckTriggersToActive() {
-    for (auto handle : CollectTriggeredHandles()) {
+    auto handles = CollectTriggeredHandles();
+    for (auto handle : handles) {
       if (!handle.done()) {
         active_handles_.push_back(handle);
       }

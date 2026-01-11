@@ -6,6 +6,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -305,17 +306,28 @@ struct RuntimeValue {
   }
 
   // Deep copy for value semantics - recursively copies nested arrays.
-  // Non-array values are returned as-is (they already have value semantics).
+  // Uses std::visit for exhaustive handling: when a new storage type is added
+  // to ValueVariant, the compiler will error here, forcing explicit handling.
   [[nodiscard]] auto DeepCopy() const -> RuntimeValue {
-    if (!IsArray()) {
-      return *this;
-    }
-    std::vector<RuntimeValue> copied;
-    copied.reserve(AsArray().size());
-    for (const auto& elem : AsArray()) {
-      copied.push_back(elem.DeepCopy());
-    }
-    return Array(type, std::move(copied));
+    auto copied_value = std::visit(
+        [](const auto& v) -> ValueVariant {
+          using T = std::decay_t<decltype(v)>;
+          if constexpr (std::is_same_v<T, common::ValueStorage>) {
+            // Value semantics - shallow copy is sufficient
+            return v;
+          } else if constexpr (std::is_same_v<T, ArrayStorage>) {
+            // Reference semantics - must deep copy
+            std::vector<RuntimeValue> copied;
+            copied.reserve(v->size());
+            for (const auto& elem : *v) {
+              copied.push_back(elem.DeepCopy());
+            }
+            return std::make_shared<std::vector<RuntimeValue>>(
+                std::move(copied));
+          }
+        },
+        value);
+    return RuntimeValue{.type = type, .value = std::move(copied_value)};
   }
 };
 
