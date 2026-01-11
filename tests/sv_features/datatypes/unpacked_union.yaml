@@ -207,6 +207,3 @@ cases:
     expect:
       variables:
         result: 15
-
-  # Note: struct_in_union and union_in_struct tests are skipped
-  # Known limitation: nested structs/unions not yet supported
