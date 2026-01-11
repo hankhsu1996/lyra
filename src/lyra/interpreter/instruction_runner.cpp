@@ -1190,10 +1190,35 @@ auto RunInstruction(
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
 
+      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
+
+      // Check if this is a local variable (no triggers needed)
+      bool is_local = false;
+      if (!frame.call_stack.empty()) {
+        auto& call_frame = frame.call_stack.back();
+        is_local = call_frame.local_variables.contains(symbol);
+      }
+      if (!is_local) {
+        is_local = process_variable_table.Exists(symbol);
+      }
+
       // RuntimeValue uses shared_ptr for array storage, so modifications
       // through this copy will affect the original in the variable table
       auto array_value = read_variable(instr.operands[0]);
       assert(array_value.IsArray());
+
+      // For non-local variables, snapshot old value BEFORE modification.
+      // This is critical: arrays use shared_ptr, so in-place modification
+      // would make old and new values identical if we snapshot after.
+      if (!is_local) {
+        auto [target_symbol, target_instance] = resolve_binding(symbol);
+        if (target_instance != nullptr) {
+          target_instance->UpdatePrevious(target_symbol, array_value);
+        } else if (instance_context != nullptr) {
+          instance_context->UpdatePrevious(symbol, array_value);
+        }
+        // Note: global table case handled below
+      }
 
       auto index_value = get_temp(instr.operands[1]);
       assert(!index_value.IsWide() && "array index cannot be wide");
@@ -1201,6 +1226,19 @@ auto RunInstruction(
           ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
 
       array_value.SetElement(actual_idx, get_temp(instr.operands[2]));
+
+      // Record modification for trigger system
+      if (!is_local) {
+        auto [target_symbol, target_instance] = resolve_binding(symbol);
+        if (target_instance != nullptr) {
+          effect.RecordVariableModification(target_symbol, target_instance);
+        } else if (instance_context != nullptr) {
+          effect.RecordVariableModification(symbol, instance_context);
+        } else {
+          effect.RecordVariableModification(symbol);
+        }
+      }
+
       return InstructionResult::Continue();
     }
 
