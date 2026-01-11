@@ -441,6 +441,16 @@ auto Codegen::GeneratePackages(
       }
     }
 
+    // Emit package parameters as constexpr
+    for (const auto& param : pkg->parameters) {
+      std::string type_str = ToCppType(param.variable.type);
+      Indent();
+      out_ << "inline constexpr " << type_str << " "
+           << param.variable.symbol->name << "{";
+      EmitExpression(*param.initializer);
+      out_ << "};\n";
+    }
+
     // Emit package variables
     for (const auto& var : pkg->variables) {
       std::string type_str = ToCppType(var.variable.type);

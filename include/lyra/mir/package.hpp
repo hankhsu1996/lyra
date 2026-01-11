@@ -25,6 +25,15 @@ struct TypeDeclaration {
   std::vector<EnumMember> members;  // For enums: the enum members
 };
 
+/// A parameter declaration within a package.
+/// Both `parameter` and `localparam` in packages have identical semantics
+/// (non-overridable compile-time constants).
+struct PackageParameter {
+  common::Variable variable;
+  std::unique_ptr<Expression>
+      initializer;  // Always non-null (evaluated by Slang)
+};
+
 /// A variable declaration within a package.
 struct PackageVariable {
   common::Variable variable;
@@ -38,6 +47,7 @@ class Package {
  public:
   std::string name;
   std::vector<TypeDeclaration> types;
+  std::vector<PackageParameter> parameters;
   std::vector<PackageVariable> variables;
   std::vector<FunctionDefinition> functions;
 };
