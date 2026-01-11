@@ -29,8 +29,10 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
     underlying.alias_name = std::nullopt;
     std::string cpp_def = ToCppType(underlying);
 
-    // Register the alias for later emission
-    user_type_aliases_[name] = cpp_def;
+    // Register the alias for later emission (only if not already registered)
+    if (user_type_names_.insert(name).second) {
+      user_type_aliases_.emplace_back(name, cpp_def);
+    }
 
     return name;
   }

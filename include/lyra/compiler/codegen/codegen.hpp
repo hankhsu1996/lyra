@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -217,8 +216,10 @@ class Codegen {
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;
 
-  // Track user-defined type aliases (typedef): name → C++ definition
-  std::map<std::string, std::string> user_type_aliases_;
+  // Track user-defined type aliases (typedef) in insertion order.
+  // Dependencies are registered before dependents due to recursive ToCppType().
+  std::vector<std::pair<std::string, std::string>> user_type_aliases_;
+  std::unordered_set<std::string> user_type_names_;  // For dedup check
 
   // Track which codegen features are used for conditional emission
   CodegenFeature used_features_ = CodegenFeature::kNone;

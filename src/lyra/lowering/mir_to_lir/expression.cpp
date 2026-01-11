@@ -121,25 +121,137 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       }
 
       if (assignment.target.IsStructFieldAssignment()) {
-        // Check if this is an unpacked struct/union field assignment
-        if (assignment.target.base_type &&
-            (assignment.target.base_type->IsUnpackedStruct() ||
-             assignment.target.base_type->IsUnpackedUnion())) {
-          // Unpacked struct/union field assignment: var.field = value
-          // For struct: use field_index; For union: ALWAYS use 0
-          size_t storage_index = assignment.target.base_type->IsUnpackedUnion()
-                                     ? 0
-                                     : *assignment.target.field_bit_offset;
-          auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-          auto index_literal = builder.InternLiteral(
-              common::Literal::Int(static_cast<int32_t>(storage_index)));
-          builder.AddInstruction(
-              Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+        const auto& field_path = assignment.target.field_path;
+        const auto& first_field = field_path[0];
 
-          auto instruction = Instruction::StoreElement(
-              Operand::Variable(assignment.target.symbol), index_temp, value,
-              assignment.is_non_blocking);
-          builder.AddInstruction(std::move(instruction));
+        // Check if this is an unpacked struct/union field assignment
+        if (!first_field.IsPacked()) {
+          // Handle nested unpacked struct/union field assignment
+          // For s.inner.x = value:
+          //   1. Load intermediate aggregates
+          //   2. Store value into innermost field
+          //   3. Store modified aggregates back up the chain
+
+          if (field_path.size() == 1) {
+            // Single-level: direct store (optimized path)
+            size_t storage_index =
+                assignment.target.base_type->IsUnpackedUnion()
+                    ? 0
+                    : first_field.index;
+            auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+            auto index_literal = builder.InternLiteral(
+                common::Literal::Int(static_cast<int32_t>(storage_index)));
+            builder.AddInstruction(
+                Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+
+            auto instruction = Instruction::StoreElement(
+                Operand::Variable(assignment.target.symbol), index_temp, value,
+                assignment.is_non_blocking);
+            builder.AddInstruction(std::move(instruction));
+          } else {
+            // Multi-level nested access: chain loads and stores
+            // Load intermediate aggregates from root to second-to-last
+            std::vector<TempRef> temps;
+            temps.reserve(field_path.size() - 1);
+
+            // First load from root variable
+            auto first_idx_temp =
+                builder.AllocateTemp("idx", common::Type::Int());
+            auto first_idx_literal = builder.InternLiteral(
+                common::Literal::Int(
+                    static_cast<int32_t>(
+                        assignment.target.base_type->IsUnpackedUnion()
+                            ? 0
+                            : field_path[0].index)));
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kLiteral, first_idx_temp, first_idx_literal));
+
+            auto first_temp = builder.AllocateTemp("agg", field_path[0].type);
+            builder.AddInstruction(
+                Instruction::LoadElement(
+                    first_temp, Operand::Variable(assignment.target.symbol),
+                    first_idx_temp, field_path[0].type));
+            temps.push_back(first_temp);
+
+            // Load remaining intermediate aggregates
+            for (size_t i = 1; i < field_path.size() - 1; ++i) {
+              auto idx_temp = builder.AllocateTemp("idx", common::Type::Int());
+              // Use parent's type to determine if it's a union
+              bool parent_is_union = field_path[i - 1].type.IsUnpackedUnion();
+              auto idx_literal = builder.InternLiteral(
+                  common::Literal::Int(
+                      static_cast<int32_t>(
+                          parent_is_union ? 0 : field_path[i].index)));
+              builder.AddInstruction(
+                  Instruction::Basic(IK::kLiteral, idx_temp, idx_literal));
+
+              auto temp = builder.AllocateTemp("agg", field_path[i].type);
+              builder.AddInstruction(
+                  Instruction::LoadElement(
+                      temp, Operand::Temp(temps.back()), idx_temp,
+                      field_path[i].type));
+              temps.push_back(temp);
+            }
+
+            // Store value into innermost field
+            const auto& last_field = field_path.back();
+            auto last_idx_temp =
+                builder.AllocateTemp("idx", common::Type::Int());
+            // Use parent's type (second-to-last in path) to determine if union
+            bool parent_is_union =
+                field_path[field_path.size() - 2].type.IsUnpackedUnion();
+            auto last_idx_literal = builder.InternLiteral(
+                common::Literal::Int(
+                    static_cast<int32_t>(
+                        parent_is_union ? 0 : last_field.index)));
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kLiteral, last_idx_temp, last_idx_literal));
+
+            builder.AddInstruction(
+                Instruction::StoreElement(
+                    Operand::Temp(temps.back()), last_idx_temp, value,
+                    assignment.is_non_blocking));
+
+            // Store modified aggregates back up the chain
+            for (size_t i = temps.size() - 1; i > 0; --i) {
+              auto idx_temp = builder.AllocateTemp("idx", common::Type::Int());
+              // Use grandparent's type to determine if parent is a union
+              bool gparent_is_union =
+                  (i >= 2) ? field_path[i - 2].type.IsUnpackedUnion()
+                           : assignment.target.base_type->IsUnpackedUnion();
+              auto idx_literal = builder.InternLiteral(
+                  common::Literal::Int(
+                      static_cast<int32_t>(
+                          gparent_is_union ? 0 : field_path[i].index)));
+              builder.AddInstruction(
+                  Instruction::Basic(IK::kLiteral, idx_temp, idx_literal));
+
+              builder.AddInstruction(
+                  Instruction::StoreElement(
+                      Operand::Temp(temps[i - 1]), idx_temp, temps[i],
+                      assignment.is_non_blocking));
+            }
+
+            // Store first intermediate back to root variable
+            auto root_idx_temp =
+                builder.AllocateTemp("idx", common::Type::Int());
+            auto root_idx_literal = builder.InternLiteral(
+                common::Literal::Int(
+                    static_cast<int32_t>(
+                        assignment.target.base_type->IsUnpackedUnion()
+                            ? 0
+                            : field_path[0].index)));
+            builder.AddInstruction(
+                Instruction::Basic(
+                    IK::kLiteral, root_idx_temp, root_idx_literal));
+
+            builder.AddInstruction(
+                Instruction::StoreElement(
+                    Operand::Variable(assignment.target.symbol), root_idx_temp,
+                    temps[0], assignment.is_non_blocking));
+          }
           return value;
         }
 
@@ -148,13 +260,13 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
         auto offset_literal = builder.InternLiteral(
             common::Literal::Int(
-                static_cast<int32_t>(*assignment.target.field_bit_offset)));
+                static_cast<int32_t>(*first_field.bit_offset)));
         builder.AddInstruction(
             Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
 
         // Create slice type with field width
         auto slice_type = common::Type::IntegralUnsigned(
-            static_cast<uint32_t>(*assignment.target.field_bit_width));
+            static_cast<uint32_t>(*first_field.bit_width));
 
         // Emit StorePackedBits instruction
         auto instruction = Instruction::StorePackedBits(
