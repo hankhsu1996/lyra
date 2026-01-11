@@ -7,8 +7,32 @@ on:
     branches: [main]
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'include/**'
+              - 'tests/**'
+              - 'examples/**'
+              - 'BUILD.bazel'
+              - 'MODULE.bazel'
+              - '.bazelrc'
+              - '.github/workflows/bazel-build.yml'
+
   build:
     name: Bazel Build
+    needs: changes
+    if: ${{ needs.changes.outputs.src == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -44,3 +68,24 @@ jobs:
       - name: Test
         run: |
           bazel test //... --test_output=errors --verbose_failures
+
+  # This job always runs and reports success when build is skipped
+  # Required for branch protection rules that require this check
+  build-status:
+    name: Build Status
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.changes.outputs.src }}" != "true" ]]; then
+            echo "No source changes detected, skipping build"
+            exit 0
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "Build succeeded"
+            exit 0
+          else
+            echo "Build failed"
+            exit 1
+          fi
