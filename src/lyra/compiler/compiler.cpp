@@ -20,7 +20,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "lyra/common/timescale.hpp"
-#include "lyra/compiler/codegen.hpp"
+#include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/mir/module.hpp"

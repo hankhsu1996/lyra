@@ -116,6 +116,7 @@ class Codegen {
   void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
+  auto EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool;
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
   void EmitAssignmentTarget(const mir::AssignmentTarget& target);
   void EmitPackedBitPosition(

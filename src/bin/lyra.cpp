@@ -20,7 +20,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/indent.hpp"
 #include "lyra/common/timescale.hpp"
-#include "lyra/compiler/codegen.hpp"
+#include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/config/project_config.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
