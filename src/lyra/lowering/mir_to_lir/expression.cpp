@@ -260,8 +260,8 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       auto index = LowerExpression(*select.selector, builder);
       auto result = builder.AllocateTemp("elem", expression.type);
 
-      // Check if this is packed type (value) or unpacked array (variable)
-      if (select.value->type.kind == common::Type::Kind::kIntegral) {
+      // Check if this is bitvector type (value) or unpacked array (variable)
+      if (select.value->type.IsBitvector()) {
         // Packed vector: lower the value, then select element/bit
         auto value = LowerExpression(*select.value, builder);
         int32_t lower = select.value->type.GetElementLower();
@@ -474,10 +474,9 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       int32_t lsb = std::min(range.left, range.right);
 
       // Adjust for non-zero-based ranges (e.g., bit [63:32])
-      if (range.value->type.kind == common::Type::Kind::kIntegral) {
-        const auto& two_state =
-            std::get<common::IntegralData>(range.value->type.data);
-        lsb -= two_state.element_lower;
+      // Packed structs return 0 from GetElementLower() (always 0-based)
+      if (range.value->type.IsBitvector()) {
+        lsb -= range.value->type.GetElementLower();
       }
 
       // Create a literal for the LSB shift amount

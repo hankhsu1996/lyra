@@ -246,3 +246,93 @@ cases:
     expect:
       variables:
         result: 65451  # 0xFFAB - MSBs preserved, LSBs overwritten
+
+  - name: union_bit_select
+    description: Bit select directly on packed union value
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_lsb, result_bit4, result_bit8, result_msb;
+        initial begin
+          u = 16'hABCD;  // binary: 1010_1011_1100_1101
+          result_lsb = u[0];   // LSB = 1
+          result_bit4 = u[4];  // bit 4 = 0
+          result_bit8 = u[8];  // bit 8 = 1
+          result_msb = u[15];  // MSB = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result_lsb: 1
+        result_bit4: 0
+        result_bit8: 1
+        result_msb: 1
+
+  - name: union_part_select
+    description: Part select directly on packed union value
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low_nibble, result_mid_byte, result_high_nibble;
+        initial begin
+          u = 16'hABCD;
+          result_low_nibble = u[3:0];   // 0xD = 13
+          result_mid_byte = u[11:4];    // 0xBC = 188
+          result_high_nibble = u[15:12]; // 0xA = 10
+        end
+      endmodule
+    expect:
+      variables:
+        result_low_nibble: 13
+        result_mid_byte: 188
+        result_high_nibble: 10
+
+  - name: union_indexed_part_select_ascending
+    description: Indexed ascending part select on packed union
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low, result_high;
+        initial begin
+          u = 16'hABCD;
+          result_low = u[0 +: 8];   // bits 7:0 = 0xCD = 205
+          result_high = u[8 +: 8];  // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171
+
+  - name: union_indexed_part_select_descending
+    description: Indexed descending part select on packed union
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low, result_high;
+        initial begin
+          u = 16'hABCD;
+          result_low = u[7 -: 8];   // bits 7:0 = 0xCD = 205
+          result_high = u[15 -: 8]; // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171

@@ -326,3 +326,93 @@ cases:
       variables:
         result: 1
 
+  - name: struct_bit_select
+    description: Bit select directly on packed struct value
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_lsb, result_bit4, result_bit8, result_msb;
+        initial begin
+          s = 16'hABCD;  // binary: 1010_1011_1100_1101
+          result_lsb = s[0];   // LSB = 1
+          result_bit4 = s[4];  // bit 4 = 0
+          result_bit8 = s[8];  // bit 8 = 1
+          result_msb = s[15];  // MSB = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result_lsb: 1
+        result_bit4: 0
+        result_bit8: 1
+        result_msb: 1
+
+  - name: struct_part_select
+    description: Part select directly on packed struct value
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_low_nibble, result_mid_byte, result_high_nibble;
+        initial begin
+          s = 16'hABCD;
+          result_low_nibble = s[3:0];   // 0xD = 13
+          result_mid_byte = s[11:4];    // 0xBC = 188
+          result_high_nibble = s[15:12]; // 0xA = 10
+        end
+      endmodule
+    expect:
+      variables:
+        result_low_nibble: 13
+        result_mid_byte: 188
+        result_high_nibble: 10
+
+  - name: struct_indexed_part_select_ascending
+    description: Indexed ascending part select on packed struct
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_low, result_high;
+        initial begin
+          s = 16'hABCD;
+          result_low = s[0 +: 8];   // bits 7:0 = 0xCD = 205
+          result_high = s[8 +: 8];  // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171
+
+  - name: struct_indexed_part_select_descending
+    description: Indexed descending part select on packed struct
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_low, result_high;
+        initial begin
+          s = 16'hABCD;
+          result_low = s[7 -: 8];   // bits 7:0 = 0xCD = 205
+          result_high = s[15 -: 8]; // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171
+
