@@ -329,61 +329,91 @@ auto LowerExpression(const slang::ast::Expression& expression)
             std::move(target), std::move(value), is_non_blocking);
       }
 
-      // Struct field assignment (my_struct.field = value)
+      // Struct/union field assignment (supports nested: s.inner.x = value)
       if (left.kind == slang::ast::ExpressionKind::MemberAccess) {
-        const auto& member_access =
-            left.as<slang::ast::MemberAccessExpression>();
-        const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
+        // Walk up the member access chain to find the root variable
+        // and build the field path along the way
+        std::vector<mir::FieldPathElement> field_path;
+        const slang::ast::Expression* current = &left;
+        const slang::ast::Symbol* root_symbol = nullptr;
+        common::Type root_type;
 
-        // Get the struct variable (for now, require simple NamedValue)
-        const auto& struct_expr = member_access.value();
-        if (struct_expr.kind != slang::ast::ExpressionKind::NamedValue) {
+        while (current->kind == slang::ast::ExpressionKind::MemberAccess) {
+          const auto& member_access =
+              current->as<slang::ast::MemberAccessExpression>();
+          const auto& field =
+              member_access.member.as<slang::ast::FieldSymbol>();
+
+          // Get the field type
+          auto field_type_result =
+              LowerType(field.getType(), member_access.sourceRange);
+          if (!field_type_result) {
+            throw DiagnosticException(std::move(field_type_result.error()));
+          }
+
+          // Determine the aggregate type and compute field index
+          const auto& value_type =
+              member_access.value().type->getCanonicalType();
+          bool is_unpacked_struct =
+              value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+          bool is_unpacked_union =
+              value_type.kind == slang::ast::SymbolKind::UnpackedUnionType;
+
+          if (is_unpacked_struct) {
+            const auto& struct_type =
+                value_type.as<slang::ast::UnpackedStructType>();
+            size_t field_index = 0;
+            for (const auto* f : struct_type.fields) {
+              if (f == &field) {
+                break;
+              }
+              ++field_index;
+            }
+            field_path.emplace_back(
+                std::string(field.name), field_index, *field_type_result);
+          } else if (is_unpacked_union) {
+            const auto& union_type =
+                value_type.as<slang::ast::UnpackedUnionType>();
+            size_t field_index = 0;
+            for (const auto* f : union_type.fields) {
+              if (f == &field) {
+                break;
+              }
+              ++field_index;
+            }
+            field_path.emplace_back(
+                std::string(field.name), field_index, *field_type_result);
+          } else {
+            // Packed struct: use bit offset and width
+            field_path.emplace_back(
+                std::string(field.name), field.bitOffset,
+                field.getType().getBitWidth(), *field_type_result);
+          }
+
+          current = &member_access.value();
+        }
+
+        // Now current should be a NamedValue (the root variable)
+        if (current->kind != slang::ast::ExpressionKind::NamedValue) {
           throw DiagnosticException(
               Diagnostic::Error(
-                  struct_expr.sourceRange,
-                  "only simple struct variables supported as assignment "
-                  "target"));
+                  current->sourceRange,
+                  "nested struct field assignment requires a variable base"));
         }
 
-        const auto& struct_symbol =
-            struct_expr.as<slang::ast::NamedValueExpression>().symbol;
-
-        auto struct_type_result = LowerType(
-            struct_expr.type->getCanonicalType(), struct_expr.sourceRange);
-        if (!struct_type_result) {
-          throw DiagnosticException(std::move(struct_type_result.error()));
+        root_symbol = &current->as<slang::ast::NamedValueExpression>().symbol;
+        auto root_type_result =
+            LowerType(current->type->getCanonicalType(), current->sourceRange);
+        if (!root_type_result) {
+          throw DiagnosticException(std::move(root_type_result.error()));
         }
+        root_type = *root_type_result;
 
-        // For unpacked structs, use field index instead of bit offset
-        // Use getCanonicalType() to handle typedef'd struct types
-        const auto& value_type = member_access.value().type->getCanonicalType();
-        bool is_unpacked_struct =
-            value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
-
-        uint64_t offset_or_index = 0;
-        size_t width = 0;
-        if (is_unpacked_struct) {
-          // Compute field index for unpacked struct
-          const auto& struct_type =
-              value_type.as<slang::ast::UnpackedStructType>();
-          size_t field_index = 0;
-          for (const auto* f : struct_type.fields) {
-            if (f == &field) {
-              break;
-            }
-            ++field_index;
-          }
-          offset_or_index = field_index;
-          width = 0;  // Not used for unpacked structs
-        } else {
-          // Packed struct: use bit offset and width
-          offset_or_index = field.bitOffset;
-          width = field.getType().getBitWidth();
-        }
+        // Reverse the field path (we built it from leaf to root)
+        std::reverse(field_path.begin(), field_path.end());
 
         mir::AssignmentTarget target(
-            &struct_symbol, std::string(field.name), offset_or_index, width,
-            *struct_type_result);
+            root_symbol, std::move(field_path), root_type);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -974,12 +1004,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // For packed structs: bit_offset is LSB position, bit_width is field
-      // width. For unpacked structs: bit_offset is field index, bit_width is 0
-      // (unused).
-      // Use getCanonicalType() to handle typedef'd struct types
+      // width. For unpacked structs/unions: bit_offset is field index,
+      // bit_width is 0 (unused).
+      // Use getCanonicalType() to handle typedef'd struct/union types
       const auto& value_type = member_access.value().type->getCanonicalType();
       bool is_unpacked_struct =
           value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+      bool is_unpacked_union =
+          value_type.kind == slang::ast::SymbolKind::UnpackedUnionType;
 
       if (is_unpacked_struct) {
         // Compute field index for unpacked struct
@@ -987,6 +1019,21 @@ auto LowerExpression(const slang::ast::Expression& expression)
             value_type.as<slang::ast::UnpackedStructType>();
         size_t field_index = 0;
         for (const auto* f : struct_type.fields) {
+          if (f == &field) {
+            break;
+          }
+          ++field_index;
+        }
+        return std::make_unique<mir::MemberAccessExpression>(
+            std::move(value), std::string(field.name), field_index, 0,
+            *type_result);
+      }
+
+      if (is_unpacked_union) {
+        // Compute field index for unpacked union
+        const auto& union_type = value_type.as<slang::ast::UnpackedUnionType>();
+        size_t field_index = 0;
+        for (const auto* f : union_type.fields) {
           if (f == &field) {
             break;
           }

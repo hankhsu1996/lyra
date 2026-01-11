@@ -183,18 +183,23 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << ")";
       } else if (assign.target.IsStructFieldAssignment()) {
         const auto& base_type = assign.target.base_type.value();
+        const auto& first_field = assign.target.field_path[0];
 
-        // Check if this is an unpacked struct field assignment
-        if (base_type.IsUnpackedStruct()) {
-          // Unpacked struct field: direct member assignment
-          out_ << assign.target.symbol->name << "." << assign.target.field_name
-               << " = ";
+        // Check if this is an unpacked struct/union field assignment
+        if (base_type.IsUnpackedStruct() || base_type.IsUnpackedUnion()) {
+          // Unpacked struct/union field: direct member assignment
+          // Emit full field path for nested access (e.g., s.inner.x = value)
+          out_ << assign.target.symbol->name;
+          for (const auto& field : assign.target.field_path) {
+            out_ << "." << field.name;
+          }
+          out_ << " = ";
           EmitExpression(*assign.value, kPrecAssign);
         } else {
           // Packed struct field assignment: my_struct.field = value
           size_t total_width = base_type.GetBitWidth();
-          size_t field_width = *assign.target.field_bit_width;
-          uint64_t bit_offset = *assign.target.field_bit_offset;
+          size_t field_width = *first_field.bit_width;
+          uint64_t bit_offset = *first_field.bit_offset;
 
           bool storage_is_wide = IsWideWidth(total_width);
           bool field_is_wide = IsWideWidth(field_width);
@@ -356,8 +361,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kMemberAccess: {
       const auto& member = mir::As<mir::MemberAccessExpression>(expr);
 
-      // For unpacked structs: direct field access
-      if (member.value->type.IsUnpackedStruct()) {
+      // For unpacked structs/unions: direct field access
+      if (member.value->type.IsUnpackedStruct() ||
+          member.value->type.IsUnpackedUnion()) {
         EmitExpression(*member.value, kPrecPrimary);
         out_ << "." << member.field_name;
         break;

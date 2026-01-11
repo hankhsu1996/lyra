@@ -29,8 +29,10 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
     underlying.alias_name = std::nullopt;
     std::string cpp_def = ToCppType(underlying);
 
-    // Register the alias for later emission
-    user_type_aliases_[name] = cpp_def;
+    // Register the alias for later emission (only if not already registered)
+    if (user_type_names_.insert(name).second) {
+      user_type_aliases_.emplace_back(name, cpp_def);
+    }
 
     return name;
   }
@@ -129,6 +131,18 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       }
       struct_def += "}";
       return struct_def;
+    }
+    case common::Type::Kind::kUnpackedUnion: {
+      // Unpacked unions are emitted as C++ unions
+      const auto& union_data = std::get<common::UnpackedUnionData>(type.data);
+
+      std::string union_def = "union { ";
+      for (const auto& field : union_data.fields) {
+        union_def +=
+            std::format("{} {}; ", ToCppType(*field.field_type), field.name);
+      }
+      union_def += "}";
+      return union_def;
     }
   }
   throw common::InternalError(

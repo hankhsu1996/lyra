@@ -1,0 +1,148 @@
+feature: nested_aggregates
+description: Nested struct/union field assignment (struct in struct, union in struct, etc.)
+
+cases:
+  - name: struct_in_struct_write_read
+    description: Write and read nested struct field
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; int z; } Outer;
+        Outer s;
+        int result;
+        initial begin
+          s.inner.x = 42;
+          result = s.inner.x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: struct_in_struct_multiple_fields
+    description: Write and read multiple nested struct fields
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; int z; } Outer;
+        Outer s;
+        int result_x, result_y, result_z;
+        initial begin
+          s.inner.x = 10;
+          s.inner.y = 20;
+          s.z = 30;
+          result_x = s.inner.x;
+          result_y = s.inner.y;
+          result_z = s.z;
+        end
+      endmodule
+    expect:
+      variables:
+        result_x: 10
+        result_y: 20
+        result_z: 30
+
+  - name: union_in_struct
+    description: Struct containing union - write and read union field
+    sv: |
+      module Test;
+        typedef union { int i; real f; } MyUnion;
+        typedef struct { MyUnion u; int tag; } Tagged;
+        Tagged t;
+        int result_i, result_tag;
+        initial begin
+          t.u.i = 123;
+          t.tag = 1;
+          result_i = t.u.i;
+          result_tag = t.tag;
+        end
+      endmodule
+    expect:
+      variables:
+        result_i: 123
+        result_tag: 1
+
+  - name: struct_in_union
+    description: Union containing struct - write and read struct field
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } Point;
+        typedef union { Point p; int raw; } MyUnion;
+        MyUnion u;
+        int result_x, result_y;
+        initial begin
+          u.p.x = 100;
+          u.p.y = 200;
+          result_x = u.p.x;
+          result_y = u.p.y;
+        end
+      endmodule
+    expect:
+      variables:
+        result_x: 100
+        result_y: 200
+
+  - name: struct_in_struct_independence
+    description: Nested struct fields are independent
+    sv: |
+      module Test;
+        typedef struct { int a; int b; } Inner;
+        typedef struct { Inner first; Inner second; } Outer;
+        Outer s;
+        int r1, r2, r3, r4;
+        initial begin
+          s.first.a = 1;
+          s.first.b = 2;
+          s.second.a = 3;
+          s.second.b = 4;
+          r1 = s.first.a;
+          r2 = s.first.b;
+          r3 = s.second.a;
+          r4 = s.second.b;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 2
+        r3: 3
+        r4: 4
+
+  - name: nested_field_expression
+    description: Nested field in arithmetic expression
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } Point;
+        typedef struct { Point p; } Wrapper;
+        Wrapper w;
+        int result;
+        initial begin
+          w.p.x = 10;
+          w.p.y = 5;
+          result = w.p.x + w.p.y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: nested_struct_copy
+    description: Copy nested struct value
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; } Outer;
+        Outer s1, s2;
+        int r1, r2;
+        initial begin
+          s1.inner.x = 42;
+          s1.inner.y = 24;
+          s2 = s1;
+          r1 = s2.inner.x;
+          r2 = s2.inner.y;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 42
+        r2: 24

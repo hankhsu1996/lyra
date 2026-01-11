@@ -262,11 +262,42 @@ class TernaryExpression : public Expression {
 // Forward declaration for AssignmentTarget
 class ElementSelectExpression;
 
+// Represents one step in a field access path (e.g., s.inner.x has two elements)
+// Used for nested struct/union field assignment
+struct FieldPathElement {
+  std::string name;  // Field name
+  size_t index;      // Storage index (field index for unpacked, 0 for unions)
+  Type type;         // Type of this field
+
+  // For packed structs only (bit-level access)
+  std::optional<uint64_t> bit_offset;  // LSB position within parent
+  std::optional<size_t> bit_width;     // Width in bits
+
+  // Constructor for unpacked struct/union field
+  FieldPathElement(std::string name, size_t index, Type type)
+      : name(std::move(name)), index(index), type(std::move(type)) {
+  }
+
+  // Constructor for packed struct field
+  FieldPathElement(
+      std::string name, uint64_t bit_offset, size_t bit_width, Type type)
+      : name(std::move(name)),
+        index(0),
+        type(std::move(type)),
+        bit_offset(bit_offset),
+        bit_width(bit_width) {
+  }
+
+  [[nodiscard]] auto IsPacked() const -> bool {
+    return bit_offset.has_value();
+  }
+};
+
 // Represents the target of an assignment:
 // - Local variable (symbol only)
 // - Array element (symbol + indices for multi-dim packed arrays)
 // - Hierarchical reference (path like "child.port")
-// - Struct field (symbol + field offset/width)
+// - Struct/union field (symbol + field_path for nested access)
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable (nullptr for hierarchical)
   std::vector<std::unique_ptr<Expression>>
@@ -277,10 +308,8 @@ struct AssignmentTarget {
   SymbolRef target_symbol{nullptr};
   std::vector<SymbolRef> instance_path;
 
-  // For struct field assignment (my_struct.field = value)
-  std::optional<uint64_t> field_bit_offset;  // LSB position of field
-  std::optional<size_t> field_bit_width;     // Width of field in bits
-  std::string field_name;                    // Name of field (for display)
+  // For struct/union field assignment (supports nested: s.inner.x = value)
+  std::vector<FieldPathElement> field_path;  // Empty = not a field assignment
 
   // Constructor for simple variable assignment
   explicit AssignmentTarget(SymbolRef sym)
@@ -319,16 +348,22 @@ struct AssignmentTarget {
         instance_path(std::move(instances)) {
   }
 
-  // Constructor for struct field assignment
+  // Constructor for struct/union field assignment (single level)
   AssignmentTarget(
-      SymbolRef sym, std::string name, uint64_t bit_offset, size_t bit_width,
+      SymbolRef sym, std::string name, size_t field_index, Type field_type,
       Type struct_type)
+      : symbol(std::move(sym)), indices(), base_type(std::move(struct_type)) {
+    field_path.emplace_back(
+        std::move(name), field_index, std::move(field_type));
+  }
+
+  // Constructor for struct/union field assignment (nested path)
+  AssignmentTarget(
+      SymbolRef sym, std::vector<FieldPathElement> path, Type struct_type)
       : symbol(std::move(sym)),
         indices(),
         base_type(std::move(struct_type)),
-        field_bit_offset(bit_offset),
-        field_bit_width(bit_width),
-        field_name(std::move(name)) {
+        field_path(std::move(path)) {
   }
 
   [[nodiscard]] auto IsElementSelect() const -> bool {
@@ -344,7 +379,7 @@ struct AssignmentTarget {
   }
 
   [[nodiscard]] auto IsStructFieldAssignment() const -> bool {
-    return field_bit_offset.has_value();
+    return !field_path.empty();
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
@@ -352,7 +387,11 @@ struct AssignmentTarget {
       return common::FormatHierarchicalPath(instance_path, target_symbol);
     }
     if (IsStructFieldAssignment()) {
-      return fmt::format("{}.{}", symbol->name, field_name);
+      std::string result = std::string(symbol->name);
+      for (const auto& elem : field_path) {
+        result += fmt::format(".{}", elem.name);
+      }
+      return result;
     }
     if (indices.empty()) {
       return std::string(symbol->name);

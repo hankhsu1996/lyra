@@ -171,6 +171,26 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     return Type::UnpackedStruct(std::move(fields));
   }
 
+  // Handle unpacked union
+  if (type.kind == slang::ast::SymbolKind::UnpackedUnionType) {
+    const auto& union_type = type.as<slang::ast::UnpackedUnionType>();
+
+    std::vector<common::UnpackedStructField> fields;
+    for (const auto* field : union_type.fields) {
+      auto field_type_result = LowerType(field->getType(), source_range);
+      if (!field_type_result) {
+        return field_type_result;
+      }
+
+      fields.push_back(
+          common::UnpackedStructField{
+              .name = std::string(field->name),
+              .field_type = std::make_shared<Type>(*field_type_result)});
+    }
+
+    return Type::UnpackedUnion(std::move(fields));
+  }
+
   return std::unexpected(
       Diagnostic::Error(
           source_range, fmt::format("unsupported type '{}'", type.toString())));
