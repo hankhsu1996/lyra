@@ -144,7 +144,8 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
                 "Unsupported format specifier: precision not supported for %d");
           }
           std::string spec = "{:";
-          if (zero_pad) {
+          // Only add zero_pad when there's a width (otherwise %0d = %d)
+          if (zero_pad && !width.empty()) {
             spec += "0";
           }
           if (!width.empty()) {
@@ -196,7 +197,7 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
                 "%h/%x");
           }
           std::string spec = "{:";
-          if (zero_pad) {
+          if (zero_pad && !width.empty()) {
             spec += "0";
           }
           if (!width.empty()) {
@@ -211,7 +212,7 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
                 "Unsupported format specifier: precision not supported for %b");
           }
           std::string spec = "{:";
-          if (zero_pad) {
+          if (zero_pad && !width.empty()) {
             spec += "0";
           }
           if (!width.empty()) {
@@ -226,7 +227,7 @@ inline auto TransformToStdFormat(const std::string& sv_fmt) -> std::string {
                 "Unsupported format specifier: precision not supported for %o");
           }
           std::string spec = "{:";
-          if (zero_pad) {
+          if (zero_pad && !width.empty()) {
             spec += "0";
           }
           if (!width.empty()) {

@@ -1,16 +1,23 @@
-# String Type Handling
+#String Type Handling
 
-How Lyra handles SystemVerilog string types, and why.
+How Lyra handles SystemVerilog string types,
+and why.
 
-## The Problem
+        ##The Problem
 
-SystemVerilog strings have dual nature: they can be used as strings or as packed bit vectors. The LRM (6.16) specifies that strings convert to unsigned packed arrays (8 bits per character, MSB first).
+            SystemVerilog strings have dual nature
+    : they can be used as strings or
+        as packed bit vectors
+            .The LRM(6.16) specifies that strings convert to unsigned packed
+        arrays(8 bits per character, MSB first)
+            .
 
-Examples of dual use:
+        Examples of dual use :
 
-- String context: `string s = "Hello";`
-- Bit context: `bit[40] b = "Hello";`
-- Mixed: `$display("Value: %d", x);` (format string detection)
+    -String context : `string s = "Hello";
+
+`- Bit context :`bit[40] b = "Hello";
+`- Mixed :`$display("Value: %d", x);` (format string detection)
 
 ## Slang's Approach
 
@@ -36,12 +43,31 @@ Without tracking, `$display("x=%d", 42)` would not be recognized as having a for
 
 ## Our Solution
 
-We preserve string literal origin via a flag:
+We preserve string literal origin via explicit separation and a flag:
+
+### MIR Level
+
+For display-like system calls ($display, $monitor, $strobe, $error, etc.):
+
+- `format_expr` - explicit optional field for the format string expression
+- `arguments` - only the format arguments (values to format)
+- `format_expr_is_literal` - true if format_expr came from a string literal
+
+### LIR Level
+
+- `format_operand` - lowered format string expression (optional)
+- `operands` - only the format arguments
+- `format_string_is_literal` - propagated from MIR
+
+### Underlying Literal
 
 - `is_string_literal` on `Literal` - marks literals that came from string literals
-- `first_operand_is_string_literal` on LIR `Instruction` - propagates to runtime
 
-This enables format string detection while respecting slang's type system.
+This approach:
+
+1. Separates format string from arguments at IR level (mirrors C++ codegen / assembly)
+2. Enables format string detection while respecting slang's type system
+3. Eliminates need for runtime extraction - format is explicitly separated at lowering time
 
 ## Alternatives Considered
 
@@ -53,4 +79,6 @@ This enables format string detection while respecting slang's type system.
 
 - LRM 6.16: String data type, conversion rules
 - `common/literal.hpp`: `is_string_literal` flag definition
+- `mir/expression.hpp`: `format_expr` and `format_expr_is_literal` in SystemCallExpression
+- `lir/instruction.hpp`: `format_operand` and `format_string_is_literal` in Instruction
 - `common/format_string.hpp`: Format string detection utilities

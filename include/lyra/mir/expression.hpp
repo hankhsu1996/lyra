@@ -426,7 +426,27 @@ class SystemCallExpression : public Expression {
   static constexpr Kind kKindValue = Kind::kSystemCall;
 
   std::string name;
+
+  // For display-like tasks ($display, $monitor, $strobe, $error, etc.):
+  // Optional format string expression. nullopt means no explicit format string
+  // (all arguments are values to display with auto-format).
+  // For non-display tasks: always nullopt.
+  std::optional<std::unique_ptr<Expression>> format_expr;
+
+  // For display-like tasks: values to format (the arguments after format_expr).
+  // For non-display tasks: general arguments.
   std::vector<std::unique_ptr<Expression>> arguments;
+
+  // True if format_expr (or first argument for mem_io tasks) is a string
+  // literal. For display tasks: enables compile-time format parsing. For
+  // mem_io tasks ($readmemh, etc.): enables filename extraction from integral.
+  bool format_expr_is_literal = false;
+
+  // Source location for severity tasks ($fatal, $error, $warning, $info).
+  // Captured at AST lowering time since slang source info is only available
+  // there.
+  std::optional<std::string> source_file;
+  std::optional<uint32_t> source_line;
 
   SystemCallExpression(
       std::string name, std::vector<std::unique_ptr<Expression>> args,
@@ -438,7 +458,10 @@ class SystemCallExpression : public Expression {
 
   [[nodiscard]] auto ToString() const -> std::string override {
     std::vector<std::string> arg_strs;
-    arg_strs.reserve(arguments.size());
+    if (format_expr) {
+      arg_strs.push_back((*format_expr)->ToString());
+    }
+    arg_strs.reserve(arg_strs.size() + arguments.size());
     for (const auto& arg : arguments) {
       arg_strs.push_back(arg ? arg->ToString() : "<null>");
     }

@@ -152,9 +152,21 @@ struct Instruction {
   // For kLoadCapture/kStoreCapture: capture variable name
   std::string capture_name{};
 
-  // For system calls: true if the first operand is a string literal
-  // (format string or filename). Computed at MIR-to-LIR lowering time.
-  bool first_operand_is_string_literal = false;
+  // For display-like system calls: explicit format string expression.
+  // Separated from operands at MIR level, lowered to optional operand in LIR.
+  // nullopt means no explicit format string (auto-format mode).
+  // Also used for mem_io tasks ($readmemh, etc.) where it indicates filename.
+  std::optional<Operand> format_operand{};
+
+  // True if format_operand (or first operand for mem_io) is a string literal.
+  // For display tasks: enables compile-time format parsing.
+  // For mem_io tasks: enables filename extraction from integral literal.
+  bool format_string_is_literal{false};
+
+  // Source location for severity tasks ($fatal, $error, $warning, $info).
+  // Propagated from MIR SystemCallExpression.
+  std::optional<std::string> source_file{};
+  std::optional<uint32_t> source_line{};
 
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
