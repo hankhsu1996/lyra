@@ -613,7 +613,7 @@ auto IntegralToString(const RuntimeValue& val) -> std::string {
 
 // Extract format string info from a RuntimeValue (first arg of $display etc).
 // The is_string_literal flag comes from the instruction's
-// first_operand_is_string_literal field, computed at MIR-to-LIR time.
+// format_string_is_literal field, computed at MIR-to-LIR time.
 auto ExtractFormatString(const RuntimeValue& val, bool is_string_literal)
     -> common::FormatStringInfo {
   common::FormatStringInfo info;
@@ -1018,7 +1018,7 @@ auto RunInstruction(
       throw common::InternalError(
           "interpreter", std::format("{} expects 2-4 operands", task_name));
     }
-    bool filename_is_string_literal = instr.first_operand_is_string_literal;
+    bool filename_is_string_literal = instr.format_string_is_literal;
     const auto filename_value = get_operand_value(instr.operands[0]);
     std::string filename;
     if (filename_value.IsString()) {
@@ -2038,9 +2038,13 @@ auto RunInstruction(
 
         // Build message from remaining arguments (if any)
         std::string message;
-        if (arg_idx < instr.operands.size()) {
-          // Collect message arguments (starting after finish_num for $fatal)
+        bool has_format = instr.format_operand.has_value();
+        if (has_format || arg_idx < instr.operands.size()) {
+          // Collect message arguments (prepend format_operand if present)
           std::vector<RuntimeValue> msg_args;
+          if (instr.format_operand) {
+            msg_args.push_back(get_operand_value(*instr.format_operand));
+          }
           for (size_t i = arg_idx; i < instr.operands.size(); ++i) {
             msg_args.push_back(get_operand_value(instr.operands[i]));
           }
@@ -2054,9 +2058,8 @@ auto RunInstruction(
               .global_precision_power =
                   simulation_context.global_precision_power};
 
-          // first_operand_is_string_literal refers to the format string operand
           message = FormatMessage(
-              msg_args, instr.first_operand_is_string_literal, 'd', &time_ctx);
+              msg_args, instr.format_string_is_literal, 'd', &time_ctx);
         }
 
         // Only print if finish_num >= 1 for $fatal (or always for others)
@@ -2104,8 +2107,11 @@ auto RunInstruction(
           instr.system_call_name == "$writeh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
 
-        // Collect argument values
+        // Collect argument values (prepend format_operand if present)
         std::vector<RuntimeValue> arg_values;
+        if (instr.format_operand) {
+          arg_values.push_back(get_operand_value(*instr.format_operand));
+        }
         for (const auto& operand : instr.operands) {
           arg_values.push_back(get_operand_value(operand));
         }
@@ -2121,8 +2127,8 @@ auto RunInstruction(
 
         // Format and output message
         std::string message = FormatMessage(
-            arg_values, instr.first_operand_is_string_literal,
-            props.default_format, &time_ctx);
+            arg_values, instr.format_string_is_literal, props.default_format,
+            &time_ctx);
         simulation_context.display_output << message;
 
         if (props.append_newline) {
@@ -2137,10 +2143,13 @@ auto RunInstruction(
           instr.system_call_name == "$strobeo" ||
           instr.system_call_name == "$strobeh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
-        bool first_is_string_literal = instr.first_operand_is_string_literal;
+        bool first_is_string_literal = instr.format_string_is_literal;
 
-        // Collect argument values now (they'll be read in Postponed region)
+        // Collect argument values now (prepend format_operand if present)
         std::vector<RuntimeValue> arg_values;
+        if (instr.format_operand) {
+          arg_values.push_back(get_operand_value(*instr.format_operand));
+        }
         for (const auto& operand : instr.operands) {
           arg_values.push_back(get_operand_value(operand));
         }
@@ -2178,12 +2187,14 @@ auto RunInstruction(
           instr.system_call_name == "$monitorh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
 
-        // Check if first operand is a string literal (from instruction
-        // metadata)
-        bool first_is_string_literal = instr.first_operand_is_string_literal;
+        // Check if format_operand is a string literal
+        bool first_is_string_literal = instr.format_string_is_literal;
 
-        // Collect argument values
+        // Collect argument values (prepend format_operand if present)
         std::vector<RuntimeValue> arg_values;
+        if (instr.format_operand) {
+          arg_values.push_back(get_operand_value(*instr.format_operand));
+        }
         for (const auto& operand : instr.operands) {
           arg_values.push_back(get_operand_value(operand));
         }

@@ -367,42 +367,25 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
       };
 
       if (is_monitor) {
-        // Check if first argument is a format string (for $monitor)
-        // Format strings are string literals and should not be tracked for
-        // value changes.
+        // Format string is now in format_expr (separate from arguments)
         const mir::Expression* format_literal = nullptr;
-        if (!system_call.arguments.empty()) {
-          const auto& first_arg = system_call.arguments[0];
-          if (first_arg && first_arg->kind == mir::Expression::Kind::kLiteral) {
-            const auto& lit = mir::As<mir::LiteralExpression>(*first_arg);
-            if (lit.literal.IsStringLiteral()) {
-              format_literal = first_arg.get();
-            }
-          }
+        if (system_call.format_expr && system_call.format_expr_is_literal) {
+          format_literal = system_call.format_expr->get();
         }
 
         // Collect pointers to monitored expressions for synthesis
+        // All arguments are now monitored values (format string is separate)
         std::vector<const mir::Expression*> monitored_exprs;
 
-        size_t arg_index = 0;
         for (const auto& argument : system_call.arguments) {
           if (argument) {
-            bool is_format_string =
-                (format_literal != nullptr) && arg_index == 0;
+            // Collect expression for check function synthesis
+            monitored_exprs.push_back(argument.get());
 
-            if (!is_format_string) {
-              // Collect expression for check function synthesis
-              monitored_exprs.push_back(argument.get());
-
-              // Lower expression at call site for initial print
-              TempRef result = LowerExpression(*argument, builder);
-              arguments.push_back(result);
-            } else {
-              // Format string - just lower it
-              arguments.push_back(LowerExpression(*argument, builder));
-            }
+            // Lower expression at call site for initial print
+            TempRef result = LowerExpression(*argument, builder);
+            arguments.push_back(result);
           }
-          ++arg_index;
         }
 
         // Determine display variant based on monitor variant
@@ -427,8 +410,11 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         auto instruction = Instruction::SystemCallWithMonitor(
             system_call.name, std::move(arguments),
             std::move(check_process_name));
-        instruction.first_operand_is_string_literal =
-            (format_literal != nullptr);
+        instruction.format_string_is_literal = (format_literal != nullptr);
+        if (format_literal != nullptr) {
+          TempRef format_temp = LowerExpression(*format_literal, builder);
+          instruction.format_operand = Operand::Temp(format_temp);
+        }
         builder.AddInstruction(std::move(instruction));
         return builder.AllocateTemp("sys", system_call.type);
       }
@@ -454,25 +440,25 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
 
       auto result = builder.AllocateTemp("sys", system_call.type);
 
-      if (is_function) {
-        // Pass result temp to store the return value
-        auto instruction = Instruction::SystemCall(
-            system_call.name, std::move(operands), result, system_call.type);
-        instruction.first_operand_is_string_literal =
-            system_call.first_operand_is_string_literal;
-        instruction.source_file = system_call.source_file;
-        instruction.source_line = system_call.source_line;
-        builder.AddInstruction(std::move(instruction));
-      } else {
-        // No result for system tasks
-        auto instruction =
-            Instruction::SystemCall(system_call.name, std::move(operands));
-        instruction.first_operand_is_string_literal =
-            system_call.first_operand_is_string_literal;
-        instruction.source_file = system_call.source_file;
-        instruction.source_line = system_call.source_line;
-        builder.AddInstruction(std::move(instruction));
+      // Lower format_expr if present (for display-like tasks)
+      std::optional<Operand> format_operand;
+      if (system_call.format_expr) {
+        auto format_temp = LowerExpression(**system_call.format_expr, builder);
+        format_operand = Operand::Temp(format_temp);
       }
+
+      // Create instruction - functions get result temp, tasks don't
+      auto instruction =
+          is_function
+              ? Instruction::SystemCall(
+                    system_call.name, std::move(operands), result,
+                    system_call.type)
+              : Instruction::SystemCall(system_call.name, std::move(operands));
+      instruction.format_operand = format_operand;
+      instruction.format_string_is_literal = system_call.format_expr_is_literal;
+      instruction.source_file = system_call.source_file;
+      instruction.source_line = system_call.source_line;
+      builder.AddInstruction(std::move(instruction));
 
       return result;
     }
@@ -1082,12 +1068,8 @@ auto SynthesizeMonitorCheckProcess(
   // do_print block: emit $display and store new prev values
   builder.StartBlock(print_label);
 
-  // Build operands for $display: format string (if any) + current values
+  // Build operands for $display: current values (format string is separate)
   std::vector<Operand> display_operands;
-  if (format_literal != nullptr) {
-    TempRef fmt_temp = LowerExpression(*format_literal, builder);
-    display_operands.push_back(Operand::Temp(fmt_temp));
-  }
   for (const auto& temp : current_temps) {
     display_operands.push_back(Operand::Temp(temp));
   }
@@ -1096,7 +1078,11 @@ auto SynthesizeMonitorCheckProcess(
   // $displayh)
   auto display_instr =
       Instruction::SystemCall(display_call, std::move(display_operands));
-  display_instr.first_operand_is_string_literal = (format_literal != nullptr);
+  if (format_literal != nullptr) {
+    TempRef fmt_temp = LowerExpression(*format_literal, builder);
+    display_instr.format_operand = Operand::Temp(fmt_temp);
+  }
+  display_instr.format_string_is_literal = (format_literal != nullptr);
   builder.AddInstruction(std::move(display_instr));
 
   // Store current values as new prev values in captures

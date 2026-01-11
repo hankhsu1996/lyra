@@ -96,20 +96,18 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
            << ", kModuleName";
     }
 
-    // Add message argument if present
-    if (arg_idx < syscall.arguments.size()) {
+    // Add message argument if present (format_expr has the format string)
+    if (syscall.format_expr) {
       out_ << ", ";
-      auto fmt_info = ExtractFormatString(*syscall.arguments[arg_idx]);
-      size_t first_format_arg =
-          fmt_info.is_string_literal ? arg_idx + 1 : arg_idx;
+      auto fmt_info = ExtractFormatString(**syscall.format_expr);
 
       if (fmt_info.is_string_literal) {
         if (fmt_info.has_format_specifiers &&
-            first_format_arg < syscall.arguments.size()) {
+            arg_idx < syscall.arguments.size()) {
           // Format string with arguments
           out_ << "std::format(\""
                << common::TransformToStdFormat(fmt_info.text) << "\"";
-          for (size_t i = first_format_arg; i < syscall.arguments.size(); ++i) {
+          for (size_t i = arg_idx; i < syscall.arguments.size(); ++i) {
             out_ << ", ";
             EmitExpression(*syscall.arguments[i], kPrecEquality);
           }
@@ -119,9 +117,9 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
           out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\"";
         }
       } else {
-        // Expression argument - convert to string
+        // Non-literal expression - convert to string
         out_ << "std::to_string(";
-        EmitExpression(*syscall.arguments[arg_idx], kPrecEquality);
+        EmitExpression(**syscall.format_expr, kPrecEquality);
         out_ << ")";
       }
     }
@@ -141,16 +139,18 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     indent_++;
 
     // Empty call - just print newline
-    if (syscall.arguments.empty()) {
+    if (!syscall.format_expr && syscall.arguments.empty()) {
       Line("std::println(std::cout, \"\");");
       indent_--;
       Line("});");
       return true;
     }
 
-    // Extract format string info from first argument
-    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
-    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+    // Extract format string info from format_expr
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
 
     // Print prefix (string literal without format specifiers)
     if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
@@ -161,10 +161,9 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
 
     // Print arguments with format string
     std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
-    if (first_arg_idx < syscall.arguments.size()) {
+    if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-          props.default_format);
+          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
     } else {
       Line("std::println(std::cout, \"\");");
     }
@@ -180,14 +179,16 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     auto props = GetDisplayVariantProps(syscall.name);
 
     // Empty call - print newline once (no values to monitor for changes)
-    if (syscall.arguments.empty()) {
+    if (!syscall.format_expr && syscall.arguments.empty()) {
       Line("std::println(std::cout, \"\");");
       return true;
     }
 
-    // Extract format string info from first argument
-    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
-    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+    // Extract format string info from format_expr
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
     std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
     std::string prefix_str =
         (fmt_info.is_string_literal && !fmt_info.has_format_specifiers)
@@ -200,8 +201,8 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
 
     // Capture initial values for each monitored argument
     std::vector<std::string> prev_names;
-    for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
-      auto prev_name = std::format("prev_{}", i - first_arg_idx);
+    for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+      auto prev_name = std::format("prev_{}", i);
       prev_names.push_back(prev_name);
       Indent();
       out_ << "auto " << prev_name << " = ";
@@ -227,13 +228,13 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     if (prev_names.empty()) {
       out_ << "false";
     } else {
-      for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
-        if (i > first_arg_idx) {
+      for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+        if (i > 0) {
           out_ << " || ";
         }
         // Use kPrecEquality so ternary expressions get parenthesized
         EmitExpression(*syscall.arguments[i], kPrecEquality);
-        out_ << " != " << prev_names[i - first_arg_idx];
+        out_ << " != " << prev_names[i];
       }
     }
     out_ << ") {\n";
@@ -245,18 +246,17 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       out_ << R"(std::print(std::cout, "{}", ")"
            << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
     }
-    if (first_arg_idx < syscall.arguments.size()) {
+    if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-          props.default_format);
+          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
     } else {
       Line("std::println(std::cout, \"\");");
     }
 
     // Update previous values
-    for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
+    for (size_t i = 0; i < syscall.arguments.size(); ++i) {
       Indent();
-      out_ << prev_names[i - first_arg_idx] << " = ";
+      out_ << prev_names[i] << " = ";
       EmitExpression(*syscall.arguments[i]);
       out_ << ";\n";
     }
@@ -272,10 +272,9 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       out_ << R"(std::print(std::cout, "{}", ")"
            << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
     }
-    if (first_arg_idx < syscall.arguments.size()) {
+    if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
-          props.default_format);
+          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
     } else {
       Line("std::println(std::cout, \"\");");
     }
@@ -306,7 +305,7 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
         props.use_println ? "std::println" : "std::print";
 
     // Empty call - just print newline if needed
-    if (syscall.arguments.empty()) {
+    if (!syscall.format_expr && syscall.arguments.empty()) {
       if (props.use_println) {
         Line("std::println(std::cout, \"\");");
       }
@@ -314,9 +313,11 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
       return true;
     }
 
-    // Extract format string info from first argument
-    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
-    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+    // Extract format string info from format_expr
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
 
     // Print prefix (string literal without format specifiers)
     if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
@@ -327,10 +328,9 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
 
     // Print remaining args with format string
     std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
-    if (first_arg_idx < syscall.arguments.size()) {
+    if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, first_arg_idx, sv_fmt, print_fn,
-          props.default_format);
+          syscall.arguments, 0, sv_fmt, print_fn, props.default_format);
     } else if (props.use_println) {
       // No more args, but need newline
       Line("std::println(std::cout, \"\");");

@@ -668,19 +668,24 @@ auto LowerExpression(const slang::ast::Expression& expression)
           }
         }
 
-        // Check if this is a severity task ($fatal, $error, $warning, $info)
+        // Check if this is a display-like or severity task
         const auto* func_info = common::FindSystemFunction(name);
+        bool is_display_like =
+            func_info != nullptr &&
+            (func_info->category == common::SystemFunctionCategory::kDisplay ||
+             func_info->category == common::SystemFunctionCategory::kSeverity);
         bool is_severity_task =
             func_info != nullptr &&
             func_info->category == common::SystemFunctionCategory::kSeverity;
 
+        std::unique_ptr<mir::Expression> format_expr;
+        bool format_expr_is_literal = false;
         std::vector<std::unique_ptr<mir::Expression>> arguments;
 
         // For severity tasks, capture source location as metadata
         std::optional<std::string> source_file;
         std::optional<uint32_t> source_line;
         if (is_severity_task) {
-          // Get source location from SourceManager via the SystemCallInfo scope
           auto loc = expression.sourceRange.start();
           const auto& sys_info = std::get<1>(call_expression.subroutine);
           const auto* sm = sys_info.scope->getCompilation().getSourceManager();
@@ -688,45 +693,63 @@ auto LowerExpression(const slang::ast::Expression& expression)
             source_file = std::string(sm->getFileName(loc));
             source_line = static_cast<uint32_t>(sm->getLineNumber(loc));
           }
+        }
 
-          // For $fatal, first argument is finish_number - keep it first
-          // Arguments become: [finish_num, format_args...]
-          size_t user_args_start = 0;
+        if (is_display_like && !is_root_variant) {
+          // Display-like tasks: separate format_expr from arguments
+          size_t format_idx = 0;
+          size_t args_start_idx = 0;
+
+          // For $fatal, first argument is finish_number (goes to arguments[0])
           if (name == "$fatal") {
             if (!call_expression.arguments().empty()) {
               arguments.push_back(
                   LowerExpression(*call_expression.arguments()[0]));
-              user_args_start = 1;
             } else {
               // Default finish_number is 1 if no arguments
               arguments.push_back(
                   std::make_unique<mir::LiteralExpression>(
                       common::Literal::Int(1)));
             }
+            format_idx = 1;
+            args_start_idx = 1;
           }
 
-          // Add user arguments (format args) - no more file/line prepending
-          for (size_t i = user_args_start;
+          // Check if format argument is a string literal
+          if (format_idx < call_expression.arguments().size()) {
+            const auto& format_arg = *call_expression.arguments()[format_idx];
+            if (format_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
+              // Extract format string into format_expr
+              format_expr = LowerExpression(format_arg);
+              format_expr_is_literal = true;
+              args_start_idx = format_idx + 1;  // Skip format in arguments
+            } else {
+              // First arg is a value, not a format string
+              args_start_idx = format_idx;
+            }
+          }
+
+          // Add remaining arguments (format args / values to display)
+          for (size_t i = args_start_idx;
                i < call_expression.arguments().size(); ++i) {
             arguments.push_back(
                 LowerExpression(*call_expression.arguments()[i]));
           }
         } else if (!is_root_variant) {
-          // Don't lower arguments for _root variants
+          // Non-display tasks: all go to arguments, no format_expr
           for (const auto& arg : call_expression.arguments()) {
             arguments.push_back(LowerExpression(*arg));
           }
-        }
-
-        // Determine if first format argument is a string literal.
-        // For $fatal: format string is at index 1 (after finish_num)
-        // For other tasks: format string is at index 0
-        bool first_operand_is_string_literal = false;
-        size_t format_idx = (name == "$fatal") ? 1 : 0;
-        if (format_idx < call_expression.arguments().size()) {
-          const auto& arg = *call_expression.arguments()[format_idx];
-          if (arg.kind == slang::ast::ExpressionKind::StringLiteral) {
-            first_operand_is_string_literal = true;
+          // For mem_io tasks, check if first arg (filename) is a string literal
+          // This is needed by interpreter to properly decode the filename
+          bool is_mem_io =
+              func_info != nullptr &&
+              func_info->category == common::SystemFunctionCategory::kMemIo;
+          if (is_mem_io && !call_expression.arguments().empty()) {
+            const auto& first_arg = *call_expression.arguments()[0];
+            if (first_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
+              format_expr_is_literal = true;
+            }
           }
         }
 
@@ -737,10 +760,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
         }
         auto syscall = std::make_unique<mir::SystemCallExpression>(
             effective_name, std::move(arguments), *return_type_result);
+        if (format_expr) {
+          syscall->format_expr = std::move(format_expr);
+        }
+        syscall->format_expr_is_literal = format_expr_is_literal;
         syscall->source_file = std::move(source_file);
         syscall->source_line = source_line;
-        syscall->first_operand_is_string_literal =
-            first_operand_is_string_literal;
         return syscall;
       }
 
