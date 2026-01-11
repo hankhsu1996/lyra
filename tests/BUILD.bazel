@@ -397,3 +397,9 @@ sv_feature_test(
     name = "constants_parameters_tests",
     yaml = "sv_features/constants/parameters.yaml",
 )
+
+# Statements
+sv_feature_test(
+    name = "statements_continuous_assign_tests",
+    yaml = "sv_features/statements/continuous_assign.yaml",
+)

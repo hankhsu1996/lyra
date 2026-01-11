@@ -1,0 +1,63 @@
+feature: statements_continuous_assign
+description: Tests continuous assignment statements (assign)
+
+cases:
+  - name: basic
+    description: Simple continuous assignment
+    sv: |
+      module Test;
+        int a, b;
+        assign b = a + 1;
+        initial begin
+          a = 5;
+          #1;
+          $display("b=%0d", b);
+        end
+      endmodule
+    expected_output: "b=6"
+
+  - name: expression
+    description: Complex RHS expression
+    sv: |
+      module Test;
+        int x, y, z;
+        assign z = (x * 2) + y;
+        initial begin
+          x = 3; y = 4;
+          #1;
+          $display("z=%0d", z);
+        end
+      endmodule
+    expected_output: "z=10"
+
+  - name: chained
+    description: Chained continuous assignments
+    sv: |
+      module Test;
+        int a, b, c;
+        assign b = a;
+        assign c = b + 1;
+        initial begin
+          a = 10;
+          #1;
+          $display("b=%0d c=%0d", b, c);
+        end
+      endmodule
+    expected_output: "b=10 c=11"
+
+  - name: sensitivity_update
+    description: Multiple updates propagate correctly
+    sv: |
+      module Test;
+        int a, b;
+        assign b = a * 2;
+        initial begin
+          a = 1; #1;
+          $display("b=%0d", b);
+          a = 5; #1;
+          $display("b=%0d", b);
+        end
+      endmodule
+    expected_output: |
+      b=2
+      b=10
