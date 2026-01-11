@@ -173,7 +173,6 @@ cases:
 
         initial begin
           a = 0;
-          count = 0;
           #5 a = 1;
           #5 a = 0;
           #5 a = 1;

@@ -17,6 +17,21 @@
 
 namespace lyra::mir {
 
+// Module parameter declaration (for template parameters in C++ codegen)
+struct ModuleParameter {
+  std::string name;                           // "WIDTH"
+  common::Type type;                          // int
+  std::unique_ptr<Expression> default_value;  // LiteralExpression(8) or nullptr
+};
+
+// Parameter override at instantiation site (for template arguments in C++
+// codegen)
+struct ParameterOverride {
+  std::string parameter_name;  // "WIDTH"
+  std::unique_ptr<Expression>
+      value;  // Expression for the override (e.g., SIZE * 2)
+};
+
 // Port direction for module interfaces
 enum class PortDirection { kInput, kOutput, kInout };
 
@@ -38,7 +53,10 @@ struct OutputBinding {
 struct SubmoduleInstance {
   common::SymbolRef instance_symbol;  // Instance symbol (for interpreter)
   std::string instance_name;          // e.g., "counter1" (for codegen)
-  std::string module_type;            // e.g., "Counter"
+  std::string module_type;            // e.g., "Counter" (base name)
+  std::string module_signature;       // e.g., "Counter<8>" (for linking)
+  std::vector<ParameterOverride>
+      parameter_overrides;                     // Template arguments for codegen
   std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 
@@ -94,7 +112,10 @@ struct FunctionDefinition {
 class Module {
  public:
   std::string name;
+  std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
   std::optional<common::TimeScale> timescale;
+  std::vector<ModuleParameter>
+      parameters;  // Template parameters for C++ codegen
   std::vector<Port> ports;
   std::vector<ModuleVariable> variables;
   std::vector<FunctionDefinition> functions;

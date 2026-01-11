@@ -64,10 +64,10 @@ auto Interpreter::RunWithCompilation(
   auto pkg_result =
       lowering::mir_to_lir::LowerPackages(lowering_result.packages);
 
-  // Link phase: resolve function call references to pointers.
+  // Link phase: resolve references to pointers.
   // Must be called after all lowering completes and before simulation starts.
-  // kCall instructions require resolved callee pointers at runtime.
   lowering::mir_to_lir::LinkFunctionCalls(lir_modules, pkg_result.functions);
+  lowering::mir_to_lir::LinkSubmodules(lir_modules);
 
   if (options.dump_lir) {
     std::cout << "[ Dumped LIR - " << lir_modules.size() << " modules ]\n";

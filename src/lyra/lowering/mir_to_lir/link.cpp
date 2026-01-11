@@ -139,4 +139,25 @@ void LinkFunctionCalls(
   }
 }
 
+void LinkSubmodules(std::span<const std::unique_ptr<lir::Module>> modules) {
+  // Build signature → module lookup map
+  std::unordered_map<std::string, const lir::Module*> module_map;
+  for (const auto& module : modules) {
+    module_map[module->signature] = module.get();
+  }
+
+  // Resolve submodule references in all modules
+  for (const auto& module : modules) {
+    for (auto& submod : module->submodules) {
+      auto it = module_map.find(submod.module_signature);
+      if (it == module_map.end()) {
+        throw common::InternalError(
+            "LinkSubmodules",
+            std::string("module '") + submod.module_signature + "' not found");
+      }
+      submod.child_module = it->second;
+    }
+  }
+}
+
 }  // namespace lyra::lowering::mir_to_lir

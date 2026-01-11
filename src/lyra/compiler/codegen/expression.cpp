@@ -14,9 +14,11 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/string_utils.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
+#include "lyra/compiler/codegen/format.hpp"
 #include "lyra/compiler/codegen/type.hpp"
 #include "lyra/compiler/codegen/utils.hpp"
 #include "lyra/mir/operators.hpp"
@@ -750,6 +752,101 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
       out_ << ")]";
       first = false;
     }
+  }
+}
+
+void Codegen::EmitConstantExpression(const mir::Expression& expr) {
+  // Emit constant expressions for template arguments (without SDK type
+  // wrappers). This is intentionally separate from EmitExpression to keep the
+  // main code path simple. Template args are rare and need raw C++ values (8
+  // not Int{8}).
+  switch (expr.kind) {
+    case mir::Expression::Kind::kLiteral: {
+      const auto& lit = mir::As<mir::LiteralExpression>(expr);
+
+      // String literals need special handling - they may be stored as
+      // bit-packed integers internally but should be emitted as C++ strings
+      if (lit.literal.IsStringLiteral()) {
+        std::string str;
+        if (lit.literal.type.kind == common::Type::Kind::kString) {
+          str = lit.literal.value.AsString();
+        } else {
+          // Bit-packed string - convert back to string
+          str = codegen::IntegralLiteralToString(lit.literal);
+        }
+        out_ << "\"" << common::EscapeForCppString(str) << "\"";
+        break;
+      }
+
+      // Emit raw value without type wrapper
+      out_ << lit.literal.ToString();
+      break;
+    }
+    case mir::Expression::Kind::kIdentifier: {
+      // Parameter reference - emit just the name
+      const auto& ident = mir::As<mir::IdentifierExpression>(expr);
+      out_ << ident.symbol->name;
+      break;
+    }
+    case mir::Expression::Kind::kBinary: {
+      const auto& bin = mir::As<mir::BinaryExpression>(expr);
+      out_ << "(";
+      EmitConstantExpression(*bin.left);
+      out_ << " " << ToCppOperator(bin.op) << " ";
+      EmitConstantExpression(*bin.right);
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kUnary: {
+      const auto& un = mir::As<mir::UnaryExpression>(expr);
+      switch (un.op) {
+        case mir::UnaryOperator::kPlus:
+          out_ << "+";
+          break;
+        case mir::UnaryOperator::kMinus:
+          out_ << "-";
+          break;
+        case mir::UnaryOperator::kLogicalNot:
+          out_ << "!";
+          break;
+        case mir::UnaryOperator::kBitwiseNot:
+          out_ << "~";
+          break;
+        default:
+          break;
+      }
+      EmitConstantExpression(*un.operand);
+      break;
+    }
+    case mir::Expression::Kind::kTernary: {
+      const auto& tern = mir::As<mir::TernaryExpression>(expr);
+      out_ << "(";
+      EmitConstantExpression(*tern.condition);
+      out_ << " ? ";
+      EmitConstantExpression(*tern.true_expression);
+      out_ << " : ";
+      EmitConstantExpression(*tern.false_expression);
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kConversion: {
+      // Handle integral-to-string conversion in constant expressions
+      // This occurs when a string parameter is stored as a bit-packed integer
+      const auto& conv = mir::As<mir::ConversionExpression>(expr);
+      if (conv.target_type.kind == common::Type::Kind::kString &&
+          conv.value->kind == mir::Expression::Kind::kLiteral) {
+        const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
+        std::string str = codegen::IntegralLiteralToString(lit.literal);
+        out_ << "\"" << common::EscapeForCppString(str) << "\"";
+        break;
+      }
+      // Fall through to default for other conversions
+      [[fallthrough]];
+    }
+    default:
+      // Fall back to regular emission for unsupported expressions
+      EmitExpression(expr, kPrecLowest);
+      break;
   }
 }
 

@@ -93,7 +93,6 @@ class SimulationRunner {
   void ScheduleModuleProcesses(
       const lir::Module& module,
       const std::shared_ptr<InstanceContext>& instance);
-  auto LookupModule(const std::string& name) const -> const lir::Module*;
 
   void ExecuteOneEvent();
   void WakeWaitingProcesses(
@@ -121,10 +120,8 @@ class SimulationRunner {
 
   bool finish_requested_ = false;
 
-  // Module storage - either single module reference or multi-module map
+  // Top module reference (submodules resolved via child_module pointers)
   std::reference_wrapper<const lir::Module> top_module_;
-  std::unordered_map<std::string, std::reference_wrapper<const lir::Module>>
-      module_map_;
 
   // Package storage for initializing package variables
   std::vector<std::reference_wrapper<const mir::Package>> packages_;

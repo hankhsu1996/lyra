@@ -37,7 +37,6 @@ SimulationRunner::SimulationRunner(
       nba_queue_(),
       postponed_queue_(),
       top_module_(module),
-      module_map_(),
       simulation_context_(context),
       trigger_manager_(context) {
   // Initialize timescale for $time/$stime/$realtime scaling
@@ -46,8 +45,6 @@ SimulationRunner::SimulationRunner(
       module.global_precision_power;
   // Initialize module name for $printtimescale
   simulation_context_.get().module_name = module.name;
-  // Add the single module to the map
-  module_map_.emplace(module.name, std::cref(module));
 }
 
 // Multi-module constructor (hierarchical designs)
@@ -65,7 +62,6 @@ SimulationRunner::SimulationRunner(
       postponed_queue_(),
       top_module_(
           *modules.back()),  // Last module is the top (dependency order)
-      module_map_(),
       packages_(),
       package_init_process_(std::move(package_init_process)),
       package_lir_context_(std::move(package_lir_context)),
@@ -78,10 +74,6 @@ SimulationRunner::SimulationRunner(
   simulation_context_.get().global_precision_power = top.global_precision_power;
   // Initialize module name for $printtimescale
   simulation_context_.get().module_name = top.name;
-  // Build module map for lookup
-  for (const auto& module : modules) {
-    module_map_.emplace(module->name, std::cref(*module));
-  }
   // Store package references
   for (const auto& pkg : packages) {
     packages_.emplace_back(std::cref(*pkg));
@@ -351,15 +343,6 @@ void SimulationRunner::ScheduleModuleProcesses(
   }
 }
 
-auto SimulationRunner::LookupModule(const std::string& name) const
-    -> const lir::Module* {
-  auto it = module_map_.find(name);
-  if (it == module_map_.end()) {
-    return nullptr;
-  }
-  return &it->second.get();
-}
-
 void SimulationRunner::ElaborateHierarchy() {
   const auto& top = top_module_.get();
 
@@ -387,12 +370,7 @@ void SimulationRunner::ElaborateSubmodules(
     const lir::Module& parent, const std::string& parent_path,
     const std::shared_ptr<InstanceContext>& parent_instance) {
   for (const auto& submod : parent.submodules) {
-    const auto* child = LookupModule(submod.module_type);
-    if (child == nullptr) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              {}, fmt::format("module '{}' not found", submod.module_type)));
-    }
+    const auto* child = submod.child_module;  // Resolved at link time
 
     std::string instance_path = parent_path + "." + submod.instance_name;
 
