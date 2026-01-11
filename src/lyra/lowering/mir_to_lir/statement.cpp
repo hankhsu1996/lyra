@@ -553,6 +553,25 @@ auto LowerStatement(
       }
       break;
     }
+
+    case mir::Statement::Kind::kProceduralAssign: {
+      const auto& proc_assign =
+          mir::As<mir::ProceduralAssignStatement>(statement);
+      auto value_temp = LowerExpression(*proc_assign.value, builder);
+      auto instruction =
+          Instruction::ProceduralAssign(proc_assign.target.symbol, value_temp);
+      builder.AddInstruction(std::move(instruction));
+      break;
+    }
+
+    case mir::Statement::Kind::kProceduralDeassign: {
+      const auto& proc_deassign =
+          mir::As<mir::ProceduralDeassignStatement>(statement);
+      auto instruction =
+          Instruction::ProceduralDeassign(proc_deassign.target.symbol);
+      builder.AddInstruction(std::move(instruction));
+      break;
+    }
   }
 }
 

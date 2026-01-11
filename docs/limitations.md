@@ -98,12 +98,22 @@ Not yet supported:
 
 ## Statements
 
+Supported:
+
+- Procedural continuous assignments (`assign`/`deassign` inside always/initial blocks)
+  - The RHS expression is evaluated once when `assign` executes
+  - The variable is then "locked" - normal procedural writes are blocked until `deassign`
+  - Note: Continuous reevaluation on RHS variable changes is not yet implemented
+
+Not yet supported:
+
 - `case inside` - pattern matching
 - `foreach` - dynamic arrays only (multi-dimensional and skipped dimensions supported)
 - `wait(expr)` - wait statements
 - `->` - event triggers
 - `fork`/`join` - parallel blocks
 - Assertions (`assert`, `assume`, `cover`)
+- `force`/`release` - net forcing
 
 ## Expressions
 

@@ -44,6 +44,10 @@ class Statement {
 
     // Return statement
     kReturn,
+
+    // Procedural continuous assignment
+    kProceduralAssign,
+    kProceduralDeassign,
   };
 
   Kind kind;
@@ -94,6 +98,10 @@ inline auto ToString(Statement::Kind kind) -> std::string {
       return "Block";
     case Statement::Kind::kReturn:
       return "Return";
+    case Statement::Kind::kProceduralAssign:
+      return "ProceduralAssign";
+    case Statement::Kind::kProceduralDeassign:
+      return "ProceduralDeassign";
   }
 }
 
@@ -518,6 +526,52 @@ class ReturnStatement : public Statement {
           "{}return {}\n", common::Indent(indent), value->ToString());
     }
     return std::format("{}return\n", common::Indent(indent));
+  }
+};
+
+/// Procedural continuous assignment: `assign target = value`
+/// This creates a continuous driver that overrides procedural assignments.
+class ProceduralAssignStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kProceduralAssign;
+
+  AssignmentTarget target;
+  std::unique_ptr<Expression> value;
+
+  ProceduralAssignStatement(AssignmentTarget t, std::unique_ptr<Expression> v)
+      : Statement(kKindValue), target(std::move(t)), value(std::move(v)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format(
+        "{}assign {} = {}\n", common::Indent(indent), target.ToString(),
+        value->ToString());
+  }
+};
+
+/// Procedural deassign: `deassign target`
+/// This removes the continuous driver created by a procedural assign.
+class ProceduralDeassignStatement : public Statement {
+ public:
+  static constexpr Kind kKindValue = Kind::kProceduralDeassign;
+
+  AssignmentTarget target;
+
+  explicit ProceduralDeassignStatement(AssignmentTarget t)
+      : Statement(kKindValue), target(std::move(t)) {
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+
+  [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    return std::format(
+        "{}deassign {}\n", common::Indent(indent), target.ToString());
   }
 };
 

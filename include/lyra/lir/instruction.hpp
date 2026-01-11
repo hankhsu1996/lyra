@@ -109,6 +109,10 @@ enum class InstructionKind {
   // Closure captures (persistent local variables for closures like $monitor)
   kLoadCapture,   // Load from closure's captures map
   kStoreCapture,  // Store to closure's captures map
+
+  // Procedural continuous assignment
+  kProceduralAssign,    // assign variable = value
+  kProceduralDeassign,  // deassign variable
 };
 
 // Enum member info for method call runtime helpers
@@ -502,6 +506,23 @@ struct Instruction {
     return instr;
   }
 
+  /// Procedural continuous assignment: assign variable = value
+  /// Sets the value and marks the variable as under procedural assign
+  static auto ProceduralAssign(SymbolRef variable, TempRef value)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kProceduralAssign,
+        .operands = {Operand::Variable(variable), Operand::Temp(value)}};
+  }
+
+  /// Procedural deassign: deassign variable
+  /// Clears the procedural assign mark on the variable
+  static auto ProceduralDeassign(SymbolRef variable) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kProceduralDeassign,
+        .operands = {Operand::Variable(variable)}};
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       // Memory operations
@@ -848,6 +869,13 @@ struct Instruction {
       case InstructionKind::kStoreCapture:
         return fmt::format(
             "store_capture {}, {}", capture_name, operands[0].ToString());
+
+      case InstructionKind::kProceduralAssign:
+        return fmt::format(
+            "assign {}, {}", operands[0].ToString(), operands[1].ToString());
+
+      case InstructionKind::kProceduralDeassign:
+        return fmt::format("deassign {}", operands[0].ToString());
     }
   }
 };

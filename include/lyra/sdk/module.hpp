@@ -6,6 +6,7 @@
 #include <iostream>
 #include <print>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/sdk/task.hpp"
@@ -129,6 +130,27 @@ class Module {
     return !nba_queue_.empty();
   }
 
+  // Procedural continuous assignment support (assign/deassign)
+  // These track which variables are under procedural continuous assignment.
+  // While a variable is in this set, normal procedural writes are blocked.
+
+  // Check if a variable is under procedural continuous assignment
+  [[nodiscard]] auto HasProceduralAssign(const void* var_ptr) const -> bool {
+    return procedural_assigns_.contains(var_ptr);
+  }
+
+  // Set procedural continuous assignment on a variable (also writes the value)
+  template <typename T>
+  void SetProceduralAssign(T* target, std::type_identity_t<T> value) {
+    *target = value;
+    procedural_assigns_.insert(target);
+  }
+
+  // Clear procedural continuous assignment (deassign)
+  void ClearProceduralAssign(const void* var_ptr) {
+    procedural_assigns_.erase(var_ptr);
+  }
+
   // Collect all modules in hierarchy (self + all descendants)
   void CollectAllModules(std::vector<Module*>& all_modules) {
     all_modules.push_back(this);
@@ -155,6 +177,7 @@ class Module {
   std::vector<std::function<Task()>> processes_;
   std::vector<std::function<void()>> nba_queue_;
   std::vector<Module*> child_modules_;
+  std::unordered_set<const void*> procedural_assigns_;
 };
 
 }  // namespace lyra::sdk
