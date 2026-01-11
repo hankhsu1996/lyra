@@ -181,6 +181,7 @@ auto LowerModule(
   lir_module->timescale = module.timescale;
   lir_module->global_precision_power = actual_precision;
   lir_module->signature = module.signature;
+  lir_module->instance_symbol = module.instance_symbol;
 
   return lir_module;
 }

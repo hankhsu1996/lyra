@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/type.hpp"
@@ -580,6 +581,42 @@ auto Codegen::GenerateModuleHeader(
   }
   header << code;
   return header.str();
+}
+
+auto Codegen::GenerateAllModules(
+    const std::vector<std::unique_ptr<mir::Module>>& modules, bool has_packages)
+    -> std::vector<ModuleOutput> {
+  std::vector<ModuleOutput> outputs;
+
+  // Track emitted signatures to deduplicate (per-instance modules share
+  // signatures)
+  std::unordered_set<std::string> emitted_signatures;
+  // Track which module names have been written (for template specializations)
+  std::unordered_set<std::string> written_modules;
+
+  for (const auto& mir : modules) {
+    // Skip if this signature was already emitted
+    if (emitted_signatures.contains(mir->signature)) {
+      continue;
+    }
+    emitted_signatures.insert(mir->signature);
+
+    bool is_first_in_file = !written_modules.contains(mir->name);
+    written_modules.insert(mir->name);
+
+    bool emit_file_header = is_first_in_file;
+    bool emit_primary_template = is_first_in_file;
+    std::string content = GenerateModuleHeader(
+        *mir, has_packages, emit_file_header, emit_primary_template);
+
+    outputs.push_back({
+        .filename = mir->name + ".hpp",
+        .content = std::move(content),
+        .append = !is_first_in_file,
+    });
+  }
+
+  return outputs;
 }
 
 }  // namespace lyra::compiler

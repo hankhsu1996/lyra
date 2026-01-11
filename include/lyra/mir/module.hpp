@@ -113,6 +113,7 @@ class Module {
  public:
   std::string name;
   std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
+  common::SymbolRef instance_symbol = nullptr;  // Slang instance symbol
   std::optional<common::TimeScale> timescale;
   std::vector<ModuleParameter>
       parameters;  // Template parameters for C++ codegen

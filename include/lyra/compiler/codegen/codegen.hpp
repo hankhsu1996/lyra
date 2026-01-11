@@ -1,12 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_set>
+#include <vector>
 
 #include <slang/ast/Symbol.h>
 
@@ -82,6 +86,13 @@ inline auto operator&(CodegenFeature lhs, CodegenFeature rhs)
       static_cast<uint16_t>(lhs) & static_cast<uint16_t>(rhs));
 }
 
+// Output from GenerateAllModules - one entry per file write operation
+struct ModuleOutput {
+  std::string filename;  // e.g., "inner.hpp"
+  std::string content;   // Generated C++ code
+  bool append;           // true for subsequent specializations to same file
+};
+
 class Codegen {
  public:
   // Generate module class code (without header guards or includes)
@@ -115,6 +126,13 @@ class Codegen {
       const mir::Module& module, bool has_packages,
       bool emit_file_header = true, bool emit_primary_template = true)
       -> std::string;
+
+  // Generate all module headers with signature-based deduplication.
+  // Handles per-instance modules that share signatures, emitting each unique
+  // signature once. Returns a list of file writes to perform.
+  auto GenerateAllModules(
+      const std::vector<std::unique_ptr<mir::Module>>& modules,
+      bool has_packages) -> std::vector<ModuleOutput>;
 
   // Get global precision power after Generate() has been called
   // Used by main.cpp generation to initialize lyra::sdk::global_precision_power

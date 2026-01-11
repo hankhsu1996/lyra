@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/lir/basic_block.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/module.hpp"
@@ -140,20 +141,23 @@ void LinkFunctionCalls(
 }
 
 void LinkSubmodules(std::span<const std::unique_ptr<lir::Module>> modules) {
-  // Build signature → module lookup map
-  std::unordered_map<std::string, const lir::Module*> module_map;
+  // Build instance_symbol → module lookup map
+  // Each instance gets its own LIR module, so this is 1:1
+  std::unordered_map<common::SymbolRef, const lir::Module*> module_map;
   for (const auto& module : modules) {
-    module_map[module->signature] = module.get();
+    if (module->instance_symbol != nullptr) {
+      module_map[module->instance_symbol] = module.get();
+    }
   }
 
-  // Resolve submodule references in all modules
+  // Resolve submodule references using instance symbol
   for (const auto& module : modules) {
     for (auto& submod : module->submodules) {
-      auto it = module_map.find(submod.module_signature);
+      auto it = module_map.find(submod.instance_symbol);
       if (it == module_map.end()) {
         throw common::InternalError(
-            "LinkSubmodules",
-            std::string("module '") + submod.module_signature + "' not found");
+            "LinkSubmodules", std::string("module for instance '") +
+                                  submod.instance_name + "' not found");
       }
       submod.child_module = it->second;
     }

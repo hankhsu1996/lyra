@@ -22,24 +22,23 @@ namespace {
 // Recursively collect all modules in the hierarchy.
 // Uses depth-first traversal: children are collected before parents,
 // ensuring dependency order (child modules defined before parent needs them).
-// Deduplication uses module signatures (name + parameter values).
+// Each instance gets its own MIR module (no signature deduplication).
+// Deduplication happens at codegen emit time instead.
 void CollectModulesRecursive(
     const slang::ast::InstanceSymbol& instance,
     std::vector<std::unique_ptr<mir::Module>>& modules,
-    std::unordered_set<std::string>& processed) {
-  auto signature = ComputeModuleSignature(instance);
-
-  // Skip already processed modules (avoids duplicates)
-  if (processed.contains(signature)) {
+    std::unordered_set<const slang::ast::InstanceSymbol*>& visited) {
+  // Guard against revisiting same instance (defensive, shouldn't happen)
+  if (visited.contains(&instance)) {
     return;
   }
-  processed.insert(signature);
+  visited.insert(&instance);
 
   // First, recurse into child instances (depth-first)
   for (const auto& member : instance.body.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
       const auto& child = member.as<slang::ast::InstanceSymbol>();
-      CollectModulesRecursive(child, modules, processed);
+      CollectModulesRecursive(child, modules, visited);
     }
   }
 
@@ -81,8 +80,8 @@ auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
       // If top is specified, find and collect it with hierarchy
       if (!top.empty()) {
         if (instance_symbol.body.name == top) {
-          std::unordered_set<std::string> processed;
-          CollectModulesRecursive(instance_symbol, result.modules, processed);
+          std::unordered_set<const slang::ast::InstanceSymbol*> visited;
+          CollectModulesRecursive(instance_symbol, result.modules, visited);
           return result;  // Returns all modules in dependency order
         }
         continue;  // Skip non-matching modules
@@ -107,8 +106,8 @@ auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
   // No top specified: if single top-level instance, collect hierarchy
   // If multiple, collect all without hierarchy (for dump command)
   if (top_instances.size() == 1) {
-    std::unordered_set<std::string> processed;
-    CollectModulesRecursive(*top_instances[0], result.modules, processed);
+    std::unordered_set<const slang::ast::InstanceSymbol*> visited;
+    CollectModulesRecursive(*top_instances[0], result.modules, visited);
   } else {
     for (const auto* instance : top_instances) {
       result.modules.push_back(LowerModule(*instance));

@@ -1,14 +1,45 @@
-# Parameterized Modules in C++ Codegen
+# Parameterized Modules
 
-How Lyra maps SystemVerilog parameterized modules to C++ template specializations.
+How Lyra handles SystemVerilog parameterized modules: per-instance IR semantics and C++ template codegen.
 
-## Signature-Based Deduplication
+## Per-Instance IR, Deduplicated Output
+
+### slang's Symbol Model
+
+slang creates a distinct `InstanceBodySymbol` for **each module instance**, even with identical parameters:
+
+```
+inner #(.VALUE(100)) inst1();  ->  inst1.body -> VariableSymbol("data") @ 0x1000
+inner #(.VALUE(100)) inst2();  ->  inst2.body -> VariableSymbol("data") @ 0x2000
+```
+
+Each instance is a complete, independent scope with unique symbol pointers.
+
+### Why Per-Instance IR Matters
+
+MIR/LIR preserve slang's per-instance model. This is essential for:
+
+- **Hierarchical references**: `inst2.data` must resolve using `inst2`'s specific symbols
+- **Interpreter correctness**: Instance contexts use symbol pointers for O(1) lookup
+- **Module linking**: `SubmoduleInstance` links to child modules by instance symbol pointer
+
+If we deduplicated at IR construction time (keeping only `inst1`'s module), hierarchical access to `inst2` would fail because the symbol pointers wouldn't match.
+
+### Signature-Based Deduplication at Emit Time
 
 Each unique parameter combination generates one C++ class. A **signature** is a canonical string representation (`counter<8>`, `memory<"data.hex">`) that determines:
 
 1. The C++ template specialization name
 2. The output header filename
 3. Whether a new class needs to be generated
+
+Deduplication is a **codegen optimization**, applied at emit time by `Codegen::GenerateAllModules()`:
+
+| Layer       | Model                              |
+| ----------- | ---------------------------------- |
+| MIR/LIR     | Per-instance (preserves semantics) |
+| Codegen     | Per-signature (emit optimization)  |
+| Interpreter | Per-instance (uses symbols)        |
 
 ## C++ Template Parameter Types
 
