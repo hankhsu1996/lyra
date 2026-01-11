@@ -4,7 +4,7 @@
 #include <memory>
 #include <utility>
 
-#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/interpreter/basic_block_result.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/instruction_runner.hpp"
@@ -54,8 +54,8 @@ auto RunBlock(
             instruction_result.return_instruction_index);
     }
   }
-  throw DiagnosticException(
-      Diagnostic::Error({}, "unreachable code in basic block runner"));
+  throw common::InternalError(
+      "interpreter", "basic block completed without terminal instruction");
 }
 
 }  // namespace lyra::interpreter

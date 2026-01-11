@@ -2,14 +2,13 @@
 
 #include <cassert>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <span>
 #include <utility>
 #include <vector>
 
-#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/lir/context.hpp"
@@ -37,7 +36,7 @@ auto MapPortDirection(mir::PortDirection dir) -> lir::PortDirection {
     case mir::PortDirection::kInout:
       return lir::PortDirection::kInout;
   }
-  std::abort();
+  throw common::InternalError("mir_to_lir", "unknown port direction");
 }
 
 // Extract symbol reference from a port connection signal expression.
@@ -47,8 +46,8 @@ auto ExtractSignalSymbol(const mir::Expression& expr) -> common::SymbolRef {
     return mir::As<mir::IdentifierExpression>(expr).symbol;
   }
   // For now, only support simple identifier connections
-  throw DiagnosticException(
-      Diagnostic::Error({}, "unsupported port connection expression type"));
+  throw common::InternalError(
+      "mir_to_lir", "unsupported port connection expression type");
 }
 
 }  // namespace
@@ -57,7 +56,7 @@ auto LowerModule(
     const mir::Module& module, std::optional<int8_t> global_precision)
     -> std::unique_ptr<lir::Module> {
   if (module.name.empty()) {
-    throw DiagnosticException(Diagnostic::Error({}, "module has empty name"));
+    throw common::InternalError("mir_to_lir", "module has empty name");
   }
 
   // Use provided global precision, or compute from this module alone

@@ -2,25 +2,40 @@
 
 This document describes error handling patterns in Lyra.
 
-## Error Categories
+## Decision Tree
 
-Lyra has three distinct error categories based on **when** the error occurs:
+Use this flowchart to pick the right error type:
 
-| Stage               | Has Source Location? | Error Type            |
-| ------------------- | -------------------- | --------------------- |
-| AST→MIR lowering    | Yes (from slang)     | `DiagnosticException` |
-| MIR→LIR, Codegen    | No                   | `InternalError` only  |
-| Interpreter runtime | No                   | `std::runtime_error`  |
-| SDK runtime         | No                   | `std::runtime_error`  |
-
-**Key insight**: `DiagnosticException` should ONLY be used during AST→MIR lowering,
-where we have source locations from slang. After that stage, source info is lost.
+```
+Where is the error?
+│
+├─ AST→MIR lowering (have source location from slang)
+│   ├─ User error (unsupported feature, invalid code)
+│   │   └─ DiagnosticException(source_range, "message")
+│   └─ Compiler bug (invariant violated)
+│       └─ InternalError("context", "message")
+│
+├─ MIR→LIR lowering / Codegen (no source location)
+│   └─ Always InternalError (any error here = compiler bug)
+│
+├─ Interpreter runtime
+│   ├─ Expected failure (file not found, invalid input)
+│   │   └─ std::runtime_error("message")
+│   └─ Should never happen (invariant violated)
+│       └─ InternalError("context", "message")
+│
+├─ SDK runtime (generated C++ code)
+│   └─ std::runtime_error (cannot use Lyra types)
+│
+└─ Shared code (interpreter + SDK)
+    └─ std::expected<T, std::string> (caller decides policy)
+```
 
 ## Error Types
 
-### DiagnosticException (AST→MIR Lowering Only)
+### DiagnosticException (AST→MIR Only)
 
-For user errors during frontend lowering where we have source location info.
+For **user errors** during frontend lowering where we have source location info.
 
 ```cpp
 #include "lyra/common/diagnostic.hpp"
@@ -30,14 +45,17 @@ throw DiagnosticException(
     Diagnostic::Error(source_range, "unknown identifier 'foo'"));
 ```
 
-**Never use with empty source location `{}`** - if you don't have a source
-location, you're in the wrong stage and should use a different error type.
+**Rules:**
+
+- ONLY use in AST→MIR lowering
+- NEVER use with empty source location `{}`
+- If you don't have a source location, use a different error type
 
 CLI commands catch and print these via `PrintDiagnostic()`.
 
 ### InternalError (Compiler Bugs)
 
-For situations that should never happen - indicates a bug in Lyra itself.
+For situations that **should never happen** - indicates a bug in Lyra itself.
 Message includes "Please report this issue" prompt.
 
 ```cpp
@@ -46,11 +64,12 @@ Message includes "Please report this issue" prompt.
 throw common::InternalError("codegen", "unexpected expression kind");
 ```
 
-Use when:
+**Use when:**
 
 - Switch statement hits an "impossible" case
 - Invariant is violated
-- Assertion would be appropriate but exception is needed
+- Code path should be unreachable
+- Any error in MIR→LIR or codegen (these stages should never fail)
 
 ### std::runtime_error (Runtime Errors)
 
@@ -65,19 +84,24 @@ throw std::runtime_error("failed to open memory file: " + path);
 throw std::runtime_error("readmem address out of bounds");
 ```
 
-## Shared Code Pattern
+**Use when:**
+
+- File I/O failures
+- Invalid runtime input (bad hex digit in $readmemh, etc.)
+- Resource exhaustion
+
+### std::expected (Shared Code)
 
 When code is shared between interpreter and SDK (e.g., parsing logic):
 
 1. **Shared code** returns `std::expected<T, std::string>` (pure logic, no policy)
-2. **Interpreter** converts error to `std::runtime_error`
-3. **SDK** converts error to `std::runtime_error`
+2. **Caller** converts error to `std::runtime_error`
 
 ```cpp
 // common/parser.hpp - Pure parsing, no error policy
 auto ParseToken(std::string_view s) -> std::expected<Token, std::string>;
 
-// Interpreter or SDK usage - both use runtime_error
+// Interpreter or SDK usage
 auto result = ParseToken(input);
 if (!result) {
   throw std::runtime_error(result.error());
@@ -86,43 +110,74 @@ if (!result) {
 
 This keeps shared code simple and lets callers decide error handling.
 
-## Assertions vs Exceptions
+## Forbidden Patterns
 
-| Mechanism       | Debug Only? | Recovery? | When to Use                       |
-| --------------- | ----------- | --------- | --------------------------------- |
-| `assert()`      | Yes         | No        | Sanity checks, fast-fail in debug |
-| `InternalError` | No          | Yes       | Bugs that should be reported      |
+### Never use std::unreachable()
 
-**Use `assert()` when:**
-
-- The check is expensive and only needed during development
-- Failure means immediate termination is acceptable
-- You're checking internal invariants that "can't possibly fail"
-
-**Use `InternalError` when:**
-
-- The check should run in release builds
-- You want the error to propagate and be caught/logged
-- The user should see a "please report this bug" message
+`std::unreachable()` is undefined behavior. If reached, there's no error message,
+no stack trace, just undefined behavior or a crash. Always use `InternalError` instead:
 
 ```cpp
-// assert - debug only, terminates
-assert(!items.empty() && "items should never be empty here");
+// BAD - undefined behavior, no diagnostics
+switch (kind) {
+  case A: return handleA();
+  case B: return handleB();
+}
+std::unreachable();
 
-// InternalError - always runs, can be caught
+// GOOD - clear error message if reached
+switch (kind) {
+  case A: return handleA();
+  case B: return handleB();
+}
+throw common::InternalError("context", "unhandled kind");
+```
+
+### Never use DiagnosticException with empty source location
+
+If you don't have a source location, you're in the wrong stage:
+
+```cpp
+// BAD - no source info means wrong error type
+throw DiagnosticException(Diagnostic::Error({}, "some error"));
+
+// GOOD - use InternalError for post-AST stages
+throw common::InternalError("context", "some error");
+
+// GOOD - use runtime_error for interpreter runtime
+throw std::runtime_error("some error");
+```
+
+## assert() vs InternalError
+
+| Mechanism       | Debug Only? | Recovery? | When to Use                         |
+| --------------- | ----------- | --------- | ----------------------------------- |
+| `assert()`      | Yes         | No        | Expensive checks in hot paths       |
+| `InternalError` | No          | Yes       | Default choice - runs in all builds |
+
+**Prefer `InternalError`** for most cases. Use `assert()` only when:
+
+- The check is computationally expensive
+- You're in a very hot path
+- The invariant is well-established and failure would be caught elsewhere
+
+```cpp
+// assert - debug only, for expensive invariant checks
+assert(googol_computation_validates() && "invariant check");
+
+// InternalError - always runs, provides diagnostics
 if (items.empty()) {
   throw common::InternalError("process", "unexpected empty items");
 }
 ```
 
-In practice, prefer `InternalError` for most cases since it provides better
-diagnostics. Use `assert` only for hot paths where the check is expensive.
+## Summary Table
 
-## Guidelines
-
-1. **Never use `InternalError` for user mistakes** - it tells users to file a bug report
-2. **Prefer `std::expected` over exceptions** for recoverable errors in hot paths
-3. **Include source location when available** - helps users find the problem
-4. **Use specific messages** - "invalid hex digit 'g'" not "parse error"
-5. **SDK code cannot use Lyra types** - only `std::` exceptions
-6. **Prefer `InternalError` over `assert`** - better diagnostics in release builds
+| Stage       | User Error            | Compiler Bug    | Runtime Failure      |
+| ----------- | --------------------- | --------------- | -------------------- |
+| AST→MIR     | `DiagnosticException` | `InternalError` | N/A                  |
+| MIR→LIR     | N/A                   | `InternalError` | N/A                  |
+| Codegen     | N/A                   | `InternalError` | N/A                  |
+| Interpreter | N/A                   | `InternalError` | `std::runtime_error` |
+| SDK         | N/A                   | N/A             | `std::runtime_error` |
+| Shared code | N/A                   | N/A             | `std::expected`      |

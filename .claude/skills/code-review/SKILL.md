@@ -26,9 +26,18 @@ Early-stage C++ compiler project. Primary goal: keep architecture clean and exte
 - Don't reinvent what standard library or codebase already provides
 - Use modern C++ when it improves clarity (not for fancy)
 
-### 4. Design Principles Alignment
+### 4. Error Handling
 
-Read `docs/design_principles.md` and check:
+Check `docs/error-handling.md` for correct error type usage:
+
+- `DiagnosticException` only in AST→MIR (with source location)
+- `InternalError` for compiler bugs (MIR→LIR, codegen, unreachable code)
+- `std::runtime_error` for interpreter/SDK runtime failures
+- Never use `std::unreachable()` or `DiagnosticException({})`
+
+### 5. Design Principles Alignment
+
+Read `docs/design-principles.md` and check:
 
 - No Workarounds
 - Parameterize, Don't Specialize
