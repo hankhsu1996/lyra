@@ -29,6 +29,12 @@ class Interpreter {
       const std::vector<std::string>& paths, const std::string& top = "",
       const InterpreterOptions& options = {}) -> InterpreterResult;
 
+  static auto RunWithCompilation(
+      slang::ast::Compilation& compilation,
+      std::shared_ptr<slang::SourceManager> source_manager,
+      const std::string& top = "", const InterpreterOptions& options = {})
+      -> InterpreterResult;
+
  private:
   static auto RunWithCompilation(
       std::unique_ptr<slang::ast::Compilation> compilation,

@@ -8,6 +8,10 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 
+namespace slang::ast {
+class Compilation;
+}
+
 namespace lyra::compiler {
 
 class Compiler {
@@ -18,6 +22,10 @@ class Compiler {
 
   static auto RunFromFiles(
       const std::vector<std::string>& paths,
+      const std::vector<std::string>& variables_to_read) -> CompilerResult;
+
+  static auto RunWithCompilation(
+      slang::ast::Compilation& compilation,
       const std::vector<std::string>& variables_to_read) -> CompilerResult;
 
  private:

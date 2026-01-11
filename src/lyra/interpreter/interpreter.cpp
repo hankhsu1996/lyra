@@ -24,34 +24,17 @@ namespace lyra::interpreter {
 using lyra::lowering::ast_to_mir::AstToMir;
 using lyra::lowering::mir_to_lir::MirToLir;
 
-auto Interpreter::RunFromSource(
-    const std::string& code, const std::string& top,
-    const InterpreterOptions& options) -> InterpreterResult {
-  frontend::SlangFrontend slang_frontend;
-  auto compilation = slang_frontend.LoadFromString(code);
-  auto source_manager = slang_frontend.GetSourceManagerPtr();
-  return RunWithCompilation(
-      std::move(compilation), std::move(source_manager), top, options);
-}
+namespace {
 
-auto Interpreter::RunFromFiles(
-    const std::vector<std::string>& paths, const std::string& top,
-    const InterpreterOptions& options) -> InterpreterResult {
-  frontend::SlangFrontend slang_frontend;
-  auto compilation = slang_frontend.LoadFromFiles(paths);
-  auto source_manager = slang_frontend.GetSourceManagerPtr();
-  return RunWithCompilation(
-      std::move(compilation), std::move(source_manager), top, options);
-}
-
-auto Interpreter::RunWithCompilation(
-    std::unique_ptr<slang::ast::Compilation> compilation,
+auto RunWithCompilationImpl(
+    slang::ast::Compilation& compilation,
+    std::unique_ptr<slang::ast::Compilation> owned_compilation,
     std::shared_ptr<slang::SourceManager> source_manager,
     const std::string& top, const InterpreterOptions& options)
     -> InterpreterResult {
   // Get modules from AST. If top is specified, returns hierarchy in order.
   // If top is empty, returns all modules (for backwards compatibility).
-  auto lowering_result = AstToMir(*compilation, top);
+  auto lowering_result = AstToMir(compilation, top);
 
   // Lower all modules to LIR
   std::vector<std::unique_ptr<lir::Module>> lir_modules;
@@ -85,11 +68,52 @@ auto Interpreter::RunWithCompilation(
   runner.Run();
 
   return InterpreterResult{
-      .compilation = std::move(compilation),
+      .compilation = std::move(owned_compilation),
       .context = std::move(context),
       .lir_context = lir_modules.back()->context,  // Last is top module
       .top_instance = runner.GetTopInstance(),
       .source_manager = std::move(source_manager)};
+}
+
+}  // namespace
+
+auto Interpreter::RunFromSource(
+    const std::string& code, const std::string& top,
+    const InterpreterOptions& options) -> InterpreterResult {
+  frontend::SlangFrontend slang_frontend;
+  auto compilation = slang_frontend.LoadFromString(code);
+  auto source_manager = slang_frontend.GetSourceManagerPtr();
+  return RunWithCompilation(
+      std::move(compilation), std::move(source_manager), top, options);
+}
+
+auto Interpreter::RunFromFiles(
+    const std::vector<std::string>& paths, const std::string& top,
+    const InterpreterOptions& options) -> InterpreterResult {
+  frontend::SlangFrontend slang_frontend;
+  auto compilation = slang_frontend.LoadFromFiles(paths);
+  auto source_manager = slang_frontend.GetSourceManagerPtr();
+  return RunWithCompilation(
+      std::move(compilation), std::move(source_manager), top, options);
+}
+
+auto Interpreter::RunWithCompilation(
+    std::unique_ptr<slang::ast::Compilation> compilation,
+    std::shared_ptr<slang::SourceManager> source_manager,
+    const std::string& top, const InterpreterOptions& options)
+    -> InterpreterResult {
+  return RunWithCompilationImpl(
+      *compilation, std::move(compilation), std::move(source_manager), top,
+      options);
+}
+
+auto Interpreter::RunWithCompilation(
+    slang::ast::Compilation& compilation,
+    std::shared_ptr<slang::SourceManager> source_manager,
+    const std::string& top, const InterpreterOptions& options)
+    -> InterpreterResult {
+  return RunWithCompilationImpl(
+      compilation, nullptr, std::move(source_manager), top, options);
 }
 
 }  // namespace lyra::interpreter

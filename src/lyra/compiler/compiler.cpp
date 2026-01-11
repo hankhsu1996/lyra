@@ -276,4 +276,12 @@ auto Compiler::RunFromFiles(
       lowering_result.modules, lowering_result.packages, variables_to_read);
 }
 
+auto Compiler::RunWithCompilation(
+    slang::ast::Compilation& compilation,
+    const std::vector<std::string>& variables_to_read) -> CompilerResult {
+  auto lowering_result = lowering::ast_to_mir::AstToMir(compilation, "");
+  return CompileAndRun(
+      lowering_result.modules, lowering_result.packages, variables_to_read);
+}
+
 }  // namespace lyra::compiler

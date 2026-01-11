@@ -1,14 +1,19 @@
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <mutex>
 #include <ranges>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/compiler/compiler.hpp"
+#include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/interpreter/interpreter.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/yaml_loader.hpp"
@@ -22,6 +27,33 @@ auto ExtractCategory(const std::filesystem::path& yaml_path) -> std::string {
   auto stem = yaml_path.stem().string();
   auto parent = yaml_path.parent_path().filename().string();
   return parent + "_" + stem;
+}
+
+struct CachedCompilation {
+  std::unique_ptr<slang::ast::Compilation> compilation;
+  std::shared_ptr<slang::SourceManager> source_manager;
+  std::filesystem::path working_dir;
+};
+
+auto HashCombine(uint64_t seed, uint64_t value) -> uint64_t {
+  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+auto HashString(std::string_view value) -> uint64_t {
+  return static_cast<uint64_t>(std::hash<std::string_view>{}(value));
+}
+
+auto ComputeTestCaseKey(const TestCase& tc) -> uint64_t {
+  uint64_t seed = 0;
+  if (tc.IsMultiFile()) {
+    for (const auto& file : tc.files) {
+      seed = HashCombine(seed, HashString(file.name));
+      seed = HashCombine(seed, HashString(file.content));
+    }
+  } else {
+    seed = HashCombine(seed, HashString(tc.sv_code));
+  }
+  return seed;
 }
 
 // Get YAML file paths to load test cases from.
@@ -80,9 +112,10 @@ class ScopedCurrentPath {
   std::filesystem::path previous_;
 };
 
-auto WriteTempFiles(const std::vector<SourceFile>& files)
+auto WriteTempFiles(const std::vector<SourceFile>& files, uint64_t key)
     -> std::vector<std::string> {
-  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test";
+  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test" /
+                 std::to_string(key);
   std::filesystem::create_directories(tmp_dir);
 
   std::vector<std::string> paths;
@@ -107,6 +140,40 @@ auto FilterSvFiles(const std::vector<std::string>& paths)
   return sv_paths;
 }
 
+auto CreateCachedCompilation(const TestCase& tc, uint64_t key)
+    -> CachedCompilation {
+  frontend::SlangFrontend slang_frontend;
+  if (tc.IsMultiFile()) {
+    auto paths = WriteTempFiles(tc.files, key);
+    auto sv_paths = FilterSvFiles(paths);
+    auto work_dir = std::filesystem::path(paths.front()).parent_path();
+    auto compilation = slang_frontend.LoadFromFiles(sv_paths);
+    return CachedCompilation{
+        .compilation = std::move(compilation),
+        .source_manager = slang_frontend.GetSourceManagerPtr(),
+        .working_dir = std::move(work_dir)};
+  }
+  auto compilation = slang_frontend.LoadFromString(tc.sv_code);
+  return CachedCompilation{
+      .compilation = std::move(compilation),
+      .source_manager = slang_frontend.GetSourceManagerPtr(),
+      .working_dir = {}};
+}
+
+auto GetCachedCompilation(const TestCase& tc) -> CachedCompilation& {
+  static std::mutex cache_mutex;
+  static std::unordered_map<uint64_t, CachedCompilation> cache;
+
+  uint64_t key = ComputeTestCaseKey(tc);
+  std::scoped_lock lock(cache_mutex);
+  auto it = cache.find(key);
+  if (it == cache.end()) {
+    auto [inserted, _] = cache.emplace(key, CreateCachedCompilation(tc, key));
+    return inserted->second;
+  }
+  return it->second;
+}
+
 void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
   if (expected.IsExact()) {
     EXPECT_EQ(actual, expected.exact.value());
@@ -121,6 +188,14 @@ void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
 
 class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 
+TEST(SvFeatureTestCache, CacheKeyDiffersOnContent) {
+  TestCase first;
+  first.sv_code = "module a; endmodule";
+  TestCase second;
+  second.sv_code = "module b; endmodule";
+  EXPECT_NE(ComputeTestCaseKey(first), ComputeTestCaseKey(second));
+}
+
 TEST_P(SvFeatureTest, Interpreter) {
   const auto& tc = GetParam();
 
@@ -130,14 +205,14 @@ TEST_P(SvFeatureTest, Interpreter) {
   }
 
   interpreter::InterpreterResult result;
-  if (tc.IsMultiFile()) {
-    auto paths = WriteTempFiles(tc.files);
-    auto sv_paths = FilterSvFiles(paths);
-    ScopedCurrentPath current_dir(
-        std::filesystem::path(paths.front()).parent_path());
-    result = interpreter::Interpreter::RunFromFiles(sv_paths);
+  auto& cached = GetCachedCompilation(tc);
+  if (!cached.working_dir.empty()) {
+    ScopedCurrentPath current_dir(cached.working_dir);
+    result = interpreter::Interpreter::RunWithCompilation(
+        *cached.compilation, cached.source_manager);
   } else {
-    result = interpreter::Interpreter::RunFromSource(tc.sv_code);
+    result = interpreter::Interpreter::RunWithCompilation(
+        *cached.compilation, cached.source_manager);
   }
 
   for (const auto& [var, expected] : tc.expected_values) {
@@ -170,14 +245,12 @@ TEST_P(SvFeatureTest, CppCodegen) {
   }
 
   compiler::CompilerResult result;
-  if (tc.IsMultiFile()) {
-    auto paths = WriteTempFiles(tc.files);
-    auto sv_paths = FilterSvFiles(paths);
-    ScopedCurrentPath current_dir(
-        std::filesystem::path(paths.front()).parent_path());
-    result = compiler::Compiler::RunFromFiles(sv_paths, vars);
+  auto& cached = GetCachedCompilation(tc);
+  if (!cached.working_dir.empty()) {
+    ScopedCurrentPath current_dir(cached.working_dir);
+    result = compiler::Compiler::RunWithCompilation(*cached.compilation, vars);
   } else {
-    result = compiler::Compiler::RunFromSource(tc.sv_code, vars);
+    result = compiler::Compiler::RunWithCompilation(*cached.compilation, vars);
   }
   ASSERT_TRUE(result.Success()) << result.ErrorMessage();
 
