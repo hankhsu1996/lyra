@@ -14,10 +14,12 @@ jobs:
       pull-requests: read
     outputs:
       src: ${{ steps.filter.outputs.src }}
+      src_files: ${{ steps.filter.outputs.src_files }}
     steps:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          list-files: shell
           filters: |
             src:
               - 'src/**'
@@ -28,6 +30,18 @@ jobs:
               - 'MODULE.bazel'
               - '.bazelrc'
               - '.github/workflows/bazel-build.yml'
+
+      - name: Log detected changes
+        run: |
+          echo "### Change Detection" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.filter.outputs.src }}" == "true" ]]; then
+            echo "Source changes detected:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "${{ steps.filter.outputs.src_files }}" | tr ' ' '\n' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No source changes detected. Build will be skipped." >> $GITHUB_STEP_SUMMARY
+          fi
 
   build:
     name: Bazel Build
