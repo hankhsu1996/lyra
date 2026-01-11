@@ -8,7 +8,7 @@
 #include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
-#include "lyra/interpreter/process_frame.hpp"
+#include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/process.hpp"
@@ -19,35 +19,19 @@ namespace lyra::interpreter {
 struct ScheduledEvent;
 
 /// Info about a waiting process including its instance context.
-/// Module for function lookup is accessed via process_instance->module.
-/// The `frame` field is the coroutine frame - it persists across suspension.
+/// The `handle` field is a non-owning reference to the ProcessFrame,
+/// which lives in SimulationRunner::process_frames_. This mirrors C++
+/// coroutines where Waiter holds a non-owning coroutine_handle<>.
 struct WaitingProcessInfo {
-  std::shared_ptr<InstanceContext> process_instance;  // Where process runs
-  std::shared_ptr<InstanceContext> watch_instance;    // Where variable lives
+  std::shared_ptr<InstanceContext> watch_instance;  // Where variable lives
   std::size_t block_index;
   std::size_t instruction_index;
   common::EdgeKind edge_kind;
-  ProcessFrame frame;  // Coroutine frame - persists across suspension
+  ProcessHandle handle;  // Non-owning reference to frame
+  // Note: process_instance is now in handle.key.instance
 };
 
-// Composite key for (process, instance) pairs - used for triggering
-struct ProcessInstanceKey {
-  std::shared_ptr<lir::Process> process;
-  std::shared_ptr<InstanceContext> instance;
-
-  auto operator==(const ProcessInstanceKey& other) const -> bool {
-    return process.get() == other.process.get() &&
-           instance.get() == other.instance.get();
-  }
-};
-
-struct ProcessInstanceKeyHash {
-  auto operator()(const ProcessInstanceKey& key) const -> std::size_t {
-    auto h1 = std::hash<lir::Process*>{}(key.process.get());
-    auto h2 = std::hash<InstanceContext*>{}(key.instance.get());
-    return h1 ^ (h2 << 1);
-  }
-};
+// ProcessInstanceKey and ProcessInstanceKeyHash are in process_handle.hpp
 
 // Composite key for (process, instance, variable) - used for storing edge kind
 // A process can wait on multiple variables with different edge kinds
@@ -95,16 +79,15 @@ class TriggerManager {
   }
 
   // Register a process to wait on variable changes.
-  // process_instance: where the process runs (module via
-  // process_instance->module) watch_instance: where the variable lives (for
-  // trigger detection) frame: the coroutine frame to preserve across suspension
+  // handle: non-owning reference to the ProcessFrame (frame lives in
+  //         SimulationRunner::process_frames_)
+  // watch_instance: where the variable lives (for trigger detection)
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
-      const std::shared_ptr<InstanceContext>& process_instance,
       const std::shared_ptr<InstanceContext>& watch_instance,
       const SymbolRef& variable, common::EdgeKind edge_kind,
       std::size_t block_index, std::size_t instruction_index,
-      ProcessFrame frame);
+      ProcessHandle handle);
 
   // Process variable changes and return processes that should be triggered
   auto CheckTriggers(const std::vector<ModifiedVariable>& modified_variables)

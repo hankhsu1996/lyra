@@ -13,6 +13,7 @@
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
+#include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/trigger_manager.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/module.hpp"
@@ -39,13 +40,14 @@ struct ProcessOrigin {
 };
 
 /// ScheduledEvent represents a process scheduled to execute.
-/// The `frame` field is the coroutine frame - it persists across suspension
-/// so that local variables (temps) survive delay/event waits.
+/// The `handle` field is a non-owning reference to the ProcessFrame,
+/// which lives in SimulationRunner::process_frames_. This mirrors C++
+/// coroutines where coroutine_handle<> is a non-owning pointer.
 struct ScheduledEvent {
   ProcessOrigin origin;
   std::size_t block_index = 0;
   std::size_t instruction_index = 0;
-  ProcessFrame frame;  // Coroutine frame - persists across suspension
+  ProcessHandle handle;
 };
 
 using DelayQueue = std::map<SimulationTime, std::vector<ScheduledEvent>>;
@@ -139,6 +141,12 @@ class SimulationRunner {
 
   // Top instance context (root of instance hierarchy)
   std::shared_ptr<InstanceContext> top_instance_;
+
+  // Centralized frame storage - owns all ProcessFrames.
+  // This mirrors C++ coroutines where Scheduler::tasks_ owns all frames.
+  // Queues and triggers store ProcessHandle (non-owning) references.
+  std::unordered_map<ProcessInstanceKey, ProcessFrame, ProcessInstanceKeyHash>
+      process_frames_;
 
   std::reference_wrapper<SimulationContext> simulation_context_;
   TriggerManager trigger_manager_;
