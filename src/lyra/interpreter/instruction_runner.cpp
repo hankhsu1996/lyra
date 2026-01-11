@@ -813,19 +813,22 @@ auto RunInstruction(
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
+    // Deep copy arrays for value semantics (nested arrays must be independent)
+    const RuntimeValue actual_value = value.DeepCopy();
+
     // Check function-local variables first (parameters and locals)
     if (!frame.call_stack.empty()) {
       auto& call_frame = frame.call_stack.back();
       auto it = call_frame.local_variables.find(symbol);
       if (it != call_frame.local_variables.end()) {
-        it->second = value;
+        it->second = actual_value;
         return;
       }
     }
 
     // Check process-local next
     if (process_variable_table.Exists(symbol)) {
-      process_variable_table.Write(symbol, value);
+      process_variable_table.Write(symbol, actual_value);
       return;
     }
 
@@ -835,12 +838,12 @@ auto RunInstruction(
     // If bound (output port), write to target instance's storage
     if (target_instance != nullptr) {
       if (!is_non_blocking) {
-        target_instance->Write(target_symbol, value);
+        target_instance->Write(target_symbol, actual_value);
         effect.RecordVariableModification(target_symbol, target_instance);
       } else {
         effect.RecordNbaAction(
             {.variable = target_symbol,
-             .value = value,
+             .value = actual_value,
              .instance = target_instance});
       }
       return;
@@ -849,11 +852,13 @@ auto RunInstruction(
     // Otherwise, write to per-instance storage (local vars, input ports)
     if (instance_context != nullptr) {
       if (!is_non_blocking) {
-        instance_context->Write(symbol, value);
+        instance_context->Write(symbol, actual_value);
         effect.RecordVariableModification(symbol, instance_context);
       } else {
         effect.RecordNbaAction(
-            {.variable = symbol, .value = value, .instance = instance_context});
+            {.variable = symbol,
+             .value = actual_value,
+             .instance = instance_context});
       }
       return;
     }
@@ -861,11 +866,11 @@ auto RunInstruction(
     // Fallback to global table (for backwards compat with non-hierarchical
     // code)
     if (!is_non_blocking) {
-      module_variable_table.Write(symbol, value);
+      module_variable_table.Write(symbol, actual_value);
       effect.RecordVariableModification(symbol);  // Global storage
     } else {
       effect.RecordNbaAction(
-          {.variable = symbol, .value = value, .instance = nullptr});
+          {.variable = symbol, .value = actual_value, .instance = nullptr});
     }
   };
 
@@ -874,6 +879,9 @@ auto RunInstruction(
                                 common::SymbolRef target,
                                 const RuntimeValue& value,
                                 bool is_non_blocking) {
+    // Deep copy arrays for value semantics (nested arrays must be independent)
+    const RuntimeValue actual_value = value.DeepCopy();
+
     // Traverse instance path
     auto target_instance = instance_context;
     for (const auto& inst_sym : instances) {
@@ -887,11 +895,13 @@ auto RunInstruction(
 
     // Write to target instance
     if (!is_non_blocking) {
-      target_instance->Write(target, value);
+      target_instance->Write(target, actual_value);
       effect.RecordVariableModification(target, target_instance);
     } else {
       effect.RecordNbaAction(
-          {.variable = target, .value = value, .instance = target_instance});
+          {.variable = target,
+           .value = actual_value,
+           .instance = target_instance});
     }
   };
 
@@ -1251,12 +1261,12 @@ auto RunInstruction(
       elements.reserve(size);
 
       if (instr.operands.size() > 1) {
-        // Resize with init: copy existing elements, fill remainder with default
+        // Resize with init: deep-copy elements for value semantics
         const auto& init = get_operand_value(instr.operands[1]);
         const auto& init_arr = init.AsArray();
         for (size_t i = 0; i < size; ++i) {
           if (i < init_arr.size()) {
-            elements.push_back(init_arr[i]);
+            elements.push_back(init_arr[i].DeepCopy());
           } else {
             elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
           }

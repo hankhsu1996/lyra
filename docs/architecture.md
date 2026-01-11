@@ -125,3 +125,28 @@ Slang's `SourceManager` owns the memory backing source text, and many slang type
 - Eliminate hidden lifetime dependencies on slang
 - Make the slang boundary explicit and complete
 - Allow slang resources to be released after lowering
+
+## Interpreter Value Model
+
+The interpreter uses `RuntimeValue` — a tagged union (`std::variant`) that can hold any SystemVerilog value (scalars, arrays, strings, etc.). Operations on values use centralized dispatch (switch on type tag).
+
+**Contrast with C++ codegen**: In generated C++, types carry their own behavior. For example, `std::vector<T>` has a copy constructor that knows how to deep-copy itself. The compiler emits calls to type-specific methods. This is the OOP model — behavior is attached to types.
+
+**Current interpreter model**: `RuntimeValue` is a variant, and operations like `DeepCopy()` switch on the type tag internally:
+
+```cpp
+RuntimeValue::DeepCopy() {
+  if (IsArray()) { /* array copy logic */ }
+  else { return *this; }
+}
+```
+
+This is the procedural/tagged-union model — behavior is centralized, not attached to types.
+
+**Consequence**: Adding new types with special semantics (queues, associative arrays, classes) requires modifying central switch statements rather than encapsulating behavior with each type. The interpreter doesn't mirror the codegen's OOP structure.
+
+**Future direction**: Consider refactoring so that each SV runtime type (dynamic array, queue, class instance) has its own representation with encapsulated operations. This would:
+
+- Mirror how C++ codegen works (types carry behavior)
+- Make adding new types more modular (add a class, not modify switches)
+- Improve separation of concerns
