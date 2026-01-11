@@ -16,6 +16,8 @@ jobs:
       src: ${{ steps.filter.outputs.src }}
       src_files: ${{ steps.filter.outputs.src_files }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: dorny/paths-filter@v3
         id: filter
         with:
