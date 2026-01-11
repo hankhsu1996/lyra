@@ -156,6 +156,18 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       continue;
     }
 
+    // Skip Parameter/Localparam - compile-time constants inlined at use sites
+    if (symbol.kind == slang::ast::SymbolKind::Parameter) {
+      continue;
+    }
+
+    // Skip StatementBlock - scoped variable containers (e.g., locals in
+    // begin...end blocks). Variables inside are handled during procedural
+    // block lowering, not as module-level declarations.
+    if (symbol.kind == slang::ast::SymbolKind::StatementBlock) {
+      continue;
+    }
+
     // Lower variables (skip port variables)
     if (symbol.kind == slang::ast::SymbolKind::Variable) {
       // Skip if this variable is a port
@@ -272,6 +284,13 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       module->submodules.push_back(std::move(submod));
       continue;
     }
+
+    // Catch-all: any unhandled symbol kind should error, not silently skip
+    throw DiagnosticException(
+        Diagnostic::Error(
+            slang::SourceRange{symbol.location, symbol.location},
+            fmt::format(
+                "unsupported module member kind: {}", toString(symbol.kind))));
   }
 
   // Extract package imports
