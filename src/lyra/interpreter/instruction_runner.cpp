@@ -31,6 +31,7 @@
 #include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
+#include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/interpreter/system_call_runner.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/context.hpp"
@@ -55,13 +56,6 @@ auto IsTruthy(const RuntimeValue& value) -> bool {
   return value.AsNarrow().raw != 0;
 }
 
-// Extract int64 value from RuntimeValue, handling both narrow and wide sources.
-// For wide sources, extracts the low 64 bits.
-auto ExtractInt64FromSource(const RuntimeValue& src) -> int64_t {
-  return src.IsWide() ? static_cast<int64_t>(src.AsWideBit().GetWord(0))
-                      : src.AsNarrow().AsInt64();
-}
-
 // Create a WideBit from an int64 value, with optional sign extension.
 // Masks the final word to the specified bit width for correct behavior.
 auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
@@ -79,39 +73,6 @@ auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
   // Mask final word to bit width (matches SDK behavior)
   common::wide_ops::MaskToWidth(wide.Words(), bit_width);
   return wide;
-}
-
-// Convert integral RuntimeValue to string per LRM 6.16.
-// Each 8 bits forms one character, MSB first, null bytes are skipped.
-auto IntegralToString(const RuntimeValue& val) -> std::string {
-  std::string result;
-  size_t width = std::get<common::IntegralData>(val.type.data).bit_width;
-
-  if (val.IsWide()) {
-    const auto& wide = val.AsWideBit();
-    // Extract bytes from MSB to LSB
-    for (size_t i = width; i >= 8; i -= 8) {
-      size_t byte_start = i - 8;
-      // Extract 8-bit value by reading bits
-      uint8_t ch = 0;
-      for (size_t b = 0; b < 8; ++b) {
-        ch |= static_cast<uint8_t>(wide.GetBit(byte_start + b) << b);
-      }
-      if (ch != 0) {
-        result += static_cast<char>(ch);
-      }
-    }
-  } else {
-    // Narrow: extract bytes from MSB to LSB
-    uint64_t bits = val.AsNarrow().AsUInt64();
-    for (size_t i = width; i >= 8; i -= 8) {
-      auto ch = static_cast<uint8_t>((bits >> (i - 8)) & 0xFF);
-      if (ch != 0) {
-        result += static_cast<char>(ch);
-      }
-    }
-  }
-  return result;
 }
 
 // Compute the actual array index after adjusting for lower bound and checking
