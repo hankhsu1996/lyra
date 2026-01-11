@@ -124,7 +124,7 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     }
 
     out_ << ");\n";
-    return true;
+    return;
   }
 
   // Handle strobe variants - schedule to Postponed region

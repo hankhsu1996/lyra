@@ -5,12 +5,15 @@
 #include <gtest/gtest.h>
 #include <iterator>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "lyra/compiler/compiler.hpp"
+#include "lyra/compiler/compiler_result.hpp"
 #include "lyra/interpreter/interpreter.hpp"
 #include "lyra/interpreter/interpreter_options.hpp"
+#include "lyra/interpreter/interpreter_result.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/yaml_loader.hpp"
 
