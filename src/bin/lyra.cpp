@@ -254,11 +254,20 @@ auto RunCommand(bool use_interpreter) -> int {
 
     CleanStaleCMakeCache(out_path);
 
-    std::string cmd = std::format(
+    // Build step (in out directory)
+    std::string build_cmd = std::format(
         "cd {} && cmake --preset default > /dev/null && "
-        "cmake --build build > /dev/null && ./build/sim",
+        "cmake --build build > /dev/null",
         out_path.string());
-    return std::system(cmd.c_str());
+    int build_result = std::system(build_cmd.c_str());
+    if (build_result != 0) {
+      return build_result;
+    }
+
+    // Run step (from project directory - keeps CWD so $readmemh paths resolve
+    // relative to the project root, not the out/ directory)
+    auto binary_path = out_path / "build" / "sim";
+    return std::system(binary_path.string().c_str());
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
