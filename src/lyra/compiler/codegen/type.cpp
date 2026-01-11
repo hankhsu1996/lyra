@@ -135,6 +135,58 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       "ToCppType", std::format("unhandled type kind: {}", type.ToString()));
 }
 
+auto Codegen::ToCppRawType(const common::Type& type) -> std::string {
+  // Returns raw C++ type without SDK aliases (for template parameters)
+  switch (type.kind) {
+    case common::Type::Kind::kVoid:
+      return "void";
+    case common::Type::Kind::kReal:
+      return "double";
+    case common::Type::Kind::kShortReal:
+      return "float";
+    case common::Type::Kind::kString:
+      return "std::string";
+    case common::Type::Kind::kIntegral: {
+      auto data = std::get<common::IntegralData>(type.data);
+      size_t width = data.bit_width;
+      bool is_signed = data.is_signed;
+
+      // Map to standard C++ integer types
+      if (is_signed) {
+        if (width <= 8) {
+          return "int8_t";
+        }
+        if (width <= 16) {
+          return "int16_t";
+        }
+        if (width <= 32) {
+          return "int32_t";
+        }
+        if (width <= 64) {
+          return "int64_t";
+        }
+      } else {
+        if (width <= 8) {
+          return "uint8_t";
+        }
+        if (width <= 16) {
+          return "uint16_t";
+        }
+        if (width <= 32) {
+          return "uint32_t";
+        }
+        if (width <= 64) {
+          return "uint64_t";
+        }
+      }
+      // Fall back to SDK type for wide types
+      return ToCppType(type);
+    }
+    default:
+      return ToCppType(type);
+  }
+}
+
 auto Codegen::ToCppUnsignedType(const common::Type& type) -> std::string {
   if (type.kind != common::Type::Kind::kIntegral) {
     return "/* unknown type */";

@@ -23,4 +23,14 @@ void LinkFunctionCalls(
     std::span<const std::unique_ptr<lir::Module>> modules,
     std::span<const std::unique_ptr<lir::Function>> package_functions);
 
+/// Resolves submodule instance references to module pointers.
+///
+/// For each SubmoduleInstance in each module:
+/// - Looks up module by signature
+/// - Stores resolved pointer in submod.child_module
+///
+/// Must be called after LowerModules.
+/// Throws InternalError if a module cannot be resolved.
+void LinkSubmodules(std::span<const std::unique_ptr<lir::Module>> modules);
+
 }  // namespace lyra::lowering::mir_to_lir

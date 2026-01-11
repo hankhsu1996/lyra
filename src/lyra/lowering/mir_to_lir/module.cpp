@@ -121,6 +121,7 @@ auto LowerModule(
     lir_submod.instance_symbol = submod.instance_symbol;
     lir_submod.instance_name = submod.instance_name;
     lir_submod.module_type = submod.module_type;
+    lir_submod.module_signature = submod.module_signature;
 
     for (const auto& binding : submod.output_bindings) {
       lir::OutputBinding lir_binding;
@@ -179,6 +180,7 @@ auto LowerModule(
   // Set timescale info on the LIR module for runtime use
   lir_module->timescale = module.timescale;
   lir_module->global_precision_power = actual_precision;
+  lir_module->signature = module.signature;
 
   return lir_module;
 }

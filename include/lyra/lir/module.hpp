@@ -18,6 +18,8 @@
 
 namespace lyra::lir {
 
+struct Module;  // Forward declaration for SubmoduleInstance::child_module
+
 // Port direction for module interfaces
 enum class PortDirection { kInput, kOutput, kInout };
 
@@ -36,9 +38,11 @@ struct OutputBinding {
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  common::SymbolRef instance_symbol;  // Instance symbol (for interpreter)
-  std::string instance_name;          // e.g., "counter1" (for codegen)
-  std::string module_type;            // e.g., "Counter"
+  common::SymbolRef instance_symbol;     // Instance symbol (for interpreter)
+  std::string instance_name;             // e.g., "counter1" (for codegen)
+  std::string module_type;               // e.g., "Counter"
+  std::string module_signature;          // e.g., "Counter<8>" (for linking)
+  const Module* child_module = nullptr;  // Resolved during linking
   std::vector<OutputBinding> output_bindings;  // Output port → parent signal
 };
 
@@ -109,6 +113,7 @@ struct Function {
 
 struct Module {
   std::string name;
+  std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
   std::optional<common::TimeScale> timescale;
   int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
   std::vector<Port> ports;

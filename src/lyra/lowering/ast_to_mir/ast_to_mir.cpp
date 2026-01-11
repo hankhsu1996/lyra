@@ -22,17 +22,18 @@ namespace {
 // Recursively collect all modules in the hierarchy.
 // Uses depth-first traversal: children are collected before parents,
 // ensuring dependency order (child modules defined before parent needs them).
+// Deduplication uses module signatures (name + parameter values).
 void CollectModulesRecursive(
     const slang::ast::InstanceSymbol& instance,
     std::vector<std::unique_ptr<mir::Module>>& modules,
     std::unordered_set<std::string>& processed) {
-  std::string name(instance.body.name);
+  auto signature = ComputeModuleSignature(instance);
 
-  // Skip already processed modules (avoids duplicates for multiple instances)
-  if (processed.contains(name)) {
+  // Skip already processed modules (avoids duplicates)
+  if (processed.contains(signature)) {
     return;
   }
-  processed.insert(name);
+  processed.insert(signature);
 
   // First, recurse into child instances (depth-first)
   for (const auto& member : instance.body.members()) {

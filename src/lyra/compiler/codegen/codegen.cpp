@@ -29,8 +29,9 @@ auto UsesArrayType(const mir::Module& module) -> bool {
 
 }  // namespace
 
-auto Codegen::Generate(const mir::Module& module, bool skip_sdk_aliases)
-    -> std::string {
+auto Codegen::Generate(
+    const mir::Module& module, bool skip_sdk_aliases, bool emit_file_header,
+    bool emit_primary_template) -> std::string {
   out_.str("");
   indent_ = 0;
   port_symbols_.clear();
@@ -63,8 +64,15 @@ auto Codegen::Generate(const mir::Module& module, bool skip_sdk_aliases)
   std::string class_content = out_.str();
   out_.swap(class_out);  // Restore empty output stream
 
-  // Now emit header (we know used_features_ from EmitClass)
-  EmitHeader(module, UsesArrayType(module));
+  // Emit SDK includes only for first module in file
+  if (emit_file_header) {
+    EmitHeader(module, UsesArrayType(module));
+  }
+
+  // Emit primary template forward declaration if requested
+  if (emit_primary_template && !module.parameters.empty()) {
+    EmitPrimaryTemplateDecl(module);
+  }
 
   // Append class content
   out_ << class_content;
@@ -229,6 +237,22 @@ void Codegen::EmitTimescaleConstants(const mir::Module& module) {
   }
 }
 
+void Codegen::EmitPrimaryTemplateDecl(const mir::Module& module) {
+  Indent();
+  out_ << "template <";
+  bool first = true;
+  for (const auto& param : module.parameters) {
+    if (!first) {
+      out_ << ", ";
+    }
+    first = false;
+    out_ << ToCppRawType(param.type) << " " << param.name;
+  }
+  out_ << ">\n";
+  Line("class " + module.name + ";");
+  out_ << "\n";
+}
+
 void Codegen::EmitClass(const mir::Module& module) {
   // Two-phase generation: first generate body to collect type alias and feature
   // usage, then emit class with only the aliases/constants that were used.
@@ -334,7 +358,22 @@ void Codegen::EmitClass(const mir::Module& module) {
 
   // Submodule members (after port references so they can use them)
   for (const auto& submod : module.submodules) {
-    Line(submod.module_type + " " + submod.instance_name + "_;");
+    Indent();
+    out_ << submod.module_type;
+    // Add template arguments if the submodule has parameter overrides
+    if (!submod.parameter_overrides.empty()) {
+      out_ << "<";
+      bool first = true;
+      for (const auto& override : submod.parameter_overrides) {
+        if (!first) {
+          out_ << ", ";
+        }
+        first = false;
+        EmitConstantExpression(*override.value);
+      }
+      out_ << ">";
+    }
+    out_ << " " << submod.instance_name << "_;\n";
   }
 
   // Phase 2: Now emit the class with conditional type aliases, then append body
@@ -342,8 +381,29 @@ void Codegen::EmitClass(const mir::Module& module) {
   out_.swap(saved_out);  // Restore original output stream
   indent_ = saved_indent;
 
-  // Emit class declaration
-  Line("class " + module.name + " : public lyra::sdk::Module {");
+  // Emit explicit specialization marker if parameterized
+  if (!module.parameters.empty()) {
+    Line("template <>");
+  }
+
+  // Emit class declaration (with template args if parameterized)
+  Indent();
+  out_ << "class " << module.name;
+  if (!module.parameters.empty()) {
+    out_ << "<";
+    bool first = true;
+    for (const auto& param : module.parameters) {
+      if (!first) {
+        out_ << ", ";
+      }
+      first = false;
+      if (param.default_value) {
+        EmitConstantExpression(*param.default_value);
+      }
+    }
+    out_ << ">";
+  }
+  out_ << " : public lyra::sdk::Module {\n";
   indent_++;
 
   // Emit only the type aliases that were actually used
@@ -497,16 +557,23 @@ auto Codegen::GeneratePackages(
   return header.str() + out_.str();
 }
 
-auto Codegen::GenerateModuleHeader(const mir::Module& module, bool has_packages)
-    -> std::string {
+auto Codegen::GenerateModuleHeader(
+    const mir::Module& module, bool has_packages, bool emit_file_header,
+    bool emit_primary_template) -> std::string {
   // When packages exist, skip SDK type aliases in the class - they're already
   // at file scope in packages.hpp
-  std::string code = Generate(module, has_packages);
+  std::string code =
+      Generate(module, has_packages, emit_file_header, emit_primary_template);
 
   std::ostringstream header;
-  header << "#pragma once\n\n";
-  if (has_packages) {
-    header << "#include \"packages.hpp\"\n\n";
+  if (emit_file_header) {
+    header << "#pragma once\n\n";
+    if (has_packages) {
+      header << "#include \"packages.hpp\"\n\n";
+    }
+  } else {
+    // For appended specializations, just add a blank line separator
+    header << "\n";
   }
   header << code;
   return header.str();

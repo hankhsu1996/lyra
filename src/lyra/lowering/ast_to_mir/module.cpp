@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -35,6 +37,39 @@
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
+
+auto ComputeModuleSignature(const slang::ast::InstanceSymbol& instance)
+    -> std::string {
+  std::string sig(instance.body.name);
+
+  // Append parameter values for parameterized modules
+  bool first_param = true;
+  for (const auto* param_base : instance.body.getParameters()) {
+    if (!param_base->isPortParam()) {
+      continue;
+    }
+    const auto& sym = param_base->symbol;
+    if (sym.kind != slang::ast::SymbolKind::Parameter) {
+      continue;
+    }
+    const auto& param = sym.as<slang::ast::ParameterSymbol>();
+
+    // Build signature like "Counter<8>" or "Counter<8,16>"
+    const auto& value = param.getValue();
+    if (first_param) {
+      sig += "<";
+      first_param = false;
+    } else {
+      sig += ",";
+    }
+    sig += value.toString();
+  }
+  if (!first_param) {
+    sig += ">";
+  }
+
+  return sig;
+}
 
 namespace {
 
@@ -98,10 +133,50 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   // Use module type name (definition name), not instance name
   module->name = std::string(instance_symbol.body.name);
 
-  // Extract timescale from the instance body
+  // Compute signature for linking (e.g., "Counter<8>" for parameterized
+  // modules)
+  module->signature = ComputeModuleSignature(instance_symbol);
   const auto& body = instance_symbol.body;
+
+  // Extract timescale from the instance body
   if (auto ts = body.getTimeScale()) {
     module->timescale = common::TimeScale::FromSlang(*ts);
+  }
+
+  // Extract module parameters (for C++ template generation)
+  // Each unique body has fully-evaluated parameter values
+  for (const auto* param_base : body.getParameters()) {
+    // Only include port parameters (template params), not body localparams
+    if (!param_base->isPortParam()) {
+      continue;
+    }
+
+    // Check if this is a value parameter (not a type parameter)
+    const auto& sym = param_base->symbol;
+    if (sym.kind != slang::ast::SymbolKind::Parameter) {
+      continue;  // Skip type parameters for now
+    }
+
+    const auto& param = sym.as<slang::ast::ParameterSymbol>();
+    slang::SourceRange source_range(param.location, param.location);
+    auto type_result = LowerType(param.getType(), source_range);
+    if (!type_result) {
+      throw DiagnosticException(std::move(type_result.error()));
+    }
+
+    // Get the evaluated constant value as the "default"
+    // For body-based dedup, this is the actual value for this specialization
+    std::unique_ptr<mir::Expression> default_expr;
+    if (const auto* init = param.getInitializer()) {
+      default_expr = LowerExpression(*init);
+    }
+
+    module->parameters.push_back(
+        mir::ModuleParameter{
+            .name = std::string(param.name),
+            .type = *type_result,
+            .default_value = std::move(default_expr),
+        });
   }
 
   // Track port internal symbols to exclude from variables list.
@@ -214,6 +289,32 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
         submod.instance_symbol = &child;
         submod.instance_name = std::string(child.name);
         submod.module_type = std::string(child.getDefinition().name);
+        submod.module_signature = ComputeModuleSignature(child);
+
+        // Extract parameter overrides (evaluated constant values for now)
+        // These become template arguments in C++ codegen: Counter<8>
+        for (const auto* param_base : child.body.getParameters()) {
+          if (!param_base->isPortParam()) {
+            continue;
+          }
+          const auto& sym = param_base->symbol;
+          if (sym.kind != slang::ast::SymbolKind::Parameter) {
+            continue;
+          }
+          const auto& param = sym.as<slang::ast::ParameterSymbol>();
+          // For now, store the evaluated constant value as a literal expression
+          // Future: preserve original expression for cases like Counter<SIZE*2>
+          const auto* init = param.getInitializer();
+          if (init == nullptr) {
+            continue;  // Skip parameters without initializers
+          }
+          auto value_expr = LowerExpression(*init);
+          submod.parameter_overrides.push_back(
+              mir::ParameterOverride{
+                  .parameter_name = std::string(param.name),
+                  .value = std::move(value_expr),
+              });
+        }
 
         for (const auto* conn : child.getPortConnections()) {
           const auto* expr = conn->getExpression();

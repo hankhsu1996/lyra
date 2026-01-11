@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -524,11 +525,22 @@ auto EmitCommandInternal(
     }
 
     // Generate header file for each module
+    // Track which module names have been written (for template specializations)
+    std::unordered_set<std::string> written_modules;
     for (const auto& mir : lowering_result.modules) {
-      std::string header_code =
-          codegen.GenerateModuleHeader(*mir, has_packages);
       fs::path module_path = design_dir / (mir->name + ".hpp");
-      WriteFile(module_path, header_code);
+      bool is_first_in_file = !written_modules.contains(mir->name);
+      written_modules.insert(mir->name);
+
+      bool emit_file_header = is_first_in_file;
+      bool emit_primary_template = is_first_in_file;
+      std::string header_code = codegen.GenerateModuleHeader(
+          *mir, has_packages, emit_file_header, emit_primary_template);
+
+      // Use append mode for subsequent specializations of the same module
+      auto mode = is_first_in_file ? std::ios::out : std::ios::app;
+      std::ofstream out(module_path, mode);
+      out << header_code;
     }
 
     // Use top module (last in list) for main.cpp

@@ -88,7 +88,14 @@ class Codegen {
   // etc.)
   //        inside the class - used when packages.hpp provides them at file
   //        scope
-  auto Generate(const mir::Module& module, bool skip_sdk_aliases = false)
+  // @param emit_file_header If true, emit SDK includes (based on feature
+  // usage).
+  //        False for subsequent specializations appended to the same file.
+  // @param emit_primary_template If true and module is parameterized, emit
+  //        the primary template forward declaration before the class.
+  auto Generate(
+      const mir::Module& module, bool skip_sdk_aliases = false,
+      bool emit_file_header = true, bool emit_primary_template = true)
       -> std::string;
 
   // Generate packages header content (namespaces with type definitions)
@@ -99,7 +106,13 @@ class Codegen {
   // Generate complete module header with #pragma once and conditional includes
   // @param module The module to generate code for
   // @param has_packages Whether to include packages.hpp
-  auto GenerateModuleHeader(const mir::Module& module, bool has_packages)
+  // @param emit_file_header True for first module in file (emits #pragma once,
+  //        includes). False for appended specializations.
+  // @param emit_primary_template True to emit primary template forward decl
+  //        for parameterized modules.
+  auto GenerateModuleHeader(
+      const mir::Module& module, bool has_packages,
+      bool emit_file_header = true, bool emit_primary_template = true)
       -> std::string;
 
   // Get global precision power after Generate() has been called
@@ -110,6 +123,7 @@ class Codegen {
 
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
+  void EmitPrimaryTemplateDecl(const mir::Module& module);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
@@ -118,6 +132,8 @@ class Codegen {
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
   auto EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool;
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
+  void EmitConstantExpression(
+      const mir::Expression& expr);  // For template args
   void EmitAssignmentTarget(const mir::AssignmentTarget& target);
   void EmitPackedBitPosition(
       const mir::Expression& index_expr, int32_t lower_bound,
@@ -185,6 +201,8 @@ class Codegen {
 
   // Type conversion helpers (record usage in used_type_aliases_)
   auto ToCppType(const common::Type& type) -> std::string;
+  auto ToCppRawType(const common::Type& type)
+      -> std::string;  // For template params
   auto ToCppUnsignedType(const common::Type& type) -> std::string;
   static auto IsSigned(const common::Type& type) -> bool;
   void EmitTypeAliases();

@@ -753,4 +753,70 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
   }
 }
 
+void Codegen::EmitConstantExpression(const mir::Expression& expr) {
+  // Emit constant expressions for template arguments (without SDK type
+  // wrappers). This is intentionally separate from EmitExpression to keep the
+  // main code path simple. Template args are rare and need raw C++ values (8
+  // not Int{8}).
+  switch (expr.kind) {
+    case mir::Expression::Kind::kLiteral: {
+      const auto& lit = mir::As<mir::LiteralExpression>(expr);
+      // Emit raw value without type wrapper
+      out_ << lit.literal.ToString();
+      break;
+    }
+    case mir::Expression::Kind::kIdentifier: {
+      // Parameter reference - emit just the name
+      const auto& ident = mir::As<mir::IdentifierExpression>(expr);
+      out_ << ident.symbol->name;
+      break;
+    }
+    case mir::Expression::Kind::kBinary: {
+      const auto& bin = mir::As<mir::BinaryExpression>(expr);
+      out_ << "(";
+      EmitConstantExpression(*bin.left);
+      out_ << " " << ToCppOperator(bin.op) << " ";
+      EmitConstantExpression(*bin.right);
+      out_ << ")";
+      break;
+    }
+    case mir::Expression::Kind::kUnary: {
+      const auto& un = mir::As<mir::UnaryExpression>(expr);
+      switch (un.op) {
+        case mir::UnaryOperator::kPlus:
+          out_ << "+";
+          break;
+        case mir::UnaryOperator::kMinus:
+          out_ << "-";
+          break;
+        case mir::UnaryOperator::kLogicalNot:
+          out_ << "!";
+          break;
+        case mir::UnaryOperator::kBitwiseNot:
+          out_ << "~";
+          break;
+        default:
+          break;
+      }
+      EmitConstantExpression(*un.operand);
+      break;
+    }
+    case mir::Expression::Kind::kTernary: {
+      const auto& tern = mir::As<mir::TernaryExpression>(expr);
+      out_ << "(";
+      EmitConstantExpression(*tern.condition);
+      out_ << " ? ";
+      EmitConstantExpression(*tern.true_expression);
+      out_ << " : ";
+      EmitConstantExpression(*tern.false_expression);
+      out_ << ")";
+      break;
+    }
+    default:
+      // Fall back to regular emission for unsupported expressions
+      EmitExpression(expr, kPrecLowest);
+      break;
+  }
+}
+
 }  // namespace lyra::compiler
