@@ -80,9 +80,14 @@ class ScopedCurrentPath {
   std::filesystem::path previous_;
 };
 
-auto WriteTempFiles(const std::vector<SourceFile>& files)
+auto WriteTempFiles(
+    const std::vector<SourceFile>& files, const std::string& test_name)
     -> std::vector<std::string> {
-  auto tmp_dir = std::filesystem::temp_directory_path() / "lyra_test";
+  // Use unique directory per test to avoid race conditions when tests run in
+  // parallel (sharded). Without this, different shards can overwrite each
+  // other's files (e.g., mem.hex for $readmemh tests).
+  auto tmp_dir =
+      std::filesystem::temp_directory_path() / "lyra_test" / test_name;
   std::filesystem::create_directories(tmp_dir);
 
   std::vector<std::string> paths;
@@ -122,75 +127,75 @@ void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
 class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 
 TEST_P(SvFeatureTest, Interpreter) {
-  const auto& tc = GetParam();
+  const auto& test_case = GetParam();
 
   // Skip interpreter test if flag is set
-  if (tc.skip_interpreter) {
+  if (test_case.skip_interpreter) {
     GTEST_SKIP() << "Interpreter skipped";
   }
 
   interpreter::InterpreterResult result;
-  if (tc.IsMultiFile()) {
-    auto paths = WriteTempFiles(tc.files);
+  if (test_case.IsMultiFile()) {
+    auto paths = WriteTempFiles(test_case.files, test_case.name);
     auto sv_paths = FilterSvFiles(paths);
     ScopedCurrentPath current_dir(
         std::filesystem::path(paths.front()).parent_path());
     result = interpreter::Interpreter::RunFromFiles(sv_paths);
   } else {
-    result = interpreter::Interpreter::RunFromSource(tc.sv_code);
+    result = interpreter::Interpreter::RunFromSource(test_case.sv_code);
   }
 
-  for (const auto& [var, expected] : tc.expected_values) {
+  for (const auto& [var, expected] : test_case.expected_values) {
     // Test expected values are always narrow
     EXPECT_EQ(result.ReadVariable(var).AsNarrow().AsInt64(), expected)
         << "Variable: " << var;
   }
 
-  if (tc.expected_time.has_value()) {
-    EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
+  if (test_case.expected_time.has_value()) {
+    EXPECT_EQ(result.FinalTime(), test_case.expected_time.value());
   }
 
-  if (tc.expected_output.has_value()) {
-    AssertOutput(result.CapturedOutput(), tc.expected_output.value());
+  if (test_case.expected_output.has_value()) {
+    AssertOutput(result.CapturedOutput(), test_case.expected_output.value());
   }
 }
 
 TEST_P(SvFeatureTest, CppCodegen) {
-  const auto& tc = GetParam();
+  const auto& test_case = GetParam();
 
   // Skip codegen test if flag is set (e.g., for hierarchy tests)
-  if (tc.skip_codegen) {
+  if (test_case.skip_codegen) {
     GTEST_SKIP() << "Codegen skipped (use CLI for hierarchical modules)";
   }
 
   std::vector<std::string> vars;
-  vars.reserve(tc.expected_values.size());
-  for (const auto& [var, _] : tc.expected_values) {
+  vars.reserve(test_case.expected_values.size());
+  for (const auto& [var, _] : test_case.expected_values) {
     vars.push_back(var);
   }
 
   compiler::CompilerResult result;
-  if (tc.IsMultiFile()) {
-    auto paths = WriteTempFiles(tc.files);
+  if (test_case.IsMultiFile()) {
+    auto paths = WriteTempFiles(test_case.files, test_case.name);
     auto sv_paths = FilterSvFiles(paths);
     ScopedCurrentPath current_dir(
         std::filesystem::path(paths.front()).parent_path());
     result = compiler::Compiler::RunFromFiles(sv_paths, vars);
   } else {
-    result = compiler::Compiler::RunFromSource(tc.sv_code, vars);
+    result = compiler::Compiler::RunFromSource(test_case.sv_code, vars);
   }
   ASSERT_TRUE(result.Success()) << result.ErrorMessage();
 
-  for (const auto& [var, expected] : tc.expected_values) {
+  for (const auto& [var, expected] : test_case.expected_values) {
     EXPECT_EQ(result.ReadVariable(var), expected) << "Variable: " << var;
   }
 
-  if (tc.expected_time.has_value()) {
-    EXPECT_EQ(result.FinalTime(), tc.expected_time.value());
+  if (test_case.expected_time.has_value()) {
+    EXPECT_EQ(result.FinalTime(), test_case.expected_time.value());
   }
 
-  if (tc.expected_output.has_value()) {
-    AssertOutput(result.CapturedOutput(), tc.expected_output.value());
+  if (test_case.expected_output.has_value()) {
+    AssertOutput(result.CapturedOutput(), test_case.expected_output.value());
   }
 }
 
@@ -203,8 +208,8 @@ auto LoadTestCases() -> std::vector<TestCase> {
     auto category = ExtractCategory(yaml_path);
 
     // Prefix test names with category for uniqueness across YAML files
-    for (auto& tc : cases) {
-      tc.name = category + "_" + tc.name;
+    for (auto& test_case : cases) {
+      test_case.name = category + "_" + test_case.name;
     }
 
     all_cases.insert(
