@@ -20,7 +20,6 @@
 #include "lyra/interpreter/system_call_runner.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
-#include "lyra/lir/operand.hpp"
 
 namespace lyra::interpreter {
 
