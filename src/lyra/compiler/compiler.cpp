@@ -14,7 +14,6 @@
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -154,23 +153,11 @@ auto Compiler::CompileAndRun(
     out << packages_code;
   }
 
-  // Generate header for each module
-  // Track which module names have been written (for template specializations)
-  std::unordered_set<std::string> written_modules;
-  for (const auto& mir : modules) {
-    auto header_path = design_dir / (mir->name + ".hpp");
-    bool is_first_in_file = !written_modules.contains(mir->name);
-    written_modules.insert(mir->name);
-
-    bool emit_file_header = is_first_in_file;
-    bool emit_primary_template = is_first_in_file;
-    std::string header_code = codegen.GenerateModuleHeader(
-        *mir, has_packages, emit_file_header, emit_primary_template);
-
-    // Use append mode for subsequent specializations of the same module
-    auto mode = is_first_in_file ? std::ios::out : std::ios::app;
-    std::ofstream out(header_path, mode);
-    out << header_code;
+  // Generate headers for all modules (handles signature deduplication)
+  for (const auto& output : codegen.GenerateAllModules(modules, has_packages)) {
+    auto mode = output.append ? std::ios::app : std::ios::out;
+    std::ofstream out(design_dir / output.filename, mode);
+    out << output.content;
   }
 
   // Use last module as top (modules are in dependency order)

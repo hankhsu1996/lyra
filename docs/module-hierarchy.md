@@ -276,6 +276,6 @@ This avoids chained lookups—Inner writes directly to Top's storage.
 | **Hier write**  | `child_.port = x`                    | `store_hierarchical()` traverses `children` |
 | **Triggers**    | `GetTriggerPath()`                   | Traverse + resolve bindings                 |
 
-## Limitations
+## Related
 
-1. **No parameter support**: Parameterized modules require future work
+- `docs/parameterized-modules.md` - Per-instance IR semantics and C++ template mapping

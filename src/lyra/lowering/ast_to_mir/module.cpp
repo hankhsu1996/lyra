@@ -136,6 +136,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   // Compute signature for linking (e.g., "Counter<8>" for parameterized
   // modules)
   module->signature = ComputeModuleSignature(instance_symbol);
+  module->instance_symbol = &instance_symbol;
   const auto& body = instance_symbol.body;
 
   // Extract timescale from the instance body

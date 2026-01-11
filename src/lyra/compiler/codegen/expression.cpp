@@ -849,9 +849,9 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
       break;
     }
     case mir::Expression::Kind::kConversion: {
-      // Handle integral-to-string conversion in constant expressions
-      // This occurs when a string parameter is stored as a bit-packed integer
+      // Handle conversions in constant expressions
       const auto& conv = mir::As<mir::ConversionExpression>(expr);
+      // Integral-to-string: convert bit-packed integer to string literal
       if (conv.target_type.kind == common::Type::Kind::kString &&
           conv.value->kind == mir::Expression::Kind::kLiteral) {
         const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
@@ -859,8 +859,10 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
         out_ << "\"" << common::EscapeForCppString(str) << "\"";
         break;
       }
-      // Fall through to default for other conversions
-      [[fallthrough]];
+      // For other conversions (e.g., int to int), just emit the inner value
+      // Template arguments need raw C++ values, not SDK type casts
+      EmitConstantExpression(*conv.value);
+      break;
     }
     default:
       // Fall back to regular emission for unsupported expressions

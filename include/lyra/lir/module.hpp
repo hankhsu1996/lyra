@@ -114,6 +114,7 @@ struct Function {
 struct Module {
   std::string name;
   std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
+  common::SymbolRef instance_symbol = nullptr;  // Slang instance symbol
   std::optional<common::TimeScale> timescale;
   int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
   std::vector<Port> ports;
