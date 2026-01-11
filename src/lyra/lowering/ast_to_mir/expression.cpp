@@ -682,6 +682,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
             func_info != nullptr &&
             func_info->category == common::SystemFunctionCategory::kSeverity;
 
+        // Override is_task for severity tasks - slang classifies them as
+        // functions but they should be treated as tasks in codegen
+        if (is_severity_task) {
+          is_task = true;
+        }
+
         std::unique_ptr<mir::Expression> format_expr;
         bool format_expr_is_literal = false;
         std::vector<std::unique_ptr<mir::Expression>> arguments;
@@ -744,7 +750,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
           // Handle $value$plusargs specially: second argument is output target
           if (name == "$value$plusargs") {
             auto args = call_expression.arguments();
-            if (args.size() >= 1) {
+            if (!args.empty()) {
               // First arg is format string (input)
               arguments.push_back(LowerExpression(*args[0]));
             }
