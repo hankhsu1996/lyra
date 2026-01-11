@@ -351,9 +351,36 @@ auto LowerExpression(const slang::ast::Expression& expression)
           throw DiagnosticException(std::move(struct_type_result.error()));
         }
 
+        // For unpacked structs, use field index instead of bit offset
+        // Use getCanonicalType() to handle typedef'd struct types
+        const auto& value_type = member_access.value().type->getCanonicalType();
+        bool is_unpacked_struct =
+            value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+
+        uint64_t offset_or_index = 0;
+        size_t width = 0;
+        if (is_unpacked_struct) {
+          // Compute field index for unpacked struct
+          const auto& struct_type =
+              value_type.as<slang::ast::UnpackedStructType>();
+          size_t field_index = 0;
+          for (const auto* f : struct_type.fields) {
+            if (f == &field) {
+              break;
+            }
+            ++field_index;
+          }
+          offset_or_index = field_index;
+          width = 0;  // Not used for unpacked structs
+        } else {
+          // Packed struct: use bit offset and width
+          offset_or_index = field.bitOffset;
+          width = field.getType().getBitWidth();
+        }
+
         mir::AssignmentTarget target(
-            &struct_symbol, std::string(field.name), field.bitOffset,
-            field.getType().getBitWidth(), *struct_type_result);
+            &struct_symbol, std::string(field.name), offset_or_index, width,
+            *struct_type_result);
         return std::make_unique<mir::AssignmentExpression>(
             std::move(target), std::move(value), is_non_blocking);
       }
@@ -810,14 +837,39 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
       // Get field info from the FieldSymbol
       const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
-      uint64_t bit_offset = field.bitOffset;
-      size_t bit_width = field.getType().getBitWidth();
 
       auto type_result = LowerType(*expression.type, expression.sourceRange);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
 
+      // For packed structs: bit_offset is LSB position, bit_width is field
+      // width. For unpacked structs: bit_offset is field index, bit_width is 0
+      // (unused).
+      // Use getCanonicalType() to handle typedef'd struct types
+      const auto& value_type = member_access.value().type->getCanonicalType();
+      bool is_unpacked_struct =
+          value_type.kind == slang::ast::SymbolKind::UnpackedStructType;
+
+      if (is_unpacked_struct) {
+        // Compute field index for unpacked struct
+        const auto& struct_type =
+            value_type.as<slang::ast::UnpackedStructType>();
+        size_t field_index = 0;
+        for (const auto* f : struct_type.fields) {
+          if (f == &field) {
+            break;
+          }
+          ++field_index;
+        }
+        return std::make_unique<mir::MemberAccessExpression>(
+            std::move(value), std::string(field.name), field_index, 0,
+            *type_result);
+      }
+
+      // Packed struct: use bit offset and width
+      uint64_t bit_offset = field.bitOffset;
+      size_t bit_width = field.getType().getBitWidth();
       return std::make_unique<mir::MemberAccessExpression>(
           std::move(value), std::string(field.name), bit_offset, bit_width,
           *type_result);
@@ -826,31 +878,39 @@ auto LowerExpression(const slang::ast::Expression& expression)
     case slang::ast::ExpressionKind::SimpleAssignmentPattern:
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
       // Both pattern types provide elements() in field declaration order.
-      // Packed struct literal = concatenation of fields (first = MSB).
       auto lower_struct_literal =
-          [&](std::span<const slang::ast::Expression* const> elements) {
-            if (!expression.type->isStruct()) {
-              throw DiagnosticException(
-                  Diagnostic::Error(
-                      expression.sourceRange,
-                      "only packed struct assignment patterns are supported"));
-            }
+          [&](std::span<const slang::ast::Expression* const> elements)
+          -> std::unique_ptr<mir::Expression> {
+        if (!expression.type->isStruct()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  "only struct assignment patterns are supported"));
+        }
 
-            std::vector<std::unique_ptr<mir::Expression>> operands;
-            operands.reserve(elements.size());
-            for (const auto* element : elements) {
-              operands.push_back(LowerExpression(*element));
-            }
+        auto type_result = LowerType(*expression.type, expression.sourceRange);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
 
-            auto type_result =
-                LowerType(*expression.type, expression.sourceRange);
-            if (!type_result) {
-              throw DiagnosticException(std::move(type_result.error()));
-            }
+        std::vector<std::unique_ptr<mir::Expression>> operands;
+        operands.reserve(elements.size());
+        for (const auto* element : elements) {
+          operands.push_back(LowerExpression(*element));
+        }
 
-            return std::make_unique<mir::ConcatenationExpression>(
-                std::move(operands), *type_result);
-          };
+        // Check if unpacked struct (use canonical type to handle typedefs)
+        const auto& canonical = expression.type->getCanonicalType();
+        if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
+          // Unpacked struct: create UnpackedStructLiteralExpression
+          return std::make_unique<mir::UnpackedStructLiteralExpression>(
+              *type_result, std::move(operands));
+        }
+
+        // Packed struct: concatenation of fields (first = MSB)
+        return std::make_unique<mir::ConcatenationExpression>(
+            std::move(operands), *type_result);
+      };
 
       if (expression.kind ==
           slang::ast::ExpressionKind::SimpleAssignmentPattern) {

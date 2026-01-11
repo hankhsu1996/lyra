@@ -24,16 +24,12 @@ enum class InstructionKind {
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
-  kLoadUnpackedElement,  // Load from unpacked array variable: arr[index]
-  kLoadUnpackedElementFromTemp,  // Load from unpacked array temp: temp[index]
-  kStoreUnpackedElement,  // Store to unpacked array variable: arr[index] =
-                          // value
-  kStoreUnpackedElementNonBlocking,  // NBA to unpacked array: arr[index] <=
-                                     // value
-  kStoreUnpackedElementToTemp,  // Store to unpacked array temp: temp[index] =
-                                // value
-  kLoadPackedBits,              // Extract bits from packed: vec[offset+:width]
+  kLoadElement,              // Load from array/struct: base[index]
+  kStoreElement,             // Store to array/struct: base[index] = value
+  kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
+  kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
   kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
+  kCreateAggregate,  // Create default-initialized struct/array in temp
   kNewDynamicArray,  // Allocate/resize dynamic array: new[size] or
                      // new[size](init)
 
@@ -219,52 +215,29 @@ struct Instruction {
         .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
-  // Load element from unpacked array: result = array[index]
-  static auto LoadUnpackedElement(
-      TempRef result, SymbolRef array, TempRef index, common::Type element_type)
+  // Load element from array/struct: result = base[index]
+  // base can be variable or temp (polymorphic)
+  static auto LoadElement(
+      TempRef result, Operand base, TempRef index, common::Type element_type)
       -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadUnpackedElement,
+        .kind = InstructionKind::kLoadElement,
         .result = result,
         .result_type = std::move(element_type),
-        .operands = {Operand::Variable(array), Operand::Temp(index)}};
+        .operands = {std::move(base), Operand::Temp(index)}};
   }
 
-  // Store element to unpacked array: array[index] = value (blocking)
-  // or array[index] <= value (non-blocking)
-  static auto StoreUnpackedElement(
-      SymbolRef array, TempRef index, TempRef value,
-      bool is_non_blocking = false) -> Instruction {
+  // Store element to array/struct: base[index] = value
+  // base can be variable or temp (polymorphic)
+  // Sensitivity tracking only triggered if base is variable
+  static auto StoreElement(
+      Operand base, TempRef index, TempRef value, bool is_non_blocking = false)
+      -> Instruction {
     return Instruction{
-        .kind = is_non_blocking
-                    ? InstructionKind::kStoreUnpackedElementNonBlocking
-                    : InstructionKind::kStoreUnpackedElement,
+        .kind = is_non_blocking ? InstructionKind::kStoreElementNonBlocking
+                                : InstructionKind::kStoreElement,
         .operands = {
-            Operand::Variable(array), Operand::Temp(index),
-            Operand::Temp(value)}};
-  }
-
-  // Load element from unpacked array in temp: result = array_temp[index]
-  // Used for multi-dimensional array access (e.g., arr[i][j])
-  static auto LoadUnpackedElementFromTemp(
-      TempRef result, TempRef array_temp, TempRef index,
-      common::Type element_type) -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kLoadUnpackedElementFromTemp,
-        .result = result,
-        .result_type = std::move(element_type),
-        .operands = {Operand::Temp(array_temp), Operand::Temp(index)}};
-  }
-
-  // Store element to unpacked array in temp: array_temp[index] = value
-  // Used for multi-dimensional array writes (copy-modify-store pattern)
-  static auto StoreUnpackedElementToTemp(
-      TempRef array_temp, TempRef index, TempRef value) -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kStoreUnpackedElementToTemp,
-        .operands = {
-            Operand::Temp(array_temp), Operand::Temp(index),
-            Operand::Temp(value)}};
+            std::move(base), Operand::Temp(index), Operand::Temp(value)}};
   }
 
   // Load bits from packed vector: result = value[bit_offset +: width]
@@ -291,6 +264,16 @@ struct Instruction {
         .operands = {
             Operand::Variable(variable), Operand::Temp(bit_offset),
             Operand::Temp(value)}};
+  }
+
+  // Create default-initialized aggregate (struct or array) in temp
+  static auto CreateAggregate(TempRef result, common::Type aggregate_type)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kCreateAggregate,
+        .result = result,
+        .result_type = std::move(aggregate_type),
+        .operands = {}};
   }
 
   // Create new dynamic array: result = new[size] or new[size](init)
@@ -538,29 +521,19 @@ struct Instruction {
         return fmt::format(
             "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
 
-      case InstructionKind::kLoadUnpackedElement:
+      case InstructionKind::kLoadElement:
         return fmt::format(
-            "lduel {}, {}[{}]", result.value(), operands[0].ToString(),
+            "ldel  {}, {}[{}]", result.value(), operands[0].ToString(),
             operands[1].ToString());
 
-      case InstructionKind::kLoadUnpackedElementFromTemp:
+      case InstructionKind::kStoreElement:
         return fmt::format(
-            "lduet {}, {}[{}]", result.value(), operands[0].ToString(),
-            operands[1].ToString());
-
-      case InstructionKind::kStoreUnpackedElement:
-        return fmt::format(
-            "stuel {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
-      case InstructionKind::kStoreUnpackedElementNonBlocking:
+      case InstructionKind::kStoreElementNonBlocking:
         return fmt::format(
-            "stuelnb {}[{}], {}", operands[0].ToString(),
-            operands[1].ToString(), operands[2].ToString());
-
-      case InstructionKind::kStoreUnpackedElementToTemp:
-        return fmt::format(
-            "stuet {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
+            "stelnb {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
       case InstructionKind::kLoadPackedBits:
@@ -572,6 +545,9 @@ struct Instruction {
         return fmt::format(
             "stpb  {}[{}+:], {}", operands[0].ToString(),
             operands[1].ToString(), operands[2].ToString());
+
+      case InstructionKind::kCreateAggregate:
+        return fmt::format("crag  {}", result.value());
 
       case InstructionKind::kNewDynamicArray:
         if (operands.size() > 1) {
