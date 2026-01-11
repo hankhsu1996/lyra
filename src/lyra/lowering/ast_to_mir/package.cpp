@@ -7,6 +7,7 @@
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -15,6 +16,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/function.hpp"
+#include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/package.hpp"
 
@@ -56,6 +58,37 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       package->types.push_back(
           {std::string(alias.name), *type_result, std::move(enum_members)});
+    }
+
+    if (member.kind == slang::ast::SymbolKind::Parameter) {
+      const auto& param_symbol = member.as<slang::ast::ParameterSymbol>();
+
+      slang::SourceRange source_range(
+          param_symbol.location, param_symbol.location);
+      auto type_result = LowerType(param_symbol.getType(), source_range);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
+      common::Variable variable{
+          .symbol = &param_symbol,
+          .type = *type_result,
+      };
+
+      // Get the constant value evaluated by Slang
+      const auto& cv = param_symbol.getValue();
+      auto literal_result = ConstantValueToLiteral(cv);
+      if (!literal_result) {
+        throw DiagnosticException(std::move(literal_result.error()));
+      }
+      auto init_expr =
+          std::make_unique<mir::LiteralExpression>(std::move(*literal_result));
+
+      package->parameters.push_back(
+          mir::PackageParameter{
+              .variable = std::move(variable),
+              .initializer = std::move(init_expr),
+          });
     }
 
     if (member.kind == slang::ast::SymbolKind::Variable) {
