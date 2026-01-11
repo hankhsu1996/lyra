@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -30,19 +31,19 @@ class InstructionContext {
 
   // Accessors for simulation state
   [[nodiscard]] auto GetSimulationContext() -> SimulationContext& {
-    return simulation_context_;
+    return *simulation_context_;
   }
   [[nodiscard]] auto GetSimulationContext() const -> const SimulationContext& {
-    return simulation_context_;
+    return *simulation_context_;
   }
   [[nodiscard]] auto GetFrame() -> ProcessFrame& {
-    return frame_;
+    return *frame_;
   }
   [[nodiscard]] auto GetEffect() -> ProcessEffect& {
-    return effect_;
+    return *effect_;
   }
   [[nodiscard]] auto GetTempTable() -> TempTable& {
-    return temp_table_;
+    return *temp_table_;
   }
   [[nodiscard]] auto GetInstanceContext() const
       -> const std::shared_ptr<InstanceContext>& {
@@ -62,6 +63,12 @@ class InstructionContext {
   void StoreVariable(
       const lir::Operand& operand, const RuntimeValue& value,
       bool is_non_blocking);
+
+  /// Store an element of an aggregate (array or struct/union).
+  /// Handles sensitivity tracking (UpdatePrevious) and modification recording.
+  void StoreElement(
+      const lir::Operand& aggregate_operand, size_t index,
+      const RuntimeValue& element_value, bool is_non_blocking);
 
   /// Store to hierarchical target: traverse instance path and store to target
   void StoreHierarchical(
@@ -98,10 +105,10 @@ class InstructionContext {
   void WriteTemp(lir::TempRef result, RuntimeValue value);
 
  private:
-  SimulationContext& simulation_context_;
-  ProcessFrame& frame_;
-  ProcessEffect& effect_;
-  TempTable& temp_table_;
+  SimulationContext* simulation_context_;
+  ProcessFrame* frame_;
+  ProcessEffect* effect_;
+  TempTable* temp_table_;
   std::shared_ptr<InstanceContext> instance_context_;
 };
 

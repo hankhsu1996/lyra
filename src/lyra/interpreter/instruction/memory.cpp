@@ -3,8 +3,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -14,12 +14,10 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/common/wide_bit_ops.hpp"
-#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
-#include "lyra/interpreter/process_effect.hpp"
-#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 
@@ -142,72 +140,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
       auto element_value = ctx.GetTemp(instr.operands[2]);
 
-      if (instr.operands[0].IsVariable()) {
-        const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-        auto& frame = ctx.GetFrame();
-        auto& effect = ctx.GetEffect();
-        const auto& instance = ctx.GetInstanceContext();
-
-        // Check if this is a local variable (no triggers needed)
-        bool is_local = false;
-        if (!frame.call_stack.empty()) {
-          auto& call_frame = frame.call_stack.back();
-          is_local = call_frame.local_variables.contains(symbol);
-        }
-        if (!is_local) {
-          is_local = frame.variable_table.Exists(symbol);
-        }
-
-        auto aggregate_value = ctx.ReadVariable(instr.operands[0]);
-
-        // Snapshot old value BEFORE modification for non-local variables
-        if (!is_local) {
-          auto [target_symbol, target_instance] = ctx.ResolveBinding(symbol);
-          if (target_instance != nullptr) {
-            target_instance->UpdatePrevious(target_symbol, aggregate_value);
-          } else if (instance != nullptr) {
-            instance->UpdatePrevious(symbol, aggregate_value);
-          }
-        }
-
-        // Perform the element store
-        if (aggregate_value.IsArray()) {
-          auto actual_idx =
-              ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-          aggregate_value.SetElement(actual_idx, element_value);
-        } else {
-          assert(
-              aggregate_value.IsUnpackedStruct() ||
-              aggregate_value.IsUnpackedUnion());
-          aggregate_value.SetField(index, element_value);
-        }
-
-        // Record modification for trigger system
-        if (!is_local) {
-          auto [target_symbol, target_instance] = ctx.ResolveBinding(symbol);
-          if (target_instance != nullptr) {
-            effect.RecordVariableModification(target_symbol, target_instance);
-          } else if (instance != nullptr) {
-            effect.RecordVariableModification(symbol, instance);
-          } else {
-            effect.RecordVariableModification(symbol);
-          }
-        }
-      } else {
-        auto aggregate_value = ctx.GetTemp(instr.operands[0]);
-
-        if (aggregate_value.IsArray()) {
-          auto actual_idx =
-              ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-          aggregate_value.SetElement(actual_idx, element_value);
-        } else {
-          assert(
-              aggregate_value.IsUnpackedStruct() ||
-              aggregate_value.IsUnpackedUnion());
-          aggregate_value.SetField(index, element_value);
-        }
-      }
-
+      ctx.StoreElement(instr.operands[0], index, element_value, false);
       return InstructionResult::Continue();
     }
 
@@ -215,45 +148,12 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       assert(instr.operands.size() == 3);
       assert(instr.operands[0].IsVariable());
 
-      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-      auto aggregate_value = ctx.ReadVariable(instr.operands[0]);
-      auto& effect = ctx.GetEffect();
-      const auto& instance = ctx.GetInstanceContext();
-
       auto index_value = ctx.GetTemp(instr.operands[1]);
       assert(!index_value.IsWide() && "element index cannot be wide");
       auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-
-      size_t actual_idx = index;
-      if (aggregate_value.IsArray()) {
-        actual_idx =
-            ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-      }
-
       auto element_value = ctx.GetTemp(instr.operands[2]);
 
-      auto [target_symbol, target_instance] = ctx.ResolveBinding(symbol);
-
-      if (target_instance != nullptr) {
-        effect.RecordNbaAction(
-            {.variable = target_symbol,
-             .value = element_value,
-             .instance = target_instance,
-             .array_index = actual_idx});
-      } else if (instance != nullptr) {
-        effect.RecordNbaAction(
-            {.variable = symbol,
-             .value = element_value,
-             .instance = instance,
-             .array_index = actual_idx});
-      } else {
-        effect.RecordNbaAction(
-            {.variable = symbol,
-             .value = element_value,
-             .instance = nullptr,
-             .array_index = actual_idx});
-      }
-
+      ctx.StoreElement(instr.operands[0], index, element_value, true);
       return InstructionResult::Continue();
     }
 

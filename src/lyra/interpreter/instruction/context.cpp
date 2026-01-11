@@ -1,6 +1,8 @@
 #include "lyra/interpreter/instruction/context.hpp"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -12,6 +14,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
@@ -19,6 +22,7 @@
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/interpreter/temp_table.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/operand.hpp"
 
 namespace lyra::interpreter {
@@ -27,10 +31,10 @@ InstructionContext::InstructionContext(
     SimulationContext& simulation_context, ProcessFrame& frame,
     ProcessEffect& effect, TempTable& temp_table,
     std::shared_ptr<InstanceContext> instance_context)
-    : simulation_context_(simulation_context),
-      frame_(frame),
-      effect_(effect),
-      temp_table_(temp_table),
+    : simulation_context_(&simulation_context),
+      frame_(&frame),
+      effect_(&effect),
+      temp_table_(&temp_table),
       instance_context_(std::move(instance_context)) {
 }
 
@@ -45,7 +49,7 @@ auto InstructionContext::ResolveBinding(common::SymbolRef symbol) const
 auto InstructionContext::GetTemp(const lir::Operand& operand) const
     -> RuntimeValue {
   assert(operand.IsTemp());
-  return temp_table_.Read(std::get<lir::TempRef>(operand.value));
+  return temp_table_->Read(std::get<lir::TempRef>(operand.value));
 }
 
 auto InstructionContext::ReadVariable(const lir::Operand& operand) const
@@ -54,8 +58,8 @@ auto InstructionContext::ReadVariable(const lir::Operand& operand) const
   const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
   // Check function-local variables first (parameters and locals)
-  if (!frame_.call_stack.empty()) {
-    const auto& call_frame = frame_.call_stack.back();
+  if (!frame_->call_stack.empty()) {
+    const auto& call_frame = frame_->call_stack.back();
     auto it = call_frame.local_variables.find(symbol);
     if (it != call_frame.local_variables.end()) {
       return it->second;
@@ -63,8 +67,8 @@ auto InstructionContext::ReadVariable(const lir::Operand& operand) const
   }
 
   // Check process-local next
-  if (frame_.variable_table.Exists(symbol)) {
-    return frame_.variable_table.Read(symbol);
+  if (frame_->variable_table.Exists(symbol)) {
+    return frame_->variable_table.Read(symbol);
   }
 
   // Resolve through port bindings (output port -> target signal/instance)
@@ -81,7 +85,7 @@ auto InstructionContext::ReadVariable(const lir::Operand& operand) const
   }
 
   // Fallback to global table
-  return simulation_context_.variable_table.Read(symbol);
+  return simulation_context_->variable_table.Read(symbol);
 }
 
 void InstructionContext::StoreVariable(
@@ -94,8 +98,8 @@ void InstructionContext::StoreVariable(
   const RuntimeValue actual_value = value.DeepCopy();
 
   // Check function-local variables first (parameters and locals)
-  if (!frame_.call_stack.empty()) {
-    auto& call_frame = frame_.call_stack.back();
+  if (!frame_->call_stack.empty()) {
+    auto& call_frame = frame_->call_stack.back();
     auto it = call_frame.local_variables.find(symbol);
     if (it != call_frame.local_variables.end()) {
       it->second = actual_value;
@@ -104,8 +108,8 @@ void InstructionContext::StoreVariable(
   }
 
   // Check process-local next
-  if (frame_.variable_table.Exists(symbol)) {
-    frame_.variable_table.Write(symbol, actual_value);
+  if (frame_->variable_table.Exists(symbol)) {
+    frame_->variable_table.Write(symbol, actual_value);
     return;
   }
 
@@ -116,9 +120,9 @@ void InstructionContext::StoreVariable(
   if (target_instance != nullptr) {
     if (!is_non_blocking) {
       target_instance->Write(target_symbol, actual_value);
-      effect_.RecordVariableModification(target_symbol, target_instance);
+      effect_->RecordVariableModification(target_symbol, target_instance);
     } else {
-      effect_.RecordNbaAction(
+      effect_->RecordNbaAction(
           {.variable = target_symbol,
            .value = actual_value,
            .instance = target_instance,
@@ -131,9 +135,9 @@ void InstructionContext::StoreVariable(
   if (instance_context_ != nullptr) {
     if (!is_non_blocking) {
       instance_context_->Write(symbol, actual_value);
-      effect_.RecordVariableModification(symbol, instance_context_);
+      effect_->RecordVariableModification(symbol, instance_context_);
     } else {
-      effect_.RecordNbaAction(
+      effect_->RecordNbaAction(
           {.variable = symbol,
            .value = actual_value,
            .instance = instance_context_,
@@ -144,10 +148,10 @@ void InstructionContext::StoreVariable(
 
   // Fallback to global table
   if (!is_non_blocking) {
-    simulation_context_.variable_table.Write(symbol, actual_value);
-    effect_.RecordVariableModification(symbol);
+    simulation_context_->variable_table.Write(symbol, actual_value);
+    effect_->RecordVariableModification(symbol);
   } else {
-    effect_.RecordNbaAction(
+    effect_->RecordNbaAction(
         {.variable = symbol,
          .value = actual_value,
          .instance = nullptr,
@@ -174,13 +178,132 @@ void InstructionContext::StoreHierarchical(
   // Write to target instance
   if (!is_non_blocking) {
     target_instance->Write(target, actual_value);
-    effect_.RecordVariableModification(target, target_instance);
+    effect_->RecordVariableModification(target, target_instance);
   } else {
-    effect_.RecordNbaAction(
+    effect_->RecordNbaAction(
         {.variable = target,
          .value = actual_value,
          .instance = target_instance,
          .array_index = std::nullopt});
+  }
+}
+
+namespace {
+
+/// Compute actual array index after adjusting for lower bound.
+/// Throws std::runtime_error if out of bounds.
+auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
+    -> size_t {
+  int32_t lower_bound = 0;
+  if (array_value.type.kind == common::Type::Kind::kUnpackedArray) {
+    const auto& array_data =
+        std::get<common::UnpackedArrayData>(array_value.type.data);
+    lower_bound = array_data.lower_bound;
+  }
+
+  auto actual_idx = static_cast<size_t>(sv_index - lower_bound);
+
+  if (actual_idx >= array_value.AsArray().size()) {
+    throw std::runtime_error(
+        fmt::format(
+            "array index {} out of bounds (size {})", sv_index,
+            array_value.AsArray().size()));
+  }
+
+  return actual_idx;
+}
+
+}  // namespace
+
+void InstructionContext::StoreElement(
+    const lir::Operand& aggregate_operand, size_t index,
+    const RuntimeValue& element_value, bool is_non_blocking) {
+  // Temp operand: modify in place, no sensitivity tracking needed
+  if (!aggregate_operand.IsVariable()) {
+    auto aggregate_value = GetTemp(aggregate_operand);
+    if (aggregate_value.IsArray()) {
+      auto actual_idx =
+          ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
+      aggregate_value.SetElement(actual_idx, element_value);
+    } else {
+      aggregate_value.SetField(index, element_value);
+    }
+    return;
+  }
+
+  // Variable operand: need sensitivity tracking
+  const auto* symbol = std::get<lir::SymbolRef>(aggregate_operand.value);
+  auto aggregate_value = ReadVariable(aggregate_operand);
+
+  // Check if this is a local variable (no triggers needed)
+  bool is_local = false;
+  if (!frame_->call_stack.empty()) {
+    auto& call_frame = frame_->call_stack.back();
+    is_local = call_frame.local_variables.contains(symbol);
+  }
+  if (!is_local) {
+    is_local = frame_->variable_table.Exists(symbol);
+  }
+
+  // Compute actual index for arrays
+  size_t actual_idx = index;
+  if (aggregate_value.IsArray()) {
+    actual_idx =
+        ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
+  }
+
+  if (is_non_blocking) {
+    // Queue NBA action with array index
+    auto [target_symbol, target_instance] = ResolveBinding(symbol);
+    if (target_instance != nullptr) {
+      effect_->RecordNbaAction(
+          {.variable = target_symbol,
+           .value = element_value.DeepCopy(),
+           .instance = target_instance,
+           .array_index = actual_idx});
+    } else if (instance_context_ != nullptr) {
+      effect_->RecordNbaAction(
+          {.variable = symbol,
+           .value = element_value.DeepCopy(),
+           .instance = instance_context_,
+           .array_index = actual_idx});
+    } else {
+      effect_->RecordNbaAction(
+          {.variable = symbol,
+           .value = element_value.DeepCopy(),
+           .instance = nullptr,
+           .array_index = actual_idx});
+    }
+    return;
+  }
+
+  // Blocking assignment: snapshot, modify, record
+  if (!is_local) {
+    auto [target_symbol, target_instance] = ResolveBinding(symbol);
+    if (target_instance != nullptr) {
+      target_instance->UpdatePrevious(target_symbol, aggregate_value);
+    } else if (instance_context_ != nullptr) {
+      instance_context_->UpdatePrevious(symbol, aggregate_value);
+    }
+  }
+
+  // Perform the element store
+  if (aggregate_value.IsArray()) {
+    aggregate_value.SetElement(actual_idx, element_value);
+  } else {
+    aggregate_value.SetField(index, element_value);
+  }
+
+  // Record modification for trigger system
+  if (!is_local) {
+    auto [target_symbol, target_instance] = ResolveBinding(symbol);
+    if (target_instance != nullptr) {
+      effect_->RecordVariableModification(target_symbol, target_instance);
+    } else if (instance_context_ != nullptr) {
+      effect_->RecordVariableModification(symbol, instance_context_);
+    } else {
+      effect_->RecordVariableModification(symbol);
+    }
   }
 }
 
@@ -221,7 +344,7 @@ auto InstructionContext::EvalUnaryOp(
     const lir::Operand& operand, lir::TempRef result,
     const std::function<RuntimeValue(RuntimeValue)>& op) -> InstructionResult {
   const auto result_value = op(GetTemp(operand));
-  temp_table_.Write(result, result_value);
+  temp_table_->Write(result, result_value);
   return InstructionResult::Continue();
 }
 
@@ -230,12 +353,12 @@ auto InstructionContext::EvalBinaryOp(
     const std::function<RuntimeValue(RuntimeValue, RuntimeValue)>& op)
     -> InstructionResult {
   const auto result_value = op(GetTemp(lhs), GetTemp(rhs));
-  temp_table_.Write(result, result_value);
+  temp_table_->Write(result, result_value);
   return InstructionResult::Continue();
 }
 
 void InstructionContext::WriteTemp(lir::TempRef result, RuntimeValue value) {
-  temp_table_.Write(result, std::move(value));
+  temp_table_->Write(result, std::move(value));
 }
 
 }  // namespace lyra::interpreter
