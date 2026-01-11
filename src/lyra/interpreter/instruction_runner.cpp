@@ -844,7 +844,8 @@ auto RunInstruction(
         effect.RecordNbaAction(
             {.variable = target_symbol,
              .value = actual_value,
-             .instance = target_instance});
+             .instance = target_instance,
+             .array_index = std::nullopt});
       }
       return;
     }
@@ -858,7 +859,8 @@ auto RunInstruction(
         effect.RecordNbaAction(
             {.variable = symbol,
              .value = actual_value,
-             .instance = instance_context});
+             .instance = instance_context,
+             .array_index = std::nullopt});
       }
       return;
     }
@@ -870,7 +872,10 @@ auto RunInstruction(
       effect.RecordVariableModification(symbol);  // Global storage
     } else {
       effect.RecordNbaAction(
-          {.variable = symbol, .value = actual_value, .instance = nullptr});
+          {.variable = symbol,
+           .value = actual_value,
+           .instance = nullptr,
+           .array_index = std::nullopt});
     }
   };
 
@@ -901,7 +906,8 @@ auto RunInstruction(
       effect.RecordNbaAction(
           {.variable = target,
            .value = actual_value,
-           .instance = target_instance});
+           .instance = target_instance,
+           .array_index = std::nullopt});
     }
   };
 
@@ -1237,6 +1243,50 @@ auto RunInstruction(
         } else {
           effect.RecordVariableModification(symbol);
         }
+      }
+
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStoreUnpackedElementNonBlocking: {
+      // NBA to unpacked array element: array[index] <= value
+      // Queue the write to be applied in NBA region
+      assert(instr.operands.size() == 3);
+      assert(instr.operands[0].IsVariable());
+
+      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
+      auto array_value = read_variable(instr.operands[0]);
+      assert(array_value.IsArray());
+
+      auto index_value = get_temp(instr.operands[1]);
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto actual_idx =
+          ComputeArrayIndex(array_value, index_value.AsNarrow().AsInt64());
+
+      auto element_value = get_temp(instr.operands[2]);
+
+      // Resolve binding for port outputs
+      auto [target_symbol, target_instance] = resolve_binding(symbol);
+
+      // Queue NBA action with array index
+      if (target_instance != nullptr) {
+        effect.RecordNbaAction(
+            {.variable = target_symbol,
+             .value = element_value,
+             .instance = target_instance,
+             .array_index = actual_idx});
+      } else if (instance_context != nullptr) {
+        effect.RecordNbaAction(
+            {.variable = symbol,
+             .value = element_value,
+             .instance = instance_context,
+             .array_index = actual_idx});
+      } else {
+        effect.RecordNbaAction(
+            {.variable = symbol,
+             .value = element_value,
+             .instance = nullptr,
+             .array_index = actual_idx});
       }
 
       return InstructionResult::Continue();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "lyra/common/symbol.hpp"
@@ -23,6 +24,7 @@ struct NbaAction {
   SymbolRef variable;
   RuntimeValue value;
   std::shared_ptr<InstanceContext> instance;  // nullptr for global variables
+  std::optional<size_t> array_index;  // For element writes: arr[index] <= value
 };
 
 struct PostponedAction {

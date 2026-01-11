@@ -198,15 +198,40 @@ void SimulationRunner::ExecuteRegion(Region region) {
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
-        if (action.instance != nullptr &&
-            action.instance->Exists(action.variable)) {
-          // Per-instance storage
-          action.instance->Write(action.variable, action.value);
+
+        if (action.array_index.has_value()) {
+          // Array element write: read array, modify element, write back
+          auto idx = action.array_index.value();
+          if (action.instance != nullptr &&
+              action.instance->Exists(action.variable)) {
+            // Per-instance storage
+            auto array = action.instance->Read(action.variable);
+            action.instance->UpdatePrevious(action.variable, array);
+            array.SetElement(idx, action.value);
+            action.instance->Write(action.variable, array);
+          } else {
+            // Global storage
+            auto array =
+                simulation_context_.get().variable_table.Read(action.variable);
+            simulation_context_.get().variable_table.UpdatePrevious(
+                action.variable, array);
+            array.SetElement(idx, action.value);
+            simulation_context_.get().variable_table.Write(
+                action.variable, array);
+          }
         } else {
-          // Global storage
-          simulation_context_.get().variable_table.Write(
-              action.variable, action.value);
+          // Whole variable write (existing behavior)
+          if (action.instance != nullptr &&
+              action.instance->Exists(action.variable)) {
+            // Per-instance storage
+            action.instance->Write(action.variable, action.value);
+          } else {
+            // Global storage
+            simulation_context_.get().variable_table.Write(
+                action.variable, action.value);
+          }
         }
+
         modified_variables.push_back(
             {.symbol = action.variable, .instance = action.instance});
         nba_queue_.pop();
