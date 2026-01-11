@@ -521,7 +521,8 @@ auto ExecuteMathUnary(std::string_view name, double arg) -> double {
   if (name == "$atanh") {
     return std::atanh(arg);
   }
-  std::unreachable();
+  throw common::InternalError(
+      "interpreter", std::format("unknown unary math function: {}", name));
 }
 
 // Execute binary math function (real, real -> real)
@@ -535,7 +536,8 @@ auto ExecuteMathBinary(std::string_view name, double a, double b) -> double {
   if (name == "$hypot") {
     return std::hypot(a, b);
   }
-  std::unreachable();
+  throw common::InternalError(
+      "interpreter", std::format("unknown binary math function: {}", name));
 }
 
 // Extract int64 value from RuntimeValue, handling both narrow and wide sources.
