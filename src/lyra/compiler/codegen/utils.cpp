@@ -1,0 +1,281 @@
+#include "lyra/compiler/codegen/utils.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <format>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "lyra/common/builtin_method.hpp"
+#include "lyra/common/internal_error.hpp"
+#include "lyra/common/trigger.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/compiler/codegen/codegen.hpp"
+#include "lyra/compiler/codegen/type.hpp"
+#include "lyra/mir/expression.hpp"
+
+namespace lyra::compiler {
+
+using codegen::GetElementWidthAfterIndices;
+using codegen::kPrecLowest;
+
+void Codegen::EmitPackedBitPosition(
+    const mir::Expression& index_expr, int32_t lower_bound,
+    size_t element_width) {
+  // Emits: (static_cast<int/size_t>(index) - lower_bound) * element_width
+  // or:    static_cast<size_t>(index) * element_width  when lower_bound == 0
+  if (lower_bound != 0) {
+    out_ << "((static_cast<int>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") - " << lower_bound << ") * " << element_width << ")";
+  } else {
+    out_ << "(static_cast<size_t>(";
+    EmitExpression(index_expr, kPrecLowest);
+    out_ << ") * " << element_width << ")";
+  }
+}
+
+void Codegen::EmitCompositePackedBitPosition(
+    const std::vector<std::unique_ptr<mir::Expression>>& indices,
+    const common::Type& base_type) {
+  // For multi-dimensional packed arrays like bit[A][B][C] with indices [i][j]:
+  // Composite index = i * B + j
+  // Bit position = composite_index * result_element_width
+  size_t element_width = GetElementWidthAfterIndices(base_type, indices.size());
+  int32_t lower_bound = base_type.GetElementLower();
+
+  if (indices.size() == 1) {
+    // Single index - delegate to existing method
+    EmitPackedBitPosition(*indices[0], lower_bound, element_width);
+    return;
+  }
+
+  // Multiple indices - emit composite index calculation
+  // ((idx0 * count1 + idx1) * count2 + idx2) * ... * element_width
+  out_ << "(";
+
+  // Build up the composite index
+  const common::Type* current = &base_type;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    if (i > 0) {
+      out_ << " + ";
+    }
+    if (i < indices.size() - 1) {
+      out_ << "(";
+    }
+
+    // Emit this index
+    out_ << "static_cast<size_t>(";
+    EmitExpression(*indices[i], kPrecLowest);
+    out_ << ")";
+
+    // Multiply by remaining dimensions' sizes
+    const common::Type* temp = current;
+    for (size_t j = i + 1; j < indices.size(); ++j) {
+      temp = &temp->GetElementType();
+      out_ << " * " << temp->GetElementCount();
+    }
+
+    if (i < indices.size() - 1) {
+      out_ << ")";
+    }
+    current = &current->GetElementType();
+  }
+
+  // Adjust for outermost lower bound (TODO: handle per-dimension bounds)
+  if (lower_bound != 0) {
+    out_ << " - " << lower_bound;
+  }
+
+  // Multiply by element width
+  out_ << ") * " << element_width;
+}
+
+void Codegen::EmitSliceExtract(
+    const common::Type& result_type, const mir::Expression& value,
+    const std::function<void()>& emit_shift, uint64_t mask, bool is_wide) {
+  // Emit slice extraction: static_cast<ResultType>(...shift & mask...)
+  // For wide types: shift the WideBit first, then cast to uint64_t
+  // For normal types: cast to uint64_t first, then shift
+  // This is because WideBit shift accesses all words, while uint64_t truncates.
+  out_ << "static_cast<" << ToCppType(result_type) << ">(";
+  if (is_wide) {
+    out_ << "static_cast<uint64_t>(";
+    EmitExpression(value, kPrecLowest);
+    out_ << " >> ";
+    emit_shift();
+    out_ << ")";
+  } else {
+    out_ << "(static_cast<uint64_t>(";
+    EmitExpression(value, kPrecLowest);
+    out_ << ") >> ";
+    emit_shift();
+    out_ << ")";
+  }
+  out_ << " & " << std::format("0x{:X}ULL", mask) << ")";
+}
+
+void Codegen::EmitSliceShift(
+    const mir::Expression& start_expr, int32_t lower_bound,
+    int32_t width_offset) {
+  // Emits: (static_cast<size_t>(start) - width_offset - lower_bound)
+  // width_offset is 0 for ascending (+:), or (width-1) for descending (-:)
+  out_ << "(static_cast<size_t>(";
+  EmitExpression(start_expr, kPrecLowest);
+  out_ << ")";
+  if (width_offset != 0) {
+    out_ << " - " << width_offset;
+  }
+  if (lower_bound != 0) {
+    out_ << " - " << lower_bound;
+  }
+  out_ << ")";
+}
+
+void Codegen::EmitHierarchicalPath(
+    const std::vector<mir::SymbolRef>& instance_path,
+    mir::SymbolRef target_symbol) {
+  // Emit hierarchical path: [child_sym], value_sym -> child_.value
+  // Instance names get _ suffix, target variable does not
+  for (const auto& inst_sym : instance_path) {
+    out_ << inst_sym->name << "_.";
+  }
+  out_ << target_symbol->name;
+}
+
+void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (i > 0) {
+      out_ << ".";
+    }
+    out_ << path[i];
+  }
+}
+
+void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
+  // Dispatch by receiver type using the builtin method registry
+  const auto& receiver_type = mc.receiver->type;
+
+  // Determine builtin type kind for registry lookup
+  common::BuiltinTypeKind type_kind{};
+  if (!mc.enum_members.empty()) {
+    type_kind = common::BuiltinTypeKind::kEnum;
+  } else if (receiver_type.IsDynamicArray()) {
+    type_kind = common::BuiltinTypeKind::kDynamicArray;
+  } else {
+    throw common::InternalError(
+        "Codegen::EmitMethodCall",
+        std::format(
+            "unsupported receiver type '{}'", receiver_type.ToString()));
+  }
+
+  // Look up method in registry
+  const auto* method_info =
+      common::FindBuiltinMethod(type_kind, mc.method_name);
+  if (method_info == nullptr) {
+    throw common::InternalError(
+        "Codegen::EmitMethodCall",
+        std::format(
+            "unknown method '{}' on type '{}'", mc.method_name,
+            receiver_type.ToString()));
+  }
+
+  // Dispatch based on category from registry
+  using Cat = common::BuiltinMethodCategory;
+  switch (method_info->category) {
+    case Cat::kEnumNext:
+      EmitEnumNavMethod(mc, true);
+      return;
+    case Cat::kEnumPrev:
+      EmitEnumNavMethod(mc, false);
+      return;
+    case Cat::kEnumName:
+      EmitEnumNameMethod(mc);
+      return;
+    case Cat::kArrayQuery:
+    case Cat::kArrayMutate:
+      // Use return_type to decide if cast is needed
+      if (method_info->return_type == common::BuiltinMethodReturnType::kInt) {
+        out_ << "static_cast<Int>(";
+        EmitExpression(*mc.receiver, kPrecLowest);
+        out_ << method_info->cpp_expr << ")";
+      } else {
+        EmitExpression(*mc.receiver, kPrecLowest);
+        out_ << method_info->cpp_expr;
+      }
+      return;
+  }
+}
+
+void Codegen::EmitEnumNavMethod(
+    const mir::MethodCallExpression& mc, bool is_next) {
+  // Get step from args (default 1 if no args)
+  int64_t step = 1;
+  if (!mc.args.empty()) {
+    const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
+    step = step_expr.literal.value.AsInt64();
+  }
+
+  // Generate inline lambda with switch
+  out_ << "[&]() -> " << ToCppType(mc.type)
+       << " { switch (static_cast<int64_t>(";
+  EmitExpression(*mc.receiver, kPrecLowest);
+  out_ << ")) {";
+  for (size_t i = 0; i < mc.enum_members.size(); ++i) {
+    size_t target_idx = 0;
+    if (is_next) {
+      target_idx = (i + static_cast<size_t>(step)) % mc.enum_members.size();
+    } else {
+      target_idx = (i + mc.enum_members.size() -
+                    (static_cast<size_t>(step) % mc.enum_members.size())) %
+                   mc.enum_members.size();
+    }
+    out_ << " case " << mc.enum_members[i].value << ": return "
+         << ToCppType(mc.type) << "{" << mc.enum_members[target_idx].value
+         << "};";
+  }
+  out_ << " default: return " << ToCppType(mc.type) << "{};";
+  out_ << " } }()";
+}
+
+void Codegen::EmitEnumNameMethod(const mir::MethodCallExpression& mc) {
+  out_ << "[&]() -> std::string { switch (static_cast<int64_t>(";
+  EmitExpression(*mc.receiver, kPrecLowest);
+  out_ << ")) {";
+  for (const auto& m : mc.enum_members) {
+    out_ << " case " << m.value << ": return \"" << m.name << "\";";
+  }
+  out_ << " default: return \"\";";
+  out_ << " } }()";
+}
+
+void Codegen::Indent() {
+  out_ << std::string(indent_ * 2, ' ');
+}
+
+void Codegen::Line(const std::string& text) {
+  if (!text.empty()) {
+    Indent();
+  }
+  out_ << text << "\n";
+}
+
+auto Codegen::GetTriggerPath(const common::Trigger& trigger) const
+    -> std::string {
+  std::string path;
+  // Emit instance path: instance symbols get _ suffix
+  for (const auto& inst_sym : trigger.instance_path) {
+    path += std::string(inst_sym->name) + "_.";
+  }
+  // Emit variable name
+  path += trigger.variable->name;
+  // Append _ for port reference members
+  if (port_symbols_.contains(trigger.variable)) {
+    path += "_";
+  }
+  return path;
+}
+
+}  // namespace lyra::compiler

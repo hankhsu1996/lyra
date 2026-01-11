@@ -65,7 +65,7 @@ Bullet points should describe **what changed**, not background context or why th
 
 **Branch name format:** `<type>/<short-description>`
 
-- **Types:** `feature`, `bugfix`, `release`, `chore`, `docs`
+- **Types:** `feature`, `bugfix`, `refactor`, `release`, `chore`, `docs`
 - Use kebab-case: `aaa-bbb-ccc`
 - Keep short (~5 words max)
 
@@ -73,6 +73,7 @@ Bullet points should describe **what changed**, not background context or why th
 
 - `feature/user-auth`
 - `bugfix/null-pointer-crash`
+- `refactor/split-codegen` (behavior-preserving restructuring)
 - `chore/update-deps` (CI changes go here)
 - `docs/api-reference`
 

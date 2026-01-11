@@ -1,0 +1,467 @@
+#include <cstddef>
+#include <cstdint>
+#include <format>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "lyra/common/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
+#include "lyra/common/string_utils.hpp"
+#include "lyra/common/sv_format.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/compiler/codegen/codegen.hpp"
+#include "lyra/compiler/codegen/format.hpp"
+#include "lyra/compiler/codegen/utils.hpp"
+#include "lyra/mir/expression.hpp"
+
+namespace lyra::compiler {
+
+using codegen::ExtractFormatString;
+using codegen::GetDisplayVariantProps;
+using codegen::IntegralLiteralToString;
+using codegen::kPrecEquality;
+
+auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
+  // Simulation control tasks: $finish, $stop, $exit
+  if (syscall.name == "$finish" || syscall.name == "$stop" ||
+      syscall.name == "$exit") {
+    // Get level argument (default 1), $exit has no argument
+    std::string level_str = "1";
+    if (!syscall.arguments.empty()) {
+      if (const auto* lit = dynamic_cast<const mir::LiteralExpression*>(
+              syscall.arguments[0].get())) {
+        level_str = std::to_string(lit->literal.value.AsInt64());
+      }
+    }
+
+    if (syscall.name == "$stop") {
+      Line("co_await lyra::sdk::Stop(" + level_str + ");");
+    } else if (syscall.name == "$exit") {
+      // $exit uses Finish with name "$exit" (exit code 0)
+      // Note: Per LRM, $exit waits for program blocks - not implemented
+      Line("co_await lyra::sdk::Finish(" + level_str + ", \"$exit\");");
+    } else {
+      // $finish (exit code 0)
+      Line("co_await lyra::sdk::Finish(" + level_str + ");");
+    }
+    return true;
+  }
+
+  // Handle strobe variants - schedule to Postponed region
+  if (syscall.name == "$strobe" || syscall.name == "$strobeb" ||
+      syscall.name == "$strobeo" || syscall.name == "$strobeh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // Wrap print in lambda scheduled to Postponed region
+    Line("lyra::sdk::current_scheduler->SchedulePostponed([=]() {");
+    indent_++;
+
+    // Empty call - just print newline
+    if (syscall.arguments.empty()) {
+      Line("std::println(std::cout, \"\");");
+      indent_--;
+      Line("});");
+      return true;
+    }
+
+    // Extract format string info from first argument
+    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+
+    // Print prefix (string literal without format specifiers)
+    if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      Indent();
+      out_ << R"(std::print(std::cout, "{}", ")"
+           << common::EscapeForCppString(fmt_info.text) << R"(");)" << "\n";
+    }
+
+    // Print arguments with format string
+    std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
+    if (first_arg_idx < syscall.arguments.size()) {
+      EmitFormattedPrint(
+          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+          props.default_format);
+    } else {
+      Line("std::println(std::cout, \"\");");
+    }
+    indent_--;
+    Line("});");
+    return true;
+  }
+
+  // Handle monitor variants - register for value change tracking
+  if (syscall.name == "$monitor" || syscall.name == "$monitorb" ||
+      syscall.name == "$monitoro" || syscall.name == "$monitorh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // Empty call - print newline once (no values to monitor for changes)
+    if (syscall.arguments.empty()) {
+      Line("std::println(std::cout, \"\");");
+      return true;
+    }
+
+    // Extract format string info from first argument
+    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+    std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
+    std::string prefix_str =
+        (fmt_info.is_string_literal && !fmt_info.has_format_specifiers)
+            ? fmt_info.text
+            : "";
+
+    // Generate block scope for previous value captures
+    Line("{");
+    indent_++;
+
+    // Capture initial values for each monitored argument
+    std::vector<std::string> prev_names;
+    for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
+      auto prev_name = std::format("prev_{}", i - first_arg_idx);
+      prev_names.push_back(prev_name);
+      Indent();
+      out_ << "auto " << prev_name << " = ";
+      EmitExpression(*syscall.arguments[i]);
+      out_ << ";\n";
+    }
+
+    // Generate SetMonitor call with lambda
+    // Capture 'this' for class member access and prev values by copy
+    Indent();
+    out_ << "lyra::sdk::current_scheduler->SetMonitor([this";
+    for (const auto& prev_name : prev_names) {
+      out_ << ", " << prev_name;
+    }
+    out_ << "]() mutable {\n";
+    indent_++;
+
+    // Generate comparison: if (arg1 != prev_0 || arg2 != prev_1 || ...)
+    // When no variables, use 'false' - nothing to track means never
+    // prints again
+    Indent();
+    out_ << "if (";
+    if (prev_names.empty()) {
+      out_ << "false";
+    } else {
+      for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
+        if (i > first_arg_idx) {
+          out_ << " || ";
+        }
+        // Use kPrecEquality so ternary expressions get parenthesized
+        EmitExpression(*syscall.arguments[i], kPrecEquality);
+        out_ << " != " << prev_names[i - first_arg_idx];
+      }
+    }
+    out_ << ") {\n";
+    indent_++;
+
+    // Generate print statement inside the if block
+    if (!prefix_str.empty()) {
+      Indent();
+      out_ << R"(std::print(std::cout, "{}", ")"
+           << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
+    }
+    if (first_arg_idx < syscall.arguments.size()) {
+      EmitFormattedPrint(
+          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+          props.default_format);
+    } else {
+      Line("std::println(std::cout, \"\");");
+    }
+
+    // Update previous values
+    for (size_t i = first_arg_idx; i < syscall.arguments.size(); ++i) {
+      Indent();
+      out_ << prev_names[i - first_arg_idx] << " = ";
+      EmitExpression(*syscall.arguments[i]);
+      out_ << ";\n";
+    }
+
+    indent_--;
+    Line("}");  // End if
+    indent_--;
+    Line("});");  // End lambda and SetMonitor call
+
+    // Print immediately on first call (IEEE 1800 §21.2.3)
+    if (!prefix_str.empty()) {
+      Indent();
+      out_ << R"(std::print(std::cout, "{}", ")"
+           << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
+    }
+    if (first_arg_idx < syscall.arguments.size()) {
+      EmitFormattedPrint(
+          syscall.arguments, first_arg_idx, sv_fmt, "std::println",
+          props.default_format);
+    } else {
+      Line("std::println(std::cout, \"\");");
+    }
+
+    indent_--;
+    Line("}");  // End block scope
+    return true;
+  }
+
+  // Handle $monitoron and $monitoroff
+  if (syscall.name == "$monitoron") {
+    Line("lyra::sdk::current_scheduler->SetMonitorEnabled(true);");
+    return true;
+  }
+  if (syscall.name == "$monitoroff") {
+    Line("lyra::sdk::current_scheduler->SetMonitorEnabled(false);");
+    return true;
+  }
+
+  // Handle all display/write variants
+  if (syscall.name == "$display" || syscall.name == "$displayb" ||
+      syscall.name == "$displayo" || syscall.name == "$displayh" ||
+      syscall.name == "$write" || syscall.name == "$writeb" ||
+      syscall.name == "$writeo" || syscall.name == "$writeh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+    std::string_view print_fn =
+        props.use_println ? "std::println" : "std::print";
+
+    // Empty call - just print newline if needed
+    if (syscall.arguments.empty()) {
+      if (props.use_println) {
+        Line("std::println(std::cout, \"\");");
+      }
+      // $write with no args does nothing
+      return true;
+    }
+
+    // Extract format string info from first argument
+    auto fmt_info = ExtractFormatString(*syscall.arguments[0]);
+    size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
+
+    // Print prefix (string literal without format specifiers)
+    if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      Indent();
+      out_ << R"(std::print(std::cout, "{}", ")"
+           << common::EscapeForCppString(fmt_info.text) << R"(");)" << "\n";
+    }
+
+    // Print remaining args with format string
+    std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
+    if (first_arg_idx < syscall.arguments.size()) {
+      EmitFormattedPrint(
+          syscall.arguments, first_arg_idx, sv_fmt, print_fn,
+          props.default_format);
+    } else if (props.use_println) {
+      // No more args, but need newline
+      Line("std::println(std::cout, \"\");");
+    }
+    return true;
+  }
+
+  if (syscall.name == "$timeformat") {
+    // $timeformat(units, precision, suffix, min_width)
+    // Cast Bit types to native types since Bit only has implicit bool
+    Indent();
+    out_ << "lyra::sdk::TimeFormat(";
+    for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+      if (i > 0) {
+        out_ << ", ";
+      }
+      if (i == 0) {
+        // units: int8_t
+        out_ << "static_cast<int8_t>(";
+        EmitExpression(*syscall.arguments[i]);
+        out_ << ")";
+      } else if (i == 1 || i == 3) {
+        // precision/min_width: int
+        out_ << "static_cast<int>(";
+        EmitExpression(*syscall.arguments[i]);
+        out_ << ")";
+      } else {
+        // suffix: string (no cast needed)
+        EmitExpression(*syscall.arguments[i]);
+      }
+    }
+    out_ << ");\n";
+    return true;
+  }
+
+  if (syscall.name == "$printtimescale") {
+    // $printtimescale() - print current module's timescale
+    used_features_ |= CodegenFeature::kDisplay;
+    used_features_ |= CodegenFeature::kModuleName;
+    used_features_ |= CodegenFeature::kTimescaleStr;
+    Line(
+        "std::println(std::cout, \"Time scale of ({}) is {}\", "
+        "kModuleName, kTimescaleStr);");
+    return true;
+  }
+
+  if (syscall.name == "$printtimescale_root") {
+    // $printtimescale($root) - print global precision (unit = precision)
+    used_features_ |= CodegenFeature::kDisplay;
+    Indent();
+    out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
+            "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
+            "power), lyra::sdk::PowerToString(lyra::sdk::global_"
+            "precision_power));\n";
+    return true;
+  }
+
+  if (syscall.name == "$readmemh" || syscall.name == "$readmemb" ||
+      syscall.name == "$writememh" || syscall.name == "$writememb") {
+    used_features_ |= CodegenFeature::kMemIo;
+    bool is_read = syscall.name == "$readmemh" || syscall.name == "$readmemb";
+    bool is_hex = syscall.name == "$readmemh" || syscall.name == "$writememh";
+    bool has_start = syscall.arguments.size() >= 3;
+    bool has_end = syscall.arguments.size() == 4;
+
+    if (syscall.arguments.size() < 2 || syscall.arguments.size() > 4) {
+      throw common::InternalError("codegen", "mem I/O expects 2-4 arguments");
+    }
+
+    const auto& target_expr = *syscall.arguments[1];
+    if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
+      throw common::InternalError(
+          "codegen", "mem I/O target must be a named variable");
+    }
+
+    const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
+    const auto& target_type = target_expr.type;
+
+    // Helper to emit filename as C++ string literal
+    auto emit_filename = [&]() {
+      const auto& filename_arg = *syscall.arguments[0];
+
+      if (filename_arg.kind == mir::Expression::Kind::kLiteral) {
+        const auto& lit = mir::As<mir::LiteralExpression>(filename_arg);
+
+        // String literal: extract string at codegen time, emit directly
+        if (lit.literal.IsStringLiteral()) {
+          std::string str;
+          if (lit.literal.type.kind == common::Type::Kind::kString) {
+            str = lit.literal.value.AsString();
+          } else {
+            str = IntegralLiteralToString(lit.literal);
+          }
+          out_ << "\"" << common::EscapeForCppString(str) << "\"";
+          return;
+        }
+      }
+
+      // Default: emit expression directly (e.g., string variable)
+      EmitExpression(filename_arg);
+    };
+
+    if (target_type.kind == common::Type::Kind::kUnpackedArray) {
+      const auto& arr = std::get<common::UnpackedArrayData>(target_type.data);
+      Indent();
+      out_ << "lyra::sdk::" << (is_read ? "ReadMemArray(" : "WriteMemArray(")
+           << target.symbol->name << ", " << arr.lower_bound << ", ";
+      emit_filename();
+      out_ << ", " << (has_start ? "true" : "false") << ", ";
+      if (has_start) {
+        EmitExpression(*syscall.arguments[2]);
+      } else {
+        out_ << "0";
+      }
+      out_ << ", " << (has_end ? "true" : "false") << ", ";
+      if (has_end) {
+        EmitExpression(*syscall.arguments[3]);
+      } else {
+        out_ << "0";
+      }
+      out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+      return true;
+    }
+
+    if (target_type.kind == common::Type::Kind::kIntegral) {
+      const auto& integral = std::get<common::IntegralData>(target_type.data);
+      size_t element_width = integral.element_type
+                                 ? integral.element_type->GetBitWidth()
+                                 : integral.bit_width;
+      size_t element_count = integral.element_type ? integral.element_count : 1;
+      int32_t lower_bound = integral.element_lower;
+      Indent();
+      out_ << "lyra::sdk::" << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")
+           << target.symbol->name << ", " << element_width << ", "
+           << element_count << ", " << lower_bound << ", ";
+      emit_filename();
+      out_ << ", " << (has_start ? "true" : "false") << ", ";
+      if (has_start) {
+        EmitExpression(*syscall.arguments[2]);
+      } else {
+        out_ << "0";
+      }
+      out_ << ", " << (has_end ? "true" : "false") << ", ";
+      if (has_end) {
+        EmitExpression(*syscall.arguments[3]);
+      } else {
+        out_ << "0";
+      }
+      out_ << ", " << (is_hex ? "true" : "false") << ");\n";
+      return true;
+    }
+
+    throw common::InternalError(
+        "codegen", "mem I/O target must be an unpacked or packed array");
+  }
+
+  // Unrecognized system call
+  throw DiagnosticException(
+      Diagnostic::Error(
+          {}, "C++ codegen: unsupported system call: " + syscall.name));
+}
+
+void Codegen::EmitFormattedPrint(
+    const std::vector<std::unique_ptr<mir::Expression>>& arguments,
+    size_t first_arg_idx, const std::string& sv_fmt, std::string_view print_fn,
+    char default_format) {
+  if (!sv_fmt.empty()) {
+    // Has format string - transform and emit with special handling
+    auto cpp_fmt = common::TransformToStdFormat(sv_fmt);
+    auto specs = common::ParseDisplayFormat(sv_fmt);
+    auto needs_cast = common::NeedsIntCast(sv_fmt);
+    Indent();
+    out_ << print_fn << "(std::cout, \"" << cpp_fmt << "\"";
+
+    // Emit arguments - for %t, wrap with FormatTimeValue; for width specs, cast
+    for (size_t i = 0; i < specs.size(); ++i) {
+      out_ << ", ";
+      if (specs[i].spec == 't') {
+        used_features_ |= CodegenFeature::kModuleUnitPower;
+        out_ << "lyra::sdk::FormatTimeValue(";
+        EmitExpression(*arguments[first_arg_idx + i]);
+        out_ << ".Value(), kModuleUnitPower)";
+      } else if (i < needs_cast.size() && needs_cast[i]) {
+        out_ << "static_cast<int64_t>(";
+        EmitExpression(*arguments[first_arg_idx + i]);
+        out_ << ")";
+      } else {
+        EmitExpression(*arguments[first_arg_idx + i]);
+      }
+    }
+    out_ << ");\n";
+  } else {
+    // No format string - generate default format from arg types
+    std::string fmt_str;
+    for (size_t i = first_arg_idx; i < arguments.size(); ++i) {
+      if (arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+        fmt_str += "{:";
+        fmt_str += default_format;
+        fmt_str += "}";
+      } else {
+        fmt_str += "{}";
+      }
+    }
+
+    Indent();
+    out_ << print_fn << "(std::cout, \"" << fmt_str << "\"";
+    for (size_t i = first_arg_idx; i < arguments.size(); ++i) {
+      out_ << ", ";
+      EmitExpression(*arguments[i]);
+    }
+    out_ << ");\n";
+  }
+}
+
+}  // namespace lyra::compiler
