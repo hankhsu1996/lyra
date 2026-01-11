@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <string>
@@ -19,8 +21,10 @@ inline auto ResolveMemPath(std::string_view filename) -> std::filesystem::path {
   return path;
 }
 
-template <typename ErrorFn>
-inline auto ParseMemDigit(char ch, bool is_hex, ErrorFn&& on_error) -> int {
+// Parse a single digit from a memory file token.
+// Returns -1 for underscore (separator), digit value otherwise.
+inline auto ParseMemDigit(char ch, bool is_hex)
+    -> std::expected<int, std::string> {
   if (ch == '_') {
     return -1;
   }
@@ -32,9 +36,9 @@ inline auto ParseMemDigit(char ch, bool is_hex, ErrorFn&& on_error) -> int {
       return 1;
     }
     if (ch == 'x' || ch == 'X' || ch == 'z' || ch == 'Z') {
-      on_error("readmem does not support X/Z digits");
+      return std::unexpected("readmem does not support X/Z digits");
     }
-    on_error(std::format("invalid binary digit: {}", ch));
+    return std::unexpected(std::format("invalid binary digit: {}", ch));
   }
   if (ch >= '0' && ch <= '9') {
     return ch - '0';
@@ -46,29 +50,33 @@ inline auto ParseMemDigit(char ch, bool is_hex, ErrorFn&& on_error) -> int {
     return 10 + (ch - 'A');
   }
   if (ch == 'x' || ch == 'X' || ch == 'z' || ch == 'Z') {
-    on_error("readmem does not support X/Z digits");
+    return std::unexpected("readmem does not support X/Z digits");
   }
-  on_error(std::format("invalid hex digit: {}", ch));
+  return std::unexpected(std::format("invalid hex digit: {}", ch));
 }
 
-template <typename ErrorFn>
-inline auto ParseMemAddress(
-    std::string_view token, bool is_hex, ErrorFn&& on_error) -> uint64_t {
+// Parse an address token from a memory file.
+inline auto ParseMemAddress(std::string_view token, bool is_hex)
+    -> std::expected<uint64_t, std::string> {
   if (token.empty()) {
-    on_error("readmem address token is empty");
+    return std::unexpected("readmem address token is empty");
   }
   uint64_t value = 0;
   size_t bit_pos = 0;
   int bits_per_digit = is_hex ? 4 : 1;
   for (size_t i = token.size(); i > 0; --i) {
-    int digit = ParseMemDigit(token[i - 1], is_hex, on_error);
+    auto digit_result = ParseMemDigit(token[i - 1], is_hex);
+    if (!digit_result) {
+      return std::unexpected(digit_result.error());
+    }
+    int digit = *digit_result;
     if (digit < 0) {
       continue;
     }
     for (int b = 0; b < bits_per_digit; ++b) {
-      if (digit & (1 << b)) {
+      if ((digit & (1 << b)) != 0) {
         if (bit_pos >= 64) {
-          on_error("readmem address exceeds 64-bit range");
+          return std::unexpected("readmem address exceeds 64-bit range");
         }
         value |= (1ULL << bit_pos);
       }
@@ -78,19 +86,23 @@ inline auto ParseMemAddress(
   return value;
 }
 
-template <typename ErrorFn>
+// Parse a value token into 64-bit words.
 inline auto ParseMemTokenToWords(
-    std::string_view token, size_t bit_width, bool is_hex, ErrorFn&& on_error)
-    -> std::vector<uint64_t> {
+    std::string_view token, size_t bit_width, bool is_hex)
+    -> std::expected<std::vector<uint64_t>, std::string> {
   if (token.empty()) {
-    on_error("readmem value token is empty");
+    return std::unexpected("readmem value token is empty");
   }
   size_t word_count = (bit_width + 63) / 64;
   std::vector<uint64_t> words(word_count, 0);
   size_t bit_pos = 0;
   int bits_per_digit = is_hex ? 4 : 1;
   for (size_t i = token.size(); i > 0; --i) {
-    int digit = ParseMemDigit(token[i - 1], is_hex, on_error);
+    auto digit_result = ParseMemDigit(token[i - 1], is_hex);
+    if (!digit_result) {
+      return std::unexpected(digit_result.error());
+    }
+    int digit = *digit_result;
     if (digit < 0) {
       continue;
     }
@@ -98,7 +110,7 @@ inline auto ParseMemTokenToWords(
       if (bit_pos >= bit_width) {
         break;
       }
-      if (digit & (1 << b)) {
+      if ((digit & (1 << b)) != 0) {
         size_t word = bit_pos / 64;
         size_t bit = bit_pos % 64;
         words[word] |= (1ULL << bit);
@@ -112,6 +124,7 @@ inline auto ParseMemTokenToWords(
   return words;
 }
 
+// Format words as a hex or binary string.
 inline auto FormatMemWords(
     const std::vector<uint64_t>& words, size_t bit_width, bool is_hex)
     -> std::string {
@@ -126,7 +139,7 @@ inline auto FormatMemWords(
       size_t nibble = digits - 1 - d;
       int val = 0;
       for (int b = 0; b < 4; ++b) {
-        size_t bit_index = nibble * 4 + b;
+        size_t bit_index = (nibble * 4) + static_cast<size_t>(b);
         if (bit_index >= bit_width) {
           continue;
         }
@@ -137,7 +150,10 @@ inline auto FormatMemWords(
           val |= (1 << b);
         }
       }
-      result[d] = "0123456789abcdef"[val];
+      constexpr std::array<char, 16> kHexDigits = {'0', '1', '2', '3', '4', '5',
+                                                   '6', '7', '8', '9', 'a', 'b',
+                                                   'c', 'd', 'e', 'f'};
+      result[d] = kHexDigits.at(static_cast<size_t>(val));
     }
     return result;
   }
@@ -153,6 +169,7 @@ inline auto FormatMemWords(
   return result;
 }
 
+// Format an address as hex or binary.
 inline auto FormatMemAddress(uint64_t address, bool is_hex) -> std::string {
   if (is_hex) {
     return std::format("{:x}", address);
@@ -162,18 +179,33 @@ inline auto FormatMemAddress(uint64_t address, bool is_hex) -> std::string {
   }
   std::string out;
   while (address != 0) {
-    out.push_back((address & 1ULL) ? '1' : '0');
+    out.push_back(((address & 1ULL) != 0) ? '1' : '0');
     address >>= 1U;
   }
-  std::reverse(out.begin(), out.end());
+  std::ranges::reverse(out);
   return out;
 }
 
-template <typename ErrorFn, typename StoreElementFn>
+// Result of parsing a memory file - either success or error message.
+struct ParseMemFileResult {
+  bool success = true;
+  std::string error;
+
+  static auto Success() -> ParseMemFileResult {
+    return {.success = true, .error = {}};
+  }
+  static auto Error(std::string msg) -> ParseMemFileResult {
+    return {.success = false, .error = std::move(msg)};
+  }
+};
+
+// Parse a memory file and call store for each value.
+// Returns error if parsing fails. The store callback receives (token, address).
+template <typename StoreElementFn>
 inline auto ParseMemFile(
     std::string_view content, bool is_hex, int64_t min_addr, int64_t max_addr,
     int64_t& current_addr, int64_t final_addr, std::string_view task_name,
-    ErrorFn&& on_error, StoreElementFn&& store) -> void {
+    const StoreElementFn& store) -> ParseMemFileResult {
   size_t i = 0;
   while (i < content.size() && current_addr <= final_addr) {
     char ch = content[i];
@@ -192,7 +224,7 @@ inline auto ParseMemFile(
       if (content[i + 1] == '*') {
         i += 2;
         while (i + 1 < content.size() &&
-               !(content[i] == '*' && content[i + 1] == '/')) {
+               (content[i] != '*' || content[i + 1] != '/')) {
           ++i;
         }
         i = std::min(i + 2, content.size());
@@ -211,10 +243,14 @@ inline auto ParseMemFile(
         ++i;
       }
       auto token = std::string_view(content).substr(start, i - start);
-      uint64_t addr = ParseMemAddress(token, is_hex, on_error);
-      current_addr = static_cast<int64_t>(addr);
+      auto addr_result = ParseMemAddress(token, is_hex);
+      if (!addr_result) {
+        return ParseMemFileResult::Error(addr_result.error());
+      }
+      current_addr = static_cast<int64_t>(*addr_result);
       if (current_addr < min_addr || current_addr > max_addr) {
-        on_error(std::format("{} address directive out of bounds", task_name));
+        return ParseMemFileResult::Error(
+            std::format("{} address directive out of bounds", task_name));
       }
       continue;
     }
@@ -232,6 +268,7 @@ inline auto ParseMemFile(
     store(token, current_addr);
     ++current_addr;
   }
+  return ParseMemFileResult::Success();
 }
 
 }  // namespace lyra::common::mem_io

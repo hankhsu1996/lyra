@@ -9,8 +9,6 @@
 #include <vector>
 
 #include "lyra/common/mem_io.hpp"
-#include "lyra/sdk/bit.hpp"
-#include "lyra/sdk/wide_bit.hpp"
 
 namespace lyra::sdk {
 namespace detail {
@@ -18,10 +16,12 @@ namespace detail {
 template <typename ElemT>
 auto ParseMemTokenToElement(std::string_view token, bool is_hex) -> ElemT {
   constexpr size_t kWidth = ElemT::kWidth;
-  auto words = common::mem_io::ParseMemTokenToWords(
-      token, kWidth, is_hex, [](std::string_view message) {
-        throw std::runtime_error(std::string(message));
-      });
+  auto words_result =
+      common::mem_io::ParseMemTokenToWords(token, kWidth, is_hex);
+  if (!words_result) {
+    throw std::runtime_error(words_result.error());
+  }
+  const auto& words = *words_result;
   if constexpr (kWidth <= 64) {
     uint64_t value = words.empty() ? 0 : words[0];
     return ElemT{value};
@@ -64,8 +64,8 @@ auto GetPackedBit(const PackedT& value, size_t bit_index) -> bool {
 template <typename PackedT>
 auto SetPackedBit(PackedT value, size_t bit_index, bool bit) -> PackedT {
   if constexpr (PackedT::kWidth <= 64) {
-    uint64_t raw = static_cast<uint64_t>(value.Value());
-    uint64_t mask = 1ULL << bit_index;
+    auto raw = static_cast<uint64_t>(value.Value());
+    auto mask = 1ULL << bit_index;
     if (bit) {
       raw |= mask;
     } else {
@@ -90,7 +90,7 @@ auto SetPackedBit(PackedT value, size_t bit_index, bool bit) -> PackedT {
 template <typename EmitElementFn>
 auto WriteMemFile(
     std::ofstream& out, bool has_start, int64_t current_addr,
-    int64_t final_addr, bool is_hex, EmitElementFn&& emit) -> void {
+    int64_t final_addr, bool is_hex, const EmitElementFn& emit) -> void {
   if (has_start) {
     out << "@"
         << common::mem_io::FormatMemAddress(
@@ -134,16 +134,16 @@ auto ReadMemArray(
   std::string content(
       (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
-  common::mem_io::ParseMemFile(
+  auto result = common::mem_io::ParseMemFile(
       content, is_hex, min_addr, max_addr, current_addr, final_addr, "readmem",
-      [](std::string_view message) {
-        throw std::runtime_error(std::string(message));
-      },
       [&](std::string_view token, int64_t addr) {
         auto value = detail::ParseMemTokenToElement<ElemT>(token, is_hex);
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto index = static_cast<size_t>(addr - min_addr);
         array[index] = value;
       });
+  if (!result.success) {
+    throw std::runtime_error(result.error);
+  }
 }
 
 template <typename PackedT>
@@ -174,17 +174,16 @@ auto ReadMemPacked(
   std::string content(
       (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
-  common::mem_io::ParseMemFile(
+  auto result = common::mem_io::ParseMemFile(
       content, is_hex, min_addr, max_addr, current_addr, final_addr, "readmem",
-      [](std::string_view message) {
-        throw std::runtime_error(std::string(message));
-      },
       [&](std::string_view token, int64_t addr) {
-        auto elem_words = common::mem_io::ParseMemTokenToWords(
-            token, element_width, is_hex, [](std::string_view message) {
-              throw std::runtime_error(std::string(message));
-            });
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto elem_words_result =
+            common::mem_io::ParseMemTokenToWords(token, element_width, is_hex);
+        if (!elem_words_result) {
+          throw std::runtime_error(elem_words_result.error());
+        }
+        const auto& elem_words = *elem_words_result;
+        auto index = static_cast<size_t>(addr - min_addr);
         size_t base_bit = index * element_width;
         for (size_t bit = 0; bit < element_width; ++bit) {
           size_t word = bit / 64;
@@ -193,6 +192,9 @@ auto ReadMemPacked(
           packed = detail::SetPackedBit(packed, base_bit + bit, bit_val);
         }
       });
+  if (!result.success) {
+    throw std::runtime_error(result.error);
+  }
 }
 
 template <typename ArrayT>
@@ -224,7 +226,7 @@ auto WriteMemArray(
 
   detail::WriteMemFile(
       out, has_start, current_addr, final_addr, is_hex, [&](int64_t addr) {
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto index = static_cast<size_t>(addr - min_addr);
         return detail::FormatMemValue(array[index], is_hex);
       });
 }
@@ -258,7 +260,7 @@ auto WriteMemPacked(
 
   detail::WriteMemFile(
       out, has_start, current_addr, final_addr, is_hex, [&](int64_t addr) {
-        size_t index = static_cast<size_t>(addr - min_addr);
+        auto index = static_cast<size_t>(addr - min_addr);
         size_t base_bit = index * element_width;
         auto elem_words = std::vector<uint64_t>((element_width + 63) / 64, 0);
         for (size_t bit = 0; bit < element_width; ++bit) {
