@@ -1,7 +1,9 @@
 #include "lyra/frontend/slang_frontend.hpp"
 
+#include <format>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <fmt/core.h>
@@ -12,6 +14,8 @@
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
 #include <slang/util/LanguageVersion.h>
+
+#include "lyra/common/diagnostic.hpp"
 
 namespace lyra::frontend {
 
@@ -55,9 +59,17 @@ auto SlangFrontend::LoadFromFiles(
   for (const auto& path : paths) {
     auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager_);
     if (!result) {
-      // File not found or couldn't be opened
-      auto [error_code, error_msg] = result.error();
-      fmt::print(stderr, "error: {}: {}\n", path, error_msg);
+      auto error_code = result.error().first;
+      if (error_code == std::errc::no_such_file_or_directory) {
+        PrintDiagnostic(
+            Diagnostic::Error(
+                {}, std::format("source file not found: {}", path)));
+      } else {
+        PrintDiagnostic(
+            Diagnostic::Error(
+                {}, std::format(
+                        "cannot read '{}': {}", path, error_code.message())));
+      }
       return nullptr;
     }
     AddTree(result.value(), *compilation);

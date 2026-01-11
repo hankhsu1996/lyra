@@ -1,6 +1,8 @@
 #include <argparse/argparse.hpp>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <expected>
 #include <filesystem>
@@ -38,7 +40,9 @@ namespace {
 void WriteFile(const fs::path& path, const std::string& content) {
   std::ofstream out(path);
   if (!out) {
-    throw std::runtime_error("Failed to create file: " + path.string());
+    throw std::runtime_error(
+        std::format(
+            "cannot write '{}': {}", path.string(), std::strerror(errno)));
   }
   out << content;
 }
@@ -71,7 +75,9 @@ auto ParseCommandFile(const fs::path& path, bool relative_to_file)
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error(
-        std::format("cannot open command file: {}", path.string()));
+        std::format(
+            "cannot open command file '{}': {}", path.string(),
+            std::strerror(errno)));
   }
 
   // Base directory for relative path resolution

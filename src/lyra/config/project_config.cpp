@@ -97,6 +97,13 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
       if (file_path.is_relative()) {
         file_path = config.root_dir / file_path;
       }
+      if (!fs::exists(file_path)) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                {},
+                std::format(
+                    "source file not found: {} (listed in lyra.toml)", *str)));
+      }
       config.files.push_back(file_path.string());
     }
   }
