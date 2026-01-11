@@ -14,6 +14,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -386,10 +387,12 @@ auto GetMemTargetInfo(const RuntimeValue& value, const common::Type& type)
 
 auto ParseMemTokenToValue(std::string_view token, size_t bit_width, bool is_hex)
     -> RuntimeValue {
-  auto words = common::mem_io::ParseMemTokenToWords(
-      token, bit_width, is_hex, [](std::string_view message) {
-        throw common::InternalError("interpreter", std::string(message));
-      });
+  auto words_result =
+      common::mem_io::ParseMemTokenToWords(token, bit_width, is_hex);
+  if (!words_result) {
+    throw std::runtime_error(words_result.error());
+  }
+  auto words = std::move(*words_result);
 
   if (bit_width <= 64) {
     return RuntimeValue::IntegralUnsigned(
@@ -1042,17 +1045,16 @@ auto RunInstruction(
         }
       };
 
-      common::mem_io::ParseMemFile(
+      auto parse_result = common::mem_io::ParseMemFile(
           content, is_hex, min_addr, max_addr, current_addr, final_addr,
-          task_name,
-          [](std::string_view message) {
-            throw common::InternalError("interpreter", std::string(message));
-          },
-          [&](std::string_view token, int64_t addr) {
+          task_name, [&](std::string_view token, int64_t addr) {
             auto value =
                 ParseMemTokenToValue(token, info.element_width, is_hex);
             write_value(addr, value);
           });
+      if (!parse_result.success) {
+        throw std::runtime_error(parse_result.error);
+      }
 
       if (info.is_unpacked) {
         store_variable(instr.operands[1], target_value, false);

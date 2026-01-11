@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands          |
 | `docs/limitations.md`              | Unsupported SystemVerilog features                   |
 | `docs/string-types.md`             | String type handling, slang interaction              |
+| `docs/error-handling.md`           | Error types, when to use each                        |
 | `docs/documentation-guidelines.md` | Documentation guidelines                             |
 
 ## Commands
@@ -134,25 +135,16 @@ bazel test //tests:datatypes_arrays_tests        # Run single category
 
 ## Error Handling
 
-**User-facing errors** - Use `DiagnosticException` (`lyra/common/diagnostic.hpp`):
+See `docs/error-handling.md` for full details.
 
-```cpp
-throw DiagnosticException(
-    Diagnostic::Error(source_range, "descriptive message"));
-```
+| Error Type            | When to Use                            |
+| --------------------- | -------------------------------------- |
+| `DiagnosticException` | AST→MIR lowering only (has source loc) |
+| `InternalError`       | Compiler bugs (invariant violations)   |
+| `std::runtime_error`  | Interpreter and SDK runtime errors     |
 
-- Provides consistent error formatting with source locations
-- Caught and printed by CLI commands via `PrintDiagnostic()`
-- Use `slang::SourceRange{}` when no source location is available
-
-**Internal errors** - Use `InternalError` (`lyra/common/internal_error.hpp`):
-
-```cpp
-throw common::InternalError("context", "detail about the bug");
-```
-
-- For compiler bugs, not user errors
-- Includes message asking users to report the issue
+For shared code between interpreter and SDK, return `std::expected<T, std::string>`
+and let callers convert to `std::runtime_error`.
 
 ## Approach to Changes
 

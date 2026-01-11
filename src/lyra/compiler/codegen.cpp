@@ -1267,8 +1267,24 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
             Diagnostic::Error(
                 {}, "C++ codegen: unsupported system call: " + syscall.name));
       }
+      // Check if expression is an assignment that produces an unused value
+      // (struct field or packed element assignment uses comma expression)
+      bool needs_void_cast = false;
+      if (expr_stmt.expression->kind == mir::Expression::Kind::kAssignment) {
+        const auto& assign =
+            mir::As<mir::AssignmentExpression>(*expr_stmt.expression);
+        needs_void_cast =
+            assign.target.IsStructFieldAssignment() ||
+            (assign.target.IsPacked() && assign.target.IsElementSelect());
+      }
       Indent();
+      if (needs_void_cast) {
+        out_ << "(void)(";
+      }
       EmitExpression(*expr_stmt.expression);
+      if (needs_void_cast) {
+        out_ << ")";
+      }
       out_ << ";\n";
       break;
     }
