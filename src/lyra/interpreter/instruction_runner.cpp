@@ -813,12 +813,6 @@ auto RunInstruction(
     assert(operand.IsVariable());
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
-    // Check if variable is under procedural continuous assignment
-    // If so, the write is blocked (silently ignored)
-    if (simulation_context.procedural_assigns.contains(symbol)) {
-      return;
-    }
-
     // Deep copy arrays for value semantics (nested arrays must be independent)
     const RuntimeValue actual_value = value.DeepCopy();
 
@@ -2624,45 +2618,6 @@ auto RunInstruction(
       auto value = get_temp(instr.operands[0]);
 
       captures[instr.capture_name] = value;
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kProceduralAssign: {
-      // Procedural continuous assignment: assign variable = value
-      // Sets the value and marks the variable as under procedural assign.
-      // Future writes to this variable will be blocked until deassign.
-      assert(instr.operands.size() == 2);
-      assert(instr.operands[0].IsVariable());
-
-      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-      auto value = get_temp(instr.operands[1]);
-
-      // Add to procedural assign set (blocks future writes)
-      simulation_context.procedural_assigns.insert(symbol);
-
-      // Write the value (this bypasses the store_variable check since we're
-      // setting it directly here)
-      const RuntimeValue actual_value = value.DeepCopy();
-      if (instance_context != nullptr) {
-        instance_context->Write(symbol, actual_value);
-        effect.RecordVariableModification(symbol, instance_context);
-      } else {
-        module_variable_table.Write(symbol, actual_value);
-        effect.RecordVariableModification(symbol);
-      }
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kProceduralDeassign: {
-      // Procedural deassign: deassign variable
-      // Clears the procedural assign mark. The value persists.
-      assert(instr.operands.size() == 1);
-      assert(instr.operands[0].IsVariable());
-
-      const auto* symbol = std::get<lir::SymbolRef>(instr.operands[0].value);
-
-      // Remove from procedural assign set (allows future writes)
-      simulation_context.procedural_assigns.erase(symbol);
       return InstructionResult::Continue();
     }
   }

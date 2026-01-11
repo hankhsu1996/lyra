@@ -532,77 +532,13 @@ auto LowerStatement(const slang::ast::Statement& statement)
       throw DiagnosticException(
           Diagnostic::Error({}, "cannot lower invalid statement"));
 
-    case StatementKind::ProceduralAssign: {
-      const auto& proc_assign =
-          statement.as<slang::ast::ProceduralAssignStatement>();
-
-      // Only support assign, not force
-      if (proc_assign.isForce) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                statement.sourceRange, "force statement is not yet supported"));
-      }
-
-      // The assignment field is an AssignmentExpression (target = value)
-      if (proc_assign.assignment.kind !=
-          slang::ast::ExpressionKind::Assignment) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                proc_assign.assignment.sourceRange,
-                "invalid procedural assign expression"));
-      }
-
-      const auto& assign_expr =
-          proc_assign.assignment.as<slang::ast::AssignmentExpression>();
-
-      const auto& left = assign_expr.left();
-      auto value = LowerExpression(assign_expr.right());
-
-      // Only support simple variable targets
-      if (left.kind != slang::ast::ExpressionKind::NamedValue) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                left.sourceRange,
-                "procedural assign only supports simple variable targets"));
-      }
-
-      const auto& target_symbol =
-          left.as<slang::ast::NamedValueExpression>().symbol;
-      mir::AssignmentTarget target(&target_symbol);
-
-      return std::make_unique<mir::ProceduralAssignStatement>(
-          std::move(target), std::move(value));
-    }
-
-    case StatementKind::ProceduralDeassign: {
-      const auto& proc_deassign =
-          statement.as<slang::ast::ProceduralDeassignStatement>();
-
-      // Only support deassign, not release
-      if (proc_deassign.isRelease) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                statement.sourceRange,
-                "release statement is not yet supported"));
-      }
-
-      const auto& left = proc_deassign.lvalue;
-
-      // Only support simple variable targets
-      if (left.kind != slang::ast::ExpressionKind::NamedValue) {
-        throw DiagnosticException(
-            Diagnostic::Error(
-                left.sourceRange,
-                "procedural deassign only supports simple variable targets"));
-      }
-
-      const auto& target_symbol =
-          left.as<slang::ast::NamedValueExpression>().symbol;
-      mir::AssignmentTarget target(&target_symbol);
-
-      return std::make_unique<mir::ProceduralDeassignStatement>(
-          std::move(target));
-    }
+    case StatementKind::ProceduralAssign:
+    case StatementKind::ProceduralDeassign:
+      throw DiagnosticException(
+          Diagnostic::Error(
+              statement.sourceRange,
+              "procedural continuous assignment (assign/deassign) is not "
+              "supported"));
 
     default:
       throw DiagnosticException(

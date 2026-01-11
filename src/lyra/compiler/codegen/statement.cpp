@@ -372,25 +372,6 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       }
       break;
     }
-    case mir::Statement::Kind::kProceduralAssign: {
-      const auto& proc_assign = mir::As<mir::ProceduralAssignStatement>(stmt);
-      Indent();
-      out_ << "SetProceduralAssign(&";
-      EmitAssignmentTarget(proc_assign.target);
-      out_ << ", ";
-      EmitExpression(*proc_assign.value);
-      out_ << ");\n";
-      break;
-    }
-    case mir::Statement::Kind::kProceduralDeassign: {
-      const auto& proc_deassign =
-          mir::As<mir::ProceduralDeassignStatement>(stmt);
-      Indent();
-      out_ << "ClearProceduralAssign(&";
-      EmitAssignmentTarget(proc_deassign.target);
-      out_ << ");\n";
-      break;
-    }
     default:
       throw DiagnosticException(
           Diagnostic::Error(

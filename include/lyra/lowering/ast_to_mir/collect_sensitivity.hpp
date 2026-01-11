@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/symbol.hpp"
@@ -215,14 +216,6 @@ class SensitivityCollector : public mir::MirVisitor {
     if (statement.value) {
       statement.value->Accept(*this);
     }
-  }
-
-  void Visit(const mir::ProceduralAssignStatement& statement) override {
-    statement.value->Accept(*this);
-  }
-
-  void Visit(const mir::ProceduralDeassignStatement& /*unused*/) override {
-    // Deassign has no RHS to collect sensitivity from
   }
 
   [[nodiscard]] auto TakeItems() && -> std::vector<SensitivityItem> {

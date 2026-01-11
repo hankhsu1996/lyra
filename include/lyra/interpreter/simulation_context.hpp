@@ -5,7 +5,6 @@
 #include <optional>
 #include <sstream>
 #include <string>
-#include <unordered_set>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/time_format.hpp"
@@ -68,11 +67,6 @@ class SimulationContext {
 
   // Active $monitor state (only one at a time per IEEE 1800)
   std::optional<MonitorState> active_monitor;
-
-  // Procedural continuous assignment tracking (assign/deassign)
-  // Set of symbols that are under procedural continuous assignment.
-  // Normal writes to these variables are blocked until deassign.
-  std::unordered_set<SymbolRef> procedural_assigns;
 };
 
 }  // namespace lyra::interpreter

@@ -210,18 +210,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*assign.value, kPrecLowest);
         out_ << ")";
       } else {
-        // Simple assignment: target = value
-        // Check for procedural continuous assignment (assign/deassign)
-        // If target is under procedural assign, the write is blocked
-        out_ << "(HasProceduralAssign(&";
-        EmitAssignmentTarget(assign.target);
-        out_ << ") ? ";
-        EmitAssignmentTarget(assign.target);
-        out_ << " : (";
         EmitAssignmentTarget(assign.target);
         out_ << " = ";
         EmitExpression(*assign.value, kPrecAssign);
-        out_ << "))";
       }
       break;
     }

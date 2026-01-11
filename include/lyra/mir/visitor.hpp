@@ -39,8 +39,6 @@ class BreakStatement;
 class ContinueStatement;
 class BlockStatement;
 class ReturnStatement;
-class ProceduralAssignStatement;
-class ProceduralDeassignStatement;
 
 class MirVisitor {
  public:
@@ -86,8 +84,6 @@ class MirVisitor {
   virtual void Visit(const ContinueStatement&) = 0;
   virtual void Visit(const BlockStatement&) = 0;
   virtual void Visit(const ReturnStatement&) = 0;
-  virtual void Visit(const ProceduralAssignStatement&) = 0;
-  virtual void Visit(const ProceduralDeassignStatement&) = 0;
 };
 
 }  // namespace lyra::mir
