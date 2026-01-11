@@ -5,9 +5,13 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
+#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
 #include "lyra/interpreter/variable_table.hpp"
@@ -17,10 +21,10 @@ namespace lyra::interpreter {
 
 void TriggerManager::RegisterWaitingProcess(
     const std::shared_ptr<lir::Process>& process,
-    const std::shared_ptr<InstanceContext>& process_instance,
     const std::shared_ptr<InstanceContext>& watch_instance,
     const SymbolRef& variable, common::EdgeKind edge_kind,
-    std::size_t block_index, std::size_t instruction_index) {
+    std::size_t block_index, std::size_t instruction_index,
+    ProcessHandle handle) {
   // Use watch_instance in the key since that's where we detect changes
   ProcessInstanceKey pi_key{.process = process, .instance = watch_instance};
   wait_map_[variable].insert(pi_key);
@@ -29,12 +33,11 @@ void TriggerManager::RegisterWaitingProcess(
   ProcessInstanceVarKey piv_key{
       .process = process, .instance = watch_instance, .variable = variable};
   wait_set_[piv_key] = {
-      .process_instance =
-          process_instance,              // For resumption (module via ->module)
       .watch_instance = watch_instance,  // For reading values
       .block_index = block_index,
       .instruction_index = instruction_index,
-      .edge_kind = edge_kind};
+      .edge_kind = edge_kind,
+      .handle = handle};
 }
 
 auto TriggerManager::CheckTriggers(
@@ -84,16 +87,18 @@ auto TriggerManager::CheckTriggers(
         continue;
       }
 
-      const auto& wait_info = info_it->second;
+      auto& wait_info = info_it->second;
 
       if (ShouldTrigger(old_value, new_value, wait_info.edge_kind)) {
+        // Get process_instance from the handle (where process runs)
         events_to_trigger.push_back(
             ScheduledEvent{
                 .origin =
                     {.process = pi_key.process,
-                     .instance = wait_info.process_instance},
+                     .instance = wait_info.handle.key.instance},
                 .block_index = wait_info.block_index,
-                .instruction_index = wait_info.instruction_index});
+                .instruction_index = wait_info.instruction_index,
+                .handle = wait_info.handle});
         triggered_keys.insert(pi_key);
         to_remove.insert(pi_key);
       }

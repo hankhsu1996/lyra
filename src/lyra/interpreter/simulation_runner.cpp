@@ -15,8 +15,9 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/interpreter/instance_context.hpp"
-#include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
+#include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/process_runner.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
@@ -249,13 +250,13 @@ void SimulationRunner::CheckMonitor() {
     return;
   }
 
-  // Create temporary context for process execution
-  ProcessContext context;
+  // Create temporary frame for process execution
+  ProcessFrame frame;
   ProcessEffect effect;
 
   // Execute check process using standard process runner
   auto result = RunProcess(
-      process, 0, 0, simulation_context_.get(), context, effect,
+      process, 0, 0, simulation_context_.get(), frame, effect,
       monitor->instance);
 
   // Monitor check should always complete (no delay/wait).
@@ -280,11 +281,11 @@ void SimulationRunner::InitializePackageVariables() {
 
   // Then execute the init process (if any) to set actual values
   if (package_init_process_) {
-    ProcessContext process_context;
-    ProcessEffect process_effect;
+    ProcessFrame frame;
+    ProcessEffect effect;
     RunProcess(
-        package_init_process_, 0, 0, simulation_context_.get(), process_context,
-        process_effect, nullptr);  // nullptr = global storage
+        package_init_process_, 0, 0, simulation_context_.get(), frame, effect,
+        nullptr);  // nullptr = global storage
   }
 }
 
@@ -311,10 +312,17 @@ void SimulationRunner::ScheduleModuleProcesses(
     if (process->is_callback) {
       continue;
     }
+
+    // Create frame in centralized storage and get handle
+    ProcessInstanceKey key{.process = process, .instance = instance};
+    process_frames_.emplace(key, ProcessFrame{});
+    ProcessHandle handle{key};
+
     active_queue_.push(
         {.origin = {.process = process, .instance = instance},
          .block_index = 0,
-         .instruction_index = 0});
+         .instruction_index = 0,
+         .handle = handle});
   }
 }
 
@@ -410,7 +418,7 @@ void SimulationRunner::ElaborateSubmodules(
 }
 
 void SimulationRunner::ExecuteOneEvent() {
-  ScheduledEvent event = active_queue_.front();
+  ScheduledEvent event = std::move(active_queue_.front());
   active_queue_.pop();
 
   const auto& origin = event.origin;
@@ -422,12 +430,15 @@ void SimulationRunner::ExecuteOneEvent() {
           "{} | Start at block {} instruction {}", origin.process->name,
           origin.process->blocks[block_index]->label, instruction_index));
 
-  ProcessContext process_context;
+  // Lookup frame from centralized storage using the handle.
+  // This mirrors C++ coroutines where the frame is accessed via
+  // coroutine_handle.
+  ProcessFrame& frame = process_frames_.at(event.handle.key);
   ProcessEffect process_effect;
 
   auto result = RunProcess(
       origin.process, block_index, instruction_index, simulation_context_.get(),
-      process_context, process_effect, origin.instance);
+      frame, process_effect, origin.instance);
 
   simulation_context_.get().tracer.Record(
       fmt::format("{} | {}", origin.process->name, result.Summary()));
@@ -443,13 +454,14 @@ void SimulationRunner::ExecuteOneEvent() {
 
   switch (result.kind) {
     case ProcessResult::Kind::kDelay: {
-      // Schedule for future time slot
+      // Schedule for future time slot - frame stays in process_frames_
       auto delay_time =
           simulation_context_.get().current_time + result.delay_amount;
       ScheduledEvent delayed_event{
           .origin = event.origin,
           .block_index = result.block_index,
-          .instruction_index = result.resume_instruction_index};
+          .instruction_index = result.resume_instruction_index,
+          .handle = event.handle};
       delay_queue_[delay_time].push_back(std::move(delayed_event));
       break;
     }
@@ -459,12 +471,17 @@ void SimulationRunner::ExecuteOneEvent() {
       ScheduledEvent inactive_event{
           .origin = event.origin,
           .block_index = result.block_index,
-          .instruction_index = result.resume_instruction_index};
+          .instruction_index = result.resume_instruction_index,
+          .handle = event.handle};
       inactive_queue_.push(std::move(inactive_event));
       break;
     }
 
     case ProcessResult::Kind::kWaitEvent: {
+      // Register for all triggers with the SAME handle.
+      // This is the key fix for compound triggers like @(a or b):
+      // all triggers share the same frame reference, so whichever fires
+      // first will resume the process with the correct frame.
       for (const auto& trigger : result.triggers) {
         // Unified trigger resolution:
         // 1. Traverse instance_path (empty for local triggers)
@@ -484,13 +501,14 @@ void SimulationRunner::ExecuteOneEvent() {
             watch_instance = resolved_instance;
           }
 
-          // Register with both:
-          // - origin.instance: where the process runs (module via ->module)
+          // Register with:
+          // - event.handle: non-owning reference to frame in process_frames_
           // - watch_instance: where the variable lives (for trigger detection)
+          // Same handle for ALL triggers - this fixes the compound trigger bug!
           trigger_manager_.RegisterWaitingProcess(
-              origin.process, origin.instance, watch_instance, target_symbol,
-              trigger.edge_kind, result.block_index,
-              result.resume_instruction_index);
+              origin.process, watch_instance, target_symbol, trigger.edge_kind,
+              result.block_index, result.resume_instruction_index,
+              event.handle);
         }
       }
       break;
@@ -505,6 +523,10 @@ void SimulationRunner::ExecuteOneEvent() {
     }
 
     case ProcessResult::Kind::kComplete: {
+      // Process finished - clean up its frame from centralized storage.
+      // This handles initial blocks that complete; always blocks typically
+      // don't complete (they suspend on delay/event and loop back).
+      process_frames_.erase(event.handle.key);
       break;
     }
   }
@@ -515,9 +537,9 @@ void SimulationRunner::WakeWaitingProcesses(
   // Delegate to trigger manager
   auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 
-  // Schedule all triggered events
-  for (const auto& event : events_to_schedule) {
-    active_queue_.push(event);
+  // Schedule all triggered events (move to preserve coroutine frames)
+  for (auto& event : events_to_schedule) {
+    active_queue_.push(std::move(event));
   }
 }
 

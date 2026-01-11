@@ -35,8 +35,8 @@
 #include "lyra/interpreter/builtin_ops.hpp"
 #include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
-#include "lyra/interpreter/process_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
+#include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/lir/context.hpp"
@@ -707,9 +707,9 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
 
 // Handle kReturn instruction: get return value, pop frame, store result.
 auto HandleReturn(
-    const lir::Instruction& instr, ProcessContext& process_context,
-    TempTable& temp_table) -> InstructionResult {
-  if (process_context.call_stack.empty()) {
+    const lir::Instruction& instr, ProcessFrame& frame, TempTable& temp_table)
+    -> InstructionResult {
+  if (frame.call_stack.empty()) {
     throw common::InternalError("kReturn", "return outside of function");
   }
 
@@ -721,20 +721,20 @@ auto HandleReturn(
   }
 
   // Pop the call frame
-  CallFrame frame = std::move(process_context.call_stack.back());
-  process_context.call_stack.pop_back();
+  CallFrame call_frame = std::move(frame.call_stack.back());
+  frame.call_stack.pop_back();
 
   // Store return value in caller's temp table (after pop)
-  if (return_value && frame.return_value_dest) {
-    TempTable& caller_temp_table =
-        process_context.call_stack.empty()
-            ? process_context.temp_table
-            : process_context.call_stack.back().temp_table;
-    caller_temp_table.Write(*frame.return_value_dest, std::move(*return_value));
+  if (return_value && call_frame.return_value_dest) {
+    TempTable& caller_temp_table = frame.call_stack.empty()
+                                       ? frame.temp_table
+                                       : frame.call_stack.back().temp_table;
+    caller_temp_table.Write(
+        *call_frame.return_value_dest, std::move(*return_value));
   }
 
   return InstructionResult::ReturnFromFunction(
-      frame.return_block_index, frame.return_instruction_index);
+      call_frame.return_block_index, call_frame.return_instruction_index);
 }
 
 }  // namespace
@@ -742,16 +742,16 @@ auto HandleReturn(
 // Execute a single instruction in the given context
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
-    ProcessContext& process_context, ProcessEffect& effect,
+    ProcessFrame& frame, ProcessEffect& effect,
     const std::shared_ptr<InstanceContext>& instance_context)
     -> InstructionResult {
   // Use function-local temp table when inside a function, otherwise use
   // process temp table. This ensures recursive calls don't overwrite temps.
-  auto& temp_table = process_context.call_stack.empty()
-                         ? process_context.temp_table
-                         : process_context.call_stack.back().temp_table;
+  auto& temp_table = frame.call_stack.empty()
+                         ? frame.temp_table
+                         : frame.call_stack.back().temp_table;
   auto& module_variable_table = simulation_context.variable_table;
-  auto& process_variable_table = process_context.variable_table;
+  auto& process_variable_table = frame.variable_table;
 
   // Helper to resolve symbol through instance context port bindings.
   // Returns (target_symbol, target_instance) where target_instance is nullptr
@@ -774,10 +774,10 @@ auto RunInstruction(
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
     // Check function-local variables first (parameters and locals)
-    if (!process_context.call_stack.empty()) {
-      auto& frame = process_context.call_stack.back();
-      auto it = frame.local_variables.find(symbol);
-      if (it != frame.local_variables.end()) {
+    if (!frame.call_stack.empty()) {
+      auto& call_frame = frame.call_stack.back();
+      auto it = call_frame.local_variables.find(symbol);
+      if (it != call_frame.local_variables.end()) {
         return it->second;
       }
     }
@@ -811,10 +811,10 @@ auto RunInstruction(
     const auto* symbol = std::get<lir::SymbolRef>(operand.value);
 
     // Check function-local variables first (parameters and locals)
-    if (!process_context.call_stack.empty()) {
-      auto& frame = process_context.call_stack.back();
-      auto it = frame.local_variables.find(symbol);
-      if (it != frame.local_variables.end()) {
+    if (!frame.call_stack.empty()) {
+      auto& call_frame = frame.call_stack.back();
+      auto it = call_frame.local_variables.find(symbol);
+      if (it != call_frame.local_variables.end()) {
         it->second = value;
         return;
       }
@@ -2473,7 +2473,7 @@ auto RunInstruction(
       return HandleCall(instr, temp_table);
 
     case lir::InstructionKind::kReturn:
-      return HandleReturn(instr, process_context, temp_table);
+      return HandleReturn(instr, frame, temp_table);
 
     case lir::InstructionKind::kLoadCapture: {
       // Load value from the closure's captures.

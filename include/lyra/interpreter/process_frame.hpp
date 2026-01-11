@@ -9,9 +9,18 @@
 
 namespace lyra::interpreter {
 
-class ProcessContext {
+/// ProcessFrame is the interpreter's analog of a coroutine frame.
+///
+/// In C++ codegen, processes become coroutines and local variables live in
+/// the coroutine frame (heap-allocated, persists across suspension).
+/// ProcessFrame mirrors this: it holds all per-process execution state that
+/// must survive across delay/event suspension.
+///
+/// When a process suspends (@(posedge clk), #delay), the frame is stored
+/// with the pending event and restored when the process resumes.
+class ProcessFrame {
  public:
-  ProcessContext() = default;
+  ProcessFrame() = default;
 
   ProcessVariableTable variable_table;
   TempTable temp_table;

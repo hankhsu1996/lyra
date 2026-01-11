@@ -502,3 +502,127 @@ cases:
     expect:
       variables:
         sum: 9
+
+  - name: repeat_with_event_control
+    description: |
+      Test that repeat loop counter survives across event control suspension.
+      This verifies ProcessFrame persistence (the coroutine frame fix).
+    sv: |
+      module Test;
+        logic clk = 0;
+        int counter = 0;
+        always #5 clk = ~clk;
+        initial begin
+          repeat (3) @(posedge clk) begin
+            counter = counter + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 3
+
+  - name: repeat_with_delay
+    description: |
+      Test that repeat loop counter survives across delay suspension.
+    sv: |
+      module Test;
+        int counter = 0;
+        initial begin
+          repeat (4) begin
+            #10;
+            counter = counter + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 4
+
+  # Compound triggers - test centralized frame ownership
+  - name: compound_trigger_second_fires_first
+    description: |
+      Test that @(a or b) preserves frame when second trigger fires first.
+      This was broken before centralized frame ownership - only the first
+      trigger got the frame, so if the second trigger fired first, the
+      process would resume with an empty frame.
+    sv: |
+      module Test;
+        bit clk = 0, rst = 1;
+        int result = 0;
+        initial begin
+          int temp = 42;
+          @(posedge clk or negedge rst);
+          result = temp;
+          $finish;
+        end
+        initial #5 rst = 0;  // negedge rst fires first
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: compound_trigger_first_fires
+    description: |
+      Test that @(a or b) also works when first trigger fires.
+    sv: |
+      module Test;
+        bit clk = 0, rst = 1;
+        int result = 0;
+        initial begin
+          int temp = 100;
+          @(posedge clk or negedge rst);
+          result = temp;
+          $finish;
+        end
+        initial #5 clk = 1;  // posedge clk fires first
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: compound_trigger_three_triggers
+    description: |
+      Test compound trigger with three variables (@(a or b or c)).
+      Verifies frame preservation works with more than two triggers.
+    sv: |
+      module Test;
+        bit a = 0, b = 0, c = 0;
+        int result = 0;
+        initial begin
+          int temp = 77;
+          @(posedge a or posedge b or posedge c);
+          result = temp;
+          $finish;
+        end
+        initial #5 b = 1;  // middle trigger fires
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: compound_trigger_same_time_slot
+    description: |
+      Test compound trigger when multiple signals change in same time slot.
+      Only one should trigger the process (deduplication).
+    sv: |
+      module Test;
+        bit clk = 0, rst = 0;
+        int count = 0;
+        initial begin
+          int temp = 55;
+          @(posedge clk or posedge rst);
+          count = temp;
+          $finish;
+        end
+        initial begin
+          #5;
+          clk = 1;  // Both change at time 5
+          rst = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 55
