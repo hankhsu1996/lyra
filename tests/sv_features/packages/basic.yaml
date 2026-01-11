@@ -200,3 +200,75 @@ cases:
       endmodule
     expect:
       output: "42\n"
+
+  - name: package_parameter_basic
+    sv: |
+      package Pkg;
+        parameter int WIDTH = 8;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", WIDTH);
+        end
+      endmodule
+    expect:
+      output: "8\n"
+
+  - name: package_localparam_basic
+    sv: |
+      package Pkg;
+        localparam int DEPTH = 16;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("%0d", DEPTH);
+        end
+      endmodule
+    expect:
+      output: "16\n"
+
+  - name: package_parameter_dependent
+    sv: |
+      package Pkg;
+        parameter int WIDTH = 8;
+        localparam int AREA = WIDTH * WIDTH;
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial begin
+          $display("WIDTH=%0d AREA=%0d", WIDTH, AREA);
+        end
+      endmodule
+    expect:
+      output: "WIDTH=8 AREA=64\n"
+
+  - name: package_parameter_in_type
+    sv: |
+      package Pkg;
+        parameter int WIDTH = 8;
+      endpackage
+      module Test;
+        import Pkg::*;
+        logic [WIDTH-1:0] data;
+        initial begin
+          data = '1;
+          $display("%0h", data);
+        end
+      endmodule
+    expect:
+      output: "ff\n"
+
+  - name: package_parameter_qualified
+    sv: |
+      package Pkg;
+        parameter int VALUE = 42;
+      endpackage
+      module Test;
+        initial begin
+          $display("%0d", Pkg::VALUE);
+        end
+      endmodule
+    expect:
+      output: "42\n"

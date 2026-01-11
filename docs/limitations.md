@@ -38,13 +38,13 @@ Supported:
 - `typedef` and `enum` declarations
 - Functions in packages
 - Variables in packages
+- Parameters and localparams in packages
 - `import Pkg::*` (wildcard import)
 - `Pkg::item` (qualified access)
 
 Not yet supported:
 
 - Tasks in packages
-- Parameters/localparams in packages
 - Package exports (`export pkg::*`)
 - Classes in packages
 - The `std` built-in package
