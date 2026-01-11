@@ -532,6 +532,14 @@ auto LowerStatement(const slang::ast::Statement& statement)
       throw DiagnosticException(
           Diagnostic::Error({}, "cannot lower invalid statement"));
 
+    case StatementKind::ProceduralAssign:
+    case StatementKind::ProceduralDeassign:
+      throw DiagnosticException(
+          Diagnostic::Error(
+              statement.sourceRange,
+              "procedural continuous assignment (assign/deassign) is not "
+              "supported"));
+
     default:
       throw DiagnosticException(
           Diagnostic::Error(

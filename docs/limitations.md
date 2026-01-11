@@ -29,7 +29,20 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 - No net types (`wire`, `tri`, etc.)
 - No multi-driver resolution / strength
 - `inout` ports not supported (require nets)
-- No continuous assignments (`assign` statements)
+
+## Continuous Assignments
+
+Supported:
+
+- Basic `assign var = expr;` at module level
+- Complex RHS expressions with automatic sensitivity detection
+
+Not yet supported:
+
+- Delays (`assign #10 a = b;`)
+- Drive strengths (`assign (strong1, pull0) a = b;`)
+- Complex LHS targets (element select, concatenation)
+- Net declaration assignments (`wire logic a = b;`)
 
 ## Packages
 

@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -110,6 +111,9 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
 
   // Counter for generating unique port driver process names within this module
   std::size_t port_driver_counter = 0;
+
+  // Counter for generating unique continuous assignment process names
+  std::size_t cont_assign_counter = 0;
 
   for (const auto& symbol : body.members()) {
     using SK = slang::ast::SymbolKind;
@@ -277,12 +281,62 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
         // Example: enum {A, B} makes A, B visible - resolved at reference
         break;
 
-      // Unsupported features - explicit errors
-      case SK::ContinuousAssign:
-        throw DiagnosticException(
-            Diagnostic::Error(
-                slang::SourceRange{symbol.location, symbol.location},
-                "continuous assignments (assign) are not yet supported"));
+      case SK::ContinuousAssign: {
+        const auto& cont_assign =
+            symbol.as<slang::ast::ContinuousAssignSymbol>();
+
+        // Reject delays (not yet supported)
+        if (cont_assign.getDelay() != nullptr) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  slang::SourceRange{symbol.location, symbol.location},
+                  "continuous assignment delays are not yet supported"));
+        }
+
+        // Get the assignment expression
+        const auto& assign_expr = cont_assign.getAssignment();
+
+        // Must be an assignment expression
+        if (assign_expr.kind != slang::ast::ExpressionKind::Assignment) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  slang::SourceRange{symbol.location, symbol.location},
+                  "unexpected expression in continuous assignment"));
+        }
+
+        const auto& slang_assign =
+            assign_expr.as<slang::ast::AssignmentExpression>();
+
+        // Lower LHS to get target (MVP: simple variables only)
+        const auto& left = slang_assign.left();
+        if (left.kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  left.sourceRange,
+                  "only simple variable targets supported in continuous "
+                  "assignments"));
+        }
+        const auto& target_sym =
+            left.as<slang::ast::NamedValueExpression>().symbol;
+        mir::AssignmentTarget target(&target_sym);
+
+        // Lower RHS expression
+        auto value = LowerExpression(slang_assign.right());
+
+        // Create driver statement
+        auto driver_stmt = std::make_unique<mir::AssignStatement>(
+            std::move(target), std::move(value));
+
+        // Create always_comb-like process
+        auto process = CreateImplicitAlwaysComb(
+            std::move(driver_stmt), cont_assign_counter);
+        process->name = fmt::format("_cont_assign_{}", cont_assign_counter++);
+
+        module->processes.push_back(std::move(process));
+        break;
+      }
+
+        // Unsupported features - explicit errors
 
       case SK::GenerateBlock:
       case SK::GenerateBlockArray:
