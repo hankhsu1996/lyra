@@ -9,6 +9,7 @@ namespace lyra::common {
 /// Category of system function for dispatch
 enum class SystemFunctionCategory : uint8_t {
   kSimControl,      // $finish, $stop, $exit
+  kSeverity,        // $fatal, $error, $warning, $info
   kDisplay,         // $display (variadic, special handling)
   kTimeFormat,      // $timeformat (mutates global state)
   kPrintTimescale,  // $printtimescale
@@ -51,6 +52,12 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$finish", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$stop", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$exit", .category = Cat::kSimControl, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = ""},
+
+  // Severity Tasks
+  {.name = "$fatal", .category = Cat::kSeverity, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$error", .category = Cat::kSeverity, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$warning", .category = Cat::kSeverity, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$info", .category = Cat::kSeverity, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
 
   // Display Tasks
   {.name = "$display", .category = Cat::kDisplay, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},

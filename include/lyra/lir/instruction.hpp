@@ -156,6 +156,11 @@ struct Instruction {
   // (format string or filename). Computed at MIR-to-LIR lowering time.
   bool first_operand_is_string_literal = false;
 
+  // Source location for severity tasks ($fatal, $error, $warning, $info).
+  // Propagated from MIR SystemCallExpression.
+  std::optional<std::string> source_file;
+  std::optional<uint32_t> source_line;
+
   static auto Basic(
       InstructionKind kind, TempRef result, std::vector<Operand> operands)
       -> Instruction {

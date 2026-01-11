@@ -88,6 +88,66 @@ class Stop {
   }
 };
 
+// Awaitable for $fatal - terminates simulation after printing severity message
+class Fatal {
+  int finish_number_;
+  std::string_view file_;
+  int line_;
+  std::string_view scope_;
+  std::string message_;
+
+ public:
+  Fatal(
+      int finish_number, std::string_view file, int line,
+      std::string_view scope, std::string message = "")
+      : finish_number_(finish_number),
+        file_(file),
+        line_(line),
+        scope_(scope),
+        message_(std::move(message)) {
+  }
+
+  static auto await_ready() -> bool {
+    return false;
+  }
+
+  [[nodiscard]] auto await_suspend(std::coroutine_handle<> /*handle*/) const
+      -> bool {
+    if (finish_number_ >= 1) {
+      if (message_.empty()) {
+        std::println(
+            std::cout, "FATAL: {}:{}: {} @ {}", file_, line_, scope_,
+            CurrentTime());
+      } else {
+        std::println(
+            std::cout, "FATAL: {}:{}: {} @ {}: {}", file_, line_, scope_,
+            CurrentTime(), message_);
+      }
+    }
+    simulation_finished = true;
+    simulation_stopped = true;  // $fatal has non-zero exit code
+    return true;                // Suspend forever (never resume)
+  }
+
+  static void await_resume() {
+  }
+};
+
+// Print severity message for $error, $warning, $info (non-terminating)
+inline void SeverityMessage(
+    std::string_view severity, std::string_view file, int line,
+    std::string_view scope, const std::string& message = "") {
+  if (message.empty()) {
+    std::println(
+        std::cout, "{}: {}:{}: {} @ {}", severity, file, line, scope,
+        CurrentTime());
+  } else {
+    std::println(
+        std::cout, "{}: {}:{}: {} @ {}: {}", severity, file, line, scope,
+        CurrentTime(), message);
+  }
+}
+
 // NOLINTEND(readability-identifier-naming)
 
 class Module {

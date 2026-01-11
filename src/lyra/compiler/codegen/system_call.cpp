@@ -49,6 +49,87 @@ auto Codegen::EmitSystemCall(const mir::SystemCallExpression& syscall) -> bool {
     return true;
   }
 
+  // Severity tasks: $fatal, $error, $warning, $info
+  // Source location is in syscall metadata.
+  // Arguments: $fatal: [finish_num, format_args...], others: [format_args...]
+  if (syscall.name == "$fatal" || syscall.name == "$error" ||
+      syscall.name == "$warning" || syscall.name == "$info") {
+    used_features_ |= CodegenFeature::kDisplay;
+    used_features_ |= CodegenFeature::kModuleName;
+
+    // Extract arguments based on task type
+    size_t arg_idx = 0;
+    std::string finish_num_str = "1";  // Default for $fatal
+
+    if (syscall.name == "$fatal" && !syscall.arguments.empty()) {
+      // First argument is finish_number for $fatal
+      if (const auto* lit = dynamic_cast<const mir::LiteralExpression*>(
+              syscall.arguments[0].get())) {
+        finish_num_str = std::to_string(lit->literal.value.AsInt64());
+      }
+      arg_idx = 1;
+    }
+
+    // Get file and line from metadata
+    std::string file_str = syscall.source_file.value_or("");
+    std::string line_str = std::to_string(syscall.source_line.value_or(0));
+
+    // Determine severity string for non-fatal tasks
+    std::string severity;
+    if (syscall.name == "$error") {
+      severity = "ERROR";
+    } else if (syscall.name == "$warning") {
+      severity = "WARNING";
+    } else if (syscall.name == "$info") {
+      severity = "INFO";
+    }
+
+    // Start generating the call
+    Indent();
+    if (syscall.name == "$fatal") {
+      out_ << "co_await lyra::sdk::Fatal(" << finish_num_str << ", \""
+           << common::EscapeForCppString(file_str) << "\", " << line_str
+           << ", kModuleName";
+    } else {
+      out_ << "lyra::sdk::SeverityMessage(\"" << severity << "\", \""
+           << common::EscapeForCppString(file_str) << "\", " << line_str
+           << ", kModuleName";
+    }
+
+    // Add message argument if present
+    if (arg_idx < syscall.arguments.size()) {
+      out_ << ", ";
+      auto fmt_info = ExtractFormatString(*syscall.arguments[arg_idx]);
+      size_t first_format_arg =
+          fmt_info.is_string_literal ? arg_idx + 1 : arg_idx;
+
+      if (fmt_info.is_string_literal) {
+        if (fmt_info.has_format_specifiers &&
+            first_format_arg < syscall.arguments.size()) {
+          // Format string with arguments
+          out_ << "std::format(\""
+               << common::TransformToStdFormat(fmt_info.text) << "\"";
+          for (size_t i = first_format_arg; i < syscall.arguments.size(); ++i) {
+            out_ << ", ";
+            EmitExpression(*syscall.arguments[i], kPrecEquality);
+          }
+          out_ << ")";
+        } else {
+          // Plain string literal
+          out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\"";
+        }
+      } else {
+        // Expression argument - convert to string
+        out_ << "std::to_string(";
+        EmitExpression(*syscall.arguments[arg_idx], kPrecEquality);
+        out_ << ")";
+      }
+    }
+
+    out_ << ");\n";
+    return true;
+  }
+
   // Handle strobe variants - schedule to Postponed region
   if (syscall.name == "$strobe" || syscall.name == "$strobeb" ||
       syscall.name == "$strobeo" || syscall.name == "$strobeh") {

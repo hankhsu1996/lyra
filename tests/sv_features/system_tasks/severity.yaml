@@ -1,0 +1,238 @@
+feature: severity
+description: Tests for severity system tasks ($fatal, $error, $warning, $info)
+
+cases:
+  # $info tests - should continue simulation
+  - name: info_basic
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $info("Info message");
+          x = 2;  // Should execute
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+      output:
+        contains:
+          - "INFO"
+          - "Info message"
+
+  - name: info_no_message
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          $info;
+          x = 42;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+      output:
+        contains:
+          - "INFO"
+
+  # $warning tests - should continue simulation
+  - name: warning_basic
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $warning("Warning message");
+          x = 2;  // Should execute
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+      output:
+        contains:
+          - "WARNING"
+          - "Warning message"
+
+  - name: warning_with_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          $warning("Value is %0d", x);
+          x = 20;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 20
+      output:
+        contains:
+          - "WARNING"
+          - "Value is 10"
+
+  # $error tests - should continue simulation (VCS style)
+  - name: error_basic
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $error("Error message");
+          x = 2;  // Should execute (non-terminating)
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+      output:
+        contains:
+          - "ERROR"
+          - "Error message"
+
+  - name: error_with_format
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $error("Invalid value: %0d", x);
+          x = 6;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 6
+      output:
+        contains:
+          - "ERROR"
+          - "Invalid value: 5"
+
+  - name: error_no_message
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          $error;
+          x = 99;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 99
+      output:
+        contains:
+          - "ERROR"
+
+  # $fatal tests - should terminate simulation
+  - name: fatal_basic
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          $fatal(1, "Fatal error");
+          x = 2;  // Should NOT execute
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1
+      output:
+        contains:
+          - "FATAL"
+          - "Fatal error"
+
+  - name: fatal_no_message
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          $fatal(1);
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+      output:
+        contains:
+          - "FATAL"
+
+  - name: fatal_level_0
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $fatal(0);  // Level 0: minimal output
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+
+  - name: fatal_default_level
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 7;
+          $fatal;  // No args = level 1
+        end
+      endmodule
+    expect:
+      variables:
+        x: 7
+      output:
+        contains:
+          - "FATAL"
+
+  # Time in output
+  - name: info_with_delay
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          #100;
+          $info("After delay");
+          x = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1
+      output:
+        contains:
+          - "INFO"
+          - "100"
+
+  # Multiple severity calls
+  - name: multiple_severities
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          $info("First");
+          x = 1;
+          $warning("Second");
+          x = 2;
+          $error("Third");
+          x = 3;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 3
+      output:
+        contains:
+          - "INFO"
+          - "First"
+          - "WARNING"
+          - "Second"
+          - "ERROR"
+          - "Third"

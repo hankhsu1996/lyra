@@ -428,6 +428,16 @@ class SystemCallExpression : public Expression {
   std::string name;
   std::vector<std::unique_ptr<Expression>> arguments;
 
+  // Source location for severity tasks ($fatal, $error, $warning, $info).
+  // Captured at AST lowering time since slang source info is only available
+  // there.
+  std::optional<std::string> source_file;
+  std::optional<uint32_t> source_line;
+
+  // True if the first format argument is a string literal.
+  // Set at AST lowering time to avoid name-based special casing in MIR->LIR.
+  bool first_operand_is_string_literal = false;
+
   SystemCallExpression(
       std::string name, std::vector<std::unique_ptr<Expression>> args,
       Type return_type)

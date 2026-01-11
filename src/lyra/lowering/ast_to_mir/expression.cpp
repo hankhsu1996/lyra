@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
+#include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -23,6 +25,7 @@
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
+#include <slang/text/SourceManager.h>
 #include <spdlog/spdlog.h>
 
 #include "lyra/common/builtin_method.hpp"
@@ -665,11 +668,65 @@ auto LowerExpression(const slang::ast::Expression& expression)
           }
         }
 
+        // Check if this is a severity task ($fatal, $error, $warning, $info)
+        const auto* func_info = common::FindSystemFunction(name);
+        bool is_severity_task =
+            func_info != nullptr &&
+            func_info->category == common::SystemFunctionCategory::kSeverity;
+
         std::vector<std::unique_ptr<mir::Expression>> arguments;
-        // Don't lower arguments for _root variants
-        if (!is_root_variant) {
+
+        // For severity tasks, capture source location as metadata
+        std::optional<std::string> source_file;
+        std::optional<uint32_t> source_line;
+        if (is_severity_task) {
+          // Get source location from SourceManager via the SystemCallInfo scope
+          auto loc = expression.sourceRange.start();
+          const auto& sys_info = std::get<1>(call_expression.subroutine);
+          const auto* sm = sys_info.scope->getCompilation().getSourceManager();
+          if (sm != nullptr) {
+            source_file = std::string(sm->getFileName(loc));
+            source_line = static_cast<uint32_t>(sm->getLineNumber(loc));
+          }
+
+          // For $fatal, first argument is finish_number - keep it first
+          // Arguments become: [finish_num, format_args...]
+          size_t user_args_start = 0;
+          if (name == "$fatal") {
+            if (!call_expression.arguments().empty()) {
+              arguments.push_back(
+                  LowerExpression(*call_expression.arguments()[0]));
+              user_args_start = 1;
+            } else {
+              // Default finish_number is 1 if no arguments
+              arguments.push_back(
+                  std::make_unique<mir::LiteralExpression>(
+                      common::Literal::Int(1)));
+            }
+          }
+
+          // Add user arguments (format args) - no more file/line prepending
+          for (size_t i = user_args_start;
+               i < call_expression.arguments().size(); ++i) {
+            arguments.push_back(
+                LowerExpression(*call_expression.arguments()[i]));
+          }
+        } else if (!is_root_variant) {
+          // Don't lower arguments for _root variants
           for (const auto& arg : call_expression.arguments()) {
             arguments.push_back(LowerExpression(*arg));
+          }
+        }
+
+        // Determine if first format argument is a string literal.
+        // For $fatal: format string is at index 1 (after finish_num)
+        // For other tasks: format string is at index 0
+        bool first_operand_is_string_literal = false;
+        size_t format_idx = (name == "$fatal") ? 1 : 0;
+        if (format_idx < call_expression.arguments().size()) {
+          const auto& arg = *call_expression.arguments()[format_idx];
+          if (arg.kind == slang::ast::ExpressionKind::StringLiteral) {
+            first_operand_is_string_literal = true;
           }
         }
 
@@ -678,8 +735,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
         if (!return_type_result) {
           throw DiagnosticException(std::move(return_type_result.error()));
         }
-        return std::make_unique<mir::SystemCallExpression>(
+        auto syscall = std::make_unique<mir::SystemCallExpression>(
             effective_name, std::move(arguments), *return_type_result);
+        syscall->source_file = std::move(source_file);
+        syscall->source_line = source_line;
+        syscall->first_operand_is_string_literal =
+            first_operand_is_string_literal;
+        return syscall;
       }
 
       // Check if this is a user-defined function call

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -649,6 +650,53 @@ auto BuildFormatString(
     fmt += GetFormatSpecifier(val, default_format);
   }
   return fmt;
+}
+
+// Unified format message function for display-like system tasks.
+// Encapsulates the common pattern: extract format string, collect args, format.
+// Returns the formatted message string; caller handles output and newlines.
+//
+// Handles three cases:
+// 1. String literal with format specifiers: use as format string
+// 2. String literal without format specifiers: prefix + formatted args
+// 3. No string literal: format all args with default_format
+auto FormatMessage(
+    std::span<const RuntimeValue> arg_values, bool first_is_string_literal,
+    char default_format, const TimeFormatContext* time_ctx) -> std::string {
+  if (arg_values.empty()) {
+    return "";
+  }
+
+  // Extract format info from first argument
+  auto fmt_info = ExtractFormatString(arg_values[0], first_is_string_literal);
+
+  // Collect format arguments (skip first if it was string literal)
+  std::vector<RuntimeValue> format_args;
+  size_t first_arg = fmt_info.is_string_literal ? 1 : 0;
+  for (size_t i = first_arg; i < arg_values.size(); ++i) {
+    format_args.push_back(arg_values[i]);
+  }
+
+  std::string result;
+
+  if (fmt_info.has_format_specifiers) {
+    // Case 1: String with format specifiers - use as format string
+    result = FormatDisplay(fmt_info.text, format_args, time_ctx);
+  } else if (fmt_info.is_string_literal) {
+    // Case 2: String literal without format specifiers - prefix + formatted
+    // args
+    result = fmt_info.text;
+    if (!format_args.empty()) {
+      std::string format_str = BuildFormatString(format_args, default_format);
+      result += FormatDisplay(format_str, format_args, time_ctx);
+    }
+  } else {
+    // Case 3: No string literal - format all args
+    std::string format_str = BuildFormatString(format_args, default_format);
+    result = FormatDisplay(format_str, format_args, time_ctx);
+  }
+
+  return result;
 }
 
 // Compute the actual array index after adjusting for lower bound and checking
@@ -1951,6 +1999,88 @@ auto RunInstruction(
         return InstructionResult::Finish(is_stop);
       }
 
+      // Severity tasks: $fatal, $error, $warning, $info
+      // Source location is in instruction metadata.
+      // Arguments: $fatal: [finish_num, format_args...], others:
+      // [format_args...]
+      if (instr.system_call_name == "$fatal" ||
+          instr.system_call_name == "$error" ||
+          instr.system_call_name == "$warning" ||
+          instr.system_call_name == "$info") {
+        // Determine severity string
+        std::string severity;
+        if (instr.system_call_name == "$fatal") {
+          severity = "FATAL";
+        } else if (instr.system_call_name == "$error") {
+          severity = "ERROR";
+        } else if (instr.system_call_name == "$warning") {
+          severity = "WARNING";
+        } else {
+          severity = "INFO";
+        }
+
+        // Parse arguments based on task type
+        size_t arg_idx = 0;
+        int finish_num = 1;  // Default for $fatal
+
+        if (instr.system_call_name == "$fatal" && !instr.operands.empty()) {
+          finish_num = static_cast<int>(
+              get_operand_value(instr.operands[0]).AsNarrow().AsUInt64());
+          arg_idx = 1;
+        }
+
+        // Get file and line from instruction metadata
+        std::string file_str = instr.source_file.value_or("");
+        int line_num = static_cast<int>(instr.source_line.value_or(0));
+
+        // Get hierarchical scope name
+        std::string scope = instance_context->instance_path;
+
+        // Build message from remaining arguments (if any)
+        std::string message;
+        if (arg_idx < instr.operands.size()) {
+          // Collect message arguments (starting after finish_num for $fatal)
+          std::vector<RuntimeValue> msg_args;
+          for (size_t i = arg_idx; i < instr.operands.size(); ++i) {
+            msg_args.push_back(get_operand_value(instr.operands[i]));
+          }
+
+          TimeFormatContext time_ctx{
+              .time_format = simulation_context.time_format,
+              .module_unit_power =
+                  simulation_context.timescale
+                      ? simulation_context.timescale->unit_power
+                      : common::TimeScale::kDefaultUnitPower,
+              .global_precision_power =
+                  simulation_context.global_precision_power};
+
+          // first_operand_is_string_literal refers to the format string operand
+          message = FormatMessage(
+              msg_args, instr.first_operand_is_string_literal, 'd', &time_ctx);
+        }
+
+        // Only print if finish_num >= 1 for $fatal (or always for others)
+        bool should_print =
+            instr.system_call_name != "$fatal" || finish_num >= 1;
+
+        if (should_print) {
+          simulation_context.display_output
+              << severity << ": " << file_str << ":" << line_num << ": "
+              << scope << " @ " << simulation_context.current_time;
+          if (!message.empty()) {
+            simulation_context.display_output << ": " << message;
+          }
+          simulation_context.display_output << "\n";
+        }
+
+        // Only $fatal terminates
+        if (instr.system_call_name == "$fatal") {
+          return InstructionResult::Finish(
+              true);  // is_stop = true for error exit
+        }
+        return InstructionResult::Continue();
+      }
+
       if (instr.system_call_name == "$readmemh" ||
           instr.system_call_name == "$readmemb") {
         bool is_hex = instr.system_call_name == "$readmemh";
@@ -1974,12 +2104,10 @@ auto RunInstruction(
           instr.system_call_name == "$writeh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
 
-        // Empty call - just print newline if needed
-        if (instr.operands.empty()) {
-          if (props.append_newline) {
-            simulation_context.display_output << "\n";
-          }
-          return InstructionResult::Continue();
+        // Collect argument values
+        std::vector<RuntimeValue> arg_values;
+        for (const auto& operand : instr.operands) {
+          arg_values.push_back(get_operand_value(operand));
         }
 
         // Create time format context for %t specifier
@@ -1991,32 +2119,11 @@ auto RunInstruction(
             .global_precision_power =
                 simulation_context.global_precision_power};
 
-        // Extract format string info from first operand
-        bool first_is_string_literal = instr.first_operand_is_string_literal;
-        auto fmt_info = ExtractFormatString(
-            get_operand_value(instr.operands[0]), first_is_string_literal);
-
-        // Collect arguments (skip first if it was a format string/prefix)
-        std::vector<RuntimeValue> args;
-        size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
-        for (size_t i = first_arg_idx; i < instr.operands.size(); ++i) {
-          args.push_back(get_operand_value(instr.operands[i]));
-        }
-
-        // Print prefix (string literal without format specifiers)
-        if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
-          simulation_context.display_output << fmt_info.text;
-        }
-
-        // Format and print arguments
-        std::string format_str =
-            fmt_info.has_format_specifiers
-                ? fmt_info.text
-                : BuildFormatString(args, props.default_format);
-        if (!args.empty()) {
-          simulation_context.display_output
-              << FormatDisplay(format_str, args, &time_ctx);
-        }
+        // Format and output message
+        std::string message = FormatMessage(
+            arg_values, instr.first_operand_is_string_literal,
+            props.default_format, &time_ctx);
+        simulation_context.display_output << message;
 
         if (props.append_newline) {
           simulation_context.display_output << "\n";
@@ -2030,9 +2137,6 @@ auto RunInstruction(
           instr.system_call_name == "$strobeo" ||
           instr.system_call_name == "$strobeh") {
         auto props = GetDisplayVariantProps(instr.system_call_name);
-
-        // Check if first operand is a string literal (from instruction
-        // metadata)
         bool first_is_string_literal = instr.first_operand_is_string_literal;
 
         // Collect argument values now (they'll be read in Postponed region)
@@ -2056,42 +2160,10 @@ auto RunInstruction(
                 .action = [&simulation_context, props,
                            arg_values = std::move(arg_values), time_ctx,
                            first_is_string_literal]() {
-                  // Empty call - just print newline if needed
-                  if (arg_values.empty()) {
-                    if (props.append_newline) {
-                      simulation_context.display_output << "\n";
-                    }
-                    return;
-                  }
-
-                  // Extract format string info from first argument
-                  auto fmt_info = ExtractFormatString(
-                      arg_values[0], first_is_string_literal);
-
-                  // Collect arguments (skip first if it was a format
-                  // string/prefix)
-                  std::vector<RuntimeValue> args;
-                  size_t first_arg_idx = fmt_info.is_string_literal ? 1 : 0;
-                  for (size_t i = first_arg_idx; i < arg_values.size(); ++i) {
-                    args.push_back(arg_values[i]);
-                  }
-
-                  // Print prefix (string literal without format specifiers)
-                  if (fmt_info.is_string_literal &&
-                      !fmt_info.has_format_specifiers) {
-                    simulation_context.display_output << fmt_info.text;
-                  }
-
-                  // Format and print arguments
-                  std::string format_str =
-                      fmt_info.has_format_specifiers
-                          ? fmt_info.text
-                          : BuildFormatString(args, props.default_format);
-                  if (!args.empty()) {
-                    simulation_context.display_output
-                        << FormatDisplay(format_str, args, &time_ctx);
-                  }
-
+                  std::string message = FormatMessage(
+                      arg_values, first_is_string_literal, props.default_format,
+                      &time_ctx);
+                  simulation_context.display_output << message;
                   if (props.append_newline) {
                     simulation_context.display_output << "\n";
                   }

@@ -347,18 +347,6 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
           (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
            system_call.name == "$monitoro" || system_call.name == "$monitorh");
 
-      // Check if first argument is a string literal (for format string or
-      // filename detection). This info is preserved in the instruction since
-      // the operand may be lowered to a temp.
-      bool first_operand_is_string_literal = false;
-      if (!system_call.arguments.empty() && system_call.arguments[0]) {
-        const auto& first_arg = *system_call.arguments[0];
-        if (first_arg.kind == mir::Expression::Kind::kLiteral) {
-          const auto& lit = mir::As<mir::LiteralExpression>(first_arg);
-          first_operand_is_string_literal = lit.literal.IsStringLiteral();
-        }
-      }
-
       std::vector<Operand> operands;
       std::vector<TempRef> arguments;
 
@@ -471,14 +459,18 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
         auto instruction = Instruction::SystemCall(
             system_call.name, std::move(operands), result, system_call.type);
         instruction.first_operand_is_string_literal =
-            first_operand_is_string_literal;
+            system_call.first_operand_is_string_literal;
+        instruction.source_file = system_call.source_file;
+        instruction.source_line = system_call.source_line;
         builder.AddInstruction(std::move(instruction));
       } else {
         // No result for system tasks
         auto instruction =
             Instruction::SystemCall(system_call.name, std::move(operands));
         instruction.first_operand_is_string_literal =
-            first_operand_is_string_literal;
+            system_call.first_operand_is_string_literal;
+        instruction.source_file = system_call.source_file;
+        instruction.source_line = system_call.source_line;
         builder.AddInstruction(std::move(instruction));
       }
 
