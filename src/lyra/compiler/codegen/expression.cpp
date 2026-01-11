@@ -219,8 +219,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kElementSelect: {
       const auto& select = mir::As<mir::ElementSelectExpression>(expr);
 
-      // Check if this is bit/element selection (packed type) or array access
-      if (select.value->type.kind == common::Type::Kind::kIntegral) {
+      // Check if this is bit/element selection (bitvector type) or array access
+      if (select.value->type.IsBitvector()) {
         // Get element width from result type
         size_t element_width = expr.type.GetBitWidth();
 
@@ -306,7 +306,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       int32_t lsb = std::min(range.left, range.right);
 
       // Adjust for non-zero-based ranges (e.g., bit [63:32])
-      if (range.value->type.kind == common::Type::Kind::kIntegral) {
+      // Packed structs return 0 from GetElementLower() (always 0-based)
+      if (range.value->type.IsBitvector()) {
         lsb -= range.value->type.GetElementLower();
       }
 

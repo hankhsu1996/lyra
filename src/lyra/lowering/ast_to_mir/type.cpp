@@ -75,6 +75,34 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
         struct_type.isFourState);
   }
 
+  // Check for packed union before isIntegral() (PackedUnionType is an
+  // IntegralType). Packed unions reuse PackedStruct representation since
+  // runtime behavior is identical - only field offsets differ (all 0 for
+  // unions).
+  if (type.kind == slang::ast::SymbolKind::PackedUnionType) {
+    const auto& union_type = type.as<slang::ast::PackedUnionType>();
+
+    std::vector<common::PackedStructField> fields;
+    for (const auto& field :
+         union_type.membersOfType<slang::ast::FieldSymbol>()) {
+      auto field_type_result = LowerType(field.getType(), source_range);
+      if (!field_type_result) {
+        return field_type_result;
+      }
+
+      fields.push_back(
+          common::PackedStructField{
+              .name = std::string(field.name),
+              .bit_offset = field.bitOffset,  // Always 0 for union members
+              .bit_width = field.getType().getBitWidth(),
+              .field_type = std::make_shared<Type>(*field_type_result)});
+    }
+
+    return Type::PackedStruct(
+        std::move(fields), union_type.bitWidth, union_type.isSigned,
+        union_type.isFourState);
+  }
+
   // Check for multi-dimensional packed arrays before isIntegral()
   // e.g., bit [3:0][7:0] has isPackedArray()=true
   if (type.isPackedArray()) {

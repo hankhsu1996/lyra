@@ -1,0 +1,338 @@
+feature: packed_union
+description: Packed union support - overlapping fields, type punning, and member access
+
+cases:
+  - name: hard_union_basic
+    description: Hard packed union - all members same size, basic access
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_word, result_bits;
+        initial begin
+          u = 16'hAABB;
+          result_word = u.word;
+          result_bits = u.bits;
+        end
+      endmodule
+    expect:
+      variables:
+        result_word: 43707  # 0xAABB
+        result_bits: 43707  # 0xAABB (same value, different view)
+
+  - name: hard_union_type_punning
+    description: Hard packed union - write one member, read another
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] as_logic;
+          bit [15:0] as_bit;
+        } pun_t;
+        pun_t u;
+        int result;
+        initial begin
+          u.as_logic = 16'hDEAD;
+          result = u.as_bit;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 57005  # 0xDEAD
+
+  - name: hard_union_signed_unsigned
+    description: Hard packed union - same bits, different signedness interpretation
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [7:0] as_unsigned;
+          logic signed [7:0] as_signed;
+        } byte_view_t;
+        byte_view_t u;
+        int result_u, result_s;
+        initial begin
+          u.as_unsigned = 8'hFF;
+          result_u = u.as_unsigned;
+          result_s = u.as_signed;
+        end
+      endmodule
+    expect:
+      variables:
+        result_u: 255
+        result_s: -1
+
+  - name: hard_union_field_write
+    description: Hard packed union - write one member, affects the other
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] view1;
+          logic [15:0] view2;
+        } my_union_t;
+        my_union_t u;
+        int result;
+        initial begin
+          u.view1 = 16'h1234;
+          u.view2 = 16'h5678;
+          result = u.view1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 22136  # 0x5678 - view2 overwrote view1
+
+  - name: hard_union_arithmetic
+    description: Hard packed union used in arithmetic expression
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [7:0] val;
+          logic [7:0] num;
+        } num_t;
+        num_t u;
+        int result;
+        initial begin
+          u.val = 8'd100;
+          result = u + 50;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 150
+
+  - name: hard_union_with_struct_member
+    description: Hard packed union containing a packed struct member
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] high;
+          logic [7:0] low;
+        } pair_t;
+        typedef union packed {
+          pair_t pair;
+          logic [15:0] word;
+        } combo_t;
+        combo_t u;
+        int result_word, result_high, result_low;
+        initial begin
+          u.word = 16'hABCD;
+          result_word = u.word;
+          result_high = u.pair.high;
+          result_low = u.pair.low;
+        end
+      endmodule
+    expect:
+      variables:
+        result_word: 43981  # 0xABCD
+        result_high: 171    # 0xAB
+        result_low: 205     # 0xCD
+
+  - name: hard_union_copy
+    description: Hard packed union - copy one union to another
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] a;
+          logic [15:0] b;
+        } my_union_t;
+        my_union_t u1, u2;
+        int result;
+        initial begin
+          u1.a = 16'hBEEF;
+          u2 = u1;
+          result = u2.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 48879  # 0xBEEF
+
+  - name: hard_union_comparison
+    description: Hard packed union equality comparison
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] val;
+          logic [15:0] num;
+        } cmp_t;
+        cmp_t u1, u2;
+        int result;
+        initial begin
+          u1.val = 16'h1234;
+          u2.num = 16'h1234;
+          result = (u1 == u2) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: hard_union_inline_declaration
+    description: Hard packed union without typedef
+    sv: |
+      module Test;
+        union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } u;
+        int result;
+        initial begin
+          u.word = 16'hCAFE;
+          result = u.bits;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 51966  # 0xCAFE
+
+  - name: hard_union_bitwise_ops
+    description: Hard packed union - bitwise operations
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [7:0] val;
+          logic [7:0] mask;
+        } bits_t;
+        bits_t u;
+        int result;
+        initial begin
+          u.val = 8'hF0;
+          result = u & 8'h0F;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: soft_union_different_sizes
+    description: Soft packed union - members with different sizes
+    sv: |
+      module Test;
+        typedef union soft packed {
+          logic [15:0] word;
+          logic [7:0] byte_val;
+        } my_union_t;
+        my_union_t u;
+        int result_word, result_byte;
+        initial begin
+          u.word = 16'hAABB;
+          result_word = u.word;
+          result_byte = u.byte_val;
+        end
+      endmodule
+    expect:
+      variables:
+        result_word: 43707  # 0xAABB
+        result_byte: 187    # 0xBB (low 8 bits)
+
+  - name: soft_union_write_narrow_read_wide
+    description: Soft packed union - write narrow member preserves MSBs
+    sv: |
+      module Test;
+        typedef union soft packed {
+          logic [15:0] wide;
+          logic [7:0] narrow;
+        } u_t;
+        u_t u;
+        int result;
+        initial begin
+          u.wide = 16'hFF00;
+          u.narrow = 8'hAB;
+          result = u.wide;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 65451  # 0xFFAB - MSBs preserved, LSBs overwritten
+
+  - name: union_bit_select
+    description: Bit select directly on packed union value
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_lsb, result_bit4, result_bit8, result_msb;
+        initial begin
+          u = 16'hABCD;  // binary: 1010_1011_1100_1101
+          result_lsb = u[0];   // LSB = 1
+          result_bit4 = u[4];  // bit 4 = 0
+          result_bit8 = u[8];  // bit 8 = 1
+          result_msb = u[15];  // MSB = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result_lsb: 1
+        result_bit4: 0
+        result_bit8: 1
+        result_msb: 1
+
+  - name: union_part_select
+    description: Part select directly on packed union value
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low_nibble, result_mid_byte, result_high_nibble;
+        initial begin
+          u = 16'hABCD;
+          result_low_nibble = u[3:0];   // 0xD = 13
+          result_mid_byte = u[11:4];    // 0xBC = 188
+          result_high_nibble = u[15:12]; // 0xA = 10
+        end
+      endmodule
+    expect:
+      variables:
+        result_low_nibble: 13
+        result_mid_byte: 188
+        result_high_nibble: 10
+
+  - name: union_indexed_part_select_ascending
+    description: Indexed ascending part select on packed union
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low, result_high;
+        initial begin
+          u = 16'hABCD;
+          result_low = u[0 +: 8];   // bits 7:0 = 0xCD = 205
+          result_high = u[8 +: 8];  // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171
+
+  - name: union_indexed_part_select_descending
+    description: Indexed descending part select on packed union
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [15:0] word;
+          logic [15:0] bits;
+        } my_union_t;
+        my_union_t u;
+        int result_low, result_high;
+        initial begin
+          u = 16'hABCD;
+          result_low = u[7 -: 8];   // bits 7:0 = 0xCD = 205
+          result_high = u[15 -: 8]; // bits 15:8 = 0xAB = 171
+        end
+      endmodule
+    expect:
+      variables:
+        result_low: 205
+        result_high: 171

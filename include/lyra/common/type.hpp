@@ -253,6 +253,12 @@ struct Type {
     return kind == Kind::kPackedStruct;
   }
 
+  // Is this a bitvector type (supports bit/part select operations)?
+  // Includes both integral types and packed structs/unions.
+  [[nodiscard]] auto IsBitvector() const -> bool {
+    return kind == Kind::kIntegral || kind == Kind::kPackedStruct;
+  }
+
   // Is this a dynamic array?
   [[nodiscard]] auto IsDynamicArray() const -> bool {
     return kind == Kind::kDynamicArray;
@@ -316,6 +322,10 @@ struct Type {
     }
     if (kind == Kind::kDynamicArray) {
       // Dynamic arrays are always 0-based
+      return 0;
+    }
+    if (kind == Kind::kPackedStruct) {
+      // Packed structs are always 0-based (bit indices start at 0)
       return 0;
     }
     throw std::runtime_error("Type is not indexable");

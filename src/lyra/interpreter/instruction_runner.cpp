@@ -1389,9 +1389,19 @@ auto RunInstruction(
       auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
 
       const auto& result_type = instr.result_type.value();
-      assert(result_type.kind == common::Type::Kind::kIntegral);
-      auto result_data = std::get<common::IntegralData>(result_type.data);
-      size_t width = result_data.bit_width;
+      // LoadPackedBits can extract integral types or packed aggregates
+      // (struct/union)
+      assert(
+          result_type.kind == common::Type::Kind::kIntegral ||
+          result_type.kind == common::Type::Kind::kPackedStruct);
+      size_t width = result_type.GetBitWidth();
+      bool is_signed = false;
+      if (result_type.kind == common::Type::Kind::kIntegral) {
+        is_signed = std::get<common::IntegralData>(result_type.data).is_signed;
+      } else {
+        is_signed =
+            std::get<common::PackedStructData>(result_type.data).is_signed;
+      }
 
       RuntimeValue result;
       if (width <= 64) {
@@ -1404,18 +1414,17 @@ auto RunInstruction(
         } else {
           extracted = (value.AsNarrow().AsUInt64() >> bit_offset) & mask;
         }
-        result = result_data.is_signed
-                     ? RuntimeValue::IntegralSigned(
-                           static_cast<int64_t>(extracted), width)
-                     : RuntimeValue::IntegralUnsigned(extracted, width);
+        result = is_signed ? RuntimeValue::IntegralSigned(
+                                 static_cast<int64_t>(extracted), width)
+                           : RuntimeValue::IntegralUnsigned(extracted, width);
       } else {
         // Wide - extract as WideBit
         auto wide_value = value.IsWide() ? value.AsWideBit()
                                          : common::WideBit::FromUInt64(
                                                value.AsNarrow().AsUInt64(), 2);
         auto extracted = wide_value.ExtractSlice(bit_offset, width);
-        result = RuntimeValue::IntegralWide(
-            std::move(extracted), width, result_data.is_signed);
+        result =
+            RuntimeValue::IntegralWide(std::move(extracted), width, is_signed);
       }
       temp_table.Write(instr.result.value(), result);
       return InstructionResult::Continue();
