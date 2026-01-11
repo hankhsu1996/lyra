@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(clang-tidy:*), Bash(run-clang-tidy:*), Bash(npx prettier:*), Bash(buildifier:*), AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), AskUserQuestion
 ---
 
 # Commit
@@ -16,31 +16,25 @@ Create a commit following the project format.
 
 ## Pre-commit Checks
 
-Before committing, format and lint changed files:
+Before committing, format ALL files in the codebase (format is fast, so we run it on everything):
 
-1. **C++ files** - If any `.cpp` or `.hpp` files changed:
-
-   ```bash
-   clang-format -i <changed-cpp-files>
-   clang-tidy -p . <changed-cpp-files>              # Few files
-   run-clang-tidy -p . -j 20 <changed-cpp-files>    # Many files (parallel)
-   ```
-
-   **CRITICAL: Fix ALL clang-tidy warnings, including pre-existing ones.** If a file you're committing has warnings - even on lines you didn't change - you MUST fix them. Never dismiss warnings as "pre-existing". Leave files cleaner than you found them.
-
-2. **Documentation** - If any `.md` files changed:
+1. **C++ files** - Format all source files:
 
    ```bash
-   npx prettier --write <changed-md-files>
+   find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
    ```
 
-3. **Bazel files** - If any `BUILD.bazel`, `.bzl`, or `MODULE.bazel` files changed:
+2. **Documentation** - Format all markdown files:
 
    ```bash
-   buildifier <changed-bazel-files>
+   npx prettier --write "**/*.md"
    ```
 
-Skip formatting if files are already clean (no diff after format).
+3. **Bazel files** - Format all Bazel files:
+
+   ```bash
+   buildifier -r .
+   ```
 
 ## Commit Format
 
@@ -80,9 +74,8 @@ Bullet points should describe **what changed**, not background context or why th
 ## Instructions
 
 1. **Check branch first** - If on main, ask user for branch name and create it before any other steps
-2. Format changed files if needed (C++, markdown, Bazel)
-3. Run linters (clang-tidy for C++) and **fix ALL warnings before proceeding** - this includes pre-existing warnings in files you're touching
-4. Stage files with `git add <files>` (do NOT use `git add -A`)
-5. Run `git commit` as a separate command (do NOT chain with add)
+2. Format all files (C++, markdown, Bazel)
+3. Stage files with `git add <files>` (do NOT use `git add -A`)
+4. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.
