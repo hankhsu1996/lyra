@@ -1,0 +1,132 @@
+feature: plusargs
+description: Tests for $test$plusargs and $value$plusargs system functions
+
+cases:
+  - name: test_plusargs_match
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $test$plusargs("VERBOSE");
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+VERBOSE"]
+    expect:
+      variables:
+        result: 1
+
+  - name: test_plusargs_no_match
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $test$plusargs("VERBOSE");
+          $finish(0);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: test_plusargs_prefix_match
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $test$plusargs("VERB");
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+VERBOSE"]
+    expect:
+      variables:
+        result: 1
+
+  - name: value_plusargs_int
+    sv: |
+      module Test;
+        int value;
+        int matched;
+        initial begin
+          matched = $value$plusargs("COUNT=%d", value);
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+COUNT=42"]
+    expect:
+      variables:
+        value: 42
+        matched: 1
+
+  - name: value_plusargs_int_no_match
+    sv: |
+      module Test;
+        int value;
+        int matched;
+        initial begin
+          value = 999;
+          matched = $value$plusargs("COUNT=%d", value);
+          $finish(0);
+        end
+      endmodule
+    expect:
+      variables:
+        value: 999
+        matched: 0
+
+  - name: value_plusargs_string_output
+    sv: |
+      module Test;
+        int matched;
+        initial begin
+          string name;
+          matched = $value$plusargs("NAME=%s", name);
+          if (matched)
+            $display("NAME=%s", name);
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+NAME=hello"]
+    expect:
+      variables:
+        matched: 1
+      output:
+        contains:
+          - "NAME=hello"
+
+  - name: multiple_plusargs
+    sv: |
+      module Test;
+        int verbose;
+        int debug;
+        int count;
+        initial begin
+          verbose = $test$plusargs("VERBOSE");
+          debug = $test$plusargs("DEBUG");
+          $value$plusargs("COUNT=%d", count);
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+VERBOSE", "+COUNT=100"]
+    expect:
+      variables:
+        verbose: 1
+        debug: 0
+        count: 100
+
+  - name: value_plusargs_zero_format
+    sv: |
+      module Test;
+        int value;
+        int matched;
+        initial begin
+          matched = $value$plusargs("NUM=%0d", value);
+          $finish(0);
+        end
+      endmodule
+    plusargs: ["+NUM=123"]
+    expect:
+      variables:
+        value: 123
+        matched: 1

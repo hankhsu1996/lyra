@@ -7,8 +7,8 @@ namespace lyra::test {
 auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
   std::vector<TestCase> cases;
 
-  YAML::Node root = YAML::LoadFile(path);
-  std::string feature = root["feature"].as<std::string>("");
+  auto root = YAML::LoadFile(path);
+  auto feature = root["feature"].as<std::string>("");
 
   for (const auto& node : root["cases"]) {
     TestCase tc;
@@ -30,6 +30,13 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       }
     }
 
+    // Plusargs: plusargs: ["+VERBOSE", "+COUNT=42"]
+    if (node["plusargs"]) {
+      for (const auto& arg : node["plusargs"]) {
+        tc.plusargs.push_back(arg.as<std::string>());
+      }
+    }
+
     // Parse unified expect: block
     if (node["expect"]) {
       const auto& expect = node["expect"];
@@ -37,8 +44,8 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       // expect.variables: {var: value, ...}
       if (expect["variables"]) {
         for (const auto& pair : expect["variables"]) {
-          std::string var_name = pair.first.as<std::string>();
-          int64_t value = pair.second.as<int64_t>();
+          auto var_name = pair.first.as<std::string>();
+          auto value = pair.second.as<int64_t>();
           tc.expected_values[var_name] = value;
         }
       }

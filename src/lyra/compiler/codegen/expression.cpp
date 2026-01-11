@@ -27,6 +27,7 @@ namespace lyra::compiler {
 
 using codegen::GetBinaryPrecedence;
 using codegen::GetElementWidthAfterIndices;
+using codegen::IntegralLiteralToString;
 using codegen::IsWideWidth;
 using codegen::kPrecAssign;
 using codegen::kPrecBitwiseXor;
@@ -575,6 +576,24 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           EmitExpression(*syscall.arguments[1], kPrecLowest);
         }
         out_ << ")";
+      } else if (syscall.name == "$test$plusargs") {
+        used_features_ |= CodegenFeature::kPlusargs;
+        out_ << "lyra::sdk::Plusargs().TestPlusargs(";
+        // Emit format string - handle integral-encoded string literals
+        EmitStringLiteralArg(*syscall.arguments[0]);
+        out_ << ")";
+      } else if (syscall.name == "$value$plusargs") {
+        used_features_ |= CodegenFeature::kPlusargs;
+        const auto& output_target = syscall.output_targets[0];
+        // Choose Int vs String variant based on output target type
+        bool is_string_target =
+            output_target.base_type.has_value() &&
+            output_target.base_type->kind == common::Type::Kind::kString;
+        out_ << "lyra::sdk::Plusargs()."
+             << (is_string_target ? "ValuePlusargsString("
+                                  : "ValuePlusargsInt(");
+        EmitStringLiteralArg(*syscall.arguments[0]);
+        out_ << ", " << output_target.symbol->name << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
@@ -848,6 +867,25 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
       EmitExpression(expr, kPrecLowest);
       break;
   }
+}
+
+void Codegen::EmitStringLiteralArg(const mir::Expression& arg) {
+  if (arg.kind == mir::Expression::Kind::kLiteral) {
+    const auto& lit = mir::As<mir::LiteralExpression>(arg);
+    // String literals may be stored as integrals - extract the string value
+    if (lit.literal.IsStringLiteral()) {
+      std::string str;
+      if (lit.literal.type.kind == common::Type::Kind::kString) {
+        str = lit.literal.value.AsString();
+      } else {
+        str = codegen::IntegralLiteralToString(lit.literal);
+      }
+      out_ << "\"" << common::EscapeForCppString(str) << "\"";
+      return;
+    }
+  }
+  // Default: emit expression directly (e.g., string variable)
+  EmitExpression(arg, kPrecLowest);
 }
 
 }  // namespace lyra::compiler

@@ -5,11 +5,15 @@
 #include <gtest/gtest.h>
 #include <iterator>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "lyra/compiler/compiler.hpp"
+#include "lyra/compiler/compiler_result.hpp"
 #include "lyra/interpreter/interpreter.hpp"
+#include "lyra/interpreter/interpreter_options.hpp"
+#include "lyra/interpreter/interpreter_result.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/yaml_loader.hpp"
 
@@ -134,15 +138,18 @@ TEST_P(SvFeatureTest, Interpreter) {
     GTEST_SKIP() << "Interpreter skipped";
   }
 
+  interpreter::InterpreterOptions options;
+  options.plusargs = test_case.plusargs;
+
   interpreter::InterpreterResult result;
   if (test_case.IsMultiFile()) {
     auto paths = WriteTempFiles(test_case.files, test_case.name);
     auto sv_paths = FilterSvFiles(paths);
     ScopedCurrentPath current_dir(
         std::filesystem::path(paths.front()).parent_path());
-    result = interpreter::Interpreter::RunFromFiles(sv_paths);
+    result = interpreter::Interpreter::RunFromFiles(sv_paths, "", options);
   } else {
-    result = interpreter::Interpreter::RunFromSource(test_case.sv_code);
+    result = interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
   }
 
   for (const auto& [var, expected] : test_case.expected_values) {
@@ -180,9 +187,9 @@ TEST_P(SvFeatureTest, CppCodegen) {
     auto sv_paths = FilterSvFiles(paths);
     ScopedCurrentPath current_dir(
         std::filesystem::path(paths.front()).parent_path());
-    result = compiler::Compiler::RunFromFiles(sv_paths, vars);
+    result = compiler::Compiler::RunFromFiles(sv_paths, vars, test_case.plusargs);
   } else {
-    result = compiler::Compiler::RunFromSource(test_case.sv_code, vars);
+    result = compiler::Compiler::RunFromSource(test_case.sv_code, vars, test_case.plusargs);
   }
   ASSERT_TRUE(result.Success()) << result.ErrorMessage();
 

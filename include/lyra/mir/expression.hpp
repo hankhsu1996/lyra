@@ -436,6 +436,8 @@ class SystemCallExpression : public Expression {
   // For display-like tasks: values to format (the arguments after format_expr).
   // For non-display tasks: general arguments.
   std::vector<std::unique_ptr<Expression>> arguments;
+  std::vector<AssignmentTarget> output_targets;
+  bool is_task = false;
 
   // True if format_expr (or first argument for mem_io tasks) is a string
   // literal. For display tasks: enables compile-time format parsing. For
@@ -450,10 +452,22 @@ class SystemCallExpression : public Expression {
 
   SystemCallExpression(
       std::string name, std::vector<std::unique_ptr<Expression>> args,
-      Type return_type)
+      Type return_type, bool is_task = false)
       : Expression(kKindValue, std::move(return_type)),
         name(std::move(name)),
-        arguments(std::move(args)) {
+        arguments(std::move(args)),
+        is_task(is_task) {
+  }
+
+  SystemCallExpression(
+      std::string name, std::vector<std::unique_ptr<Expression>> args,
+      std::vector<AssignmentTarget> outputs, Type return_type,
+      bool is_task = false)
+      : Expression(kKindValue, std::move(return_type)),
+        name(std::move(name)),
+        arguments(std::move(args)),
+        output_targets(std::move(outputs)),
+        is_task(is_task) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
@@ -464,6 +478,9 @@ class SystemCallExpression : public Expression {
     arg_strs.reserve(arg_strs.size() + arguments.size());
     for (const auto& arg : arguments) {
       arg_strs.push_back(arg ? arg->ToString() : "<null>");
+    }
+    for (const auto& target : output_targets) {
+      arg_strs.push_back("out:" + target.ToString());
     }
     return fmt::format("({} {})", name, fmt::join(arg_strs, ", "));
   }

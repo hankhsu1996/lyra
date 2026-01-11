@@ -79,13 +79,15 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kExpression: {
       const auto& expr_stmt = mir::As<mir::ExpressionStatement>(stmt);
-      // Handle system calls specially
+      // Handle system tasks specially (not system functions)
       if (expr_stmt.expression->kind == mir::Expression::Kind::kSystemCall) {
         const auto& syscall =
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
-        if (EmitSystemCall(syscall)) {
+        if (syscall.is_task) {
+          EmitSystemTask(syscall);
           break;
         }
+        // System functions fall through to expression handling
       }
       // Check if expression is an assignment that produces an unused value
       // (packed struct field or packed element assignment uses comma

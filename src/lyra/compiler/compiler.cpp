@@ -130,7 +130,8 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
 auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
     const std::vector<std::unique_ptr<mir::Package>>& packages,
-    const std::vector<std::string>& variables_to_read)
+    const std::vector<std::string>& variables_to_read,
+    const std::vector<std::string>& plusargs)
     // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
     -> CompilerResult {
   CompilerResult result;
@@ -177,7 +178,9 @@ auto Compiler::CompileAndRun(
 
   // Build main() that captures display output and prints results
   std::ostringstream main_code;
-  main_code << "\nint main() {\n";
+  main_code << "\nint main(int argc, char* argv[]) {\n";
+  main_code
+      << "  lyra::sdk::InitPlusargs({argv, static_cast<size_t>(argc)});\n";
   // Initialize global precision only if not default (for
   // $timeunit/$timeprecision)
   if (codegen.GetGlobalPrecisionPower() !=
@@ -211,6 +214,7 @@ auto Compiler::CompileAndRun(
     std::ostringstream wrapper_stream;
     wrapper_stream << "#include <iostream>\n";
     wrapper_stream << "#include <sstream>\n";
+    wrapper_stream << "#include <lyra/sdk/plusargs.hpp>\n";
     wrapper_stream << "#include \"design/" << top.name << ".hpp\"\n";
     wrapper_stream << main_code.str();
     wrapper_code = wrapper_stream.str();
@@ -241,8 +245,11 @@ auto Compiler::CompileAndRun(
     return result;
   }
 
-  // Run
+  // Run with plusargs
   std::string run_cmd = bin_path.string();
+  for (const auto& arg : plusargs) {
+    run_cmd += " " + arg;
+  }
   auto [run_status, run_output] = ExecuteCommand(run_cmd);
   if (run_status != 0) {
     result.error_message_ =
@@ -297,8 +304,8 @@ auto CompilerResult::ReadVariable(const std::string& name) const -> int64_t {
 }
 
 auto Compiler::RunFromSource(
-    const std::string& code, const std::vector<std::string>& variables_to_read)
-    -> CompilerResult {
+    const std::string& code, const std::vector<std::string>& variables_to_read,
+    const std::vector<std::string>& plusargs) -> CompilerResult {
   CompilerResult result;
 
   // Parse SV
@@ -313,12 +320,14 @@ auto Compiler::RunFromSource(
   auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
   return CompileAndRun(
-      lowering_result.modules, lowering_result.packages, variables_to_read);
+      lowering_result.modules, lowering_result.packages, variables_to_read,
+      plusargs);
 }
 
 auto Compiler::RunFromFiles(
     const std::vector<std::string>& paths,
-    const std::vector<std::string>& variables_to_read) -> CompilerResult {
+    const std::vector<std::string>& variables_to_read,
+    const std::vector<std::string>& plusargs) -> CompilerResult {
   CompilerResult result;
 
   // Parse SV files
@@ -333,7 +342,8 @@ auto Compiler::RunFromFiles(
   auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
   return CompileAndRun(
-      lowering_result.modules, lowering_result.packages, variables_to_read);
+      lowering_result.modules, lowering_result.packages, variables_to_read,
+      plusargs);
 }
 
 }  // namespace lyra::compiler

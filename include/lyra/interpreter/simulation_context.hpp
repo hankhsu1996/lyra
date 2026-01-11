@@ -12,6 +12,7 @@
 #include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/tracer.hpp"
 #include "lyra/interpreter/variable_table.hpp"
+#include "lyra/sdk/plusargs.hpp"
 
 namespace lyra::interpreter {
 
@@ -67,6 +68,8 @@ class SimulationContext {
 
   // Active $monitor state (only one at a time per IEEE 1800)
   std::optional<MonitorState> active_monitor;
+
+  sdk::PlusargsTable plusargs;
 };
 
 }  // namespace lyra::interpreter
