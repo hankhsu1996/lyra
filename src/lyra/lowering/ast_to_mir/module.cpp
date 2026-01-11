@@ -103,205 +103,203 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     module->timescale = common::TimeScale::FromSlang(*ts);
   }
 
-  // Track port internal symbols to exclude from variables list
+  // Track port internal symbols to exclude from variables list.
+  // Port symbols appear BEFORE their internal Variable in body.members(),
+  // so we can build this set as we go and check it when handling Variable.
   std::unordered_set<const slang::ast::Symbol*> port_symbols;
 
   // Counter for generating unique port driver process names within this module
   std::size_t port_driver_counter = 0;
 
-  // Extract ports from the module definition
-  for (const auto* port_symbol : body.getPortList()) {
-    // Skip non-port symbols (e.g., multi-ports, interface ports)
-    if (port_symbol->kind != slang::ast::SymbolKind::Port) {
-      continue;
-    }
-
-    const auto& port = port_symbol->as<slang::ast::PortSymbol>();
-
-    // Use the internal symbol for the variable (it's the actual signal inside)
-    const auto* internal = port.internalSymbol;
-    if (internal == nullptr) {
-      // Null ports (not connected to internal signal) - skip for now
-      continue;
-    }
-
-    // Get type from the port
-    const auto& port_type = port.getType();
-    slang::SourceRange source_range(port.location, port.location);
-
-    auto type_result = LowerType(port_type, source_range);
-    if (!type_result) {
-      throw DiagnosticException(std::move(type_result.error()));
-    }
-
-    // Use the internal symbol as the variable symbol
-    common::Variable variable{
-        .symbol = internal,
-        .type = *type_result,
-    };
-
-    module->ports.push_back(
-        mir::Port{
-            .variable = std::move(variable),
-            .direction = MapPortDirection(port.direction),
-        });
-
-    // Track this symbol to exclude from variables
-    port_symbols.insert(internal);
-  }
-
   for (const auto& symbol : body.members()) {
-    // Skip TypeAlias - handled in LowerType which unwraps to canonical type
-    if (symbol.kind == slang::ast::SymbolKind::TypeAlias) {
-      continue;
-    }
+    using SK = slang::ast::SymbolKind;
 
-    // Skip Parameter/Localparam - compile-time constants inlined at use sites
-    if (symbol.kind == slang::ast::SymbolKind::Parameter) {
-      continue;
-    }
+    switch (symbol.kind) {
+      case SK::Port: {
+        const auto& port = symbol.as<slang::ast::PortSymbol>();
 
-    // Skip StatementBlock - scoped variable containers (e.g., locals in
-    // begin...end blocks). Variables inside are handled during procedural
-    // block lowering, not as module-level declarations.
-    if (symbol.kind == slang::ast::SymbolKind::StatementBlock) {
-      continue;
-    }
+        // Null ports (not connected to internal signal) - skip for now
+        const auto* internal = port.internalSymbol;
+        if (internal == nullptr) {
+          break;
+        }
 
-    // Lower variables (skip port variables)
-    if (symbol.kind == slang::ast::SymbolKind::Variable) {
-      // Skip if this variable is a port
-      if (port_symbols.contains(&symbol)) {
-        continue;
+        slang::SourceRange source_range(port.location, port.location);
+        auto type_result = LowerType(port.getType(), source_range);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+
+        common::Variable variable{
+            .symbol = internal,
+            .type = *type_result,
+        };
+
+        module->ports.push_back(
+            mir::Port{
+                .variable = std::move(variable),
+                .direction = MapPortDirection(port.direction),
+            });
+
+        // Track so Variable case knows to skip this internal symbol
+        port_symbols.insert(internal);
+        break;
       }
 
-      const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
+      case SK::Variable: {
+        // Skip if this is a port's internal symbol (already handled above)
+        if (port_symbols.contains(&symbol)) {
+          break;
+        }
 
-      // Create source range from symbol location
-      slang::SourceRange source_range(
-          variable_symbol.location, variable_symbol.location);
+        const auto& variable_symbol = symbol.as<slang::ast::VariableSymbol>();
 
-      auto type_result = LowerType(variable_symbol.getType(), source_range);
-      if (!type_result) {
-        throw DiagnosticException(std::move(type_result.error()));
+        slang::SourceRange source_range(
+            variable_symbol.location, variable_symbol.location);
+
+        auto type_result = LowerType(variable_symbol.getType(), source_range);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+
+        common::Variable variable{
+            .symbol = &variable_symbol,
+            .type = *type_result,
+        };
+
+        std::unique_ptr<mir::Expression> init_expr = nullptr;
+        if (const auto* initializer = variable_symbol.getInitializer()) {
+          init_expr = LowerExpression(*initializer);
+        }
+
+        module->variables.push_back(
+            mir::ModuleVariable{
+                .variable = std::move(variable),
+                .initializer = std::move(init_expr)});
+        break;
       }
 
-      common::Variable variable{
-          .symbol = &variable_symbol,
-          .type = *type_result,
-      };
-
-      // Extract initializer if present
-      std::unique_ptr<mir::Expression> init_expr = nullptr;
-      if (const auto* initializer = variable_symbol.getInitializer()) {
-        init_expr = LowerExpression(*initializer);
+      case SK::ProceduralBlock: {
+        const auto& procedural_block =
+            symbol.as<slang::ast::ProceduralBlockSymbol>();
+        auto process = LowerProcess(procedural_block);
+        module->processes.push_back(std::move(process));
+        break;
       }
 
-      module->variables.push_back(
-          mir::ModuleVariable{
-              .variable = std::move(variable),
-              .initializer = std::move(init_expr)});
-      continue;
-    }
+      case SK::Subroutine: {
+        const auto& subroutine = symbol.as<slang::ast::SubroutineSymbol>();
 
-    // Lower procedural blocks (initial, always, etc.)
-    if (symbol.kind == slang::ast::SymbolKind::ProceduralBlock) {
-      const auto& procedural_block =
-          symbol.as<slang::ast::ProceduralBlockSymbol>();
-      auto process = LowerProcess(procedural_block);
-      module->processes.push_back(std::move(process));
-      continue;
-    }
+        if (subroutine.subroutineKind == slang::ast::SubroutineKind::Task) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  slang::SourceRange(subroutine.location, subroutine.location),
+                  fmt::format(
+                      "task '{}' is not yet supported", subroutine.name)));
+        }
 
-    // Lower function definitions
-    if (symbol.kind == slang::ast::SymbolKind::Subroutine) {
-      const auto& subroutine = symbol.as<slang::ast::SubroutineSymbol>();
+        auto func = LowerFunction(subroutine);
+        module->functions.push_back(std::move(func));
+        break;
+      }
 
-      // Skip tasks (require timing controls, not yet supported)
-      if (subroutine.subroutineKind == slang::ast::SubroutineKind::Task) {
+      case SK::Instance: {
+        const auto& child = symbol.as<slang::ast::InstanceSymbol>();
+
+        mir::SubmoduleInstance submod;
+        submod.instance_symbol = &child;
+        submod.instance_name = std::string(child.name);
+        submod.module_type = std::string(child.getDefinition().name);
+
+        for (const auto* conn : child.getPortConnections()) {
+          const auto* expr = conn->getExpression();
+          if (expr == nullptr ||
+              expr->kind == slang::ast::ExpressionKind::EmptyArgument) {
+            continue;
+          }
+
+          if (expr->kind == slang::ast::ExpressionKind::Assignment) {
+            const auto& assignment =
+                expr->as<slang::ast::AssignmentExpression>();
+            mir::OutputBinding binding;
+            binding.port_name = std::string(conn->port.name);
+            binding.signal = LowerExpression(assignment.left());
+            submod.output_bindings.push_back(std::move(binding));
+          } else {
+            auto signal_expr = LowerExpression(*expr);
+            const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
+            mir::AssignmentTarget target(
+                port_sym.internalSymbol, {submod.instance_symbol});
+            auto driver_stmt = std::make_unique<mir::AssignStatement>(
+                std::move(target), std::move(signal_expr));
+            auto process = CreateImplicitAlwaysComb(
+                std::move(driver_stmt), port_driver_counter);
+            module->processes.push_back(std::move(process));
+          }
+        }
+
+        module->submodules.push_back(std::move(submod));
+        break;
+      }
+
+      case SK::WildcardImport: {
+        const auto& import = symbol.as<slang::ast::WildcardImportSymbol>();
+        module->wildcard_imports.emplace_back(import.packageName);
+        break;
+      }
+
+      case SK::ExplicitImport: {
+        const auto& import = symbol.as<slang::ast::ExplicitImportSymbol>();
+        module->explicit_imports.emplace_back(
+            std::string(import.packageName), std::string(import.importName));
+        break;
+      }
+
+      // Compile-time resolved - no runtime representation needed
+      case SK::TypeAlias:
+        // Type aliases are unwrapped to canonical types by LowerType()
+        // Example: typedef logic [7:0] byte_t; → byte_t becomes logic[7:0]
+        break;
+
+      case SK::Parameter:
+        // Compile-time constants - slang inlines values at use sites
+        // Example: parameter int WIDTH = 8; → WIDTH becomes literal 8
+        break;
+
+      // Scoped symbols - slang exposes for name resolution, handled in blocks
+      case SK::StatementBlock:
+        // Contains local variables in begin...end blocks
+        // These are lowered when processing the ProceduralBlock body
+        break;
+
+      case SK::TransparentMember:
+        // Provides access to enum members at module scope
+        // Example: enum {A, B} makes A, B visible - resolved at reference
+        break;
+
+      // Unsupported features - explicit errors
+      case SK::ContinuousAssign:
         throw DiagnosticException(
             Diagnostic::Error(
-                slang::SourceRange(subroutine.location, subroutine.location),
+                slang::SourceRange{symbol.location, symbol.location},
+                "continuous assignments (assign) are not yet supported"));
+
+      case SK::GenerateBlock:
+      case SK::GenerateBlockArray:
+        throw DiagnosticException(
+            Diagnostic::Error(
+                slang::SourceRange{symbol.location, symbol.location},
+                "generate blocks are not yet supported"));
+
+      // Unknown - force investigation
+      default:
+        throw DiagnosticException(
+            Diagnostic::Error(
+                slang::SourceRange{symbol.location, symbol.location},
                 fmt::format(
-                    "task '{}' is not yet supported", subroutine.name)));
-      }
-
-      auto func = LowerFunction(subroutine);
-      module->functions.push_back(std::move(func));
-      continue;
+                    "unhandled module member kind: {}",
+                    toString(symbol.kind))));
     }
-
-    // Lower submodule instances
-    if (symbol.kind == slang::ast::SymbolKind::Instance) {
-      const auto& child = symbol.as<slang::ast::InstanceSymbol>();
-
-      mir::SubmoduleInstance submod;
-      submod.instance_symbol = &child;
-      submod.instance_name = std::string(child.name);
-      submod.module_type = std::string(child.getDefinition().name);
-
-      for (const auto* conn : child.getPortConnections()) {
-        const auto* expr = conn->getExpression();
-        // Skip empty/implicit port connections
-        if (expr == nullptr ||
-            expr->kind == slang::ast::ExpressionKind::EmptyArgument) {
-          continue;
-        }
-
-        // For output ports, slang wraps the connection in an Assignment
-        // expression (external = internal). Extract just the LHS signal.
-        // Output ports need binding so child writes go to parent's storage.
-        if (expr->kind == slang::ast::ExpressionKind::Assignment) {
-          const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
-          mir::OutputBinding binding;
-          binding.port_name = std::string(conn->port.name);
-          binding.signal = LowerExpression(assignment.left());
-          submod.output_bindings.push_back(std::move(binding));
-        } else {
-          // Input port connection (simple `.a(x)` or expression `.a(x + y)`)
-          // Create driver process using hierarchical assignment.
-          // child.port = expr becomes AssignStatement with hierarchical target.
-          //
-          // Design: Input ports are value members in child, parent drives them.
-          // Both codegen and interpreter use driver process (no binding).
-          auto signal_expr = LowerExpression(*expr);
-
-          // Create port driver process using hierarchical assignment.
-          // Driver writes to child's storage, child reads from own storage.
-          // This is consistent with codegen model (no binding indirection).
-          // Use internalSymbol which is the actual storage (same as port init)
-          const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
-          mir::AssignmentTarget target(
-              port_sym.internalSymbol, {submod.instance_symbol});
-          auto driver_stmt = std::make_unique<mir::AssignStatement>(
-              std::move(target), std::move(signal_expr));
-          auto process = CreateImplicitAlwaysComb(
-              std::move(driver_stmt), port_driver_counter);
-          module->processes.push_back(std::move(process));
-        }
-      }
-
-      module->submodules.push_back(std::move(submod));
-      continue;
-    }
-
-    // Catch-all: any unhandled symbol kind should error, not silently skip
-    throw DiagnosticException(
-        Diagnostic::Error(
-            slang::SourceRange{symbol.location, symbol.location},
-            fmt::format(
-                "unsupported module member kind: {}", toString(symbol.kind))));
-  }
-
-  // Extract package imports
-  for (const auto& import :
-       body.membersOfType<slang::ast::WildcardImportSymbol>()) {
-    module->wildcard_imports.emplace_back(import.packageName);
-  }
-  for (const auto& import :
-       body.membersOfType<slang::ast::ExplicitImportSymbol>()) {
-    module->explicit_imports.emplace_back(
-        std::string(import.packageName), std::string(import.importName));
   }
 
   return module;
