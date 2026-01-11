@@ -97,6 +97,10 @@ top = "TopModule"
 files = ["file1.sv", "file2.sv"]
 ```
 
+## SystemVerilog Version
+
+Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is configured with `languageVersion = v1800_2023`. When testing SV 2023 features directly with slang, use `--std 1800-2023`.
+
 ## Architecture
 
 SystemVerilog compiler and simulator:
