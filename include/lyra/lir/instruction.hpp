@@ -107,6 +107,91 @@ enum class InstructionKind {
   kStoreCapture,  // Store to closure's captures map
 };
 
+/// Category of instruction for dispatch
+enum class InstructionCategory : uint8_t {
+  kMemory,      // Load, store, aggregate operations
+  kArithmetic,  // Unary, binary, reduction operations
+  kType,        // Conversion, concatenation
+  kControl,     // Control flow, calls, events
+};
+
+/// Get the category of an instruction kind
+constexpr auto GetInstructionCategory(InstructionKind kind)
+    -> InstructionCategory {
+  switch (kind) {
+    // Memory operations
+    case InstructionKind::kLiteral:
+    case InstructionKind::kLoadVariable:
+    case InstructionKind::kStoreVariable:
+    case InstructionKind::kStoreVariableNonBlocking:
+    case InstructionKind::kLoadElement:
+    case InstructionKind::kStoreElement:
+    case InstructionKind::kStoreElementNonBlocking:
+    case InstructionKind::kLoadPackedBits:
+    case InstructionKind::kStorePackedBits:
+    case InstructionKind::kCreateAggregate:
+    case InstructionKind::kNewDynamicArray:
+    case InstructionKind::kMove:
+      return InstructionCategory::kMemory;
+
+    // Arithmetic operations
+    case InstructionKind::kUnaryPlus:
+    case InstructionKind::kUnaryMinus:
+    case InstructionKind::kUnaryLogicalNot:
+    case InstructionKind::kUnaryBitwiseNot:
+    case InstructionKind::kReductionAnd:
+    case InstructionKind::kReductionNand:
+    case InstructionKind::kReductionOr:
+    case InstructionKind::kReductionNor:
+    case InstructionKind::kReductionXor:
+    case InstructionKind::kReductionXnor:
+    case InstructionKind::kBinaryAdd:
+    case InstructionKind::kBinarySubtract:
+    case InstructionKind::kBinaryMultiply:
+    case InstructionKind::kBinaryDivide:
+    case InstructionKind::kBinaryModulo:
+    case InstructionKind::kBinaryEqual:
+    case InstructionKind::kBinaryNotEqual:
+    case InstructionKind::kBinaryLessThan:
+    case InstructionKind::kBinaryLessThanEqual:
+    case InstructionKind::kBinaryGreaterThan:
+    case InstructionKind::kBinaryGreaterThanEqual:
+    case InstructionKind::kBinaryPower:
+    case InstructionKind::kBinaryBitwiseAnd:
+    case InstructionKind::kBinaryBitwiseOr:
+    case InstructionKind::kBinaryBitwiseXor:
+    case InstructionKind::kBinaryBitwiseXnor:
+    case InstructionKind::kBinaryLogicalAnd:
+    case InstructionKind::kBinaryLogicalOr:
+    case InstructionKind::kBinaryLogicalShiftLeft:
+    case InstructionKind::kBinaryLogicalShiftRight:
+    case InstructionKind::kBinaryArithmeticShiftLeft:
+    case InstructionKind::kBinaryArithmeticShiftRight:
+      return InstructionCategory::kArithmetic;
+
+    // Type operations
+    case InstructionKind::kConversion:
+    case InstructionKind::kConcatenation:
+      return InstructionCategory::kType;
+
+    // Control flow operations
+    case InstructionKind::kComplete:
+    case InstructionKind::kWaitEvent:
+    case InstructionKind::kDelay:
+    case InstructionKind::kSystemCall:
+    case InstructionKind::kMethodCall:
+    case InstructionKind::kJump:
+    case InstructionKind::kBranch:
+    case InstructionKind::kCall:
+    case InstructionKind::kReturn:
+    case InstructionKind::kLoadCapture:
+    case InstructionKind::kStoreCapture:
+      return InstructionCategory::kControl;
+  }
+  // Unreachable - all cases covered
+  return InstructionCategory::kControl;
+}
+
 // Enum member info for method call runtime helpers
 struct EnumMemberInfo {
   std::string name;
