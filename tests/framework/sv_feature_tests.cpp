@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -7,6 +8,8 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "lyra/compiler/compiler.hpp"
@@ -149,13 +152,29 @@ TEST_P(SvFeatureTest, Interpreter) {
         std::filesystem::path(paths.front()).parent_path());
     result = interpreter::Interpreter::RunFromFiles(sv_paths, "", options);
   } else {
-    result = interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
+    result =
+        interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
   }
 
   for (const auto& [var, expected] : test_case.expected_values) {
-    // Test expected values are always narrow
-    EXPECT_EQ(result.ReadVariable(var).AsNarrow().AsInt64(), expected)
-        << "Variable: " << var;
+    auto actual = result.ReadVariable(var);
+    std::visit(
+        [&](auto&& exp_val) {
+          using T = std::decay_t<decltype(exp_val)>;
+          if constexpr (std::is_same_v<T, int64_t>) {
+            EXPECT_EQ(actual.AsNarrow().AsInt64(), exp_val)
+                << "Variable: " << var;
+          } else if constexpr (std::is_same_v<T, double>) {
+            // Handle both real (double) and shortreal (float)
+            if (actual.IsShortReal()) {
+              EXPECT_EQ(static_cast<double>(actual.AsFloat()), exp_val)
+                  << "Variable: " << var;
+            } else {
+              EXPECT_EQ(actual.AsDouble(), exp_val) << "Variable: " << var;
+            }
+          }
+        },
+        expected);
   }
 
   if (test_case.expected_time.has_value()) {
@@ -187,14 +206,31 @@ TEST_P(SvFeatureTest, CppCodegen) {
     auto sv_paths = FilterSvFiles(paths);
     ScopedCurrentPath current_dir(
         std::filesystem::path(paths.front()).parent_path());
-    result = compiler::Compiler::RunFromFiles(sv_paths, vars, test_case.plusargs);
+    result =
+        compiler::Compiler::RunFromFiles(sv_paths, vars, test_case.plusargs);
   } else {
-    result = compiler::Compiler::RunFromSource(test_case.sv_code, vars, test_case.plusargs);
+    result = compiler::Compiler::RunFromSource(
+        test_case.sv_code, vars, test_case.plusargs);
   }
   ASSERT_TRUE(result.Success()) << result.ErrorMessage();
 
   for (const auto& [var, expected] : test_case.expected_values) {
-    EXPECT_EQ(result.ReadVariable(var), expected) << "Variable: " << var;
+    auto actual = result.ReadVariable(var);
+    std::visit(
+        [&](auto&& exp_val) {
+          using T = std::decay_t<decltype(exp_val)>;
+          if constexpr (std::is_same_v<T, int64_t>) {
+            EXPECT_TRUE(std::holds_alternative<int64_t>(actual))
+                << "Variable " << var << " expected integer";
+            EXPECT_EQ(std::get<int64_t>(actual), exp_val)
+                << "Variable: " << var;
+          } else if constexpr (std::is_same_v<T, double>) {
+            EXPECT_TRUE(std::holds_alternative<double>(actual))
+                << "Variable " << var << " expected double";
+            EXPECT_EQ(std::get<double>(actual), exp_val) << "Variable: " << var;
+          }
+        },
+        expected);
   }
 
   if (test_case.expected_time.has_value()) {

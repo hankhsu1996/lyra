@@ -3,8 +3,12 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <variant>
 
 namespace lyra::compiler {
+
+// Value type for test assertions: integers or floating-point
+using TestValue = std::variant<int64_t, double>;
 
 class CompilerResult {
  public:
@@ -14,7 +18,7 @@ class CompilerResult {
   [[nodiscard]] auto ErrorMessage() const -> const std::string& {
     return error_message_;
   }
-  [[nodiscard]] auto ReadVariable(const std::string& name) const -> int64_t;
+  [[nodiscard]] auto ReadVariable(const std::string& name) const -> TestValue;
   [[nodiscard]] auto FinalTime() const -> uint64_t {
     return final_time_;
   }
@@ -27,7 +31,7 @@ class CompilerResult {
 
   bool success_ = false;
   std::string error_message_;
-  std::unordered_map<std::string, int64_t> variables_;
+  std::unordered_map<std::string, TestValue> variables_;
   uint64_t final_time_ = 0;
   std::string captured_output_;
 };

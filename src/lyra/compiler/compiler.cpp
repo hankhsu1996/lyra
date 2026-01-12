@@ -21,6 +21,7 @@
 
 #include "lyra/common/timescale.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
+#include "lyra/compiler/compiler_result.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
 #include "lyra/mir/module.hpp"
@@ -76,8 +77,7 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
     result += buffer.data();
   }
   int status = pclose(pipe.release());  // NOLINT(misc-include-cleaner)
-  // NOLINTNEXTLINE(misc-include-cleaner): WEXITSTATUS is in <sys/wait.h>
-  return {WEXITSTATUS(status), result};
+  return {WEXITSTATUS(status), result};  // NOLINT(misc-include-cleaner)
 }
 
 // Generate precompiled header if it doesn't exist, return path to PCH file.
@@ -130,9 +130,7 @@ auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
     const std::vector<std::unique_ptr<mir::Package>>& packages,
     const std::vector<std::string>& variables_to_read,
-    const std::vector<std::string>& plusargs)
-    // NOLINTNEXTLINE(misc-include-cleaner): CompilerResult is in compiler.hpp
-    -> CompilerResult {
+    const std::vector<std::string>& plusargs) -> CompilerResult {
   CompilerResult result;
 
   // Create unique temp directory with design subdirectory for headers
@@ -185,8 +183,10 @@ auto Compiler::CompileAndRun(
   main_code << "  std::cout << \"__output__=\" << captured.str() "
             << "<< \"__end_output__\" << std::endl;\n";
   for (const auto& var : variables_to_read) {
-    main_code << "  std::cout << \"" << var << "=\" << dut." << var
-              << " << std::endl;\n";
+    // Use std::showpoint to always show decimal point for floats (e.g., 4.0 not
+    // 4)
+    main_code << "  std::cout << \"" << var << "=\" << std::showpoint << dut."
+              << var << " << std::noshowpoint << std::endl;\n";
   }
   main_code
       << "  std::cout << \"__time__=\" << result.final_time << std::endl;\n";
@@ -199,6 +199,7 @@ auto Compiler::CompileAndRun(
   std::string wrapper_code;
   {
     std::ostringstream wrapper_stream;
+    wrapper_stream << "#include <iomanip>\n";
     wrapper_stream << "#include <iostream>\n";
     wrapper_stream << "#include <sstream>\n";
     wrapper_stream << "#include <lyra/sdk/plusargs.hpp>\n";
@@ -272,8 +273,16 @@ auto Compiler::CompileAndRun(
       if (name == "__time__") {
         result.final_time_ = std::stoull(line.substr(eq_pos + 1));
       } else {
-        int64_t value = std::stoll(line.substr(eq_pos + 1));
-        result.variables_[name] = value;
+        std::string value_str = line.substr(eq_pos + 1);
+        // Detect floating-point by presence of '.', 'e', 'E', or special values
+        if (value_str.find('.') != std::string::npos ||
+            value_str.find('e') != std::string::npos ||
+            value_str.find('E') != std::string::npos || value_str == "inf" ||
+            value_str == "-inf" || value_str == "nan") {
+          result.variables_[name] = std::stod(value_str);
+        } else {
+          result.variables_[name] = std::stoll(value_str);
+        }
       }
     }
   }
@@ -282,7 +291,7 @@ auto Compiler::CompileAndRun(
   return result;
 }
 
-auto CompilerResult::ReadVariable(const std::string& name) const -> int64_t {
+auto CompilerResult::ReadVariable(const std::string& name) const -> TestValue {
   auto it = variables_.find(name);
   if (it == variables_.end()) {
     throw std::runtime_error("Variable not found: " + name);
