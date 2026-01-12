@@ -9,13 +9,13 @@ Use this flowchart to pick the right error type:
 ```
 Where is the error?
 │
-├─ AST→MIR lowering (have source location from slang)
+├─ AST->MIR lowering (have source location from slang)
 │   ├─ User error (unsupported feature, invalid code)
 │   │   └─ DiagnosticException(source_range, "message")
 │   └─ Compiler bug (invariant violated)
 │       └─ InternalError("context", "message")
 │
-├─ MIR→LIR lowering / Codegen (no source location)
+├─ MIR->LIR lowering / Codegen (no source location)
 │   └─ Always InternalError (any error here = compiler bug)
 │
 ├─ Interpreter runtime
@@ -33,7 +33,7 @@ Where is the error?
 
 ## Error Types
 
-### DiagnosticException (AST→MIR Only)
+### DiagnosticException (AST->MIR Only)
 
 For **user errors** during frontend lowering where we have source location info.
 
@@ -47,7 +47,7 @@ throw DiagnosticException(
 
 **Rules:**
 
-- ONLY use in AST→MIR lowering
+- ONLY use in AST->MIR lowering
 - NEVER use with empty source location `{}`
 - If you don't have a source location, use a different error type
 
@@ -69,7 +69,7 @@ throw common::InternalError("codegen", "unexpected expression kind");
 - Switch statement hits an "impossible" case
 - Invariant is violated
 - Code path should be unreachable
-- Any error in MIR→LIR or codegen (these stages should never fail)
+- Any error in MIR->LIR or codegen (these stages should never fail)
 
 ### std::runtime_error (Runtime Errors)
 
@@ -175,8 +175,8 @@ if (items.empty()) {
 
 | Stage       | User Error            | Compiler Bug    | Runtime Failure      |
 | ----------- | --------------------- | --------------- | -------------------- |
-| AST→MIR     | `DiagnosticException` | `InternalError` | N/A                  |
-| MIR→LIR     | N/A                   | `InternalError` | N/A                  |
+| AST->MIR    | `DiagnosticException` | `InternalError` | N/A                  |
+| MIR->LIR    | N/A                   | `InternalError` | N/A                  |
 | Codegen     | N/A                   | `InternalError` | N/A                  |
 | Interpreter | N/A                   | `InternalError` | `std::runtime_error` |
 | SDK         | N/A                   | N/A             | `std::runtime_error` |

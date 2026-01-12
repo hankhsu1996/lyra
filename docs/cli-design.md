@@ -111,7 +111,7 @@ When both `lyra.toml` and CLI arguments are provided:
 | `-I`      | CLI merges with lyra.toml (additive) |
 | `<files>` | CLI replaces lyra.toml files         |
 
-### Output Structure (`lyra emit` → `out/`)
+### Output Structure (`lyra emit` -> `out/`)
 
 ```
 out/
@@ -149,10 +149,10 @@ This is the only command that accepts file arguments directly.
 
 Two execution backends:
 
-| Backend     | Path                          | Use Case                    |
-| ----------- | ----------------------------- | --------------------------- |
-| Interpreter | AST → MIR → LIR → Interpreter | Development, debugging      |
-| Codegen     | AST → MIR → C++ → Binary      | Performance, production use |
+| Backend     | Path                             | Use Case                    |
+| ----------- | -------------------------------- | --------------------------- |
+| Interpreter | AST -> MIR -> LIR -> Interpreter | Development, debugging      |
+| Codegen     | AST -> MIR -> C++ -> Binary      | Performance, production use |
 
 Codegen is the default backend. Interpreter is useful for development (no compile step).
 
@@ -184,8 +184,8 @@ include/lyra/
 | Class           | Location       | Role                                 |
 | --------------- | -------------- | ------------------------------------ |
 | `ProjectConfig` | `config/`      | lyra.toml parsing                    |
-| `Interpreter`   | `interpreter/` | MIR → LIR → run                      |
-| `Compiler`      | `compiler/`    | MIR → C++ → compile → run            |
+| `Interpreter`   | `interpreter/` | MIR -> LIR -> run                    |
+| `Compiler`      | `compiler/`    | MIR -> C++ -> compile -> run         |
 | `Codegen`       | `compiler/`    | Generates C++ source from MIR        |
 | `Module`        | `sdk/`         | Base class for generated modules     |
 | `Scheduler`     | `sdk/`         | Coroutine-based simulation scheduler |

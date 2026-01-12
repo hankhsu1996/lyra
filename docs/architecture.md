@@ -47,7 +47,7 @@ Generated code links against SDK for simulation runtime.
 The `lyra emit` command produces a standalone C++ project that includes SDK headers. To enable the binary to work from any directory without installation:
 
 ```
-include/lyra/sdk/*.hpp  →  [genrule]  →  embedded_sdk.hpp  →  lyra binary
+include/lyra/sdk/*.hpp  ->  [genrule]  ->  embedded_sdk.hpp  ->  lyra binary
 ```
 
 - SDK headers are maintained as normal `.hpp` files in `include/lyra/sdk/`
@@ -125,10 +125,10 @@ LIR is a register-based IR using named temporaries (`%t0`, `%t1`) that maps to L
 
 **Two elaboration models:**
 
-| Path                    | Elaboration                    | Variable Access                           |
-| ----------------------- | ------------------------------ | ----------------------------------------- |
-| C++ codegen             | Runtime (C++ builds hierarchy) | `this->u_child_.value` - member traversal |
-| MIR → LIR → Interpreter | Compile-time (slang resolves)  | `$symbol` - flat lookup by unique pointer |
+| Path                      | Elaboration                    | Variable Access                           |
+| ------------------------- | ------------------------------ | ----------------------------------------- |
+| C++ codegen               | Runtime (C++ builds hierarchy) | `this->u_child_.value` - member traversal |
+| MIR -> LIR -> Interpreter | Compile-time (slang resolves)  | `$symbol` - flat lookup by unique pointer |
 
 **Design guidance:**
 
@@ -154,7 +154,7 @@ Slang's `SourceManager` owns the memory backing source text, and many slang type
 
 **Consequence**: `InterpreterResult` stores a `shared_ptr<SourceManager>` to keep this memory valid. This is a lifetime hack, not a conceptual fit.
 
-**Future direction**: MIR/LIR should own their data. At the slang → MIR boundary (`AstToMir`), we should copy symbol information into our own types with owned `std::string` names. This would:
+**Future direction**: MIR/LIR should own their data. At the slang -> MIR boundary (`AstToMir`), we should copy symbol information into our own types with owned `std::string` names. This would:
 
 - Eliminate hidden lifetime dependencies on slang
 - Make the slang boundary explicit and complete
