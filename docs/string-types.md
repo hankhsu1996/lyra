@@ -59,9 +59,9 @@ For display-like system calls ($display, $monitor, $strobe, $error, etc.):
 - `operands` - only the format arguments
 - `format_string_is_literal` - propagated from MIR
 
-### Underlying Literal
+### Underlying Constant
 
-- `is_string_literal` on `Literal` - marks literals that came from string literals
+- `is_string_literal` on `Constant` - marks constants that came from string literals
 
 This approach:
 
@@ -78,7 +78,7 @@ This approach:
 ## Related
 
 - LRM 6.16: String data type, conversion rules
-- `common/literal.hpp`: `is_string_literal` flag definition
+- `common/constant.hpp`: `is_string_literal` flag definition
 - `mir/expression.hpp`: `format_expr` and `format_expr_is_literal` in SystemCallExpression
 - `lir/instruction.hpp`: `format_operand` and `format_string_is_literal` in Instruction
 - `common/format_string.hpp`: Format string detection utilities

@@ -20,8 +20,8 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -157,23 +157,23 @@ auto LowerForeachLoop(
       int32_t end_value = range.right;
 
       // Create initializer: var = start_value
-      auto start_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(start_value, 32));
+      auto start_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(start_value, 32));
       auto init_assign = std::make_unique<mir::AssignmentExpression>(
-          loop_var, std::move(start_literal), false);
+          loop_var, std::move(start_constant), false);
       initializers.push_back(
           std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
 
       // Create condition: var >= end (descending) or var <= end (ascending)
       auto cond_var_ref =
           std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
-      auto end_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(end_value, 32));
+      auto end_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(end_value, 32));
       mir::BinaryOperator cmp_op = is_descending
                                        ? mir::BinaryOperator::kGreaterThanEqual
                                        : mir::BinaryOperator::kLessThanEqual;
       condition = std::make_unique<mir::BinaryExpression>(
-          cmp_op, std::move(cond_var_ref), std::move(end_literal),
+          cmp_op, std::move(cond_var_ref), std::move(end_constant),
           common::Type::Bool());
 
       // Create step: var-- (descending) or var++ (ascending)
@@ -190,10 +190,10 @@ auto LowerForeachLoop(
       // Generates: for (i = 0; i < arr.size(); i++)
 
       // Create initializer: var = 0
-      auto start_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(0, 32));
+      auto start_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(0, 32));
       auto init_assign = std::make_unique<mir::AssignmentExpression>(
-          loop_var, std::move(start_literal), false);
+          loop_var, std::move(start_constant), false);
       initializers.push_back(
           std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
 
@@ -444,8 +444,8 @@ auto LowerStatement(
       auto body = LowerStatement(forever_loop.body, arena);
 
       // Create a constant true condition for the while loop
-      auto true_condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto true_condition = std::make_unique<mir::ConstantExpression>(
+          common::Constant::Bool(true));
 
       // Create a while statement with the true condition
       return std::make_unique<mir::WhileStatement>(
@@ -515,11 +515,12 @@ auto LowerStatement(
             // Create a literal expression with the masked value
             // Match the signedness of the case expression
             auto width = sv_int.getBitWidth();
-            auto literal = sv_int.isSigned()
-                               ? common::Literal::IntegralSigned(value, width)
-                               : common::Literal::IntegralUnsigned(
-                                     static_cast<uint64_t>(value), width);
-            exprs.push_back(std::make_unique<mir::LiteralExpression>(literal));
+            auto constant = sv_int.isSigned()
+                                ? common::Constant::IntegralSigned(value, width)
+                                : common::Constant::IntegralUnsigned(
+                                      static_cast<uint64_t>(value), width);
+            exprs.push_back(
+                std::make_unique<mir::ConstantExpression>(constant));
             masks.push_back(mask);
           } else {
             // Normal case - use regular expression lowering

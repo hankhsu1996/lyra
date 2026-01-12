@@ -18,8 +18,8 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/common/builtin_method.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -45,15 +45,15 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       int64_t value = cv->integer().as<int64_t>().value_or(0);
       size_t bit_width = type_result->GetBitWidth();
       bool is_signed = type_result->IsSigned();
-      auto literal = is_signed
-                         ? common::Literal::IntegralSigned(value, bit_width)
-                         : common::Literal::IntegralUnsigned(
-                               static_cast<uint64_t>(value), bit_width);
-      return std::make_unique<mir::LiteralExpression>(std::move(literal));
+      auto constant = is_signed
+                          ? common::Constant::IntegralSigned(value, bit_width)
+                          : common::Constant::IntegralUnsigned(
+                                static_cast<uint64_t>(value), bit_width);
+      return std::make_unique<mir::ConstantExpression>(std::move(constant));
     }
     if (type_result->kind == common::Type::Kind::kString) {
-      return std::make_unique<mir::LiteralExpression>(
-          common::Literal::String(std::string(cv->str())));
+      return std::make_unique<mir::ConstantExpression>(
+          common::Constant::String(std::string(cv->str())));
     }
     // Fall through for other constant types
   }
@@ -78,8 +78,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           ++count;
         }
         // num() returns int type
-        return std::make_unique<mir::LiteralExpression>(
-            common::Literal::Int(static_cast<int32_t>(count)));
+        return std::make_unique<mir::ConstantExpression>(
+            common::Constant::Int(static_cast<int32_t>(count)));
       }
       if (subroutine_name == "first") {
         // first() returns the first enum value
@@ -93,11 +93,11 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           }
           size_t bit_width = type_result->GetBitWidth();
           bool is_signed = type_result->IsSigned();
-          auto literal = is_signed
-                             ? common::Literal::IntegralSigned(value, bit_width)
-                             : common::Literal::IntegralUnsigned(
-                                   static_cast<uint64_t>(value), bit_width);
-          return std::make_unique<mir::LiteralExpression>(std::move(literal));
+          auto constant =
+              is_signed ? common::Constant::IntegralSigned(value, bit_width)
+                        : common::Constant::IntegralUnsigned(
+                              static_cast<uint64_t>(value), bit_width);
+          return std::make_unique<mir::ConstantExpression>(std::move(constant));
         }
       }
       if (subroutine_name == "last") {
@@ -112,11 +112,11 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         }
         size_t bit_width = type_result->GetBitWidth();
         bool is_signed = type_result->IsSigned();
-        auto literal =
-            is_signed ? common::Literal::IntegralSigned(last_value, bit_width)
-                      : common::Literal::IntegralUnsigned(
+        auto constant =
+            is_signed ? common::Constant::IntegralSigned(last_value, bit_width)
+                      : common::Constant::IntegralUnsigned(
                             static_cast<uint64_t>(last_value), bit_width);
-        return std::make_unique<mir::LiteralExpression>(std::move(literal));
+        return std::make_unique<mir::ConstantExpression>(std::move(constant));
       }
 
       // Runtime enum methods (next, prev, name)
@@ -151,8 +151,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           int64_t step = step_cv->integer().as<int64_t>().value_or(1);
           // Store step as literal argument
           args.push_back(
-              std::make_unique<mir::LiteralExpression>(
-                  common::Literal::IntegralSigned(step, 32)));
+              std::make_unique<mir::ConstantExpression>(
+                  common::Constant::IntegralSigned(step, 32)));
         }
 
         auto type_result = LowerType(*call.type, expression.sourceRange, arena);
@@ -317,8 +317,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         } else {
           // Default finish_number is 1 if no arguments
           arguments.push_back(
-              std::make_unique<mir::LiteralExpression>(
-                  common::Literal::Int(1)));
+              std::make_unique<mir::ConstantExpression>(
+                  common::Constant::Int(1)));
         }
         format_idx = 1;
         args_start_idx = 1;

@@ -55,13 +55,14 @@ auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
 auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   switch (instr.kind) {
-    case lir::InstructionKind::kLiteral: {
+    case lir::InstructionKind::kConstant: {
       assert(instr.operands.size() == 1);
-      assert(instr.operands[0].IsLiteral());
+      assert(instr.operands[0].IsConstant());
       assert(instr.result.has_value());
 
-      const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
-      RuntimeValue value = RuntimeValue::FromLiteral(literal);
+      const auto& constant =
+          std::get<lir::ConstantRef>(instr.operands[0].value);
+      RuntimeValue value = RuntimeValue::FromConstant(constant);
       ctx.WriteTemp(instr.result.value(), value);
       return InstructionResult::Continue();
     }

@@ -3,8 +3,8 @@
 #include <memory>
 #include <utility>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
@@ -28,28 +28,28 @@ class TypeArena;
 
 namespace lyra::lowering::ast_to_mir {
 
-// Lowers a slang AST IntegerLiteral into a MIR Literal.
+// Lowers a slang AST IntegerLiteral into a MIR Constant.
 auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
-    -> Result<common::Literal>;
+    -> Result<common::Constant>;
 
-// Lowers a slang AST StringLiteral into a MIR Literal.
-auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal;
+// Lowers a slang AST StringLiteral into a MIR Constant.
+auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Constant;
 
-// Lowers a slang AST RealLiteral into a MIR Literal.
-auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal;
+// Lowers a slang AST RealLiteral into a MIR Constant.
+auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Constant;
 
-// Lowers a slang AST UnbasedUnsizedIntegerLiteral into a MIR Literal.
+// Lowers a slang AST UnbasedUnsizedIntegerLiteral into a MIR Constant.
 auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
-    -> Result<common::Literal>;
+    -> Result<common::Constant>;
 
-// Converts a slang ConstantValue to a MIR Literal.
+// Converts a slang ConstantValue to a MIR Constant.
 // Used for elaboration-time constants like parameters.
 // Only handles scalar types (integer, real, string).
-auto ConstantValueToLiteral(const slang::ConstantValue& cv)
-    -> Result<common::Literal>;
+auto ConstantValueToConstant(const slang::ConstantValue& cv)
+    -> Result<common::Constant>;
 
 // Converts a slang ConstantValue to a MIR Expression.
-// Handles both scalar types (via LiteralExpression) and aggregate types
+// Handles both scalar types (via ConstantExpression) and aggregate types
 // (unpacked structs via UnpackedStructLiteralExpression).
 // The type parameter is needed to determine the structure of aggregate values.
 auto ConstantValueToExpression(

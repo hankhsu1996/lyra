@@ -5,7 +5,7 @@
 #include <string_view>
 #include <utility>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 
 namespace lyra::lir {
@@ -20,26 +20,27 @@ auto LirContext::InternLabel(std::string_view name) -> LabelRef {
   return LabelRef{.ptr = &*it};
 }
 
-auto LirContext::InternLiteral(const common::Literal& literal) -> LiteralRef {
-  literal_storage_.push_back(literal);
-  const auto* ptr = &literal_storage_.back();
+auto LirContext::InternConstant(const common::Constant& constant)
+    -> ConstantRef {
+  constant_storage_.push_back(constant);
+  const auto* ptr = &constant_storage_.back();
 
-  auto [it, inserted] = literal_set_.emplace(ptr);
+  auto [it, inserted] = constant_set_.emplace(ptr);
   if (!inserted) {
-    literal_storage_.pop_back();
+    constant_storage_.pop_back();
     ptr = *it;
   }
 
-  return LiteralRef{.ptr = ptr};
+  return ConstantRef{.ptr = ptr};
 }
 
-auto LirContext::LiteralPtrHash::operator()(const common::Literal* ptr) const
+auto LirContext::ConstantPtrHash::operator()(const common::Constant* ptr) const
     -> std::size_t {
   return ptr->Hash();
 }
 
-auto LirContext::LiteralPtrEqual::operator()(
-    const common::Literal* a, const common::Literal* b) const -> bool {
+auto LirContext::ConstantPtrEqual::operator()(
+    const common::Constant* a, const common::Constant* b) const -> bool {
   return *a == *b;
 }
 

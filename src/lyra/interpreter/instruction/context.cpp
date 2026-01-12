@@ -228,9 +228,9 @@ auto InstructionContext::GetOperandValue(const lir::Operand& operand) const
   if (operand.IsVariable()) {
     return ReadVariable(operand);
   }
-  if (operand.IsLiteral()) {
-    const auto& literal = std::get<lir::LiteralRef>(operand.value);
-    return RuntimeValue::FromLiteral(literal);
+  if (operand.IsConstant()) {
+    const auto& constant = std::get<lir::ConstantRef>(operand.value);
+    return RuntimeValue::FromConstant(constant);
   }
   throw common::InternalError(
       "interpreter", "unexpected operand kind for instruction");

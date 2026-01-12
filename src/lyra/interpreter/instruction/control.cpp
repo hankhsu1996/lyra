@@ -118,10 +118,11 @@ auto HandleControlFlowOps(
       return InstructionResult::WaitEvent(instr.wait_triggers);
 
     case lir::InstructionKind::kDelay: {
-      assert(instr.operands[0].IsLiteral());
-      const auto& literal = std::get<lir::LiteralRef>(instr.operands[0].value);
+      assert(instr.operands[0].IsConstant());
+      const auto& constant =
+          std::get<lir::ConstantRef>(instr.operands[0].value);
       const auto delay_amount =
-          RuntimeValue::FromLiteral(literal).AsNarrow().AsUInt64();
+          RuntimeValue::FromConstant(constant).AsNarrow().AsUInt64();
       return InstructionResult::Delay(delay_amount);
     }
 

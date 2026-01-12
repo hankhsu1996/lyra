@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -13,7 +13,7 @@
 
 namespace lyra::lowering::mir_to_lir {
 
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
@@ -78,12 +78,12 @@ auto LowerUnpackedStructLiteralExpression(
   for (size_t i = 0; i < lit.field_values.size(); ++i) {
     auto field_value = LowerExpression(*lit.field_values[i], builder);
 
-    // Emit literal for field index
+    // Emit constant for field index
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-    auto index_literal =
-        builder.InternLiteral(Literal::Int(static_cast<int32_t>(i)));
+    auto index_constant =
+        builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+        Instruction::Basic(IK::kConstant, index_temp, index_constant));
 
     // Use unified StoreElement with temp operand
     builder.AddInstruction(
@@ -120,10 +120,10 @@ auto LowerArrayLiteralExpression(
     } else {
       // Use StoreElement for dynamic arrays
       auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-      auto index_literal =
-          builder.InternLiteral(Literal::Int(static_cast<int32_t>(i)));
+      auto index_constant =
+          builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
       builder.AddInstruction(
-          Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+          Instruction::Basic(IK::kConstant, index_temp, index_constant));
       builder.AddInstruction(
           Instruction::StoreElement(
               Operand::Temp(current), index_temp, element_value));

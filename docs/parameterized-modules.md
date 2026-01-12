@@ -201,7 +201,7 @@ This enables: `template <lyra::sdk::FixedString PROGRAM> class memory;`
 
 Slang stores string literals as bit-packed integers (`"hello"` -> `bit[40]` = `0x68656C6C6F`). The pipeline must convert back to strings:
 
-1. **AST->MIR**: Parameter value stored as `LiteralExpression` (with `is_string_literal` flag) or `ConversionExpression` (integral->string) wrapping a bit-packed literal
+1. **AST->MIR**: Parameter value stored as `ConstantExpression` (with `is_string_literal` flag) or `ConversionExpression` (integral->string) wrapping a bit-packed constant
 2. **Codegen**: `EmitConstantExpression()` detects these cases and emits proper C++ string literals
 
 When parameters flow through module hierarchy (testbench -> cpu -> instr_memory), each level's specialization uses the propagated string value.

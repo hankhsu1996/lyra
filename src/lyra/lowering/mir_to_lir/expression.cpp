@@ -21,9 +21,9 @@ using IK = lir::InstructionKind;
 auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     -> lir::TempRef {
   switch (expression.kind) {
-    case mir::Expression::Kind::kLiteral:
-      return LowerLiteralExpression(
-          mir::As<mir::LiteralExpression>(expression), builder);
+    case mir::Expression::Kind::kConstant:
+      return LowerConstantExpression(
+          mir::As<mir::ConstantExpression>(expression), builder);
 
     case mir::Expression::Kind::kIdentifier:
       return LowerIdentifierExpression(

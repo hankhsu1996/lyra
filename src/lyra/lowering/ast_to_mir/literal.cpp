@@ -16,8 +16,8 @@
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/bit_utils.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
@@ -28,9 +28,9 @@ namespace lyra::lowering::ast_to_mir {
 
 namespace {
 
-// Helper to convert SVInt to Literal (shared by IntegerLiteral and
+// Helper to convert SVInt to Constant (shared by IntegerLiteral and
 // UnbasedUnsizedIntegerLiteral)
-auto SVIntToLiteral(const slang::SVInt& sv_int) -> common::Literal {
+auto SVIntToConstant(const slang::SVInt& sv_int) -> common::Constant {
   auto width = sv_int.getBitWidth();
   auto is_signed = sv_int.isSigned();
 
@@ -41,10 +41,10 @@ auto SVIntToLiteral(const slang::SVInt& sv_int) -> common::Literal {
 
     if (is_signed) {
       int64_t extended = lyra::common::SignExtend(raw_word, width);
-      return common::Literal::IntegralSigned(extended, width);
+      return common::Constant::IntegralSigned(extended, width);
     }
     uint64_t masked = raw_word & lyra::common::MakeBitMask(width);
-    return common::Literal::IntegralUnsigned(masked, width);
+    return common::Constant::IntegralUnsigned(masked, width);
   }
 
   // Wide literal (>64 bits): use WideBit
@@ -54,13 +54,14 @@ auto SVIntToLiteral(const slang::SVInt& sv_int) -> common::Literal {
   common::WideBit wide_value(std::move(words));
   wide_value.MaskToWidth(width);
 
-  return common::Literal::IntegralWide(std::move(wide_value), width, is_signed);
+  return common::Constant::IntegralWide(
+      std::move(wide_value), width, is_signed);
 }
 
 }  // namespace
 
 auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
-    -> Result<common::Literal> {
+    -> Result<common::Constant> {
   const auto& sv_int = literal.getValue();
 
   // Reject four-state values with unknown bits
@@ -70,16 +71,17 @@ auto LowerLiteral(const slang::ast::IntegerLiteral& literal)
             literal.sourceRange, "unsupported literal with unknown bits"));
   }
 
-  return SVIntToLiteral(sv_int);
+  return SVIntToConstant(sv_int);
 }
 
-auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
+auto LowerLiteral(const slang::ast::StringLiteral& literal)
+    -> common::Constant {
   // In bit concatenation contexts, string literals have integral type (bit[N]).
   // Use the integer interpretation for those cases.
   if (literal.type->isIntegral()) {
     const auto& int_val = literal.getIntValue();
     if (int_val.isInteger()) {
-      auto result = SVIntToLiteral(int_val.integer());
+      auto result = SVIntToConstant(int_val.integer());
       result.is_string_literal = true;
       return result;
     }
@@ -88,21 +90,22 @@ auto LowerLiteral(const slang::ast::StringLiteral& literal) -> common::Literal {
   // String type context - return as string literal (String() sets
   // is_string_literal = true)
   auto value = std::string(literal.getValue());
-  return common::Literal::String(std::move(value));
+  return common::Constant::String(std::move(value));
 }
 
-auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Literal {
+auto LowerLiteral(const slang::ast::RealLiteral& literal) -> common::Constant {
   if (literal.type->isFloating()) {
     const auto& floating = literal.type->as<slang::ast::FloatingType>();
     if (floating.floatKind == slang::ast::FloatingType::ShortReal) {
-      return common::Literal::ShortReal(static_cast<float>(literal.getValue()));
+      return common::Constant::ShortReal(
+          static_cast<float>(literal.getValue()));
     }
   }
-  return common::Literal::Real(literal.getValue());
+  return common::Constant::Real(literal.getValue());
 }
 
 auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
-    -> Result<common::Literal> {
+    -> Result<common::Constant> {
   // Check for X/Z values which are not supported (four-state)
   auto bit_value = literal.getLiteralValue();
   if (bit_value.value == slang::logic_t::X_VALUE ||
@@ -114,30 +117,30 @@ auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
   }
 
   // getValue() returns fully-expanded SVInt sized to context type
-  return SVIntToLiteral(literal.getValue());
+  return SVIntToConstant(literal.getValue());
 }
 
-auto ConstantValueToLiteral(const slang::ConstantValue& cv)
-    -> Result<common::Literal> {
+auto ConstantValueToConstant(const slang::ConstantValue& cv)
+    -> Result<common::Constant> {
   if (cv.isInteger()) {
     const auto& sv_int = cv.integer();
     if (sv_int.hasUnknown()) {
       return std::unexpected(
           Diagnostic::Error({}, "unsupported constant with unknown bits"));
     }
-    return SVIntToLiteral(sv_int);
+    return SVIntToConstant(sv_int);
   }
 
   if (cv.isReal()) {
-    return common::Literal::Real(cv.real());
+    return common::Constant::Real(cv.real());
   }
 
   if (cv.isShortReal()) {
-    return common::Literal::ShortReal(cv.shortReal());
+    return common::Constant::ShortReal(cv.shortReal());
   }
 
   if (cv.isString()) {
-    return common::Literal::String(std::string(cv.str()));
+    return common::Constant::String(std::string(cv.str()));
   }
 
   return std::unexpected(
@@ -149,13 +152,14 @@ auto ConstantValueToExpression(
     slang::SourceRange source_range, common::TypeArena& arena)
     -> Result<std::unique_ptr<mir::Expression>> {
   // Scalar types (including packed structs, which slang folds to integers):
-  // delegate to ConstantValueToLiteral
+  // delegate to ConstantValueToConstant
   if (cv.isInteger() || cv.isReal() || cv.isShortReal() || cv.isString()) {
-    auto literal_result = ConstantValueToLiteral(cv);
-    if (!literal_result) {
-      return std::unexpected(std::move(literal_result.error()));
+    auto constant_result = ConstantValueToConstant(cv);
+    if (!constant_result) {
+      return std::unexpected(std::move(constant_result.error()));
     }
-    return std::make_unique<mir::LiteralExpression>(std::move(*literal_result));
+    return std::make_unique<mir::ConstantExpression>(
+        std::move(*constant_result));
   }
 
   // Unpacked aggregate (struct or array)

@@ -11,8 +11,8 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
@@ -87,8 +87,8 @@ auto LowerProcess(
           std::make_unique<mir::WaitEventStatement>(std::move(triggers)));
 
       // while (true) { body; wait_event; }
-      auto condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto condition = std::make_unique<mir::ConstantExpression>(
+          common::Constant::Bool(true));
       process->body = std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(loop_block));
       break;
@@ -100,8 +100,8 @@ auto LowerProcess(
       auto loop_block = LowerStatement(procedural_block.getBody(), arena);
 
       // Simply wrap in while (true) { ... }
-      auto condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto condition = std::make_unique<mir::ConstantExpression>(
+          common::Constant::Bool(true));
       auto loop = std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(loop_block));
 

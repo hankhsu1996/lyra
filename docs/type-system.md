@@ -47,12 +47,21 @@ This enables methods like `.next()`, `.prev()`, `.name()` to access enum metadat
 
 ## Value Representation
 
-A single `Value` type represents both compile-time constants and runtime values:
+Two value types with distinct purposes:
 
-- `type`: Pointer to interned type (not a copy)
-- `storage`: The actual data (inline for small values, pointer for large)
+**Constant** (compile-time): Immutable values from source code.
 
-No separate Literal vs RuntimeValue distinction. This eliminates conversion overhead and simplifies the codebase.
+- `type`: The value's type
+- `value`: Storage (integral, string, etc.)
+- Used in MIR/LIR for constant expressions
+
+**RuntimeValue** (runtime): Execution state in interpreter.
+
+- `type`: Pointer to interned type
+- `value`: Variant holding actual data
+- Mutable, supports all runtime operations
+
+The separation follows LLVM's design where `llvm::Constant` is distinct from runtime values. `RuntimeValue::FromConstant()` converts at the interpreter boundary.
 
 ## Built-in Methods
 
@@ -101,8 +110,8 @@ Built-in methods access type metadata through the receiver's type pointer (e.g.,
 - **Stability**: External API changes don't ripple through backend
 - **Lifetime**: Backend types outlive frontend compilation
 
-### Why unified Value?
+### Why separate Constant and RuntimeValue?
 
-- One representation to understand and maintain
-- No conversion between compile-time and runtime
-- Operations work identically everywhere
+- **Semantics**: Constants describe program meaning, RuntimeValues hold execution state
+- **Immutability**: Constants are immutable and shareable; RuntimeValues are mutable
+- **Clear boundary**: Conversion at interpreter boundary makes the compile-time/runtime split explicit

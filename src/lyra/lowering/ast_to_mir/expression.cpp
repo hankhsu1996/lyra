@@ -40,23 +40,23 @@ auto LowerExpression(
   switch (expression.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
       const auto& literal = expression.as<slang::ast::IntegerLiteral>();
-      auto mir_literal_result = LowerLiteral(literal);
-      if (!mir_literal_result) {
-        throw DiagnosticException(std::move(mir_literal_result.error()));
+      auto mir_constant_result = LowerLiteral(literal);
+      if (!mir_constant_result) {
+        throw DiagnosticException(std::move(mir_constant_result.error()));
       }
-      return std::make_unique<mir::LiteralExpression>(
-          std::move(*mir_literal_result));
+      return std::make_unique<mir::ConstantExpression>(
+          std::move(*mir_constant_result));
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
       const auto& literal =
           expression.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
-      auto mir_literal_result = LowerLiteral(literal);
-      if (!mir_literal_result) {
-        throw DiagnosticException(std::move(mir_literal_result.error()));
+      auto mir_constant_result = LowerLiteral(literal);
+      if (!mir_constant_result) {
+        throw DiagnosticException(std::move(mir_constant_result.error()));
       }
-      return std::make_unique<mir::LiteralExpression>(
-          std::move(*mir_literal_result));
+      return std::make_unique<mir::ConstantExpression>(
+          std::move(*mir_constant_result));
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
@@ -65,14 +65,14 @@ auto LowerExpression(
       // is_string_literal=true
       // - String context: returns string literal
       const auto& literal = expression.as<slang::ast::StringLiteral>();
-      auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      auto mir_constant = LowerLiteral(literal);
+      return std::make_unique<mir::ConstantExpression>(std::move(mir_constant));
     }
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& literal = expression.as<slang::ast::RealLiteral>();
-      auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      auto mir_constant = LowerLiteral(literal);
+      return std::make_unique<mir::ConstantExpression>(std::move(mir_constant));
     }
 
     case slang::ast::ExpressionKind::NamedValue: {

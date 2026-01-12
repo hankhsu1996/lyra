@@ -3,7 +3,7 @@
 namespace lyra::mir {
 
 class Expression;
-class LiteralExpression;
+class ConstantExpression;
 class IdentifierExpression;
 class EnumValueExpression;
 class UnaryExpression;
@@ -51,7 +51,7 @@ class MirVisitor {
   auto operator=(MirVisitor&&) -> MirVisitor& = delete;
   virtual ~MirVisitor() = default;
 
-  virtual void Visit(const LiteralExpression&) = 0;
+  virtual void Visit(const ConstantExpression&) = 0;
   virtual void Visit(const IdentifierExpression&) = 0;
   virtual void Visit(const EnumValueExpression&) = 0;
   virtual void Visit(const UnaryExpression&) = 0;

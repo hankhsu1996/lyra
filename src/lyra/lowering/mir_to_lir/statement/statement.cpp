@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_set>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -74,12 +74,12 @@ auto LowerStatement(
           // Compute bit_offset = adjusted_index * element_width
           auto bit_offset =
               builder.AllocateTemp("bit_offset", common::Type::Int());
-          auto width_literal = builder.InternLiteral(
-              common::Literal::Int(static_cast<int32_t>(element_width)));
+          auto width_constant = builder.InternConstant(
+              common::Constant::Int(static_cast<int32_t>(element_width)));
           auto width_temp = builder.AllocateTemp("width", common::Type::Int());
           builder.AddInstruction(
               Instruction::Basic(
-                  lir::InstructionKind::kLiteral, width_temp, width_literal));
+                  lir::InstructionKind::kConstant, width_temp, width_constant));
           builder.AddInstruction(
               Instruction::Basic(
                   lir::InstructionKind::kBinaryMultiply, bit_offset,
@@ -165,10 +165,10 @@ auto LowerStatement(
       // Scale delay based on module's timescale and global precision
       uint64_t scaled_delay =
           delay.delay_amount * lowering_context.DelayMultiplier();
-      auto delay_amount = common::Literal::ULongInt(scaled_delay);
-      auto delay_interned = builder.InternLiteral(delay_amount);
+      auto delay_amount = common::Constant::ULongInt(scaled_delay);
+      auto delay_interned = builder.InternConstant(delay_amount);
       auto instruction =
-          Instruction::Delay(lir::Operand::Literal(delay_interned));
+          Instruction::Delay(lir::Operand::Constant(delay_interned));
       builder.AddInstruction(std::move(instruction));
       break;
     }

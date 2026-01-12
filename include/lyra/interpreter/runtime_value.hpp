@@ -14,8 +14,8 @@
 #include <fmt/core.h>
 
 #include "lyra/common/bit_utils.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lir/context.hpp"
@@ -34,13 +34,13 @@ struct RuntimeValue {
   common::Type type;
   ValueVariant value;
 
-  static auto FromLiteral(lir::LiteralRef literal) -> RuntimeValue {
-    return FromLiteral(*literal.ptr);
+  static auto FromConstant(lir::ConstantRef constant) -> RuntimeValue {
+    return FromConstant(*constant.ptr);
   }
 
-  static auto FromLiteral(const common::Literal& literal) -> RuntimeValue {
+  static auto FromConstant(const common::Constant& constant) -> RuntimeValue {
     return RuntimeValue{
-        .type = literal.type, .value = ValueVariant(literal.value)};
+        .type = constant.type, .value = ValueVariant(constant.value)};
   }
 
   static auto DefaultValueForType(const common::Type& type) -> RuntimeValue;

@@ -24,8 +24,8 @@
 #include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
@@ -122,7 +122,7 @@ auto CreateImplicitAlwaysComb(
 
   // while (true) { driver; wait_event; }
   auto condition =
-      std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      std::make_unique<mir::ConstantExpression>(common::Constant::Bool(true));
   process->body = std::make_unique<mir::WhileStatement>(
       std::move(condition), std::move(loop_block));
 

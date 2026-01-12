@@ -20,7 +20,7 @@ struct Function;
 
 enum class InstructionKind {
   // Memory operations
-  kLiteral,
+  kConstant,
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
@@ -120,7 +120,7 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     -> InstructionCategory {
   switch (kind) {
     // Memory operations
-    case InstructionKind::kLiteral:
+    case InstructionKind::kConstant:
     case InstructionKind::kLoadVariable:
     case InstructionKind::kStoreVariable:
     case InstructionKind::kStoreVariableNonBlocking:
@@ -281,12 +281,12 @@ struct Instruction {
         .operands = {Operand::Variable(operand)}};
   }
 
-  static auto Basic(InstructionKind kind, TempRef result, LiteralRef operand)
+  static auto Basic(InstructionKind kind, TempRef result, ConstantRef operand)
       -> Instruction {
     return Instruction{
         .kind = kind,
         .result = std::move(result),
-        .operands = {Operand::Literal(operand)}};
+        .operands = {Operand::Constant(operand)}};
   }
 
   static auto WithType(
@@ -556,9 +556,9 @@ struct Instruction {
   [[nodiscard]] auto ToString() const -> std::string {
     switch (kind) {
       // Memory operations
-      case InstructionKind::kLiteral:
+      case InstructionKind::kConstant:
         return fmt::format(
-            "lit   {}, {}", result.value(), operands[0].ToString());
+            "const {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kLoadVariable:
         return fmt::format(
