@@ -181,6 +181,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     case mir::Statement::Kind::kWaitEvent: {
       const auto& wait = mir::As<mir::WaitEventStatement>(stmt);
       if (wait.triggers.empty()) {
+        // Constant continuous assignments have no triggers - nothing will ever
+        // cause re-evaluation, so execute once and complete the process.
+        Line("co_return;");
         break;
       }
 

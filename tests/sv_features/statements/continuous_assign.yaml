@@ -61,3 +61,16 @@ cases:
     expected_output: |
       b=2
       b=10
+
+  - name: constant_rhs
+    description: Constant RHS (no sensitivity) should not cause infinite loop
+    sv: |
+      module Test;
+        int result;
+        assign result = 42;
+        initial begin
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expected_output: "result=42"
