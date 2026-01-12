@@ -76,7 +76,7 @@ auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
   while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
     result += buffer.data();
   }
-  int status = pclose(pipe.release());  // NOLINT(misc-include-cleaner)
+  int status = pclose(pipe.release());   // NOLINT(misc-include-cleaner)
   return {WEXITSTATUS(status), result};  // NOLINT(misc-include-cleaner)
 }
 
