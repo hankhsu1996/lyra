@@ -41,6 +41,39 @@ Deduplication is a **codegen optimization**, applied at emit time by `Codegen::G
 | Codegen     | Per-signature (emit optimization)  |
 | Interpreter | Per-instance (uses symbols)        |
 
+## Template vs Constructor Parameters
+
+### The Core Insight
+
+Not all value parameters need to be C++ template parameters. The deciding factor: **can this parameter type affect signal data types?**
+
+- **Packed/integral types** can appear in signal type definitions (e.g., `logic [WIDTH-1:0]`)
+- **Unpacked types** (strings, unpacked structs, dynamic arrays) cannot
+
+### SV Semantic Guarantee
+
+SystemVerilog guarantees that packed types can only contain packed things:
+
+- Packed structs/unions/arrays can only have integral/packed members
+- No strings, no dynamic arrays, no unpacked structs inside packed types
+
+This means: **no recursive type checking needed** - just classify the top-level type.
+
+### Parameter Classification Rule
+
+| Parameter Type Category    | Can Affect Signal Types? | C++ Strategy         |
+| -------------------------- | ------------------------ | -------------------- |
+| Integral (int, bit, logic) | Yes                      | Template parameter   |
+| Packed struct/union/array  | Yes                      | Template parameter   |
+| Real, shortreal            | No\*                     | Template parameter   |
+| String                     | No                       | Constructor argument |
+| Unpacked struct/union      | No                       | Constructor argument |
+| Dynamic/associative array  | No                       | Constructor argument |
+
+\*Real types can be template parameters (structural) but cannot be used in type expressions.
+
+This aligns with `docs/philosophy.md`: "runtime parameters for values, templates only for type parameters."
+
 ## C++ Template Parameter Types
 
 ### The Structural Type Requirement

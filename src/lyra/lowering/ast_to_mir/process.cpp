@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_mir/process.hpp"
 
-#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -23,16 +22,10 @@
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
-    -> std::unique_ptr<mir::Process> {
+auto LowerProcess(
+    const slang::ast::ProceduralBlockSymbol& procedural_block,
+    ProcessCounters& counters) -> std::unique_ptr<mir::Process> {
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
-
-  // Static counters for generating unique process names
-  static std::size_t initial_counter = 0;
-  static std::size_t always_counter = 0;
-  static std::size_t always_comb_counter = 0;
-  static std::size_t always_latch_counter = 0;
-  static std::size_t always_ff_counter = 0;
 
   auto process = std::make_unique<mir::Process>();
 
@@ -42,19 +35,19 @@ auto LowerProcess(const slang::ast::ProceduralBlockSymbol& procedural_block)
   } else {
     switch (procedural_block.procedureKind) {
       case ProceduralBlockKind::Initial:
-        process->name = fmt::format("initial_{}", initial_counter++);
+        process->name = fmt::format("initial_{}", counters.initial++);
         break;
       case ProceduralBlockKind::Always:
-        process->name = fmt::format("always_{}", always_counter++);
+        process->name = fmt::format("always_{}", counters.always++);
         break;
       case ProceduralBlockKind::AlwaysComb:
-        process->name = fmt::format("always_comb_{}", always_comb_counter++);
+        process->name = fmt::format("always_comb_{}", counters.always_comb++);
         break;
       case ProceduralBlockKind::AlwaysLatch:
-        process->name = fmt::format("always_latch_{}", always_latch_counter++);
+        process->name = fmt::format("always_latch_{}", counters.always_latch++);
         break;
       case ProceduralBlockKind::AlwaysFF:
-        process->name = fmt::format("always_ff_{}", always_ff_counter++);
+        process->name = fmt::format("always_ff_{}", counters.always_ff++);
         break;
       case ProceduralBlockKind::Final:
         process->name = "final";

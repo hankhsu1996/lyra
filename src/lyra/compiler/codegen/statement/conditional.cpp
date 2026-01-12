@@ -49,28 +49,29 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
   bool needs_overlap_check = root.check == mir::UniquePriorityCheck::kUnique ||
                              root.check == mir::UniquePriorityCheck::kUnique0;
 
-  // Block scope for temp variables
-  Indent();
-  out_ << "{\n";
-  indent_++;
+  // Get unique ID for this statement's temp variables
+  int if_id = temp_counter_++;
 
   if (needs_overlap_check) {
     // unique/unique0 if: Evaluate ALL conditions, count, check overlap
     used_features_ |= CodegenFeature::kModuleName;
 
     // Declare match counter and condition results
-    Line("int _if_count = 0;");
+    Indent();
+    out_ << "int _if_count_" << if_id << " = 0;\n";
     for (size_t i = 0; i < conditions.size(); ++i) {
       Indent();
-      out_ << "bool _cond_" << i << " = static_cast<bool>(";
+      out_ << "bool _cond_" << if_id << "_" << i << " = static_cast<bool>(";
       EmitExpression(*conditions[i]);
       out_ << ");\n";
       Indent();
-      out_ << "if (_cond_" << i << ") _if_count++;\n";
+      out_ << "if (_cond_" << if_id << "_" << i << ") _if_count_" << if_id
+           << "++;\n";
     }
 
     // Overlap check: if (count > 1) emit warning
-    Line("if (_if_count > 1) {");
+    Indent();
+    out_ << "if (_if_count_" << if_id << " > 1) {\n";
     indent_++;
     Line(
         "lyra::sdk::SeverityMessage(\"WARNING\", \"\", 0, kModuleName, "
@@ -82,7 +83,8 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
     bool needs_no_match = root.check == mir::UniquePriorityCheck::kUnique &&
                           final_else == nullptr;
     if (needs_no_match) {
-      Line("if (_if_count == 0) {");
+      Indent();
+      out_ << "if (_if_count_" << if_id << " == 0) {\n";
       indent_++;
       Line(
           "lyra::sdk::SeverityMessage(\"WARNING\", \"\", 0, kModuleName, "
@@ -96,10 +98,10 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
     for (size_t i = 0; i < conditions.size(); ++i) {
       Indent();
       if (first) {
-        out_ << "if (_cond_" << i << ") {\n";
+        out_ << "if (_cond_" << if_id << "_" << i << ") {\n";
         first = false;
       } else {
-        out_ << "} else if (_cond_" << i << ") {\n";
+        out_ << "} else if (_cond_" << if_id << "_" << i << ") {\n";
       }
       indent_++;
       if (bodies[i] != nullptr) {
@@ -131,7 +133,8 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
 
     // Track if any branch was taken (only if no final else)
     if (final_else == nullptr) {
-      Line("bool _matched = false;");
+      Indent();
+      out_ << "bool _matched_" << if_id << " = false;\n";
     }
 
     // Emit if-else-if chain
@@ -148,7 +151,8 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
       out_ << ") {\n";
       indent_++;
       if (final_else == nullptr) {
-        Line("_matched = true;");
+        Indent();
+        out_ << "_matched_" << if_id << " = true;\n";
       }
       if (bodies[i] != nullptr) {
         EmitStatement(*bodies[i]);
@@ -176,7 +180,8 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
 
     // No-match check (only if no final else)
     if (final_else == nullptr) {
-      Line("if (!_matched) {");
+      Indent();
+      out_ << "if (!_matched_" << if_id << ") {\n";
       indent_++;
       Line(
           "lyra::sdk::SeverityMessage(\"WARNING\", \"\", 0, kModuleName, "
@@ -185,10 +190,6 @@ void Codegen::EmitUniquePriorityIf(const mir::ConditionalStatement& root) {
       Line("}");
     }
   }
-
-  indent_--;
-  Indent();
-  out_ << "}\n";
 }
 
 void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
@@ -197,14 +198,12 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
       case_stmt.check == mir::UniquePriorityCheck::kUnique ||
       case_stmt.check == mir::UniquePriorityCheck::kUnique0;
 
-  // Block scope for the condition temp variable
-  Indent();
-  out_ << "{\n";
-  indent_++;
+  // Get unique ID for this case statement's temp variables
+  int case_id = temp_counter_++;
 
   // Emit condition once into a temp
   Indent();
-  out_ << "auto _case_cond = ";
+  out_ << "auto _case_cond_" << case_id << " = ";
   EmitExpression(*case_stmt.condition);
   out_ << ";\n";
 
@@ -219,10 +218,10 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
       bool is_all_ones = (mask == -1) || (umask == 0xFFFFFFFF) ||
                          (umask == 0xFFFFFFFFFFFFFFFF);
       if (is_all_ones) {
-        out_ << "_case_cond == ";
+        out_ << "_case_cond_" << case_id << " == ";
       } else {
-        out_ << "(static_cast<uint64_t>(_case_cond) & 0x" << std::hex << umask
-             << std::dec << "ULL) == ";
+        out_ << "(static_cast<uint64_t>(_case_cond_" << case_id << ") & 0x"
+             << std::hex << umask << std::dec << "ULL) == ";
       }
       EmitExpression(*item.expressions[i]);
     }
@@ -233,10 +232,11 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
     used_features_ |= CodegenFeature::kModuleName;
 
     // Declare match counter and flags
-    Line("int _match_count = 0;");
+    Indent();
+    out_ << "int _match_count_" << case_id << " = 0;\n";
     for (size_t i = 0; i < case_stmt.items.size(); ++i) {
       Indent();
-      out_ << "bool _matched_" << i << " = false;\n";
+      out_ << "bool _matched_" << case_id << "_" << i << " = false;\n";
     }
 
     // Evaluate all conditions and increment counter
@@ -248,14 +248,16 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
       out_ << ") {\n";
       indent_++;
       Indent();
-      out_ << "_matched_" << i << " = true;\n";
-      Line("_match_count++;");
+      out_ << "_matched_" << case_id << "_" << i << " = true;\n";
+      Indent();
+      out_ << "_match_count_" << case_id << "++;\n";
       indent_--;
       Line("}");
     }
 
     // Overlap check: if (count > 1) emit warning
-    Line("if (_match_count > 1) {");
+    Indent();
+    out_ << "if (_match_count_" << case_id << " > 1) {\n";
     indent_++;
     Line(
         "lyra::sdk::SeverityMessage(\"WARNING\", \"\", 0, kModuleName, "
@@ -268,7 +270,8 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
         case_stmt.check == mir::UniquePriorityCheck::kUnique &&
         !case_stmt.default_case;
     if (needs_no_match) {
-      Line("if (_match_count == 0) {");
+      Indent();
+      out_ << "if (_match_count_" << case_id << " == 0) {\n";
       indent_++;
       Line(
           "lyra::sdk::SeverityMessage(\"WARNING\", \"\", 0, kModuleName, "
@@ -282,10 +285,10 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
     for (size_t i = 0; i < case_stmt.items.size(); ++i) {
       Indent();
       if (first) {
-        out_ << "if (_matched_" << i << ") {\n";
+        out_ << "if (_matched_" << case_id << "_" << i << ") {\n";
         first = false;
       } else {
-        out_ << "} else if (_matched_" << i << ") {\n";
+        out_ << "} else if (_matched_" << case_id << "_" << i << ") {\n";
       }
       indent_++;
       if (case_stmt.items[i].statement) {
@@ -360,11 +363,6 @@ void Codegen::EmitCaseStatement(const mir::CaseStatement& case_stmt) {
       out_ << "}\n";
     }
   }
-
-  // Close block scope
-  indent_--;
-  Indent();
-  out_ << "}\n";
 }
 
 }  // namespace lyra::compiler

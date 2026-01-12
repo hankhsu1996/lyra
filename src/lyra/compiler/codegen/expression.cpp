@@ -38,6 +38,25 @@ using codegen::kPrecTernary;
 using codegen::kPrecUnary;
 using codegen::ToCppOperator;
 
+namespace {
+
+// Check if two types map to the same C++ type for codegen purposes.
+// For integral types, ignores is_four_state since C++ doesn't distinguish
+// two-state (bit) from four-state (logic) types.
+auto SameCppType(const common::Type& a, const common::Type& b) -> bool {
+  if (a.kind != b.kind) {
+    return false;
+  }
+  if (a.kind == common::Type::Kind::kIntegral) {
+    const auto& ad = std::get<common::IntegralData>(a.data);
+    const auto& bd = std::get<common::IntegralData>(b.data);
+    return ad.bit_width == bd.bit_width && ad.is_signed == bd.is_signed;
+  }
+  return a == b;
+}
+
+}  // namespace
+
 void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
@@ -72,8 +91,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         }
       }
       out_ << Escape(ident.symbol->name);
-      // Append underscore for port reference members (Google style)
-      if (port_symbols_.contains(ident.symbol)) {
+      // Append underscore for port reference members and constructor params
+      if (port_symbols_.contains(ident.symbol) ||
+          constructor_param_symbols_.contains(ident.symbol)) {
         out_ << "_";
       }
       break;
@@ -301,6 +321,18 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         // For non-zero-based arrays (e.g., int arr[2:5]), subtract lower_bound
         int32_t lower_bound = select.value->type.GetElementLower();
         EmitExpression(*select.value, kPrecPrimary);
+
+        // For constant integer indices, emit raw literal
+        if (select.selector->kind == mir::Expression::Kind::kLiteral) {
+          const auto& lit = mir::As<mir::LiteralExpression>(*select.selector);
+          if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
+            int64_t index = lit.literal.value.AsInt64() - lower_bound;
+            out_ << "[" << index << "]";
+            break;
+          }
+        }
+
+        // Variable index: use static_cast<size_t>
         out_ << "[static_cast<size_t>(";
         if (lower_bound != 0) {
           // Cast to int to avoid ambiguous operator- with Bit<N>
@@ -503,10 +535,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         break;
       }
 
-      // Default conversion
-      out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
-      EmitExpression(*conv.value, kPrecLowest);
-      out_ << ")";
+      // Skip cast if types map to the same C++ type
+      if (SameCppType(conv.value->type, conv.target_type)) {
+        EmitExpression(*conv.value, parent_prec);
+      } else {
+        out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
+        EmitExpression(*conv.value, kPrecLowest);
+        out_ << ")";
+      }
       break;
     }
     case mir::Expression::Kind::kSystemCall: {
@@ -531,11 +567,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           syscall.name == "$timeunit_root" ||
           syscall.name == "$timeprecision_root") {
         out_ << "lyra::sdk::global_precision_power";
-      } else if (syscall.name == "$signed" || syscall.name == "$unsigned") {
-        // Cast to target signedness, preserving bit pattern
-        out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
-        EmitExpression(*syscall.arguments[0], kPrecLowest);
-        out_ << ")";
+      } else if (syscall.name == "$signed") {
+        EmitExpression(*syscall.arguments[0], kPrecPrimary);
+        out_ << ".ToSigned()";
+      } else if (syscall.name == "$unsigned") {
+        EmitExpression(*syscall.arguments[0], kPrecPrimary);
+        out_ << ".ToUnsigned()";
       } else if (syscall.name == "$itor") {
         // Convert integer to real
         out_ << "static_cast<Real>(";
@@ -728,7 +765,13 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         }
         // Use designated initializers for clarity: .field = value
         out_ << "." << struct_data.fields[i].name << " = ";
-        EmitExpression(*lit.field_values[i], kPrecLowest);
+        // String fields need special handling for bit-packed string literals
+        if (struct_data.fields[i].field_type->kind ==
+            common::Type::Kind::kString) {
+          EmitStringLiteralArg(*lit.field_values[i]);
+        } else {
+          EmitExpression(*lit.field_values[i], kPrecLowest);
+        }
       }
       out_ << "}";
       break;
@@ -894,6 +937,18 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
 }
 
 void Codegen::EmitStringLiteralArg(const mir::Expression& arg) {
+  // Handle conversion from integral to string (bit-packed string literals)
+  if (arg.kind == mir::Expression::Kind::kConversion) {
+    const auto& conv = mir::As<mir::ConversionExpression>(arg);
+    if (conv.target_type.kind == common::Type::Kind::kString &&
+        conv.value->kind == mir::Expression::Kind::kLiteral) {
+      const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
+      std::string str = codegen::IntegralLiteralToString(lit.literal);
+      out_ << "\"" << common::EscapeForCppString(str) << "\"";
+      return;
+    }
+  }
+
   if (arg.kind == mir::Expression::Kind::kLiteral) {
     const auto& lit = mir::As<mir::LiteralExpression>(arg);
     // String literals may be stored as integrals - extract the string value

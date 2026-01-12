@@ -21,6 +21,7 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/lowering/ast_to_mir/assignment.hpp"
 #include "lyra/lowering/ast_to_mir/call.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -97,10 +98,30 @@ auto LowerExpression(const slang::ast::Expression& expression)
             value);
       }
 
-      // Handle parameter references - evaluate to constant value
+      // Handle parameter references
       if (named_value.symbol.kind == slang::ast::SymbolKind::Parameter) {
         const auto& param =
             named_value.symbol.as<slang::ast::ParameterSymbol>();
+
+        // Only preserve as identifier for port parameters with non-template
+        // types. Localparams are always inlined since they're internal
+        // constants.
+        if (param.isPortParam()) {
+          auto param_type_result =
+              LowerType(param.getType(), expression.sourceRange);
+          if (!param_type_result) {
+            throw DiagnosticException(std::move(param_type_result.error()));
+          }
+
+          if (!common::IsTemplateParamType(*param_type_result)) {
+            // Constructor params (non-template port params): preserve as
+            // identifier for runtime access via class member
+            return std::make_unique<mir::IdentifierExpression>(
+                *param_type_result, &named_value.symbol);
+          }
+        }
+
+        // Template params and localparams: inline the constant value
         const auto& cv = param.getValue();
         auto expr_result = ConstantValueToExpression(
             cv, param.getType(), expression.sourceRange);

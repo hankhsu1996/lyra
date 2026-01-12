@@ -156,6 +156,7 @@ class Codegen {
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
+  void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
@@ -218,6 +219,7 @@ class Codegen {
 
   std::ostringstream out_;
   int indent_ = 0;
+  int temp_counter_ = 0;  // For unique temp variable names within a function
 
   // Timescale info for delay scaling
   std::optional<common::TimeScale> timescale_;
@@ -227,6 +229,10 @@ class Codegen {
 
   // Track port symbols for identifier emission (append _ suffix)
   std::unordered_set<const slang::ast::Symbol*> port_symbols_;
+
+  // Track constructor param symbols for identifier emission (append _ suffix)
+  // These are non-template params stored as class members.
+  std::unordered_set<const slang::ast::Symbol*> constructor_param_symbols_;
 
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;

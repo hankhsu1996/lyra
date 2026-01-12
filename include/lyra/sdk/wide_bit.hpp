@@ -247,6 +247,16 @@ class WideBit {
     return (words_[kNumWords - 1] >> bit_in_final) & 1;
   }
 
+  // Convert to signed type, preserving width and bit pattern
+  [[nodiscard]] constexpr auto ToSigned() const -> WideBit<Width, true> {
+    return WideBit<Width, true>{*this};
+  }
+
+  // Convert to unsigned type, preserving width and bit pattern
+  [[nodiscard]] constexpr auto ToUnsigned() const -> WideBit<Width, false> {
+    return WideBit<Width, false>{*this};
+  }
+
   // Bitwise NOT
   [[nodiscard]] constexpr auto operator~() const -> WideBit {
     WideBit result;
