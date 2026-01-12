@@ -402,7 +402,7 @@ void ProcessModuleMember(
         for (const auto& member : entry->members()) {
           ProcessModuleMember(
               member, module, port_symbols, port_driver_counter,
-              cont_assign_counter);
+              cont_assign_counter, process_counters);
         }
       }
       break;

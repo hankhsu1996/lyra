@@ -38,6 +38,25 @@ using codegen::kPrecTernary;
 using codegen::kPrecUnary;
 using codegen::ToCppOperator;
 
+namespace {
+
+// Check if two types map to the same C++ type for codegen purposes.
+// For integral types, ignores is_four_state since C++ doesn't distinguish
+// two-state (bit) from four-state (logic) types.
+auto SameCppType(const common::Type& a, const common::Type& b) -> bool {
+  if (a.kind != b.kind) {
+    return false;
+  }
+  if (a.kind == common::Type::Kind::kIntegral) {
+    const auto& ad = std::get<common::IntegralData>(a.data);
+    const auto& bd = std::get<common::IntegralData>(b.data);
+    return ad.bit_width == bd.bit_width && ad.is_signed == bd.is_signed;
+  }
+  return a == b;
+}
+
+}  // namespace
+
 void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
   switch (expr.kind) {
     case mir::Expression::Kind::kLiteral: {
@@ -515,8 +534,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         break;
       }
 
-      // Default conversion - skip if types match
-      if (conv.value->type == conv.target_type) {
+      // Skip cast if types map to the same C++ type
+      if (SameCppType(conv.value->type, conv.target_type)) {
         EmitExpression(*conv.value, parent_prec);
       } else {
         out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
