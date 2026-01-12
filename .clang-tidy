@@ -17,7 +17,7 @@ CheckOptions:
   # Ignore external headers for misc-include-cleaner
   # Also ignore POSIX sys/ headers which the tool doesn't map correctly
   - key: misc-include-cleaner.IgnoreHeaders
-    value: "slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*;sys/.*"
+    value: "slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*;yaml-cpp/.*;sys/.*"
 
   # Google's naming conventions.
   # See: https://gist.github.com/airglow923/1fa3bda42f2b193920d7f46ee8345e04

@@ -5,6 +5,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace lyra::test {
@@ -23,13 +24,17 @@ struct ExpectedOutput {
   }
 };
 
+// Expected value type: integers or floating-point
+// shortreal (float) is stored as double since YAML parsing produces double
+using ExpectedValue = std::variant<int64_t, double>;
+
 struct TestCase {
   std::string name;
   std::string feature;
   std::string sv_code;
   std::vector<SourceFile> files;
   std::vector<std::string> plusargs;
-  std::map<std::string, int64_t> expected_values;
+  std::map<std::string, ExpectedValue> expected_values;
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_output;
   bool skip_codegen = false;      // Skip codegen test (e.g., for hierarchy)
