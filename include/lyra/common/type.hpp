@@ -47,6 +47,14 @@ struct DynamicArrayData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+struct QueueData {
+  std::shared_ptr<Type> element_type;
+  uint32_t max_bound;  // 0 = unbounded, else max index ([$:N] syntax)
+
+  auto operator==(const QueueData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 // Field metadata for packed structs
 struct PackedStructField {
   std::string name;
@@ -107,6 +115,7 @@ struct Type {
     kString,
     kUnpackedArray,
     kDynamicArray,
+    kQueue,
     kPackedStruct,
     kUnpackedStruct,
     kUnpackedUnion
@@ -115,7 +124,7 @@ struct Type {
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
-      PackedStructData, UnpackedStructData, UnpackedUnionData>
+      QueueData, PackedStructData, UnpackedStructData, UnpackedUnionData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -247,6 +256,16 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  static auto Queue(Type element, uint32_t max_bound = 0) -> Type {
+    return Type{
+        .kind = Kind::kQueue,
+        .data =
+            QueueData{
+                .element_type = std::make_shared<Type>(std::move(element)),
+                .max_bound = max_bound},
+        .alias_name = std::nullopt};
+  }
+
   // Create a packed struct type
   static auto PackedStruct(
       std::vector<PackedStructField> fields, size_t bit_width, bool is_signed,
@@ -310,6 +329,11 @@ struct Type {
     return kind == Kind::kDynamicArray;
   }
 
+  // Is this a queue?
+  [[nodiscard]] auto IsQueue() const -> bool {
+    return kind == Kind::kQueue;
+  }
+
   // Is this an unpacked struct?
   [[nodiscard]] auto IsUnpackedStruct() const -> bool {
     return kind == Kind::kUnpackedStruct;
@@ -363,6 +387,9 @@ struct Type {
     if (kind == Kind::kDynamicArray) {
       return *std::get<DynamicArrayData>(data).element_type;
     }
+    if (kind == Kind::kQueue) {
+      return *std::get<QueueData>(data).element_type;
+    }
     throw std::runtime_error("Type is not indexable");
   }
 
@@ -382,6 +409,9 @@ struct Type {
       throw std::runtime_error(
           "Dynamic arrays have no compile-time element count");
     }
+    if (kind == Kind::kQueue) {
+      throw std::runtime_error("Queues have no compile-time element count");
+    }
     throw std::runtime_error("Type is not indexable");
   }
 
@@ -396,6 +426,10 @@ struct Type {
     }
     if (kind == Kind::kDynamicArray) {
       // Dynamic arrays are always 0-based
+      return 0;
+    }
+    if (kind == Kind::kQueue) {
+      // Queues are always 0-based
       return 0;
     }
     if (kind == Kind::kPackedStruct) {
@@ -426,6 +460,9 @@ struct Type {
     if (kind == Kind::kDynamicArray) {
       throw std::runtime_error(
           "Dynamic arrays have no compile-time element width");
+    }
+    if (kind == Kind::kQueue) {
+      throw std::runtime_error("Queues have no compile-time element width");
     }
     throw std::runtime_error("Type is not indexable");
   }
@@ -518,6 +555,16 @@ struct Type {
         structural_str = fmt::format("{}$[]", arr.element_type->ToString());
         break;
       }
+      case Kind::kQueue: {
+        const auto& q = std::get<QueueData>(data);
+        if (q.max_bound > 0) {
+          structural_str =
+              fmt::format("{}[$:{}]", q.element_type->ToString(), q.max_bound);
+        } else {
+          structural_str = fmt::format("{}[$]", q.element_type->ToString());
+        }
+        break;
+      }
       case Kind::kPackedStruct: {
         const auto& ps = std::get<PackedStructData>(data);
         std::string base_name = ps.is_four_state ? "logic" : "bit";
@@ -600,6 +647,16 @@ inline auto DynamicArrayData::operator==(const DynamicArrayData& other) const
 
 inline auto DynamicArrayData::Hash() const -> std::size_t {
   return element_type->Hash();
+}
+
+inline auto QueueData::operator==(const QueueData& other) const -> bool {
+  return *element_type == *other.element_type && max_bound == other.max_bound;
+}
+
+inline auto QueueData::Hash() const -> std::size_t {
+  std::size_t h = element_type->Hash();
+  h ^= std::hash<uint32_t>{}(max_bound) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  return h;
 }
 
 inline auto PackedStructField::operator==(const PackedStructField& other) const
@@ -688,6 +745,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "unpacked_array";
     case Type::Kind::kDynamicArray:
       return "dynamic_array";
+    case Type::Kind::kQueue:
+      return "queue";
     case Type::Kind::kPackedStruct:
       return "packed_struct";
     case Type::Kind::kUnpackedStruct:

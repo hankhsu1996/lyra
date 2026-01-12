@@ -141,6 +141,16 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     return Type::DynamicArray(*element_result);
   }
 
+  // Check for queues
+  if (type.kind == slang::ast::SymbolKind::QueueType) {
+    const auto& queue = type.as<slang::ast::QueueType>();
+    auto element_result = LowerType(queue.elementType, source_range);
+    if (!element_result) {
+      return element_result;
+    }
+    return Type::Queue(*element_result, queue.maxBound);
+  }
+
   if (type.isUnpackedArray()) {
     const auto& array_type = type.as<slang::ast::FixedSizeUnpackedArrayType>();
     auto element_result = LowerType(array_type.elementType, source_range);

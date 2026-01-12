@@ -47,6 +47,7 @@ class Expression {
     kNewArray,
     kMethodCall,
     kUnpackedStructLiteral,
+    kArrayLiteral,
   };
 
   Kind kind;
@@ -854,6 +855,33 @@ class UnpackedStructLiteralExpression : public Expression {
       value_strs.push_back(v->ToString());
     }
     return fmt::format("'{{{}}}", fmt::join(value_strs, ", "));
+  }
+
+  void Accept(MirVisitor& visitor) const override {
+    visitor.Visit(*this);
+  }
+};
+
+// Array/queue literal expression: '{elem0, elem1, ...}
+// Creates a dynamic array or queue from element values.
+class ArrayLiteralExpression : public Expression {
+ public:
+  static constexpr Kind kKindValue = Kind::kArrayLiteral;
+
+  std::vector<std::unique_ptr<Expression>> elements;
+
+  ArrayLiteralExpression(
+      Type type, std::vector<std::unique_ptr<Expression>> elements)
+      : Expression(kKindValue, std::move(type)), elements(std::move(elements)) {
+  }
+
+  [[nodiscard]] auto ToString() const -> std::string override {
+    std::vector<std::string> elem_strs;
+    elem_strs.reserve(elements.size());
+    for (const auto& e : elements) {
+      elem_strs.push_back(e->ToString());
+    }
+    return fmt::format("'{{{}}}", fmt::join(elem_strs, ", "));
   }
 
   void Accept(MirVisitor& visitor) const override {

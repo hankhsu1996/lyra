@@ -1,8 +1,10 @@
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"
 
 #include <cassert>
+#include <utility>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/internal.hpp"
@@ -109,6 +111,10 @@ auto LowerExpression(const mir::Expression& expression, LirBuilder& builder)
     case mir::Expression::Kind::kUnpackedStructLiteral:
       return LowerUnpackedStructLiteralExpression(
           mir::As<mir::UnpackedStructLiteralExpression>(expression), builder);
+
+    case mir::Expression::Kind::kArrayLiteral:
+      return LowerArrayLiteralExpression(
+          mir::As<mir::ArrayLiteralExpression>(expression), builder);
   }
   // All expression kinds must be handled above - if we reach here, a new
   // expression kind was added without updating this function

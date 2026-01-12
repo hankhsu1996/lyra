@@ -28,6 +28,76 @@ auto LowerAssignmentExpression(
     const mir::AssignmentExpression& assignment, LirBuilder& builder)
     -> lir::TempRef {
   assert(assignment.value);
+
+  // Handle pop methods specially: they return element but also mutate receiver.
+  // For v = q.pop_back(), we need to:
+  // 1. Get the element (via pop_back call)
+  // 2. Store element to v
+  // 3. Delete the element from q
+  // 4. Store modified q back
+  if (assignment.value->kind == mir::Expression::Kind::kMethodCall) {
+    const auto& method_call =
+        mir::As<mir::MethodCallExpression>(*assignment.value);
+    const auto& receiver = *method_call.receiver;
+    bool is_pop =
+        (method_call.method_name == "pop_back" ||
+         method_call.method_name == "pop_front");
+
+    if (is_pop && receiver.kind == mir::Expression::Kind::kIdentifier) {
+      const auto& ident = mir::As<mir::IdentifierExpression>(receiver);
+
+      // Lower the pop method call (returns element)
+      auto element = LowerExpression(*assignment.value, builder);
+
+      // Store element to target
+      auto store_elem = Instruction::StoreVariable(
+          assignment.target.symbol, element, assignment.is_non_blocking);
+      builder.AddInstruction(std::move(store_elem));
+
+      // Emit delete operation to shrink the queue
+      auto recv_temp = builder.AllocateTemp("recv", receiver.type);
+      builder.AddInstruction(
+          Instruction::Basic(IK::kLoadVariable, recv_temp, ident.symbol));
+
+      // Create delete index: 0 for pop_front, size-1 for pop_back
+      auto del_idx = builder.AllocateTemp("idx", common::Type::Int());
+      if (method_call.method_name == "pop_front") {
+        auto zero_lit = builder.InternLiteral(common::Literal::Int(0));
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, del_idx, zero_lit));
+      } else {
+        // pop_back: delete at size - 1
+        auto size_temp = builder.AllocateTemp("sz", common::Type::Int());
+        builder.AddInstruction(
+            Instruction::MethodCall(
+                "size", recv_temp, {}, size_temp, common::Type::Int(), 1, {}));
+        auto one_lit = builder.InternLiteral(common::Literal::Int(1));
+        auto one_temp = builder.AllocateTemp("one", common::Type::Int());
+        builder.AddInstruction(
+            Instruction::Basic(IK::kLiteral, one_temp, one_lit));
+        builder.AddInstruction(
+            Instruction::Basic(
+                IK::kBinarySubtract, del_idx,
+                {Operand::Temp(size_temp), Operand::Temp(one_temp)}));
+      }
+
+      // Call delete(index) on receiver
+      std::vector<Operand> del_args = {Operand::Temp(del_idx)};
+      auto del_result = builder.AllocateTemp("del", receiver.type);
+      builder.AddInstruction(
+          Instruction::MethodCall(
+              "delete", recv_temp, std::move(del_args), del_result,
+              receiver.type, 1, {}));
+
+      // Store modified queue back to variable
+      auto store_queue =
+          Instruction::StoreVariable(ident.symbol, del_result, false);
+      builder.AddInstruction(std::move(store_queue));
+
+      return element;
+    }
+  }
+
   auto value = LowerExpression(*assignment.value, builder);
 
   if (assignment.target.IsHierarchical()) {

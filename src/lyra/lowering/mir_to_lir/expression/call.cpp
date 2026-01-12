@@ -320,17 +320,30 @@ auto LowerMethodCallExpression(
     lir_members.push_back({.name = m.name, .value = m.value});
   }
 
-  // Get step from args (for enum next/prev)
+  // For enum methods, extract step from args (first literal arg)
+  // For array/queue methods, lower all args as operands
   int64_t step = 1;
-  if (!mc.args.empty()) {
-    const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
-    step = step_expr.literal.value.AsInt64();
+  std::vector<Operand> arg_operands;
+
+  if (!lir_members.empty()) {
+    // Enum method: first arg is step (if present)
+    if (!mc.args.empty()) {
+      const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
+      step = step_expr.literal.value.AsInt64();
+    }
+  } else {
+    // Array/queue method: lower all args as operands
+    arg_operands.reserve(mc.args.size());
+    for (const auto& arg : mc.args) {
+      auto arg_temp = LowerExpression(*arg, builder);
+      arg_operands.push_back(Operand::Temp(arg_temp));
+    }
   }
 
   builder.AddInstruction(
       Instruction::MethodCall(
-          mc.method_name, receiver, result, mc.type, step,
-          std::move(lir_members)));
+          mc.method_name, receiver, std::move(arg_operands), result, mc.type,
+          step, std::move(lir_members)));
   return result;
 }
 

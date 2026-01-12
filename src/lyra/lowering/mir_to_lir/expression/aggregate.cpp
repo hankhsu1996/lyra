@@ -93,4 +93,43 @@ auto LowerUnpackedStructLiteralExpression(
   return result;
 }
 
+auto LowerArrayLiteralExpression(
+    const mir::ArrayLiteralExpression& lit, LirBuilder& builder)
+    -> lir::TempRef {
+  // Create array/queue literal by building up values in SSA style
+  auto current = builder.AllocateTemp("array_lit", lit.type);
+  builder.AddInstruction(Instruction::CreateAggregate(current, lit.type));
+
+  // For queues, use push_back to add elements (SSA style: each returns new
+  // queue) For dynamic arrays, use StoreElement (dynamic array starts with
+  // size)
+  bool is_queue = lit.type.IsQueue();
+
+  for (size_t i = 0; i < lit.elements.size(); ++i) {
+    auto element_value = LowerExpression(*lit.elements[i], builder);
+
+    if (is_queue) {
+      // SSA style: push_back returns the modified queue
+      // %q1 = push_back(%q0, element) -> %q1 is new queue with element
+      auto next = builder.AllocateTemp("array_lit", lit.type);
+      std::vector<lir::Operand> args = {Operand::Temp(element_value)};
+      builder.AddInstruction(
+          Instruction::MethodCall(
+              "push_back", current, std::move(args), next, lit.type, 1, {}));
+      current = next;  // Chain: next iteration uses result of this one
+    } else {
+      // Use StoreElement for dynamic arrays
+      auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+      auto index_literal =
+          builder.InternLiteral(Literal::Int(static_cast<int32_t>(i)));
+      builder.AddInstruction(
+          Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+      builder.AddInstruction(
+          Instruction::StoreElement(
+              Operand::Temp(current), index_temp, element_value));
+    }
+  }
+  return current;
+}
+
 }  // namespace lyra::lowering::mir_to_lir

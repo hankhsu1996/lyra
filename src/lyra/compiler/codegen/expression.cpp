@@ -734,6 +734,22 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       break;
     }
 
+    case mir::Expression::Kind::kArrayLiteral: {
+      // Array/queue literal: '{elem0, elem1, ...}
+      // Emit as C++ initializer list: {val0, val1, ...}
+      const auto& lit = mir::As<mir::ArrayLiteralExpression>(expr);
+
+      out_ << ToCppType(expr.type) << "{";
+      for (size_t i = 0; i < lit.elements.size(); ++i) {
+        if (i > 0) {
+          out_ << ", ";
+        }
+        EmitExpression(*lit.elements[i], kPrecLowest);
+      }
+      out_ << "}";
+      break;
+    }
+
     default:
       throw DiagnosticException(
           Diagnostic::Error(

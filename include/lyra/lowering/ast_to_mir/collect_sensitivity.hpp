@@ -131,6 +131,12 @@ class SensitivityCollector : public mir::MirVisitor {
     }
   }
 
+  void Visit(const mir::ArrayLiteralExpression& expression) override {
+    for (const auto& element : expression.elements) {
+      element->Accept(*this);
+    }
+  }
+
   void Visit(const mir::VariableDeclarationStatement& statement) override {
     if (statement.initializer) {
       statement.initializer->Accept(*this);

@@ -339,6 +339,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& concat_expr =
           expression.as<slang::ast::ConcatenationExpression>();
 
+      // Get the result type from slang (already computed with correct width)
+      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+
       // Lower all operands, skipping void-type operands (zero replications)
       std::vector<std::unique_ptr<mir::Expression>> operands;
       operands.reserve(concat_expr.operands().size());
@@ -350,12 +356,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
         operands.push_back(LowerExpression(*operand));
       }
 
-      // Get the result type from slang (already computed with correct width)
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
-      if (!type_result) {
-        throw DiagnosticException(std::move(type_result.error()));
+      // For queues/dynamic arrays, create an ArrayLiteralExpression
+      // (assignment patterns used to initialize unpacked arrays)
+      if (type_result->IsQueue() || type_result->IsDynamicArray()) {
+        return std::make_unique<mir::ArrayLiteralExpression>(
+            *type_result, std::move(operands));
       }
 
+      // For packed types, create a ConcatenationExpression
       return std::make_unique<mir::ConcatenationExpression>(
           std::move(operands), *type_result);
     }
