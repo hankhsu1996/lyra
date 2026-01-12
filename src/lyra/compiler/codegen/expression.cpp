@@ -71,7 +71,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           out_ << parent_symbol.name << "::";
         }
       }
-      out_ << ident.symbol->name;
+      out_ << Escape(ident.symbol->name);
       // Append underscore for port reference members (Google style)
       if (port_symbols_.contains(ident.symbol)) {
         out_ << "_";
@@ -158,8 +158,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << "(";
         if (storage_is_wide || element_is_wide) {
           // Wide storage or wide element - use InsertSlice
-          out_ << assign.target.symbol->name << " = "
-               << assign.target.symbol->name << ".InsertSlice(";
+          out_ << Escape(assign.target.symbol->name) << " = "
+               << Escape(assign.target.symbol->name) << ".InsertSlice(";
           EmitExpression(*assign.value, kPrecLowest);
           out_ << ", ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
@@ -168,9 +168,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           // Narrow storage and narrow element - use mask-and-merge
           used_type_aliases_ |= TypeAlias::kBit;
           uint64_t mask = common::MakeBitMask(element_width);
-          out_ << assign.target.symbol->name << " = ("
-               << assign.target.symbol->name << " & ~(Bit<" << total_width
-               << ">{" << mask << "ULL} << ";
+          out_ << Escape(assign.target.symbol->name) << " = ("
+               << Escape(assign.target.symbol->name) << " & ~(Bit<"
+               << total_width << ">{" << mask << "ULL} << ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
           out_ << ")) | ((Bit<" << total_width << ">{";
           EmitExpression(*assign.value, kPrecLowest);
@@ -189,7 +189,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         if (base_type.IsUnpackedStruct() || base_type.IsUnpackedUnion()) {
           // Unpacked struct/union field: direct member assignment
           // Emit full field path for nested access (e.g., s.inner.x = value)
-          out_ << assign.target.symbol->name;
+          out_ << Escape(assign.target.symbol->name);
           for (const auto& field : assign.target.field_path) {
             out_ << "." << field.name;
           }
@@ -207,18 +207,18 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           out_ << "(";
           if (storage_is_wide || field_is_wide) {
             // Wide storage or wide field - use InsertSlice
-            out_ << assign.target.symbol->name << " = "
-                 << assign.target.symbol->name << ".InsertSlice(";
+            out_ << Escape(assign.target.symbol->name) << " = "
+                 << Escape(assign.target.symbol->name) << ".InsertSlice(";
             EmitExpression(*assign.value, kPrecLowest);
             out_ << ", " << bit_offset << ", " << field_width << ")";
           } else {
             // Narrow storage and narrow field - use mask-and-merge
             used_type_aliases_ |= TypeAlias::kBit;
             uint64_t mask = common::MakeBitMask(field_width);
-            out_ << assign.target.symbol->name << " = ("
-                 << assign.target.symbol->name << " & ~(Bit<" << total_width
-                 << ">{" << mask << "ULL} << " << bit_offset << ")) | ((Bit<"
-                 << total_width << ">{";
+            out_ << Escape(assign.target.symbol->name) << " = ("
+                 << Escape(assign.target.symbol->name) << " & ~(Bit<"
+                 << total_width << ">{" << mask << "ULL} << " << bit_offset
+                 << ")) | ((Bit<" << total_width << ">{";
             EmitExpression(*assign.value, kPrecLowest);
             out_ << ".Value() & " << mask << "ULL} << " << bit_offset << "))";
           }
@@ -599,7 +599,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
              << (is_string_target ? "ValuePlusargsString("
                                   : "ValuePlusargsInt(");
         EmitStringLiteralArg(*syscall.arguments[0]);
-        out_ << ", " << output_target.symbol->name << ")";
+        out_ << ", " << Escape(output_target.symbol->name) << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
@@ -677,8 +677,8 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     case mir::Expression::Kind::kFunctionCall: {
       const auto& call = mir::As<mir::FunctionCallExpression>(expr);
       // function_name is already qualified for package functions (e.g.,
-      // "MyPkg::add")
-      out_ << call.function_name << "(";
+      // "MyPkg::add"). Escape the function name part for C++ keywords.
+      out_ << EscapeQualified(call.function_name) << "(";
       for (size_t i = 0; i < call.arguments.size(); ++i) {
         if (i > 0) {
           out_ << ", ";
@@ -764,7 +764,7 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     return;
   }
 
-  out_ << target.symbol->name;
+  out_ << Escape(target.symbol->name);
   // Append underscore for port reference members (Google style)
   if (port_symbols_.contains(target.symbol)) {
     out_ << "_";
@@ -826,7 +826,7 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
     case mir::Expression::Kind::kIdentifier: {
       // Parameter reference - emit just the name
       const auto& ident = mir::As<mir::IdentifierExpression>(expr);
-      out_ << ident.symbol->name;
+      out_ << Escape(ident.symbol->name);
       break;
     }
     case mir::Expression::Kind::kBinary: {

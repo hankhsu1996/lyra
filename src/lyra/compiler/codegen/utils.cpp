@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/builtin_method.hpp"
@@ -17,6 +18,105 @@
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::compiler {
+
+namespace codegen {
+
+namespace {
+
+// C++ reserved keywords (C++23) - derived from cppreference.com/w/cpp/keyword
+// and clang's TokenKinds.def.
+// clang-format off
+const std::unordered_set<std::string_view> kCppKeywords = {
+    // C++ keywords
+    "alignas", "alignof", "and", "and_eq", "asm", "auto",
+    "bitand", "bitor", "bool", "break",
+    "case", "catch", "char", "char8_t", "char16_t", "char32_t", "class",
+    "compl", "concept", "const", "const_cast", "consteval", "constexpr",
+    "constinit", "continue", "co_await", "co_return", "co_yield",
+    "decltype", "default", "delete", "do", "double", "dynamic_cast",
+    "else", "enum", "explicit", "export", "extern",
+    "false", "float", "for", "friend",
+    "goto",
+    "if", "inline", "int",
+    "long",
+    "mutable",
+    "namespace", "new", "noexcept", "not", "not_eq", "nullptr",
+    "operator", "or", "or_eq",
+    "private", "protected", "public",
+    "register", "reinterpret_cast", "requires", "return",
+    "short", "signed", "sizeof", "static", "static_assert", "static_cast",
+    "struct", "switch",
+    "template", "this", "thread_local", "throw", "true", "try", "typedef",
+    "typeid", "typename",
+    "union", "unsigned", "using",
+    "virtual", "void", "volatile",
+    "wchar_t", "while",
+    "xor", "xor_eq",
+    // Identifiers with special meaning (context-sensitive keywords)
+    "final", "override", "import", "module",
+};
+// clang-format on
+
+}  // namespace
+
+auto IsCppKeyword(std::string_view name) -> bool {
+  return kCppKeywords.contains(name);
+}
+
+auto EscapeIdentifier(std::string_view name) -> std::string {
+  // Appending underscore suffix follows Google Protocol Buffers convention.
+  if (kCppKeywords.contains(name)) {
+    return std::string(name) + "_";
+  }
+  return std::string(name);
+}
+
+auto EscapeIdentifier(
+    std::string_view name,
+    const std::unordered_set<std::string_view>& existing_names) -> std::string {
+  if (!kCppKeywords.contains(name)) {
+    return std::string(name);
+  }
+
+  // Try simple suffix first
+  std::string escaped = std::string(name) + "_";
+  if (!existing_names.contains(escaped)) {
+    return escaped;
+  }
+
+  // Try double underscore
+  escaped = std::string(name) + "__";
+  if (!existing_names.contains(escaped)) {
+    return escaped;
+  }
+
+  // Try numbered suffixes
+  for (int i = 0; i < 100; ++i) {
+    escaped = std::format("{}_{}_", name, i);
+    if (!existing_names.contains(escaped)) {
+      return escaped;
+    }
+  }
+
+  // Should never happen in practice
+  return std::format("{}_escaped_", name);
+}
+
+auto EscapeQualifiedName(std::string_view qualified_name) -> std::string {
+  // Find the last "::" separator
+  auto pos = qualified_name.rfind("::");
+  if (pos == std::string_view::npos) {
+    // No qualifier - escape the whole name
+    return EscapeIdentifier(qualified_name);
+  }
+  // Has qualifier - escape only the function name part
+  std::string_view qualifier =
+      qualified_name.substr(0, pos + 2);  // Include "::"
+  std::string_view name = qualified_name.substr(pos + 2);
+  return std::string(qualifier) + EscapeIdentifier(name);
+}
+
+}  // namespace codegen
 
 using codegen::GetElementWidthAfterIndices;
 using codegen::kPrecLowest;
@@ -140,9 +240,9 @@ void Codegen::EmitHierarchicalPath(
   // Emit hierarchical path: [child_sym], value_sym -> child_.value
   // Instance names get _ suffix, target variable does not
   for (const auto& inst_sym : instance_path) {
-    out_ << inst_sym->name << "_.";
+    out_ << Escape(inst_sym->name) << "_.";
   }
-  out_ << target_symbol->name;
+  out_ << Escape(target_symbol->name);
 }
 
 void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
@@ -317,10 +417,10 @@ auto Codegen::GetTriggerPath(const common::Trigger& trigger) const
   std::string path;
   // Emit instance path: instance symbols get _ suffix
   for (const auto& inst_sym : trigger.instance_path) {
-    path += std::string(inst_sym->name) + "_.";
+    path += Escape(inst_sym->name) + "_.";
   }
   // Emit variable name
-  path += trigger.variable->name;
+  path += Escape(trigger.variable->name);
   // Append _ for port reference members
   if (port_symbols_.contains(trigger.variable)) {
     path += "_";

@@ -11,6 +11,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/compiler/codegen/type.hpp"
+#include "lyra/compiler/codegen/utils.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::compiler {
@@ -44,8 +45,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         if (storage_is_wide || element_is_wide) {
           // Wide storage or wide element - use InsertSlice
           // Generate: vec = vec.InsertSlice(val, bit_position, element_width)
-          out_ << assign.target.symbol->name << " = "
-               << assign.target.symbol->name << ".InsertSlice(";
+          out_ << Escape(assign.target.symbol->name) << " = "
+               << Escape(assign.target.symbol->name) << ".InsertSlice(";
           EmitExpression(*assign.value);
           out_ << ", ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
@@ -56,9 +57,9 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // adj_idx)
           used_type_aliases_ |= TypeAlias::kBit;
           uint64_t mask = common::MakeBitMask(element_width);
-          out_ << assign.target.symbol->name << " = ("
-               << assign.target.symbol->name << " & ~(Bit<" << total_width
-               << ">{" << mask << "ULL} << ";
+          out_ << Escape(assign.target.symbol->name) << " = ("
+               << Escape(assign.target.symbol->name) << " & ~(Bit<"
+               << total_width << ">{" << mask << "ULL} << ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
           out_ << ")) | ((Bit<" << total_width << ">{";
           EmitExpression(*assign.value);
@@ -246,7 +247,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();
       out_ << ToCppType(decl.variable.type) << " "
-           << decl.variable.symbol->name;
+           << Escape(decl.variable.symbol->name);
       if (decl.initializer) {
         out_ << " = ";
         EmitExpression(*decl.initializer);

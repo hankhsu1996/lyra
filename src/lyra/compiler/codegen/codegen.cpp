@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/common/type.hpp"
+#include "lyra/compiler/codegen/utils.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/process.hpp"
@@ -56,6 +57,9 @@ auto Codegen::Generate(
       port_symbols_.insert(port.variable.symbol);
     }
   }
+
+  // Build escape map for C++ keyword collision handling
+  BuildEscapeMap(module);
 
   // Two-phase generation: generate class first to collect feature usage,
   // then emit header with conditional includes, then append class.
@@ -277,7 +281,7 @@ void Codegen::EmitClass(const mir::Module& module) {
   for (const auto& port : module.ports) {
     if (port.direction == mir::PortDirection::kInput) {
       std::string type_str = ToCppType(port.variable.type);
-      Line(type_str + " " + std::string(port.variable.symbol->name) + ";");
+      Line(type_str + " " + Escape(port.variable.symbol->name) + ";");
     }
   }
 
@@ -296,7 +300,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     }
     first = false;
     std::string type_str = ToCppType(port.variable.type);
-    out_ << type_str << "& " << port.variable.symbol->name;
+    out_ << type_str << "& " << Escape(port.variable.symbol->name);
   }
 
   out_ << ") : Module(\"" << module.name << "\")";
@@ -306,8 +310,8 @@ void Codegen::EmitClass(const mir::Module& module) {
     if (port.direction == mir::PortDirection::kInput) {
       continue;  // Input ports are public variables, not reference members
     }
-    out_ << ", " << port.variable.symbol->name << "_("
-         << port.variable.symbol->name << ")";
+    out_ << ", " << Escape(port.variable.symbol->name) << "_("
+         << Escape(port.variable.symbol->name) << ")";
   }
 
   // Submodule initializers - pass output port bindings as references
@@ -327,7 +331,9 @@ void Codegen::EmitClass(const mir::Module& module) {
   out_ << " {\n";
   indent_++;
   for (const auto& process : module.processes) {
-    Line("RegisterProcess(&" + module.name + "::" + process->name + ");");
+    Line(
+        "RegisterProcess(&" + module.name + "::" + Escape(process->name) +
+        ");");
   }
   // Register child modules for hierarchical execution
   for (const auto& submod : module.submodules) {
@@ -357,7 +363,7 @@ void Codegen::EmitClass(const mir::Module& module) {
       continue;  // Input ports declared as public variables above
     }
     std::string type_str = ToCppType(port.variable.type);
-    Line(type_str + "& " + std::string(port.variable.symbol->name) + "_;");
+    Line(type_str + "& " + Escape(port.variable.symbol->name) + "_;");
   }
 
   // Submodule members (after port references so they can use them)
@@ -428,7 +434,7 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
   for (const auto& mod_var : variables) {
     std::string type_str = ToCppType(mod_var.variable.type);
     Indent();
-    out_ << type_str << " " << mod_var.variable.symbol->name;
+    out_ << type_str << " " << Escape(mod_var.variable.symbol->name);
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
@@ -440,7 +446,7 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
 }
 
 void Codegen::EmitProcess(const mir::Process& process) {
-  Line("auto " + process.name + "() -> lyra::sdk::Task {");
+  Line("auto " + Escape(process.name) + "() -> lyra::sdk::Task {");
   indent_++;
   if (process.body) {
     EmitStatement(*process.body);
@@ -453,7 +459,7 @@ void Codegen::EmitProcess(const mir::Process& process) {
 
 void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
   Indent();
-  out_ << "auto " << function.name << "(";
+  out_ << "auto " << Escape(function.name) << "(";
 
   // Parameters
   bool first = true;
@@ -463,7 +469,7 @@ void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
     }
     first = false;
     out_ << ToCppType(param.variable.type) << " "
-         << param.variable.symbol->name;
+         << Escape(param.variable.symbol->name);
   }
 
   out_ << ") -> " << ToCppType(function.return_type) << " {\n";
@@ -488,6 +494,9 @@ auto Codegen::GeneratePackages(
 
   // Generate package namespaces
   for (const auto& pkg : packages) {
+    // Build escape map for this package
+    BuildEscapeMap(*pkg);
+
     Line(std::format("namespace {} {{", pkg->name));
     indent_++;
 
@@ -510,7 +519,7 @@ auto Codegen::GeneratePackages(
       std::string type_str = ToCppType(param.variable.type);
       Indent();
       out_ << "inline constexpr " << type_str << " "
-           << param.variable.symbol->name << "{";
+           << Escape(param.variable.symbol->name) << "{";
       EmitExpression(*param.initializer);
       out_ << "};\n";
     }
@@ -519,7 +528,7 @@ auto Codegen::GeneratePackages(
     for (const auto& var : pkg->variables) {
       std::string type_str = ToCppType(var.variable.type);
       Indent();
-      out_ << "inline " << type_str << " " << var.variable.symbol->name;
+      out_ << "inline " << type_str << " " << Escape(var.variable.symbol->name);
       if (var.initializer) {
         out_ << "{";
         EmitExpression(*var.initializer);
@@ -617,6 +626,107 @@ auto Codegen::GenerateAllModules(
   }
 
   return outputs;
+}
+
+void Codegen::BuildEscapeMap(const mir::Module& module) {
+  escape_map_.clear();
+
+  // Collect all identifier names in this module
+  std::unordered_set<std::string_view> all_names;
+
+  // Port names
+  for (const auto& port : module.ports) {
+    all_names.insert(port.variable.symbol->name);
+  }
+
+  // Module variable names
+  for (const auto& var : module.variables) {
+    all_names.insert(var.variable.symbol->name);
+  }
+
+  // Function names and their parameter names
+  for (const auto& func : module.functions) {
+    all_names.insert(func.name);
+    for (const auto& param : func.parameters) {
+      all_names.insert(param.variable.symbol->name);
+    }
+  }
+
+  // Process names
+  for (const auto& process : module.processes) {
+    all_names.insert(process->name);
+  }
+
+  // Submodule instance names
+  for (const auto& submod : module.submodules) {
+    all_names.insert(submod.instance_name);
+  }
+
+  // Build escape map for keywords
+  for (const auto& name : all_names) {
+    if (codegen::IsCppKeyword(name)) {
+      escape_map_[std::string(name)] =
+          codegen::EscapeIdentifier(name, all_names);
+    }
+  }
+}
+
+void Codegen::BuildEscapeMap(const mir::Package& package) {
+  escape_map_.clear();
+
+  // Collect all identifier names in this package
+  std::unordered_set<std::string_view> all_names;
+
+  // Parameter names
+  for (const auto& param : package.parameters) {
+    all_names.insert(param.variable.symbol->name);
+  }
+
+  // Variable names
+  for (const auto& var : package.variables) {
+    all_names.insert(var.variable.symbol->name);
+  }
+
+  // Function names and their parameter names
+  for (const auto& func : package.functions) {
+    all_names.insert(func.name);
+    for (const auto& param : func.parameters) {
+      all_names.insert(param.variable.symbol->name);
+    }
+  }
+
+  // Build escape map for keywords
+  for (const auto& name : all_names) {
+    if (codegen::IsCppKeyword(name)) {
+      escape_map_[std::string(name)] =
+          codegen::EscapeIdentifier(name, all_names);
+    }
+  }
+}
+
+auto Codegen::Escape(std::string_view name) const -> std::string {
+  // Check if name has a pre-computed escape (for collision handling)
+  auto it = escape_map_.find(std::string(name));
+  if (it != escape_map_.end()) {
+    return it->second;
+  }
+  // Fall back to simple escaping for local variables not in the map
+  return codegen::EscapeIdentifier(name);
+}
+
+auto Codegen::EscapeQualified(std::string_view qualified_name) const
+    -> std::string {
+  // Find the last "::" separator
+  auto pos = qualified_name.rfind("::");
+  if (pos == std::string_view::npos) {
+    // No qualifier - use the collision-aware Escape
+    return Escape(qualified_name);
+  }
+  // Has qualifier - escape only the function name part
+  std::string_view qualifier =
+      qualified_name.substr(0, pos + 2);  // Include "::"
+  std::string_view name = qualified_name.substr(pos + 2);
+  return std::string(qualifier) + Escape(name);
 }
 
 }  // namespace lyra::compiler

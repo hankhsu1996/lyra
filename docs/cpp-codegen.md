@@ -78,6 +78,34 @@ class Test : public Module {
 };
 ```
 
+## Identifier Escaping
+
+SystemVerilog and C++ have different reserved word sets. Valid SV identifiers like `double`, `template`, or `namespace` are C++ keywords and produce invalid code:
+
+```cpp
+auto double(int x) -> int { ... }  // Invalid: double is a keyword
+```
+
+### Convention
+
+Escape by appending underscore: `double` → `double_`
+
+This follows Google Protocol Buffers' convention for reserved keywords (e.g., `false` → `false_()`). It's also consistent with Lyra's existing use of underscore suffix for output/inout port reference members.
+
+### Collision Resolution
+
+If the escaped name collides with an existing identifier, alternative suffixes are tried:
+
+| Original | First try | If collision | If still collision |
+| -------- | --------- | ------------ | ------------------ |
+| `double` | `double_` | `double__`   | `double_0_`        |
+
+This is computed per-module/package scope before code emission.
+
+### Scope
+
+Only C++ reserved words are escaped (92 keywords plus special identifiers like `final`, `override`, `import`, `module`). Regular identifiers pass through unchanged.
+
 ## SDK Interface
 
 Core types:

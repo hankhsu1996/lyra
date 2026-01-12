@@ -1,8 +1,29 @@
 #pragma once
 
+#include <string>
+#include <string_view>
+#include <unordered_set>
+
 #include "lyra/mir/operators.hpp"
 
 namespace lyra::compiler::codegen {
+
+// Returns true if name is a C++ reserved keyword.
+auto IsCppKeyword(std::string_view name) -> bool;
+
+// Escapes C++ reserved keywords by appending underscore suffix.
+// Follows Google Protocol Buffers convention (e.g., "double" -> "double_").
+auto EscapeIdentifier(std::string_view name) -> std::string;
+
+// Escapes C++ reserved keywords, avoiding collisions with existing identifiers.
+// If "name_" collides, tries "name__", "name_0_", "name_1_", etc.
+auto EscapeIdentifier(
+    std::string_view name,
+    const std::unordered_set<std::string_view>& existing_names) -> std::string;
+
+// Escapes qualified names like "MyPkg::double" -> "MyPkg::double_".
+// Only escapes the last component (after the final "::").
+auto EscapeQualifiedName(std::string_view qualified_name) -> std::string;
 
 // C++ operator precedence (higher value = binds tighter)
 // See: https://en.cppreference.com/w/cpp/language/operator_precedence
