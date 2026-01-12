@@ -102,6 +102,23 @@ Alternative execution path (interpreter):
 The interpreter (`lyra run --interpret`) is useful for development and debugging.
 It supports hierarchical modules via instance contexts (see `docs/interpreter-hierarchy.md`).
 
+### Process vs Function
+
+In the interpreter, **Process** and **Function** are distinct execution models reflecting SystemVerilog semantics:
+
+| Aspect         | Process                                      | Function                                 |
+| -------------- | -------------------------------------------- | ---------------------------------------- |
+| **Lifetime**   | Long-lived, persists across simulation       | Ephemeral, exists during call            |
+| **Suspension** | Can suspend (`@event`, `#delay`)             | Cannot suspend, runs to completion       |
+| **Scheduling** | Scheduled independently by simulator         | Called synchronously within a process    |
+| **Variables**  | Persist across suspensions in `ProcessFrame` | Local to call frame, destroyed on return |
+
+**Implementation**: Both use the same block execution infrastructure. `RunProcess` manages a unified loop that switches between process blocks and function blocks via a call stack. When a function is called, its `CallFrame` is pushed; on return, execution resumes in the caller. This avoids duplicating block execution logic.
+
+**Why separate concepts?** SystemVerilog processes (`initial`, `always`) are concurrent execution units with their own timeline. Functions are subroutines that borrow the caller's timeline. A function cannot contain delays because that would require the calling process to suspend mid-expression evaluation, which violates the language model.
+
+**C++ analogy**: A Process is analogous to a C++ coroutine (can suspend and resume), while a Function is analogous to a regular C++ function (runs to completion). The `ProcessFrame` is the interpreter's equivalent of a coroutine frame.
+
 ## Data Flow
 
 1. Source files -> `SlangFrontend` -> AST
