@@ -103,6 +103,29 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
         union_type.isFourState);
   }
 
+  // Check for enum types before isIntegral() (EnumType is an IntegralType)
+  if (type.kind == slang::ast::SymbolKind::EnumType) {
+    const auto& enum_type = type.as<slang::ast::EnumType>();
+
+    std::vector<common::EnumMember> members;
+    for (const auto& val : enum_type.values()) {
+      auto cv = val.getValue();
+      int64_t int_val = 0;
+      if (cv.isInteger()) {
+        int_val = cv.integer().as<int64_t>().value_or(0);
+      }
+      members.push_back(
+          common::EnumMember{.name = std::string(val.name), .value = int_val});
+    }
+
+    auto result = Type::Enum(
+        enum_type.bitWidth, enum_type.isSigned, enum_type.isFourState,
+        std::move(members));
+    // Preserve enum type name
+    result.alias_name = std::string(enum_type.name);
+    return result;
+  }
+
   // Check for multi-dimensional packed arrays before isIntegral()
   // e.g., bit [3:0][7:0] has isPackedArray()=true
   if (type.isPackedArray()) {

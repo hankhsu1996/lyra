@@ -105,6 +105,26 @@ struct UnpackedUnionData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+// Enum member info - stores name and integer value
+struct EnumMember {
+  std::string name;
+  int64_t value;
+
+  auto operator==(const EnumMember& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
+// Enum data - stores underlying type info and member list
+struct EnumData {
+  size_t bit_width;
+  bool is_signed = false;
+  bool is_four_state = false;
+  std::vector<EnumMember> members;
+
+  auto operator==(const EnumData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 struct Type {
   enum class Kind {
     kVoid,
@@ -117,13 +137,15 @@ struct Type {
     kQueue,
     kPackedStruct,
     kUnpackedStruct,
-    kUnpackedUnion
+    kUnpackedUnion,
+    kEnum
   };
 
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
-      QueueData, PackedStructData, UnpackedStructData, UnpackedUnionData>
+      QueueData, PackedStructData, UnpackedStructData, UnpackedUnionData,
+      EnumData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -279,6 +301,21 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  // Create an enum type
+  static auto Enum(
+      size_t bit_width, bool is_signed, bool is_four_state,
+      std::vector<EnumMember> members) -> Type {
+    return Type{
+        .kind = Kind::kEnum,
+        .data =
+            EnumData{
+                .bit_width = bit_width,
+                .is_signed = is_signed,
+                .is_four_state = is_four_state,
+                .members = std::move(members)},
+        .alias_name = std::nullopt};
+  }
+
   // Is this a scalar integral (no packed array structure)?
   [[nodiscard]] auto IsScalar() const -> bool {
     if (kind != Kind::kIntegral) {
@@ -301,9 +338,25 @@ struct Type {
   }
 
   // Is this a bitvector type (supports bit/part select operations)?
-  // Includes both integral types and packed structs/unions.
+  // Includes integral types, packed structs, and enums.
   [[nodiscard]] auto IsBitvector() const -> bool {
-    return kind == Kind::kIntegral || kind == Kind::kPackedStruct;
+    return kind == Kind::kIntegral || kind == Kind::kPackedStruct ||
+           kind == Kind::kEnum;
+  }
+
+  // Get signedness for bitvector types (integral, packed struct, enum).
+  // Returns false for non-bitvector types.
+  [[nodiscard]] auto IsSigned() const -> bool {
+    switch (kind) {
+      case Kind::kIntegral:
+        return std::get<IntegralData>(data).is_signed;
+      case Kind::kPackedStruct:
+        return std::get<PackedStructData>(data).is_signed;
+      case Kind::kEnum:
+        return std::get<EnumData>(data).is_signed;
+      default:
+        return false;
+    }
   }
 
   // Is this a dynamic array?
@@ -324,6 +377,11 @@ struct Type {
   // Is this an unpacked union?
   [[nodiscard]] auto IsUnpackedUnion() const -> bool {
     return kind == Kind::kUnpackedUnion;
+  }
+
+  // Is this an enum type?
+  [[nodiscard]] auto IsEnum() const -> bool {
+    return kind == Kind::kEnum;
   }
 
   // Get struct fields (only valid for packed structs)
@@ -351,6 +409,19 @@ struct Type {
       throw std::runtime_error("Type is not an unpacked union");
     }
     return std::get<UnpackedUnionData>(data).fields;
+  }
+
+  // Get enum data (only valid for enum types)
+  [[nodiscard]] auto GetEnumData() const -> const EnumData& {
+    if (kind != Kind::kEnum) {
+      throw std::runtime_error("Type is not an enum");
+    }
+    return std::get<EnumData>(data);
+  }
+
+  // Get enum members (only valid for enum types)
+  [[nodiscard]] auto GetEnumMembers() const -> const std::vector<EnumMember>& {
+    return GetEnumData().members;
   }
 
   // Get element type for indexing (works for packed, unpacked, and dynamic
@@ -449,13 +520,16 @@ struct Type {
     throw std::runtime_error("Type is not indexable");
   }
 
-  // Get total bit width for integral types and packed structs
+  // Get total bit width for integral types, packed structs, and enums
   [[nodiscard]] auto GetBitWidth() const -> size_t {
     if (kind == Kind::kIntegral) {
       return std::get<IntegralData>(data).bit_width;
     }
     if (kind == Kind::kPackedStruct) {
       return std::get<PackedStructData>(data).bit_width;
+    }
+    if (kind == Kind::kEnum) {
+      return std::get<EnumData>(data).bit_width;
     }
     throw std::runtime_error("Type does not have bit width");
   }
@@ -566,6 +640,14 @@ struct Type {
         const auto& uu = std::get<UnpackedUnionData>(data);
         structural_str =
             fmt::format("union{}", uu.fields.empty() ? "" : " {...}");
+        break;
+      }
+      case Kind::kEnum: {
+        const auto& ed = std::get<EnumData>(data);
+        std::string base_name = ed.is_four_state ? "logic" : "bit";
+        const auto* sign_str = ed.is_signed ? " signed" : "";
+        structural_str =
+            fmt::format("enum {}[{}]{}", base_name, ed.bit_width, sign_str);
         break;
       }
     }
@@ -711,6 +793,33 @@ inline auto UnpackedUnionData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto EnumMember::operator==(const EnumMember& other) const -> bool {
+  return name == other.name && value == other.value;
+}
+
+inline auto EnumMember::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= std::hash<std::string>{}(name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  return h;
+}
+
+inline auto EnumData::operator==(const EnumData& other) const -> bool {
+  return bit_width == other.bit_width && is_signed == other.is_signed &&
+         is_four_state == other.is_four_state && members == other.members;
+}
+
+inline auto EnumData::Hash() const -> std::size_t {
+  std::size_t h = 0;
+  h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<bool>{}(is_signed) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<bool>{}(is_four_state) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  for (const auto& member : members) {
+    h ^= member.Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+  }
+  return h;
+}
+
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -735,6 +844,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "unpacked_struct";
     case Type::Kind::kUnpackedUnion:
       return "unpacked_union";
+    case Type::Kind::kEnum:
+      return "enum";
   }
   std::abort();
 }
@@ -756,6 +867,7 @@ inline auto IsTemplateParamType(const Type& type) -> bool {
   switch (type.kind) {
     case Type::Kind::kIntegral:
     case Type::Kind::kPackedStruct:
+    case Type::Kind::kEnum:
     case Type::Kind::kReal:
     case Type::Kind::kShortReal:
       return true;

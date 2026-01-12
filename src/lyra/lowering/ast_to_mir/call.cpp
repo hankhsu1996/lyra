@@ -40,15 +40,14 @@ auto LowerCall(const slang::ast::CallExpression& call)
       throw DiagnosticException(std::move(type_result.error()));
     }
 
-    if (type_result->kind == common::Type::Kind::kIntegral) {
+    if (type_result->IsBitvector()) {
       int64_t value = cv->integer().as<int64_t>().value_or(0);
-      const auto& integral_data =
-          std::get<common::IntegralData>(type_result->data);
-      auto literal =
-          integral_data.is_signed
-              ? common::Literal::IntegralSigned(value, integral_data.bit_width)
-              : common::Literal::IntegralUnsigned(
-                    static_cast<uint64_t>(value), integral_data.bit_width);
+      size_t bit_width = type_result->GetBitWidth();
+      bool is_signed = type_result->IsSigned();
+      auto literal = is_signed
+                         ? common::Literal::IntegralSigned(value, bit_width)
+                         : common::Literal::IntegralUnsigned(
+                               static_cast<uint64_t>(value), bit_width);
       return std::make_unique<mir::LiteralExpression>(std::move(literal));
     }
     if (type_result->kind == common::Type::Kind::kString) {
@@ -90,14 +89,12 @@ auto LowerCall(const slang::ast::CallExpression& call)
           if (!type_result) {
             throw DiagnosticException(std::move(type_result.error()));
           }
-          const auto& integral_data =
-              std::get<common::IntegralData>(type_result->data);
-          auto literal =
-              integral_data.is_signed
-                  ? common::Literal::IntegralSigned(
-                        value, integral_data.bit_width)
-                  : common::Literal::IntegralUnsigned(
-                        static_cast<uint64_t>(value), integral_data.bit_width);
+          size_t bit_width = type_result->GetBitWidth();
+          bool is_signed = type_result->IsSigned();
+          auto literal = is_signed
+                             ? common::Literal::IntegralSigned(value, bit_width)
+                             : common::Literal::IntegralUnsigned(
+                                   static_cast<uint64_t>(value), bit_width);
           return std::make_unique<mir::LiteralExpression>(std::move(literal));
         }
       }
@@ -111,14 +108,12 @@ auto LowerCall(const slang::ast::CallExpression& call)
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
-        const auto& integral_data =
-            std::get<common::IntegralData>(type_result->data);
-        auto literal = integral_data.is_signed
-                           ? common::Literal::IntegralSigned(
-                                 last_value, integral_data.bit_width)
-                           : common::Literal::IntegralUnsigned(
-                                 static_cast<uint64_t>(last_value),
-                                 integral_data.bit_width);
+        size_t bit_width = type_result->GetBitWidth();
+        bool is_signed = type_result->IsSigned();
+        auto literal =
+            is_signed ? common::Literal::IntegralSigned(last_value, bit_width)
+                      : common::Literal::IntegralUnsigned(
+                            static_cast<uint64_t>(last_value), bit_width);
         return std::make_unique<mir::LiteralExpression>(std::move(literal));
       }
 

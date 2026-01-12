@@ -199,17 +199,9 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
 
       const auto& result_type = instr.result_type.value();
-      assert(
-          result_type.kind == common::Type::Kind::kIntegral ||
-          result_type.kind == common::Type::Kind::kPackedStruct);
+      assert(result_type.IsBitvector());
       size_t width = result_type.GetBitWidth();
-      bool is_signed = false;
-      if (result_type.kind == common::Type::Kind::kIntegral) {
-        is_signed = std::get<common::IntegralData>(result_type.data).is_signed;
-      } else {
-        is_signed =
-            std::get<common::PackedStructData>(result_type.data).is_signed;
-      }
+      bool is_signed = result_type.IsSigned();
 
       RuntimeValue result;
       if (width <= 64) {
@@ -255,9 +247,8 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       const auto& slice_type = instr.result_type.value();
       size_t slice_width = slice_type.GetBitWidth();
 
-      const auto& current_data =
-          std::get<common::IntegralData>(current.type.data);
-      size_t storage_width = current_data.bit_width;
+      size_t storage_width = current.type.GetBitWidth();
+      bool storage_is_signed = current.type.IsSigned();
       bool storage_is_wide = current.IsWide();
       bool slice_is_wide = slice_width > 64;
 
@@ -269,7 +260,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
         uint64_t merged =
             (current.AsNarrow().AsUInt64() & clear_mask) |
             ((new_value.AsNarrow().AsUInt64() & slice_mask) << bit_offset);
-        result = current_data.is_signed
+        result = storage_is_signed
                      ? RuntimeValue::IntegralSigned(
                            static_cast<int64_t>(merged), storage_width)
                      : RuntimeValue::IntegralUnsigned(merged, storage_width);
@@ -286,7 +277,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
         auto merged =
             current_wide.InsertSlice(value_wide, bit_offset, slice_width);
         result = RuntimeValue::IntegralWide(
-            std::move(merged), storage_width, current_data.is_signed);
+            std::move(merged), storage_width, storage_is_signed);
       }
       ctx.StoreVariable(instr.operands[0], result, false);
       return InstructionResult::Continue();

@@ -12,10 +12,7 @@
 namespace lyra::compiler {
 
 auto Codegen::IsSigned(const common::Type& type) -> bool {
-  if (type.kind != common::Type::Kind::kIntegral) {
-    return false;
-  }
-  return std::get<common::IntegralData>(type.data).is_signed;
+  return type.IsSigned();
 }
 
 auto Codegen::ToCppType(const common::Type& type) -> std::string {
@@ -153,6 +150,28 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       }
       union_def += "}";
       return union_def;
+    }
+    case common::Type::Kind::kEnum: {
+      // Enums are integral types - use the underlying type representation
+      // Note: The alias_name check at the top of the function handles named
+      // enums. This case handles enum types without alias_name (shouldn't
+      // happen in practice).
+      const auto& enum_data = std::get<common::EnumData>(type.data);
+      size_t width = enum_data.bit_width;
+      bool is_signed = enum_data.is_signed;
+
+      if (codegen::IsWideWidth(width)) {
+        if (is_signed) {
+          return std::format("lyra::sdk::WideBit<{}, true>", width);
+        }
+        return std::format("lyra::sdk::WideBit<{}>", width);
+      }
+
+      used_type_aliases_ |= TypeAlias::kBit;
+      if (is_signed) {
+        return std::format("Bit<{}, true>", width);
+      }
+      return std::format("Bit<{}>", width);
     }
   }
   throw common::InternalError(

@@ -54,9 +54,31 @@ A single `Value` type represents both compile-time constants and runtime values:
 
 No separate Literal vs RuntimeValue distinction. This eliminates conversion overhead and simplifies the codebase.
 
-## Built-in Method Access
+## Built-in Methods
+
+Built-in methods (`.size()`, `.push_back()`, `.next()`, etc.) are compiler intrinsics with fixed semantics known at compile time. They are NOT user-defined functions.
+
+### Dispatch Architecture
+
+Method dispatch is resolved at MIR→LIR lowering time, not at runtime:
+
+- **MIR→LIR**: Resolves method name + receiver type → function pointer
+- **LIR**: Stores resolved function pointer in instruction
+- **Interpreter**: Calls function pointer directly (no string comparison)
+
+This eliminates O(n) string comparisons on every method call and catches typos at compile time.
+
+### Type Metadata Access
 
 Built-in methods access type metadata through the receiver's type pointer (e.g., `receiver.type->enum_members`). No special context parameter needed. The receiver carries everything, matching how production languages work (Python `self.__class__`, Java `getClass()`).
+
+### Supported Methods
+
+| Receiver    | Methods                                                                |
+| ----------- | ---------------------------------------------------------------------- |
+| array/queue | `size()`, `delete()`                                                   |
+| queue       | `push_back()`, `push_front()`, `pop_back()`, `pop_front()`, `insert()` |
+| enum        | `next()`, `prev()`, `name()`                                           |
 
 ## Design Decisions
 

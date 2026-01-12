@@ -7,6 +7,7 @@
 #include <slang/ast/symbols/ParameterSymbols.h>
 
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/mir_to_lir/expression/internal.hpp"
@@ -66,10 +67,9 @@ auto LowerEnumValueExpression(
   auto result = builder.AllocateTemp("enum", enum_val.type);
 
   // Respect the enum's base type signedness
-  const auto& integral_data =
-      std::get<common::IntegralData>(enum_val.type.data);
   auto width = enum_val.type.GetBitWidth();
-  auto literal = integral_data.is_signed
+  bool is_signed = enum_val.type.IsSigned();
+  auto literal = is_signed
                      ? builder.InternLiteral(
                            Literal::IntegralSigned(enum_val.value, width))
                      : builder.InternLiteral(

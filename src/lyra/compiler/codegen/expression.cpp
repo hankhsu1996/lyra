@@ -41,16 +41,13 @@ using codegen::ToCppOperator;
 namespace {
 
 // Check if two types map to the same C++ type for codegen purposes.
-// For integral types, ignores is_four_state since C++ doesn't distinguish
+// For bitvector types, ignores is_four_state since C++ doesn't distinguish
 // two-state (bit) from four-state (logic) types.
 auto SameCppType(const common::Type& a, const common::Type& b) -> bool {
-  if (a.kind != b.kind) {
-    return false;
-  }
-  if (a.kind == common::Type::Kind::kIntegral) {
-    const auto& ad = std::get<common::IntegralData>(a.data);
-    const auto& bd = std::get<common::IntegralData>(b.data);
-    return ad.bit_width == bd.bit_width && ad.is_signed == bd.is_signed;
+  // Bitvector types (integral, packed struct, enum) map to the same C++ type
+  // if they have the same bit width and signedness
+  if (a.IsBitvector() && b.IsBitvector()) {
+    return a.GetBitWidth() == b.GetBitWidth() && a.IsSigned() == b.IsSigned();
   }
   return a == b;
 }
