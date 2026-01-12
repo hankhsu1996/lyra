@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/Symbol.h>
@@ -14,6 +16,8 @@
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/function.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -22,7 +26,8 @@
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
+auto LowerPackage(
+    const slang::ast::PackageSymbol& pkg_symbol, common::TypeArena& arena)
     -> std::unique_ptr<mir::Package> {
   auto package = std::make_unique<mir::Package>();
   package->name = std::string(pkg_symbol.name);
@@ -33,7 +38,7 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
       const auto& target_type = alias.targetType.getType();
 
       // Lower the target type (the underlying type the alias refers to)
-      auto type_result = LowerType(target_type, slang::SourceRange{});
+      auto type_result = LowerType(target_type, slang::SourceRange{}, arena);
       if (!type_result) {
         // Skip types we can't lower (e.g., unsupported types like structs)
         continue;
@@ -65,7 +70,7 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       slang::SourceRange source_range(
           param_symbol.location, param_symbol.location);
-      auto type_result = LowerType(param_symbol.getType(), source_range);
+      auto type_result = LowerType(param_symbol.getType(), source_range, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -77,8 +82,8 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       // Get the constant value evaluated by Slang
       const auto& cv = param_symbol.getValue();
-      auto init_result =
-          ConstantValueToExpression(cv, param_symbol.getType(), source_range);
+      auto init_result = ConstantValueToExpression(
+          cv, param_symbol.getType(), source_range, arena);
       if (!init_result) {
         throw DiagnosticException(std::move(init_result.error()));
       }
@@ -95,7 +100,7 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
       const auto& var_symbol = member.as<slang::ast::VariableSymbol>();
 
       slang::SourceRange source_range(var_symbol.location, var_symbol.location);
-      auto type_result = LowerType(var_symbol.getType(), source_range);
+      auto type_result = LowerType(var_symbol.getType(), source_range, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -107,7 +112,7 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       std::unique_ptr<mir::Expression> init_expr = nullptr;
       if (const auto* initializer = var_symbol.getInitializer()) {
-        init_expr = LowerExpression(*initializer);
+        init_expr = LowerExpression(*initializer, arena);
       }
 
       package->variables.push_back(
@@ -127,7 +132,7 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
                 "tasks in packages are not yet supported"));
       }
 
-      package->functions.push_back(LowerFunction(subroutine));
+      package->functions.push_back(LowerFunction(subroutine, arena));
     }
   }
 

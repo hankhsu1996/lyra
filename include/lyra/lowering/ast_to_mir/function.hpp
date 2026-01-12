@@ -4,10 +4,15 @@
 
 #include "lyra/mir/module.hpp"
 
+namespace lyra::common {
+class TypeArena;
+}
+
 namespace lyra::lowering::ast_to_mir {
 
 /// Lower a function definition from slang AST to MIR
-auto LowerFunction(const slang::ast::SubroutineSymbol& subroutine)
+auto LowerFunction(
+    const slang::ast::SubroutineSymbol& subroutine, common::TypeArena& arena)
     -> mir::FunctionDefinition;
 
 }  // namespace lyra::lowering::ast_to_mir

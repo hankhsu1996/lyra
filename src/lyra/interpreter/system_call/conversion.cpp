@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
@@ -24,9 +25,9 @@ auto HandleConversionCalls(
     assert(instr.result_type.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    auto target_data = std::get<common::IntegralData>(instr.result_type->data);
-    auto result = RuntimeValue::IntegralSigned(
-        ExtractInt64FromSource(src), target_data.bit_width);
+    size_t target_width = instr.result_type->GetBitWidth();
+    auto result =
+        RuntimeValue::IntegralSigned(ExtractInt64FromSource(src), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
     return InstructionResult::Continue();
   }
@@ -37,10 +38,9 @@ auto HandleConversionCalls(
     assert(instr.result_type.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    auto target_data = std::get<common::IntegralData>(instr.result_type->data);
+    size_t target_width = instr.result_type->GetBitWidth();
     auto result = RuntimeValue::IntegralUnsigned(
-        static_cast<uint64_t>(ExtractInt64FromSource(src)),
-        target_data.bit_width);
+        static_cast<uint64_t>(ExtractInt64FromSource(src)), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
     return InstructionResult::Continue();
   }
@@ -50,11 +50,11 @@ auto HandleConversionCalls(
     assert(instr.result.has_value());
     assert(!instr.operands.empty());
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    auto src_data = std::get<common::IntegralData>(src.type.data);
-    double real_value = src_data.is_signed
-                            ? static_cast<double>(ExtractInt64FromSource(src))
-                            : static_cast<double>(static_cast<uint64_t>(
-                                  ExtractInt64FromSource(src)));
+    bool src_signed = src.type.IsSigned();
+    double real_value =
+        src_signed ? static_cast<double>(ExtractInt64FromSource(src))
+                   : static_cast<double>(
+                         static_cast<uint64_t>(ExtractInt64FromSource(src)));
     ctx.GetTempTable().Write(
         instr.result.value(), RuntimeValue::Real(real_value));
     return InstructionResult::Continue();
@@ -66,13 +66,13 @@ auto HandleConversionCalls(
     assert(instr.result_type.has_value());
     assert(!instr.operands.empty());
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    auto target_data = std::get<common::IntegralData>(instr.result_type->data);
+    size_t target_width = instr.result_type->GetBitWidth();
+    bool target_signed = instr.result_type->IsSigned();
     auto raw_value = static_cast<int64_t>(src.AsDouble());
-    auto result =
-        target_data.is_signed
-            ? RuntimeValue::IntegralSigned(raw_value, target_data.bit_width)
-            : RuntimeValue::IntegralUnsigned(
-                  static_cast<uint64_t>(raw_value), target_data.bit_width);
+    auto result = target_signed
+                      ? RuntimeValue::IntegralSigned(raw_value, target_width)
+                      : RuntimeValue::IntegralUnsigned(
+                            static_cast<uint64_t>(raw_value), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
     return InstructionResult::Continue();
   }

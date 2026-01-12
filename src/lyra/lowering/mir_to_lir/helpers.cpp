@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -15,7 +15,7 @@
 
 namespace lyra::lowering::mir_to_lir {
 
-using common::Literal;
+using common::Constant;
 using common::Type;
 using lir::Instruction;
 using lir::Operand;
@@ -28,9 +28,9 @@ auto AdjustForNonZeroLower(
     return index;
   }
   auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-  auto offset_literal = builder.InternLiteral(Literal::Int(lower_bound));
+  auto offset_constant = builder.InternConstant(Constant::Int(lower_bound));
   builder.AddInstruction(
-      Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+      Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
 
   auto adjusted = builder.AllocateTemp("adj_idx", Type::Int());
   builder.AddInstruction(
@@ -67,9 +67,9 @@ auto ComputeCompositeIndex(
 
     // composite = composite * inner_count + indices[i]
     auto count_temp = builder.AllocateTemp("cnt", Type::Int());
-    auto count_literal = builder.InternLiteral(Literal::Int(inner_count));
+    auto count_constant = builder.InternConstant(Constant::Int(inner_count));
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, count_temp, count_literal));
+        Instruction::Basic(IK::kConstant, count_temp, count_constant));
 
     auto mul_temp = builder.AllocateTemp("mul", Type::Int());
     builder.AddInstruction(

@@ -64,26 +64,13 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
         return InstructionResult::Continue();
       }
 
-      // Helper to check if a type is integral-like (bitvector)
-      auto is_integral_like = [](common::Type::Kind kind) {
-        return kind == common::Type::Kind::kIntegral ||
-               kind == common::Type::Kind::kPackedStruct;
-      };
-
-      if (is_integral_like(src.type.kind) &&
-          is_integral_like(target_type.kind)) {
+      if (src.type.IsBitvector() && target_type.IsBitvector()) {
         // Get bit width and signedness for the target type
         size_t target_width = target_type.GetBitWidth();
-        bool target_signed =
-            target_type.IsPackedStruct()
-                ? std::get<common::PackedStructData>(target_type.data).is_signed
-                : std::get<common::IntegralData>(target_type.data).is_signed;
+        bool target_signed = target_type.IsSigned();
 
         // Get source signedness for sign extension
-        bool src_signed =
-            src.type.IsPackedStruct()
-                ? std::get<common::PackedStructData>(src.type.data).is_signed
-                : std::get<common::IntegralData>(src.type.data).is_signed;
+        bool src_signed = src.type.IsSigned();
 
         // Wide target type - create WideBit and sign-extend if needed
         if (target_width > 64) {
@@ -112,16 +99,16 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
         return InstructionResult::Continue();
       }
 
-      if (src.type.kind == common::Type::Kind::kIntegral &&
+      if (src.type.IsBitvector() &&
           target_type.kind == common::Type::Kind::kReal) {
-        auto two_state_data = std::get<common::IntegralData>(src.type.data);
+        bool src_signed = src.type.IsSigned();
         double real_value = 0.0;
         if (src.IsWide()) {
           real_value = src.AsWideBit().ToDouble();
         } else {
           int64_t raw_value = src.AsNarrow().AsInt64();
           real_value =
-              two_state_data.is_signed
+              src_signed
                   ? static_cast<double>(raw_value)
                   : static_cast<double>(static_cast<uint64_t>(raw_value));
         }
@@ -130,46 +117,44 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
       }
 
       if (src.type.kind == common::Type::Kind::kReal &&
-          target_type.kind == common::Type::Kind::kIntegral) {
-        auto two_state_data = std::get<common::IntegralData>(target_type.data);
+          target_type.IsBitvector()) {
+        size_t target_width = target_type.GetBitWidth();
+        bool target_signed = target_type.IsSigned();
         auto raw_value = static_cast<int64_t>(src.AsDouble());
 
         // Wide target type
-        if (two_state_data.bit_width > 64) {
+        if (target_width > 64) {
           common::WideBit wide = CreateWideFromInt64(
-              raw_value, two_state_data.bit_width, /*sign_extend=*/true);
+              raw_value, target_width, /*sign_extend=*/true);
           RuntimeValue result = RuntimeValue::IntegralWide(
-              std::move(wide), two_state_data.bit_width,
-              two_state_data.is_signed);
+              std::move(wide), target_width, target_signed);
           ctx.WriteTemp(instr.result.value(), result);
           return InstructionResult::Continue();
         }
 
         // Narrow target type
-        RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::IntegralSigned(
-                                        raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::IntegralUnsigned(
-                                        static_cast<uint64_t>(raw_value),
-                                        two_state_data.bit_width);
+        RuntimeValue result =
+            target_signed
+                ? RuntimeValue::IntegralSigned(raw_value, target_width)
+                : RuntimeValue::IntegralUnsigned(
+                      static_cast<uint64_t>(raw_value), target_width);
 
         ctx.WriteTemp(instr.result.value(), result);
         return InstructionResult::Continue();
       }
 
       // Shortreal conversions
-      if (src.type.kind == common::Type::Kind::kIntegral &&
+      if (src.type.IsBitvector() &&
           target_type.kind == common::Type::Kind::kShortReal) {
-        auto two_state_data = std::get<common::IntegralData>(src.type.data);
+        bool src_signed = src.type.IsSigned();
         float float_value = 0.0F;
         if (src.IsWide()) {
           float_value = static_cast<float>(src.AsWideBit().ToDouble());
         } else {
           int64_t raw_value = src.AsNarrow().AsInt64();
           float_value =
-              two_state_data.is_signed
-                  ? static_cast<float>(raw_value)
-                  : static_cast<float>(static_cast<uint64_t>(raw_value));
+              src_signed ? static_cast<float>(raw_value)
+                         : static_cast<float>(static_cast<uint64_t>(raw_value));
         }
         ctx.WriteTemp(
             instr.result.value(), RuntimeValue::ShortReal(float_value));
@@ -177,28 +162,27 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
       }
 
       if (src.type.kind == common::Type::Kind::kShortReal &&
-          target_type.kind == common::Type::Kind::kIntegral) {
-        auto two_state_data = std::get<common::IntegralData>(target_type.data);
+          target_type.IsBitvector()) {
+        size_t target_width = target_type.GetBitWidth();
+        bool target_signed = target_type.IsSigned();
         auto raw_value = static_cast<int64_t>(src.AsFloat());
 
         // Wide target type
-        if (two_state_data.bit_width > 64) {
+        if (target_width > 64) {
           common::WideBit wide = CreateWideFromInt64(
-              raw_value, two_state_data.bit_width, /*sign_extend=*/true);
+              raw_value, target_width, /*sign_extend=*/true);
           RuntimeValue result = RuntimeValue::IntegralWide(
-              std::move(wide), two_state_data.bit_width,
-              two_state_data.is_signed);
+              std::move(wide), target_width, target_signed);
           ctx.WriteTemp(instr.result.value(), result);
           return InstructionResult::Continue();
         }
 
         // Narrow target type
-        RuntimeValue result = two_state_data.is_signed
-                                  ? RuntimeValue::IntegralSigned(
-                                        raw_value, two_state_data.bit_width)
-                                  : RuntimeValue::IntegralUnsigned(
-                                        static_cast<uint64_t>(raw_value),
-                                        two_state_data.bit_width);
+        RuntimeValue result =
+            target_signed
+                ? RuntimeValue::IntegralSigned(raw_value, target_width)
+                : RuntimeValue::IntegralUnsigned(
+                      static_cast<uint64_t>(raw_value), target_width);
 
         ctx.WriteTemp(instr.result.value(), result);
         return InstructionResult::Continue();
@@ -221,7 +205,7 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
       }
 
       // Integral to string conversion (LRM 6.16)
-      if (src.type.kind == common::Type::Kind::kIntegral &&
+      if (src.type.IsBitvector() &&
           target_type.kind == common::Type::Kind::kString) {
         ctx.WriteTemp(
             instr.result.value(), RuntimeValue::String(IntegralToString(src)));

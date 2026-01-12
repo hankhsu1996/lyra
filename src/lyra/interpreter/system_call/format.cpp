@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,7 +12,9 @@
 #include <fmt/format.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/format_string.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
 
@@ -266,7 +269,7 @@ auto FormatDisplay(
 
 auto IntegralToString(const RuntimeValue& val) -> std::string {
   std::string result;
-  size_t width = std::get<common::IntegralData>(val.type.data).bit_width;
+  size_t width = val.type.GetBitWidth();
 
   if (val.IsWide()) {
     const auto& wide = val.AsWideBit();

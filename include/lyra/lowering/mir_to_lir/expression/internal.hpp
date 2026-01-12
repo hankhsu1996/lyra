@@ -4,7 +4,7 @@
 
 namespace lyra::mir {
 class Expression;
-class LiteralExpression;
+class ConstantExpression;
 class IdentifierExpression;
 class EnumValueExpression;
 class UnaryExpression;
@@ -29,9 +29,9 @@ class AssignmentExpression;
 namespace lyra::lowering::mir_to_lir {
 class LirBuilder;
 
-// Literal lowering
-auto LowerLiteralExpression(
-    const mir::LiteralExpression& literal_expression, LirBuilder& builder)
+// Constant lowering
+auto LowerConstantExpression(
+    const mir::ConstantExpression& constant_expression, LirBuilder& builder)
     -> lir::TempRef;
 auto LowerIdentifierExpression(
     const mir::IdentifierExpression& identifier, LirBuilder& builder)

@@ -6,10 +6,12 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "lyra/common/builtin_method.hpp"
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -386,8 +388,8 @@ void Codegen::EmitEnumNavMethod(
   // Get step from args (default 1 if no args)
   int64_t step = 1;
   if (!mc.args.empty()) {
-    const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
-    step = step_expr.literal.value.AsInt64();
+    const auto& step_expr = mir::As<mir::ConstantExpression>(*mc.args[0]);
+    step = step_expr.constant.value.AsInt64();
   }
 
   // Generate inline lambda with switch

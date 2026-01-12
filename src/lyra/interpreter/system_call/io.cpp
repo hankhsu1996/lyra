@@ -116,8 +116,8 @@ auto ExtractPackedElement(
 auto StorePackedElement(
     const RuntimeValue& current, size_t index, size_t element_width,
     const RuntimeValue& new_value) -> RuntimeValue {
-  const auto& current_data = std::get<common::IntegralData>(current.type.data);
-  size_t storage_width = current_data.bit_width;
+  size_t storage_width = current.type.GetBitWidth();
+  bool storage_is_signed = current.type.IsSigned();
   bool storage_is_wide = current.IsWide();
   bool element_is_wide = element_width > 64;
   size_t shift = index * element_width;
@@ -128,7 +128,7 @@ auto StorePackedElement(
     uint64_t clear_mask = ~(elem_mask << shift);
     uint64_t merged = (current.AsNarrow().AsUInt64() & clear_mask) |
                       ((new_value.AsNarrow().AsUInt64() & elem_mask) << shift);
-    return current_data.is_signed
+    return storage_is_signed
                ? RuntimeValue::IntegralSigned(
                      static_cast<int64_t>(merged), storage_width)
                : RuntimeValue::IntegralUnsigned(merged, storage_width);
@@ -145,7 +145,7 @@ auto StorePackedElement(
                               new_value.AsNarrow().AsUInt64(), storage_words);
   auto merged = current_wide.InsertSlice(value_wide, shift, element_width);
   return RuntimeValue::IntegralWide(
-      std::move(merged), storage_width, current_data.is_signed);
+      std::move(merged), storage_width, storage_is_signed);
 }
 
 auto FormatMemValue(const RuntimeValue& value, size_t bit_width, bool is_hex)

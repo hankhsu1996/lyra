@@ -8,7 +8,7 @@
 
 #include <fmt/core.h>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lir/basic_block.hpp"
@@ -284,9 +284,9 @@ auto LirBuilder::InternLabel(const std::string& name) -> lir::LabelRef {
   return context_->InternLabel(name);
 }
 
-auto LirBuilder::InternLiteral(const common::Literal& literal)
-    -> lir::LiteralRef {
-  return context_->InternLiteral(literal);
+auto LirBuilder::InternConstant(const common::Constant& constant)
+    -> lir::ConstantRef {
+  return context_->InternConstant(constant);
 }
 
 }  // namespace lyra::lowering::mir_to_lir

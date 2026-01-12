@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <utility>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -18,7 +18,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
@@ -43,11 +43,11 @@ auto LowerElementSelectExpression(
     // Compute bit_offset = adjusted_index * element_width
     size_t element_width = select.type.GetBitWidth();
     auto bit_offset = builder.AllocateTemp("bit_offset", Type::Int());
-    auto width_literal = builder.InternLiteral(
-        Literal::Int(static_cast<int32_t>(element_width)));
+    auto width_constant = builder.InternConstant(
+        Constant::Int(static_cast<int32_t>(element_width)));
     auto width_temp = builder.AllocateTemp("width", Type::Int());
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, width_temp, width_literal));
+        Instruction::Basic(IK::kConstant, width_temp, width_constant));
     builder.AddInstruction(
         Instruction::Basic(
             IK::kBinaryMultiply, bit_offset,
@@ -93,11 +93,11 @@ auto LowerRangeSelectExpression(
     lsb -= range.value->type.GetElementLower();
   }
 
-  // Create a literal for the LSB shift amount
+  // Create a constant for the LSB shift amount
   auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());
-  auto lsb_literal = builder.InternLiteral(Literal::Int(lsb));
+  auto lsb_constant = builder.InternConstant(Constant::Int(lsb));
   auto lsb_instruction =
-      Instruction::Basic(IK::kLiteral, lsb_temp, lsb_literal);
+      Instruction::Basic(IK::kConstant, lsb_temp, lsb_constant);
   builder.AddInstruction(std::move(lsb_instruction));
 
   auto result = builder.AllocateTemp("slice", range.type);
@@ -123,10 +123,10 @@ auto LowerIndexedRangeSelectExpression(
   } else {
     // a[i-:4]: lsb = i - width + 1
     auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-    auto offset_literal =
-        builder.InternLiteral(Literal::Int(indexed.width - 1));
+    auto offset_constant =
+        builder.InternConstant(Constant::Int(indexed.width - 1));
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+        Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
 
     lsb_temp = builder.AllocateTemp("lsb", Type::Int());
     builder.AddInstruction(
@@ -161,12 +161,12 @@ auto LowerMemberAccessExpression(
     size_t storage_index =
         member.value->type.IsUnpackedUnion() ? 0 : member.bit_offset;
 
-    // Emit literal for storage index
+    // Emit constant for storage index
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-    auto index_literal = builder.InternLiteral(
-        Literal::Int(static_cast<int32_t>(storage_index)));
+    auto index_constant = builder.InternConstant(
+        Constant::Int(static_cast<int32_t>(storage_index)));
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+        Instruction::Basic(IK::kConstant, index_temp, index_constant));
 
     // Use unified LoadElement with temp operand
     builder.AddInstruction(
@@ -178,12 +178,12 @@ auto LowerMemberAccessExpression(
   // Packed struct: use bit extraction
   auto value = LowerExpression(*member.value, builder);
 
-  // Create a literal for the bit offset (LSB position)
+  // Create a constant for the bit offset (LSB position)
   auto offset_temp = builder.AllocateTemp("offset", Type::Int());
-  auto offset_literal = builder.InternLiteral(
-      Literal::Int(static_cast<int32_t>(member.bit_offset)));
+  auto offset_constant = builder.InternConstant(
+      Constant::Int(static_cast<int32_t>(member.bit_offset)));
   builder.AddInstruction(
-      Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+      Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
 
   // Use LoadPackedBits to extract the field bits
   auto result = builder.AllocateTemp("field", member.type);

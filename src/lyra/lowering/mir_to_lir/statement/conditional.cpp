@@ -2,10 +2,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"
@@ -18,7 +20,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
@@ -29,11 +31,11 @@ namespace {
 void EmitWarning(const char* message, LirBuilder& builder) {
   auto warning_instr =
       Instruction::SystemCall("$warning", std::vector<Operand>{});
-  auto format_literal = builder.InternLiteral(Literal::String(message));
+  auto format_constant = builder.InternConstant(Constant::String(message));
   auto format_temp = builder.AllocateTemp("warning.fmt", Type::String());
   builder.AddInstruction(
       Instruction::Basic(
-          IK::kLiteral, format_temp, Operand::Literal(format_literal)));
+          IK::kConstant, format_temp, Operand::Constant(format_constant)));
   warning_instr.format_operand = Operand::Temp(format_temp);
   warning_instr.format_string_is_literal = true;
   builder.AddInstruction(std::move(warning_instr));
@@ -54,12 +56,12 @@ auto EvalCaseItemMatch(
     if (mask == -1) {
       cmp_lhs = cond_temp;
     } else {
-      auto mask_literal =
-          builder.InternLiteral(Literal::UInt(static_cast<uint32_t>(mask)));
+      auto mask_constant =
+          builder.InternConstant(Constant::UInt(static_cast<uint32_t>(mask)));
       auto mask_temp = builder.AllocateTemp("case.mask", Type::UInt());
       builder.AddInstruction(
           Instruction::Basic(
-              IK::kLiteral, mask_temp, Operand::Literal(mask_literal)));
+              IK::kConstant, mask_temp, Operand::Constant(mask_constant)));
       auto masked_cond = builder.AllocateTemp("case.masked_cond", Type::UInt());
       builder.AddInstruction(
           Instruction::Basic(
@@ -97,11 +99,11 @@ auto EvalCaseItemMatch(
 void EmitOverlapCheck(
     TempRef count_temp, const char* warning_msg, const char* label_prefix,
     LirBuilder& builder) {
-  auto one_lit = builder.InternLiteral(Literal::Int(1));
+  auto one_lit = builder.InternConstant(Constant::Int(1));
   auto one_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".one", Type::Int());
   builder.AddInstruction(
-      Instruction::Basic(IK::kLiteral, one_temp, Operand::Literal(one_lit)));
+      Instruction::Basic(IK::kConstant, one_temp, Operand::Constant(one_lit)));
 
   auto overlap_cond =
       builder.AllocateTemp(std::string(label_prefix) + ".overlap", Type::Int());
@@ -130,15 +132,16 @@ void EmitOverlapCheck(
 
 // Emits no-match check: warns if count == 0.
 // count_temp: temp holding number of matching conditions
-// zero_lit: pre-interned zero literal (for reuse)
+// zero_lit: pre-interned zero constant (for reuse)
 // label_prefix: "case" or "if" for label naming
 void EmitNoMatchCheck(
-    TempRef count_temp, lir::LiteralRef zero_lit, const char* warning_msg,
+    TempRef count_temp, lir::ConstantRef zero_lit, const char* warning_msg,
     const char* label_prefix, LirBuilder& builder) {
   auto zero_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".zero", Type::Int());
   builder.AddInstruction(
-      Instruction::Basic(IK::kLiteral, zero_temp, Operand::Literal(zero_lit)));
+      Instruction::Basic(
+          IK::kConstant, zero_temp, Operand::Constant(zero_lit)));
 
   auto no_match_cond = builder.AllocateTemp(
       std::string(label_prefix) + ".no_match", Type::Int());
@@ -170,11 +173,12 @@ void EmitNoMatchCheck(
 auto CountMatches(
     const std::vector<TempRef>& match_temps, const char* label_prefix,
     LirBuilder& builder) -> TempRef {
-  auto zero_lit = builder.InternLiteral(Literal::Int(0));
+  auto zero_lit = builder.InternConstant(Constant::Int(0));
   auto count_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".count", Type::Int());
   builder.AddInstruction(
-      Instruction::Basic(IK::kLiteral, count_temp, Operand::Literal(zero_lit)));
+      Instruction::Basic(
+          IK::kConstant, count_temp, Operand::Constant(zero_lit)));
 
   for (auto match : match_temps) {
     auto match_as_int = builder.AllocateTemp(
@@ -228,7 +232,7 @@ void LowerConditionalStatement(
     bool needs_no_match = if_stmt.check == mir::UniquePriorityCheck::kUnique &&
                           final_else == nullptr;
     if (needs_no_match) {
-      auto zero_lit = builder.InternLiteral(Literal::Int(0));
+      auto zero_lit = builder.InternConstant(Constant::Int(0));
       EmitNoMatchCheck(
           count_temp, zero_lit, "no condition matched in unique if", "if",
           builder);
@@ -273,13 +277,13 @@ void LowerConditionalStatement(
     auto [conditions, bodies, final_else] = mir::CollectIfChain(if_stmt);
 
     // Track if any branch was taken
-    auto zero_lit = builder.InternLiteral(Literal::Int(0));
+    auto zero_lit = builder.InternConstant(Constant::Int(0));
     auto matched_temp = builder.AllocateTemp("if.matched", Type::Int());
     builder.AddInstruction(
         Instruction::Basic(
-            IK::kLiteral, matched_temp, Operand::Literal(zero_lit)));
+            IK::kConstant, matched_temp, Operand::Constant(zero_lit)));
 
-    auto one_lit = builder.InternLiteral(Literal::Int(1));
+    auto one_lit = builder.InternConstant(Constant::Int(1));
 
     lir::LabelRef else_label = final_else != nullptr
                                    ? builder.MakeLabel("if.else")
@@ -302,7 +306,7 @@ void LowerConditionalStatement(
       auto one_temp = builder.AllocateTemp("if.one", Type::Int());
       builder.AddInstruction(
           Instruction::Basic(
-              IK::kLiteral, one_temp, Operand::Literal(one_lit)));
+              IK::kConstant, one_temp, Operand::Constant(one_lit)));
       builder.AddInstruction(
           Instruction::Basic(IK::kMove, matched_temp, one_temp));
 
@@ -324,7 +328,7 @@ void LowerConditionalStatement(
       auto one_temp = builder.AllocateTemp("if.one", Type::Int());
       builder.AddInstruction(
           Instruction::Basic(
-              IK::kLiteral, one_temp, Operand::Literal(one_lit)));
+              IK::kConstant, one_temp, Operand::Constant(one_lit)));
       builder.AddInstruction(
           Instruction::Basic(IK::kMove, matched_temp, one_temp));
       LowerStatement(*final_else, builder, lowering_context);
@@ -337,7 +341,7 @@ void LowerConditionalStatement(
       auto zero_temp = builder.AllocateTemp("if.zero", Type::Int());
       builder.AddInstruction(
           Instruction::Basic(
-              IK::kLiteral, zero_temp, Operand::Literal(zero_lit)));
+              IK::kConstant, zero_temp, Operand::Constant(zero_lit)));
 
       auto no_match_cond = builder.AllocateTemp("if.no_match", Type::Int());
       builder.AddInstruction(
@@ -424,7 +428,7 @@ void LowerCaseStatement(
         case_stmt.check == mir::UniquePriorityCheck::kUnique &&
         !case_stmt.default_case;
     if (needs_no_match) {
-      auto zero_lit = builder.InternLiteral(Literal::Int(0));
+      auto zero_lit = builder.InternConstant(Constant::Int(0));
       EmitNoMatchCheck(
           count_temp, zero_lit, "no matching case item", "case", builder);
     }

@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -18,7 +18,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
@@ -62,19 +62,19 @@ auto LowerAssignmentExpression(
       // Create delete index: 0 for pop_front, size-1 for pop_back
       auto del_idx = builder.AllocateTemp("idx", common::Type::Int());
       if (method_call.method_name == "pop_front") {
-        auto zero_lit = builder.InternLiteral(common::Literal::Int(0));
+        auto zero_lit = builder.InternConstant(common::Constant::Int(0));
         builder.AddInstruction(
-            Instruction::Basic(IK::kLiteral, del_idx, zero_lit));
+            Instruction::Basic(IK::kConstant, del_idx, zero_lit));
       } else {
         // pop_back: delete at size - 1
         auto size_temp = builder.AllocateTemp("sz", common::Type::Int());
         builder.AddInstruction(
             Instruction::MethodCall(
                 "size", recv_temp, {}, size_temp, common::Type::Int(), 1, {}));
-        auto one_lit = builder.InternLiteral(common::Literal::Int(1));
+        auto one_lit = builder.InternConstant(common::Constant::Int(1));
         auto one_temp = builder.AllocateTemp("one", common::Type::Int());
         builder.AddInstruction(
-            Instruction::Basic(IK::kLiteral, one_temp, one_lit));
+            Instruction::Basic(IK::kConstant, one_temp, one_lit));
         builder.AddInstruction(
             Instruction::Basic(
                 IK::kBinarySubtract, del_idx,
@@ -126,10 +126,10 @@ auto LowerAssignmentExpression(
                                    ? 0
                                    : first_field.index;
         auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto index_literal = builder.InternLiteral(
-            common::Literal::Int(static_cast<int32_t>(storage_index)));
+        auto index_constant = builder.InternConstant(
+            common::Constant::Int(static_cast<int32_t>(storage_index)));
         builder.AddInstruction(
-            Instruction::Basic(IK::kLiteral, index_temp, index_literal));
+            Instruction::Basic(IK::kConstant, index_temp, index_constant));
 
         auto instruction = Instruction::StoreElement(
             Operand::Variable(assignment.target.symbol), index_temp, value,
@@ -143,15 +143,15 @@ auto LowerAssignmentExpression(
 
         // First load from root variable
         auto first_idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto first_idx_literal = builder.InternLiteral(
-            common::Literal::Int(
+        auto first_idx_constant = builder.InternConstant(
+            common::Constant::Int(
                 static_cast<int32_t>(
                     assignment.target.base_type->IsUnpackedUnion()
                         ? 0
                         : field_path[0].index)));
         builder.AddInstruction(
             Instruction::Basic(
-                IK::kLiteral, first_idx_temp, first_idx_literal));
+                IK::kConstant, first_idx_temp, first_idx_constant));
 
         auto first_temp = builder.AllocateTemp("agg", field_path[0].type);
         builder.AddInstruction(
@@ -165,12 +165,12 @@ auto LowerAssignmentExpression(
           auto idx_temp = builder.AllocateTemp("idx", common::Type::Int());
           // Use parent's type to determine if it's a union
           bool parent_is_union = field_path[i - 1].type.IsUnpackedUnion();
-          auto idx_literal = builder.InternLiteral(
-              common::Literal::Int(
+          auto idx_constant = builder.InternConstant(
+              common::Constant::Int(
                   static_cast<int32_t>(
                       parent_is_union ? 0 : field_path[i].index)));
           builder.AddInstruction(
-              Instruction::Basic(IK::kLiteral, idx_temp, idx_literal));
+              Instruction::Basic(IK::kConstant, idx_temp, idx_constant));
 
           auto temp = builder.AllocateTemp("agg", field_path[i].type);
           builder.AddInstruction(
@@ -186,11 +186,12 @@ auto LowerAssignmentExpression(
         // Use parent's type (second-to-last in path) to determine if union
         bool parent_is_union =
             field_path[field_path.size() - 2].type.IsUnpackedUnion();
-        auto last_idx_literal = builder.InternLiteral(
-            common::Literal::Int(
+        auto last_idx_constant = builder.InternConstant(
+            common::Constant::Int(
                 static_cast<int32_t>(parent_is_union ? 0 : last_field.index)));
         builder.AddInstruction(
-            Instruction::Basic(IK::kLiteral, last_idx_temp, last_idx_literal));
+            Instruction::Basic(
+                IK::kConstant, last_idx_temp, last_idx_constant));
 
         builder.AddInstruction(
             Instruction::StoreElement(
@@ -204,12 +205,12 @@ auto LowerAssignmentExpression(
           bool gparent_is_union =
               (i >= 2) ? field_path[i - 2].type.IsUnpackedUnion()
                        : assignment.target.base_type->IsUnpackedUnion();
-          auto idx_literal = builder.InternLiteral(
-              common::Literal::Int(
+          auto idx_constant = builder.InternConstant(
+              common::Constant::Int(
                   static_cast<int32_t>(
                       gparent_is_union ? 0 : field_path[i].index)));
           builder.AddInstruction(
-              Instruction::Basic(IK::kLiteral, idx_temp, idx_literal));
+              Instruction::Basic(IK::kConstant, idx_temp, idx_constant));
 
           builder.AddInstruction(
               Instruction::StoreElement(
@@ -219,14 +220,15 @@ auto LowerAssignmentExpression(
 
         // Store first intermediate back to root variable
         auto root_idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto root_idx_literal = builder.InternLiteral(
-            common::Literal::Int(
+        auto root_idx_constant = builder.InternConstant(
+            common::Constant::Int(
                 static_cast<int32_t>(
                     assignment.target.base_type->IsUnpackedUnion()
                         ? 0
                         : field_path[0].index)));
         builder.AddInstruction(
-            Instruction::Basic(IK::kLiteral, root_idx_temp, root_idx_literal));
+            Instruction::Basic(
+                IK::kConstant, root_idx_temp, root_idx_constant));
 
         builder.AddInstruction(
             Instruction::StoreElement(
@@ -239,10 +241,10 @@ auto LowerAssignmentExpression(
     // Packed struct field assignment: my_struct.field = value
     // Create literal for field bit offset
     auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
-    auto offset_literal = builder.InternLiteral(
-        common::Literal::Int(static_cast<int32_t>(*first_field.bit_offset)));
+    auto offset_constant = builder.InternConstant(
+        common::Constant::Int(static_cast<int32_t>(*first_field.bit_offset)));
     builder.AddInstruction(
-        Instruction::Basic(IK::kLiteral, offset_temp, offset_literal));
+        Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
 
     // Create slice type with field width
     auto slice_type = common::Type::IntegralUnsigned(
@@ -268,11 +270,11 @@ auto LowerAssignmentExpression(
 
       // Compute bit_offset = adjusted_index * element_width
       auto bit_offset = builder.AllocateTemp("bit_offset", Type::Int());
-      auto width_literal = builder.InternLiteral(
-          Literal::Int(static_cast<int32_t>(element_width)));
+      auto width_constant = builder.InternConstant(
+          Constant::Int(static_cast<int32_t>(element_width)));
       auto width_temp = builder.AllocateTemp("width", Type::Int());
       builder.AddInstruction(
-          Instruction::Basic(IK::kLiteral, width_temp, width_literal));
+          Instruction::Basic(IK::kConstant, width_temp, width_constant));
       builder.AddInstruction(
           Instruction::Basic(
               IK::kBinaryMultiply, bit_offset,

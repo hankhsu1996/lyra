@@ -20,10 +20,11 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -96,8 +97,9 @@ auto ConvertUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
 //     for (i = ...) { for (j = ...) { for (k = ...) { body } } } }
 // Skipped dimensions like `foreach(arr[i,,k])` generate no loop for that
 // dimension.
-auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
-    -> std::unique_ptr<mir::Statement> {
+auto LowerForeachLoop(
+    const slang::ast::ForeachLoopStatement& foreach_loop,
+    common::TypeArena& arena) -> std::unique_ptr<mir::Statement> {
   // Check for empty loopDims (shouldn't happen, but be safe)
   if (foreach_loop.loopDims.empty()) {
     throw DiagnosticException(
@@ -113,12 +115,13 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
     if (dim.loopVar == nullptr) {
       continue;
     }
-    auto var_decl = LowerVariableDeclaration(*dim.loopVar);
+    auto var_decl = LowerVariableDeclaration(*dim.loopVar, arena);
     block->statements.push_back(std::move(var_decl));
   }
 
   // Lower the body statement once
-  std::unique_ptr<mir::Statement> current = LowerStatement(foreach_loop.body);
+  std::unique_ptr<mir::Statement> current =
+      LowerStatement(foreach_loop.body, arena);
 
   // Build nested for loops from innermost to outermost
   // Process dimensions in reverse order so the first dimension is outermost
@@ -133,7 +136,7 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
 
     // Get the iterator variable type
     slang::SourceRange source_range(loop_var->location, loop_var->location);
-    auto type_result = LowerType(loop_var->getType(), source_range);
+    auto type_result = LowerType(loop_var->getType(), source_range, arena);
     if (!type_result) {
       throw DiagnosticException(std::move(type_result.error()));
     }
@@ -154,23 +157,23 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
       int32_t end_value = range.right;
 
       // Create initializer: var = start_value
-      auto start_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(start_value, 32));
+      auto start_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(start_value, 32));
       auto init_assign = std::make_unique<mir::AssignmentExpression>(
-          loop_var, std::move(start_literal), false);
+          loop_var, std::move(start_constant), false);
       initializers.push_back(
           std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
 
       // Create condition: var >= end (descending) or var <= end (ascending)
       auto cond_var_ref =
           std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
-      auto end_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(end_value, 32));
+      auto end_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(end_value, 32));
       mir::BinaryOperator cmp_op = is_descending
                                        ? mir::BinaryOperator::kGreaterThanEqual
                                        : mir::BinaryOperator::kLessThanEqual;
       condition = std::make_unique<mir::BinaryExpression>(
-          cmp_op, std::move(cond_var_ref), std::move(end_literal),
+          cmp_op, std::move(cond_var_ref), std::move(end_constant),
           common::Type::Bool());
 
       // Create step: var-- (descending) or var++ (ascending)
@@ -187,10 +190,10 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
       // Generates: for (i = 0; i < arr.size(); i++)
 
       // Create initializer: var = 0
-      auto start_literal = std::make_unique<mir::LiteralExpression>(
-          common::Literal::IntegralSigned(0, 32));
+      auto start_constant = std::make_unique<mir::ConstantExpression>(
+          common::Constant::IntegralSigned(0, 32));
       auto init_assign = std::make_unique<mir::AssignmentExpression>(
-          loop_var, std::move(start_literal), false);
+          loop_var, std::move(start_constant), false);
       initializers.push_back(
           std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
 
@@ -199,7 +202,7 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
           std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
 
       // Synthesize size() method call on the array
-      auto array_ref = LowerExpression(foreach_loop.arrayRef);
+      auto array_ref = LowerExpression(foreach_loop.arrayRef, arena);
       auto size_call = std::make_unique<mir::MethodCallExpression>(
           common::Type::Int(), std::move(array_ref), "size");
 
@@ -229,33 +232,34 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
 
 }  // namespace
 
-auto LowerStatement(const slang::ast::Statement& statement)
+auto LowerStatement(
+    const slang::ast::Statement& statement, common::TypeArena& arena)
     -> std::unique_ptr<mir::Statement> {
   switch (statement.kind) {
     case StatementKind::List: {
       const auto& statement_list = statement.as<slang::ast::StatementList>();
       auto block = std::make_unique<mir::BlockStatement>();
       for (const auto* statement : statement_list.list) {
-        block->statements.push_back(LowerStatement(*statement));
+        block->statements.push_back(LowerStatement(*statement, arena));
       }
       return block;
     }
 
     case StatementKind::Block: {
       const auto& block_statement = statement.as<slang::ast::BlockStatement>();
-      return LowerStatement(block_statement.body);
+      return LowerStatement(block_statement.body, arena);
     }
 
     case StatementKind::VariableDeclaration: {
       const auto& declaration =
           statement.as<slang::ast::VariableDeclStatement>();
-      return LowerVariableDeclaration(declaration.symbol);
+      return LowerVariableDeclaration(declaration.symbol, arena);
     }
 
     case StatementKind::ExpressionStatement: {
       const auto& expression_statement =
           statement.as<slang::ast::ExpressionStatement>();
-      return LowerExpressionStatement(expression_statement.expr);
+      return LowerExpressionStatement(expression_statement.expr, arena);
     }
 
     case StatementKind::Timed: {
@@ -288,7 +292,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
           auto delay_statement =
               std::make_unique<mir::DelayStatement>(delay_amount_opt.value());
-          auto inner_statement = LowerStatement(timed_statement.stmt);
+          auto inner_statement = LowerStatement(timed_statement.stmt, arena);
 
           auto block = std::make_unique<mir::BlockStatement>();
           block->statements.push_back(std::move(delay_statement));
@@ -304,7 +308,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
           auto wait_statement =
               std::make_unique<mir::WaitEventStatement>(std::move(triggers));
-          auto inner_statement = LowerStatement(timed_statement.stmt);
+          auto inner_statement = LowerStatement(timed_statement.stmt, arena);
 
           auto block = std::make_unique<mir::BlockStatement>();
           block->statements.push_back(std::move(wait_statement));
@@ -335,7 +339,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
           auto wait_statement =
               std::make_unique<mir::WaitEventStatement>(std::move(triggers));
-          auto inner_statement = LowerStatement(timed_statement.stmt);
+          auto inner_statement = LowerStatement(timed_statement.stmt, arena);
 
           auto block = std::make_unique<mir::BlockStatement>();
           block->statements.push_back(std::move(wait_statement));
@@ -370,12 +374,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
                 "supported"));
       }
 
-      auto condition = LowerExpression(*conditional.conditions[0].expr);
-      auto then_branch = LowerStatement(conditional.ifTrue);
+      auto condition = LowerExpression(*conditional.conditions[0].expr, arena);
+      auto then_branch = LowerStatement(conditional.ifTrue, arena);
 
       std::unique_ptr<mir::Statement> else_branch;
       if (conditional.ifFalse != nullptr) {
-        else_branch = LowerStatement(*conditional.ifFalse);
+        else_branch = LowerStatement(*conditional.ifFalse, arena);
       }
 
       auto check = ConvertUniquePriorityCheck(conditional.check);
@@ -387,8 +391,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
     case StatementKind::WhileLoop: {
       const auto& while_loop = statement.as<slang::ast::WhileLoopStatement>();
-      auto condition = LowerExpression(while_loop.cond);
-      auto body = LowerStatement(while_loop.body);
+      auto condition = LowerExpression(while_loop.cond, arena);
+      auto body = LowerStatement(while_loop.body, arena);
       return std::make_unique<mir::WhileStatement>(
           std::move(condition), std::move(body));
     }
@@ -396,8 +400,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::DoWhileLoop: {
       const auto& do_while_loop =
           statement.as<slang::ast::DoWhileLoopStatement>();
-      auto condition = LowerExpression(do_while_loop.cond);
-      auto body = LowerStatement(do_while_loop.body);
+      auto condition = LowerExpression(do_while_loop.cond, arena);
+      auto body = LowerStatement(do_while_loop.body, arena);
       return std::make_unique<mir::DoWhileStatement>(
           std::move(condition), std::move(body));
     }
@@ -412,22 +416,22 @@ auto LowerStatement(const slang::ast::Statement& statement)
       // which contains assignment expressions for pre-declared variables.
       std::vector<std::unique_ptr<mir::Statement>> initializers;
       for (const auto* expr : for_loop.initializers) {
-        initializers.push_back(LowerExpressionStatement(*expr));
+        initializers.push_back(LowerExpressionStatement(*expr, arena));
       }
 
       // Condition (nullptr if no stop expression = infinite loop)
       auto condition = (for_loop.stopExpr != nullptr)
-                           ? LowerExpression(*for_loop.stopExpr)
+                           ? LowerExpression(*for_loop.stopExpr, arena)
                            : nullptr;
 
       // Step expressions
       std::vector<std::unique_ptr<mir::Expression>> steps;
       for (const auto* step : for_loop.steps) {
-        steps.push_back(LowerExpression(*step));
+        steps.push_back(LowerExpression(*step, arena));
       }
 
       // Body
-      auto body = LowerStatement(for_loop.body);
+      auto body = LowerStatement(for_loop.body, arena);
 
       return std::make_unique<mir::ForStatement>(
           std::move(initializers), std::move(condition), std::move(steps),
@@ -437,11 +441,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::ForeverLoop: {
       const auto& forever_loop =
           statement.as<slang::ast::ForeverLoopStatement>();
-      auto body = LowerStatement(forever_loop.body);
+      auto body = LowerStatement(forever_loop.body, arena);
 
       // Create a constant true condition for the while loop
-      auto true_condition =
-          std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      auto true_condition = std::make_unique<mir::ConstantExpression>(
+          common::Constant::Bool(true));
 
       // Create a while statement with the true condition
       return std::make_unique<mir::WhileStatement>(
@@ -450,8 +454,8 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
     case StatementKind::RepeatLoop: {
       const auto& repeat_loop = statement.as<slang::ast::RepeatLoopStatement>();
-      auto count = LowerExpression(repeat_loop.count);
-      auto body = LowerStatement(repeat_loop.body);
+      auto count = LowerExpression(repeat_loop.count, arena);
+      auto body = LowerStatement(repeat_loop.body, arena);
       return std::make_unique<mir::RepeatStatement>(
           std::move(count), std::move(body));
     }
@@ -459,7 +463,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
     case StatementKind::ForeachLoop: {
       const auto& foreach_loop =
           statement.as<slang::ast::ForeachLoopStatement>();
-      return LowerForeachLoop(foreach_loop);
+      return LowerForeachLoop(foreach_loop, arena);
     }
 
     case StatementKind::Case: {
@@ -484,7 +488,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
       }
 
       // Lower the controlling expression
-      auto condition = LowerExpression(case_stmt.expr);
+      auto condition = LowerExpression(case_stmt.expr, arena);
 
       // Lower each case item
       std::vector<mir::CaseItem> items;
@@ -511,28 +515,29 @@ auto LowerStatement(const slang::ast::Statement& statement)
             // Create a literal expression with the masked value
             // Match the signedness of the case expression
             auto width = sv_int.getBitWidth();
-            auto literal = sv_int.isSigned()
-                               ? common::Literal::IntegralSigned(value, width)
-                               : common::Literal::IntegralUnsigned(
-                                     static_cast<uint64_t>(value), width);
-            exprs.push_back(std::make_unique<mir::LiteralExpression>(literal));
+            auto constant = sv_int.isSigned()
+                                ? common::Constant::IntegralSigned(value, width)
+                                : common::Constant::IntegralUnsigned(
+                                      static_cast<uint64_t>(value), width);
+            exprs.push_back(
+                std::make_unique<mir::ConstantExpression>(constant));
             masks.push_back(mask);
           } else {
             // Normal case - use regular expression lowering
-            exprs.push_back(LowerExpression(*expr));
+            exprs.push_back(LowerExpression(*expr, arena));
             // Mask of all 1s for normal case (compare all bits)
             masks.push_back(-1);
           }
         }
         // Lower the statement
-        auto stmt = LowerStatement(*item.stmt);
+        auto stmt = LowerStatement(*item.stmt, arena);
         items.emplace_back(std::move(exprs), std::move(masks), std::move(stmt));
       }
 
       // Lower optional default case
       std::unique_ptr<mir::Statement> default_case;
       if (case_stmt.defaultCase != nullptr) {
-        default_case = LowerStatement(*case_stmt.defaultCase);
+        default_case = LowerStatement(*case_stmt.defaultCase, arena);
       }
 
       // Convert unique/priority qualifier
@@ -560,7 +565,7 @@ auto LowerStatement(const slang::ast::Statement& statement)
 
       std::unique_ptr<mir::Expression> return_value = nullptr;
       if (return_stmt.expr != nullptr) {
-        return_value = LowerExpression(*return_stmt.expr);
+        return_value = LowerExpression(*return_stmt.expr, arena);
       }
 
       return std::make_unique<mir::ReturnStatement>(std::move(return_value));
@@ -591,12 +596,13 @@ auto LowerStatement(const slang::ast::Statement& statement)
   }
 }
 
-auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
+auto LowerVariableDeclaration(
+    const slang::ast::VariableSymbol& symbol, common::TypeArena& arena)
     -> std::unique_ptr<mir::VariableDeclarationStatement> {
   // Create source range from symbol location
   slang::SourceRange source_range(symbol.location, symbol.location);
 
-  auto type_result = LowerType(symbol.getType(), source_range);
+  auto type_result = LowerType(symbol.getType(), source_range, arena);
   if (!type_result) {
     throw DiagnosticException(std::move(type_result.error()));
   }
@@ -609,7 +615,7 @@ auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
   const auto* initializer = symbol.getInitializer();
 
   if (initializer != nullptr) {
-    auto lowered_initializer = LowerExpression(*initializer);
+    auto lowered_initializer = LowerExpression(*initializer, arena);
     return std::make_unique<mir::VariableDeclarationStatement>(
         std::move(variable), std::move(lowered_initializer));
   }
@@ -618,9 +624,10 @@ auto LowerVariableDeclaration(const slang::ast::VariableSymbol& symbol)
       std::move(variable), nullptr);
 }
 
-auto LowerExpressionStatement(const slang::ast::Expression& expr)
+auto LowerExpressionStatement(
+    const slang::ast::Expression& expr, common::TypeArena& arena)
     -> std::unique_ptr<mir::ExpressionStatement> {
-  auto lowered_expr = LowerExpression(expr);
+  auto lowered_expr = LowerExpression(expr, arena);
   return std::make_unique<mir::ExpressionStatement>(std::move(lowered_expr));
 }
 

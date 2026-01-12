@@ -8,7 +8,7 @@
 
 #include <fmt/core.h>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 
 namespace lyra::lir {
 
@@ -59,14 +59,14 @@ struct LabelRef {
   }
 };
 
-struct LiteralRef {
-  const common::Literal* ptr;
+struct ConstantRef {
+  const common::Constant* ptr;
 
-  [[nodiscard]] auto operator*() const -> const common::Literal& {
+  [[nodiscard]] auto operator*() const -> const common::Constant& {
     return *ptr;
   }
 
-  [[nodiscard]] auto operator->() const -> const common::Literal* {
+  [[nodiscard]] auto operator->() const -> const common::Constant* {
     return ptr;
   }
 
@@ -74,8 +74,8 @@ struct LiteralRef {
     return ptr->ToString();
   }
 
-  [[nodiscard]] friend auto operator==(const LiteralRef& a, const LiteralRef& b)
-      -> bool {
+  [[nodiscard]] friend auto operator==(
+      const ConstantRef& a, const ConstantRef& b) -> bool {
     return a.ptr == b.ptr;
   }
 };
@@ -84,24 +84,24 @@ class LirContext {
  public:
   auto AllocateTemp(std::string name, common::Type type) -> TempRef;
   auto InternLabel(std::string_view name) -> LabelRef;
-  auto InternLiteral(const common::Literal& literal) -> LiteralRef;
+  auto InternConstant(const common::Constant& constant) -> ConstantRef;
 
  private:
   std::deque<TempSymbol> temp_storage_;
   std::unordered_set<std::string> label_pool_;
-  std::deque<common::Literal> literal_storage_;
+  std::deque<common::Constant> constant_storage_;
 
-  struct LiteralPtrHash {
-    auto operator()(const common::Literal* ptr) const -> std::size_t;
+  struct ConstantPtrHash {
+    auto operator()(const common::Constant* ptr) const -> std::size_t;
   };
 
-  struct LiteralPtrEqual {
-    auto operator()(const common::Literal* a, const common::Literal* b) const
+  struct ConstantPtrEqual {
+    auto operator()(const common::Constant* a, const common::Constant* b) const
         -> bool;
   };
 
-  std::unordered_set<const common::Literal*, LiteralPtrHash, LiteralPtrEqual>
-      literal_set_;
+  std::unordered_set<const common::Constant*, ConstantPtrHash, ConstantPtrEqual>
+      constant_set_;
 };
 
 }  // namespace lyra::lir
@@ -123,8 +123,8 @@ struct hash<lyra::lir::LabelRef> {
 };
 
 template <>
-struct hash<lyra::lir::LiteralRef> {
-  auto operator()(const lyra::lir::LiteralRef& ref) const -> std::size_t {
+struct hash<lyra::lir::ConstantRef> {
+  auto operator()(const lyra::lir::ConstantRef& ref) const -> std::size_t {
     return std::hash<const void*>{}(ref.ptr);
   }
 };
@@ -158,14 +158,14 @@ struct fmt::formatter<lyra::lir::LabelRef> {
 };
 
 template <>
-struct fmt::formatter<lyra::lir::LiteralRef> {
+struct fmt::formatter<lyra::lir::ConstantRef> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& ctx) {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(const lyra::lir::LiteralRef& ref, FormatContext& ctx) const {
+  auto format(const lyra::lir::ConstantRef& ref, FormatContext& ctx) const {
     return fmt::format_to(ctx.out(), "{}", ref.ToString());
   }
 };

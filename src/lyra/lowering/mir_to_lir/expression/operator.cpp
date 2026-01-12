@@ -1,7 +1,9 @@
 #include <cassert>
+#include <utility>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"
@@ -13,7 +15,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
@@ -218,9 +220,9 @@ auto LowerIncrementDecrementExpression(
 
   // Create a literal instruction for the constant 1
   auto const_one_temp = builder.AllocateTemp("const", identifier.type);
-  auto const_one = builder.InternLiteral(Literal::Int(1));
+  auto const_one = builder.InternConstant(Constant::Int(1));
   auto const_instruction =
-      Instruction::Basic(IK::kLiteral, const_one_temp, const_one);
+      Instruction::Basic(IK::kConstant, const_one_temp, const_one);
   builder.AddInstruction(std::move(const_instruction));
 
   // Compute the new value (add/subtract 1)

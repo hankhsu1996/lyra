@@ -1,4 +1,4 @@
-#include "lyra/common/literal.hpp"
+#include "lyra/lowering/ast_to_mir/literal.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -6,25 +6,27 @@
 
 #include <slang/ast/symbols/ParameterSymbols.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
-#include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/mir_to_lir/expression/internal.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
-auto LowerLiteralExpression(
-    const mir::LiteralExpression& literal_expression, LirBuilder& builder)
+auto LowerConstantExpression(
+    const mir::ConstantExpression& constant_expression, LirBuilder& builder)
     -> lir::TempRef {
-  auto result = builder.AllocateTemp("lit", literal_expression.literal.type);
-  auto literal = builder.InternLiteral(literal_expression.literal);
-  auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
+  auto result =
+      builder.AllocateTemp("const", constant_expression.constant.type);
+  auto constant = builder.InternConstant(constant_expression.constant);
+  auto instruction = Instruction::Basic(IK::kConstant, result, constant);
   builder.AddInstruction(std::move(instruction));
   return result;
 }
@@ -38,17 +40,17 @@ auto LowerIdentifierExpression(
   if (identifier.symbol->kind == slang::ast::SymbolKind::Parameter) {
     const auto& param = identifier.symbol->as<slang::ast::ParameterSymbol>();
     const auto& cv = param.getValue();
-    auto literal_result = ast_to_mir::ConstantValueToLiteral(cv);
-    if (!literal_result) {
-      // Struct-typed parameters can't be converted to simple literals.
+    auto constant_result = ast_to_mir::ConstantValueToConstant(cv);
+    if (!constant_result) {
+      // Struct-typed parameters can't be converted to simple constants.
       // This is a limitation of the interpreter for non-template param types.
       throw std::runtime_error(
           "Unsupported: unpacked struct/string port parameters not yet "
           "supported in interpreter. Use 'lyra run' (codegen) instead.");
     }
     auto result = builder.AllocateTemp("param", identifier.type);
-    auto interned = builder.InternLiteral(*literal_result);
-    auto instruction = Instruction::Basic(IK::kLiteral, result, interned);
+    auto interned = builder.InternConstant(*constant_result);
+    auto instruction = Instruction::Basic(IK::kConstant, result, interned);
     builder.AddInstruction(std::move(instruction));
     return result;
   }
@@ -66,17 +68,16 @@ auto LowerEnumValueExpression(
   auto result = builder.AllocateTemp("enum", enum_val.type);
 
   // Respect the enum's base type signedness
-  const auto& integral_data =
-      std::get<common::IntegralData>(enum_val.type.data);
   auto width = enum_val.type.GetBitWidth();
-  auto literal = integral_data.is_signed
-                     ? builder.InternLiteral(
-                           Literal::IntegralSigned(enum_val.value, width))
-                     : builder.InternLiteral(
-                           Literal::IntegralUnsigned(
-                               static_cast<uint64_t>(enum_val.value), width));
+  bool is_signed = enum_val.type.IsSigned();
+  auto constant = is_signed
+                      ? builder.InternConstant(
+                            Constant::IntegralSigned(enum_val.value, width))
+                      : builder.InternConstant(
+                            Constant::IntegralUnsigned(
+                                static_cast<uint64_t>(enum_val.value), width));
 
-  auto instruction = Instruction::Basic(IK::kLiteral, result, literal);
+  auto instruction = Instruction::Basic(IK::kConstant, result, constant);
   builder.AddInstruction(std::move(instruction));
   return result;
 }

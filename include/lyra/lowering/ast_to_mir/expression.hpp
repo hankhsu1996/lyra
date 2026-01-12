@@ -6,6 +6,10 @@ namespace slang::ast {
 class Expression;
 }
 
+namespace lyra::common {
+class TypeArena;
+}
+
 namespace lyra::mir {
 class Expression;
 }
@@ -13,7 +17,8 @@ class Expression;
 namespace lyra::lowering::ast_to_mir {
 
 // Lowers a slang AST Expression into a MIR Expression.
-auto LowerExpression(const slang::ast::Expression& expression)
+auto LowerExpression(
+    const slang::ast::Expression& expression, common::TypeArena& arena)
     -> std::unique_ptr<mir::Expression>;
 
 }  // namespace lyra::lowering::ast_to_mir

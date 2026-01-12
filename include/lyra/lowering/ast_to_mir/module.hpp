@@ -7,6 +7,10 @@ namespace slang::ast {
 class InstanceSymbol;
 }  // namespace slang::ast
 
+namespace lyra::common {
+class TypeArena;
+}  // namespace lyra::common
+
 namespace lyra::mir {
 class Module;
 }
@@ -20,7 +24,8 @@ auto ComputeModuleSignature(const slang::ast::InstanceSymbol& instance)
     -> std::string;
 
 // Lowers a slang AST InstanceSymbol into a MIR Module.
-auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
+auto LowerModule(
+    const slang::ast::InstanceSymbol& instance_symbol, common::TypeArena& arena)
     -> std::unique_ptr<mir::Module>;
 
 }  // namespace lyra::lowering::ast_to_mir

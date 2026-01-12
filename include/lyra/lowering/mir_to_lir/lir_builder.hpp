@@ -7,7 +7,7 @@
 
 #include <fmt/core.h>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/lir/basic_block.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -73,7 +73,7 @@ class LirBuilder {
   // Instruction interface
   void AddInstruction(lir::Instruction instruction);
   auto AllocateTemp(const std::string& hint, common::Type type) -> lir::TempRef;
-  auto InternLiteral(const common::Literal& literal) -> lir::LiteralRef;
+  auto InternConstant(const common::Constant& constant) -> lir::ConstantRef;
   [[nodiscard]] auto GetContext() const -> std::shared_ptr<lir::LirContext> {
     return context_;
   }

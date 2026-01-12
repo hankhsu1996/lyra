@@ -1,7 +1,7 @@
 #include <cassert>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -15,7 +15,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
@@ -153,9 +153,9 @@ void LowerRepeatLoop(
   builder.AddInstruction(
       Instruction::Basic(IK::kMove, counter_temp, count_value));
 
-  // Create literals for comparison and decrement
-  auto zero_literal = builder.InternLiteral(Literal::Int(0));
-  auto one_literal = builder.InternLiteral(Literal::Int(1));
+  // Create constants for comparison and decrement
+  auto zero_constant = builder.InternConstant(Constant::Int(0));
+  auto one_constant = builder.InternConstant(Constant::Int(1));
 
   auto cond_label = builder.MakeLabel("repeat.cond");
   auto body_label = builder.MakeLabel("repeat.body");
@@ -175,7 +175,7 @@ void LowerRepeatLoop(
   auto zero_temp = builder.AllocateTemp("zero", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(
-          IK::kLiteral, zero_temp, Operand::Literal(zero_literal)));
+          IK::kConstant, zero_temp, Operand::Constant(zero_constant)));
   auto cond_temp = builder.AllocateTemp("repeat.cond", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(
@@ -195,7 +195,7 @@ void LowerRepeatLoop(
   auto one_temp = builder.AllocateTemp("one", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(
-          IK::kLiteral, one_temp, Operand::Literal(one_literal)));
+          IK::kConstant, one_temp, Operand::Constant(one_constant)));
   auto new_counter = builder.AllocateTemp("repeat.new_counter", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(

@@ -11,7 +11,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/compiler/codegen/type.hpp"
-#include "lyra/compiler/codegen/utils.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::compiler {

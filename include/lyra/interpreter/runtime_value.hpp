@@ -14,8 +14,8 @@
 #include <fmt/core.h>
 
 #include "lyra/common/bit_utils.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lir/context.hpp"
@@ -34,13 +34,13 @@ struct RuntimeValue {
   common::Type type;
   ValueVariant value;
 
-  static auto FromLiteral(lir::LiteralRef literal) -> RuntimeValue {
-    return FromLiteral(*literal.ptr);
+  static auto FromConstant(lir::ConstantRef constant) -> RuntimeValue {
+    return FromConstant(*constant.ptr);
   }
 
-  static auto FromLiteral(const common::Literal& literal) -> RuntimeValue {
+  static auto FromConstant(const common::Constant& constant) -> RuntimeValue {
     return RuntimeValue{
-        .type = literal.type, .value = ValueVariant(literal.value)};
+        .type = constant.type, .value = ValueVariant(constant.value)};
   }
 
   static auto DefaultValueForType(const common::Type& type) -> RuntimeValue;
@@ -261,17 +261,14 @@ struct RuntimeValue {
   }
 
   [[nodiscard]] auto GetBitWidth() const -> uint32_t {
-    if (type.kind != common::Type::Kind::kIntegral) {
+    if (!type.IsBitvector()) {
       return 0;
     }
-    return std::get<common::IntegralData>(type.data).bit_width;
+    return type.GetBitWidth();
   }
 
   [[nodiscard]] auto IsSigned() const -> bool {
-    if (type.kind != common::Type::Kind::kIntegral) {
-      return false;
-    }
-    return std::get<common::IntegralData>(type.data).is_signed;
+    return type.IsSigned();
   }
 
   // Safe narrow integral value wrapper.
@@ -435,6 +432,19 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
           .type = type,
           .value =
               std::make_shared<std::vector<RuntimeValue>>(std::move(storage))};
+    }
+    case common::Type::Kind::kEnum: {
+      // Enums are bitvectors - initialize to 0
+      const auto& data = std::get<common::EnumData>(type.data);
+      if (data.bit_width > 64) {
+        return IntegralWide(
+            common::WideBit::FromBitWidth(data.bit_width), data.bit_width,
+            data.is_signed);
+      }
+      if (data.is_signed) {
+        return IntegralSigned(0, data.bit_width);
+      }
+      return IntegralUnsigned(0, data.bit_width);
     }
   }
   throw common::InternalError(

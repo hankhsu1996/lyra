@@ -27,7 +27,7 @@ namespace lyra::compiler {
 
 using codegen::GetBinaryPrecedence;
 using codegen::GetElementWidthAfterIndices;
-using codegen::IntegralLiteralToString;
+using codegen::IntegralConstantToString;
 using codegen::IsWideWidth;
 using codegen::kPrecAssign;
 using codegen::kPrecBitwiseXor;
@@ -41,16 +41,13 @@ using codegen::ToCppOperator;
 namespace {
 
 // Check if two types map to the same C++ type for codegen purposes.
-// For integral types, ignores is_four_state since C++ doesn't distinguish
+// For bitvector types, ignores is_four_state since C++ doesn't distinguish
 // two-state (bit) from four-state (logic) types.
 auto SameCppType(const common::Type& a, const common::Type& b) -> bool {
-  if (a.kind != b.kind) {
-    return false;
-  }
-  if (a.kind == common::Type::Kind::kIntegral) {
-    const auto& ad = std::get<common::IntegralData>(a.data);
-    const auto& bd = std::get<common::IntegralData>(b.data);
-    return ad.bit_width == bd.bit_width && ad.is_signed == bd.is_signed;
+  // Bitvector types (integral, packed struct, enum) map to the same C++ type
+  // if they have the same bit width and signedness
+  if (a.IsBitvector() && b.IsBitvector()) {
+    return a.GetBitWidth() == b.GetBitWidth() && a.IsSigned() == b.IsSigned();
   }
   return a == b;
 }
@@ -59,24 +56,24 @@ auto SameCppType(const common::Type& a, const common::Type& b) -> bool {
 
 void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
   switch (expr.kind) {
-    case mir::Expression::Kind::kLiteral: {
-      const auto& lit = mir::As<mir::LiteralExpression>(expr);
+    case mir::Expression::Kind::kConstant: {
+      const auto& lit = mir::As<mir::ConstantExpression>(expr);
       // Emit literals with their proper SDK type
-      if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
+      if (lit.constant.type.kind == common::Type::Kind::kIntegral) {
         auto integral_data =
-            std::get<common::IntegralData>(lit.literal.type.data);
+            std::get<common::IntegralData>(lit.constant.type.data);
         // For wide types, use parentheses to avoid parsing ambiguity with >
         // For narrow types, use braces for uniform initialization
         if (IsWideWidth(integral_data.bit_width)) {
-          out_ << ToCppType(lit.literal.type) << "(" << lit.literal.ToString()
+          out_ << ToCppType(lit.constant.type) << "(" << lit.constant.ToString()
                << ")";
         } else {
-          out_ << ToCppType(lit.literal.type) << "{" << lit.literal.ToString()
+          out_ << ToCppType(lit.constant.type) << "{" << lit.constant.ToString()
                << "}";
         }
       } else {
         // Non-integral types (string, etc.)
-        out_ << lit.literal.ToString();
+        out_ << lit.constant.ToString();
       }
       break;
     }
@@ -331,10 +328,10 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*select.value, kPrecPrimary);
 
         // For constant integer indices, emit raw literal
-        if (select.selector->kind == mir::Expression::Kind::kLiteral) {
-          const auto& lit = mir::As<mir::LiteralExpression>(*select.selector);
-          if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
-            int64_t index = lit.literal.value.AsInt64() - lower_bound;
+        if (select.selector->kind == mir::Expression::Kind::kConstant) {
+          const auto& lit = mir::As<mir::ConstantExpression>(*select.selector);
+          if (lit.constant.type.kind == common::Type::Kind::kIntegral) {
+            int64_t index = lit.constant.value.AsInt64() - lower_bound;
             out_ << "[" << index << "]";
             break;
           }
@@ -862,25 +859,25 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
   // main code path simple. Template args are rare and need raw C++ values (8
   // not Int{8}).
   switch (expr.kind) {
-    case mir::Expression::Kind::kLiteral: {
-      const auto& lit = mir::As<mir::LiteralExpression>(expr);
+    case mir::Expression::Kind::kConstant: {
+      const auto& lit = mir::As<mir::ConstantExpression>(expr);
 
       // String literals need special handling - they may be stored as
       // bit-packed integers internally but should be emitted as C++ strings
-      if (lit.literal.IsStringLiteral()) {
+      if (lit.constant.IsStringLiteral()) {
         std::string str;
-        if (lit.literal.type.kind == common::Type::Kind::kString) {
-          str = lit.literal.value.AsString();
+        if (lit.constant.type.kind == common::Type::Kind::kString) {
+          str = lit.constant.value.AsString();
         } else {
           // Bit-packed string - convert back to string
-          str = codegen::IntegralLiteralToString(lit.literal);
+          str = codegen::IntegralConstantToString(lit.constant);
         }
         out_ << "\"" << common::EscapeForCppString(str) << "\"";
         break;
       }
 
       // Emit raw value without type wrapper
-      out_ << lit.literal.ToString();
+      out_ << lit.constant.ToString();
       break;
     }
     case mir::Expression::Kind::kIdentifier: {
@@ -935,9 +932,9 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
       const auto& conv = mir::As<mir::ConversionExpression>(expr);
       // Integral-to-string: convert bit-packed integer to string literal
       if (conv.target_type.kind == common::Type::Kind::kString &&
-          conv.value->kind == mir::Expression::Kind::kLiteral) {
-        const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
-        std::string str = codegen::IntegralLiteralToString(lit.literal);
+          conv.value->kind == mir::Expression::Kind::kConstant) {
+        const auto& lit = mir::As<mir::ConstantExpression>(*conv.value);
+        std::string str = codegen::IntegralConstantToString(lit.constant);
         out_ << "\"" << common::EscapeForCppString(str) << "\"";
         break;
       }
@@ -958,23 +955,23 @@ void Codegen::EmitStringLiteralArg(const mir::Expression& arg) {
   if (arg.kind == mir::Expression::Kind::kConversion) {
     const auto& conv = mir::As<mir::ConversionExpression>(arg);
     if (conv.target_type.kind == common::Type::Kind::kString &&
-        conv.value->kind == mir::Expression::Kind::kLiteral) {
-      const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
-      std::string str = codegen::IntegralLiteralToString(lit.literal);
+        conv.value->kind == mir::Expression::Kind::kConstant) {
+      const auto& lit = mir::As<mir::ConstantExpression>(*conv.value);
+      std::string str = codegen::IntegralConstantToString(lit.constant);
       out_ << "\"" << common::EscapeForCppString(str) << "\"";
       return;
     }
   }
 
-  if (arg.kind == mir::Expression::Kind::kLiteral) {
-    const auto& lit = mir::As<mir::LiteralExpression>(arg);
+  if (arg.kind == mir::Expression::Kind::kConstant) {
+    const auto& lit = mir::As<mir::ConstantExpression>(arg);
     // String literals may be stored as integrals - extract the string value
-    if (lit.literal.IsStringLiteral()) {
+    if (lit.constant.IsStringLiteral()) {
       std::string str;
-      if (lit.literal.type.kind == common::Type::Kind::kString) {
-        str = lit.literal.value.AsString();
+      if (lit.constant.type.kind == common::Type::Kind::kString) {
+        str = lit.constant.value.AsString();
       } else {
-        str = codegen::IntegralLiteralToString(lit.literal);
+        str = codegen::IntegralConstantToString(lit.constant);
       }
       out_ << "\"" << common::EscapeForCppString(str) << "\"";
       return;

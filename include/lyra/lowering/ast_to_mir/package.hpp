@@ -8,11 +8,16 @@ namespace slang::ast {
 class PackageSymbol;
 }
 
+namespace lyra::common {
+class TypeArena;
+}
+
 namespace lyra::lowering::ast_to_mir {
 
 // Lowers a slang PackageSymbol to an MIR Package.
 // Currently extracts typedef and enum type declarations.
-auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
+auto LowerPackage(
+    const slang::ast::PackageSymbol& pkg_symbol, common::TypeArena& arena)
     -> std::unique_ptr<mir::Package>;
 
 }  // namespace lyra::lowering::ast_to_mir

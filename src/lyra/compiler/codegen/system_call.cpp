@@ -19,7 +19,7 @@ namespace lyra::compiler {
 
 using codegen::ExtractFormatString;
 using codegen::GetDisplayVariantProps;
-using codegen::IntegralLiteralToString;
+using codegen::IntegralConstantToString;
 using codegen::kPrecEquality;
 
 void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
@@ -29,9 +29,9 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     // Get level argument (default 1), $exit has no argument
     std::string level_str = "1";
     if (!syscall.arguments.empty()) {
-      if (const auto* lit = dynamic_cast<const mir::LiteralExpression*>(
+      if (const auto* lit = dynamic_cast<const mir::ConstantExpression*>(
               syscall.arguments[0].get())) {
-        level_str = std::to_string(lit->literal.value.AsInt64());
+        level_str = std::to_string(lit->constant.value.AsInt64());
       }
     }
 
@@ -62,9 +62,9 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     if (syscall.name == "$fatal" && !syscall.arguments.empty()) {
       // First argument is finish_number for $fatal
-      if (const auto* lit = dynamic_cast<const mir::LiteralExpression*>(
+      if (const auto* lit = dynamic_cast<const mir::ConstantExpression*>(
               syscall.arguments[0].get())) {
-        finish_num_str = std::to_string(lit->literal.value.AsInt64());
+        finish_num_str = std::to_string(lit->constant.value.AsInt64());
       }
       arg_idx = 1;
     }
@@ -444,16 +444,16 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     auto emit_filename = [&]() {
       const auto& filename_arg = *syscall.arguments[0];
 
-      if (filename_arg.kind == mir::Expression::Kind::kLiteral) {
-        const auto& lit = mir::As<mir::LiteralExpression>(filename_arg);
+      if (filename_arg.kind == mir::Expression::Kind::kConstant) {
+        const auto& lit = mir::As<mir::ConstantExpression>(filename_arg);
 
         // String literal: extract string at codegen time, emit directly
-        if (lit.literal.IsStringLiteral()) {
+        if (lit.constant.IsStringLiteral()) {
           std::string str;
-          if (lit.literal.type.kind == common::Type::Kind::kString) {
-            str = lit.literal.value.AsString();
+          if (lit.constant.type.kind == common::Type::Kind::kString) {
+            str = lit.constant.value.AsString();
           } else {
-            str = IntegralLiteralToString(lit.literal);
+            str = IntegralConstantToString(lit.constant);
           }
           out_ << "\"" << common::EscapeForCppString(str) << "\"";
           return;
@@ -488,10 +488,11 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     if (target_type.kind == common::Type::Kind::kIntegral) {
       const auto& integral = std::get<common::IntegralData>(target_type.data);
-      size_t element_width = integral.element_type
+      size_t element_width = integral.element_type != nullptr
                                  ? integral.element_type->GetBitWidth()
                                  : integral.bit_width;
-      size_t element_count = integral.element_type ? integral.element_count : 1;
+      size_t element_count =
+          integral.element_type != nullptr ? integral.element_count : 1;
       int32_t lower_bound = integral.element_lower;
       Indent();
       out_ << "lyra::sdk::" << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")

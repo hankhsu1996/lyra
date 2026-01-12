@@ -98,23 +98,22 @@ auto UnaryMinus(const RuntimeValue& operand) -> RuntimeValue {
   }
 
   CheckIntegral("UnaryMinus", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
+  bool is_signed = operand.type.IsSigned();
 
   if (operand.IsWide()) {
     return RuntimeValue::IntegralWide(
-        operand.AsWideBit().Negate(two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        operand.AsWideBit().Negate(bit_width), bit_width, is_signed);
   }
 
   auto narrow = operand.AsNarrow();
-  if (two_state_data.is_signed) {
-    return RuntimeValue::IntegralSigned(
-        -narrow.AsInt64(), two_state_data.bit_width);
+  if (is_signed) {
+    return RuntimeValue::IntegralSigned(-narrow.AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
       static_cast<uint64_t>(-static_cast<int64_t>(narrow.AsUInt64())),
-      two_state_data.bit_width);
+      bit_width);
 }
 
 auto UnaryLogicalNot(const RuntimeValue& operand) -> RuntimeValue {
@@ -133,36 +132,33 @@ auto UnaryLogicalNot(const RuntimeValue& operand) -> RuntimeValue {
 
 auto UnaryBitwiseNot(const RuntimeValue& operand) -> RuntimeValue {
   CheckIntegral("UnaryBitwiseNot", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
+  bool is_signed = operand.type.IsSigned();
 
   if (operand.IsWide()) {
     return RuntimeValue::IntegralWide(
-        operand.AsWideBit().BitwiseNot(two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        operand.AsWideBit().BitwiseNot(bit_width), bit_width, is_signed);
   }
 
   auto narrow = operand.AsNarrow();
-  if (two_state_data.is_signed) {
-    return RuntimeValue::IntegralSigned(
-        ~narrow.AsInt64(), two_state_data.bit_width);
+  if (is_signed) {
+    return RuntimeValue::IntegralSigned(~narrow.AsInt64(), bit_width);
   }
 
-  return RuntimeValue::IntegralUnsigned(
-      ~narrow.AsUInt64(), two_state_data.bit_width);
+  return RuntimeValue::IntegralUnsigned(~narrow.AsUInt64(), bit_width);
 }
 
 // Reduction Operations
 
 auto ReductionAnd(const RuntimeValue& operand) -> RuntimeValue {
   CheckIntegral("ReductionAnd", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
 
   if (operand.IsWide()) {
     const auto& wide = operand.AsWideBit();
     size_t num_words = wide.NumWords();
     size_t final_word_idx = num_words - 1;
-    uint64_t final_mask =
-        common::wide_ops::FinalWordMask(two_state_data.bit_width);
+    uint64_t final_mask = common::wide_ops::FinalWordMask(bit_width);
 
     // All words except last must be all-1s
     for (size_t i = 0; i < final_word_idx; ++i) {
@@ -176,7 +172,7 @@ auto ReductionAnd(const RuntimeValue& operand) -> RuntimeValue {
   }
 
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // AND reduction: 1 if all bits are 1, 0 otherwise
@@ -185,14 +181,13 @@ auto ReductionAnd(const RuntimeValue& operand) -> RuntimeValue {
 
 auto ReductionNand(const RuntimeValue& operand) -> RuntimeValue {
   CheckIntegral("ReductionNand", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
 
   if (operand.IsWide()) {
     const auto& wide = operand.AsWideBit();
     size_t num_words = wide.NumWords();
     size_t final_word_idx = num_words - 1;
-    uint64_t final_mask =
-        common::wide_ops::FinalWordMask(two_state_data.bit_width);
+    uint64_t final_mask = common::wide_ops::FinalWordMask(bit_width);
 
     // NAND: NOT of AND - true if any bit is 0
     for (size_t i = 0; i < final_word_idx; ++i) {
@@ -205,7 +200,7 @@ auto ReductionNand(const RuntimeValue& operand) -> RuntimeValue {
   }
 
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // NAND reduction: 0 if all bits are 1, 1 otherwise
@@ -221,9 +216,9 @@ auto ReductionOr(const RuntimeValue& operand) -> RuntimeValue {
     return RuntimeValue::Bool(!common::wide_ops::IsZero(wide.Words()));
   }
 
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // OR reduction: 1 if any bit is 1, 0 otherwise
@@ -239,9 +234,9 @@ auto ReductionNor(const RuntimeValue& operand) -> RuntimeValue {
     return RuntimeValue::Bool(common::wide_ops::IsZero(wide.Words()));
   }
 
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // NOR reduction: 0 if any bit is 1, 1 otherwise
@@ -250,14 +245,13 @@ auto ReductionNor(const RuntimeValue& operand) -> RuntimeValue {
 
 auto ReductionXor(const RuntimeValue& operand) -> RuntimeValue {
   CheckIntegral("ReductionXor", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
 
   if (operand.IsWide()) {
     const auto& wide = operand.AsWideBit();
     size_t num_words = wide.NumWords();
     size_t final_word_idx = num_words - 1;
-    uint64_t final_mask =
-        common::wide_ops::FinalWordMask(two_state_data.bit_width);
+    uint64_t final_mask = common::wide_ops::FinalWordMask(bit_width);
 
     // XOR: count all set bits, result is 1 if count is odd
     int total_popcount = 0;
@@ -270,7 +264,7 @@ auto ReductionXor(const RuntimeValue& operand) -> RuntimeValue {
   }
 
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // XOR reduction: true if popcount is odd
@@ -279,14 +273,13 @@ auto ReductionXor(const RuntimeValue& operand) -> RuntimeValue {
 
 auto ReductionXnor(const RuntimeValue& operand) -> RuntimeValue {
   CheckIntegral("ReductionXnor", operand);
-  auto two_state_data = std::get<common::IntegralData>(operand.type.data);
+  size_t bit_width = operand.type.GetBitWidth();
 
   if (operand.IsWide()) {
     const auto& wide = operand.AsWideBit();
     size_t num_words = wide.NumWords();
     size_t final_word_idx = num_words - 1;
-    uint64_t final_mask =
-        common::wide_ops::FinalWordMask(two_state_data.bit_width);
+    uint64_t final_mask = common::wide_ops::FinalWordMask(bit_width);
 
     // XNOR: count all set bits, result is 1 if count is even
     int total_popcount = 0;
@@ -299,7 +292,7 @@ auto ReductionXnor(const RuntimeValue& operand) -> RuntimeValue {
   }
 
   uint64_t value = operand.AsNarrow().AsUInt64();
-  uint64_t mask = common::MakeBitMask(two_state_data.bit_width);
+  uint64_t mask = common::MakeBitMask(bit_width);
   value &= mask;  // Apply bit width mask
 
   // XNOR reduction: true if popcount is even
@@ -316,23 +309,21 @@ auto BinaryAdd(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryAdd", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit().Add(rhs.AsWideBit(), two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        lhs.AsWideBit().Add(rhs.AsWideBit(), bit_width), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() + rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() + rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() + rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() + rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -343,23 +334,21 @@ auto BinarySubtract(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinarySubtract", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit().Sub(rhs.AsWideBit(), two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        lhs.AsWideBit().Sub(rhs.AsWideBit(), bit_width), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() - rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() - rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() - rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() - rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -370,23 +359,21 @@ auto BinaryMultiply(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryMultiply", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit().Mul(rhs.AsWideBit(), two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        lhs.AsWideBit().Mul(rhs.AsWideBit(), bit_width), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() * rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() * rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() * rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() * rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -398,7 +385,8 @@ auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryDivide", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     throw common::InternalError(
@@ -409,19 +397,19 @@ auto BinaryDivide(const RuntimeValue& lhs, const RuntimeValue& rhs)
   auto lhs_narrow = lhs.AsNarrow();
   auto rhs_narrow = rhs.AsNarrow();
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     if (rhs_narrow.AsInt64() == 0) {
-      return RuntimeValue::IntegralSigned(0, two_state_data.bit_width);
+      return RuntimeValue::IntegralSigned(0, bit_width);
     }
     return RuntimeValue::IntegralSigned(
-        lhs_narrow.AsInt64() / rhs_narrow.AsInt64(), two_state_data.bit_width);
+        lhs_narrow.AsInt64() / rhs_narrow.AsInt64(), bit_width);
   }
 
   if (rhs_narrow.AsUInt64() == 0) {
-    return RuntimeValue::IntegralUnsigned(0, two_state_data.bit_width);
+    return RuntimeValue::IntegralUnsigned(0, bit_width);
   }
   return RuntimeValue::IntegralUnsigned(
-      lhs_narrow.AsUInt64() / rhs_narrow.AsUInt64(), two_state_data.bit_width);
+      lhs_narrow.AsUInt64() / rhs_narrow.AsUInt64(), bit_width);
 }
 
 auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -432,7 +420,8 @@ auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryModulo", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     throw common::InternalError(
@@ -443,19 +432,19 @@ auto BinaryModulo(const RuntimeValue& lhs, const RuntimeValue& rhs)
   auto lhs_narrow = lhs.AsNarrow();
   auto rhs_narrow = rhs.AsNarrow();
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     if (rhs_narrow.AsInt64() == 0) {
-      return RuntimeValue::IntegralSigned(0, two_state_data.bit_width);
+      return RuntimeValue::IntegralSigned(0, bit_width);
     }
     return RuntimeValue::IntegralSigned(
-        lhs_narrow.AsInt64() % rhs_narrow.AsInt64(), two_state_data.bit_width);
+        lhs_narrow.AsInt64() % rhs_narrow.AsInt64(), bit_width);
   }
 
   if (rhs_narrow.AsUInt64() == 0) {
-    return RuntimeValue::IntegralUnsigned(0, two_state_data.bit_width);
+    return RuntimeValue::IntegralUnsigned(0, bit_width);
   }
   return RuntimeValue::IntegralUnsigned(
-      lhs_narrow.AsUInt64() % rhs_narrow.AsUInt64(), two_state_data.bit_width);
+      lhs_narrow.AsUInt64() % rhs_narrow.AsUInt64(), bit_width);
 }
 
 // Supports TwoState, Real, ShortReal, and String types.
@@ -522,14 +511,15 @@ auto BinaryLessThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryLessThan", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
-    return RuntimeValue::Bool(lhs.AsWideBit().LessThan(
-        rhs.AsWideBit(), two_state_data.bit_width, two_state_data.is_signed));
+    return RuntimeValue::Bool(
+        lhs.AsWideBit().LessThan(rhs.AsWideBit(), bit_width, is_signed));
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::Bool(
         lhs.AsNarrow().AsInt64() < rhs.AsNarrow().AsInt64());
   }
@@ -546,15 +536,16 @@ auto BinaryLessThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryLessThanEqual", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     // a <= b is equivalent to !(b < a)
-    return RuntimeValue::Bool(!rhs.AsWideBit().LessThan(
-        lhs.AsWideBit(), two_state_data.bit_width, two_state_data.is_signed));
+    return RuntimeValue::Bool(
+        !rhs.AsWideBit().LessThan(lhs.AsWideBit(), bit_width, is_signed));
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::Bool(
         lhs.AsNarrow().AsInt64() <= rhs.AsNarrow().AsInt64());
   }
@@ -571,15 +562,16 @@ auto BinaryGreaterThan(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryGreaterThan", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     // a > b is equivalent to b < a
-    return RuntimeValue::Bool(rhs.AsWideBit().LessThan(
-        lhs.AsWideBit(), two_state_data.bit_width, two_state_data.is_signed));
+    return RuntimeValue::Bool(
+        rhs.AsWideBit().LessThan(lhs.AsWideBit(), bit_width, is_signed));
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::Bool(
         lhs.AsNarrow().AsInt64() > rhs.AsNarrow().AsInt64());
   }
@@ -596,15 +588,16 @@ auto BinaryGreaterThanEqual(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryGreaterThanEqual", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     // a >= b is equivalent to !(a < b)
-    return RuntimeValue::Bool(!lhs.AsWideBit().LessThan(
-        rhs.AsWideBit(), two_state_data.bit_width, two_state_data.is_signed));
+    return RuntimeValue::Bool(
+        !lhs.AsWideBit().LessThan(rhs.AsWideBit(), bit_width, is_signed));
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::Bool(
         lhs.AsNarrow().AsInt64() >= rhs.AsNarrow().AsInt64());
   }
@@ -621,116 +614,109 @@ auto BinaryPower(const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   CheckBinaryTwoState("BinaryPower", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide() || rhs.IsWide()) {
     throw common::InternalError(
         "BinaryPower", "power operation not supported for wide types");
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
         static_cast<int64_t>(
             std::pow(lhs.AsNarrow().AsInt64(), rhs.AsNarrow().AsInt64())),
-        two_state_data.bit_width);
+        bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
       static_cast<uint64_t>(
           std::pow(lhs.AsNarrow().AsUInt64(), rhs.AsNarrow().AsUInt64())),
-      two_state_data.bit_width);
+      bit_width);
 }
 
 auto BinaryBitwiseAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   CheckBinaryTwoState("BinaryBitwiseAnd", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit() & rhs.AsWideBit(), two_state_data.bit_width,
-        two_state_data.is_signed);
+        lhs.AsWideBit() & rhs.AsWideBit(), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() & rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() & rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() & rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() & rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinaryBitwiseOr(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   CheckBinaryTwoState("BinaryBitwiseOr", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit() | rhs.AsWideBit(), two_state_data.bit_width,
-        two_state_data.is_signed);
+        lhs.AsWideBit() | rhs.AsWideBit(), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() | rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() | rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() | rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() | rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinaryBitwiseXor(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   CheckBinaryTwoState("BinaryBitwiseXor", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
-        lhs.AsWideBit() ^ rhs.AsWideBit(), two_state_data.bit_width,
-        two_state_data.is_signed);
+        lhs.AsWideBit() ^ rhs.AsWideBit(), bit_width, is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     return RuntimeValue::IntegralSigned(
-        lhs.AsNarrow().AsInt64() ^ rhs.AsNarrow().AsInt64(),
-        two_state_data.bit_width);
+        lhs.AsNarrow().AsInt64() ^ rhs.AsNarrow().AsInt64(), bit_width);
   }
 
   return RuntimeValue::IntegralUnsigned(
-      lhs.AsNarrow().AsUInt64() ^ rhs.AsNarrow().AsUInt64(),
-      two_state_data.bit_width);
+      lhs.AsNarrow().AsUInt64() ^ rhs.AsNarrow().AsUInt64(), bit_width);
 }
 
 auto BinaryBitwiseXnor(const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   CheckBinaryTwoState("BinaryBitwiseXnor", lhs, rhs);
-  auto two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t bit_width = lhs.type.GetBitWidth();
+  bool is_signed = lhs.type.IsSigned();
 
   if (lhs.IsWide()) {
     // XNOR is ~(a ^ b)
     return RuntimeValue::IntegralWide(
-        (lhs.AsWideBit() ^ rhs.AsWideBit())
-            .BitwiseNot(two_state_data.bit_width),
-        two_state_data.bit_width, two_state_data.is_signed);
+        (lhs.AsWideBit() ^ rhs.AsWideBit()).BitwiseNot(bit_width), bit_width,
+        is_signed);
   }
 
-  if (two_state_data.is_signed) {
+  if (is_signed) {
     // XNOR is ~(a ^ b)
     return RuntimeValue::IntegralSigned(
-        ~(lhs.AsNarrow().AsInt64() ^ rhs.AsNarrow().AsInt64()),
-        two_state_data.bit_width);
+        ~(lhs.AsNarrow().AsInt64() ^ rhs.AsNarrow().AsInt64()), bit_width);
   }
 
   // XNOR is ~(a ^ b)
   return RuntimeValue::IntegralUnsigned(
-      ~(lhs.AsNarrow().AsUInt64() ^ rhs.AsNarrow().AsUInt64()),
-      two_state_data.bit_width);
+      ~(lhs.AsNarrow().AsUInt64() ^ rhs.AsNarrow().AsUInt64()), bit_width);
 }
 
 auto BinaryLogicalAnd(const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -787,24 +773,25 @@ auto BinaryLogicalShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
   CheckIntegral("BinaryLogicalShiftLeft", lhs);
   CheckIntegral("BinaryLogicalShiftLeft", rhs);
 
-  auto lhs_two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t lhs_bit_width = lhs.type.GetBitWidth();
+  bool lhs_is_signed = lhs.type.IsSigned();
 
   // Right operand (shift amount) is always treated as unsigned
   // For wide values, only the lower 64 bits are relevant (shift amounts don't
   // need >64 bits)
   uint64_t shift_amount =
       rhs.IsWide() ? rhs.AsWideBit().GetWord(0) : rhs.AsNarrow().AsUInt64();
-  auto bit_width = lhs_two_state_data.bit_width;
+  auto bit_width = lhs_bit_width;
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
         lhs.AsWideBit().ShiftLeft(shift_amount, bit_width), bit_width,
-        lhs_two_state_data.is_signed);
+        lhs_is_signed);
   }
 
   // SV/Verilator: shift >= bit_width results in all zeros
   if (shift_amount >= bit_width) {
-    if (lhs_two_state_data.is_signed) {
+    if (lhs_is_signed) {
       return RuntimeValue::IntegralSigned(0, bit_width);
     }
     return RuntimeValue::IntegralUnsigned(0, bit_width);
@@ -813,7 +800,7 @@ auto BinaryLogicalShiftLeft(const RuntimeValue& lhs, const RuntimeValue& rhs)
   // Create bit mask based on bit width
   uint64_t mask = common::MakeBitMask(bit_width);
 
-  if (lhs_two_state_data.is_signed) {
+  if (lhs_is_signed) {
     int64_t value = lhs.AsNarrow().AsInt64();
     // Perform shift and apply mask to maintain bit width
     // Cast to uint64_t for the mask operation, then back to int64_t
@@ -834,21 +821,22 @@ auto BinaryLogicalShiftRight(const RuntimeValue& lhs, const RuntimeValue& rhs)
   CheckIntegral("BinaryLogicalShiftRight", lhs);
   CheckIntegral("BinaryLogicalShiftRight", rhs);
 
-  auto lhs_two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t lhs_bit_width = lhs.type.GetBitWidth();
+  bool lhs_is_signed = lhs.type.IsSigned();
 
   uint64_t shift_amount =
       rhs.IsWide() ? rhs.AsWideBit().GetWord(0) : rhs.AsNarrow().AsUInt64();
-  auto bit_width = lhs_two_state_data.bit_width;
+  auto bit_width = lhs_bit_width;
 
   if (lhs.IsWide()) {
     return RuntimeValue::IntegralWide(
         lhs.AsWideBit().ShiftRightLogical(shift_amount), bit_width,
-        lhs_two_state_data.is_signed);
+        lhs_is_signed);
   }
 
   // SV/Verilator: shift >= bit_width results in all zeros
   if (shift_amount >= bit_width) {
-    if (lhs_two_state_data.is_signed) {
+    if (lhs_is_signed) {
       return RuntimeValue::IntegralSigned(0, bit_width);
     }
     return RuntimeValue::IntegralUnsigned(0, bit_width);
@@ -861,7 +849,7 @@ auto BinaryLogicalShiftRight(const RuntimeValue& lhs, const RuntimeValue& rhs)
   uint64_t value = lhs.AsNarrow().AsUInt64();
   uint64_t result = (value >> shift_amount) & mask;
 
-  if (lhs_two_state_data.is_signed) {
+  if (lhs_is_signed) {
     return RuntimeValue::IntegralSigned(
         static_cast<int64_t>(result), bit_width);
   }
@@ -882,14 +870,15 @@ auto BinaryArithmeticShiftRight(
   CheckIntegral("BinaryArithmeticShiftRight", lhs);
   CheckIntegral("BinaryArithmeticShiftRight", rhs);
 
-  auto lhs_two_state_data = std::get<common::IntegralData>(lhs.type.data);
+  size_t lhs_bit_width = lhs.type.GetBitWidth();
+  bool lhs_is_signed = lhs.type.IsSigned();
 
   uint64_t shift_amount =
       rhs.IsWide() ? rhs.AsWideBit().GetWord(0) : rhs.AsNarrow().AsUInt64();
-  auto bit_width = lhs_two_state_data.bit_width;
+  auto bit_width = lhs_bit_width;
 
   if (lhs.IsWide()) {
-    if (lhs_two_state_data.is_signed) {
+    if (lhs_is_signed) {
       return RuntimeValue::IntegralWide(
           lhs.AsWideBit().ShiftRightArithmetic(shift_amount, bit_width),
           bit_width, true);
@@ -898,7 +887,7 @@ auto BinaryArithmeticShiftRight(
         lhs.AsWideBit().ShiftRightLogical(shift_amount), bit_width, false);
   }
 
-  if (lhs_two_state_data.is_signed) {
+  if (lhs_is_signed) {
     int64_t value = lhs.AsNarrow().AsInt64();
 
     // SV/Verilator: shift >= bit_width results in all sign bits

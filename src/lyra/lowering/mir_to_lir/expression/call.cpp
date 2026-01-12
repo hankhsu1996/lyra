@@ -1,12 +1,15 @@
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "lyra/common/literal.hpp"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"
@@ -17,7 +20,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
@@ -159,11 +162,11 @@ auto LowerSystemCallExpression(
       const auto& ident = mir::As<mir::IdentifierExpression>(argument);
       return Operand::Variable(ident.symbol);
     }
-    // For literal expressions, keep as literal operand to preserve metadata
-    if (argument.kind == mir::Expression::Kind::kLiteral) {
-      const auto& lit = mir::As<mir::LiteralExpression>(argument);
-      auto literal_ref = builder.InternLiteral(lit.literal);
-      return Operand::Literal(literal_ref);
+    // For constant expressions, keep as constant operand to preserve metadata
+    if (argument.kind == mir::Expression::Kind::kConstant) {
+      const auto& lit = mir::As<mir::ConstantExpression>(argument);
+      auto constant_ref = builder.InternConstant(lit.constant);
+      return Operand::Constant(constant_ref);
     }
     auto temp = LowerExpression(argument, builder);
     return Operand::Temp(temp);
@@ -232,8 +235,8 @@ auto LowerSystemCallExpression(
   if ((system_call.name == "$finish" || system_call.name == "$stop") &&
       operands.empty() && !is_monitor) {
     auto temp = builder.AllocateTemp("sys", system_call.type);
-    auto const_one = builder.InternLiteral(Literal::Int(1));
-    auto instruction = Instruction::Basic(IK::kLiteral, temp, const_one);
+    auto const_one = builder.InternConstant(Constant::Int(1));
+    auto instruction = Instruction::Basic(IK::kConstant, temp, const_one);
     builder.AddInstruction(std::move(instruction));
     operands.push_back(Operand::Temp(temp));
   }
@@ -328,8 +331,8 @@ auto LowerMethodCallExpression(
   if (!lir_members.empty()) {
     // Enum method: first arg is step (if present)
     if (!mc.args.empty()) {
-      const auto& step_expr = mir::As<mir::LiteralExpression>(*mc.args[0]);
-      step = step_expr.literal.value.AsInt64();
+      const auto& step_expr = mir::As<mir::ConstantExpression>(*mc.args[0]);
+      step = step_expr.constant.value.AsInt64();
     }
   } else {
     // Array/queue method: lower all args as operands

@@ -12,8 +12,8 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/hierarchical_path.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/operators.hpp"
@@ -22,7 +22,7 @@
 namespace lyra::mir {
 
 using Type = common::Type;
-using Literal = common::Literal;
+using Constant = common::Constant;
 using SymbolRef = common::SymbolRef;
 using HierarchicalPathElement = common::HierarchicalPathElement;
 using common::FormatHierarchicalPath;
@@ -30,7 +30,7 @@ using common::FormatHierarchicalPath;
 class Expression {
  public:
   enum class Kind {
-    kLiteral,
+    kConstant,
     kIdentifier,
     kEnumValue,
     kUnary,
@@ -71,8 +71,8 @@ class Expression {
 
 inline auto ToString(Expression::Kind kind) -> std::string {
   switch (kind) {
-    case Expression::Kind::kLiteral:
-      return "Literal";
+    case Expression::Kind::kConstant:
+      return "Constant";
     case Expression::Kind::kIdentifier:
       return "Identifier";
     case Expression::Kind::kEnumValue:
@@ -111,6 +111,8 @@ inline auto ToString(Expression::Kind kind) -> std::string {
       return "MethodCall";
     case Expression::Kind::kUnpackedStructLiteral:
       return "UnpackedStructLiteral";
+    case Expression::Kind::kArrayLiteral:
+      return "ArrayLiteral";
   }
   std::abort();
 }
@@ -120,18 +122,18 @@ inline auto operator<<(std::ostream& os, const Expression::Kind& kind)
   return os << ToString(kind);
 }
 
-class LiteralExpression : public Expression {
+class ConstantExpression : public Expression {
  public:
-  static constexpr Kind kKindValue = Kind::kLiteral;
+  static constexpr Kind kKindValue = Kind::kConstant;
 
-  Literal literal;
+  Constant constant;
 
-  explicit LiteralExpression(Literal literal)
-      : Expression(kKindValue, literal.type), literal(std::move(literal)) {
+  explicit ConstantExpression(Constant constant)
+      : Expression(kKindValue, constant.type), constant(std::move(constant)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return literal.ToString();
+    return constant.ToString();
   }
 
   void Accept(MirVisitor& visitor) const override {

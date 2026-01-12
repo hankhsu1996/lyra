@@ -20,11 +20,12 @@
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <spdlog/spdlog.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
@@ -121,7 +122,7 @@ auto CreateImplicitAlwaysComb(
 
   // while (true) { driver; wait_event; }
   auto condition =
-      std::make_unique<mir::LiteralExpression>(common::Literal::Bool(true));
+      std::make_unique<mir::ConstantExpression>(common::Constant::Bool(true));
   process->body = std::make_unique<mir::WhileStatement>(
       std::move(condition), std::move(loop_block));
 
@@ -136,6 +137,7 @@ struct ModuleLoweringContext {
   std::size_t* port_driver_counter;
   std::size_t* cont_assign_counter;
   ProcessCounters* process_counters;
+  common::TypeArena* arena;
 };
 
 // Generate Block Lowering Architecture
@@ -234,8 +236,8 @@ void ProcessGenerateScopeMembers(
 // other module-level members.
 auto LowerGenerateScope(
     const slang::ast::Scope& scope, const std::string& name,
-    common::SymbolRef symbol, std::optional<size_t> array_size)
-    -> mir::GenerateScope {
+    common::SymbolRef symbol, std::optional<size_t> array_size,
+    common::TypeArena& arena) -> mir::GenerateScope {
   using SK = slang::ast::SymbolKind;
 
   mir::GenerateScope result;
@@ -255,7 +257,7 @@ auto LowerGenerateScope(
       case SK::Variable: {
         const auto& var = member.as<slang::ast::VariableSymbol>();
         slang::SourceRange source_range(var.location, var.location);
-        auto type_result = LowerType(var.getType(), source_range);
+        auto type_result = LowerType(var.getType(), source_range, arena);
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
@@ -263,7 +265,7 @@ auto LowerGenerateScope(
             .variable = common::Variable{.symbol = &var, .type = *type_result},
             .initializer = nullptr};
         if (const auto* init = var.getInitializer()) {
-          mod_var.initializer = LowerExpression(*init);
+          mod_var.initializer = LowerExpression(*init, arena);
         }
         result.variables.push_back(std::move(mod_var));
         break;
@@ -276,11 +278,11 @@ auto LowerGenerateScope(
           // Named nested generate block - add to nested_scopes
           result.nested_scopes.push_back(LowerGenerateScope(
               nested_sym, std::string(nested_sym.name), &nested_sym,
-              std::nullopt));
+              std::nullopt, arena));
         } else {
           // Unnamed nested block - flatten contents into this scope
-          auto inner =
-              LowerGenerateScope(nested_sym, "", &nested_sym, std::nullopt);
+          auto inner = LowerGenerateScope(
+              nested_sym, "", &nested_sym, std::nullopt, arena);
           for (auto& var : inner.variables) {
             result.variables.push_back(std::move(var));
           }
@@ -299,7 +301,7 @@ auto LowerGenerateScope(
           const auto* first_entry = nested_array.entries[0];
           result.nested_scopes.push_back(LowerGenerateScope(
               *first_entry, std::string(nested_array.name), &nested_array,
-              nested_array.entries.size()));
+              nested_array.entries.size(), arena));
         }
         break;
       }
@@ -380,7 +382,7 @@ void ProcessModuleMember(
       }
 
       slang::SourceRange source_range(port.location, port.location);
-      auto type_result = LowerType(port.getType(), source_range);
+      auto type_result = LowerType(port.getType(), source_range, *ctx.arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -412,7 +414,8 @@ void ProcessModuleMember(
       slang::SourceRange source_range(
           variable_symbol.location, variable_symbol.location);
 
-      auto type_result = LowerType(variable_symbol.getType(), source_range);
+      auto type_result =
+          LowerType(variable_symbol.getType(), source_range, *ctx.arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -424,7 +427,7 @@ void ProcessModuleMember(
 
       std::unique_ptr<mir::Expression> init_expr = nullptr;
       if (const auto* initializer = variable_symbol.getInitializer()) {
-        init_expr = LowerExpression(*initializer);
+        init_expr = LowerExpression(*initializer, *ctx.arena);
       }
 
       ctx.module->variables.push_back(
@@ -437,7 +440,8 @@ void ProcessModuleMember(
     case SK::ProceduralBlock: {
       const auto& procedural_block =
           symbol.as<slang::ast::ProceduralBlockSymbol>();
-      auto process = LowerProcess(procedural_block, *ctx.process_counters);
+      auto process =
+          LowerProcess(procedural_block, *ctx.process_counters, *ctx.arena);
       ctx.module->processes.push_back(std::move(process));
       break;
     }
@@ -453,7 +457,7 @@ void ProcessModuleMember(
                     "task '{}' is not yet supported", subroutine.name)));
       }
 
-      auto func = LowerFunction(subroutine);
+      auto func = LowerFunction(subroutine, *ctx.arena);
       ctx.module->functions.push_back(std::move(func));
       break;
     }
@@ -484,7 +488,7 @@ void ProcessModuleMember(
         if (init == nullptr) {
           continue;  // Skip parameters without initializers
         }
-        auto value_expr = LowerExpression(*init);
+        auto value_expr = LowerExpression(*init, *ctx.arena);
         submod.parameter_overrides.push_back(
             mir::ParameterOverride{
                 .parameter_name = std::string(param.name),
@@ -503,10 +507,10 @@ void ProcessModuleMember(
           const auto& assignment = expr->as<slang::ast::AssignmentExpression>();
           mir::OutputBinding binding;
           binding.port_name = std::string(conn->port.name);
-          binding.signal = LowerExpression(assignment.left());
+          binding.signal = LowerExpression(assignment.left(), *ctx.arena);
           submod.output_bindings.push_back(std::move(binding));
         } else {
-          auto signal_expr = LowerExpression(*expr);
+          auto signal_expr = LowerExpression(*expr, *ctx.arena);
           const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
           mir::AssignmentTarget target(
               port_sym.internalSymbol,
@@ -602,7 +606,7 @@ void ProcessModuleMember(
       mir::AssignmentTarget target(&target_sym);
 
       // Lower RHS expression
-      auto value = LowerExpression(slang_assign.right());
+      auto value = LowerExpression(slang_assign.right(), *ctx.arena);
 
       // Create driver statement
       auto driver_stmt = std::make_unique<mir::AssignStatement>(
@@ -630,11 +634,11 @@ void ProcessModuleMember(
         // Named generate blocks create a scope for hierarchical access
         ctx.module->generate_scopes.push_back(LowerGenerateScope(
             gen_block_sym, std::string(gen_block_sym.name), &gen_block_sym,
-            std::nullopt));
+            std::nullopt, *ctx.arena));
       } else {
         // Unnamed generate block - flatten structure into module
-        auto scope =
-            LowerGenerateScope(gen_block_sym, "", &gen_block_sym, std::nullopt);
+        auto scope = LowerGenerateScope(
+            gen_block_sym, "", &gen_block_sym, std::nullopt, *ctx.arena);
         for (auto& var : scope.variables) {
           ctx.module->variables.push_back(std::move(var));
         }
@@ -655,7 +659,7 @@ void ProcessModuleMember(
         const auto* first_entry = gen_array.entries[0];
         ctx.module->generate_scopes.push_back(LowerGenerateScope(
             *first_entry, std::string(gen_array.name), &gen_array,
-            gen_array.entries.size()));
+            gen_array.entries.size(), *ctx.arena));
 
         // Phase 2: Process executable members from ALL entries
         ProcessGenerateArrayMembers(gen_array.entries, ctx);
@@ -675,7 +679,8 @@ void ProcessModuleMember(
 
 }  // namespace
 
-auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
+auto LowerModule(
+    const slang::ast::InstanceSymbol& instance_symbol, common::TypeArena& arena)
     -> std::unique_ptr<mir::Module> {
   auto module = std::make_unique<mir::Module>();
   // Use module type name (definition name), not instance name
@@ -708,7 +713,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
 
     const auto& param = sym.as<slang::ast::ParameterSymbol>();
     slang::SourceRange source_range(param.location, param.location);
-    auto type_result = LowerType(param.getType(), source_range);
+    auto type_result = LowerType(param.getType(), source_range, arena);
     if (!type_result) {
       throw DiagnosticException(std::move(type_result.error()));
     }
@@ -717,7 +722,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
     // For body-based dedup, this is the actual value for this specialization
     std::unique_ptr<mir::Expression> default_expr;
     if (const auto* init = param.getInitializer()) {
-      default_expr = LowerExpression(*init);
+      default_expr = LowerExpression(*init, arena);
     }
 
     module->parameters.push_back(
@@ -749,6 +754,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
       .port_driver_counter = &port_driver_counter,
       .cont_assign_counter = &cont_assign_counter,
       .process_counters = &process_counters,
+      .arena = &arena,
   };
 
   for (const auto& symbol : body.members()) {

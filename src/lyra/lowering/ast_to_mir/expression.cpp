@@ -19,10 +19,12 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/assignment.hpp"
 #include "lyra/lowering/ast_to_mir/call.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -32,28 +34,29 @@
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerExpression(const slang::ast::Expression& expression)
+auto LowerExpression(
+    const slang::ast::Expression& expression, common::TypeArena& arena)
     -> std::unique_ptr<mir::Expression> {
   switch (expression.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
       const auto& literal = expression.as<slang::ast::IntegerLiteral>();
-      auto mir_literal_result = LowerLiteral(literal);
-      if (!mir_literal_result) {
-        throw DiagnosticException(std::move(mir_literal_result.error()));
+      auto mir_constant_result = LowerLiteral(literal);
+      if (!mir_constant_result) {
+        throw DiagnosticException(std::move(mir_constant_result.error()));
       }
-      return std::make_unique<mir::LiteralExpression>(
-          std::move(*mir_literal_result));
+      return std::make_unique<mir::ConstantExpression>(
+          std::move(*mir_constant_result));
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
       const auto& literal =
           expression.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
-      auto mir_literal_result = LowerLiteral(literal);
-      if (!mir_literal_result) {
-        throw DiagnosticException(std::move(mir_literal_result.error()));
+      auto mir_constant_result = LowerLiteral(literal);
+      if (!mir_constant_result) {
+        throw DiagnosticException(std::move(mir_constant_result.error()));
       }
-      return std::make_unique<mir::LiteralExpression>(
-          std::move(*mir_literal_result));
+      return std::make_unique<mir::ConstantExpression>(
+          std::move(*mir_constant_result));
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
@@ -62,14 +65,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
       // is_string_literal=true
       // - String context: returns string literal
       const auto& literal = expression.as<slang::ast::StringLiteral>();
-      auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      auto mir_constant = LowerLiteral(literal);
+      return std::make_unique<mir::ConstantExpression>(std::move(mir_constant));
     }
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& literal = expression.as<slang::ast::RealLiteral>();
-      auto mir_literal = LowerLiteral(literal);
-      return std::make_unique<mir::LiteralExpression>(std::move(mir_literal));
+      auto mir_constant = LowerLiteral(literal);
+      return std::make_unique<mir::ConstantExpression>(std::move(mir_constant));
     }
 
     case slang::ast::ExpressionKind::NamedValue: {
@@ -88,8 +91,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
         std::string enum_name = std::string(
             parent_scope->asSymbol().as<slang::ast::EnumType>().name);
 
-        auto type_result =
-            LowerType(named_value.symbol.getType(), expression.sourceRange);
+        auto type_result = LowerType(
+            named_value.symbol.getType(), expression.sourceRange, arena);
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
@@ -109,7 +112,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
         // constants.
         if (param.isPortParam()) {
           auto param_type_result =
-              LowerType(param.getType(), expression.sourceRange);
+              LowerType(param.getType(), expression.sourceRange, arena);
           if (!param_type_result) {
             throw DiagnosticException(std::move(param_type_result.error()));
           }
@@ -125,7 +128,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
         // Template params and localparams: inline the constant value
         const auto& cv = param.getValue();
         auto expr_result = ConstantValueToExpression(
-            cv, param.getType(), expression.sourceRange);
+            cv, param.getType(), expression.sourceRange, arena);
         if (!expr_result) {
           throw DiagnosticException(std::move(expr_result.error()));
         }
@@ -133,8 +136,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // Regular variable reference
-      auto type_result =
-          LowerType(named_value.symbol.getType(), expression.sourceRange);
+      auto type_result = LowerType(
+          named_value.symbol.getType(), expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -163,7 +166,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
                 "increment/decrement requires a variable operand"));
       }
 
-      auto operand = LowerExpression(unary_expression.operand());
+      auto operand = LowerExpression(unary_expression.operand(), arena);
 
       return std::make_unique<mir::UnaryExpression>(
           mir_operator, std::move(operand));
@@ -209,12 +212,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
                     mir_operator)));
       }
 
-      auto left = LowerExpression(binary_expression.left());
-      auto right = LowerExpression(binary_expression.right());
+      auto left = LowerExpression(binary_expression.left(), arena);
+      auto right = LowerExpression(binary_expression.right(), arena);
 
       // Get result type from slang (important for comparison operators which
       // return 1-bit, not the operand type)
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -237,26 +241,29 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       auto condition =
-          LowerExpression(*conditional_expression.conditions[0].expr);
-      auto true_expression = LowerExpression(conditional_expression.left());
-      auto false_expression = LowerExpression(conditional_expression.right());
+          LowerExpression(*conditional_expression.conditions[0].expr, arena);
+      auto true_expression =
+          LowerExpression(conditional_expression.left(), arena);
+      auto false_expression =
+          LowerExpression(conditional_expression.right(), arena);
       return std::make_unique<mir::TernaryExpression>(
           std::move(condition), std::move(true_expression),
           std::move(false_expression));
     }
 
     case slang::ast::ExpressionKind::Assignment:
-      return LowerAssignment(expression.as<slang::ast::AssignmentExpression>());
+      return LowerAssignment(
+          expression.as<slang::ast::AssignmentExpression>(), arena);
 
     case slang::ast::ExpressionKind::ElementSelect: {
       const auto& element_select =
           expression.as<slang::ast::ElementSelectExpression>();
-      auto array_value = LowerExpression(element_select.value());
-      auto selector = LowerExpression(element_select.selector());
+      auto array_value = LowerExpression(element_select.value(), arena);
+      auto selector = LowerExpression(element_select.selector(), arena);
 
       // Get the element type from the array type
       auto type_result =
-          LowerType(*element_select.type, expression.sourceRange);
+          LowerType(*element_select.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -269,12 +276,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
       const auto& range_select =
           expression.as<slang::ast::RangeSelectExpression>();
 
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
 
-      auto value = LowerExpression(range_select.value());
+      auto value = LowerExpression(range_select.value(), arena);
       auto selection_kind = range_select.getSelectionKind();
 
       if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
@@ -298,7 +306,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // Indexed part-select: a[i+:4] or a[i-:4]
-      auto start = LowerExpression(range_select.left());
+      auto start = LowerExpression(range_select.left(), arena);
 
       // Width must be constant
       const auto* width_cv = range_select.right().getConstant();
@@ -320,13 +328,14 @@ auto LowerExpression(const slang::ast::Expression& expression)
     }
 
     case slang::ast::ExpressionKind::Call:
-      return LowerCall(expression.as<slang::ast::CallExpression>());
+      return LowerCall(expression.as<slang::ast::CallExpression>(), arena);
 
     case slang::ast::ExpressionKind::Conversion: {
       const auto& conversion =
           expression.as<slang::ast::ConversionExpression>();
-      auto value = LowerExpression(conversion.operand());
-      auto type_result = LowerType(*conversion.type, expression.sourceRange);
+      auto value = LowerExpression(conversion.operand(), arena);
+      auto type_result =
+          LowerType(*conversion.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -353,7 +362,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // Get type from the expression
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -367,7 +377,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
           expression.as<slang::ast::ConcatenationExpression>();
 
       // Get the result type from slang (already computed with correct width)
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -380,7 +391,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
           // Skip zero-width operands (e.g., {0{x}} inside concatenation)
           continue;
         }
-        operands.push_back(LowerExpression(*operand));
+        operands.push_back(LowerExpression(*operand, arena));
       }
 
       // For queues/dynamic arrays, create an ArrayLiteralExpression
@@ -414,10 +425,11 @@ auto LowerExpression(const slang::ast::Expression& expression)
       }
 
       // Lower the inner expression (concat() returns the replicated expression)
-      auto operand = LowerExpression(rep_expr.concat());
+      auto operand = LowerExpression(rep_expr.concat(), arena);
 
       // Get the result type from slang
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -429,12 +441,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
     case slang::ast::ExpressionKind::MemberAccess: {
       const auto& member_access =
           expression.as<slang::ast::MemberAccessExpression>();
-      auto value = LowerExpression(member_access.value());
+      auto value = LowerExpression(member_access.value(), arena);
 
       // Get field info from the FieldSymbol
       const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
 
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -501,7 +514,8 @@ auto LowerExpression(const slang::ast::Expression& expression)
                   "only struct assignment patterns are supported"));
         }
 
-        auto type_result = LowerType(*expression.type, expression.sourceRange);
+        auto type_result =
+            LowerType(*expression.type, expression.sourceRange, arena);
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
@@ -509,7 +523,7 @@ auto LowerExpression(const slang::ast::Expression& expression)
         std::vector<std::unique_ptr<mir::Expression>> operands;
         operands.reserve(elements.size());
         for (const auto* element : elements) {
-          operands.push_back(LowerExpression(*element));
+          operands.push_back(LowerExpression(*element, arena));
         }
 
         // Check if unpacked struct (use canonical type to handle typedefs)
@@ -538,12 +552,13 @@ auto LowerExpression(const slang::ast::Expression& expression)
 
     case slang::ast::ExpressionKind::NewArray: {
       const auto& new_array = expression.as<slang::ast::NewArrayExpression>();
-      auto size = LowerExpression(new_array.sizeExpr());
+      auto size = LowerExpression(new_array.sizeExpr(), arena);
       std::unique_ptr<mir::Expression> init = nullptr;
       if (new_array.initExpr() != nullptr) {
-        init = LowerExpression(*new_array.initExpr());
+        init = LowerExpression(*new_array.initExpr(), arena);
       }
-      auto type_result = LowerType(*expression.type, expression.sourceRange);
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }

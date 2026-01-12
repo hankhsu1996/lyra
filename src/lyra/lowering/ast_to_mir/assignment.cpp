@@ -20,16 +20,18 @@
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
-    -> std::unique_ptr<mir::Expression> {
+auto LowerAssignment(
+    const slang::ast::AssignmentExpression& assignment,
+    common::TypeArena& arena) -> std::unique_ptr<mir::Expression> {
   const auto& left = assignment.left();
-  auto value = LowerExpression(assignment.right());
+  auto value = LowerExpression(assignment.right(), arena);
   auto is_non_blocking = assignment.isNonBlocking();
 
   // Simple variable assignment
@@ -66,7 +68,7 @@ auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
 
     while (current->kind == slang::ast::ExpressionKind::ElementSelect) {
       const auto& es = current->as<slang::ast::ElementSelectExpression>();
-      indices.push_back(LowerExpression(es.selector()));
+      indices.push_back(LowerExpression(es.selector(), arena));
       current = &es.value();
     }
 
@@ -86,7 +88,7 @@ auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
 
     // Lower base type to distinguish packed vs unpacked
     auto base_type_result =
-        LowerType(array_symbol.getType(), current->sourceRange);
+        LowerType(array_symbol.getType(), current->sourceRange, arena);
     if (!base_type_result) {
       throw DiagnosticException(std::move(base_type_result.error()));
     }
@@ -137,7 +139,7 @@ auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
 
       // Get the field type
       auto field_type_result =
-          LowerType(field.getType(), member_access.sourceRange);
+          LowerType(field.getType(), member_access.sourceRange, arena);
       if (!field_type_result) {
         throw DiagnosticException(std::move(field_type_result.error()));
       }
@@ -191,8 +193,8 @@ auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
     }
 
     root_symbol = &current->as<slang::ast::NamedValueExpression>().symbol;
-    auto root_type_result =
-        LowerType(current->type->getCanonicalType(), current->sourceRange);
+    auto root_type_result = LowerType(
+        current->type->getCanonicalType(), current->sourceRange, arena);
     if (!root_type_result) {
       throw DiagnosticException(std::move(root_type_result.error()));
     }

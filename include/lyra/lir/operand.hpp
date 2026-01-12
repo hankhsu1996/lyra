@@ -12,10 +12,10 @@
 namespace lyra::lir {
 
 using SymbolRef = common::SymbolRef;
-using OperandValue = std::variant<TempRef, SymbolRef, LiteralRef, LabelRef>;
+using OperandValue = std::variant<TempRef, SymbolRef, ConstantRef, LabelRef>;
 
 struct Operand {
-  enum class Kind { kTemp, kVariable, kLiteral, kLabel };
+  enum class Kind { kTemp, kVariable, kConstant, kLabel };
 
   Kind kind;
   OperandValue value{};
@@ -33,8 +33,8 @@ struct Operand {
     return Make(Kind::kVariable, symbol);
   }
 
-  static auto Literal(LiteralRef literal) -> Operand {
-    return Make(Kind::kLiteral, literal);
+  static auto Constant(ConstantRef constant) -> Operand {
+    return Make(Kind::kConstant, constant);
   }
 
   static auto Label(LabelRef label) -> Operand {
@@ -49,8 +49,8 @@ struct Operand {
     return kind == Kind::kVariable;
   }
 
-  [[nodiscard]] auto IsLiteral() const -> bool {
-    return kind == Kind::kLiteral;
+  [[nodiscard]] auto IsConstant() const -> bool {
+    return kind == Kind::kConstant;
   }
 
   [[nodiscard]] auto IsLabel() const -> bool {
@@ -65,7 +65,7 @@ struct Operand {
             return v->name;
           } else if constexpr (std::is_same_v<T, SymbolRef>) {
             return std::string(v->name);
-          } else if constexpr (std::is_same_v<T, LiteralRef>) {
+          } else if constexpr (std::is_same_v<T, ConstantRef>) {
             return v->ToString();
           } else if constexpr (std::is_same_v<T, LabelRef>) {
             return *v;
@@ -109,8 +109,8 @@ struct fmt::formatter<lyra::lir::Operand::Kind> {
         return fmt::format_to(ctx.out(), "temp");
       case K::kVariable:
         return fmt::format_to(ctx.out(), "variable");
-      case K::kLiteral:
-        return fmt::format_to(ctx.out(), "literal");
+      case K::kConstant:
+        return fmt::format_to(ctx.out(), "constant");
       case K::kLabel:
         return fmt::format_to(ctx.out(), "label");
     }
