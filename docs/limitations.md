@@ -84,11 +84,11 @@ Not yet supported:
 Supported:
 
 - Conditional generate (`if-generate`)
+- Loop generate (`for-generate` with `genvar`)
+- Case generate (`case-generate`)
 
 Not yet supported:
 
-- Loop generate (`for-generate` with `genvar`)
-- Case generate (`case-generate`)
 - Hierarchical references through generate block names (e.g., `gen_block.signal`)
 
 ## Subroutines (Tasks and Functions)
