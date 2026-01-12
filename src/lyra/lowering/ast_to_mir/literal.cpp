@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <slang/ast/expressions/LiteralExpressions.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
 #include <slang/numeric/SVInt.h>

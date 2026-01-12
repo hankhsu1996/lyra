@@ -9,7 +9,6 @@
 #include <vector>
 
 #include <fmt/core.h>
-#include <slang/ast/types/Type.h>
 
 #include "lyra/common/meta_util.hpp"
 
@@ -131,23 +130,6 @@ struct Type {
   // bit[7:0] Byte). This is metadata for codegen readability, not part of
   // semantic type equality. Also used for enum typedefs.
   std::optional<std::string> alias_name;
-
-  static auto FromSlang(const slang::ast::Type& type) -> Type {
-    if (type.isString()) {
-      return Type{.kind = Kind::kString, .alias_name = std::nullopt};
-    }
-    if (type.isFloating()) {
-      return Type::Real();
-    }
-    if (type.isIntegral()) {
-      if (type.isSigned()) {
-        return Type::IntegralSigned(type.getBitWidth());
-      }
-      return Type::IntegralUnsigned(type.getBitWidth());
-    }
-    throw std::runtime_error(
-        fmt::format("Unsupported type: {}", type.toString()));
-  }
 
   static auto Void() -> Type {
     return Type{.kind = Kind::kVoid, .alias_name = std::nullopt};
