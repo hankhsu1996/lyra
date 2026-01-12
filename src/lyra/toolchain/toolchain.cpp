@@ -16,9 +16,10 @@ namespace {
 auto ExecuteCommand(const std::string& cmd) -> std::string {
   std::array<char, 256> buffer{};
   std::string result;
-  // NOLINTNEXTLINE(misc-include-cleaner): popen/pclose are in <cstdio>
+  // NOLINTBEGIN(misc-include-cleaner): popen/pclose are in <cstdio>
   std::unique_ptr<FILE, decltype(&pclose)> pipe(
       popen(cmd.c_str(), "r"), pclose);
+  // NOLINTEND(misc-include-cleaner)
   if (!pipe) {
     return "";
   }

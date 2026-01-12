@@ -2,11 +2,14 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/context.hpp"

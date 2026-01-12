@@ -1,12 +1,15 @@
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"

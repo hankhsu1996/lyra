@@ -6,10 +6,12 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "lyra/common/builtin_method.hpp"
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"

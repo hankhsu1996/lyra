@@ -488,10 +488,11 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     if (target_type.kind == common::Type::Kind::kIntegral) {
       const auto& integral = std::get<common::IntegralData>(target_type.data);
-      size_t element_width = integral.element_type
+      size_t element_width = integral.element_type != nullptr
                                  ? integral.element_type->GetBitWidth()
                                  : integral.bit_width;
-      size_t element_count = integral.element_type ? integral.element_count : 1;
+      size_t element_count =
+          integral.element_type != nullptr ? integral.element_count : 1;
       int32_t lower_bound = integral.element_lower;
       Indent();
       out_ << "lyra::sdk::" << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")

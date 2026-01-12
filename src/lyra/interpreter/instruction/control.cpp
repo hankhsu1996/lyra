@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
