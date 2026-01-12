@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <ios>
 #include <string>
 
 #include "lyra/common/bit_utils.hpp"
@@ -12,14 +11,12 @@
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/compiler/codegen/type.hpp"
-#include "lyra/compiler/codegen/utils.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::compiler {
 
 using codegen::GetElementWidthAfterIndices;
 using codegen::IsWideWidth;
-using codegen::kPrecLowest;
 
 void Codegen::EmitStatement(const mir::Statement& stmt) {
   switch (stmt.kind) {
@@ -119,157 +116,44 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kConditional: {
       const auto& cond = mir::As<mir::ConditionalStatement>(stmt);
-      EmitConditional(cond, false);
+
+      // Check if this is unique/unique0/priority if
+      bool needs_overlap_check =
+          cond.check == mir::UniquePriorityCheck::kUnique ||
+          cond.check == mir::UniquePriorityCheck::kUnique0;
+      bool needs_priority_check =
+          cond.check == mir::UniquePriorityCheck::kPriority;
+
+      if (needs_overlap_check || needs_priority_check) {
+        EmitUniquePriorityIf(cond);
+      } else {
+        EmitConditional(cond, false);
+      }
       break;
     }
     case mir::Statement::Kind::kWhile: {
       const auto& while_stmt = mir::As<mir::WhileStatement>(stmt);
-      Indent();
-      out_ << "while (";
-      EmitExpression(*while_stmt.condition);
-      out_ << ") {\n";
-      indent_++;
-      EmitStatement(*while_stmt.body);
-      indent_--;
-      Indent();
-      out_ << "}\n";
+      EmitWhileLoop(while_stmt);
       break;
     }
     case mir::Statement::Kind::kDoWhile: {
       const auto& do_while = mir::As<mir::DoWhileStatement>(stmt);
-      Indent();
-      out_ << "do {\n";
-      indent_++;
-      EmitStatement(*do_while.body);
-      indent_--;
-      Indent();
-      out_ << "} while (";
-      EmitExpression(*do_while.condition);
-      out_ << ");\n";
+      EmitDoWhileLoop(do_while);
       break;
     }
     case mir::Statement::Kind::kFor: {
       const auto& for_stmt = mir::As<mir::ForStatement>(stmt);
-      // Emit initializers (variable declarations must be outside for loop in
-      // C++)
-      for (const auto& init : for_stmt.initializers) {
-        EmitStatement(*init);
-      }
-      Indent();
-      out_ << "for (; ";
-      if (for_stmt.condition) {
-        EmitExpression(*for_stmt.condition);
-      }
-      out_ << "; ";
-      for (size_t i = 0; i < for_stmt.steps.size(); ++i) {
-        if (i > 0) {
-          out_ << ", ";
-        }
-        EmitExpression(*for_stmt.steps[i]);
-      }
-      out_ << ") {\n";
-      indent_++;
-      EmitStatement(*for_stmt.body);
-      indent_--;
-      Indent();
-      out_ << "}\n";
+      EmitForLoop(for_stmt);
       break;
     }
     case mir::Statement::Kind::kRepeat: {
       const auto& repeat_stmt = mir::As<mir::RepeatStatement>(stmt);
-      Indent();
-      out_ << "for (int _repeat_i = static_cast<int>(";
-      EmitExpression(*repeat_stmt.count);
-      out_ << "); _repeat_i > 0; --_repeat_i) {\n";
-      indent_++;
-      EmitStatement(*repeat_stmt.body);
-      indent_--;
-      Indent();
-      out_ << "}\n";
+      EmitRepeatLoop(repeat_stmt);
       break;
     }
     case mir::Statement::Kind::kCase: {
       const auto& case_stmt = mir::As<mir::CaseStatement>(stmt);
-
-      // Block scope for the condition temp variable
-      Indent();
-      out_ << "{\n";
-      indent_++;
-
-      // Emit condition once into a temp
-      Indent();
-      out_ << "auto _case_cond = ";
-      EmitExpression(*case_stmt.condition);
-      out_ << ";\n";
-
-      // Emit if-else-if chain for each item
-      bool first = true;
-      for (const auto& item : case_stmt.items) {
-        Indent();
-        if (first) {
-          out_ << "if (";
-          first = false;
-        } else {
-          out_ << "} else if (";
-        }
-
-        // Emit condition:
-        // Normal case: (_case_cond == expr0) || (_case_cond == expr1) || ...
-        // Wildcard case: ((_case_cond & mask0) == expr0) || ...
-        for (size_t i = 0; i < item.expressions.size(); ++i) {
-          if (i > 0) {
-            out_ << " || ";
-          }
-          int64_t mask = item.masks[i];
-          // Check if mask is all-1s (no wildcards) - can use direct comparison
-          // A mask is "all ones" if it's -1 or all bits are set for the width
-          auto umask = static_cast<uint64_t>(mask);
-          bool is_all_ones = (mask == -1) ||
-                             (umask == 0xFFFFFFFF) ||        // 32-bit all 1s
-                             (umask == 0xFFFFFFFFFFFFFFFF);  // 64-bit all 1s
-          if (is_all_ones) {
-            // No wildcards - direct comparison
-            out_ << "_case_cond == ";
-          } else {
-            // Wildcard case - apply mask
-            // Cast to uint64_t to avoid negative hex output
-            out_ << "(static_cast<uint64_t>(_case_cond) & 0x" << std::hex
-                 << umask << std::dec << "ULL) == ";
-          }
-          EmitExpression(*item.expressions[i]);
-        }
-        out_ << ") {\n";
-        indent_++;
-        if (item.statement) {
-          EmitStatement(*item.statement);
-        }
-        indent_--;
-      }
-
-      // Emit default case (if any)
-      if (case_stmt.default_case) {
-        if (!case_stmt.items.empty()) {
-          Indent();
-          out_ << "} else {\n";
-          indent_++;
-          EmitStatement(*case_stmt.default_case);
-          indent_--;
-        } else {
-          // No items, just default
-          EmitStatement(*case_stmt.default_case);
-        }
-      }
-
-      // Close if chain
-      if (!case_stmt.items.empty()) {
-        Indent();
-        out_ << "}\n";
-      }
-
-      // Close block scope
-      indent_--;
-      Indent();
-      out_ << "}\n";
+      EmitCaseStatement(case_stmt);
       break;
     }
     case mir::Statement::Kind::kBreak: {
@@ -387,42 +271,6 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
               {}, "C++ codegen: unimplemented statement kind: " +
                       ToString(stmt.kind)));
   }
-}
-
-void Codegen::EmitConditional(
-    const mir::ConditionalStatement& cond, bool is_else_if) {
-  if (is_else_if) {
-    out_ << " else if (";
-  } else {
-    Indent();
-    out_ << "if (";
-  }
-  EmitExpression(*cond.condition);
-  out_ << ") {\n";
-  indent_++;
-  EmitStatement(*cond.then_branch);
-  indent_--;
-
-  if (cond.else_branch) {
-    // Check if else branch is another conditional (else-if chain)
-    if (cond.else_branch->kind == mir::Statement::Kind::kConditional) {
-      Indent();
-      out_ << "}";
-      const auto& else_cond =
-          mir::As<mir::ConditionalStatement>(*cond.else_branch);
-      EmitConditional(else_cond, true);
-      return;  // The recursive call handles closing brace
-    }
-    // Regular else branch
-    Indent();
-    out_ << "} else {\n";
-    indent_++;
-    EmitStatement(*cond.else_branch);
-    indent_--;
-  }
-
-  Indent();
-  out_ << "}\n";
 }
 
 }  // namespace lyra::compiler

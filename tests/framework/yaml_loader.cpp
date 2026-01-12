@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+// NOLINTNEXTLINE(misc-include-cleaner): yaml.h is the public API
 #include <yaml-cpp/yaml.h>
 
 #include "tests/framework/test_case.hpp"
@@ -13,6 +15,7 @@ namespace lyra::test {
 auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
   std::vector<TestCase> cases;
 
+  // NOLINTNEXTLINE(misc-include-cleaner): LoadFile is provided by yaml.h
   auto root = YAML::LoadFile(path);
   auto feature = root["feature"].as<std::string>("");
 
@@ -72,10 +75,17 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         if (expect["output"].IsScalar()) {
           // Simple string - exact match
           output.exact = expect["output"].as<std::string>();
-        } else if (expect["output"]["contains"]) {
-          // Contains list
-          for (const auto& item : expect["output"]["contains"]) {
-            output.contains.push_back(item.as<std::string>());
+        } else {
+          // Map with contains/not_contains
+          if (expect["output"]["contains"]) {
+            for (const auto& item : expect["output"]["contains"]) {
+              output.contains.push_back(item.as<std::string>());
+            }
+          }
+          if (expect["output"]["not_contains"]) {
+            for (const auto& item : expect["output"]["not_contains"]) {
+              output.not_contains.push_back(item.as<std::string>());
+            }
           }
         }
         tc.expected_output = std::move(output);

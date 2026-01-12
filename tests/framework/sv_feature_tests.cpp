@@ -129,6 +129,11 @@ void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
           << "Actual output: \"" << actual << "\"";
     }
   }
+  for (const auto& substring : expected.not_contains) {
+    EXPECT_TRUE(actual.find(substring) == std::string::npos)
+        << "Expected output to NOT contain: \"" << substring << "\"\n"
+        << "Actual output: \"" << actual << "\"";
+  }
 }
 
 class SvFeatureTest : public testing::TestWithParam<TestCase> {};

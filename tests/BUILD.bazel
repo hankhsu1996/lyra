@@ -154,6 +154,16 @@ sv_feature_test(
     yaml = "sv_features/control_flow/foreach.yaml",
 )
 
+sv_feature_test(
+    name = "control_flow_unique_priority_case_tests",
+    yaml = "sv_features/control_flow/unique_priority_case.yaml",
+)
+
+sv_feature_test(
+    name = "control_flow_unique_priority_if_tests",
+    yaml = "sv_features/control_flow/unique_priority_if.yaml",
+)
+
 # Datatypes
 sv_feature_test(
     name = "datatypes_variables_tests",

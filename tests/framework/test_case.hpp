@@ -18,6 +18,7 @@ struct SourceFile {
 struct ExpectedOutput {
   std::optional<std::string> exact;
   std::vector<std::string> contains;
+  std::vector<std::string> not_contains;
 
   [[nodiscard]] auto IsExact() const -> bool {
     return exact.has_value();

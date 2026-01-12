@@ -1,11 +1,11 @@
-#include "lyra/lowering/mir_to_lir/expression.hpp"
+#include "lyra/lowering/mir_to_lir/expression/expression.hpp"
 
 #include <cassert>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
-#include "lyra/lowering/mir_to_lir/expression_internal.hpp"
+#include "lyra/lowering/mir_to_lir/expression/internal.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 

@@ -23,6 +23,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/trigger.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -72,6 +73,21 @@ auto ExtractTrigger(const slang::ast::SignalEventControl& signal_event)
 
   return common::Trigger{
       .edge_kind = edge_kind, .variable = &variable, .instance_path = {}};
+}
+
+// Convert slang's UniquePriorityCheck to MIR's enum
+auto ConvertUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
+    -> mir::UniquePriorityCheck {
+  switch (check) {
+    case slang::ast::UniquePriorityCheck::None:
+      return mir::UniquePriorityCheck::kNone;
+    case slang::ast::UniquePriorityCheck::Unique:
+      return mir::UniquePriorityCheck::kUnique;
+    case slang::ast::UniquePriorityCheck::Unique0:
+      return mir::UniquePriorityCheck::kUnique0;
+    case slang::ast::UniquePriorityCheck::Priority:
+      return mir::UniquePriorityCheck::kPriority;
+  }
 }
 
 // Lower a foreach loop to equivalent nested for loops.
@@ -343,8 +359,11 @@ auto LowerStatement(const slang::ast::Statement& statement)
         else_branch = LowerStatement(*conditional.ifFalse);
       }
 
+      auto check = ConvertUniquePriorityCheck(conditional.check);
+
       return std::make_unique<mir::ConditionalStatement>(
-          std::move(condition), std::move(then_branch), std::move(else_branch));
+          std::move(condition), std::move(then_branch), std::move(else_branch),
+          check);
     }
 
     case StatementKind::WhileLoop: {
@@ -497,9 +516,12 @@ auto LowerStatement(const slang::ast::Statement& statement)
         default_case = LowerStatement(*case_stmt.defaultCase);
       }
 
+      // Convert unique/priority qualifier
+      auto check = ConvertUniquePriorityCheck(case_stmt.check);
+
       return std::make_unique<mir::CaseStatement>(
           case_condition, std::move(condition), std::move(items),
-          std::move(default_case));
+          std::move(default_case), check);
     }
 
     case StatementKind::Break: {

@@ -192,6 +192,8 @@ See [scheduling.md](scheduling.md) for implemented regions.
   - Array element access (`arr[i]` where `i` is out of range)
   - Bit/part select (`vec[i]`, `vec[i+:w]`, `vec[i-:w]` where the selection extends beyond the vector bounds)
 
+- **Unique/priority violation reporting**: LRM 12.4.2.1 specifies that `unique`/`priority`/`unique0` violation reports should be deferred to the Observed region with "zero-delay glitch immunity" - violations are flushed if the process re-triggers before the Observed region. Lyra reports violations immediately via `$warning`, which may produce spurious reports in `always_comb` blocks with combinational feedback loops. Per-process violation tracking and `$assertcontrol` are not supported.
+
 ## $monitor Limitations
 
 - **Same-time-slot operations**: When `$monitor` is replaced or `$monitoroff` is called in the same time slot as a value change, that change may not be detected. This is due to CheckMonitor running at the end of the time slot after all instructions have executed.
