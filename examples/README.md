@@ -2,10 +2,10 @@
 
 Sample Lyra projects demonstrating SystemVerilog simulation.
 
-| Project     | Description                         |
-| ----------- | ----------------------------------- |
-| `hello/`    | Minimal example with $display       |
-| `tiny_cpu/` | Comprehensive example with clocking |
+| Project      | Description                               |
+| ------------ | ----------------------------------------- |
+| `hello/`     | Minimal example with $display             |
+| `riscv-cpu/` | Single-cycle RISC-V CPU with test programs |
 
 ## Running
 
@@ -14,13 +14,11 @@ cd examples/hello
 lyra run
 ```
 
-## Supported Features
+## riscv-cpu
 
-See `tiny_cpu/tiny_cpu.sv` for examples of:
+A simple RISC-V RV32I CPU demonstrating:
 
-- Data types: `bit`, `int`
-- Time delays: `#5`, `#10`
-- Clock generation: `forever` loops
-- Always blocks: `always_comb`, `always_ff`
-- Wait events: `@(posedge clk)`
-- Initial blocks with `$display` and `$finish`
+- Packages with typedefs, enums, and structs
+- Multi-module hierarchy (cpu, register_file, ALU, memories)
+- Parameterized modules with $readmemh
+- Multiple test programs (sum, fibonacci)

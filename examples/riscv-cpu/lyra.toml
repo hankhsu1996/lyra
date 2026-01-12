@@ -1,6 +1,6 @@
 [package]
 name = "riscv-cpu"
-top = "testbench"
+top = "all_tests"
 
 [sources]
 files = [
@@ -13,7 +13,6 @@ files = [
     "execution_unit.sv",
     "writeback.sv",
     "cpu.sv",
-    "testbench.sv",
     "tests/sum_test.sv",
     "tests/fib_test.sv",
     "tests/all_tests.sv",

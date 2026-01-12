@@ -7,6 +7,16 @@ allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git b
 
 Create a commit following the project format.
 
+## STOP: Check Branch First
+
+**You are NOT allowed to commit on main.** Before doing ANYTHING else:
+
+1. Check the current branch in the Context section below
+2. If on `main`, STOP and ask the user for a branch name using AskUserQuestion
+3. Create the branch with `git switch -c <branch-name>` BEFORE any other steps
+
+Do NOT proceed with formatting or staging until you are on a feature branch.
+
 ## Context
 
 - **Current branch:** !`git branch --show-current`
@@ -53,10 +63,6 @@ Bullet points should describe **what changed**, not background context or why th
 
 ## Branch Rules
 
-**CRITICAL: Never commit directly to main.** If on main, you MUST ask the user for a branch name before proceeding. Use AskUserQuestion to get the branch name.
-
-**CRITICAL: Use `git switch`, NOT `git checkout`.** To create a new branch: `git switch -c <branch-name>`
-
 **Branch name format:** `<type>/<short-description>`
 
 - **Types:** `feature`, `bugfix`, `refactor`, `release`, `chore`, `docs`
@@ -73,7 +79,7 @@ Bullet points should describe **what changed**, not background context or why th
 
 ## Instructions
 
-1. **Check branch first** - If on main, ask user for branch name and create it before any other steps
+1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
 2. Format all files (C++, markdown, Bazel)
 3. Stage files with `git add <files>` (do NOT use `git add -A`)
 4. Run `git commit` as a separate command (do NOT chain with add)
