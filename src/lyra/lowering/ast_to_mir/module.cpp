@@ -138,22 +138,104 @@ struct ModuleLoweringContext {
   ProcessCounters* process_counters;
 };
 
-// Forward declaration for mutual recursion with ProcessModuleMember
+// Generate Block Lowering Architecture
+// =====================================
+// Generate blocks are processed in two phases to handle the asymmetry between
+// structure (same across all array entries) and members (different per entry).
+//
+// PHASE 1 - STRUCTURE (LowerGenerateScope):
+//   Builds the MIR GenerateScope tree with variables and nesting structure.
+//   For GenerateBlockArray, only examines entries[0] since all entries have
+//   identical structure (same variable declarations, same nested generates).
+//   Handles: kStructural members only.
+//
+// PHASE 2 - MEMBERS (ProcessGenerateScopeMembers /
+// ProcessGenerateArrayMembers):
+//   Processes executable members (processes, functions, submodules) and adds
+//   them to the module. For GenerateBlockArray, iterates ALL entries because
+//   each entry's processes reference different genvar values.
+//   Handles: kProcessable members, recurses into kStructural generates.
+//
+// INVARIANT: Each symbol kind belongs to exactly one category. A symbol is
+// either captured in Phase 1 (structure) or Phase 2 (members), never both.
+// The GenerateMemberCategory enum enforces this single source of truth.
+
+// Category for generate block member symbols.
+// Determines which phase handles each symbol kind.
+enum class GenerateMemberCategory {
+  // Structural members: define the shape of the generate scope.
+  // Handled by LowerGenerateScope (Phase 1).
+  // - Variable: captured in GenerateScope::variables
+  // - GenerateBlock/Array: recursively define nested structure
+  kStructural,
+
+  // Skipped members: metadata that doesn't produce MIR.
+  // Ignored by both phases.
+  // - Parameter: elaboration-time constant, already resolved by slang
+  // - Genvar: loop variable, already resolved by slang
+  // - UninstantiatedDef: module definition not instantiated in this scope
+  // - Uninstantiated GenerateBlock: condition evaluated to false
+  kSkipped,
+
+  // Processable members: produce executable MIR (processes, functions, etc.).
+  // Handled by ProcessGenerateScopeMembers (Phase 2).
+  // Delegates to ProcessModuleMember for actual lowering.
+  kProcessable,
+};
+
+// Categorize a symbol for generate block processing.
+// This is the SINGLE SOURCE OF TRUTH for the phase 1/phase 2 split.
+// Takes full symbol (not just kind) to handle isUninstantiated check.
+auto CategorizeGenerateMember(const slang::ast::Symbol& symbol)
+    -> GenerateMemberCategory {
+  using SK = slang::ast::SymbolKind;
+
+  // Uninstantiated generate blocks are skipped entirely
+  if (symbol.kind == SK::GenerateBlock) {
+    const auto& block = symbol.as<slang::ast::GenerateBlockSymbol>();
+    if (block.isUninstantiated) {
+      return GenerateMemberCategory::kSkipped;
+    }
+    return GenerateMemberCategory::kStructural;
+  }
+
+  switch (symbol.kind) {
+    // Structural - handled by LowerGenerateScope
+    case SK::Variable:
+    case SK::GenerateBlockArray:
+      return GenerateMemberCategory::kStructural;
+
+    // Skipped - ignored by both phases
+    case SK::Parameter:
+    case SK::Genvar:
+    case SK::UninstantiatedDef:
+      return GenerateMemberCategory::kSkipped;
+
+    // Everything else is processable
+    default:
+      return GenerateMemberCategory::kProcessable;
+  }
+}
+
+// Forward declarations for mutual recursion
 void ProcessModuleMember(
     const slang::ast::Symbol& symbol, ModuleLoweringContext& ctx);
-
-// Process non-structural members (processes, functions) from all generate array
-// entries. Variables and nested generates are handled by LowerGenerateScope.
 void ProcessGenerateArrayMembers(
     std::span<const slang::ast::GenerateBlockSymbol* const> entries,
     ModuleLoweringContext& ctx);
+void ProcessGenerateScopeMembers(
+    const slang::ast::Scope& scope, ModuleLoweringContext& ctx);
 
-// Lower a generate block scope to MIR, collecting variables and nested scopes.
-// Processes (initial/always blocks) are added to the module, not returned here.
+// PHASE 1: Build MIR structure from generate scope.
+// Only handles kStructural members (Variable, GenerateBlock,
+// GenerateBlockArray). Non-structural members (kProcessable, kSkipped) are
+// ignored here. Note: This function is pure - it doesn't need
+// ModuleLoweringContext because structure building doesn't add processes or
+// other module-level members.
 auto LowerGenerateScope(
     const slang::ast::Scope& scope, const std::string& name,
-    common::SymbolRef symbol, std::optional<size_t> array_size,
-    ModuleLoweringContext& ctx) -> mir::GenerateScope {
+    common::SymbolRef symbol, std::optional<size_t> array_size)
+    -> mir::GenerateScope {
   using SK = slang::ast::SymbolKind;
 
   mir::GenerateScope result;
@@ -162,6 +244,13 @@ auto LowerGenerateScope(
   result.array_size = array_size;
 
   for (const auto& member : scope.members()) {
+    // Only process kStructural members in this phase
+    // (isUninstantiated check is handled inside CategorizeGenerateMember)
+    if (CategorizeGenerateMember(member) !=
+        GenerateMemberCategory::kStructural) {
+      continue;
+    }
+
     switch (member.kind) {
       case SK::Variable: {
         const auto& var = member.as<slang::ast::VariableSymbol>();
@@ -181,20 +270,17 @@ auto LowerGenerateScope(
       }
 
       case SK::GenerateBlock: {
+        // isUninstantiated already checked by categorization
         const auto& nested_sym = member.as<slang::ast::GenerateBlockSymbol>();
-        if (nested_sym.isUninstantiated) {
-          break;
-        }
         if (!nested_sym.name.empty()) {
           // Named nested generate block - add to nested_scopes
           result.nested_scopes.push_back(LowerGenerateScope(
               nested_sym, std::string(nested_sym.name), &nested_sym,
-              std::nullopt, ctx));
+              std::nullopt));
         } else {
           // Unnamed nested block - flatten contents into this scope
-          // Variables go into our variables, nested scopes get merged
-          auto inner = LowerGenerateScope(
-              nested_sym, "", &nested_sym, std::nullopt, ctx);
+          auto inner =
+              LowerGenerateScope(nested_sym, "", &nested_sym, std::nullopt);
           for (auto& var : inner.variables) {
             result.variables.push_back(std::move(var));
           }
@@ -213,18 +299,13 @@ auto LowerGenerateScope(
           const auto* first_entry = nested_array.entries[0];
           result.nested_scopes.push_back(LowerGenerateScope(
               *first_entry, std::string(nested_array.name), &nested_array,
-              nested_array.entries.size(), ctx));
-
-          // Process non-variable/non-generate members from ALL entries
-          ProcessGenerateArrayMembers(nested_array.entries, ctx);
+              nested_array.entries.size()));
         }
         break;
       }
 
       default:
-        // Non-generate, non-variable members (processes, functions) go to
-        // module
-        ProcessModuleMember(member, ctx);
+        // Should not reach here - categorization filter above catches this
         break;
     }
   }
@@ -232,18 +313,52 @@ auto LowerGenerateScope(
   return result;
 }
 
-// Process non-structural members (processes, functions) from all generate array
-// entries. Variables and nested generates are handled by LowerGenerateScope.
+// PHASE 2 helpers: Process executable members from generate scopes.
+
+// Process non-structural members from all generate array entries.
+// For GenerateBlockArray, we must iterate ALL entries because each entry's
+// processes reference different genvar values.
 void ProcessGenerateArrayMembers(
     std::span<const slang::ast::GenerateBlockSymbol* const> entries,
     ModuleLoweringContext& ctx) {
-  using SK = slang::ast::SymbolKind;
   for (const auto* entry : entries) {
-    for (const auto& member : entry->members()) {
-      if (member.kind != SK::Variable && member.kind != SK::GenerateBlock &&
-          member.kind != SK::GenerateBlockArray) {
+    ProcessGenerateScopeMembers(*entry, ctx);
+  }
+}
+
+// PHASE 2: Process executable members from a generate scope.
+// Handles kProcessable members by delegating to ProcessModuleMember.
+// Recurses into kStructural generate blocks to find nested processable members.
+// Skips kSkipped members entirely (including uninstantiated generate blocks).
+void ProcessGenerateScopeMembers(
+    const slang::ast::Scope& scope, ModuleLoweringContext& ctx) {
+  using SK = slang::ast::SymbolKind;
+
+  for (const auto& member : scope.members()) {
+    // isUninstantiated check is handled inside CategorizeGenerateMember
+    switch (CategorizeGenerateMember(member)) {
+      case GenerateMemberCategory::kSkipped:
+        // Metadata members and uninstantiated blocks - no MIR needed
+        break;
+
+      case GenerateMemberCategory::kStructural:
+        // Structure was captured in Phase 1, but we must recurse to find
+        // processable members inside nested generates
+        if (member.kind == SK::GenerateBlock) {
+          const auto& nested = member.as<slang::ast::GenerateBlockSymbol>();
+          ProcessGenerateScopeMembers(nested, ctx);
+        } else if (member.kind == SK::GenerateBlockArray) {
+          const auto& nested =
+              member.as<slang::ast::GenerateBlockArraySymbol>();
+          ProcessGenerateArrayMembers(nested.entries, ctx);
+        }
+        // SK::Variable - nothing to do, already captured in Phase 1
+        break;
+
+      case GenerateMemberCategory::kProcessable:
+        // Executable members - delegate to ProcessModuleMember
         ProcessModuleMember(member, ctx);
-      }
+        break;
     }
   }
 }
@@ -510,26 +625,25 @@ void ProcessModuleMember(
         break;
       }
 
-      // Named generate blocks (if-generate/case-generate) create a scope
-      // that can be referenced hierarchically (e.g., enabled.value)
+      // Phase 1: Build structure
       if (!gen_block_sym.name.empty()) {
+        // Named generate blocks create a scope for hierarchical access
         ctx.module->generate_scopes.push_back(LowerGenerateScope(
             gen_block_sym, std::string(gen_block_sym.name), &gen_block_sym,
-            std::nullopt, ctx));
+            std::nullopt));
       } else {
-        // Unnamed generate block - flatten into module
-        // Use LowerGenerateScope to process nested structures, then merge
-        auto scope = LowerGenerateScope(
-            gen_block_sym, "", &gen_block_sym, std::nullopt, ctx);
-        // Flatten variables into module (not typical, but handle gracefully)
+        // Unnamed generate block - flatten structure into module
+        auto scope =
+            LowerGenerateScope(gen_block_sym, "", &gen_block_sym, std::nullopt);
         for (auto& var : scope.variables) {
           ctx.module->variables.push_back(std::move(var));
         }
-        // Merge nested scopes into module's generate_scopes
         for (auto& nested : scope.nested_scopes) {
           ctx.module->generate_scopes.push_back(std::move(nested));
         }
       }
+      // Phase 2: Process executable members
+      ProcessGenerateScopeMembers(gen_block_sym, ctx);
       break;
     }
 
@@ -537,13 +651,13 @@ void ProcessModuleMember(
       const auto& gen_array = symbol.as<slang::ast::GenerateBlockArraySymbol>();
 
       if (!gen_array.entries.empty()) {
-        // Use first entry for structure (all entries have same structure)
+        // Phase 1: Build structure from first entry (all have same structure)
         const auto* first_entry = gen_array.entries[0];
         ctx.module->generate_scopes.push_back(LowerGenerateScope(
             *first_entry, std::string(gen_array.name), &gen_array,
-            gen_array.entries.size(), ctx));
+            gen_array.entries.size()));
 
-        // Process non-variable/non-generate members from ALL entries
+        // Phase 2: Process executable members from ALL entries
         ProcessGenerateArrayMembers(gen_array.entries, ctx);
       }
       break;
