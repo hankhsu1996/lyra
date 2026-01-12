@@ -70,6 +70,18 @@ struct ModuleVariable {
   std::unique_ptr<Expression> initializer;  // nullptr if no initializer
 };
 
+// Unified generate scope - handles both for-generate (array) and
+// if/case-generate (single). For-generate creates an array of scopes,
+// if/case-generate creates a single scope. The nesting structure allows
+// arbitrary depth of generate blocks.
+struct GenerateScope {
+  std::string name;                          // Block name ("gen_block")
+  common::SymbolRef symbol;                  // Slang symbol
+  std::optional<size_t> array_size;          // nullopt = single, value = array
+  std::vector<ModuleVariable> variables;     // Variables declared in scope
+  std::vector<GenerateScope> nested_scopes;  // Nested generate blocks
+};
+
 /// Function parameter for user-defined functions.
 /// Wrapped in a struct (rather than using Variable directly) for extensibility:
 /// future support for output/inout/ref arguments will require additional fields
@@ -123,6 +135,7 @@ class Module {
       parameters;  // Template parameters for C++ codegen
   std::vector<Port> ports;
   std::vector<ModuleVariable> variables;
+  std::vector<GenerateScope> generate_scopes;
   std::vector<FunctionDefinition> functions;
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;

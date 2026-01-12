@@ -82,12 +82,20 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
     }
     case mir::Expression::Kind::kIdentifier: {
       const auto& ident = mir::As<mir::IdentifierExpression>(expr);
-      // Check if symbol is from a package (needs qualified access)
+      // Check if symbol is from a package or generate block (needs qualified
+      // access)
       const auto* parent_scope = ident.symbol->getParentScope();
       if (parent_scope != nullptr) {
         const auto& parent_symbol = parent_scope->asSymbol();
         if (parent_symbol.kind == slang::ast::SymbolKind::Package) {
           out_ << parent_symbol.name << "::";
+        } else if (
+            parent_symbol.kind == slang::ast::SymbolKind::GenerateBlock) {
+          // Variable inside a named generate block - emit qualified path
+          // e.g., gen_internal.internal_var -> gen_internal_.internal_var
+          if (!parent_symbol.name.empty()) {
+            out_ << parent_symbol.name << "_.";
+          }
         }
       }
       out_ << Escape(ident.symbol->name);
@@ -807,6 +815,15 @@ void Codegen::EmitAssignmentTarget(const mir::AssignmentTarget& target) {
     return;
   }
 
+  // Check if symbol is inside a named generate block (needs qualified path)
+  const auto* parent_scope = target.symbol->getParentScope();
+  if (parent_scope != nullptr) {
+    const auto& parent_symbol = parent_scope->asSymbol();
+    if (parent_symbol.kind == slang::ast::SymbolKind::GenerateBlock &&
+        !parent_symbol.name.empty()) {
+      out_ << Escape(parent_symbol.name) << "_.";
+    }
+  }
   out_ << Escape(target.symbol->name);
   // Append underscore for port reference members (Google style)
   if (port_symbols_.contains(target.symbol)) {

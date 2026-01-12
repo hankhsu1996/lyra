@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -95,17 +97,23 @@ auto LowerAssignment(const slang::ast::AssignmentExpression& assignment)
         std::move(target), std::move(value), is_non_blocking);
   }
 
-  // Hierarchical assignment (child.signal = value)
+  // Hierarchical assignment (child.signal = value or gen_block[0].signal =
+  // value)
   if (left.kind == slang::ast::ExpressionKind::HierarchicalValue) {
     const auto& hier_expr = left.as<slang::ast::HierarchicalValueExpression>();
 
     // Target symbol (the variable being assigned)
     mir::SymbolRef target_symbol = &hier_expr.symbol;
 
-    // Instance symbols (for path traversal)
-    std::vector<mir::SymbolRef> instance_path;
+    // Instance path with array indices (for path traversal)
+    std::vector<mir::HierarchicalPathElement> instance_path;
     for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
-      instance_path.push_back(hier_expr.ref.path[i].symbol);
+      const auto& elem = hier_expr.ref.path[i];
+      if (const auto* idx = std::get_if<int32_t>(&elem.selector)) {
+        instance_path.emplace_back(elem.symbol, *idx);
+      } else {
+        instance_path.emplace_back(elem.symbol);
+      }
     }
 
     mir::AssignmentTarget target(target_symbol, std::move(instance_path));

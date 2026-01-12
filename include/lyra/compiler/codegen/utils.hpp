@@ -3,10 +3,20 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/mir/operators.hpp"
 
 namespace lyra::compiler::codegen {
+
+// Formats a hierarchical instance path as a C++ member access string.
+// Instance names get _ suffix, array indices get [N] notation, dots separate.
+// Example: [{gen_block, null}, {"", 0}] -> "gen_block_[0]"
+// Note: Does NOT include the target variable - just the path to reach it.
+auto FormatCppInstancePath(
+    const std::vector<common::HierarchicalPathElement>& elements)
+    -> std::string;
 
 // Returns true if name is a C++ reserved keyword.
 auto IsCppKeyword(std::string_view name) -> bool;

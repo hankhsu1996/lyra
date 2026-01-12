@@ -463,7 +463,10 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  // Member variables
+  // Generate block struct types and members (supports nested scopes)
+  EmitGenerateScopes(module.generate_scopes);
+
+  // Regular member variables (non-generate-block)
   EmitVariables(module.variables);
 
   // Constructor param members (non-template types: string, unpacked struct)
@@ -633,6 +636,61 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
       out_ << "{}";
     }
     out_ << ";\n";
+  }
+}
+
+void Codegen::EmitGenerateScopeStruct(const mir::GenerateScope& scope) {
+  std::string escaped_name = Escape(scope.name);
+  std::string struct_name = escaped_name + "_s";
+  Line("struct " + struct_name + " {");
+  indent_++;
+
+  // Emit variables
+  for (const auto& mod_var : scope.variables) {
+    std::string type_str = ToCppType(mod_var.variable.type);
+    Indent();
+    out_ << type_str << " " << Escape(mod_var.variable.symbol->name);
+    if (mod_var.initializer) {
+      out_ << " = ";
+      EmitExpression(*mod_var.initializer);
+    } else {
+      out_ << "{}";
+    }
+    out_ << ";\n";
+  }
+
+  // Recursively emit nested scope structs and their members
+  for (const auto& nested : scope.nested_scopes) {
+    EmitGenerateScopeStruct(nested);
+    // Emit member: array or single instance
+    std::string nested_escaped = Escape(nested.name);
+    Indent();
+    if (nested.array_size) {
+      out_ << "std::array<" << nested_escaped << "_s, " << *nested.array_size
+           << "> " << nested_escaped << "_{};\n";
+    } else {
+      out_ << nested_escaped << "_s " << nested_escaped << "_{};\n";
+    }
+  }
+
+  indent_--;
+  Line("};");
+}
+
+void Codegen::EmitGenerateScopes(
+    const std::vector<mir::GenerateScope>& scopes) {
+  for (const auto& scope : scopes) {
+    EmitGenerateScopeStruct(scope);
+
+    // Emit member: array or single instance
+    std::string escaped_name = Escape(scope.name);
+    Indent();
+    if (scope.array_size) {
+      out_ << "std::array<" << escaped_name << "_s, " << *scope.array_size
+           << "> " << escaped_name << "_{};\n";
+    } else {
+      out_ << escaped_name << "_s " << escaped_name << "_{};\n";
+    }
   }
 }
 

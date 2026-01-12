@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -23,6 +24,8 @@ namespace lyra::mir {
 using Type = common::Type;
 using Literal = common::Literal;
 using SymbolRef = common::SymbolRef;
+using HierarchicalPathElement = common::HierarchicalPathElement;
+using common::FormatHierarchicalPath;
 
 class Expression {
  public:
@@ -297,7 +300,7 @@ struct FieldPathElement {
 // Represents the target of an assignment:
 // - Local variable (symbol only)
 // - Array element (symbol + indices for multi-dim packed arrays)
-// - Hierarchical reference (path like "child.port")
+// - Hierarchical reference (path like "child.port" or "gen_block[0].signal")
 // - Struct/union field (symbol + field_path for nested access)
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable (nullptr for hierarchical)
@@ -307,7 +310,7 @@ struct AssignmentTarget {
 
   // For hierarchical targets
   SymbolRef target_symbol{nullptr};
-  std::vector<SymbolRef> instance_path;
+  std::vector<HierarchicalPathElement> instance_path;
 
   // For struct/union field assignment (supports nested: s.inner.x = value)
   std::vector<FieldPathElement> field_path;  // Empty = not a field assignment
@@ -342,7 +345,8 @@ struct AssignmentTarget {
   }
 
   // Constructor for hierarchical reference assignment
-  AssignmentTarget(SymbolRef target, std::vector<SymbolRef> instances)
+  AssignmentTarget(
+      SymbolRef target, std::vector<HierarchicalPathElement> instances)
       : symbol(nullptr),
         indices(),
         target_symbol(target),
@@ -385,7 +389,7 @@ struct AssignmentTarget {
 
   [[nodiscard]] auto ToString() const -> std::string {
     if (IsHierarchical()) {
-      return common::FormatHierarchicalPath(instance_path, target_symbol);
+      return FormatHierarchicalPath(instance_path, target_symbol);
     }
     if (IsStructFieldAssignment()) {
       std::string result = std::string(symbol->name);
@@ -611,24 +615,26 @@ class IndexedRangeSelectExpression : public Expression {
   }
 };
 
-// Represents a general hierarchical reference: path.to.signal
-// Can be used as both RHS (reading) and LHS (writing via AssignmentTarget)
+// Represents a general hierarchical reference: path.to.signal or
+// gen_block[0].signal Can be used as both RHS (reading) and LHS (writing via
+// AssignmentTarget)
 class HierarchicalReferenceExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kHierarchicalReference;
 
-  SymbolRef target_symbol;               // Target variable symbol
-  std::vector<SymbolRef> instance_path;  // Instance traversal path
+  SymbolRef target_symbol;                             // Target variable symbol
+  std::vector<HierarchicalPathElement> instance_path;  // Instance traversal
 
   HierarchicalReferenceExpression(
-      SymbolRef target, std::vector<SymbolRef> instances, Type type)
+      SymbolRef target, std::vector<HierarchicalPathElement> instances,
+      Type type)
       : Expression(kKindValue, std::move(type)),
         target_symbol(target),
         instance_path(std::move(instances)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return common::FormatHierarchicalPath(instance_path, target_symbol);
+    return FormatHierarchicalPath(instance_path, target_symbol);
   }
 
   void Accept(MirVisitor& visitor) const override {

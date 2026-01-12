@@ -472,8 +472,8 @@ void SimulationRunner::ExecuteOneEvent() {
         // Unified trigger resolution:
         // 1. Traverse instance_path (empty for local triggers)
         auto binding_instance = origin.instance;
-        for (const auto& inst_sym : trigger.instance_path) {
-          binding_instance = binding_instance->LookupChild(inst_sym);
+        for (const auto& elem : trigger.instance_path) {
+          binding_instance = binding_instance->LookupChild(elem.symbol);
           if (!binding_instance) {
             break;  // Should not happen - validated at lowering
           }

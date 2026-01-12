@@ -5,6 +5,7 @@ Checks: >
   readability-*,
   cppcoreguidelines-*,
   clang-analyzer-*,
+  -clang-analyzer-optin.cplusplus.UninitializedObject,
   misc-include-cleaner,
   -readability-identifier-length,
   -readability-magic-numbers,

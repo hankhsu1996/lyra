@@ -86,10 +86,8 @@ Supported:
 - Conditional generate (`if-generate`)
 - Loop generate (`for-generate` with `genvar`)
 - Case generate (`case-generate`)
-
-Not yet supported:
-
-- Hierarchical references through generate block names (e.g., `gen_block.signal`)
+- Nested generate blocks (arbitrary nesting depth)
+- Hierarchical references through generate blocks (e.g., `outer[0].inner[1].signal`)
 
 ## Subroutines (Tasks and Functions)
 

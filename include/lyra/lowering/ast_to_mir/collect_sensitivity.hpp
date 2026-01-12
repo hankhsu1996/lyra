@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
@@ -10,13 +11,15 @@
 namespace lyra::lowering::ast_to_mir {
 
 using SymbolRef = common::SymbolRef;
+using HierarchicalPathElement = common::HierarchicalPathElement;
 
 // Represents a sensitivity item: a symbol with optional instance path.
 // For local variables, instance_path is empty.
-// For hierarchical references, instance_path contains the traversal symbols.
+// For hierarchical references, instance_path contains the traversal with
+// indices.
 struct SensitivityItem {
   SymbolRef symbol;
-  std::vector<SymbolRef> instance_path;
+  std::vector<HierarchicalPathElement> instance_path;
 
   auto operator==(const SensitivityItem& other) const -> bool {
     return symbol == other.symbol && instance_path == other.instance_path;
@@ -87,6 +90,7 @@ class SensitivityCollector : public mir::MirVisitor {
 
   void Visit(const mir::HierarchicalReferenceExpression& expression) override {
     // Add hierarchical reference with instance path for sensitivity tracking
+    // Preserve indices for generate array elements
     items_.push_back({expression.target_symbol, expression.instance_path});
   }
 

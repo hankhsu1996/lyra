@@ -4,6 +4,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/symbol.hpp"
 
 namespace lyra::common {
@@ -13,23 +14,28 @@ enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
 struct Trigger {
   EdgeKind edge_kind;
   SymbolRef variable;
-  std::vector<SymbolRef> instance_path;  // Empty for local, instance symbols
-                                         // for hierarchical
+  std::vector<HierarchicalPathElement> instance_path;  // Empty for local
 
   [[nodiscard]] auto IsHierarchical() const -> bool {
     return !instance_path.empty();
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
+    std::string path_str;
+    if (!instance_path.empty()) {
+      path_str = FormatHierarchicalPath(instance_path, variable);
+    } else {
+      path_str = variable->name;
+    }
     switch (edge_kind) {
       case EdgeKind::kAnyChange:
-        return fmt::format("{}", variable->name);
+        return path_str;
       case EdgeKind::kPosedge:
-        return fmt::format("posedge {}", variable->name);
+        return fmt::format("posedge {}", path_str);
       case EdgeKind::kNegedge:
-        return fmt::format("negedge {}", variable->name);
+        return fmt::format("negedge {}", path_str);
       case EdgeKind::kBothEdge:
-        return fmt::format("{}", variable->name);
+        return path_str;
     }
   }
 
@@ -43,8 +49,8 @@ struct Trigger {
 
   // Factory for hierarchical signal
   static auto AnyChange(
-      const SymbolRef& variable, std::vector<SymbolRef> instance_path)
-      -> Trigger {
+      const SymbolRef& variable,
+      std::vector<HierarchicalPathElement> instance_path) -> Trigger {
     return Trigger{
         .edge_kind = EdgeKind::kAnyChange,
         .variable = variable,
