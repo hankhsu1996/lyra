@@ -3,8 +3,6 @@ description: Tests generate constructs (if-generate, for-generate, and case-gene
 
 cases:
   - name: if_generate_continuous_assign
-    skip_interpreter: true
-    skip_codegen: true
     description: if-generate selecting continuous assignment based on parameter
     sv: |
       module Test;
@@ -22,11 +20,9 @@ cases:
         end
       endmodule
     expect:
-      output: "c=8"
+      output: "c=8\n"
 
   - name: if_generate_always_comb
-    skip_interpreter: true
-    skip_codegen: true
     description: if-generate selecting always_comb block
     sv: |
       module Test;
@@ -44,11 +40,9 @@ cases:
         end
       endmodule
     expect:
-      output: "y=20"
+      output: "y=20\n"
 
   - name: if_generate_initial
-    skip_interpreter: true
-    skip_codegen: true
     description: Initial block inside generate
     sv: |
       module Test;
@@ -65,11 +59,9 @@ cases:
         end
       endmodule
     expect:
-      output: "value=42"
+      output: "value=42\n"
 
   - name: if_generate_false_branch
-    skip_interpreter: true
-    skip_codegen: true
     description: Condition is false, else branch taken
     sv: |
       module Test;
@@ -87,11 +79,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=12"
+      output: "result=12\n"
 
   - name: if_generate_no_else
-    skip_interpreter: true
-    skip_codegen: true
     description: if-generate without else branch (condition false = nothing)
     sv: |
       module Test;
@@ -106,11 +96,9 @@ cases:
         end
       endmodule
     expect:
-      output: "x=5"
+      output: "x=5\n"
 
   - name: nested_if_generate
-    skip_interpreter: true
-    skip_codegen: true
     description: Nested if-generate constructs
     sv: |
       module Test;
@@ -133,11 +121,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=11"
+      output: "result=11\n"
 
   - name: if_generate_variable
-    skip_interpreter: true
-    skip_codegen: true
     description: Variable declared inside generate block
     sv: |
       module Test;
@@ -156,11 +142,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=77"
+      output: "result=77\n"
 
   - name: if_generate_function
-    skip_interpreter: true
-    skip_codegen: true
     description: Function defined inside generate block
     sv: |
       module Test;
@@ -178,11 +162,9 @@ cases:
         end
       endmodule
     expect:
-      output: "x=42"
+      output: "x=42\n"
 
   - name: if_generate_submodule
-    skip_interpreter: true
-    skip_codegen: true
     description: Module instance inside generate block
     sv: |
       module Adder(input int a, input int b, output int sum);
@@ -208,7 +190,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result=10"
+      output: "result=10\n"
 
   - name: for_generate_basic
     description: Basic for-generate loop with genvar
@@ -227,8 +209,6 @@ cases:
         i=3
 
   - name: for_generate_always_comb
-    skip_interpreter: true
-    skip_codegen: true
     description: always_comb inside for-generate loop
     sv: |
       module Test;
@@ -246,7 +226,7 @@ cases:
         end
       endmodule
     expect:
-      output: "y0=10 y1=11 y2=12"
+      output: "y0=10 y1=11 y2=12\n"
 
   - name: nested_for_generate
     description: Nested for-generate loops
@@ -300,8 +280,6 @@ cases:
           - "never"
 
   - name: for_generate_submodule
-    skip_interpreter: true
-    skip_codegen: true
     description: Module instance inside for-generate loop
     sv: |
       module Doubler(input int x, output int y);
@@ -323,11 +301,9 @@ cases:
         end
       endmodule
     expect:
-      output: "out0=6 out1=10"
+      output: "out0=6 out1=10\n"
 
   - name: case_generate_basic
-    skip_interpreter: true
-    skip_codegen: true
     description: case-generate selecting initial block based on parameter
     sv: |
       module Test;
@@ -350,11 +326,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=200"
+      output: "result=200\n"
 
   - name: case_generate_default
-    skip_interpreter: true
-    skip_codegen: true
     description: case-generate falling through to default case
     sv: |
       module Test;
@@ -377,11 +351,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=999"
+      output: "result=999\n"
 
   - name: case_generate_continuous_assign
-    skip_interpreter: true
-    skip_codegen: true
     description: case-generate selecting continuous assignment
     sv: |
       module Test;
@@ -405,11 +377,9 @@ cases:
         end
       endmodule
     expect:
-      output: "y=20"
+      output: "y=20\n"
 
   - name: case_generate_always_comb
-    skip_interpreter: true
-    skip_codegen: true
     description: case-generate selecting always_comb block
     sv: |
       module Test;
@@ -433,11 +403,9 @@ cases:
         end
       endmodule
     expect:
-      output: "result=12"
+      output: "result=12\n"
 
   - name: case_generate_function
-    skip_interpreter: true
-    skip_codegen: true
     description: Function defined inside case-generate block
     sv: |
       module Test;
@@ -463,11 +431,9 @@ cases:
         end
       endmodule
     expect:
-      output: "x=20"
+      output: "x=20\n"
 
   - name: case_generate_submodule
-    skip_interpreter: true
-    skip_codegen: true
     description: Module instance inside case-generate block
     sv: |
       module Adder(input int a, input int b, output int c);
@@ -496,4 +462,4 @@ cases:
         end
       endmodule
     expect:
-      output: "result=21"
+      output: "result=21\n"
