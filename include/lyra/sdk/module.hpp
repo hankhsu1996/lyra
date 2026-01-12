@@ -204,8 +204,18 @@ class Module {
         [this, method]() { return (static_cast<T*>(this)->*method)(); });
   }
 
+  template <typename T, typename... Methods>
+  void RegisterProcesses(Methods... methods) {
+    (RegisterProcess<T>(methods), ...);
+  }
+
   void RegisterChild(Module* child) {
     child_modules_.push_back(child);
+  }
+
+  template <typename... Modules>
+  void RegisterChildren(Modules*... children) {
+    (RegisterChild(children), ...);
   }
 
  private:

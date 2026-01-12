@@ -531,11 +531,12 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           syscall.name == "$timeunit_root" ||
           syscall.name == "$timeprecision_root") {
         out_ << "lyra::sdk::global_precision_power";
-      } else if (syscall.name == "$signed" || syscall.name == "$unsigned") {
-        // Cast to target signedness, preserving bit pattern
-        out_ << "static_cast<" << ToCppType(syscall.type) << ">(";
-        EmitExpression(*syscall.arguments[0], kPrecLowest);
-        out_ << ")";
+      } else if (syscall.name == "$signed") {
+        EmitExpression(*syscall.arguments[0], kPrecPrimary);
+        out_ << ".ToSigned()";
+      } else if (syscall.name == "$unsigned") {
+        EmitExpression(*syscall.arguments[0], kPrecPrimary);
+        out_ << ".ToUnsigned()";
       } else if (syscall.name == "$itor") {
         // Convert integer to real
         out_ << "static_cast<Real>(";

@@ -185,6 +185,16 @@ class Bit {
     return (value_ & kSignBit) != 0;
   }
 
+  // Convert to signed type, preserving width and bit pattern
+  [[nodiscard]] constexpr auto ToSigned() const -> Bit<Width, true> {
+    return Bit<Width, true>{value_};
+  }
+
+  // Convert to unsigned type, preserving width and bit pattern
+  [[nodiscard]] constexpr auto ToUnsigned() const -> Bit<Width, false> {
+    return Bit<Width, false>{value_};
+  }
+
   // Implicit conversion to bool (for use in conditions like if/while)
   // NOLINTNEXTLINE(google-explicit-constructor)
   constexpr operator bool() const {

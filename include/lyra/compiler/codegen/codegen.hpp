@@ -156,6 +156,7 @@ class Codegen {
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
+  void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
   void EmitProcess(const mir::Process& process);
@@ -218,6 +219,7 @@ class Codegen {
 
   std::ostringstream out_;
   int indent_ = 0;
+  int temp_counter_ = 0;  // For unique temp variable names within a function
 
   // Timescale info for delay scaling
   std::optional<common::TimeScale> timescale_;

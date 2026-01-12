@@ -29,6 +29,28 @@ auto UsesArrayType(const mir::Module& module) -> bool {
          std::ranges::any_of(module.ports, is_array);
 }
 
+// Check if a type is a string (requires FixedString template arg, not params
+// struct)
+auto IsStringType(const common::Type& type) -> bool {
+  return type.kind == common::Type::Kind::kString;
+}
+
+// Count non-string parameters in a module
+auto CountNonStringParams(const mir::Module& module) -> size_t {
+  size_t count = 0;
+  for (const auto& param : module.parameters) {
+    if (!IsStringType(param.type)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+// Check if module should use a params struct (2+ non-string params)
+auto UseParamsStruct(const mir::Module& module) -> bool {
+  return CountNonStringParams(module) >= 2;
+}
+
 }  // namespace
 
 auto Codegen::Generate(
@@ -74,8 +96,9 @@ auto Codegen::Generate(
     EmitHeader(module, UsesArrayType(module));
   }
 
-  // Emit primary template forward declaration if requested
+  // Emit params struct and primary template forward declaration if requested
   if (emit_primary_template && !module.parameters.empty()) {
+    EmitParamsStruct(module);
     EmitPrimaryTemplateDecl(module);
   }
 
@@ -246,19 +269,73 @@ void Codegen::EmitTimescaleConstants(const mir::Module& module) {
 }
 
 void Codegen::EmitPrimaryTemplateDecl(const mir::Module& module) {
+  bool use_params_struct = UseParamsStruct(module);
+
   Indent();
   out_ << "template <";
   bool first = true;
+
+  // String params first (as separate template args)
   for (const auto& param : module.parameters) {
+    if (!IsStringType(param.type)) {
+      continue;
+    }
     if (!first) {
       out_ << ", ";
     }
     first = false;
     out_ << ToCppRawType(param.type) << " " << param.name;
   }
+
+  if (use_params_struct) {
+    // Add params struct as final template arg with default
+    if (!first) {
+      out_ << ", ";
+    }
+    out_ << module.name << "_params params = {}";
+  } else {
+    // Non-string params as individual template args
+    for (const auto& param : module.parameters) {
+      if (IsStringType(param.type)) {
+        continue;
+      }
+      if (!first) {
+        out_ << ", ";
+      }
+      first = false;
+      out_ << ToCppRawType(param.type) << " " << param.name;
+    }
+  }
+
   out_ << ">\n";
   Line("class " + module.name + ";");
   out_ << "\n";
+}
+
+void Codegen::EmitParamsStruct(const mir::Module& module) {
+  if (!UseParamsStruct(module)) {
+    return;  // No struct needed for <2 non-string params
+  }
+
+  out_ << "struct " << module.name << "_params {\n";
+
+  // Emit non-string parameters with their defaults
+  for (const auto& param : module.parameters) {
+    if (IsStringType(param.type)) {
+      continue;
+    }
+    out_ << "  " << ToCppRawType(param.type) << " " << param.name;
+    if (param.default_value) {
+      out_ << " = ";
+      EmitConstantExpression(*param.default_value);
+    }
+    out_ << ";\n";
+  }
+
+  // Add comparison operator for NTTP (required for C++20 structural type)
+  out_ << "  constexpr auto operator<=>(const " << module.name
+       << "_params&) const = default;\n";
+  out_ << "};\n\n";
 }
 
 void Codegen::EmitClass(const mir::Module& module) {
@@ -330,14 +407,27 @@ void Codegen::EmitClass(const mir::Module& module) {
 
   out_ << " {\n";
   indent_++;
-  for (const auto& process : module.processes) {
-    Line(
-        "RegisterProcess(&" + module.name + "::" + Escape(process->name) +
-        ");");
+  if (!module.processes.empty()) {
+    std::string call = "RegisterProcesses<" + module.name + ">(";
+    for (size_t i = 0; i < module.processes.size(); ++i) {
+      if (i > 0) {
+        call += ", ";
+      }
+      call += "&" + module.name + "::" + Escape(module.processes[i]->name);
+    }
+    call += ");";
+    Line(call);
   }
-  // Register child modules for hierarchical execution
-  for (const auto& submod : module.submodules) {
-    Line("RegisterChild(&" + submod.instance_name + "_);");
+  if (!module.submodules.empty()) {
+    std::string call = "RegisterChildren(";
+    for (size_t i = 0; i < module.submodules.size(); ++i) {
+      if (i > 0) {
+        call += ", ";
+      }
+      call += "&" + module.submodules[i].instance_name + "_";
+    }
+    call += ");";
+    Line(call);
   }
   indent_--;
   Line("}");
@@ -368,11 +458,66 @@ void Codegen::EmitClass(const mir::Module& module) {
 
   // Submodule members (after port references so they can use them)
   for (const auto& submod : module.submodules) {
-    Indent();
-    out_ << submod.module_type;
-    // Add template arguments if the submodule has parameter overrides
-    if (!submod.parameter_overrides.empty()) {
-      out_ << "<";
+    if (submod.parameter_overrides.empty()) {
+      // No template args needed
+      Line(submod.module_type + " " + submod.instance_name + "_;");
+      continue;
+    }
+
+    // Count non-string overrides to decide on params struct
+    size_t non_string_count = 0;
+    for (const auto& override : submod.parameter_overrides) {
+      if (!IsStringType(override.value->type)) {
+        non_string_count++;
+      }
+    }
+
+    bool use_params_struct = non_string_count >= 2;
+
+    if (use_params_struct) {
+      // Emit static constexpr config variable for this child
+      std::string config_name = submod.instance_name + "_params_";
+      Indent();
+      out_ << "static constexpr " << submod.module_type << "_params "
+           << config_name << "{";
+      bool first_param = true;
+      for (const auto& override : submod.parameter_overrides) {
+        if (IsStringType(override.value->type)) {
+          continue;  // Strings go as separate template args
+        }
+        if (!first_param) {
+          out_ << ", ";
+        }
+        first_param = false;
+        out_ << "." << override.parameter_name << " = ";
+        EmitConstantExpression(*override.value);
+      }
+      out_ << "};\n";
+
+      // Emit member with short type: Module<"str", config_name>
+      Indent();
+      out_ << submod.module_type << "<";
+      bool first = true;
+      // String overrides first
+      for (const auto& override : submod.parameter_overrides) {
+        if (!IsStringType(override.value->type)) {
+          continue;
+        }
+        if (!first) {
+          out_ << ", ";
+        }
+        first = false;
+        EmitConstantExpression(*override.value);
+      }
+      // Then config variable
+      if (!first) {
+        out_ << ", ";
+      }
+      out_ << config_name << "> " << submod.instance_name << "_;\n";
+    } else {
+      // Use inline template args (old syntax, for 0-1 non-string params)
+      Indent();
+      out_ << submod.module_type << "<";
       bool first = true;
       for (const auto& override : submod.parameter_overrides) {
         if (!first) {
@@ -381,9 +526,8 @@ void Codegen::EmitClass(const mir::Module& module) {
         first = false;
         EmitConstantExpression(*override.value);
       }
-      out_ << ">";
+      out_ << "> " << submod.instance_name << "_;\n";
     }
-    out_ << " " << submod.instance_name << "_;\n";
   }
 
   // Phase 2: Now emit the class with conditional type aliases, then append body
@@ -400,9 +544,16 @@ void Codegen::EmitClass(const mir::Module& module) {
   Indent();
   out_ << "class " << module.name;
   if (!module.parameters.empty()) {
+    bool use_params_struct = UseParamsStruct(module);
+
     out_ << "<";
     bool first = true;
+
+    // String params first (with values)
     for (const auto& param : module.parameters) {
+      if (!IsStringType(param.type)) {
+        continue;
+      }
       if (!first) {
         out_ << ", ";
       }
@@ -411,6 +562,44 @@ void Codegen::EmitClass(const mir::Module& module) {
         EmitConstantExpression(*param.default_value);
       }
     }
+
+    if (use_params_struct) {
+      // Use params struct with designated initializers
+      if (!first) {
+        out_ << ", ";
+      }
+      out_ << module.name << "_params{";
+      bool first_param = true;
+      for (const auto& param : module.parameters) {
+        if (IsStringType(param.type)) {
+          continue;
+        }
+        if (!first_param) {
+          out_ << ", ";
+        }
+        first_param = false;
+        out_ << "." << param.name << " = ";
+        if (param.default_value) {
+          EmitConstantExpression(*param.default_value);
+        }
+      }
+      out_ << "}";
+    } else {
+      // Individual non-string param values
+      for (const auto& param : module.parameters) {
+        if (IsStringType(param.type)) {
+          continue;
+        }
+        if (!first) {
+          out_ << ", ";
+        }
+        first = false;
+        if (param.default_value) {
+          EmitConstantExpression(*param.default_value);
+        }
+      }
+    }
+
     out_ << ">";
   }
   out_ << " : public lyra::sdk::Module {\n";
@@ -446,6 +635,7 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
 }
 
 void Codegen::EmitProcess(const mir::Process& process) {
+  temp_counter_ = 0;  // Reset for unique temp names within this function
   Line("auto " + Escape(process.name) + "() -> lyra::sdk::Task {");
   indent_++;
   if (process.body) {
@@ -458,6 +648,7 @@ void Codegen::EmitProcess(const mir::Process& process) {
 }
 
 void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
+  temp_counter_ = 0;  // Reset for unique temp names within this function
   Indent();
   out_ << "auto " << Escape(function.name) << "(";
 
