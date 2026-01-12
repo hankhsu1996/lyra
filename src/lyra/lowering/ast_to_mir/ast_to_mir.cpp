@@ -40,6 +40,11 @@ void CollectInstancesFromScope(
       if (!gen_block.isUninstantiated) {
         CollectInstancesFromScope(gen_block, modules, visited);
       }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& gen_array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : gen_array.entries) {
+        CollectInstancesFromScope(*entry, modules, visited);
+      }
     }
   }
 }
