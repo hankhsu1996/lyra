@@ -470,6 +470,7 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
             .name = std::string(param.name),
             .type = *type_result,
             .default_value = std::move(default_expr),
+            .symbol = &param,
         });
   }
 

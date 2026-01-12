@@ -230,6 +230,10 @@ class Codegen {
   // Track port symbols for identifier emission (append _ suffix)
   std::unordered_set<const slang::ast::Symbol*> port_symbols_;
 
+  // Track constructor param symbols for identifier emission (append _ suffix)
+  // These are non-template params stored as class members.
+  std::unordered_set<const slang::ast::Symbol*> constructor_param_symbols_;
+
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;
 

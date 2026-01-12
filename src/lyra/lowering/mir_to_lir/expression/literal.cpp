@@ -1,9 +1,14 @@
 #include "lyra/common/literal.hpp"
 
 #include <cstdint>
+#include <stdexcept>
+#include <utility>
+
+#include <slang/ast/symbols/ParameterSymbols.h>
 
 #include "lyra/common/type.hpp"
 #include "lyra/lir/instruction.hpp"
+#include "lyra/lowering/ast_to_mir/literal.hpp"
 #include "lyra/lowering/mir_to_lir/expression/internal.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
@@ -27,6 +32,27 @@ auto LowerLiteralExpression(
 auto LowerIdentifierExpression(
     const mir::IdentifierExpression& identifier, LirBuilder& builder)
     -> lir::TempRef {
+  // Parameter symbols (from constructor params) need to be resolved to their
+  // constant values for the interpreter. In codegen, these are accessed as
+  // class members, but the interpreter uses flat symbol tables.
+  if (identifier.symbol->kind == slang::ast::SymbolKind::Parameter) {
+    const auto& param = identifier.symbol->as<slang::ast::ParameterSymbol>();
+    const auto& cv = param.getValue();
+    auto literal_result = ast_to_mir::ConstantValueToLiteral(cv);
+    if (!literal_result) {
+      // Struct-typed parameters can't be converted to simple literals.
+      // This is a limitation of the interpreter for non-template param types.
+      throw std::runtime_error(
+          "Unsupported: unpacked struct/string port parameters not yet "
+          "supported in interpreter. Use 'lyra run' (codegen) instead.");
+    }
+    auto result = builder.AllocateTemp("param", identifier.type);
+    auto interned = builder.InternLiteral(*literal_result);
+    auto instruction = Instruction::Basic(IK::kLiteral, result, interned);
+    builder.AddInstruction(std::move(instruction));
+    return result;
+  }
+
   auto result = builder.AllocateTemp("load", identifier.type);
   auto instruction =
       Instruction::Basic(IK::kLoadVariable, result, identifier.symbol);

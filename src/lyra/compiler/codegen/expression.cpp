@@ -91,8 +91,9 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         }
       }
       out_ << Escape(ident.symbol->name);
-      // Append underscore for port reference members (Google style)
-      if (port_symbols_.contains(ident.symbol)) {
+      // Append underscore for port reference members and constructor params
+      if (port_symbols_.contains(ident.symbol) ||
+          constructor_param_symbols_.contains(ident.symbol)) {
         out_ << "_";
       }
       break;
@@ -764,7 +765,13 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         }
         // Use designated initializers for clarity: .field = value
         out_ << "." << struct_data.fields[i].name << " = ";
-        EmitExpression(*lit.field_values[i], kPrecLowest);
+        // String fields need special handling for bit-packed string literals
+        if (struct_data.fields[i].field_type->kind ==
+            common::Type::Kind::kString) {
+          EmitStringLiteralArg(*lit.field_values[i]);
+        } else {
+          EmitExpression(*lit.field_values[i], kPrecLowest);
+        }
       }
       out_ << "}";
       break;
@@ -930,6 +937,18 @@ void Codegen::EmitConstantExpression(const mir::Expression& expr) {
 }
 
 void Codegen::EmitStringLiteralArg(const mir::Expression& arg) {
+  // Handle conversion from integral to string (bit-packed string literals)
+  if (arg.kind == mir::Expression::Kind::kConversion) {
+    const auto& conv = mir::As<mir::ConversionExpression>(arg);
+    if (conv.target_type.kind == common::Type::Kind::kString &&
+        conv.value->kind == mir::Expression::Kind::kLiteral) {
+      const auto& lit = mir::As<mir::LiteralExpression>(*conv.value);
+      std::string str = codegen::IntegralLiteralToString(lit.literal);
+      out_ << "\"" << common::EscapeForCppString(str) << "\"";
+      return;
+    }
+  }
+
   if (arg.kind == mir::Expression::Kind::kLiteral) {
     const auto& lit = mir::As<mir::LiteralExpression>(arg);
     // String literals may be stored as integrals - extract the string value

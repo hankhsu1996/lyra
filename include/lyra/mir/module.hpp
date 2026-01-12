@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/Symbol.h>
+
 #include "lyra/common/indent.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
@@ -22,6 +24,8 @@ struct ModuleParameter {
   std::string name;                           // "WIDTH"
   common::Type type;                          // int
   std::unique_ptr<Expression> default_value;  // LiteralExpression(8) or nullptr
+  const slang::ast::Symbol* symbol{};  // Slang symbol for constructor param
+                                       // identifier emission
 };
 
 // Parameter override at instantiation site (for template arguments in C++

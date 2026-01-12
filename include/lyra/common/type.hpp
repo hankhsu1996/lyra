@@ -765,6 +765,23 @@ inline auto operator<<(std::ostream& os, Type type) -> std::ostream& {
   return os << type.ToString();
 }
 
+// Check if a type can affect signal data types and must be a template param.
+// These types:
+// - Can legally be used in SV type expressions (e.g., logic [WIDTH-1:0])
+// - Are valid C++20 NTTPs (structural types)
+// Everything else becomes a constructor argument.
+inline auto IsTemplateParamType(const Type& type) -> bool {
+  switch (type.kind) {
+    case Type::Kind::kIntegral:
+    case Type::Kind::kPackedStruct:
+    case Type::Kind::kReal:
+    case Type::Kind::kShortReal:
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Convert bit width and signedness to a C++ fixed-width integer type string.
 // Used by codegen for enum base types and other contexts requiring C++ types.
 inline auto ToCppIntType(size_t width, bool is_signed) -> std::string {
