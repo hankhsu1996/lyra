@@ -2,7 +2,7 @@
 
 #include "lyra/lowering/mir_to_lir/context.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
-#include "lyra/lowering/mir_to_lir/statement.hpp"
+#include "lyra/lowering/mir_to_lir/statement/statement.hpp"
 #include "lyra/mir/process.hpp"
 
 namespace lyra::lowering::mir_to_lir {

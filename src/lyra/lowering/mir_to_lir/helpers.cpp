@@ -10,7 +10,7 @@
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
-#include "lyra/lowering/mir_to_lir/expression.hpp"
+#include "lyra/lowering/mir_to_lir/expression/expression.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 
 namespace lyra::lowering::mir_to_lir {

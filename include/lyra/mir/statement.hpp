@@ -4,6 +4,7 @@
 #include <memory>
 #include <ostream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <fmt/core.h>
@@ -210,17 +211,41 @@ class DelayStatement : public Statement {
   }
 };
 
+/// Unique/priority qualifier for case and if statements (LRM 12.4.2, 12.5.3)
+enum class UniquePriorityCheck {
+  kNone,      // No check
+  kUnique,    // Check for overlap and no-match
+  kUnique0,   // Check for overlap only (no-match OK)
+  kPriority,  // Check for no-match only (overlap OK)
+};
+
+inline auto ToString(UniquePriorityCheck check) -> std::string {
+  switch (check) {
+    case UniquePriorityCheck::kNone:
+      return "";
+    case UniquePriorityCheck::kUnique:
+      return "unique";
+    case UniquePriorityCheck::kUnique0:
+      return "unique0";
+    case UniquePriorityCheck::kPriority:
+      return "priority";
+  }
+}
+
 class ConditionalStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kConditional;
+  UniquePriorityCheck check = UniquePriorityCheck::kNone;
   std::unique_ptr<Expression> condition;
   std::unique_ptr<Statement> then_branch;
   std::unique_ptr<Statement> else_branch;
 
   ConditionalStatement(
       std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
-      std::unique_ptr<Statement> else_b)
+      std::unique_ptr<Statement> else_b,
+      UniquePriorityCheck check_qualifier = UniquePriorityCheck::kNone)
       : Statement(kKindValue),
+        check(check_qualifier),
         condition(std::move(cond)),
         then_branch(std::move(then_b)),
         else_branch(std::move(else_b)) {
@@ -231,8 +256,11 @@ class ConditionalStatement : public Statement {
   }
 
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
-    std::string result =
-        std::format("{}if {}\n", common::Indent(indent), condition->ToString());
+    std::string check_prefix =
+        check != UniquePriorityCheck::kNone ? mir::ToString(check) + " " : "";
+    std::string result = std::format(
+        "{}{}if {}\n", common::Indent(indent), check_prefix,
+        condition->ToString());
     if (then_branch) {
       result += then_branch->ToString(indent + 1);
     }
@@ -401,15 +429,18 @@ class CaseStatement : public Statement {
  public:
   static constexpr Kind kKindValue = Kind::kCase;
   CaseCondition case_condition = CaseCondition::kNormal;
+  UniquePriorityCheck check = UniquePriorityCheck::kNone;
   std::unique_ptr<Expression> condition;
   std::vector<CaseItem> items;
   std::unique_ptr<Statement> default_case;  // nullptr if no default
 
   CaseStatement(
       CaseCondition case_cond, std::unique_ptr<Expression> cond,
-      std::vector<CaseItem> case_items, std::unique_ptr<Statement> default_stmt)
+      std::vector<CaseItem> case_items, std::unique_ptr<Statement> default_stmt,
+      UniquePriorityCheck check_qualifier = UniquePriorityCheck::kNone)
       : Statement(kKindValue),
         case_condition(case_cond),
+        check(check_qualifier),
         condition(std::move(cond)),
         items(std::move(case_items)),
         default_case(std::move(default_stmt)) {
@@ -420,9 +451,11 @@ class CaseStatement : public Statement {
   }
 
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
+    std::string check_prefix =
+        check != UniquePriorityCheck::kNone ? mir::ToString(check) + " " : "";
     std::string result = std::format(
-        "{}{} {}\n", common::Indent(indent), mir::ToString(case_condition),
-        condition->ToString());
+        "{}{}{} {}\n", common::Indent(indent), check_prefix,
+        mir::ToString(case_condition), condition->ToString());
     for (const auto& item : items) {
       std::string exprs_str;
       for (size_t i = 0; i < item.expressions.size(); ++i) {
@@ -528,6 +561,35 @@ auto As(const Statement& stmt) -> const T& {
     throw std::runtime_error("Statement kind mismatch in As<T>() cast");
   }
   return static_cast<const T&>(stmt);
+}
+
+/// Collect conditions/bodies from nested if-else-if chain.
+/// Returns tuple of (conditions, bodies, final_else).
+/// final_else is nullptr if chain ends without else.
+inline auto CollectIfChain(const ConditionalStatement& root) -> std::tuple<
+    std::vector<const Expression*>, std::vector<const Statement*>,
+    const Statement*> {
+  std::vector<const Expression*> conditions;
+  std::vector<const Statement*> bodies;
+  const Statement* final_else = nullptr;
+
+  const ConditionalStatement* current = &root;
+  while (current != nullptr) {
+    conditions.push_back(current->condition.get());
+    bodies.push_back(current->then_branch.get());
+
+    if (!current->else_branch) {
+      break;
+    }
+
+    if (current->else_branch->kind == Statement::Kind::kConditional) {
+      current = &As<ConditionalStatement>(*current->else_branch);
+    } else {
+      final_else = current->else_branch.get();
+      break;
+    }
+  }
+  return {conditions, bodies, final_else};
 }
 
 }  // namespace lyra::mir

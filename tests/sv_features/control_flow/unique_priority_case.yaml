@@ -1,0 +1,134 @@
+feature: unique_priority_case
+description: Tests for unique/unique0/priority case statements (LRM 12.5.3)
+
+cases:
+  - name: priority_no_match_warning
+    description: priority case warns when no item matches and no default
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 5;
+          result = 100;
+          priority case (sel)
+            0: result = 10;
+            1: result = 20;
+          endcase
+          $display("done");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+      output:
+        contains:
+          - "WARNING"
+          - "no matching case item"
+
+  - name: priority_default_suppresses_warning
+    description: default clause suppresses no-match warning
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 5;
+          result = 0;
+          priority case (sel)
+            0: result = 10;
+            1: result = 20;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99
+      output:
+        not_contains:
+          - "WARNING"
+
+  - name: unique_overlap_warning
+    description: unique case warns when multiple items match
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 1;
+          result = 0;
+          unique case (sel)
+            1: result = 10;
+            1: result = 20;
+          endcase
+          $display("done");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+      output:
+        contains:
+          - "WARNING"
+          - "multiple case items match"
+
+  - name: unique_no_match_warning
+    description: unique case warns when no item matches
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 5;
+          result = 100;
+          unique case (sel)
+            0: result = 10;
+            1: result = 20;
+          endcase
+          $display("done");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+      output:
+        contains:
+          - "WARNING"
+          - "no matching case item"
+
+  - name: unique0_no_match_no_warning
+    description: unique0 case does NOT warn on no-match (key difference from unique)
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 5;
+          result = 100;
+          unique0 case (sel)
+            0: result = 10;
+            1: result = 20;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+      output:
+        not_contains:
+          - "WARNING"
+
+  - name: priority_casez_wildcard
+    description: priority casez with wildcard pattern matching
+    sv: |
+      module Test;
+        int sel, result;
+        initial begin
+          sel = 5;
+          result = 0;
+          priority casez (sel)
+            32'b00000000000000000000000000000???: result = 1;
+            32'd10: result = 2;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

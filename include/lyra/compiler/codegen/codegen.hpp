@@ -20,6 +20,14 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 
+namespace lyra::mir {
+class CaseStatement;
+class WhileStatement;
+class DoWhileStatement;
+class ForStatement;
+class RepeatStatement;
+}  // namespace lyra::mir
+
 namespace lyra::compiler {
 
 // Bit flags for tracking which type aliases are used during codegen
@@ -153,6 +161,12 @@ class Codegen {
   void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);
   void EmitConditional(const mir::ConditionalStatement& cond, bool is_else_if);
+  void EmitUniquePriorityIf(const mir::ConditionalStatement& root);
+  void EmitCaseStatement(const mir::CaseStatement& case_stmt);
+  void EmitWhileLoop(const mir::WhileStatement& while_stmt);
+  void EmitDoWhileLoop(const mir::DoWhileStatement& do_while);
+  void EmitForLoop(const mir::ForStatement& for_stmt);
+  void EmitRepeatLoop(const mir::RepeatStatement& repeat_stmt);
   void EmitSystemTask(const mir::SystemCallExpression& syscall);
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
   void EmitConstantExpression(

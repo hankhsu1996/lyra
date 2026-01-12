@@ -1,9 +1,10 @@
+#include "lyra/common/literal.hpp"
+
 #include <cstdint>
 
-#include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/instruction.hpp"
-#include "lyra/lowering/mir_to_lir/expression_internal.hpp"
+#include "lyra/lowering/mir_to_lir/expression/internal.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
 
