@@ -151,6 +151,6 @@ cases:
         end
       endmodule
     expect:
-      stdout: |
+      output: |
         before: 20
         after: 99

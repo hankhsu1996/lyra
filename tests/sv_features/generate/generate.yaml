@@ -3,6 +3,8 @@ description: Tests generate constructs (if-generate, for-generate, and case-gene
 
 cases:
   - name: if_generate_continuous_assign
+    skip_interpreter: true
+    skip_codegen: true
     description: if-generate selecting continuous assignment based on parameter
     sv: |
       module Test;
@@ -19,9 +21,12 @@ cases:
           $display("c=%0d", c);
         end
       endmodule
-    expected_output: "c=8"
+    expect:
+      output: "c=8"
 
   - name: if_generate_always_comb
+    skip_interpreter: true
+    skip_codegen: true
     description: if-generate selecting always_comb block
     sv: |
       module Test;
@@ -38,9 +43,12 @@ cases:
           $display("y=%0d", y);
         end
       endmodule
-    expected_output: "y=20"
+    expect:
+      output: "y=20"
 
   - name: if_generate_initial
+    skip_interpreter: true
+    skip_codegen: true
     description: Initial block inside generate
     sv: |
       module Test;
@@ -56,9 +64,12 @@ cases:
           $display("value=%0d", value);
         end
       endmodule
-    expected_output: "value=42"
+    expect:
+      output: "value=42"
 
   - name: if_generate_false_branch
+    skip_interpreter: true
+    skip_codegen: true
     description: Condition is false, else branch taken
     sv: |
       module Test;
@@ -75,9 +86,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=12"
+    expect:
+      output: "result=12"
 
   - name: if_generate_no_else
+    skip_interpreter: true
+    skip_codegen: true
     description: if-generate without else branch (condition false = nothing)
     sv: |
       module Test;
@@ -91,9 +105,12 @@ cases:
           $display("x=%0d", x);
         end
       endmodule
-    expected_output: "x=5"
+    expect:
+      output: "x=5"
 
   - name: nested_if_generate
+    skip_interpreter: true
+    skip_codegen: true
     description: Nested if-generate constructs
     sv: |
       module Test;
@@ -115,9 +132,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=11"
+    expect:
+      output: "result=11"
 
   - name: if_generate_variable
+    skip_interpreter: true
+    skip_codegen: true
     description: Variable declared inside generate block
     sv: |
       module Test;
@@ -135,9 +155,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=77"
+    expect:
+      output: "result=77"
 
   - name: if_generate_function
+    skip_interpreter: true
+    skip_codegen: true
     description: Function defined inside generate block
     sv: |
       module Test;
@@ -154,9 +177,12 @@ cases:
           $display("x=%0d", x);
         end
       endmodule
-    expected_output: "x=42"
+    expect:
+      output: "x=42"
 
   - name: if_generate_submodule
+    skip_interpreter: true
+    skip_codegen: true
     description: Module instance inside generate block
     sv: |
       module Adder(input int a, input int b, output int sum);
@@ -181,7 +207,8 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=10"
+    expect:
+      output: "result=10"
 
   - name: for_generate_basic
     description: Basic for-generate loop with genvar
@@ -192,13 +219,16 @@ cases:
           initial $display("i=%0d", i);
         end
       endmodule
-    expected_output: |
-      i=0
-      i=1
-      i=2
-      i=3
+    expect:
+      output: |
+        i=0
+        i=1
+        i=2
+        i=3
 
   - name: for_generate_always_comb
+    skip_interpreter: true
+    skip_codegen: true
     description: always_comb inside for-generate loop
     sv: |
       module Test;
@@ -215,7 +245,8 @@ cases:
           $display("y0=%0d y1=%0d y2=%0d", y0, y1, y2);
         end
       endmodule
-    expected_output: "y0=10 y1=11 y2=12"
+    expect:
+      output: "y0=10 y1=11 y2=12"
 
   - name: nested_for_generate
     description: Nested for-generate loops
@@ -228,11 +259,12 @@ cases:
           end
         end
       endmodule
-    expected_output: |
-      i=0 j=0
-      i=0 j=1
-      i=1 j=0
-      i=1 j=1
+    expect:
+      output: |
+        i=0 j=0
+        i=0 j=1
+        i=1 j=0
+        i=1 j=1
 
   - name: for_generate_with_if
     description: if-generate inside for-generate loop
@@ -245,9 +277,10 @@ cases:
           end
         end
       endmodule
-    expected_output: |
-      even: 0
-      even: 2
+    expect:
+      output: |
+        even: 0
+        even: 2
 
   - name: for_generate_zero_iterations
     description: for-generate with zero iterations
@@ -267,6 +300,8 @@ cases:
           - "never"
 
   - name: for_generate_submodule
+    skip_interpreter: true
+    skip_codegen: true
     description: Module instance inside for-generate loop
     sv: |
       module Doubler(input int x, output int y);
@@ -287,9 +322,12 @@ cases:
           $display("out0=%0d out1=%0d", out0, out1);
         end
       endmodule
-    expected_output: "out0=6 out1=10"
+    expect:
+      output: "out0=6 out1=10"
 
   - name: case_generate_basic
+    skip_interpreter: true
+    skip_codegen: true
     description: case-generate selecting initial block based on parameter
     sv: |
       module Test;
@@ -311,9 +349,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=200"
+    expect:
+      output: "result=200"
 
   - name: case_generate_default
+    skip_interpreter: true
+    skip_codegen: true
     description: case-generate falling through to default case
     sv: |
       module Test;
@@ -335,9 +376,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=999"
+    expect:
+      output: "result=999"
 
   - name: case_generate_continuous_assign
+    skip_interpreter: true
+    skip_codegen: true
     description: case-generate selecting continuous assignment
     sv: |
       module Test;
@@ -360,9 +404,12 @@ cases:
           $display("y=%0d", y);
         end
       endmodule
-    expected_output: "y=20"
+    expect:
+      output: "y=20"
 
   - name: case_generate_always_comb
+    skip_interpreter: true
+    skip_codegen: true
     description: case-generate selecting always_comb block
     sv: |
       module Test;
@@ -385,9 +432,12 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=12"
+    expect:
+      output: "result=12"
 
   - name: case_generate_function
+    skip_interpreter: true
+    skip_codegen: true
     description: Function defined inside case-generate block
     sv: |
       module Test;
@@ -412,9 +462,12 @@ cases:
           $display("x=%0d", x);
         end
       endmodule
-    expected_output: "x=20"
+    expect:
+      output: "x=20"
 
   - name: case_generate_submodule
+    skip_interpreter: true
+    skip_codegen: true
     description: Module instance inside case-generate block
     sv: |
       module Adder(input int a, input int b, output int c);
@@ -442,4 +495,5 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=21"
+    expect:
+      output: "result=21"

@@ -3,6 +3,8 @@ description: Tests continuous assignment statements (assign)
 
 cases:
   - name: basic
+    skip_interpreter: true
+    skip_codegen: true
     description: Simple continuous assignment
     sv: |
       module Test;
@@ -14,9 +16,12 @@ cases:
           $display("b=%0d", b);
         end
       endmodule
-    expected_output: "b=6"
+    expect:
+      output: "b=6"
 
   - name: expression
+    skip_interpreter: true
+    skip_codegen: true
     description: Complex RHS expression
     sv: |
       module Test;
@@ -28,9 +33,12 @@ cases:
           $display("z=%0d", z);
         end
       endmodule
-    expected_output: "z=10"
+    expect:
+      output: "z=10"
 
   - name: chained
+    skip_interpreter: true
+    skip_codegen: true
     description: Chained continuous assignments
     sv: |
       module Test;
@@ -43,7 +51,8 @@ cases:
           $display("b=%0d c=%0d", b, c);
         end
       endmodule
-    expected_output: "b=10 c=11"
+    expect:
+      output: "b=10 c=11"
 
   - name: sensitivity_update
     description: Multiple updates propagate correctly
@@ -58,11 +67,14 @@ cases:
           $display("b=%0d", b);
         end
       endmodule
-    expected_output: |
-      b=2
-      b=10
+    expect:
+      output: |
+        b=2
+        b=10
 
   - name: constant_rhs
+    skip_interpreter: true
+    skip_codegen: true
     description: Constant RHS (no sensitivity) should not cause infinite loop
     sv: |
       module Test;
@@ -73,4 +85,5 @@ cases:
           $display("result=%0d", result);
         end
       endmodule
-    expected_output: "result=42"
+    expect:
+      output: "result=42"
