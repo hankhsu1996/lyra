@@ -4,7 +4,7 @@
 #include <functional>
 #include <memory>
 
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -14,7 +14,7 @@ namespace lyra::interpreter {
 /// definition can run in multiple module instances.
 struct ProcessInstanceKey {
   std::shared_ptr<lir::Process> process;
-  std::shared_ptr<InstanceContext> instance;
+  std::shared_ptr<HierarchyContext> instance;
 
   auto operator==(const ProcessInstanceKey& other) const -> bool {
     return process.get() == other.process.get() &&
@@ -25,7 +25,7 @@ struct ProcessInstanceKey {
 struct ProcessInstanceKeyHash {
   auto operator()(const ProcessInstanceKey& key) const -> std::size_t {
     auto h1 = std::hash<lir::Process*>{}(key.process.get());
-    auto h2 = std::hash<InstanceContext*>{}(key.instance.get());
+    auto h2 = std::hash<HierarchyContext*>{}(key.instance.get());
     return h1 ^ (h2 << 1);
   }
 };

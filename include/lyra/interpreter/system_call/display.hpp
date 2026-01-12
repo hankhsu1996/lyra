@@ -8,11 +8,11 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle display and output system tasks.
 /// Includes: $display*, $write*, $strobe*, $monitor*, $monitoron, $monitoroff
-auto HandleDisplayCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter

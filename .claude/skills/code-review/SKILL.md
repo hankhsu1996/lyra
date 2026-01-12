@@ -47,6 +47,14 @@ Read `docs/design-principles.md` and check:
 - Use Domain Vocabulary
 - Comments Explain Why, Not What
 
+### 6. LIR Design (if touching LIR)
+
+Check that LIR changes follow the correct mental model (see `docs/architecture.md`):
+
+- **Variable access**: uses slang's flat symbol model (symbol = unique address, no instance traversal)
+- **Operations**: RISC-V assembly style (register-based, explicit data flow)
+- **Method calls on complex types**: RISC-V function call style (object pointer as `this`)
+
 ## Output Format
 
 1. **Summary**: One sentence on what the change does

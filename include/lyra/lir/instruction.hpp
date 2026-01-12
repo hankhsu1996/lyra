@@ -219,12 +219,6 @@ struct Instruction {
   // Event name
   std::vector<common::Trigger> wait_triggers{};
 
-  // Hierarchical access: instance path + target symbol
-  // instance_path: symbols for instance traversal (e.g., u_child instance
-  // symbol) target_symbol: the final variable symbol to access
-  std::vector<SymbolRef> instance_path{};
-  SymbolRef target_symbol{nullptr};
-
   // Method call: method name and metadata
   // For enum methods: method_name is "next", "prev", or "name"
   // operands[0] = receiver
@@ -389,38 +383,6 @@ struct Instruction {
         .result = result,
         .result_type = std::move(result_type),
         .operands = std::move(ops)};
-  }
-
-  // Store to hierarchical target: instance.signal = value
-  // instance_path: instance symbols to traverse
-  // target: the variable symbol to write
-  static auto StoreHierarchical(
-      std::vector<SymbolRef> instance_path, SymbolRef target, TempRef value,
-      bool is_non_blocking) -> Instruction {
-    assert(!instance_path.empty() && "Must have at least one instance");
-    assert(target != nullptr && "Must have target symbol");
-    return Instruction{
-        .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
-                                : InstructionKind::kStoreVariable,
-        .operands = {Operand::Temp(value)},
-        .instance_path = std::move(instance_path),
-        .target_symbol = target};
-  }
-
-  // Load from hierarchical target: result = instance.signal
-  // instance_path: instance symbols to traverse
-  // target: the variable symbol to read
-  static auto LoadHierarchical(
-      TempRef result, std::vector<SymbolRef> instance_path, SymbolRef target,
-      common::Type result_type) -> Instruction {
-    assert(!instance_path.empty() && "Must have at least one instance");
-    assert(target != nullptr && "Must have target symbol");
-    return Instruction{
-        .kind = InstructionKind::kLoadVariable,
-        .result = result,
-        .result_type = std::move(result_type),
-        .instance_path = std::move(instance_path),
-        .target_symbol = target};
   }
 
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
@@ -591,31 +553,14 @@ struct Instruction {
             "lit   {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kLoadVariable:
-        if (!instance_path.empty()) {
-          return fmt::format(
-              "load  {}, {}", result.value(),
-              common::FormatHierarchicalPath(instance_path, target_symbol));
-        }
         return fmt::format(
             "load  {}, {}", result.value(), operands[0].ToString());
 
       case InstructionKind::kStoreVariable:
-        if (!instance_path.empty()) {
-          return fmt::format(
-              "store {}, {}",
-              common::FormatHierarchicalPath(instance_path, target_symbol),
-              operands[0].ToString());
-        }
         return fmt::format(
             "store {}, {}", operands[0].ToString(), operands[1].ToString());
 
       case InstructionKind::kStoreVariableNonBlocking:
-        if (!instance_path.empty()) {
-          return fmt::format(
-              "nba   {}, {}",
-              common::FormatHierarchicalPath(instance_path, target_symbol),
-              operands[0].ToString());
-        }
         return fmt::format(
             "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
 

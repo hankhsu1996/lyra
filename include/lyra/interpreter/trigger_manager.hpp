@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -23,7 +23,7 @@ struct ScheduledEvent;
 /// which lives in SimulationRunner::process_frames_. This mirrors C++
 /// coroutines where Waiter holds a non-owning coroutine_handle<>.
 struct WaitingProcessInfo {
-  std::shared_ptr<InstanceContext> watch_instance;  // Where variable lives
+  std::shared_ptr<HierarchyContext> binding_instance;  // Where variable lives
   std::size_t block_index;
   std::size_t instruction_index;
   common::EdgeKind edge_kind;
@@ -38,7 +38,7 @@ struct WaitingProcessInfo {
 // (e.g., @(posedge clk or negedge rst))
 struct ProcessInstanceVarKey {
   std::shared_ptr<lir::Process> process;
-  std::shared_ptr<InstanceContext> instance;
+  std::shared_ptr<HierarchyContext> instance;
   SymbolRef variable;
 
   auto operator==(const ProcessInstanceVarKey& other) const -> bool {
@@ -50,7 +50,7 @@ struct ProcessInstanceVarKey {
 struct ProcessInstanceVarKeyHash {
   auto operator()(const ProcessInstanceVarKey& key) const -> std::size_t {
     auto h1 = std::hash<lir::Process*>{}(key.process.get());
-    auto h2 = std::hash<InstanceContext*>{}(key.instance.get());
+    auto h2 = std::hash<HierarchyContext*>{}(key.instance.get());
     auto h3 = std::hash<SymbolRef>{}(key.variable);
     return h1 ^ (h2 << 1) ^ (h3 << 2);
   }
@@ -81,16 +81,17 @@ class TriggerManager {
   // Register a process to wait on variable changes.
   // handle: non-owning reference to the ProcessFrame (frame lives in
   //         SimulationRunner::process_frames_)
-  // watch_instance: where the variable lives (for trigger detection)
+  // binding_instance: where the variable lives (for trigger detection)
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
-      const std::shared_ptr<InstanceContext>& watch_instance,
+      const std::shared_ptr<HierarchyContext>& binding_instance,
       const SymbolRef& variable, common::EdgeKind edge_kind,
       std::size_t block_index, std::size_t instruction_index,
       ProcessHandle handle);
 
   // Process variable changes and return processes that should be triggered
-  auto CheckTriggers(const std::vector<ModifiedVariable>& modified_variables)
+  auto CheckTriggers(
+      const std::vector<VariableChangeRecord>& modified_variables)
       -> std::vector<ScheduledEvent>;
 
  private:

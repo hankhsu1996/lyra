@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "lyra/common/trigger.hpp"
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -21,19 +21,19 @@ namespace lyra::interpreter {
 
 void TriggerManager::RegisterWaitingProcess(
     const std::shared_ptr<lir::Process>& process,
-    const std::shared_ptr<InstanceContext>& watch_instance,
+    const std::shared_ptr<HierarchyContext>& binding_instance,
     const SymbolRef& variable, common::EdgeKind edge_kind,
     std::size_t block_index, std::size_t instruction_index,
     ProcessHandle handle) {
-  // Use watch_instance in the key since that's where we detect changes
-  ProcessInstanceKey pi_key{.process = process, .instance = watch_instance};
+  // Use binding_instance in the key since that's where we detect changes
+  ProcessInstanceKey pi_key{.process = process, .instance = binding_instance};
   wait_map_[variable].insert(pi_key);
 
-  // Use (process, watch_instance, variable) as key to store per-variable info
+  // Use (process, binding_instance, variable) as key to store per-variable info
   ProcessInstanceVarKey piv_key{
-      .process = process, .instance = watch_instance, .variable = variable};
+      .process = process, .instance = binding_instance, .variable = variable};
   wait_set_[piv_key] = {
-      .watch_instance = watch_instance,  // For reading values
+      .binding_instance = binding_instance,  // For reading values
       .block_index = block_index,
       .instruction_index = instruction_index,
       .edge_kind = edge_kind,
@@ -41,30 +41,20 @@ void TriggerManager::RegisterWaitingProcess(
 }
 
 auto TriggerManager::CheckTriggers(
-    const std::vector<ModifiedVariable>& modified_variables)
+    const std::vector<VariableChangeRecord>& modified_variables)
     -> std::vector<ScheduledEvent> {
   std::vector<ScheduledEvent> events_to_trigger;
   std::unordered_set<ProcessInstanceKey, ProcessInstanceKeyHash> triggered_keys;
 
-  for (const auto& [variable, instance] : modified_variables) {
-    // Read previous and current values from the appropriate source
-    RuntimeValue old_value;
-    RuntimeValue new_value;
-
-    if (instance != nullptr && instance->Exists(variable)) {
-      // Per-instance storage
-      old_value = instance->ReadPrevious(variable);
-      new_value = instance->Read(variable);
-      instance->UpdatePrevious(variable, new_value);
-    } else {
-      // Global storage
-      old_value = context_.get().variable_table.ReadPrevious(variable);
-      new_value = context_.get().variable_table.Read(variable);
-      context_.get().variable_table.UpdatePrevious(variable, new_value);
-    }
+  for (const auto& modified : modified_variables) {
+    // Read previous and current values from flat storage
+    auto old_value =
+        context_.get().variable_store.ReadPrevious(modified.symbol);
+    auto new_value = context_.get().variable_store.Read(modified.symbol);
+    context_.get().variable_store.UpdatePrevious(modified.symbol);
 
     // Check if any process is waiting on this variable
-    auto map_it = wait_map_.find(variable);
+    auto map_it = wait_map_.find(modified.symbol);
     if (map_it == wait_map_.end()) {
       continue;
     }
@@ -81,7 +71,7 @@ auto TriggerManager::CheckTriggers(
       ProcessInstanceVarKey piv_key{
           .process = pi_key.process,
           .instance = pi_key.instance,
-          .variable = variable};
+          .variable = modified.symbol};
       auto info_it = wait_set_.find(piv_key);
       if (info_it == wait_set_.end()) {
         continue;
@@ -114,7 +104,7 @@ auto TriggerManager::CheckTriggers(
       std::string trace_detail = fmt::format(
           "Trigger on variable '{}': old = {}, new = {}, triggered "
           "process(es) = {}",
-          variable->name, old_value.ToString(), new_value.ToString(),
+          modified.symbol->name, old_value.ToString(), new_value.ToString(),
           fmt::join(proc_names, ", "));
 
       context_.get().tracer.Record(trace_detail);
@@ -126,7 +116,7 @@ auto TriggerManager::CheckTriggers(
     }
 
     if (map_it->second.empty()) {
-      vars_to_remove_.push_back(variable);
+      vars_to_remove_.push_back(modified.symbol);
     }
   }
 

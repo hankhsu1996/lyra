@@ -8,13 +8,13 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle time-related system functions.
 /// Includes: $time, $stime, $realtime, $timeformat, $timeunit, $timeunit_root,
 ///           $timeprecision, $timeprecision_root, $printtimescale,
 ///           $printtimescale_root
-auto HandleTimeCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleTimeCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter

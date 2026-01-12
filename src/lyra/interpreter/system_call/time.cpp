@@ -2,18 +2,20 @@
 
 #include <cassert>
 #include <cstdint>
+#include <utility>
 
 #include "lyra/common/timescale.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/sdk/time_utils.hpp"
 
 namespace lyra::interpreter {
 
-auto HandleTimeCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleTimeCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   auto& simulation_context = ctx.GetSimulationContext();
 

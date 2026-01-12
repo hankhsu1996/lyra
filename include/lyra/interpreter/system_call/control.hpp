@@ -8,12 +8,12 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle simulation control and severity tasks.
 /// Includes: $finish, $stop, $exit, $fatal, $error, $warning, $info,
 ///           $test$plusargs, $value$plusargs
-auto HandleControlCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleControlCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter

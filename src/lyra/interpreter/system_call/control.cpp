@@ -1,15 +1,17 @@
 #include "lyra/interpreter/system_call/control.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/timescale.hpp"
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -18,7 +20,7 @@
 
 namespace lyra::interpreter {
 
-auto HandleControlCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleControlCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   auto& simulation_context = ctx.GetSimulationContext();
 
@@ -78,8 +80,8 @@ auto HandleControlCalls(const lir::Instruction& instr, SystemCallContext& ctx)
     std::string file_str = instr.source_file.value_or("");
     int line_num = static_cast<int>(instr.source_line.value_or(0));
 
-    // Get hierarchical scope name
-    std::string scope = ctx.GetInstanceContext()->instance_path;
+    // Get hierarchy path for error reporting
+    std::string scope = ctx.GetHierarchyContext()->hierarchy_path;
 
     // Build message from remaining arguments (if any)
     std::string message;
@@ -167,14 +169,16 @@ auto HandleControlCalls(const lir::Instruction& instr, SystemCallContext& ctx)
         matched = 1;
         auto target_operand = lir::Operand::Variable(instr.output_targets[0]);
         ctx.StoreVariable(
-            target_operand, RuntimeValue::IntegralSigned(result.value, 32));
+            target_operand, RuntimeValue::IntegralSigned(result.value, 32),
+            false);
       }
     } else if (spec == 's' || spec == 'S') {
       auto result = query.ValuePlusargsString(format);
       if (result.matched) {
         matched = 1;
         auto target_operand = lir::Operand::Variable(instr.output_targets[0]);
-        ctx.StoreVariable(target_operand, RuntimeValue::String(result.value));
+        ctx.StoreVariable(
+            target_operand, RuntimeValue::String(result.value), false);
       }
     }
 

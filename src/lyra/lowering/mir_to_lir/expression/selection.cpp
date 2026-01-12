@@ -1,9 +1,12 @@
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"
@@ -192,9 +195,10 @@ auto LowerMemberAccessExpression(
 auto LowerHierarchicalReferenceExpression(
     const mir::HierarchicalReferenceExpression& hier_ref, LirBuilder& builder)
     -> lir::TempRef {
+  // Hierarchical reference uses target_symbol directly (flat storage model)
   auto result = builder.AllocateTemp("hier", hier_ref.type);
-  auto instruction = Instruction::LoadHierarchical(
-      result, hier_ref.instance_path, hier_ref.target_symbol, hier_ref.type);
+  auto instruction =
+      Instruction::Basic(IK::kLoadVariable, result, hier_ref.target_symbol);
   builder.AddInstruction(std::move(instruction));
   return result;
 }

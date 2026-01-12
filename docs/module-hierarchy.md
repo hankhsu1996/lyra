@@ -39,10 +39,10 @@ class Parent {
 
 **Interpreter**:
 
-1. Child's input port is a regular variable in child's `InstanceContext::variables`
+1. Child's input port is a regular variable in flat `VariableStore`
 2. Parent's driver process executes `store_hierarchical()`
-3. `store_hierarchical()` traverses `InstanceContext::children` map to find child
-4. Writes directly to child's variable storage
+3. `store_hierarchical()` traverses `HierarchyContext::children` map to find child
+4. Writes directly to flat variable storage
 
 ### Output Ports
 
@@ -78,7 +78,7 @@ Child writes to `out_` → goes directly to `Parent::result` (C++ reference sema
 
 **Interpreter**:
 
-1. During elaboration, creates `PortBinding` in child's `InstanceContext`:
+1. During elaboration, creates `PortBinding` in child's `HierarchyContext`:
 
    ```
    child.port_bindings[out_symbol] = {target: result_symbol, instance: parent}
@@ -204,41 +204,39 @@ When registering a wait:
 3. Register with `TriggerManager` using resolved (symbol, instance) pair
 
 ```cpp
-auto watch_instance = current_instance;
+auto binding_instance = current_instance;
 for (const auto& inst_sym : trigger.instance_path) {
-  watch_instance = watch_instance->LookupChild(inst_sym);
+  binding_instance = binding_instance->LookupChild(inst_sym);
 }
-auto [target_symbol, resolved_instance] = watch_instance->ResolveBinding(trigger.variable);
+auto [target_symbol, resolved_instance] = binding_instance->ResolveBinding(trigger.variable);
 trigger_manager.RegisterWaitingProcess(process, target_symbol, resolved_instance);
 ```
 
-## Interpreter: Instance Context
+## Interpreter: Hierarchy Context
 
-Each module instance has an `InstanceContext`:
+Each module instance has a `HierarchyContext` for port binding resolution:
 
 ```cpp
-struct InstanceContext {
-  string instance_path;  // "top.counter1" for debugging
+struct HierarchyContext {
+  string hierarchy_path;  // "top.counter1" for debugging
 
   // Output port bindings: port symbol → (parent_symbol, parent_instance)
   unordered_map<SymbolRef, PortBinding> port_bindings;
 
-  // Per-instance variable storage
-  unordered_map<SymbolRef, RuntimeValue> variables;
-
   // Child instances for hierarchical access
-  unordered_map<SymbolRef, shared_ptr<InstanceContext>> children;
+  unordered_map<SymbolRef, shared_ptr<HierarchyContext>> children;
 };
 ```
 
-**Key insight**: One process definition runs with multiple instance contexts. The process code is shared; the storage is per-instance.
+Variables are stored in a flat `VariableStore` (keyed by symbol), not per-instance.
+Port bindings resolve output port writes to the correct target in flat storage.
 
 ### Elaboration
 
 During elaboration (`SimulationRunner::ElaborateSubmodules`):
 
 1. For each submodule instance in MIR:
-2. Create child `InstanceContext` with output port bindings
+2. Create child `HierarchyContext` with output port bindings
 3. Store child in parent's `children` map (keyed by instance symbol)
 4. Initialize child's variables
 5. Schedule child's processes with child's instance context

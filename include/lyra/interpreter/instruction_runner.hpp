@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
@@ -9,11 +9,11 @@
 
 namespace lyra::interpreter {
 
-// instance_context can be nullptr for flat (non-hierarchical) modules
+// hierarchy_context can be nullptr for flat (non-hierarchical) modules
 auto RunInstruction(
     const lir::Instruction& instr, SimulationContext& simulation_context,
     ProcessFrame& frame, ProcessEffect& effect,
-    const std::shared_ptr<InstanceContext>& instance_context = nullptr)
+    const std::shared_ptr<HierarchyContext>& hierarchy_context = nullptr)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter

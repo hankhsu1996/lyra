@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "lyra/common/simulation_region.hpp"
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/process_handle.hpp"
@@ -36,7 +36,7 @@ using ProcessPtr = std::shared_ptr<lir::Process>;
 // Module for function lookup is accessed via instance->module.
 struct ProcessOrigin {
   ProcessPtr process;
-  std::shared_ptr<InstanceContext> instance;  // Like C++ 'this' pointer
+  std::shared_ptr<HierarchyContext> instance;  // Like C++ 'this' pointer
 };
 
 /// ScheduledEvent represents a process scheduled to execute.
@@ -77,7 +77,7 @@ class SimulationRunner {
 
   // Get the top instance context (for reading final variable values)
   [[nodiscard]] auto GetTopInstance() const
-      -> const std::shared_ptr<InstanceContext>& {
+      -> const std::shared_ptr<HierarchyContext>& {
     return top_instance_;
   }
 
@@ -85,18 +85,16 @@ class SimulationRunner {
   void ElaborateHierarchy();
   void ElaborateSubmodules(
       const lir::Module& parent, const std::string& parent_path,
-      const std::shared_ptr<InstanceContext>& parent_instance);
+      const std::shared_ptr<HierarchyContext>& parent_instance);
   void InitializePackageVariables();
-  static void InitializeModuleVariables(
-      const lir::Module& module,
-      const std::shared_ptr<InstanceContext>& instance);
+  void InitializeModuleVariables(const lir::Module& module);
   void ScheduleModuleProcesses(
       const lir::Module& module,
-      const std::shared_ptr<InstanceContext>& instance);
+      const std::shared_ptr<HierarchyContext>& instance);
 
   void ExecuteOneEvent();
   void WakeWaitingProcesses(
-      const std::vector<ModifiedVariable>& modified_variables);
+      const std::vector<VariableChangeRecord>& modified_variables);
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
 
@@ -137,7 +135,7 @@ class SimulationRunner {
   std::vector<std::unique_ptr<lir::Function>> package_functions_;
 
   // Top instance context (root of instance hierarchy)
-  std::shared_ptr<InstanceContext> top_instance_;
+  std::shared_ptr<HierarchyContext> top_instance_;
 
   // Centralized frame storage - owns all ProcessFrames.
   // This mirrors C++ coroutines where Scheduler::tasks_ owns all frames.

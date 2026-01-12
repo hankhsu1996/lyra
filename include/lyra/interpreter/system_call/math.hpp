@@ -8,10 +8,10 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle math system functions ($ln, $sqrt, $sin, $pow, etc.)
-auto HandleMathCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleMathCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter

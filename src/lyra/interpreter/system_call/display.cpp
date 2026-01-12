@@ -8,16 +8,17 @@
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/interpreter/call_frame.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/lir/instruction.hpp"
 
 namespace lyra::interpreter {
 
-auto HandleDisplayCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   auto& simulation_context = ctx.GetSimulationContext();
 
@@ -172,7 +173,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, SystemCallContext& ctx)
 
     simulation_context.active_monitor = MonitorState{
         .enabled = true,
-        .instance = ctx.GetInstanceContext(),
+        .instance = ctx.GetHierarchyContext(),
         .check_process_name = instr.monitor_check_function_name,
         .closure = std::move(closure)};
 

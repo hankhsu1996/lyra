@@ -21,7 +21,7 @@ auto RunBlock(
     const lir::BasicBlock& block, std::size_t start_instruction_index,
     SimulationContext& simulation_context, ProcessFrame& frame,
     ProcessEffect& effect,
-    const std::shared_ptr<InstanceContext>& instance_context)
+    const std::shared_ptr<HierarchyContext>& hierarchy_context)
     -> BasicBlockResult {
   const auto& instructions = block.instructions;
 
@@ -29,7 +29,7 @@ auto RunBlock(
     const auto& instr = instructions[i];
 
     auto instruction_result = RunInstruction(
-        instr, simulation_context, frame, effect, instance_context);
+        instr, simulation_context, frame, effect, hierarchy_context);
 
     switch (instruction_result.kind) {
       case ResultKind::kComplete:

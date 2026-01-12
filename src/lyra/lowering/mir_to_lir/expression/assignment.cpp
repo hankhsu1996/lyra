@@ -1,10 +1,12 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
 #include "lyra/lowering/mir_to_lir/expression/expression.hpp"
@@ -29,10 +31,9 @@ auto LowerAssignmentExpression(
   auto value = LowerExpression(*assignment.value, builder);
 
   if (assignment.target.IsHierarchical()) {
-    // Hierarchical assignment: child.signal = value
-    auto instruction = Instruction::StoreHierarchical(
-        assignment.target.instance_path, assignment.target.target_symbol, value,
-        assignment.is_non_blocking);
+    // Hierarchical assignment uses target_symbol directly (flat storage model)
+    auto instruction = Instruction::StoreVariable(
+        assignment.target.target_symbol, value, assignment.is_non_blocking);
     builder.AddInstruction(std::move(instruction));
     return value;
   }

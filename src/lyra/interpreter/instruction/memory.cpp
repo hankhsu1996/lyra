@@ -67,42 +67,24 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
     }
 
     case lir::InstructionKind::kLoadVariable: {
-      if (instr.target_symbol != nullptr) {
-        const auto value =
-            ctx.LoadHierarchical(instr.instance_path, instr.target_symbol);
-        ctx.WriteTemp(instr.result.value(), value);
-      } else {
-        const auto& src_variable = ctx.ReadVariable(instr.operands[0]);
-        ctx.WriteTemp(instr.result.value(), src_variable);
-      }
+      const auto& value = ctx.ReadVariable(instr.operands[0]);
+      ctx.WriteTemp(instr.result.value(), value);
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariable: {
-      if (instr.target_symbol != nullptr) {
-        const auto value = ctx.GetTemp(instr.operands[0]);
-        ctx.StoreHierarchical(
-            instr.instance_path, instr.target_symbol, value, false);
-      } else {
-        const auto variable = instr.operands[0];
-        const auto value = ctx.GetTemp(instr.operands[1]);
-        assert(variable.IsVariable());
-        ctx.StoreVariable(variable, value, false);
-      }
+      const auto variable = instr.operands[0];
+      const auto value = ctx.GetTemp(instr.operands[1]);
+      assert(variable.IsVariable());
+      ctx.StoreVariable(variable, value, false);
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreVariableNonBlocking: {
-      if (instr.target_symbol != nullptr) {
-        const auto value = ctx.GetTemp(instr.operands[0]);
-        ctx.StoreHierarchical(
-            instr.instance_path, instr.target_symbol, value, true);
-      } else {
-        const auto variable = instr.operands[0];
-        const auto value = ctx.GetTemp(instr.operands[1]);
-        assert(variable.IsVariable());
-        ctx.StoreVariable(variable, value, true);
-      }
+      const auto variable = instr.operands[0];
+      const auto value = ctx.GetTemp(instr.operands[1]);
+      assert(variable.IsVariable());
+      ctx.StoreVariable(variable, value, true);
       return InstructionResult::Continue();
     }
 

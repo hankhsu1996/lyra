@@ -8,11 +8,11 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle memory I/O system tasks.
 /// Includes: $readmemh, $readmemb, $writememh, $writememb
-auto HandleMemIoCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleMemIoCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter
