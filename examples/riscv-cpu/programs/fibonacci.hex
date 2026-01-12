@@ -5,7 +5,7 @@
 00900213  // addi x4, x0, 9     # counter = 9 (for fib(10))
 00020c63  // beq x4, x0, +24    # if counter == 0, goto done
 002081b3  // add x3, x1, x2     # next = prev + curr
-00010033  // add x1, x2, x0     # prev = curr
+000100b3  // add x1, x2, x0     # prev = curr
 00018133  // add x2, x3, x0     # curr = next
 fff20213  // addi x4, x4, -1    # counter--
 fedff06f  // jal x0, -20        # goto loop
