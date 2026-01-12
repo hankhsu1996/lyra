@@ -1,4 +1,4 @@
-feature: statements_generate
+feature: generate_generate
 description: Tests generate constructs (if-generate, for-generate, and case-generate)
 
 cases:

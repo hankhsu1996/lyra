@@ -419,7 +419,8 @@ sv_feature_test(
     yaml = "sv_features/statements/continuous_assign.yaml",
 )
 
+# Generate constructs (LRM §27)
 sv_feature_test(
-    name = "statements_generate_tests",
-    yaml = "sv_features/statements/generate.yaml",
+    name = "generate_generate_tests",
+    yaml = "sv_features/generate/generate.yaml",
 )
