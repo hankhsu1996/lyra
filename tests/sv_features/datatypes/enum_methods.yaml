@@ -220,5 +220,5 @@ cases:
         end
       endmodule
     expect:
-      stdout: |
+      output: |
         RUN

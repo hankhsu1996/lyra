@@ -145,7 +145,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: |
+      output: |
         0
         1
 
