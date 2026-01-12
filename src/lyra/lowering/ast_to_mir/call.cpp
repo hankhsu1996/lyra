@@ -22,20 +22,21 @@
 #include "lyra/common/literal.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerCall(const slang::ast::CallExpression& call)
+auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
     -> std::unique_ptr<mir::Expression> {
   const auto& expression = static_cast<const slang::ast::Expression&>(call);
 
   // Handle compile-time constant calls (includes enum methods like first(),
   // last()). slang evaluates these at compile time.
   if (const auto* cv = call.getConstant(); cv != nullptr) {
-    auto type_result = LowerType(*call.type, expression.sourceRange);
+    auto type_result = LowerType(*call.type, expression.sourceRange, arena);
     if (!type_result) {
       throw DiagnosticException(std::move(type_result.error()));
     }
@@ -85,7 +86,8 @@ auto LowerCall(const slang::ast::CallExpression& call)
         auto it = enum_type.values().begin();
         if (it != enum_type.values().end()) {
           int64_t value = it->getValue().integer().as<int64_t>().value_or(0);
-          auto type_result = LowerType(*call.type, expression.sourceRange);
+          auto type_result =
+              LowerType(*call.type, expression.sourceRange, arena);
           if (!type_result) {
             throw DiagnosticException(std::move(type_result.error()));
           }
@@ -104,7 +106,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
         for (const auto& member : enum_type.values()) {
           last_value = member.getValue().integer().as<int64_t>().value_or(0);
         }
-        auto type_result = LowerType(*call.type, expression.sourceRange);
+        auto type_result = LowerType(*call.type, expression.sourceRange, arena);
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
@@ -122,7 +124,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kEnum, subroutine_name);
       if (method_info != nullptr) {
-        auto receiver = LowerExpression(first_arg);
+        auto receiver = LowerExpression(first_arg, arena);
 
         // Collect enum member info for codegen
         std::vector<mir::EnumMemberInfo> members;
@@ -153,7 +155,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
                   common::Literal::IntegralSigned(step, 32)));
         }
 
-        auto type_result = LowerType(*call.type, expression.sourceRange);
+        auto type_result = LowerType(*call.type, expression.sourceRange, arena);
         if (!type_result) {
           throw DiagnosticException(std::move(type_result.error()));
         }
@@ -176,7 +178,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kDynamicArray, subroutine_name);
       if (method_info != nullptr) {
-        auto receiver = LowerExpression(first_arg);
+        auto receiver = LowerExpression(first_arg, arena);
         auto return_type =
             (method_info->return_type == common::BuiltinMethodReturnType::kInt)
                 ? common::Type::Int()
@@ -191,14 +193,14 @@ auto LowerCall(const slang::ast::CallExpression& call)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kQueue, subroutine_name);
       if (method_info != nullptr) {
-        auto receiver = LowerExpression(first_arg);
+        auto receiver = LowerExpression(first_arg, arena);
 
         // Determine return type based on method
         // For SSA semantics: mutating methods return the modified receiver
         const auto& queue_ast_type =
             first_arg.type->as<slang::ast::QueueType>();
         auto queue_type_result =
-            LowerType(*first_arg.type, expression.sourceRange);
+            LowerType(*first_arg.type, expression.sourceRange, arena);
         if (!queue_type_result) {
           throw DiagnosticException(queue_type_result.error());
         }
@@ -210,8 +212,8 @@ auto LowerCall(const slang::ast::CallExpression& call)
             method_info->return_type ==
             common::BuiltinMethodReturnType::kElement) {
           // pop_front/pop_back return the element type
-          auto elem_result =
-              LowerType(queue_ast_type.elementType, expression.sourceRange);
+          auto elem_result = LowerType(
+              queue_ast_type.elementType, expression.sourceRange, arena);
           if (!elem_result) {
             throw DiagnosticException(elem_result.error());
           }
@@ -227,7 +229,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
         // Collect method arguments (skip first arg which is receiver)
         std::vector<std::unique_ptr<mir::Expression>> args;
         for (size_t i = 1; i < call.arguments().size(); ++i) {
-          args.push_back(LowerExpression(*call.arguments()[i]));
+          args.push_back(LowerExpression(*call.arguments()[i], arena));
         }
 
         return std::make_unique<mir::MethodCallExpression>(
@@ -311,7 +313,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
       // For $fatal, first argument is finish_number (goes to arguments[0])
       if (name == "$fatal") {
         if (!call.arguments().empty()) {
-          arguments.push_back(LowerExpression(*call.arguments()[0]));
+          arguments.push_back(LowerExpression(*call.arguments()[0], arena));
         } else {
           // Default finish_number is 1 if no arguments
           arguments.push_back(
@@ -327,7 +329,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
         const auto& format_arg = *call.arguments()[format_idx];
         if (format_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
           // Extract format string into format_expr
-          format_expr = LowerExpression(format_arg);
+          format_expr = LowerExpression(format_arg, arena);
           format_expr_is_literal = true;
           args_start_idx = format_idx + 1;  // Skip format in arguments
         } else {
@@ -338,7 +340,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
 
       // Add remaining arguments (format args / values to display)
       for (size_t i = args_start_idx; i < call.arguments().size(); ++i) {
-        arguments.push_back(LowerExpression(*call.arguments()[i]));
+        arguments.push_back(LowerExpression(*call.arguments()[i], arena));
       }
     } else if (!is_root_variant) {
       // Handle $value$plusargs specially: second argument is output target
@@ -346,7 +348,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
         auto args = call.arguments();
         if (!args.empty()) {
           // First arg is format string (input)
-          arguments.push_back(LowerExpression(*args[0]));
+          arguments.push_back(LowerExpression(*args[0], arena));
         }
         if (args.size() >= 2) {
           // Second arg is output variable
@@ -356,7 +358,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
                 output_arg->as<slang::ast::NamedValueExpression>();
             // Get the type of the output variable for codegen
             auto type_result = LowerType(
-                named_value.symbol.getType(), output_arg->sourceRange);
+                named_value.symbol.getType(), output_arg->sourceRange, arena);
             if (!type_result) {
               throw DiagnosticException(std::move(type_result.error()));
             }
@@ -373,7 +375,7 @@ auto LowerCall(const slang::ast::CallExpression& call)
       } else {
         // Other non-display system calls: process all arguments normally
         for (const auto* arg : call.arguments()) {
-          arguments.push_back(LowerExpression(*arg));
+          arguments.push_back(LowerExpression(*arg, arena));
         }
       }
       // For mem_io tasks, check if first arg (filename) is a string literal
@@ -389,7 +391,8 @@ auto LowerCall(const slang::ast::CallExpression& call)
       }
     }
 
-    auto return_type_result = LowerType(*call.type, expression.sourceRange);
+    auto return_type_result =
+        LowerType(*call.type, expression.sourceRange, arena);
     if (!return_type_result) {
       throw DiagnosticException(std::move(return_type_result.error()));
     }
@@ -435,11 +438,12 @@ auto LowerCall(const slang::ast::CallExpression& call)
       // Lower arguments
       std::vector<std::unique_ptr<mir::Expression>> arguments;
       for (const auto* arg : call.arguments()) {
-        arguments.push_back(LowerExpression(*arg));
+        arguments.push_back(LowerExpression(*arg, arena));
       }
 
       // Get return type
-      auto return_type_result = LowerType(*call.type, expression.sourceRange);
+      auto return_type_result =
+          LowerType(*call.type, expression.sourceRange, arena);
       if (!return_type_result) {
         throw DiagnosticException(std::move(return_type_result.error()));
       }

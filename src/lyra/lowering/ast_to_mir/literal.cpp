@@ -18,6 +18,7 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
@@ -145,7 +146,7 @@ auto ConstantValueToLiteral(const slang::ConstantValue& cv)
 
 auto ConstantValueToExpression(
     const slang::ConstantValue& cv, const slang::ast::Type& type,
-    slang::SourceRange source_range)
+    slang::SourceRange source_range, common::TypeArena& arena)
     -> Result<std::unique_ptr<mir::Expression>> {
   // Scalar types (including packed structs, which slang folds to integers):
   // delegate to ConstantValueToLiteral
@@ -171,14 +172,14 @@ auto ConstantValueToExpression(
 
       for (size_t i = 0; i < elements.size(); ++i) {
         auto field_result = ConstantValueToExpression(
-            elements[i], fields[i]->getType(), source_range);
+            elements[i], fields[i]->getType(), source_range, arena);
         if (!field_result) {
           return std::unexpected(std::move(field_result.error()));
         }
         field_exprs.push_back(std::move(*field_result));
       }
 
-      auto type_result = LowerType(type, source_range);
+      auto type_result = LowerType(type, source_range, arena);
       if (!type_result) {
         return std::unexpected(std::move(type_result.error()));
       }

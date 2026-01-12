@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/common/type_arena.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 
@@ -14,7 +15,10 @@ class Compilation;
 namespace lyra::lowering::ast_to_mir {
 
 /// Result of lowering AST to MIR.
+/// TypeArena is declared first to ensure it is destroyed last (Types may
+/// contain pointers to arena-allocated nested types).
 struct LoweringResult {
+  common::TypeArena type_arena;
   std::vector<std::unique_ptr<mir::Package>> packages;
   std::vector<std::unique_ptr<mir::Module>> modules;
 };

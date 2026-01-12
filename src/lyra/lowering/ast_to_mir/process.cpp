@@ -14,6 +14,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/trigger.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 #include "lyra/mir/expression.hpp"
@@ -24,7 +25,8 @@ namespace lyra::lowering::ast_to_mir {
 
 auto LowerProcess(
     const slang::ast::ProceduralBlockSymbol& procedural_block,
-    ProcessCounters& counters) -> std::unique_ptr<mir::Process> {
+    ProcessCounters& counters, common::TypeArena& arena)
+    -> std::unique_ptr<mir::Process> {
   using ProceduralBlockKind = slang::ast::ProceduralBlockKind;
 
   auto process = std::make_unique<mir::Process>();
@@ -58,7 +60,7 @@ auto LowerProcess(
   switch (procedural_block.procedureKind) {
     case ProceduralBlockKind::Initial: {
       const auto& slang_statement = procedural_block.getBody();
-      auto statement = LowerStatement(slang_statement);
+      auto statement = LowerStatement(slang_statement, arena);
       process->body = std::move(statement);
       break;
     }
@@ -66,7 +68,7 @@ auto LowerProcess(
     case ProceduralBlockKind::AlwaysLatch:
     case ProceduralBlockKind::AlwaysComb: {
       const auto& slang_statement = procedural_block.getBody();
-      auto body = LowerStatement(slang_statement);
+      auto body = LowerStatement(slang_statement, arena);
       auto sensitivity_items = CollectSensitivityList(*body);
 
       std::vector<common::Trigger> triggers;
@@ -95,7 +97,7 @@ auto LowerProcess(
     case ProceduralBlockKind::Always:
     case ProceduralBlockKind::AlwaysFF: {
       // Lower the user's body, which should contain WaitEventStatement itself
-      auto loop_block = LowerStatement(procedural_block.getBody());
+      auto loop_block = LowerStatement(procedural_block.getBody(), arena);
 
       // Simply wrap in while (true) { ... }
       auto condition =

@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_mir/function.hpp"
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -9,20 +10,24 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerFunction(const slang::ast::SubroutineSymbol& subroutine)
+auto LowerFunction(
+    const slang::ast::SubroutineSymbol& subroutine, common::TypeArena& arena)
     -> mir::FunctionDefinition {
   mir::FunctionDefinition func;
   func.name = std::string(subroutine.name);
 
   // Lower return type
   slang::SourceRange source_range(subroutine.location, subroutine.location);
-  auto return_type_result = LowerType(subroutine.getReturnType(), source_range);
+  auto return_type_result =
+      LowerType(subroutine.getReturnType(), source_range, arena);
   if (!return_type_result) {
     throw DiagnosticException(std::move(return_type_result.error()));
   }
@@ -40,7 +45,7 @@ auto LowerFunction(const slang::ast::SubroutineSymbol& subroutine)
                   subroutine.name)));
     }
 
-    auto type_result = LowerType(arg->getType(), source_range);
+    auto type_result = LowerType(arg->getType(), source_range, arena);
     if (!type_result) {
       throw DiagnosticException(std::move(type_result.error()));
     }
@@ -64,7 +69,7 @@ auto LowerFunction(const slang::ast::SubroutineSymbol& subroutine)
         continue;
       }
 
-      auto type_result = LowerType(var_symbol.getType(), source_range);
+      auto type_result = LowerType(var_symbol.getType(), source_range, arena);
       if (!type_result) {
         throw DiagnosticException(std::move(type_result.error()));
       }
@@ -78,7 +83,7 @@ auto LowerFunction(const slang::ast::SubroutineSymbol& subroutine)
   }
 
   // Lower the function body
-  func.body = LowerStatement(subroutine.getBody());
+  func.body = LowerStatement(subroutine.getBody(), arena);
 
   return func;
 }

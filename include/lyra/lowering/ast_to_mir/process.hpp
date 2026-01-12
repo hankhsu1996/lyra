@@ -5,6 +5,10 @@
 
 #include "lyra/mir/process.hpp"
 
+namespace lyra::common {
+class TypeArena;
+}
+
 namespace slang::ast {
 class ProceduralBlockSymbol;
 }
@@ -24,6 +28,7 @@ struct ProcessCounters {
 // Lowers a slang AST ProceduralBlockSymbol into a MIR Process.
 auto LowerProcess(
     const slang::ast::ProceduralBlockSymbol& procedural_block,
-    ProcessCounters& counters) -> std::unique_ptr<mir::Process>;
+    ProcessCounters& counters, common::TypeArena& arena)
+    -> std::unique_ptr<mir::Process>;
 
 }  // namespace lyra::lowering::ast_to_mir

@@ -26,8 +26,8 @@ class TypeArena {
 
   TypeArena(const TypeArena&) = delete;
   auto operator=(const TypeArena&) -> TypeArena& = delete;
-  TypeArena(TypeArena&&) = delete;
-  auto operator=(TypeArena&&) -> TypeArena& = delete;
+  TypeArena(TypeArena&&) noexcept = default;
+  auto operator=(TypeArena&&) noexcept -> TypeArena& = default;
 
   /// Intern a type, returning a stable pointer to the canonical instance.
   /// If a structurally identical type already exists, returns that pointer.

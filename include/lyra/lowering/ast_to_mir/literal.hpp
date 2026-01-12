@@ -22,6 +22,10 @@ class Type;
 class UnbasedUnsizedIntegerLiteral;
 }  // namespace slang::ast
 
+namespace lyra::common {
+class TypeArena;
+}
+
 namespace lyra::lowering::ast_to_mir {
 
 // Lowers a slang AST IntegerLiteral into a MIR Literal.
@@ -50,7 +54,7 @@ auto ConstantValueToLiteral(const slang::ConstantValue& cv)
 // The type parameter is needed to determine the structure of aggregate values.
 auto ConstantValueToExpression(
     const slang::ConstantValue& cv, const slang::ast::Type& type,
-    slang::SourceRange source_range)
+    slang::SourceRange source_range, common::TypeArena& arena)
     -> Result<std::unique_ptr<mir::Expression>>;
 
 /// Extracts (value, mask) from an SVInt for casez/casex pattern matching.

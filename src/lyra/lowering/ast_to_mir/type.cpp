@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <expected>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,17 +12,19 @@
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
 using Type = common::Type;
 
-auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
-    -> Result<Type> {
+auto LowerType(
+    const slang::ast::Type& type, slang::SourceRange source_range,
+    common::TypeArena& arena) -> Result<Type> {
   // Handle type aliases (typedef): unwrap to canonical type but preserve name
   if (type.isAlias()) {
     const auto& canonical = type.getCanonicalType();
-    auto result = LowerType(canonical, source_range);
+    auto result = LowerType(canonical, source_range, arena);
     if (result) {
       const auto& alias = type.as<slang::ast::TypeAliasType>();
       result->alias_name = std::string(alias.name);
@@ -57,7 +58,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     std::vector<common::PackedStructField> fields;
     for (const auto& field :
          struct_type.membersOfType<slang::ast::FieldSymbol>()) {
-      auto field_type_result = LowerType(field.getType(), source_range);
+      auto field_type_result = LowerType(field.getType(), source_range, arena);
       if (!field_type_result) {
         return field_type_result;
       }
@@ -67,7 +68,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
               .name = std::string(field.name),
               .bit_offset = field.bitOffset,
               .bit_width = field.getType().getBitWidth(),
-              .field_type = std::make_shared<Type>(*field_type_result)});
+              .field_type = arena.Intern(*field_type_result)});
     }
 
     return Type::PackedStruct(
@@ -85,7 +86,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     std::vector<common::PackedStructField> fields;
     for (const auto& field :
          union_type.membersOfType<slang::ast::FieldSymbol>()) {
-      auto field_type_result = LowerType(field.getType(), source_range);
+      auto field_type_result = LowerType(field.getType(), source_range, arena);
       if (!field_type_result) {
         return field_type_result;
       }
@@ -95,7 +96,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
               .name = std::string(field.name),
               .bit_offset = field.bitOffset,  // Always 0 for union members
               .bit_width = field.getType().getBitWidth(),
-              .field_type = std::make_shared<Type>(*field_type_result)});
+              .field_type = arena.Intern(*field_type_result)});
     }
 
     return Type::PackedStruct(
@@ -130,7 +131,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
   // e.g., bit [3:0][7:0] has isPackedArray()=true
   if (type.isPackedArray()) {
     const auto& packed = type.as<slang::ast::PackedArrayType>();
-    auto element_result = LowerType(packed.elementType, source_range);
+    auto element_result = LowerType(packed.elementType, source_range, arena);
     if (!element_result) {
       return element_result;
     }
@@ -138,8 +139,8 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
     bool is_signed = type.isSigned();
     bool is_four_state = type.isFourState();
     return Type::PackedArray(
-        *element_result, packed.range.width(), packed.range.lower(), is_signed,
-        is_four_state);
+        arena.Intern(*element_result), packed.range.width(),
+        packed.range.lower(), is_signed, is_four_state);
   }
 
   if (type.isIntegral()) {
@@ -157,31 +158,33 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
   // Check for dynamic arrays before fixed-size unpacked arrays
   if (type.kind == slang::ast::SymbolKind::DynamicArrayType) {
     const auto& dyn_array = type.as<slang::ast::DynamicArrayType>();
-    auto element_result = LowerType(dyn_array.elementType, source_range);
+    auto element_result = LowerType(dyn_array.elementType, source_range, arena);
     if (!element_result) {
       return element_result;
     }
-    return Type::DynamicArray(*element_result);
+    return Type::DynamicArray(arena.Intern(*element_result));
   }
 
   // Check for queues
   if (type.kind == slang::ast::SymbolKind::QueueType) {
     const auto& queue = type.as<slang::ast::QueueType>();
-    auto element_result = LowerType(queue.elementType, source_range);
+    auto element_result = LowerType(queue.elementType, source_range, arena);
     if (!element_result) {
       return element_result;
     }
-    return Type::Queue(*element_result, queue.maxBound);
+    return Type::Queue(arena.Intern(*element_result), queue.maxBound);
   }
 
   if (type.isUnpackedArray()) {
     const auto& array_type = type.as<slang::ast::FixedSizeUnpackedArrayType>();
-    auto element_result = LowerType(array_type.elementType, source_range);
+    auto element_result =
+        LowerType(array_type.elementType, source_range, arena);
     if (!element_result) {
       return element_result;
     }
     return Type::UnpackedArray(
-        *element_result, array_type.range.width(), array_type.range.lower());
+        arena.Intern(*element_result), array_type.range.width(),
+        array_type.range.lower());
   }
 
   // Handle unpacked struct
@@ -190,7 +193,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
 
     std::vector<common::UnpackedStructField> fields;
     for (const auto* field : struct_type.fields) {
-      auto field_type_result = LowerType(field->getType(), source_range);
+      auto field_type_result = LowerType(field->getType(), source_range, arena);
       if (!field_type_result) {
         return field_type_result;
       }
@@ -198,7 +201,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
       fields.push_back(
           common::UnpackedStructField{
               .name = std::string(field->name),
-              .field_type = std::make_shared<Type>(*field_type_result)});
+              .field_type = arena.Intern(*field_type_result)});
     }
 
     return Type::UnpackedStruct(std::move(fields));
@@ -210,7 +213,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
 
     std::vector<common::UnpackedStructField> fields;
     for (const auto* field : union_type.fields) {
-      auto field_type_result = LowerType(field->getType(), source_range);
+      auto field_type_result = LowerType(field->getType(), source_range, arena);
       if (!field_type_result) {
         return field_type_result;
       }
@@ -218,7 +221,7 @@ auto LowerType(const slang::ast::Type& type, slang::SourceRange source_range)
       fields.push_back(
           common::UnpackedStructField{
               .name = std::string(field->name),
-              .field_type = std::make_shared<Type>(*field_type_result)});
+              .field_type = arena.Intern(*field_type_result)});
     }
 
     return Type::UnpackedUnion(std::move(fields));

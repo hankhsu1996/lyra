@@ -1,7 +1,7 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -14,7 +14,7 @@
 
 namespace lyra::common {
 
-struct Type;  // Forward declaration for UnpackedArrayData
+struct Type;  // Forward declaration for nested type pointers
 
 struct IntegralData {
   size_t bit_width;  // Total flat storage width
@@ -22,7 +22,8 @@ struct IntegralData {
   bool is_four_state = false;  // true for logic/reg, false for bit/int
 
   // Packed array dimension (nullptr for scalars like int, bit)
-  std::shared_ptr<Type> element_type;
+  // Points to arena-interned type
+  const Type* element_type = nullptr;
   size_t element_count = 0;   // range.width() - number of elements
   int32_t element_lower = 0;  // range.lower() - index lower bound
 
@@ -31,7 +32,7 @@ struct IntegralData {
 };
 
 struct UnpackedArrayData {
-  std::shared_ptr<Type> element_type;
+  const Type* element_type;  // arena-interned
   size_t size;
   int32_t lower_bound;  // For [2:5] style ranges, lower_bound=2
 
@@ -40,15 +41,15 @@ struct UnpackedArrayData {
 };
 
 struct DynamicArrayData {
-  std::shared_ptr<Type> element_type;
+  const Type* element_type;  // arena-interned
 
   auto operator==(const DynamicArrayData& other) const -> bool;
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
 struct QueueData {
-  std::shared_ptr<Type> element_type;
-  uint32_t max_bound;  // 0 = unbounded, else max index ([$:N] syntax)
+  const Type* element_type;  // arena-interned
+  uint32_t max_bound;        // 0 = unbounded, else max index ([$:N] syntax)
 
   auto operator==(const QueueData& other) const -> bool;
   [[nodiscard]] auto Hash() const -> std::size_t;
@@ -59,7 +60,7 @@ struct PackedStructField {
   std::string name;
   uint64_t bit_offset;  // LSB position within the struct
   size_t bit_width;
-  std::shared_ptr<Type> field_type;
+  const Type* field_type;  // arena-interned
 
   auto operator==(const PackedStructField& other) const -> bool;
   [[nodiscard]] auto Hash() const -> std::size_t;
@@ -80,7 +81,7 @@ struct PackedStructData {
 // Field metadata for unpacked structs
 struct UnpackedStructField {
   std::string name;
-  std::shared_ptr<Type> field_type;
+  const Type* field_type;  // arena-interned
 
   auto operator==(const UnpackedStructField& other) const -> bool;
   [[nodiscard]] auto Hash() const -> std::size_t;
@@ -182,16 +183,17 @@ struct Type {
   }
 
   // Create a packed array type (e.g., bit [3:0][7:0])
+  // element_type must be arena-interned pointer
   static auto PackedArray(
-      Type element_type, size_t element_count, int32_t element_lower = 0,
+      const Type* element_type, size_t element_count, int32_t element_lower = 0,
       bool is_signed = false, bool is_four_state = false) -> Type {
     // Validate: element type must be integral
-    if (element_type.kind != Kind::kIntegral) {
+    if (element_type->kind != Kind::kIntegral) {
       throw std::runtime_error("Packed array element must be integral type");
     }
 
     // Compute total bit width from element type and count
-    const auto& elem_data = std::get<IntegralData>(element_type.data);
+    const auto& elem_data = std::get<IntegralData>(element_type->data);
     size_t total_width = elem_data.bit_width * element_count;
 
     return Type{
@@ -201,7 +203,7 @@ struct Type {
                 .bit_width = total_width,
                 .is_signed = is_signed,
                 .is_four_state = is_four_state,
-                .element_type = std::make_shared<Type>(std::move(element_type)),
+                .element_type = element_type,
                 .element_count = element_count,
                 .element_lower = element_lower},
         .alias_name = std::nullopt};
@@ -239,34 +241,32 @@ struct Type {
     return Type{.kind = Kind::kShortReal, .alias_name = std::nullopt};
   }
 
-  static auto UnpackedArray(Type element, size_t size, int32_t lower_bound = 0)
-      -> Type {
+  // element must be arena-interned pointer
+  static auto UnpackedArray(
+      const Type* element, size_t size, int32_t lower_bound = 0) -> Type {
     return Type{
         .kind = Kind::kUnpackedArray,
         .data =
             UnpackedArrayData{
-                .element_type = std::make_shared<Type>(element),
+                .element_type = element,
                 .size = size,
                 .lower_bound = lower_bound},
         .alias_name = std::nullopt};
   }
 
-  static auto DynamicArray(Type element) -> Type {
+  // element must be arena-interned pointer
+  static auto DynamicArray(const Type* element) -> Type {
     return Type{
         .kind = Kind::kDynamicArray,
-        .data =
-            DynamicArrayData{
-                .element_type = std::make_shared<Type>(std::move(element))},
+        .data = DynamicArrayData{.element_type = element},
         .alias_name = std::nullopt};
   }
 
-  static auto Queue(Type element, uint32_t max_bound = 0) -> Type {
+  // element must be arena-interned pointer
+  static auto Queue(const Type* element, uint32_t max_bound = 0) -> Type {
     return Type{
         .kind = Kind::kQueue,
-        .data =
-            QueueData{
-                .element_type = std::make_shared<Type>(std::move(element)),
-                .max_bound = max_bound},
+        .data = QueueData{.element_type = element, .max_bound = max_bound},
         .alias_name = std::nullopt};
   }
 
