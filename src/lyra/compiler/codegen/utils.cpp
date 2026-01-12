@@ -116,6 +116,27 @@ auto EscapeQualifiedName(std::string_view qualified_name) -> std::string {
   return std::string(qualifier) + EscapeIdentifier(name);
 }
 
+auto FormatCppInstancePath(
+    const std::vector<common::HierarchicalPathElement>& elements)
+    -> std::string {
+  std::string path;
+  bool need_dot = false;
+  for (const auto& elem : elements) {
+    if (!elem.symbol->name.empty()) {
+      if (need_dot) {
+        path += ".";
+      }
+      path += EscapeIdentifier(elem.symbol->name) + "_";
+      need_dot = true;
+    }
+    if (elem.array_index) {
+      path += "[" + std::to_string(*elem.array_index) + "]";
+      need_dot = true;
+    }
+  }
+  return path;
+}
+
 }  // namespace codegen
 
 using codegen::GetElementWidthAfterIndices;
@@ -237,24 +258,11 @@ void Codegen::EmitSliceShift(
 void Codegen::EmitHierarchicalPath(
     const std::vector<mir::HierarchicalPathElement>& instance_path,
     mir::SymbolRef target_symbol) {
-  // Emit hierarchical path: gen_block[0].signal -> gen_block_[0].signal
-  // Instance names get _ suffix, target variable does not.
-  //
-  // Generate blocks have two path elements: the array (name="gen_block") and
-  // the block instance (name="", index=0). We emit:
-  // - name_ for non-empty symbol names (underscore suffix)
-  // - [index] for array indices
-  // - single dot before target
-  for (const auto& elem : instance_path) {
-    if (!elem.symbol->name.empty()) {
-      out_ << Escape(elem.symbol->name) << "_";
-    }
-    if (elem.array_index) {
-      out_ << "[" << *elem.array_index << "]";
-    }
-  }
-  if (!instance_path.empty()) {
-    out_ << ".";
+  // Emit hierarchical path: u_child.signal -> u_child_.signal
+  // Uses common helper for instance path formatting.
+  std::string path = codegen::FormatCppInstancePath(instance_path);
+  if (!path.empty()) {
+    out_ << path << ".";
   }
   out_ << Escape(target_symbol->name);
 }
@@ -428,12 +436,12 @@ void Codegen::Line(const std::string& text) {
 
 auto Codegen::GetTriggerPath(const common::Trigger& trigger) const
     -> std::string {
-  std::string path;
-  // Emit instance path: instance symbols get _ suffix
-  for (const auto& inst_sym : trigger.instance_path) {
-    path += Escape(inst_sym->name) + "_.";
-  }
+  // Use common helper for instance path formatting
+  std::string path = codegen::FormatCppInstancePath(trigger.instance_path);
   // Emit variable name
+  if (!path.empty()) {
+    path += ".";
+  }
   path += Escape(trigger.variable->name);
   // Append _ for port reference members
   if (port_symbols_.contains(trigger.variable)) {

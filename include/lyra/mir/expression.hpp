@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -23,6 +24,8 @@ namespace lyra::mir {
 using Type = common::Type;
 using Literal = common::Literal;
 using SymbolRef = common::SymbolRef;
+using HierarchicalPathElement = common::HierarchicalPathElement;
+using common::FormatHierarchicalPath;
 
 class Expression {
  public:
@@ -293,55 +296,6 @@ struct FieldPathElement {
     return bit_offset.has_value();
   }
 };
-
-// Represents one step in a hierarchical path with optional array index.
-// Used for generate block array indexing (e.g., gen_block[0].signal).
-struct HierarchicalPathElement {
-  SymbolRef symbol;                    // The scope/instance symbol
-  std::optional<int32_t> array_index;  // Index for generate arrays
-
-  // Constructor for simple symbol (no index)
-  explicit HierarchicalPathElement(SymbolRef sym)
-      : symbol(sym), array_index(std::nullopt) {
-  }
-
-  // Constructor with index
-  HierarchicalPathElement(SymbolRef sym, int32_t idx)
-      : symbol(sym), array_index(idx) {
-  }
-};
-
-// Format full hierarchical path, handling empty intermediate names.
-// When a path element has an empty name (common for unnamed generate blocks),
-// its array index is appended to the previous element's output.
-// Example: [{gen_block, null}, {"", 0}] -> "gen_block[0]"
-inline auto FormatHierarchicalPath(
-    const std::vector<HierarchicalPathElement>& instance_path,
-    SymbolRef target_symbol) -> std::string {
-  std::string result;
-  for (const auto& elem : instance_path) {
-    if (elem.symbol->name.empty()) {
-      // Empty name: append index directly (no dot separator)
-      if (elem.array_index) {
-        result += fmt::format("[{}]", *elem.array_index);
-      }
-    } else {
-      // Non-empty name: add dot separator if needed
-      if (!result.empty()) {
-        result += ".";
-      }
-      result += elem.symbol->name;
-      if (elem.array_index) {
-        result += fmt::format("[{}]", *elem.array_index);
-      }
-    }
-  }
-  if (!result.empty()) {
-    result += ".";
-  }
-  result += target_symbol->name;
-  return result;
-}
 
 // Represents the target of an assignment:
 // - Local variable (symbol only)

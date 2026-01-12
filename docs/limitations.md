@@ -86,10 +86,30 @@ Supported:
 - Conditional generate (`if-generate`)
 - Loop generate (`for-generate` with `genvar`)
 - Case generate (`case-generate`)
+- Hierarchical references through generate blocks (e.g., `gen_block[0].signal`)
 
-Not yet supported:
+### Nested Generate Limitations
 
-- Hierarchical references through generate block names (e.g., `gen_block.signal`)
+Nested generate blocks (generate blocks inside for-generate loops) are supported with some limitations:
+
+- **Variables are flattened**: Variables declared in nested generate blocks are collected but the nested block structure is not preserved in the emitted C++ structs. This means all variables inside a for-generate loop are accessed through the array element, regardless of nesting depth.
+
+- **Processes work correctly**: Initial and always blocks inside nested generates execute correctly - the flattening only affects struct layout, not behavior.
+
+- **Workaround in place**: The current implementation uses `ProcessNestedGenerateMembers` to extract processes from nested blocks without creating duplicate struct definitions. This is a workaround to avoid C++ compilation errors from redefined nested structs.
+
+Example that works:
+
+```systemverilog
+for (genvar i = 0; i < 2; i++) begin : gen_loop
+  int counter;  // Accessible as gen_loop[i].counter
+  if (i == 0) begin : inner
+    int value;  // Flattened, may not be directly accessible by nested path
+  end
+end
+```
+
+Future work: Proper nested struct emission to support full hierarchical paths through multiple levels of generate blocks.
 
 ## Subroutines (Tasks and Functions)
 
