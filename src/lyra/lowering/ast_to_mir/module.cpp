@@ -125,6 +125,34 @@ auto CreateImplicitAlwaysComb(
   return process;
 }
 
+// Collect variable declarations from a scope (generate block).
+// Returns the list of ModuleVariables found.
+auto CollectScopeVariables(const slang::ast::Scope& scope)
+    -> std::vector<mir::ModuleVariable> {
+  using SK = slang::ast::SymbolKind;
+  std::vector<mir::ModuleVariable> variables;
+
+  for (const auto& member : scope.members()) {
+    if (member.kind == SK::Variable) {
+      const auto& var = member.as<slang::ast::VariableSymbol>();
+      slang::SourceRange source_range(var.location, var.location);
+      auto type_result = LowerType(var.getType(), source_range);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
+      }
+      mir::ModuleVariable mod_var{
+          .variable = common::Variable{.symbol = &var, .type = *type_result},
+          .initializer = nullptr};
+      if (const auto* init = var.getInitializer()) {
+        mod_var.initializer = LowerExpression(*init);
+      }
+      variables.push_back(std::move(mod_var));
+    }
+  }
+
+  return variables;
+}
+
 // Process a single module member symbol and add it to the MIR module.
 // Called for direct module members and recursively for generate block contents.
 void ProcessModuleMember(
@@ -274,7 +302,8 @@ void ProcessModuleMember(
           auto signal_expr = LowerExpression(*expr);
           const auto& port_sym = conn->port.as<slang::ast::PortSymbol>();
           mir::AssignmentTarget target(
-              port_sym.internalSymbol, {submod.instance_symbol});
+              port_sym.internalSymbol,
+              {mir::HierarchicalPathElement{submod.instance_symbol}});
           auto driver_stmt = std::make_unique<mir::AssignStatement>(
               std::move(target), std::move(signal_expr));
           auto process = CreateImplicitAlwaysComb(
@@ -382,29 +411,69 @@ void ProcessModuleMember(
     }
 
     case SK::GenerateBlock: {
-      const auto& gen_block = symbol.as<slang::ast::GenerateBlockSymbol>();
+      const auto& gen_block_sym = symbol.as<slang::ast::GenerateBlockSymbol>();
       // Skip uninstantiated blocks (slang marks these when condition is false)
-      if (gen_block.isUninstantiated) {
+      if (gen_block_sym.isUninstantiated) {
         break;
       }
-      // Recursively process members of the generate block
-      for (const auto& member : gen_block.members()) {
-        ProcessModuleMember(
-            member, module, port_symbols, port_driver_counter,
-            cont_assign_counter, process_counters);
+
+      // Named generate blocks (if-generate/case-generate) create a scope
+      // that can be referenced hierarchically (e.g., enabled.value)
+      if (!gen_block_sym.name.empty()) {
+        mir::GenerateBlock gen_block;
+        gen_block.name = std::string(gen_block_sym.name);
+        gen_block.symbol = &gen_block_sym;
+        gen_block.variables = CollectScopeVariables(gen_block_sym);
+
+        // Process non-variable members (processes, functions) normally
+        // TODO(hankhsu): Handle nested generate blocks
+        for (const auto& member : gen_block_sym.members()) {
+          if (member.kind != SK::Variable) {
+            ProcessModuleMember(
+                member, module, port_symbols, port_driver_counter,
+                cont_assign_counter, process_counters);
+          }
+        }
+
+        module.generate_blocks.push_back(std::move(gen_block));
+      } else {
+        // Unnamed generate block - just process members (flatten)
+        for (const auto& member : gen_block_sym.members()) {
+          ProcessModuleMember(
+              member, module, port_symbols, port_driver_counter,
+              cont_assign_counter, process_counters);
+        }
       }
       break;
     }
 
     case SK::GenerateBlockArray: {
       const auto& gen_array = symbol.as<slang::ast::GenerateBlockArraySymbol>();
+
+      mir::GenerateBlockArray gen_block;
+      gen_block.name = std::string(gen_array.name);
+      gen_block.size = gen_array.entries.size();
+      gen_block.symbol = &gen_array;
+
+      // Collect variables from first entry for struct definition
+      // (all entries have same structure, just different symbol addresses)
+      // TODO(hankhsu): Handle nested generate blocks, functions, etc.
+      if (!gen_array.entries.empty()) {
+        gen_block.variables = CollectScopeVariables(*gen_array.entries[0]);
+      }
+
+      // Process non-variable members from all entries
       for (const auto* entry : gen_array.entries) {
         for (const auto& member : entry->members()) {
-          ProcessModuleMember(
-              member, module, port_symbols, port_driver_counter,
-              cont_assign_counter, process_counters);
+          if (member.kind != SK::Variable) {
+            ProcessModuleMember(
+                member, module, port_symbols, port_driver_counter,
+                cont_assign_counter, process_counters);
+          }
         }
       }
+
+      module.generate_block_arrays.push_back(std::move(gen_block));
       break;
     }
 

@@ -294,10 +294,59 @@ struct FieldPathElement {
   }
 };
 
+// Represents one step in a hierarchical path with optional array index.
+// Used for generate block array indexing (e.g., gen_block[0].signal).
+struct HierarchicalPathElement {
+  SymbolRef symbol;                    // The scope/instance symbol
+  std::optional<int32_t> array_index;  // Index for generate arrays
+
+  // Constructor for simple symbol (no index)
+  explicit HierarchicalPathElement(SymbolRef sym)
+      : symbol(sym), array_index(std::nullopt) {
+  }
+
+  // Constructor with index
+  HierarchicalPathElement(SymbolRef sym, int32_t idx)
+      : symbol(sym), array_index(idx) {
+  }
+};
+
+// Format full hierarchical path, handling empty intermediate names.
+// When a path element has an empty name (common for unnamed generate blocks),
+// its array index is appended to the previous element's output.
+// Example: [{gen_block, null}, {"", 0}] -> "gen_block[0]"
+inline auto FormatHierarchicalPath(
+    const std::vector<HierarchicalPathElement>& instance_path,
+    SymbolRef target_symbol) -> std::string {
+  std::string result;
+  for (const auto& elem : instance_path) {
+    if (elem.symbol->name.empty()) {
+      // Empty name: append index directly (no dot separator)
+      if (elem.array_index) {
+        result += fmt::format("[{}]", *elem.array_index);
+      }
+    } else {
+      // Non-empty name: add dot separator if needed
+      if (!result.empty()) {
+        result += ".";
+      }
+      result += elem.symbol->name;
+      if (elem.array_index) {
+        result += fmt::format("[{}]", *elem.array_index);
+      }
+    }
+  }
+  if (!result.empty()) {
+    result += ".";
+  }
+  result += target_symbol->name;
+  return result;
+}
+
 // Represents the target of an assignment:
 // - Local variable (symbol only)
 // - Array element (symbol + indices for multi-dim packed arrays)
-// - Hierarchical reference (path like "child.port")
+// - Hierarchical reference (path like "child.port" or "gen_block[0].signal")
 // - Struct/union field (symbol + field_path for nested access)
 struct AssignmentTarget {
   SymbolRef symbol;  // The base variable (nullptr for hierarchical)
@@ -307,7 +356,7 @@ struct AssignmentTarget {
 
   // For hierarchical targets
   SymbolRef target_symbol{nullptr};
-  std::vector<SymbolRef> instance_path;
+  std::vector<HierarchicalPathElement> instance_path;
 
   // For struct/union field assignment (supports nested: s.inner.x = value)
   std::vector<FieldPathElement> field_path;  // Empty = not a field assignment
@@ -342,7 +391,8 @@ struct AssignmentTarget {
   }
 
   // Constructor for hierarchical reference assignment
-  AssignmentTarget(SymbolRef target, std::vector<SymbolRef> instances)
+  AssignmentTarget(
+      SymbolRef target, std::vector<HierarchicalPathElement> instances)
       : symbol(nullptr),
         indices(),
         target_symbol(target),
@@ -385,7 +435,7 @@ struct AssignmentTarget {
 
   [[nodiscard]] auto ToString() const -> std::string {
     if (IsHierarchical()) {
-      return common::FormatHierarchicalPath(instance_path, target_symbol);
+      return FormatHierarchicalPath(instance_path, target_symbol);
     }
     if (IsStructFieldAssignment()) {
       std::string result = std::string(symbol->name);
@@ -611,24 +661,26 @@ class IndexedRangeSelectExpression : public Expression {
   }
 };
 
-// Represents a general hierarchical reference: path.to.signal
-// Can be used as both RHS (reading) and LHS (writing via AssignmentTarget)
+// Represents a general hierarchical reference: path.to.signal or
+// gen_block[0].signal Can be used as both RHS (reading) and LHS (writing via
+// AssignmentTarget)
 class HierarchicalReferenceExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kHierarchicalReference;
 
-  SymbolRef target_symbol;               // Target variable symbol
-  std::vector<SymbolRef> instance_path;  // Instance traversal path
+  SymbolRef target_symbol;                             // Target variable symbol
+  std::vector<HierarchicalPathElement> instance_path;  // Instance traversal
 
   HierarchicalReferenceExpression(
-      SymbolRef target, std::vector<SymbolRef> instances, Type type)
+      SymbolRef target, std::vector<HierarchicalPathElement> instances,
+      Type type)
       : Expression(kKindValue, std::move(type)),
         target_symbol(target),
         instance_path(std::move(instances)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return common::FormatHierarchicalPath(instance_path, target_symbol);
+    return FormatHierarchicalPath(instance_path, target_symbol);
   }
 
   void Accept(MirVisitor& visitor) const override {

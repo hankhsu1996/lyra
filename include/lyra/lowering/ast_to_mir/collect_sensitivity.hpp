@@ -87,7 +87,14 @@ class SensitivityCollector : public mir::MirVisitor {
 
   void Visit(const mir::HierarchicalReferenceExpression& expression) override {
     // Add hierarchical reference with instance path for sensitivity tracking
-    items_.push_back({expression.target_symbol, expression.instance_path});
+    // Extract just the symbols from the path (indices not needed for
+    // sensitivity)
+    std::vector<SymbolRef> path;
+    path.reserve(expression.instance_path.size());
+    for (const auto& elem : expression.instance_path) {
+      path.push_back(elem.symbol);
+    }
+    items_.push_back({expression.target_symbol, std::move(path)});
   }
 
   void Visit(const mir::ConcatenationExpression& expression) override {

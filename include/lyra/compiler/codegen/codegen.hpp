@@ -159,6 +159,13 @@ class Codegen {
   void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
+  void EmitGenerateBlockStruct(
+      const std::string& name,
+      const std::vector<mir::ModuleVariable>& variables);
+  void EmitGenerateBlockArrays(
+      const std::vector<mir::GenerateBlockArray>& generate_block_arrays);
+  void EmitGenerateBlocks(
+      const std::vector<mir::GenerateBlock>& generate_blocks);
   void EmitProcess(const mir::Process& process);
   void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);
@@ -184,7 +191,7 @@ class Codegen {
       const mir::Expression& start_expr, int32_t lower_bound,
       int32_t width_offset);
   void EmitHierarchicalPath(
-      const std::vector<mir::SymbolRef>& instance_path,
+      const std::vector<mir::HierarchicalPathElement>& instance_path,
       mir::SymbolRef target_symbol);
   void EmitHierarchicalPath(const std::vector<std::string>& path);
   void EmitMethodCall(const mir::MethodCallExpression& mc);

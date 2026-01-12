@@ -463,3 +463,57 @@ cases:
       endmodule
     expect:
       output: "result=21\n"
+
+  - name: for_generate_hierarchical_ref
+    description: Hierarchical reference to variable inside for-generate block
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 2; i = i + 1) begin : gen_block
+          int counter;
+        end
+        initial begin
+          gen_block[0].counter = 10;
+          gen_block[1].counter = 20;
+          $display("gen_block[0].counter = %0d", gen_block[0].counter);
+          $display("gen_block[1].counter = %0d", gen_block[1].counter);
+        end
+      endmodule
+    expect:
+      output: "gen_block[0].counter = 10\ngen_block[1].counter = 20\n"
+
+  - name: for_generate_hierarchical_ref_multiple_vars
+    description: Hierarchical reference to multiple variables inside for-generate
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 3; i = i + 1) begin : blk
+          int x;
+          int y;
+        end
+        initial begin
+          blk[0].x = 1; blk[0].y = 2;
+          blk[1].x = 10; blk[1].y = 20;
+          blk[2].x = 100; blk[2].y = 200;
+          $display("%0d %0d %0d %0d %0d %0d",
+            blk[0].x, blk[0].y, blk[1].x, blk[1].y, blk[2].x, blk[2].y);
+        end
+      endmodule
+    expect:
+      output: "1 2 10 20 100 200\n"
+
+  - name: if_generate_hierarchical_ref
+    description: Hierarchical reference to variable inside if-generate block
+    sv: |
+      module Test;
+        parameter bit ENABLE = 1;
+        if (ENABLE) begin : enabled
+          int value;
+        end
+        initial begin
+          enabled.value = 42;
+          $display("enabled.value = %0d", enabled.value);
+        end
+      endmodule
+    expect:
+      output: "enabled.value = 42\n"

@@ -463,7 +463,11 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  // Member variables
+  // Generate block struct types and members
+  EmitGenerateBlockArrays(module.generate_block_arrays);
+  EmitGenerateBlocks(module.generate_blocks);
+
+  // Regular member variables (non-generate-block)
   EmitVariables(module.variables);
 
   // Constructor param members (non-template types: string, unpacked struct)
@@ -633,6 +637,53 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
       out_ << "{}";
     }
     out_ << ";\n";
+  }
+}
+
+void Codegen::EmitGenerateBlockStruct(
+    const std::string& name,
+    const std::vector<mir::ModuleVariable>& variables) {
+  std::string struct_name = name + "_s";
+  Line("struct " + struct_name + " {");
+  indent_++;
+
+  for (const auto& mod_var : variables) {
+    std::string type_str = ToCppType(mod_var.variable.type);
+    Indent();
+    out_ << type_str << " " << mod_var.variable.symbol->name;
+    if (mod_var.initializer) {
+      out_ << " = ";
+      EmitExpression(*mod_var.initializer);
+    } else {
+      out_ << "{}";
+    }
+    out_ << ";\n";
+  }
+
+  indent_--;
+  Line("};");
+}
+
+void Codegen::EmitGenerateBlockArrays(
+    const std::vector<mir::GenerateBlockArray>& generate_block_arrays) {
+  for (const auto& gen_block : generate_block_arrays) {
+    EmitGenerateBlockStruct(gen_block.name, gen_block.variables);
+
+    // Emit array member
+    Indent();
+    out_ << "std::array<" << gen_block.name << "_s, " << gen_block.size << "> "
+         << gen_block.name << "_{};\n";
+  }
+}
+
+void Codegen::EmitGenerateBlocks(
+    const std::vector<mir::GenerateBlock>& generate_blocks) {
+  for (const auto& gen_block : generate_blocks) {
+    EmitGenerateBlockStruct(gen_block.name, gen_block.variables);
+
+    // Emit single instance member (not an array)
+    Indent();
+    out_ << gen_block.name << "_s " << gen_block.name << "_{};\n";
   }
 }
 

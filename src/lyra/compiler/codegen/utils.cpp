@@ -235,12 +235,26 @@ void Codegen::EmitSliceShift(
 }
 
 void Codegen::EmitHierarchicalPath(
-    const std::vector<mir::SymbolRef>& instance_path,
+    const std::vector<mir::HierarchicalPathElement>& instance_path,
     mir::SymbolRef target_symbol) {
-  // Emit hierarchical path: [child_sym], value_sym -> child_.value
-  // Instance names get _ suffix, target variable does not
-  for (const auto& inst_sym : instance_path) {
-    out_ << Escape(inst_sym->name) << "_.";
+  // Emit hierarchical path: gen_block[0].signal -> gen_block_[0].signal
+  // Instance names get _ suffix, target variable does not.
+  //
+  // Generate blocks have two path elements: the array (name="gen_block") and
+  // the block instance (name="", index=0). We emit:
+  // - name_ for non-empty symbol names (underscore suffix)
+  // - [index] for array indices
+  // - single dot before target
+  for (const auto& elem : instance_path) {
+    if (!elem.symbol->name.empty()) {
+      out_ << Escape(elem.symbol->name) << "_";
+    }
+    if (elem.array_index) {
+      out_ << "[" << *elem.array_index << "]";
+    }
+  }
+  if (!instance_path.empty()) {
+    out_ << ".";
   }
   out_ << Escape(target_symbol->name);
 }

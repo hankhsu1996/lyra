@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -340,10 +341,15 @@ auto LowerExpression(const slang::ast::Expression& expression)
       // Target symbol
       mir::SymbolRef target_symbol = &hier_expr.symbol;
 
-      // Instance symbols (all but last element in path)
-      std::vector<mir::SymbolRef> instance_path;
+      // Instance path with array indices (all but last element in path)
+      std::vector<mir::HierarchicalPathElement> instance_path;
       for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
-        instance_path.push_back(hier_expr.ref.path[i].symbol);
+        const auto& elem = hier_expr.ref.path[i];
+        if (const auto* idx = std::get_if<int32_t>(&elem.selector)) {
+          instance_path.emplace_back(elem.symbol, *idx);
+        } else {
+          instance_path.emplace_back(elem.symbol);
+        }
       }
 
       // Get type from the expression
