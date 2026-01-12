@@ -1,6 +1,12 @@
 #include "tests/framework/yaml_loader.hpp"
 
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 #include <yaml-cpp/yaml.h>
+
+#include "tests/framework/test_case.hpp"
 
 namespace lyra::test {
 
@@ -45,8 +51,13 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       if (expect["variables"]) {
         for (const auto& pair : expect["variables"]) {
           auto var_name = pair.first.as<std::string>();
-          auto value = pair.second.as<int64_t>();
-          tc.expected_values[var_name] = value;
+
+          // Try integer first, fall back to double
+          try {
+            tc.expected_values[var_name] = pair.second.as<int64_t>();
+          } catch (const YAML::BadConversion&) {
+            tc.expected_values[var_name] = pair.second.as<double>();
+          }
         }
       }
 
