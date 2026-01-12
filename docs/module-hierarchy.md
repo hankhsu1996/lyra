@@ -2,7 +2,7 @@
 
 How Lyra handles hierarchical module instantiation and port connections.
 
-Key design: **Transform once at AST→MIR, simplify downstream stages**.
+Key design: **Transform once at AST->MIR, simplify downstream stages**.
 
 ## Port Connections
 
@@ -10,7 +10,7 @@ Key design: **Transform once at AST→MIR, simplify downstream stages**.
 
 Both backends use **driver processes** for input port connections.
 
-**MIR Transformation**: When AST→MIR encounters `Child c(.a(x))`:
+**MIR Transformation**: When AST->MIR encounters `Child c(.a(x))`:
 
 1. Creates `AssignmentStatement` with hierarchical target: `child.a = x`
 2. Wraps it in an implicit `always_comb` process with sensitivity to `x`
@@ -48,7 +48,7 @@ class Parent {
 
 Backends differ for output ports due to platform constraints.
 
-**MIR Transformation**: When AST→MIR encounters `Child c(.out(result))`:
+**MIR Transformation**: When AST->MIR encounters `Child c(.out(result))`:
 
 1. Slang represents this as `Assignment(result = internal_out)`
 2. MIR extracts and stores `OutputBinding{port_name: "out", signal: result}`
@@ -74,7 +74,7 @@ class Parent {
 };
 ```
 
-Child writes to `out_` → goes directly to `Parent::result` (C++ reference semantics).
+Child writes to `out_` -> goes directly to `Parent::result` (C++ reference semantics).
 
 **Interpreter**:
 
@@ -87,9 +87,9 @@ Child writes to `out_` → goes directly to `Parent::result` (C++ reference sema
 2. When child writes to output port:
    ```
    store_variable(out_symbol, value)
-     → ResolveBinding(out_symbol)
-     → returns (result_symbol, parent_instance)
-     → parent_instance->Write(result_symbol, value)
+     -> ResolveBinding(out_symbol)
+     -> returns (result_symbol, parent_instance)
+     -> parent_instance->Write(result_symbol, value)
    ```
 
 **Why the difference?** C++ reference semantics bind at compile time. The interpreter cannot replicate this—it must resolve bindings at runtime. This is a platform constraint, not an optimization choice.
@@ -220,7 +220,7 @@ Each module instance has a `HierarchyContext` for port binding resolution:
 struct HierarchyContext {
   string hierarchy_path;  // "top.counter1" for debugging
 
-  // Output port bindings: port symbol → (parent_symbol, parent_instance)
+  // Output port bindings: port symbol -> (parent_symbol, parent_instance)
   unordered_map<SymbolRef, PortBinding> port_bindings;
 
   // Child instances for hierarchical access
@@ -244,23 +244,23 @@ During elaboration (`SimulationRunner::ElaborateSubmodules`):
 
 ### Binding Flattening
 
-Bindings are flattened at elaboration. For `Top → Middle → Inner`:
+Bindings are flattened at elaboration. For `Top -> Middle -> Inner`:
 
 ```systemverilog
 module Inner(output int out);
 module Middle(output int out);
-  Inner i(.out(out));  // Inner.out → Middle.out
+  Inner i(.out(out));  // Inner.out -> Middle.out
 endmodule
 module Top;
   int result;
-  Middle m(.out(result));  // Middle.out → Top.result
+  Middle m(.out(result));  // Middle.out -> Top.result
 endmodule
 ```
 
 At elaboration:
 
-- Middle's binding: `out → (result, Top)`
-- Inner's binding: `out → (result, Top)` (flattened, not `out → Middle`)
+- Middle's binding: `out -> (result, Top)`
+- Inner's binding: `out -> (result, Top)` (flattened, not `out -> Middle`)
 
 This avoids chained lookups—Inner writes directly to Top's storage.
 

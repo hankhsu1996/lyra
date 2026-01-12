@@ -88,9 +88,9 @@ auto double(int x) -> int { ... }  // Invalid: double is a keyword
 
 ### Convention
 
-Escape by appending underscore: `double` → `double_`
+Escape by appending underscore: `double` -> `double_`
 
-This follows Google Protocol Buffers' convention for reserved keywords (e.g., `false` → `false_()`). It's also consistent with Lyra's existing use of underscore suffix for output/inout port reference members.
+This follows Google Protocol Buffers' convention for reserved keywords (e.g., `false` -> `false_()`). It's also consistent with Lyra's existing use of underscore suffix for output/inout port reference members.
 
 ### Collision Resolution
 
