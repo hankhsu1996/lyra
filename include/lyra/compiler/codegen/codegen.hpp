@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -242,6 +243,10 @@ class Codegen {
   // packages.hpp)
   bool skip_sdk_aliases_ = false;
 
+  // Maps C++ keywords to escaped names for collision-free codegen.
+  // Built per-module/package before emission.
+  std::unordered_map<std::string, std::string> escape_map_;
+
   // Type conversion helpers (record usage in used_type_aliases_)
   auto ToCppType(const common::Type& type) -> std::string;
   auto ToCppRawType(const common::Type& type)
@@ -250,6 +255,19 @@ class Codegen {
   static auto IsSigned(const common::Type& type) -> bool;
   void EmitTypeAliases();
   void EmitTimescaleConstants(const mir::Module& module);
+
+  // Build escape map for all identifiers in a module/package.
+  // Maps C++ keywords to escaped names, handling collisions by trying
+  // alternative suffixes (e.g., double_ -> double__ -> double_0_).
+  void BuildEscapeMap(const mir::Module& module);
+  void BuildEscapeMap(const mir::Package& package);
+
+  // Get escaped identifier name. Returns original if not a C++ keyword.
+  [[nodiscard]] auto Escape(std::string_view name) const -> std::string;
+
+  // Escape qualified names like "MyPkg::double" using the collision-aware map.
+  [[nodiscard]] auto EscapeQualified(std::string_view qualified_name) const
+      -> std::string;
 
   void Indent();
   void Line(const std::string& text);
