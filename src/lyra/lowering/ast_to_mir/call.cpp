@@ -190,6 +190,56 @@ auto LowerCall(const slang::ast::CallExpression& call)
             return_type, std::move(receiver), std::string(subroutine_name));
       }
     }
+
+    // Handle queue built-in methods
+    if (first_arg.type->kind == slang::ast::SymbolKind::QueueType) {
+      const auto* method_info = common::FindBuiltinMethod(
+          common::BuiltinTypeKind::kQueue, subroutine_name);
+      if (method_info != nullptr) {
+        auto receiver = LowerExpression(first_arg);
+
+        // Determine return type based on method
+        // For SSA semantics: mutating methods return the modified receiver
+        const auto& queue_ast_type =
+            first_arg.type->as<slang::ast::QueueType>();
+        auto queue_type_result =
+            LowerType(*first_arg.type, expression.sourceRange);
+        if (!queue_type_result) {
+          throw DiagnosticException(queue_type_result.error());
+        }
+
+        common::Type return_type = common::Type::Void();
+        if (method_info->return_type == common::BuiltinMethodReturnType::kInt) {
+          return_type = common::Type::Int();
+        } else if (
+            method_info->return_type ==
+            common::BuiltinMethodReturnType::kElement) {
+          // pop_front/pop_back return the element type
+          auto elem_result =
+              LowerType(queue_ast_type.elementType, expression.sourceRange);
+          if (!elem_result) {
+            throw DiagnosticException(elem_result.error());
+          }
+          return_type = *elem_result;
+        } else if (
+            method_info->return_type ==
+            common::BuiltinMethodReturnType::kVoid) {
+          // SSA: mutating methods (push_back, push_front, insert, delete)
+          // return the modified receiver (queue type)
+          return_type = *queue_type_result;
+        }
+
+        // Collect method arguments (skip first arg which is receiver)
+        std::vector<std::unique_ptr<mir::Expression>> args;
+        for (size_t i = 1; i < call.arguments().size(); ++i) {
+          args.push_back(LowerExpression(*call.arguments()[i]));
+        }
+
+        return std::make_unique<mir::MethodCallExpression>(
+            return_type, std::move(receiver), std::string(subroutine_name),
+            std::move(args));
+      }
+    }
   }
 
   if (call.isSystemCall()) {

@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <cstddef>
+#include <string>
+#include <unordered_set>
 
 #include "lyra/common/literal.hpp"
 #include "lyra/common/type.hpp"
@@ -12,6 +14,7 @@
 #include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/lowering/mir_to_lir/statement/internal.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -113,8 +116,37 @@ auto LowerStatement(
       // Use assertion for internal consistency check
       assert(expression_statement.expression);
 
+      const auto& expr = *expression_statement.expression;
+
+      // Handle mutating method calls on variables (SSA style):
+      // q.push_back(x) should store the result back to q
+      if (expr.kind == mir::Expression::Kind::kMethodCall) {
+        const auto& method_call = mir::As<mir::MethodCallExpression>(expr);
+        const auto& receiver = *method_call.receiver;
+
+        // Check if this is a mutating method that returns the modified
+        // receiver. Note: pop_back/pop_front return the element, not the
+        // receiver, so they are handled separately in assignment lowering.
+        static const std::unordered_set<std::string> kMutatingMethods = {
+            "push_back", "push_front", "insert", "delete"};
+
+        bool is_mutating = kMutatingMethods.contains(method_call.method_name);
+
+        if (is_mutating &&
+            receiver.kind == mir::Expression::Kind::kIdentifier) {
+          const auto& ident = mir::As<mir::IdentifierExpression>(receiver);
+          // Lower the method call
+          auto result = LowerExpression(expr, builder);
+          // Store result back to the receiver variable (SSA writeback)
+          auto store_instr =
+              Instruction::StoreVariable(ident.symbol, result, false);
+          builder.AddInstruction(std::move(store_instr));
+          break;
+        }
+      }
+
       // Lower the expression, which may produce instructions
-      LowerExpression(*expression_statement.expression, builder);
+      LowerExpression(expr, builder);
       break;
     }
 

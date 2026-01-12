@@ -10,23 +10,28 @@ namespace lyra::common {
 /// Maps to Type::Kind but only for types with built-in methods
 enum class BuiltinTypeKind : uint8_t {
   kDynamicArray,
+  kQueue,
   kEnum,
   kString,
-  // Future: kQueue, kAssocArray
+  // Future: kAssocArray
 };
 
 /// Return type for built-in methods
 enum class BuiltinMethodReturnType : uint8_t {
   kVoid,
-  kInt,     // 32-bit signed integer
-  kString,  // string type
-  kSelf,    // Same type as receiver (for enum next/prev)
+  kInt,      // 32-bit signed integer
+  kString,   // string type
+  kSelf,     // Same type as receiver (for enum next/prev)
+  kElement,  // Element type of container (for queue pop methods)
 };
 
 /// Category for grouping related methods
 enum class BuiltinMethodCategory : uint8_t {
   kArrayQuery,   // size()
   kArrayMutate,  // delete()
+  kQueuePush,    // push_front(), push_back()
+  kQueuePop,     // pop_front(), pop_back() - returns element
+  kQueueInsert,  // insert(index, item)
   kEnumNext,     // next()
   kEnumPrev,     // prev()
   kEnumName,     // name()
@@ -64,6 +69,71 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .min_args = 0,
     .max_args = 0,
     .cpp_expr = ".clear()",
+  },
+
+  // Queue methods
+  {
+    .name = "size",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kArrayQuery,
+    .return_type = BuiltinMethodReturnType::kInt,
+    .min_args = 0,
+    .max_args = 0,
+    .cpp_expr = ".size()",
+  },
+  {
+    .name = "push_back",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kQueuePush,
+    .return_type = BuiltinMethodReturnType::kVoid,
+    .min_args = 1,
+    .max_args = 1,
+    .cpp_expr = "",  // Special handling: needs argument
+  },
+  {
+    .name = "push_front",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kQueuePush,
+    .return_type = BuiltinMethodReturnType::kVoid,
+    .min_args = 1,
+    .max_args = 1,
+    .cpp_expr = "",  // Special handling: needs argument
+  },
+  {
+    .name = "pop_back",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kQueuePop,
+    .return_type = BuiltinMethodReturnType::kElement,
+    .min_args = 0,
+    .max_args = 0,
+    .cpp_expr = "",  // Special handling: removes and returns
+  },
+  {
+    .name = "pop_front",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kQueuePop,
+    .return_type = BuiltinMethodReturnType::kElement,
+    .min_args = 0,
+    .max_args = 0,
+    .cpp_expr = "",  // Special handling: removes and returns
+  },
+  {
+    .name = "insert",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kQueueInsert,
+    .return_type = BuiltinMethodReturnType::kVoid,
+    .min_args = 2,
+    .max_args = 2,
+    .cpp_expr = "",  // Special handling: needs index and item
+  },
+  {
+    .name = "delete",
+    .receiver_type = BuiltinTypeKind::kQueue,
+    .category = BuiltinMethodCategory::kArrayMutate,
+    .return_type = BuiltinMethodReturnType::kVoid,
+    .min_args = 0,
+    .max_args = 1,  // delete() or delete(index)
+    .cpp_expr = "",  // Special handling: two forms
   },
 
   // Enum methods (require special handling for switch generation)

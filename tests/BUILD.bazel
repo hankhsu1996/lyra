@@ -196,6 +196,11 @@ sv_feature_test(
 )
 
 sv_feature_test(
+    name = "datatypes_queues_tests",
+    yaml = "sv_features/datatypes/queues.yaml",
+)
+
+sv_feature_test(
     name = "datatypes_arbitrary_width_tests",
     yaml = "sv_features/datatypes/arbitrary_width.yaml",
 )

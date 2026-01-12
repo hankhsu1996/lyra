@@ -22,6 +22,7 @@ class ConcatenationExpression;
 class ReplicationExpression;
 class NewArrayExpression;
 class UnpackedStructLiteralExpression;
+class ArrayLiteralExpression;
 class AssignmentExpression;
 }  // namespace lyra::mir
 
@@ -82,6 +83,9 @@ auto LowerNewArrayExpression(
     -> lir::TempRef;
 auto LowerUnpackedStructLiteralExpression(
     const mir::UnpackedStructLiteralExpression& lit, LirBuilder& builder)
+    -> lir::TempRef;
+auto LowerArrayLiteralExpression(
+    const mir::ArrayLiteralExpression& lit, LirBuilder& builder)
     -> lir::TempRef;
 
 // Assignment lowering

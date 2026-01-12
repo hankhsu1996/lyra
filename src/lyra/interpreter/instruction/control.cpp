@@ -140,21 +140,87 @@ auto HandleControlFlowOps(
       assert(instr.result_type.has_value());
       assert(!instr.operands.empty());
 
-      // Array methods have empty enum_members
+      // Array/queue methods have empty enum_members
       if (instr.enum_members.empty()) {
-        auto receiver = ctx.GetTemp(instr.operands[0]);
+        // SSA-style: mutating methods return the modified receiver as result
+        // This avoids mutation - each operation produces a new value
+        auto receiver = ctx.GetTemp(instr.operands[0]).DeepCopy();
+        auto& arr = receiver.AsArray();
+
+        // Helper to check if bounded queue is full (cannot add more elements)
+        auto is_queue_full = [&]() -> bool {
+          if (instr.result_type->IsQueue()) {
+            const auto& queue_data =
+                std::get<common::QueueData>(instr.result_type->data);
+            if (queue_data.max_bound > 0) {
+              size_t max_size = queue_data.max_bound + 1;
+              return arr.size() >= max_size;
+            }
+          }
+          return false;
+        };
 
         if (instr.method_name == "size") {
-          auto size = static_cast<int32_t>(receiver.AsArray().size());
+          auto size = static_cast<int32_t>(arr.size());
           ctx.WriteTemp(
               instr.result.value(), RuntimeValue::IntegralSigned(size, 32));
         } else if (instr.method_name == "delete") {
-          receiver.AsArray().clear();
-          ctx.WriteTemp(
-              instr.result.value(),
-              RuntimeValue::DefaultValueForType(*instr.result_type));
+          if (instr.operands.size() > 1) {
+            auto index = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+            if (index >= 0 && static_cast<size_t>(index) < arr.size()) {
+              arr.erase(arr.begin() + index);
+            }
+          } else {
+            arr.clear();
+          }
+          // Return modified receiver (SSA style)
+          ctx.WriteTemp(instr.result.value(), std::move(receiver));
+        } else if (instr.method_name == "push_back") {
+          if (!is_queue_full()) {
+            auto item = ctx.GetTemp(instr.operands[1]);
+            arr.push_back(std::move(item));
+          }
+          // Return modified receiver (SSA style)
+          ctx.WriteTemp(instr.result.value(), std::move(receiver));
+        } else if (instr.method_name == "push_front") {
+          if (!is_queue_full()) {
+            auto item = ctx.GetTemp(instr.operands[1]);
+            arr.insert(arr.begin(), std::move(item));
+          }
+          // Return modified receiver (SSA style)
+          ctx.WriteTemp(instr.result.value(), std::move(receiver));
+        } else if (instr.method_name == "pop_back") {
+          if (arr.empty()) {
+            ctx.WriteTemp(
+                instr.result.value(),
+                RuntimeValue::DefaultValueForType(*instr.result_type));
+          } else {
+            auto value = std::move(arr.back());
+            arr.pop_back();
+            ctx.WriteTemp(instr.result.value(), std::move(value));
+          }
+        } else if (instr.method_name == "pop_front") {
+          if (arr.empty()) {
+            ctx.WriteTemp(
+                instr.result.value(),
+                RuntimeValue::DefaultValueForType(*instr.result_type));
+          } else {
+            auto value = std::move(arr.front());
+            arr.erase(arr.begin());
+            ctx.WriteTemp(instr.result.value(), std::move(value));
+          }
+        } else if (instr.method_name == "insert") {
+          if (!is_queue_full()) {
+            auto index = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+            auto item = ctx.GetTemp(instr.operands[2]);
+            if (index >= 0 && static_cast<size_t>(index) <= arr.size()) {
+              arr.insert(arr.begin() + index, std::move(item));
+            }
+          }
+          // Return modified receiver (SSA style)
+          ctx.WriteTemp(instr.result.value(), std::move(receiver));
         } else {
-          assert(false && "unsupported array method call");
+          assert(false && "unsupported array/queue method call");
         }
         return InstructionResult::Continue();
       }

@@ -1,0 +1,417 @@
+feature: datatypes_queues
+description: Queue data type with FIFO/LIFO operations (IEEE 1800-2023 Section 7.10)
+
+cases:
+  - name: declaration_empty
+    description: Empty queue declaration has size 0
+    sv: |
+      module Test;
+        int size;
+        initial begin
+          int q[$];
+          size = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 0
+
+  - name: declaration_bounded
+    description: Bounded queue declaration
+    sv: |
+      module Test;
+        int size;
+        initial begin
+          int q[$:3];
+          size = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 0
+
+  - name: init_literal
+    description: Queue initialized with literal values
+    sv: |
+      module Test;
+        int size;
+        int a;
+        int b;
+        int c;
+        initial begin
+          int q[$] = {10, 20, 30};
+          size = q.size();
+          a = q[0];
+          b = q[1];
+          c = q[2];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 3
+        a: 10
+        b: 20
+        c: 30
+
+  - name: init_empty
+    description: Queue initialized to empty with {}
+    sv: |
+      module Test;
+        int size;
+        initial begin
+          int q[$] = {};
+          size = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        size: 0
+
+  - name: element_read_write
+    description: Basic element access
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int q[$] = {1, 2, 3};
+          a = q[0];
+          q[1] = 99;
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 1
+        b: 99
+
+  - name: size_method
+    description: size() returns current queue size
+    sv: |
+      module Test;
+        int s1;
+        int s2;
+        int s3;
+        initial begin
+          int q[$];
+          s1 = q.size();
+          q.push_back(1);
+          s2 = q.size();
+          q.push_back(2);
+          q.push_back(3);
+          s3 = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        s1: 0
+        s2: 1
+        s3: 3
+
+  - name: push_back
+    description: push_back() adds element at end
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        int size;
+        initial begin
+          int q[$];
+          q.push_back(10);
+          q.push_back(20);
+          q.push_back(30);
+          size = q.size();
+          a = q[0];
+          b = q[1];
+          c = q[2];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 3
+        a: 10
+        b: 20
+        c: 30
+
+  - name: push_front
+    description: push_front() adds element at beginning
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        int size;
+        initial begin
+          int q[$];
+          q.push_front(30);
+          q.push_front(20);
+          q.push_front(10);
+          size = q.size();
+          a = q[0];
+          b = q[1];
+          c = q[2];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 3
+        a: 10
+        b: 20
+        c: 30
+
+  - name: pop_back
+    description: pop_back() removes and returns last element
+    sv: |
+      module Test;
+        int v1;
+        int v2;
+        int size;
+        initial begin
+          int q[$] = {10, 20, 30};
+          v1 = q.pop_back();
+          v2 = q.pop_back();
+          size = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        v1: 30
+        v2: 20
+        size: 1
+
+  - name: pop_front
+    description: pop_front() removes and returns first element
+    sv: |
+      module Test;
+        int v1;
+        int v2;
+        int size;
+        initial begin
+          int q[$] = {10, 20, 30};
+          v1 = q.pop_front();
+          v2 = q.pop_front();
+          size = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        v1: 10
+        v2: 20
+        size: 1
+
+  - name: insert_at_position
+    description: insert() adds element at specified index
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int c;
+        int d;
+        int size;
+        initial begin
+          int q[$] = {10, 30};
+          q.insert(1, 20);
+          size = q.size();
+          a = q[0];
+          b = q[1];
+          c = q[2];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 3
+        a: 10
+        b: 20
+        c: 30
+
+  - name: insert_at_beginning
+    description: insert() at index 0 prepends
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int q[$] = {20};
+          q.insert(0, 10);
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  - name: insert_at_end
+    description: insert() at index size appends
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int q[$] = {10};
+          q.insert(1, 20);
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  - name: delete_all
+    description: delete() clears entire queue
+    sv: |
+      module Test;
+        int sz_before;
+        int sz_after;
+        initial begin
+          int q[$] = {1, 2, 3, 4, 5};
+          sz_before = q.size();
+          q.delete();
+          sz_after = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        sz_before: 5
+        sz_after: 0
+
+  - name: delete_at_index
+    description: delete(index) removes element at position
+    sv: |
+      module Test;
+        int a;
+        int b;
+        int size;
+        initial begin
+          int q[$] = {10, 20, 30};
+          q.delete(1);
+          size = q.size();
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 2
+        a: 10
+        b: 30
+
+  - name: fifo_pattern
+    description: Queue used as FIFO (push_back, pop_front)
+    sv: |
+      module Test;
+        int v1;
+        int v2;
+        int v3;
+        initial begin
+          int q[$];
+          q.push_back(1);
+          q.push_back(2);
+          q.push_back(3);
+          v1 = q.pop_front();
+          v2 = q.pop_front();
+          v3 = q.pop_front();
+        end
+      endmodule
+    expect:
+      variables:
+        v1: 1
+        v2: 2
+        v3: 3
+
+  - name: lifo_pattern
+    description: Queue used as LIFO/stack (push_back, pop_back)
+    sv: |
+      module Test;
+        int v1;
+        int v2;
+        int v3;
+        initial begin
+          int q[$];
+          q.push_back(1);
+          q.push_back(2);
+          q.push_back(3);
+          v1 = q.pop_back();
+          v2 = q.pop_back();
+          v3 = q.pop_back();
+        end
+      endmodule
+    expect:
+      variables:
+        v1: 3
+        v2: 2
+        v3: 1
+
+  - name: bounded_truncation
+    description: Bounded queue truncates when exceeding max size
+    sv: |
+      module Test;
+        int size;
+        int a;
+        int b;
+        initial begin
+          int q[$:1];
+          q.push_back(10);
+          q.push_back(20);
+          q.push_back(30);
+          size = q.size();
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 2
+        a: 10
+        b: 20
+
+  - name: module_level_decl
+    description: Queue declared at module level
+    sv: |
+      module Test;
+        int q[$];
+        int size;
+        int val;
+        initial begin
+          q.push_back(42);
+          size = q.size();
+          val = q[0];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 1
+        val: 42
+
+  - name: loop_with_size
+    description: Iterate queue using size() in loop
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int q[$] = {1, 2, 3, 4, 5};
+          sum = 0;
+          for (int i = 0; i < q.size(); i++) begin
+            sum = sum + q[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 15
+
+  - name: display_output
+    description: Display queue values
+    sv: |
+      module Test;
+        initial begin
+          int q[$] = {100, 200, 300};
+          $display("size=%0d, q[1]=%0d", q.size(), q[1]);
+        end
+      endmodule
+    expect:
+      output: "size=3, q[1]=200\n"

@@ -99,6 +99,16 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       return std::format(
           "std::vector<{}>", ToCppType(*array_data.element_type));
     }
+    case common::Type::Kind::kQueue: {
+      const auto& queue_data = std::get<common::QueueData>(type.data);
+      auto element_type = ToCppType(*queue_data.element_type);
+      if (queue_data.max_bound > 0) {
+        return std::format(
+            "lyra::sdk::BoundedQueue<{}, {}>", element_type,
+            queue_data.max_bound);
+      }
+      return std::format("std::deque<{}>", element_type);
+    }
     case common::Type::Kind::kPackedStruct: {
       // Packed structs are bitvectors - same as kIntegral
       auto data = std::get<common::PackedStructData>(type.data);

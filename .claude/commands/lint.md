@@ -30,13 +30,13 @@ For changed files only (faster):
 
 ```bash
 clang-tidy -p . <changed-cpp-files>              # Few files (~20s each)
-run-clang-tidy -p . -j 20 <changed-cpp-files>    # Many files (parallel)
+run-clang-tidy -p . -j 12 <changed-cpp-files>    # Many files (parallel)
 ```
 
 For all files (thorough):
 
 ```bash
-run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
+run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 12 src/lyra/
 ```
 
 **CRITICAL: Fix ALL clang-tidy warnings, including pre-existing ones.** If a file has warnings - even on lines you didn't change - you MUST fix them. Never dismiss warnings as "pre-existing". Leave files cleaner than you found them.

@@ -164,6 +164,8 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
     type_kind = common::BuiltinTypeKind::kEnum;
   } else if (receiver_type.IsDynamicArray()) {
     type_kind = common::BuiltinTypeKind::kDynamicArray;
+  } else if (receiver_type.IsQueue()) {
+    type_kind = common::BuiltinTypeKind::kQueue;
   } else {
     throw common::InternalError(
         "Codegen::EmitMethodCall",
@@ -195,7 +197,6 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
       EmitEnumNameMethod(mc);
       return;
     case Cat::kArrayQuery:
-    case Cat::kArrayMutate:
       // Use return_type to decide if cast is needed
       if (method_info->return_type == common::BuiltinMethodReturnType::kInt) {
         out_ << "static_cast<Int>(";
@@ -205,6 +206,55 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
         EmitExpression(*mc.receiver, kPrecLowest);
         out_ << method_info->cpp_expr;
       }
+      return;
+    case Cat::kArrayMutate:
+      // For queue delete with optional index
+      if (type_kind == common::BuiltinTypeKind::kQueue) {
+        if (mc.args.empty()) {
+          // delete() - clear all
+          EmitExpression(*mc.receiver, kPrecLowest);
+          out_ << ".clear()";
+        } else {
+          // delete(index) - erase at position
+          EmitExpression(*mc.receiver, kPrecLowest);
+          out_ << ".erase(";
+          EmitExpression(*mc.receiver, kPrecLowest);
+          out_ << ".begin() + ";
+          EmitExpression(*mc.args[0], kPrecLowest);
+          out_ << ")";
+        }
+      } else {
+        // Dynamic array delete - always .clear()
+        EmitExpression(*mc.receiver, kPrecLowest);
+        out_ << method_info->cpp_expr;
+      }
+      return;
+    case Cat::kQueuePush:
+      // push_back(item) or push_front(item)
+      EmitExpression(*mc.receiver, kPrecLowest);
+      out_ << "." << mc.method_name << "(";
+      EmitExpression(*mc.args[0], kPrecLowest);
+      out_ << ")";
+      return;
+    case Cat::kQueuePop:
+      // pop_front() or pop_back() - need to emit a lambda that saves, pops,
+      // returns
+      out_ << "[&]() { auto& _q_ = ";
+      EmitExpression(*mc.receiver, kPrecLowest);
+      out_ << "; auto _v_ = _q_."
+           << (mc.method_name == "pop_front" ? "front" : "back") << "(); _q_."
+           << mc.method_name << "(); return _v_; }()";
+      return;
+    case Cat::kQueueInsert:
+      // insert(index, item)
+      EmitExpression(*mc.receiver, kPrecLowest);
+      out_ << ".insert(";
+      EmitExpression(*mc.receiver, kPrecLowest);
+      out_ << ".begin() + ";
+      EmitExpression(*mc.args[0], kPrecLowest);
+      out_ << ", ";
+      EmitExpression(*mc.args[1], kPrecLowest);
+      out_ << ")";
       return;
   }
 }

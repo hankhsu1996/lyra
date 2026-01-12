@@ -423,17 +423,25 @@ struct Instruction {
         std::move(name), std::move(operands), result, std::move(result_type));
   }
 
-  // Method call instruction (enum methods, future: string/class methods)
-  // For enum methods: receiver is operands[0]
+  // Method call instruction (enum methods, array/queue methods)
+  // operands[0] = receiver, operands[1..] = method arguments
+  // For enum methods: method_step and enum_members are used
+  // For array/queue methods: arguments are in operands[1..]
   static auto MethodCall(
-      std::string method, TempRef receiver, TempRef result,
-      common::Type result_type, int64_t step,
+      std::string method, TempRef receiver, std::vector<Operand> args,
+      TempRef result, common::Type result_type, int64_t step,
       std::vector<EnumMemberInfo> members) -> Instruction {
+    std::vector<Operand> operands;
+    operands.reserve(1 + args.size());
+    operands.push_back(Operand::Temp(receiver));
+    for (auto& arg : args) {
+      operands.push_back(std::move(arg));
+    }
     return Instruction{
         .kind = InstructionKind::kMethodCall,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = {Operand::Temp(receiver)},
+        .operands = std::move(operands),
         .method_name = std::move(method),
         .method_step = step,
         .enum_members = std::move(members)};
@@ -810,17 +818,23 @@ struct Instruction {
         return fmt::format("call  {} {}", system_call_name, args);
       }
 
-      case InstructionKind::kMethodCall:
-        // Show step parameter only for next/prev with non-default step
-        // name() method doesn't take a step parameter
-        if (method_step != 1 && method_name != "name") {
-          return fmt::format(
-              "mcall {}, {}.{}({})", result.value(), operands[0].ToString(),
-              method_name, method_step);
+      case InstructionKind::kMethodCall: {
+        // Build args string from operands[1..]
+        std::string args_str;
+        for (size_t i = 1; i < operands.size(); ++i) {
+          if (i > 1) {
+            args_str += ", ";
+          }
+          args_str += operands[i].ToString();
+        }
+        // For enum next/prev, show step if non-default
+        if (enum_members.empty() && args_str.empty() && method_step != 1) {
+          args_str = std::to_string(method_step);
         }
         return fmt::format(
-            "mcall {}, {}.{}()", result.value(), operands[0].ToString(),
-            method_name);
+            "mcall {}, {}.{}({})", result.value(), operands[0].ToString(),
+            method_name, args_str);
+      }
 
       case InstructionKind::kJump:
         if (operands.size() == 1) {
