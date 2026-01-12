@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <slang/ast/Compilation.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 
@@ -18,6 +19,30 @@
 namespace lyra::lowering::ast_to_mir {
 
 namespace {
+
+// Forward declaration for mutual recursion
+void CollectModulesRecursive(
+    const slang::ast::InstanceSymbol& instance,
+    std::vector<std::unique_ptr<mir::Module>>& modules,
+    std::unordered_set<const slang::ast::InstanceSymbol*>& visited);
+
+// Collect instances from a scope (module body or generate block)
+void CollectInstancesFromScope(
+    const slang::ast::Scope& scope,
+    std::vector<std::unique_ptr<mir::Module>>& modules,
+    std::unordered_set<const slang::ast::InstanceSymbol*>& visited) {
+  for (const auto& member : scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      CollectModulesRecursive(child, modules, visited);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& gen_block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (!gen_block.isUninstantiated) {
+        CollectInstancesFromScope(gen_block, modules, visited);
+      }
+    }
+  }
+}
 
 // Recursively collect all modules in the hierarchy.
 // Uses depth-first traversal: children are collected before parents,
@@ -35,12 +60,8 @@ void CollectModulesRecursive(
   visited.insert(&instance);
 
   // First, recurse into child instances (depth-first)
-  for (const auto& member : instance.body.members()) {
-    if (member.kind == slang::ast::SymbolKind::Instance) {
-      const auto& child = member.as<slang::ast::InstanceSymbol>();
-      CollectModulesRecursive(child, modules, visited);
-    }
-  }
+  // This includes instances inside generate blocks
+  CollectInstancesFromScope(instance.body, modules, visited);
 
   // Then add this module (after all children are processed)
   modules.push_back(LowerModule(instance));

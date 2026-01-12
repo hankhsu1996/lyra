@@ -1,0 +1,184 @@
+feature: statements_generate
+description: Tests conditional generate (if-generate) constructs
+
+cases:
+  - name: if_generate_continuous_assign
+    description: if-generate selecting continuous assignment based on parameter
+    sv: |
+      module Test;
+        parameter int MODE = 1;
+        int a, b, c;
+        if (MODE == 1) begin : gen_add
+          assign c = a + b;
+        end else begin : gen_sub
+          assign c = a - b;
+        end
+        initial begin
+          a = 5; b = 3;
+          #1;
+          $display("c=%0d", c);
+        end
+      endmodule
+    expected_output: "c=8"
+
+  - name: if_generate_always_comb
+    description: if-generate selecting always_comb block
+    sv: |
+      module Test;
+        parameter int MODE = 0;
+        int x, y;
+        if (MODE == 0) begin : gen_double
+          always_comb y = x * 2;
+        end else begin : gen_triple
+          always_comb y = x * 3;
+        end
+        initial begin
+          x = 10;
+          #1;
+          $display("y=%0d", y);
+        end
+      endmodule
+    expected_output: "y=20"
+
+  - name: if_generate_initial
+    description: Initial block inside generate
+    sv: |
+      module Test;
+        parameter int ENABLE = 1;
+        int value = 0;
+        if (ENABLE) begin : gen_init
+          initial begin
+            value = 42;
+          end
+        end
+        initial begin
+          #1;
+          $display("value=%0d", value);
+        end
+      endmodule
+    expected_output: "value=42"
+
+  - name: if_generate_false_branch
+    description: Condition is false, else branch taken
+    sv: |
+      module Test;
+        parameter int USE_ADD = 0;
+        int a, b, result;
+        if (USE_ADD) begin : gen_add
+          assign result = a + b;
+        end else begin : gen_mul
+          assign result = a * b;
+        end
+        initial begin
+          a = 3; b = 4;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expected_output: "result=12"
+
+  - name: if_generate_no_else
+    description: if-generate without else branch (condition false = nothing)
+    sv: |
+      module Test;
+        parameter int ENABLE = 0;
+        int x = 5;
+        if (ENABLE) begin : gen_block
+          initial x = 100;
+        end
+        initial begin
+          #1;
+          $display("x=%0d", x);
+        end
+      endmodule
+    expected_output: "x=5"
+
+  - name: nested_if_generate
+    description: Nested if-generate constructs
+    sv: |
+      module Test;
+        parameter int A = 1;
+        parameter int B = 1;
+        int x, result;
+        if (A) begin : gen_a
+          if (B) begin : gen_b
+            assign result = x + 11;
+          end else begin : gen_not_b
+            assign result = x + 10;
+          end
+        end else begin : gen_not_a
+          assign result = x;
+        end
+        initial begin
+          x = 0;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expected_output: "result=11"
+
+  - name: if_generate_variable
+    description: Variable declared inside generate block
+    sv: |
+      module Test;
+        parameter int USE_INTERNAL = 1;
+        int result = 0;
+        if (USE_INTERNAL) begin : gen_internal
+          int internal_var;
+          initial begin
+            internal_var = 77;
+            result = internal_var;
+          end
+        end
+        initial begin
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expected_output: "result=77"
+
+  - name: if_generate_function
+    description: Function defined inside generate block
+    sv: |
+      module Test;
+        parameter int MODE = 1;
+        int x;
+        if (MODE == 1) begin : gen_func
+          function int multiply_by_two(int val);
+            return val * 2;
+          endfunction
+          initial x = multiply_by_two(21);
+        end
+        initial begin
+          #1;
+          $display("x=%0d", x);
+        end
+      endmodule
+    expected_output: "x=42"
+
+  - name: if_generate_submodule
+    description: Module instance inside generate block
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Multiplier(input int a, input int b, output int prod);
+        always_comb prod = a * b;
+      endmodule
+
+      module Test;
+        parameter int USE_ADDER = 1;
+        int x, y, result;
+        if (USE_ADDER) begin : gen_adder
+          Adder op(.a(x), .b(y), .sum(result));
+        end else begin : gen_mult
+          Multiplier op(.a(x), .b(y), .prod(result));
+        end
+        initial begin
+          x = 3; y = 7;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expected_output: "result=10"

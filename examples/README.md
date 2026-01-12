@@ -2,9 +2,9 @@
 
 Sample Lyra projects demonstrating SystemVerilog simulation.
 
-| Project      | Description                               |
-| ------------ | ----------------------------------------- |
-| `hello/`     | Minimal example with $display             |
+| Project      | Description                                |
+| ------------ | ------------------------------------------ |
+| `hello/`     | Minimal example with $display              |
 | `riscv-cpu/` | Single-cycle RISC-V CPU with test programs |
 
 ## Running

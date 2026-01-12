@@ -408,3 +408,8 @@ sv_feature_test(
     name = "statements_continuous_assign_tests",
     yaml = "sv_features/statements/continuous_assign.yaml",
 )
+
+sv_feature_test(
+    name = "statements_generate_tests",
+    yaml = "sv_features/statements/generate.yaml",
+)
