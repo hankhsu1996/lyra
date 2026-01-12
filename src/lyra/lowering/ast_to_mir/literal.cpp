@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -11,11 +12,14 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
 #include <slang/numeric/SVInt.h>
+#include <slang/text/SourceLocation.h>
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
 #include "lyra/common/wide_bit.hpp"
+#include "lyra/lowering/ast_to_mir/type.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -136,6 +140,60 @@ auto ConstantValueToLiteral(const slang::ConstantValue& cv)
 
   return std::unexpected(
       Diagnostic::Error({}, "unsupported constant value type"));
+}
+
+auto ConstantValueToExpression(
+    const slang::ConstantValue& cv, const slang::ast::Type& type,
+    slang::SourceRange source_range)
+    -> Result<std::unique_ptr<mir::Expression>> {
+  // Scalar types (including packed structs, which slang folds to integers):
+  // delegate to ConstantValueToLiteral
+  if (cv.isInteger() || cv.isReal() || cv.isShortReal() || cv.isString()) {
+    auto literal_result = ConstantValueToLiteral(cv);
+    if (!literal_result) {
+      return std::unexpected(std::move(literal_result.error()));
+    }
+    return std::make_unique<mir::LiteralExpression>(std::move(*literal_result));
+  }
+
+  // Unpacked aggregate (struct or array)
+  if (cv.isUnpacked()) {
+    auto elements = cv.elements();
+    const auto& canonical = type.getCanonicalType();
+
+    // Unpacked struct
+    if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
+      const auto& struct_type = canonical.as<slang::ast::UnpackedStructType>();
+      auto fields = struct_type.fields;
+      std::vector<std::unique_ptr<mir::Expression>> field_exprs;
+      field_exprs.reserve(elements.size());
+
+      for (size_t i = 0; i < elements.size(); ++i) {
+        auto field_result = ConstantValueToExpression(
+            elements[i], fields[i]->getType(), source_range);
+        if (!field_result) {
+          return std::unexpected(std::move(field_result.error()));
+        }
+        field_exprs.push_back(std::move(*field_result));
+      }
+
+      auto type_result = LowerType(type, source_range);
+      if (!type_result) {
+        return std::unexpected(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::UnpackedStructLiteralExpression>(
+          *type_result, std::move(field_exprs));
+    }
+
+    // Unpacked array - not yet supported
+    return std::unexpected(
+        Diagnostic::Error(
+            source_range, "unpacked array constants not yet supported"));
+  }
+
+  return std::unexpected(
+      Diagnostic::Error(source_range, "unsupported constant value type"));
 }
 
 auto ExtractMaskAndValue(

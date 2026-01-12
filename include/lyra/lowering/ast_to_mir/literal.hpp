@@ -1,20 +1,24 @@
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
+#include "lyra/mir/expression.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace slang {
 class SVInt;
 class ConstantValue;
+class SourceRange;
 }  // namespace slang
 
 namespace slang::ast {
 class IntegerLiteral;
 class RealLiteral;
 class StringLiteral;
+class Type;
 class UnbasedUnsizedIntegerLiteral;
 }  // namespace slang::ast
 
@@ -36,8 +40,18 @@ auto LowerLiteral(const slang::ast::UnbasedUnsizedIntegerLiteral& literal)
 
 // Converts a slang ConstantValue to a MIR Literal.
 // Used for elaboration-time constants like parameters.
+// Only handles scalar types (integer, real, string).
 auto ConstantValueToLiteral(const slang::ConstantValue& cv)
     -> Result<common::Literal>;
+
+// Converts a slang ConstantValue to a MIR Expression.
+// Handles both scalar types (via LiteralExpression) and aggregate types
+// (unpacked structs via UnpackedStructLiteralExpression).
+// The type parameter is needed to determine the structure of aggregate values.
+auto ConstantValueToExpression(
+    const slang::ConstantValue& cv, const slang::ast::Type& type,
+    slang::SourceRange source_range)
+    -> Result<std::unique_ptr<mir::Expression>>;
 
 /// Extracts (value, mask) from an SVInt for casez/casex pattern matching.
 /// For casex: both X and Z bits become wildcards (mask bit = 0)

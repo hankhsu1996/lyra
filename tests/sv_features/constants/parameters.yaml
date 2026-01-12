@@ -219,3 +219,88 @@ cases:
     expect:
       variables:
         x: 160
+
+  - name: localparam_unpacked_struct
+    description: Localparam with unpacked struct type
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+
+        localparam my_struct_t X = '{123, 456};
+
+        int result;
+        initial begin
+          result = X.a + X.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 579
+
+  - name: localparam_unpacked_struct_named_fields
+    description: Localparam with unpacked struct using named fields
+    sv: |
+      module Test;
+        typedef struct {
+          int x;
+          int y;
+        } point_t;
+
+        localparam point_t P = '{x: 10, y: 20};
+
+        int result;
+        initial begin
+          result = P.x * P.y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 200
+
+  - name: localparam_unpacked_struct_field_access
+    description: Individual field access on struct localparam
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+          int c;
+        } triple_t;
+
+        localparam triple_t T = '{1, 2, 3};
+
+        int ra, rb, rc;
+        initial begin
+          ra = T.a;
+          rb = T.b;
+          rc = T.c;
+        end
+      endmodule
+    expect:
+      variables:
+        ra: 1
+        rb: 2
+        rc: 3
+
+  - name: localparam_packed_struct
+    description: Localparam with packed struct (should fold to integer)
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] high;
+          logic [7:0] low;
+        } packed_t;
+
+        localparam packed_t P = '{8'hAB, 8'hCD};
+
+        int result;
+        initial begin
+          result = P;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43981

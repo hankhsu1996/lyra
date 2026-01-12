@@ -21,8 +21,6 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/literal.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/lowering/ast_to_mir/assignment.hpp"
 #include "lyra/lowering/ast_to_mir/call.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
@@ -104,17 +102,12 @@ auto LowerExpression(const slang::ast::Expression& expression)
         const auto& param =
             named_value.symbol.as<slang::ast::ParameterSymbol>();
         const auto& cv = param.getValue();
-        auto literal_result = ConstantValueToLiteral(cv);
-        if (!literal_result) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  expression.sourceRange,
-                  fmt::format(
-                      "unsupported parameter '{}': {}", param.name,
-                      literal_result.error().message)));
+        auto expr_result = ConstantValueToExpression(
+            cv, param.getType(), expression.sourceRange);
+        if (!expr_result) {
+          throw DiagnosticException(std::move(expr_result.error()));
         }
-        return std::make_unique<mir::LiteralExpression>(
-            std::move(*literal_result));
+        return std::move(*expr_result);
       }
 
       // Regular variable reference

@@ -77,12 +77,12 @@ auto LowerPackage(const slang::ast::PackageSymbol& pkg_symbol)
 
       // Get the constant value evaluated by Slang
       const auto& cv = param_symbol.getValue();
-      auto literal_result = ConstantValueToLiteral(cv);
-      if (!literal_result) {
-        throw DiagnosticException(std::move(literal_result.error()));
+      auto init_result =
+          ConstantValueToExpression(cv, param_symbol.getType(), source_range);
+      if (!init_result) {
+        throw DiagnosticException(std::move(init_result.error()));
       }
-      auto init_expr =
-          std::make_unique<mir::LiteralExpression>(std::move(*literal_result));
+      auto init_expr = std::move(*init_result);
 
       package->parameters.push_back(
           mir::PackageParameter{
