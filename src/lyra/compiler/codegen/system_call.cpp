@@ -153,9 +153,19 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     // Print prefix (string literal without format specifiers)
     if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      if (syscall.arguments.empty()) {
+        // String-only: emit directly and return
+        Indent();
+        out_ << "std::println(std::cout, \""
+             << common::EscapeForCppString(fmt_info.text) << "\");\n";
+        indent_--;
+        Line("});");
+        return;
+      }
+      // Has args: print prefix, then args with newline
       Indent();
-      out_ << R"(std::print(std::cout, "{}", ")"
-           << common::EscapeForCppString(fmt_info.text) << R"(");)" << "\n";
+      out_ << "std::print(std::cout, \""
+           << common::EscapeForCppString(fmt_info.text) << "\");\n";
     }
 
     // Print arguments with format string
@@ -240,16 +250,23 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     indent_++;
 
     // Generate print statement inside the if block
-    if (!prefix_str.empty()) {
+    if (!prefix_str.empty() && syscall.arguments.empty()) {
+      // String-only: emit directly
       Indent();
-      out_ << R"(std::print(std::cout, "{}", ")"
-           << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
-    }
-    if (!syscall.arguments.empty()) {
-      EmitFormattedPrint(
-          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+      out_ << "std::println(std::cout, \""
+           << common::EscapeForCppString(prefix_str) << "\");\n";
     } else {
-      Line("std::println(std::cout, \"\");");
+      if (!prefix_str.empty()) {
+        Indent();
+        out_ << "std::print(std::cout, \""
+             << common::EscapeForCppString(prefix_str) << "\");\n";
+      }
+      if (!syscall.arguments.empty()) {
+        EmitFormattedPrint(
+            syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+      } else {
+        Line("std::println(std::cout, \"\");");
+      }
     }
 
     // Update previous values
@@ -266,16 +283,23 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     Line("});");  // End lambda and SetMonitor call
 
     // Print immediately on first call (IEEE 1800 §21.2.3)
-    if (!prefix_str.empty()) {
+    if (!prefix_str.empty() && syscall.arguments.empty()) {
+      // String-only: emit directly
       Indent();
-      out_ << R"(std::print(std::cout, "{}", ")"
-           << common::EscapeForCppString(prefix_str) << R"(");)" << "\n";
-    }
-    if (!syscall.arguments.empty()) {
-      EmitFormattedPrint(
-          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+      out_ << "std::println(std::cout, \""
+           << common::EscapeForCppString(prefix_str) << "\");\n";
     } else {
-      Line("std::println(std::cout, \"\");");
+      if (!prefix_str.empty()) {
+        Indent();
+        out_ << "std::print(std::cout, \""
+             << common::EscapeForCppString(prefix_str) << "\");\n";
+      }
+      if (!syscall.arguments.empty()) {
+        EmitFormattedPrint(
+            syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+      } else {
+        Line("std::println(std::cout, \"\");");
+      }
     }
 
     indent_--;
@@ -320,9 +344,17 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     // Print prefix (string literal without format specifiers)
     if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      if (syscall.arguments.empty()) {
+        // String-only: emit directly and return
+        Indent();
+        out_ << print_fn << "(std::cout, \""
+             << common::EscapeForCppString(fmt_info.text) << "\");\n";
+        return;
+      }
+      // Has args: print prefix, then args with newline
       Indent();
-      out_ << R"(std::print(std::cout, "{}", ")"
-           << common::EscapeForCppString(fmt_info.text) << R"(");)" << "\n";
+      out_ << "std::print(std::cout, \""
+           << common::EscapeForCppString(fmt_info.text) << "\");\n";
     }
 
     // Print remaining args with format string

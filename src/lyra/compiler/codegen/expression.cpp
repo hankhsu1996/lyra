@@ -301,6 +301,18 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         // For non-zero-based arrays (e.g., int arr[2:5]), subtract lower_bound
         int32_t lower_bound = select.value->type.GetElementLower();
         EmitExpression(*select.value, kPrecPrimary);
+
+        // For constant integer indices, emit raw literal
+        if (select.selector->kind == mir::Expression::Kind::kLiteral) {
+          const auto& lit = mir::As<mir::LiteralExpression>(*select.selector);
+          if (lit.literal.type.kind == common::Type::Kind::kIntegral) {
+            int64_t index = lit.literal.value.AsInt64() - lower_bound;
+            out_ << "[" << index << "]";
+            break;
+          }
+        }
+
+        // Variable index: use static_cast<size_t>
         out_ << "[static_cast<size_t>(";
         if (lower_bound != 0) {
           // Cast to int to avoid ambiguous operator- with Bit<N>
@@ -503,10 +515,14 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         break;
       }
 
-      // Default conversion
-      out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
-      EmitExpression(*conv.value, kPrecLowest);
-      out_ << ")";
+      // Default conversion - skip if types match
+      if (conv.value->type == conv.target_type) {
+        EmitExpression(*conv.value, parent_prec);
+      } else {
+        out_ << "static_cast<" << ToCppType(conv.target_type) << ">(";
+        EmitExpression(*conv.value, kPrecLowest);
+        out_ << ")";
+      }
       break;
     }
     case mir::Expression::Kind::kSystemCall: {
