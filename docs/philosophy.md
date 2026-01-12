@@ -32,15 +32,25 @@ Reasons:
 
 LLVM IR remains a possible future backend, but does not drive initial architecture.
 
-### Runtime Elaboration
+### Elaboration Models
 
-Hierarchy is constructed at runtime, not compile-time.
+Lyra has two execution paths with different elaboration strategies:
 
+**C++ Codegen Path (Runtime Elaboration):**
+
+- Hierarchy is constructed at C++ runtime
 - All non-type parameters are constructor arguments
 - `generate for/if` becomes constructor logic
-- Instance graph is built procedurally at runtime
+- Variable access: `this->u_child_.value` (member traversal)
 
-Slang still performs legality checks, name resolution, and validation. But Slang does not emit a fully elaborated netlist for codegen.
+**Interpreter Path (Compile-time Elaboration via Slang):**
+
+- Slang elaborates hierarchy at compile time
+- Each variable gets a unique symbol pointer
+- Variable access: flat lookup by symbol (no instance traversal)
+- Symbol pointer IS the address
+
+Slang performs legality checks, name resolution, and validation for both paths. For codegen, Slang does not emit a fully elaborated netlist. For the interpreter, Slang's elaborated symbols are used directly.
 
 ### MIR/LIR Role
 

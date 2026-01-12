@@ -18,9 +18,9 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/common/wide_bit_ops.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/lir/instruction.hpp"
 
@@ -169,7 +169,7 @@ auto FormatMemValue(const RuntimeValue& value, size_t bit_width, bool is_hex)
 /// Handles $readmem* and $writemem* system tasks.
 auto HandleMemIO(
     const lir::Instruction& instr, bool is_read, bool is_hex,
-    SystemCallContext& ctx) -> InstructionResult {
+    InstructionContext& ctx) -> InstructionResult {
   std::string_view task_name = is_read ? "$readmem" : "$writemem";
   if (instr.operands.size() < 2 || instr.operands.size() > 4) {
     throw common::InternalError(
@@ -273,9 +273,9 @@ auto HandleMemIO(
     }
 
     if (info.is_unpacked) {
-      ctx.StoreVariable(instr.operands[1], target_value);
+      ctx.StoreVariable(instr.operands[1], target_value, false);
     } else {
-      ctx.StoreVariable(instr.operands[1], packed_value);
+      ctx.StoreVariable(instr.operands[1], packed_value, false);
     }
     return InstructionResult::Continue();
   };
@@ -314,7 +314,7 @@ auto HandleMemIO(
 
 }  // namespace
 
-auto HandleMemIoCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleMemIoCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   if (instr.system_call_name == "$readmemh" ||
       instr.system_call_name == "$readmemb") {

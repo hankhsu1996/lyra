@@ -21,7 +21,8 @@ auto RunProcess(
     const std::shared_ptr<lir::Process>& process, std::size_t block_index,
     std::size_t instruction_index, SimulationContext& simulation_context,
     ProcessFrame& frame, ProcessEffect& effect,
-    const std::shared_ptr<InstanceContext>& instance_context) -> ProcessResult {
+    const std::shared_ptr<HierarchyContext>& hierarchy_context)
+    -> ProcessResult {
   for (const auto& variable : process->variables) {
     frame.variable_table.InitializeVariable(variable);
   }
@@ -35,7 +36,7 @@ auto RunProcess(
     const auto& block = *(*current_blocks)[block_index];
     auto block_result = RunBlock(
         block, instruction_index, simulation_context, frame, effect,
-        instance_context);
+        hierarchy_context);
 
     switch (block_result.kind) {
       case BasicBlockResult::Kind::kComplete:

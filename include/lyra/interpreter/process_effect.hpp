@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <optional>
 #include <vector>
 
@@ -11,19 +10,15 @@ namespace lyra::interpreter {
 
 using SymbolRef = common::SymbolRef;
 
-// Forward declaration
-struct InstanceContext;
-
-// Tracks a variable modification with its instance (nullptr = global)
-struct ModifiedVariable {
+// Tracks a variable modification (symbol alone identifies the variable in flat
+// storage)
+struct VariableChangeRecord {
   SymbolRef symbol;
-  std::shared_ptr<InstanceContext> instance;  // nullptr for global variables
 };
 
 struct NbaAction {
-  SymbolRef variable;
+  SymbolRef symbol;
   RuntimeValue value;
-  std::shared_ptr<InstanceContext> instance;  // nullptr for global variables
   std::optional<size_t> array_index;  // For element writes: arr[index] <= value
 };
 
@@ -36,10 +31,8 @@ class ProcessEffect {
   ProcessEffect() = default;
 
   // Core effect recording methods
-  void RecordVariableModification(
-      const SymbolRef& symbol,
-      const std::shared_ptr<InstanceContext>& instance = nullptr) {
-    modified_variables_.push_back({.symbol = symbol, .instance = instance});
+  void RecordVariableModification(const SymbolRef& symbol) {
+    modified_variables_.push_back({.symbol = symbol});
   }
 
   void RecordNbaAction(NbaAction action) {
@@ -52,7 +45,7 @@ class ProcessEffect {
 
   // Accessors for simulation runner
   [[nodiscard]] auto GetModifiedVariables() const
-      -> const std::vector<ModifiedVariable>& {
+      -> const std::vector<VariableChangeRecord>& {
     return modified_variables_;
   }
 
@@ -66,7 +59,7 @@ class ProcessEffect {
   }
 
  private:
-  std::vector<ModifiedVariable> modified_variables_;
+  std::vector<VariableChangeRecord> modified_variables_;
   std::vector<NbaAction> nba_actions_;
   std::vector<PostponedAction> postponed_actions_;
 };

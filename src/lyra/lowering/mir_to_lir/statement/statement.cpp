@@ -49,9 +49,10 @@ auto LowerStatement(
       auto result_value = LowerExpression(*expression, builder);
 
       if (target.IsHierarchical()) {
-        // Hierarchical assignment: child.signal = value
-        auto instruction = Instruction::StoreHierarchical(
-            target.instance_path, target.target_symbol, result_value, false);
+        // Hierarchical assignment uses target_symbol directly (flat storage
+        // model)
+        auto instruction = Instruction::StoreVariable(
+            target.target_symbol, result_value, false);
         builder.AddInstruction(std::move(instruction));
         break;
       }

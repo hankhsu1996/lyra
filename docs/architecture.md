@@ -119,6 +119,23 @@ In the interpreter, **Process** and **Function** are distinct execution models r
 
 **C++ analogy**: A Process is analogous to a C++ coroutine (can suspend and resume), while a Function is analogous to a regular C++ function (runs to completion). The `ProcessFrame` is the interpreter's equivalent of a coroutine frame.
 
+### LIR Design Philosophy
+
+LIR is a register-based IR using named temporaries (`%t0`, `%t1`) that maps to LLVM IR's SSA form.
+
+**Two elaboration models:**
+
+| Path                    | Elaboration                    | Variable Access                           |
+| ----------------------- | ------------------------------ | ----------------------------------------- |
+| C++ codegen             | Runtime (C++ builds hierarchy) | `this->u_child_.value` - member traversal |
+| MIR → LIR → Interpreter | Compile-time (slang resolves)  | `$symbol` - flat lookup by unique pointer |
+
+**Design guidance:**
+
+- **Variable access**: follow slang's model - symbol is a unique compile-time resolved address
+- **Operations** (arithmetic, control flow): think RISC-V assembly - register-based, explicit data flow
+- **Method calls on complex types** (arrays, queues, classes): think RISC-V function calls - object pointer as `this`, call instruction for methods
+
 ## Data Flow
 
 1. Source files -> `SlangFrontend` -> AST

@@ -6,8 +6,9 @@
 #include <utility>
 
 #include "lyra/common/system_function.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
 
@@ -90,7 +91,7 @@ auto ExecuteMathBinary(std::string_view name, double a, double b) -> double {
 
 }  // namespace
 
-auto HandleMathCalls(const lir::Instruction& instr, SystemCallContext& ctx)
+auto HandleMathCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   using Category = common::SystemFunctionCategory;
   const auto* func_info = common::FindSystemFunction(instr.system_call_name);

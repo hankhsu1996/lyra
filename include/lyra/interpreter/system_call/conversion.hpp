@@ -8,12 +8,13 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class SystemCallContext;
+class InstructionContext;
 
 /// Handle type conversion and bit cast functions.
 /// Includes: $signed, $unsigned, $itor, $rtoi, $realtobits, $bitstoreal,
 ///           $shortrealtobits, $bitstoshortreal, $clog2
 auto HandleConversionCalls(
-    const lir::Instruction& instr, SystemCallContext& ctx) -> InstructionResult;
+    const lir::Instruction& instr, InstructionContext& ctx)
+    -> InstructionResult;
 
 }  // namespace lyra::interpreter

@@ -19,6 +19,7 @@
 #include "lyra/interpreter/simulation_context.hpp"
 #include "lyra/interpreter/system_call_runner.hpp"
 #include "lyra/interpreter/temp_table.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 
 namespace lyra::interpreter {
@@ -129,7 +130,7 @@ auto HandleControlFlowOps(
       auto& frame = ctx.GetFrame();
       auto& effect = ctx.GetEffect();
       auto& temp_table = ctx.GetTempTable();
-      const auto& instance = ctx.GetInstanceContext();
+      const auto& instance = ctx.GetHierarchyContext();
       return RunSystemCall(instr, sim, frame, effect, temp_table, instance);
     }
 

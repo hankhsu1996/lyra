@@ -15,7 +15,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/interpreter/instance_context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
@@ -30,18 +29,18 @@ namespace lyra::interpreter {
 InstructionContext::InstructionContext(
     SimulationContext& simulation_context, ProcessFrame& frame,
     ProcessEffect& effect, TempTable& temp_table,
-    std::shared_ptr<InstanceContext> instance_context)
+    std::shared_ptr<HierarchyContext> hierarchy_context)
     : simulation_context_(&simulation_context),
       frame_(&frame),
       effect_(&effect),
       temp_table_(&temp_table),
-      instance_context_(std::move(instance_context)) {
+      hierarchy_context_(std::move(hierarchy_context)) {
 }
 
 auto InstructionContext::ResolveBinding(common::SymbolRef symbol) const
-    -> std::pair<common::SymbolRef, std::shared_ptr<InstanceContext>> {
-  if (instance_context_ != nullptr) {
-    return instance_context_->ResolveBinding(symbol);
+    -> std::pair<common::SymbolRef, std::shared_ptr<HierarchyContext>> {
+  if (hierarchy_context_ != nullptr) {
+    return hierarchy_context_->ResolveBinding(symbol);
   }
   return {symbol, nullptr};
 }
@@ -71,21 +70,13 @@ auto InstructionContext::ReadVariable(const lir::Operand& operand) const
     return frame_->variable_table.Read(symbol);
   }
 
-  // Resolve through port bindings (output port -> target signal/instance)
+  // Resolve through port bindings (output port -> target signal)
   auto [target_symbol, target_instance] = ResolveBinding(symbol);
 
-  // If bound, read from target instance's storage
-  if (target_instance != nullptr) {
-    return target_instance->Read(target_symbol);
-  }
-
-  // Otherwise, read from per-instance storage (local vars, input ports)
-  if (instance_context_ != nullptr && instance_context_->Exists(symbol)) {
-    return instance_context_->Read(symbol);
-  }
-
-  // Fallback to global table
-  return simulation_context_->variable_table.Read(symbol);
+  // Read from flat storage (either resolved target or original symbol)
+  const auto* actual_symbol =
+      (target_instance != nullptr) ? target_symbol : symbol;
+  return simulation_context_->variable_store.Read(actual_symbol);
 }
 
 void InstructionContext::StoreVariable(
@@ -113,77 +104,19 @@ void InstructionContext::StoreVariable(
     return;
   }
 
-  // Resolve through port bindings (output port -> target signal/instance)
+  // Resolve through port bindings (output port -> target signal)
   auto [target_symbol, target_instance] = ResolveBinding(symbol);
+  const auto* actual_symbol =
+      (target_instance != nullptr) ? target_symbol : symbol;
 
-  // If bound (output port), write to target instance's storage
-  if (target_instance != nullptr) {
-    if (!is_non_blocking) {
-      target_instance->Write(target_symbol, actual_value);
-      effect_->RecordVariableModification(target_symbol, target_instance);
-    } else {
-      effect_->RecordNbaAction(
-          {.variable = target_symbol,
-           .value = actual_value,
-           .instance = target_instance,
-           .array_index = std::nullopt});
-    }
-    return;
-  }
-
-  // Otherwise, write to per-instance storage (local vars, input ports)
-  if (instance_context_ != nullptr) {
-    if (!is_non_blocking) {
-      instance_context_->Write(symbol, actual_value);
-      effect_->RecordVariableModification(symbol, instance_context_);
-    } else {
-      effect_->RecordNbaAction(
-          {.variable = symbol,
-           .value = actual_value,
-           .instance = instance_context_,
-           .array_index = std::nullopt});
-    }
-    return;
-  }
-
-  // Fallback to global table
+  // Write to flat storage
   if (!is_non_blocking) {
-    simulation_context_->variable_table.Write(symbol, actual_value);
-    effect_->RecordVariableModification(symbol);
+    simulation_context_->variable_store.Write(actual_symbol, actual_value);
+    effect_->RecordVariableModification(actual_symbol);
   } else {
     effect_->RecordNbaAction(
-        {.variable = symbol,
+        {.symbol = actual_symbol,
          .value = actual_value,
-         .instance = nullptr,
-         .array_index = std::nullopt});
-  }
-}
-
-void InstructionContext::StoreHierarchical(
-    const std::vector<common::SymbolRef>& instances, common::SymbolRef target,
-    const RuntimeValue& value, bool is_non_blocking) {
-  // Deep copy arrays for value semantics
-  const RuntimeValue actual_value = value.DeepCopy();
-
-  // Traverse instance path
-  auto target_instance = instance_context_;
-  for (const auto& inst_sym : instances) {
-    target_instance = target_instance->LookupChild(inst_sym);
-    if (!target_instance) {
-      throw std::runtime_error(
-          fmt::format("unknown child instance: {}", inst_sym->name));
-    }
-  }
-
-  // Write to target instance
-  if (!is_non_blocking) {
-    target_instance->Write(target, actual_value);
-    effect_->RecordVariableModification(target, target_instance);
-  } else {
-    effect_->RecordNbaAction(
-        {.variable = target,
-         .value = actual_value,
-         .instance = target_instance,
          .array_index = std::nullopt});
   }
 }
@@ -252,39 +185,23 @@ void InstructionContext::StoreElement(
         ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
   }
 
+  // Resolve port bindings
+  auto [target_symbol, target_instance] = ResolveBinding(symbol);
+  const auto* actual_symbol =
+      (target_instance != nullptr) ? target_symbol : symbol;
+
   if (is_non_blocking) {
     // Queue NBA action with array index
-    auto [target_symbol, target_instance] = ResolveBinding(symbol);
-    if (target_instance != nullptr) {
-      effect_->RecordNbaAction(
-          {.variable = target_symbol,
-           .value = element_value.DeepCopy(),
-           .instance = target_instance,
-           .array_index = actual_idx});
-    } else if (instance_context_ != nullptr) {
-      effect_->RecordNbaAction(
-          {.variable = symbol,
-           .value = element_value.DeepCopy(),
-           .instance = instance_context_,
-           .array_index = actual_idx});
-    } else {
-      effect_->RecordNbaAction(
-          {.variable = symbol,
-           .value = element_value.DeepCopy(),
-           .instance = nullptr,
-           .array_index = actual_idx});
-    }
+    effect_->RecordNbaAction(
+        {.symbol = actual_symbol,
+         .value = element_value.DeepCopy(),
+         .array_index = actual_idx});
     return;
   }
 
-  // Blocking assignment: snapshot, modify, record
+  // Blocking assignment: snapshot before modification
   if (!is_local) {
-    auto [target_symbol, target_instance] = ResolveBinding(symbol);
-    if (target_instance != nullptr) {
-      target_instance->UpdatePrevious(target_symbol, aggregate_value);
-    } else if (instance_context_ != nullptr) {
-      instance_context_->UpdatePrevious(symbol, aggregate_value);
-    }
+    simulation_context_->variable_store.UpdatePrevious(actual_symbol);
   }
 
   // Perform the element store
@@ -294,34 +211,13 @@ void InstructionContext::StoreElement(
     aggregate_value.SetField(index, element_value);
   }
 
+  // Write modified aggregate back to flat storage
+  simulation_context_->variable_store.Write(actual_symbol, aggregate_value);
+
   // Record modification for trigger system
   if (!is_local) {
-    auto [target_symbol, target_instance] = ResolveBinding(symbol);
-    if (target_instance != nullptr) {
-      effect_->RecordVariableModification(target_symbol, target_instance);
-    } else if (instance_context_ != nullptr) {
-      effect_->RecordVariableModification(symbol, instance_context_);
-    } else {
-      effect_->RecordVariableModification(symbol);
-    }
+    effect_->RecordVariableModification(actual_symbol);
   }
-}
-
-auto InstructionContext::LoadHierarchical(
-    const std::vector<common::SymbolRef>& instances,
-    common::SymbolRef target) const -> RuntimeValue {
-  // Traverse instance path
-  auto target_instance = instance_context_;
-  for (const auto& inst_sym : instances) {
-    target_instance = target_instance->LookupChild(inst_sym);
-    if (!target_instance) {
-      throw std::runtime_error(
-          fmt::format("unknown child instance: {}", inst_sym->name));
-    }
-  }
-
-  // Read from target instance
-  return target_instance->Read(target);
 }
 
 auto InstructionContext::GetOperandValue(const lir::Operand& operand) const

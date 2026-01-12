@@ -53,9 +53,26 @@ This agent defines the high-level execution model and must run before any MIR/LI
 
 This agent projects the runtime abstraction into the compiler's IR world. It determines how the C++-level primitives from C0 map onto existing MIR/LIR constructs, or what minimal primitive is missing.
 
-**Guiding rule:** Given the C++ runtime abstraction from C0, ask: what would this look like after being compiled to assembly and linked? That is what LIR should encode. LIR mirrors low-level execution reality, not language feature names.
+**LIR Design Mental Model:**
 
-It also ensures both execution paths (Interpreter and Codegen) can converge on the same model.
+LIR uses named temporaries (`%t0`, `%t1`) in a register-based form that maps to LLVM IR's SSA.
+
+Key distinction - two elaboration models:
+
+| Path                    | Elaboration                    | Variable Access                           |
+| ----------------------- | ------------------------------ | ----------------------------------------- |
+| C++ codegen             | Runtime (C++ builds hierarchy) | `this->u_child_.value` - member traversal |
+| MIR → LIR → Interpreter | Compile-time (slang resolves)  | `$symbol` - flat lookup by unique pointer |
+
+**When to use which mental model:**
+
+| Aspect                                | Mental Model                          | Example                                   |
+| ------------------------------------- | ------------------------------------- | ----------------------------------------- |
+| Variable access                       | Slang's flat model (symbol = address) | `load %t0, $symbol`                       |
+| Operations (arithmetic, control flow) | RISC-V assembly style                 | `add %t2, %t0, %t1`                       |
+| Method calls on complex types         | RISC-V function call style            | `arr.size()` → `call` with object pointer |
+
+For **arrays, queues, and future classes**: think about C++ method dispatch compiled to RISC-V - object pointer as implicit `this`, function call for methods.
 
 ### Agent D: Challenge / Structural Critic
 

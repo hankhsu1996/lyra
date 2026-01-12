@@ -3,10 +3,12 @@
 #include <bit>
 #include <cassert>
 #include <cstdint>
+#include <utility>
 
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/instruction/context.hpp"
+#include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
-#include "lyra/interpreter/system_call/context.hpp"
 #include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -14,7 +16,7 @@
 namespace lyra::interpreter {
 
 auto HandleConversionCalls(
-    const lir::Instruction& instr, SystemCallContext& ctx)
+    const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   // $signed: reinterpret signedness, preserving bit pattern
   if (instr.system_call_name == "$signed") {

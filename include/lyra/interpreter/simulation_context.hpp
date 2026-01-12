@@ -11,13 +11,14 @@
 #include "lyra/common/timescale.hpp"
 #include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/tracer.hpp"
+#include "lyra/interpreter/variable_store.hpp"
 #include "lyra/interpreter/variable_table.hpp"
 #include "lyra/sdk/plusargs.hpp"
 
 namespace lyra::interpreter {
 
 // Forward declaration
-struct InstanceContext;
+struct HierarchyContext;
 
 using SimulationTime = uint64_t;
 using SymbolRef = common::SymbolRef;
@@ -31,7 +32,7 @@ struct MonitorState {
   bool enabled = true;  // $monitoron/$monitoroff
 
   // Instance context for reading variables in the synthesized process
-  std::shared_ptr<InstanceContext> instance;
+  std::shared_ptr<HierarchyContext> instance;
 
   // Name of synthesized check process
   std::string check_process_name;
@@ -49,6 +50,7 @@ class SimulationContext {
   }
 
   ModuleVariableTable variable_table;
+  VariableStore variable_store;
   SimulationTime current_time = 0;
   Tracer tracer;
   std::ostringstream display_output;

@@ -14,7 +14,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
-#include "lyra/interpreter/instance_context.hpp"
+#include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/process_handle.hpp"
@@ -186,46 +186,28 @@ void SimulationRunner::ExecuteRegion(Region region) {
     case Region::kNBA: {
       // Invariant: Active and inactive queues are empty.
       // Commit all nonblocking assignments and wake triggered processes.
-      std::vector<ModifiedVariable> modified_variables;
+      std::vector<VariableChangeRecord> modified_variables;
 
       while (!nba_queue_.empty()) {
         const auto& action = nba_queue_.front();
 
+        auto& store = simulation_context_.get().variable_store;
+
         if (action.array_index.has_value()) {
           // Array element write: read array, modify element, write back
           auto idx = action.array_index.value();
-          if (action.instance != nullptr &&
-              action.instance->Exists(action.variable)) {
-            // Per-instance storage
-            auto array = action.instance->Read(action.variable);
-            action.instance->UpdatePrevious(action.variable, array);
-            array.SetElement(idx, action.value);
-            action.instance->Write(action.variable, array);
-          } else {
-            // Global storage
-            auto array =
-                simulation_context_.get().variable_table.Read(action.variable);
-            simulation_context_.get().variable_table.UpdatePrevious(
-                action.variable, array);
-            array.SetElement(idx, action.value);
-            simulation_context_.get().variable_table.Write(
-                action.variable, array);
-          }
+          auto array = store.Read(action.symbol);
+          store.UpdatePrevious(action.symbol);
+          // Need mutable copy for modification
+          RuntimeValue mutable_array = array;
+          mutable_array.SetElement(idx, action.value);
+          store.Write(action.symbol, mutable_array);
         } else {
-          // Whole variable write (existing behavior)
-          if (action.instance != nullptr &&
-              action.instance->Exists(action.variable)) {
-            // Per-instance storage
-            action.instance->Write(action.variable, action.value);
-          } else {
-            // Global storage
-            simulation_context_.get().variable_table.Write(
-                action.variable, action.value);
-          }
+          // Whole variable write
+          store.Write(action.symbol, action.value);
         }
 
-        modified_variables.push_back(
-            {.symbol = action.variable, .instance = action.instance});
+        modified_variables.push_back({.symbol = action.symbol});
         nba_queue_.pop();
       }
 
@@ -291,7 +273,7 @@ void SimulationRunner::InitializePackageVariables() {
     for (const auto& var : pkg.variables) {
       RuntimeValue default_value =
           RuntimeValue::DefaultValueForType(var.variable.type);
-      simulation_context_.get().variable_table.CreateVariable(
+      simulation_context_.get().variable_store.Initialize(
           var.variable.symbol, std::move(default_value));
     }
   }
@@ -306,24 +288,25 @@ void SimulationRunner::InitializePackageVariables() {
   }
 }
 
-void SimulationRunner::InitializeModuleVariables(
-    const lir::Module& module,
-    const std::shared_ptr<InstanceContext>& instance) {
-  // Initialize module variables in the instance's storage
+void SimulationRunner::InitializeModuleVariables(const lir::Module& module) {
+  // Initialize module variables in flat storage
   for (const auto& variable : module.variables) {
-    instance->InitializeVariable(variable);
+    auto initial = RuntimeValue::DefaultValueForType(variable.type);
+    simulation_context_.get().variable_store.Initialize(
+        variable.symbol, std::move(initial));
   }
 
-  // Initialize ports in the instance's storage (for input ports that need
-  // storage)
+  // Initialize ports in flat storage
   for (const auto& port : module.ports) {
-    instance->InitializeVariable(port.variable);
+    auto initial = RuntimeValue::DefaultValueForType(port.variable.type);
+    simulation_context_.get().variable_store.Initialize(
+        port.variable.symbol, std::move(initial));
   }
 }
 
 void SimulationRunner::ScheduleModuleProcesses(
     const lir::Module& module,
-    const std::shared_ptr<InstanceContext>& instance) {
+    const std::shared_ptr<HierarchyContext>& instance) {
   for (const auto& process : module.processes) {
     // Skip callback processes (e.g., monitor check) - they're called on demand
     if (process->is_callback) {
@@ -350,11 +333,11 @@ void SimulationRunner::ElaborateHierarchy() {
   InitializePackageVariables();
 
   // Create top module instance context (no port bindings)
-  auto top_instance = std::make_shared<InstanceContext>(
-      top.name, std::unordered_map<common::SymbolRef, PortBinding>{}, &top);
+  auto top_instance = std::make_shared<HierarchyContext>(
+      top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
 
-  // Initialize top module variables in per-instance storage
-  InitializeModuleVariables(top, top_instance);
+  // Initialize top module variables in flat storage
+  InitializeModuleVariables(top);
 
   // Schedule top module's processes
   ScheduleModuleProcesses(top, top_instance);
@@ -368,7 +351,7 @@ void SimulationRunner::ElaborateHierarchy() {
 
 void SimulationRunner::ElaborateSubmodules(
     const lir::Module& parent, const std::string& parent_path,
-    const std::shared_ptr<InstanceContext>& parent_instance) {
+    const std::shared_ptr<HierarchyContext>& parent_instance) {
   for (const auto& submod : parent.submodules) {
     const auto* child = submod.child_module;  // Resolved at link time
 
@@ -403,14 +386,14 @@ void SimulationRunner::ElaborateSubmodules(
               target_instance ? target_instance : parent_instance};
     }
 
-    auto child_instance = std::make_shared<InstanceContext>(
-        instance_path, std::move(bindings), child);
+    auto child_instance =
+        std::make_shared<HierarchyContext>(instance_path, std::move(bindings));
 
     // Store child in parent for hierarchical access
     parent_instance->children[submod.instance_symbol] = child_instance;
 
-    // Initialize child module's variables in per-instance storage
-    InitializeModuleVariables(*child, child_instance);
+    // Initialize child module's variables in flat storage
+    InitializeModuleVariables(*child);
 
     // Schedule child module's processes with this instance context
     ScheduleModuleProcesses(*child, child_instance);
@@ -488,30 +471,31 @@ void SimulationRunner::ExecuteOneEvent() {
       for (const auto& trigger : result.triggers) {
         // Unified trigger resolution:
         // 1. Traverse instance_path (empty for local triggers)
-        auto watch_instance = origin.instance;
+        auto binding_instance = origin.instance;
         for (const auto& inst_sym : trigger.instance_path) {
-          watch_instance = watch_instance->LookupChild(inst_sym);
-          if (!watch_instance) {
+          binding_instance = binding_instance->LookupChild(inst_sym);
+          if (!binding_instance) {
             break;  // Should not happen - validated at lowering
           }
         }
 
-        if (watch_instance) {
+        if (binding_instance) {
           // 2. Resolve through port bindings (e.g., port -> parent signal)
           auto [target_symbol, resolved_instance] =
-              watch_instance->ResolveBinding(trigger.variable);
+              binding_instance->ResolveBinding(trigger.variable);
           if (resolved_instance) {
-            watch_instance = resolved_instance;
+            binding_instance = resolved_instance;
           }
 
           // Register with:
           // - event.handle: non-owning reference to frame in process_frames_
-          // - watch_instance: where the variable lives (for trigger detection)
-          // Same handle for ALL triggers - this fixes the compound trigger bug!
+          // - binding_instance: where the variable lives (for trigger
+          // detection) Same handle for ALL triggers - this fixes the compound
+          // trigger bug!
           trigger_manager_.RegisterWaitingProcess(
-              origin.process, watch_instance, target_symbol, trigger.edge_kind,
-              result.block_index, result.resume_instruction_index,
-              event.handle);
+              origin.process, binding_instance, target_symbol,
+              trigger.edge_kind, result.block_index,
+              result.resume_instruction_index, event.handle);
         }
       }
       break;
@@ -536,7 +520,7 @@ void SimulationRunner::ExecuteOneEvent() {
 }
 
 void SimulationRunner::WakeWaitingProcesses(
-    const std::vector<ModifiedVariable>& modified_variables) {
+    const std::vector<VariableChangeRecord>& modified_variables) {
   // Delegate to trigger manager
   auto events_to_schedule = trigger_manager_.CheckTriggers(modified_variables);
 

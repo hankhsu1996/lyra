@@ -10,7 +10,7 @@ struct Instruction;
 
 namespace lyra::interpreter {
 
-class InstanceContext;
+class HierarchyContext;
 class ProcessEffect;
 class ProcessFrame;
 class SimulationContext;
@@ -21,7 +21,7 @@ class TempTable;
 auto RunSystemCall(
     const lir::Instruction& instr, SimulationContext& simulation_context,
     ProcessFrame& frame, ProcessEffect& effect, TempTable& temp_table,
-    const std::shared_ptr<InstanceContext>& instance_context)
+    const std::shared_ptr<HierarchyContext>& hierarchy_context)
     -> InstructionResult;
 
 }  // namespace lyra::interpreter
