@@ -105,22 +105,6 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
             foreach_loop.sourceRange, "foreach loop has no dimensions"));
   }
 
-  // Validate non-skipped dimensions
-  for (const auto& dim : foreach_loop.loopDims) {
-    // Skipped dimensions (loopVar == nullptr) are allowed - no loop generated
-    if (dim.loopVar == nullptr) {
-      continue;
-    }
-
-    // Check for dynamic arrays (range is nullopt)
-    if (!dim.range.has_value()) {
-      throw DiagnosticException(
-          Diagnostic::Error(
-              foreach_loop.sourceRange,
-              "foreach over dynamic arrays is not yet supported"));
-    }
-  }
-
   // Create outer block to hold all variable declarations and nested for loops
   auto block = std::make_unique<mir::BlockStatement>();
 
@@ -145,7 +129,6 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
     if (dim.loopVar == nullptr) {
       continue;
     }
-    const auto& range = dim.range.value();
     const auto* loop_var = dim.loopVar;
 
     // Get the iterator variable type
@@ -156,45 +139,81 @@ auto LowerForeachLoop(const slang::ast::ForeachLoopStatement& foreach_loop)
     }
     const auto& var_type = *type_result;
 
-    // Determine iteration direction and bounds
-    // isLittleEndian() returns true when left >= right (e.g., [3:0])
-    bool is_descending = range.isLittleEndian();
-    int32_t start_value = range.left;
-    int32_t end_value = range.right;
-
-    // Create initializer: var = start_value
-    auto start_literal = std::make_unique<mir::LiteralExpression>(
-        common::Literal::IntegralSigned(start_value, 32));
-    auto init_assign = std::make_unique<mir::AssignmentExpression>(
-        loop_var, std::move(start_literal), false);
     std::vector<std::unique_ptr<mir::Statement>> initializers;
-    initializers.push_back(
-        std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
-
-    // Create condition: var >= end (descending) or var <= end (ascending)
-    auto cond_var_ref =
-        std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
-    auto end_literal = std::make_unique<mir::LiteralExpression>(
-        common::Literal::IntegralSigned(end_value, 32));
-    mir::BinaryOperator cmp_op = is_descending
-                                     ? mir::BinaryOperator::kGreaterThanEqual
-                                     : mir::BinaryOperator::kLessThanEqual;
-    // Synthetic MIR construction (not from slang AST) - comparison operators
-    // return 1-bit per IEEE 1800-2023 11.4.4
-    auto condition = std::make_unique<mir::BinaryExpression>(
-        cmp_op, std::move(cond_var_ref), std::move(end_literal),
-        common::Type::Bool());
-
-    // Create step: var-- (descending) or var++ (ascending)
-    auto step_var_ref =
-        std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
-    mir::UnaryOperator step_op = is_descending
-                                     ? mir::UnaryOperator::kPostdecrement
-                                     : mir::UnaryOperator::kPostincrement;
-    auto step_expr = std::make_unique<mir::UnaryExpression>(
-        step_op, std::move(step_var_ref));
+    std::unique_ptr<mir::Expression> condition;
     std::vector<std::unique_ptr<mir::Expression>> steps;
-    steps.push_back(std::move(step_expr));
+
+    if (dim.range.has_value()) {
+      // Static dimension: use compile-time bounds from range
+      const auto& range = dim.range.value();
+
+      // Determine iteration direction and bounds
+      // isLittleEndian() returns true when left >= right (e.g., [3:0])
+      bool is_descending = range.isLittleEndian();
+      int32_t start_value = range.left;
+      int32_t end_value = range.right;
+
+      // Create initializer: var = start_value
+      auto start_literal = std::make_unique<mir::LiteralExpression>(
+          common::Literal::IntegralSigned(start_value, 32));
+      auto init_assign = std::make_unique<mir::AssignmentExpression>(
+          loop_var, std::move(start_literal), false);
+      initializers.push_back(
+          std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
+
+      // Create condition: var >= end (descending) or var <= end (ascending)
+      auto cond_var_ref =
+          std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+      auto end_literal = std::make_unique<mir::LiteralExpression>(
+          common::Literal::IntegralSigned(end_value, 32));
+      mir::BinaryOperator cmp_op = is_descending
+                                       ? mir::BinaryOperator::kGreaterThanEqual
+                                       : mir::BinaryOperator::kLessThanEqual;
+      condition = std::make_unique<mir::BinaryExpression>(
+          cmp_op, std::move(cond_var_ref), std::move(end_literal),
+          common::Type::Bool());
+
+      // Create step: var-- (descending) or var++ (ascending)
+      auto step_var_ref =
+          std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+      mir::UnaryOperator step_op = is_descending
+                                       ? mir::UnaryOperator::kPostdecrement
+                                       : mir::UnaryOperator::kPostincrement;
+      steps.push_back(
+          std::make_unique<mir::UnaryExpression>(
+              step_op, std::move(step_var_ref)));
+    } else {
+      // Dynamic dimension: iterate from 0 to size()-1
+      // Generates: for (i = 0; i < arr.size(); i++)
+
+      // Create initializer: var = 0
+      auto start_literal = std::make_unique<mir::LiteralExpression>(
+          common::Literal::IntegralSigned(0, 32));
+      auto init_assign = std::make_unique<mir::AssignmentExpression>(
+          loop_var, std::move(start_literal), false);
+      initializers.push_back(
+          std::make_unique<mir::ExpressionStatement>(std::move(init_assign)));
+
+      // Create condition: var < arr.size()
+      auto cond_var_ref =
+          std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+
+      // Synthesize size() method call on the array
+      auto array_ref = LowerExpression(foreach_loop.arrayRef);
+      auto size_call = std::make_unique<mir::MethodCallExpression>(
+          common::Type::Int(), std::move(array_ref), "size");
+
+      condition = std::make_unique<mir::BinaryExpression>(
+          mir::BinaryOperator::kLessThan, std::move(cond_var_ref),
+          std::move(size_call), common::Type::Bool());
+
+      // Create step: var++
+      auto step_var_ref =
+          std::make_unique<mir::IdentifierExpression>(var_type, loop_var);
+      steps.push_back(
+          std::make_unique<mir::UnaryExpression>(
+              mir::UnaryOperator::kPostincrement, std::move(step_var_ref)));
+    }
 
     // Create ForStatement wrapping current content
     auto for_stmt = std::make_unique<mir::ForStatement>(
