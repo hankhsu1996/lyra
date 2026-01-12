@@ -1,5 +1,5 @@
 feature: statements_generate
-description: Tests conditional generate (if-generate) constructs
+description: Tests generate constructs (if-generate and for-generate)
 
 cases:
   - name: if_generate_continuous_assign
@@ -182,3 +182,109 @@ cases:
         end
       endmodule
     expected_output: "result=10"
+
+  - name: for_generate_basic
+    description: Basic for-generate loop with genvar
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 4; i = i + 1) begin : blk
+          initial $display("i=%0d", i);
+        end
+      endmodule
+    expected_output: |
+      i=0
+      i=1
+      i=2
+      i=3
+
+  - name: for_generate_always_comb
+    description: always_comb inside for-generate loop
+    sv: |
+      module Test;
+        int x, y0, y1, y2;
+        genvar i;
+        for (i = 0; i < 3; i = i + 1) begin : blk
+          if (i == 0) always_comb y0 = x + i;
+          if (i == 1) always_comb y1 = x + i;
+          if (i == 2) always_comb y2 = x + i;
+        end
+        initial begin
+          x = 10;
+          #1;
+          $display("y0=%0d y1=%0d y2=%0d", y0, y1, y2);
+        end
+      endmodule
+    expected_output: "y0=10 y1=11 y2=12"
+
+  - name: nested_for_generate
+    description: Nested for-generate loops
+    sv: |
+      module Test;
+        genvar i, j;
+        for (i = 0; i < 2; i = i + 1) begin : outer
+          for (j = 0; j < 2; j = j + 1) begin : inner
+            initial $display("i=%0d j=%0d", i, j);
+          end
+        end
+      endmodule
+    expected_output: |
+      i=0 j=0
+      i=0 j=1
+      i=1 j=0
+      i=1 j=1
+
+  - name: for_generate_with_if
+    description: if-generate inside for-generate loop
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 4; i = i + 1) begin : blk
+          if (i % 2 == 0) begin : even
+            initial $display("even: %0d", i);
+          end
+        end
+      endmodule
+    expected_output: |
+      even: 0
+      even: 2
+
+  - name: for_generate_zero_iterations
+    description: for-generate with zero iterations
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 0; i = i + 1) begin : blk
+          initial $display("never");
+        end
+        initial $display("done");
+      endmodule
+    expect:
+      output:
+        contains:
+          - "done"
+        not_contains:
+          - "never"
+
+  - name: for_generate_submodule
+    description: Module instance inside for-generate loop
+    sv: |
+      module Doubler(input int x, output int y);
+        always_comb y = x * 2;
+      endmodule
+
+      module Test;
+        int in0, in1, out0, out1;
+        genvar i;
+        for (i = 0; i < 2; i = i + 1) begin : dbl
+          if (i == 0) Doubler d0(.x(in0), .y(out0));
+          if (i == 1) Doubler d1(.x(in1), .y(out1));
+        end
+        initial begin
+          in0 = 3;
+          in1 = 5;
+          #1;
+          $display("out0=%0d out1=%0d", out0, out1);
+        end
+      endmodule
+    expected_output: "out0=6 out1=10"

@@ -310,6 +310,11 @@ void ProcessModuleMember(
       // Example: parameter int WIDTH = 8; → WIDTH becomes literal 8
       break;
 
+    case SK::Genvar:
+      // Generate loop index - exists only at elaboration time
+      // Values are resolved to implicit localparams within generate blocks
+      break;
+
     // Scoped symbols - slang exposes for name resolution, handled in blocks
     case SK::StatementBlock:
       // Contains local variables in begin...end blocks
@@ -390,11 +395,17 @@ void ProcessModuleMember(
       break;
     }
 
-    case SK::GenerateBlockArray:
-      throw DiagnosticException(
-          Diagnostic::Error(
-              slang::SourceRange{symbol.location, symbol.location},
-              "generate loop blocks (for-generate) are not yet supported"));
+    case SK::GenerateBlockArray: {
+      const auto& gen_array = symbol.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : gen_array.entries) {
+        for (const auto& member : entry->members()) {
+          ProcessModuleMember(
+              member, module, port_symbols, port_driver_counter,
+              cont_assign_counter);
+        }
+      }
+      break;
+    }
 
     // Unknown - force investigation
     default:
