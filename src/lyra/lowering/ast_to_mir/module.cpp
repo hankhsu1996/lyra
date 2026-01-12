@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -23,6 +25,7 @@
 
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/literal.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
@@ -125,41 +128,130 @@ auto CreateImplicitAlwaysComb(
   return process;
 }
 
-// Collect variable declarations from a scope (generate block).
-// Returns the list of ModuleVariables found.
-auto CollectScopeVariables(const slang::ast::Scope& scope)
-    -> std::vector<mir::ModuleVariable> {
+// Context for module lowering - groups parameters threaded through all
+// functions.
+struct ModuleLoweringContext {
+  mir::Module* module;
+  std::unordered_set<const slang::ast::Symbol*>* port_symbols;
+  std::size_t* port_driver_counter;
+  std::size_t* cont_assign_counter;
+  ProcessCounters* process_counters;
+};
+
+// Forward declaration for mutual recursion with ProcessModuleMember
+void ProcessModuleMember(
+    const slang::ast::Symbol& symbol, ModuleLoweringContext& ctx);
+
+// Process non-structural members (processes, functions) from all generate array
+// entries. Variables and nested generates are handled by LowerGenerateScope.
+void ProcessGenerateArrayMembers(
+    std::span<const slang::ast::GenerateBlockSymbol* const> entries,
+    ModuleLoweringContext& ctx);
+
+// Lower a generate block scope to MIR, collecting variables and nested scopes.
+// Processes (initial/always blocks) are added to the module, not returned here.
+auto LowerGenerateScope(
+    const slang::ast::Scope& scope, const std::string& name,
+    common::SymbolRef symbol, std::optional<size_t> array_size,
+    ModuleLoweringContext& ctx) -> mir::GenerateScope {
   using SK = slang::ast::SymbolKind;
-  std::vector<mir::ModuleVariable> variables;
+
+  mir::GenerateScope result;
+  result.name = name;
+  result.symbol = symbol;
+  result.array_size = array_size;
 
   for (const auto& member : scope.members()) {
-    if (member.kind == SK::Variable) {
-      const auto& var = member.as<slang::ast::VariableSymbol>();
-      slang::SourceRange source_range(var.location, var.location);
-      auto type_result = LowerType(var.getType(), source_range);
-      if (!type_result) {
-        throw DiagnosticException(std::move(type_result.error()));
+    switch (member.kind) {
+      case SK::Variable: {
+        const auto& var = member.as<slang::ast::VariableSymbol>();
+        slang::SourceRange source_range(var.location, var.location);
+        auto type_result = LowerType(var.getType(), source_range);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+        mir::ModuleVariable mod_var{
+            .variable = common::Variable{.symbol = &var, .type = *type_result},
+            .initializer = nullptr};
+        if (const auto* init = var.getInitializer()) {
+          mod_var.initializer = LowerExpression(*init);
+        }
+        result.variables.push_back(std::move(mod_var));
+        break;
       }
-      mir::ModuleVariable mod_var{
-          .variable = common::Variable{.symbol = &var, .type = *type_result},
-          .initializer = nullptr};
-      if (const auto* init = var.getInitializer()) {
-        mod_var.initializer = LowerExpression(*init);
+
+      case SK::GenerateBlock: {
+        const auto& nested_sym = member.as<slang::ast::GenerateBlockSymbol>();
+        if (nested_sym.isUninstantiated) {
+          break;
+        }
+        if (!nested_sym.name.empty()) {
+          // Named nested generate block - add to nested_scopes
+          result.nested_scopes.push_back(LowerGenerateScope(
+              nested_sym, std::string(nested_sym.name), &nested_sym,
+              std::nullopt, ctx));
+        } else {
+          // Unnamed nested block - flatten contents into this scope
+          // Variables go into our variables, nested scopes get merged
+          auto inner = LowerGenerateScope(
+              nested_sym, "", &nested_sym, std::nullopt, ctx);
+          for (auto& var : inner.variables) {
+            result.variables.push_back(std::move(var));
+          }
+          for (auto& nested : inner.nested_scopes) {
+            result.nested_scopes.push_back(std::move(nested));
+          }
+        }
+        break;
       }
-      variables.push_back(std::move(mod_var));
+
+      case SK::GenerateBlockArray: {
+        const auto& nested_array =
+            member.as<slang::ast::GenerateBlockArraySymbol>();
+        if (!nested_array.entries.empty()) {
+          // Use first entry for structure (all entries have same structure)
+          const auto* first_entry = nested_array.entries[0];
+          result.nested_scopes.push_back(LowerGenerateScope(
+              *first_entry, std::string(nested_array.name), &nested_array,
+              nested_array.entries.size(), ctx));
+
+          // Process non-variable/non-generate members from ALL entries
+          ProcessGenerateArrayMembers(nested_array.entries, ctx);
+        }
+        break;
+      }
+
+      default:
+        // Non-generate, non-variable members (processes, functions) go to
+        // module
+        ProcessModuleMember(member, ctx);
+        break;
     }
   }
 
-  return variables;
+  return result;
+}
+
+// Process non-structural members (processes, functions) from all generate array
+// entries. Variables and nested generates are handled by LowerGenerateScope.
+void ProcessGenerateArrayMembers(
+    std::span<const slang::ast::GenerateBlockSymbol* const> entries,
+    ModuleLoweringContext& ctx) {
+  using SK = slang::ast::SymbolKind;
+  for (const auto* entry : entries) {
+    for (const auto& member : entry->members()) {
+      if (member.kind != SK::Variable && member.kind != SK::GenerateBlock &&
+          member.kind != SK::GenerateBlockArray) {
+        ProcessModuleMember(member, ctx);
+      }
+    }
+  }
 }
 
 // Process a single module member symbol and add it to the MIR module.
 // Called for direct module members and recursively for generate block contents.
 void ProcessModuleMember(
-    const slang::ast::Symbol& symbol, mir::Module& module,
-    std::unordered_set<const slang::ast::Symbol*>& port_symbols,
-    std::size_t& port_driver_counter, std::size_t& cont_assign_counter,
-    ProcessCounters& process_counters) {
+    const slang::ast::Symbol& symbol, ModuleLoweringContext& ctx) {
   using SK = slang::ast::SymbolKind;
 
   switch (symbol.kind) {
@@ -183,20 +275,20 @@ void ProcessModuleMember(
           .type = *type_result,
       };
 
-      module.ports.push_back(
+      ctx.module->ports.push_back(
           mir::Port{
               .variable = std::move(variable),
               .direction = MapPortDirection(port.direction),
           });
 
       // Track so Variable case knows to skip this internal symbol
-      port_symbols.insert(internal);
+      ctx.port_symbols->insert(internal);
       break;
     }
 
     case SK::Variable: {
       // Skip if this is a port's internal symbol (already handled above)
-      if (port_symbols.contains(&symbol)) {
+      if (ctx.port_symbols->contains(&symbol)) {
         break;
       }
 
@@ -220,7 +312,7 @@ void ProcessModuleMember(
         init_expr = LowerExpression(*initializer);
       }
 
-      module.variables.push_back(
+      ctx.module->variables.push_back(
           mir::ModuleVariable{
               .variable = std::move(variable),
               .initializer = std::move(init_expr)});
@@ -230,8 +322,8 @@ void ProcessModuleMember(
     case SK::ProceduralBlock: {
       const auto& procedural_block =
           symbol.as<slang::ast::ProceduralBlockSymbol>();
-      auto process = LowerProcess(procedural_block, process_counters);
-      module.processes.push_back(std::move(process));
+      auto process = LowerProcess(procedural_block, *ctx.process_counters);
+      ctx.module->processes.push_back(std::move(process));
       break;
     }
 
@@ -247,7 +339,7 @@ void ProcessModuleMember(
       }
 
       auto func = LowerFunction(subroutine);
-      module.functions.push_back(std::move(func));
+      ctx.module->functions.push_back(std::move(func));
       break;
     }
 
@@ -307,24 +399,24 @@ void ProcessModuleMember(
           auto driver_stmt = std::make_unique<mir::AssignStatement>(
               std::move(target), std::move(signal_expr));
           auto process = CreateImplicitAlwaysComb(
-              std::move(driver_stmt), port_driver_counter);
-          module.processes.push_back(std::move(process));
+              std::move(driver_stmt), *ctx.port_driver_counter);
+          ctx.module->processes.push_back(std::move(process));
         }
       }
 
-      module.submodules.push_back(std::move(submod));
+      ctx.module->submodules.push_back(std::move(submod));
       break;
     }
 
     case SK::WildcardImport: {
       const auto& import = symbol.as<slang::ast::WildcardImportSymbol>();
-      module.wildcard_imports.emplace_back(import.packageName);
+      ctx.module->wildcard_imports.emplace_back(import.packageName);
       break;
     }
 
     case SK::ExplicitImport: {
       const auto& import = symbol.as<slang::ast::ExplicitImportSymbol>();
-      module.explicit_imports.emplace_back(
+      ctx.module->explicit_imports.emplace_back(
           std::string(import.packageName), std::string(import.importName));
       break;
     }
@@ -402,11 +494,12 @@ void ProcessModuleMember(
           std::move(target), std::move(value));
 
       // Create always_comb-like process
-      auto process =
-          CreateImplicitAlwaysComb(std::move(driver_stmt), cont_assign_counter);
-      process->name = fmt::format("_cont_assign_{}", cont_assign_counter++);
+      auto process = CreateImplicitAlwaysComb(
+          std::move(driver_stmt), *ctx.cont_assign_counter);
+      process->name =
+          fmt::format("_cont_assign_{}", (*ctx.cont_assign_counter)++);
 
-      module.processes.push_back(std::move(process));
+      ctx.module->processes.push_back(std::move(process));
       break;
     }
 
@@ -420,28 +513,21 @@ void ProcessModuleMember(
       // Named generate blocks (if-generate/case-generate) create a scope
       // that can be referenced hierarchically (e.g., enabled.value)
       if (!gen_block_sym.name.empty()) {
-        mir::GenerateBlock gen_block;
-        gen_block.name = std::string(gen_block_sym.name);
-        gen_block.symbol = &gen_block_sym;
-        gen_block.variables = CollectScopeVariables(gen_block_sym);
-
-        // Process non-variable members (processes, functions) normally
-        // TODO(hankhsu): Handle nested generate blocks
-        for (const auto& member : gen_block_sym.members()) {
-          if (member.kind != SK::Variable) {
-            ProcessModuleMember(
-                member, module, port_symbols, port_driver_counter,
-                cont_assign_counter, process_counters);
-          }
-        }
-
-        module.generate_blocks.push_back(std::move(gen_block));
+        ctx.module->generate_scopes.push_back(LowerGenerateScope(
+            gen_block_sym, std::string(gen_block_sym.name), &gen_block_sym,
+            std::nullopt, ctx));
       } else {
-        // Unnamed generate block - just process members (flatten)
-        for (const auto& member : gen_block_sym.members()) {
-          ProcessModuleMember(
-              member, module, port_symbols, port_driver_counter,
-              cont_assign_counter, process_counters);
+        // Unnamed generate block - flatten into module
+        // Use LowerGenerateScope to process nested structures, then merge
+        auto scope = LowerGenerateScope(
+            gen_block_sym, "", &gen_block_sym, std::nullopt, ctx);
+        // Flatten variables into module (not typical, but handle gracefully)
+        for (auto& var : scope.variables) {
+          ctx.module->variables.push_back(std::move(var));
+        }
+        // Merge nested scopes into module's generate_scopes
+        for (auto& nested : scope.nested_scopes) {
+          ctx.module->generate_scopes.push_back(std::move(nested));
         }
       }
       break;
@@ -450,30 +536,16 @@ void ProcessModuleMember(
     case SK::GenerateBlockArray: {
       const auto& gen_array = symbol.as<slang::ast::GenerateBlockArraySymbol>();
 
-      mir::GenerateBlockArray gen_block;
-      gen_block.name = std::string(gen_array.name);
-      gen_block.size = gen_array.entries.size();
-      gen_block.symbol = &gen_array;
-
-      // Collect variables from first entry for struct definition
-      // (all entries have same structure, just different symbol addresses)
-      // TODO(hankhsu): Handle nested generate blocks, functions, etc.
       if (!gen_array.entries.empty()) {
-        gen_block.variables = CollectScopeVariables(*gen_array.entries[0]);
-      }
+        // Use first entry for structure (all entries have same structure)
+        const auto* first_entry = gen_array.entries[0];
+        ctx.module->generate_scopes.push_back(LowerGenerateScope(
+            *first_entry, std::string(gen_array.name), &gen_array,
+            gen_array.entries.size(), ctx));
 
-      // Process non-variable members from all entries
-      for (const auto* entry : gen_array.entries) {
-        for (const auto& member : entry->members()) {
-          if (member.kind != SK::Variable) {
-            ProcessModuleMember(
-                member, module, port_symbols, port_driver_counter,
-                cont_assign_counter, process_counters);
-          }
-        }
+        // Process non-variable/non-generate members from ALL entries
+        ProcessGenerateArrayMembers(gen_array.entries, ctx);
       }
-
-      module.generate_block_arrays.push_back(std::move(gen_block));
       break;
     }
 
@@ -557,10 +629,16 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   // Counters for generating unique process names (initial, always, etc.)
   ProcessCounters process_counters;
 
+  ModuleLoweringContext ctx{
+      .module = module.get(),
+      .port_symbols = &port_symbols,
+      .port_driver_counter = &port_driver_counter,
+      .cont_assign_counter = &cont_assign_counter,
+      .process_counters = &process_counters,
+  };
+
   for (const auto& symbol : body.members()) {
-    ProcessModuleMember(
-        symbol, *module, port_symbols, port_driver_counter, cont_assign_counter,
-        process_counters);
+    ProcessModuleMember(symbol, ctx);
   }
 
   return module;

@@ -159,13 +159,8 @@ class Codegen {
   void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);
   void EmitVariables(const std::vector<mir::ModuleVariable>& variables);
-  void EmitGenerateBlockStruct(
-      const std::string& name,
-      const std::vector<mir::ModuleVariable>& variables);
-  void EmitGenerateBlockArrays(
-      const std::vector<mir::GenerateBlockArray>& generate_block_arrays);
-  void EmitGenerateBlocks(
-      const std::vector<mir::GenerateBlock>& generate_blocks);
+  void EmitGenerateScopeStruct(const mir::GenerateScope& scope);
+  void EmitGenerateScopes(const std::vector<mir::GenerateScope>& scopes);
   void EmitProcess(const mir::Process& process);
   void EmitFunction(const mir::FunctionDefinition& function);
   void EmitStatement(const mir::Statement& stmt);

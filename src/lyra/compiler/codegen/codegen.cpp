@@ -463,9 +463,8 @@ void Codegen::EmitClass(const mir::Module& module) {
     EmitProcess(*process);
   }
 
-  // Generate block struct types and members
-  EmitGenerateBlockArrays(module.generate_block_arrays);
-  EmitGenerateBlocks(module.generate_blocks);
+  // Generate block struct types and members (supports nested scopes)
+  EmitGenerateScopes(module.generate_scopes);
 
   // Regular member variables (non-generate-block)
   EmitVariables(module.variables);
@@ -640,17 +639,17 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
   }
 }
 
-void Codegen::EmitGenerateBlockStruct(
-    const std::string& name,
-    const std::vector<mir::ModuleVariable>& variables) {
-  std::string struct_name = name + "_s";
+void Codegen::EmitGenerateScopeStruct(const mir::GenerateScope& scope) {
+  std::string escaped_name = Escape(scope.name);
+  std::string struct_name = escaped_name + "_s";
   Line("struct " + struct_name + " {");
   indent_++;
 
-  for (const auto& mod_var : variables) {
+  // Emit variables
+  for (const auto& mod_var : scope.variables) {
     std::string type_str = ToCppType(mod_var.variable.type);
     Indent();
-    out_ << type_str << " " << mod_var.variable.symbol->name;
+    out_ << type_str << " " << Escape(mod_var.variable.symbol->name);
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
@@ -660,30 +659,38 @@ void Codegen::EmitGenerateBlockStruct(
     out_ << ";\n";
   }
 
+  // Recursively emit nested scope structs and their members
+  for (const auto& nested : scope.nested_scopes) {
+    EmitGenerateScopeStruct(nested);
+    // Emit member: array or single instance
+    std::string nested_escaped = Escape(nested.name);
+    Indent();
+    if (nested.array_size) {
+      out_ << "std::array<" << nested_escaped << "_s, " << *nested.array_size
+           << "> " << nested_escaped << "_{};\n";
+    } else {
+      out_ << nested_escaped << "_s " << nested_escaped << "_{};\n";
+    }
+  }
+
   indent_--;
   Line("};");
 }
 
-void Codegen::EmitGenerateBlockArrays(
-    const std::vector<mir::GenerateBlockArray>& generate_block_arrays) {
-  for (const auto& gen_block : generate_block_arrays) {
-    EmitGenerateBlockStruct(gen_block.name, gen_block.variables);
+void Codegen::EmitGenerateScopes(
+    const std::vector<mir::GenerateScope>& scopes) {
+  for (const auto& scope : scopes) {
+    EmitGenerateScopeStruct(scope);
 
-    // Emit array member
+    // Emit member: array or single instance
+    std::string escaped_name = Escape(scope.name);
     Indent();
-    out_ << "std::array<" << gen_block.name << "_s, " << gen_block.size << "> "
-         << gen_block.name << "_{};\n";
-  }
-}
-
-void Codegen::EmitGenerateBlocks(
-    const std::vector<mir::GenerateBlock>& generate_blocks) {
-  for (const auto& gen_block : generate_blocks) {
-    EmitGenerateBlockStruct(gen_block.name, gen_block.variables);
-
-    // Emit single instance member (not an array)
-    Indent();
-    out_ << gen_block.name << "_s " << gen_block.name << "_{};\n";
+    if (scope.array_size) {
+      out_ << "std::array<" << escaped_name << "_s, " << *scope.array_size
+           << "> " << escaped_name << "_{};\n";
+    } else {
+      out_ << escaped_name << "_s " << escaped_name << "_{};\n";
+    }
   }
 }
 

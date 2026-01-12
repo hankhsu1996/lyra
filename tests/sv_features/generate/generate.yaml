@@ -517,3 +517,77 @@ cases:
       endmodule
     expect:
       output: "enabled.value = 42\n"
+
+  - name: nested_for_generate_variables
+    description: Variables in nested for-generate blocks with hierarchical access
+    sv: |
+      module Test;
+        genvar i, j;
+        for (i = 0; i < 2; i = i + 1) begin : outer
+          int x;
+          for (j = 0; j < 2; j = j + 1) begin : inner
+            int y;
+          end
+        end
+        initial begin
+          outer[0].x = 10;
+          outer[1].x = 20;
+          outer[0].inner[0].y = 100;
+          outer[0].inner[1].y = 101;
+          outer[1].inner[0].y = 200;
+          outer[1].inner[1].y = 201;
+          $display("outer[0].x=%0d outer[1].x=%0d", outer[0].x, outer[1].x);
+          $display("outer[0].inner[0].y=%0d outer[0].inner[1].y=%0d",
+            outer[0].inner[0].y, outer[0].inner[1].y);
+          $display("outer[1].inner[0].y=%0d outer[1].inner[1].y=%0d",
+            outer[1].inner[0].y, outer[1].inner[1].y);
+        end
+      endmodule
+    expect:
+      output: "outer[0].x=10 outer[1].x=20\nouter[0].inner[0].y=100 outer[0].inner[1].y=101\nouter[1].inner[0].y=200 outer[1].inner[1].y=201\n"
+
+  - name: nested_if_in_for_generate_variables
+    description: Variables in if-generate nested inside for-generate
+    sv: |
+      module Test;
+        genvar i;
+        for (i = 0; i < 2; i = i + 1) begin : outer
+          int x;
+          if (i == 0) begin : inner
+            int y;
+          end
+        end
+        initial begin
+          outer[0].x = 10;
+          outer[1].x = 20;
+          outer[0].inner.y = 42;
+          $display("outer[0].x=%0d outer[1].x=%0d", outer[0].x, outer[1].x);
+          $display("outer[0].inner.y=%0d", outer[0].inner.y);
+        end
+      endmodule
+    expect:
+      output: "outer[0].x=10 outer[1].x=20\nouter[0].inner.y=42\n"
+
+  - name: nested_for_in_if_generate_variables
+    description: Variables in for-generate nested inside if-generate
+    sv: |
+      module Test;
+        parameter bit ENABLE = 1;
+        genvar i;
+        if (ENABLE) begin : outer
+          int x;
+          for (i = 0; i < 2; i = i + 1) begin : inner
+            int y;
+          end
+        end
+        initial begin
+          outer.x = 10;
+          outer.inner[0].y = 100;
+          outer.inner[1].y = 200;
+          $display("outer.x=%0d", outer.x);
+          $display("outer.inner[0].y=%0d outer.inner[1].y=%0d",
+            outer.inner[0].y, outer.inner[1].y);
+        end
+      endmodule
+    expect:
+      output: "outer.x=10\nouter.inner[0].y=100 outer.inner[1].y=200\n"

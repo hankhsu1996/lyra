@@ -70,23 +70,16 @@ struct ModuleVariable {
   std::unique_ptr<Expression> initializer;  // nullptr if no initializer
 };
 
-// Generate block array (for-generate with named block)
-// Represents a for-generate loop: for (i = 0; i < N; i++) begin : name ... end
-// Each iteration creates a scope with the same structure but different symbols.
-struct GenerateBlockArray {
-  std::string name;                       // Block name ("gen_block")
-  size_t size;                            // Number of iterations
-  common::SymbolRef symbol;               // Slang GenerateBlockArraySymbol
-  std::vector<ModuleVariable> variables;  // Variables declared in block
-};
-
-// Single generate block (if-generate or case-generate with named block)
-// Represents: if (cond) begin : name ... end
-// Creates a single scope (not an array) with the given name.
-struct GenerateBlock {
-  std::string name;                       // Block name ("enabled")
-  common::SymbolRef symbol;               // Slang GenerateBlockSymbol
-  std::vector<ModuleVariable> variables;  // Variables declared in block
+// Unified generate scope - handles both for-generate (array) and
+// if/case-generate (single). For-generate creates an array of scopes,
+// if/case-generate creates a single scope. The nesting structure allows
+// arbitrary depth of generate blocks.
+struct GenerateScope {
+  std::string name;                          // Block name ("gen_block")
+  common::SymbolRef symbol;                  // Slang symbol
+  std::optional<size_t> array_size;          // nullopt = single, value = array
+  std::vector<ModuleVariable> variables;     // Variables declared in scope
+  std::vector<GenerateScope> nested_scopes;  // Nested generate blocks
 };
 
 /// Function parameter for user-defined functions.
@@ -142,8 +135,7 @@ class Module {
       parameters;  // Template parameters for C++ codegen
   std::vector<Port> ports;
   std::vector<ModuleVariable> variables;
-  std::vector<GenerateBlockArray> generate_block_arrays;
-  std::vector<GenerateBlock> generate_blocks;
+  std::vector<GenerateScope> generate_scopes;
   std::vector<FunctionDefinition> functions;
   std::vector<SubmoduleInstance> submodules;
   std::vector<std::shared_ptr<Process>> processes;
