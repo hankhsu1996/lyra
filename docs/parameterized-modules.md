@@ -74,6 +74,100 @@ This means: **no recursive type checking needed** - just classify the top-level 
 
 This aligns with `docs/philosophy.md`: "runtime parameters for values, templates only for type parameters."
 
+### Future Direction: Usage-Based Classification
+
+The current classification is **type-based**: integral types become template parameters because they _could_ affect signal types. However, a more precise approach would be **usage-based**: only parameters that _actually_ appear in type expressions need to be template parameters.
+
+**The Variability Paradox**
+
+In real hardware designs, there's an inverse relationship between parameter variability and type-affecting behavior:
+
+| Parameter Category      | Examples               | Variability                   | Affects Types? |
+| ----------------------- | ---------------------- | ----------------------------- | -------------- |
+| Architectural constants | DATA_WIDTH, ADDR_WIDTH | Low (same across instances)   | Usually yes    |
+| Instance configuration  | BANK_ID, SLOT_INDEX    | High (different per instance) | Usually no     |
+
+Consider a memory system with 64 banks:
+
+```systemverilog
+module MemoryBank #(
+  parameter int DATA_WIDTH = 64,  // Same for all banks, affects logic [DATA_WIDTH-1:0]
+  parameter int ADDR_WIDTH = 48,  // Same for all banks, affects logic [ADDR_WIDTH-1:0]
+  parameter int BANK_ID = 0       // Different per bank, only used for address comparison
+);
+```
+
+With type-based classification, all three are template parameters → **64 template specializations** (one per BANK_ID).
+
+With usage-based classification, only DATA_WIDTH and ADDR_WIDTH are templates → **1 template specialization**, 64 instances with different `bank_id_` constructor args.
+
+**Why This Matters**
+
+Parameters that vary most are often the ones that DON'T affect types. This means the current approach creates maximum template bloat for exactly the parameters that could be constructor arguments. This directly impacts the philosophy's #1 priority: minimizing compile time.
+
+**Technical Note: Why Templates Exist**
+
+A common misconception: template parameters are needed for type correctness in generated C++. Actually, slang resolves all types at elaboration time:
+
+- `logic [WIDTH-1:0]` where WIDTH=8 → slang returns type with `bit_width=8`
+- `LowerType()` extracts this concrete value
+- `ToCppType()` emits `Bit<8>`, not `Bit<WIDTH>`
+
+Templates serve a different purpose: **signature-based deduplication**. Different parameter values create different C++ classes because the resulting types differ. The template parameter is the signature key, enabling `Counter<8>` and `Counter<16>` to be distinct classes.
+
+This means usage-based classification is about **which parameters belong in the signature**, not which parameters affect type correctness. All types are already concrete.
+
+**Implementation Challenge**
+
+Determining whether a parameter affects types requires analyzing:
+
+- Direct usage in type expressions (`logic [WIDTH-1:0]`)
+- Indirect usage through localparams (`localparam X = WIDTH; logic [X-1:0]`)
+- Cross-module propagation (parameter passed to child module's type-affecting param)
+
+**The Core Problem: Slang Folds Expressions Eagerly**
+
+When slang resolves `logic [WIDTH-1:0]` where WIDTH=8, it evaluates `WIDTH-1` to `7` and stores only the constant `ConstantRange(7, 0)`. The original expression referencing the parameter is discarded. By the time Lyra sees the type, there's no way to know it came from `WIDTH`.
+
+**Explored Approaches and Their Tradeoffs**
+
+We explored multiple approaches to implement usage-based classification. Each has significant drawbacks:
+
+| Approach                     | Description                                                   | Blocker                                                                     |
+| ---------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Analyze slang Type           | Check if Type stores dimension expressions                    | Slang master only stores folded constants, not expressions                  |
+| Use EvaluatedDimension       | Access `rangeLeftExpr`/`rangeRightExpr`                       | Would require adding expression fields to upstream slang                    |
+| Re-bind from syntax          | Use `DeclaredType::getTypeSyntax()` + `Expression::bind()`    | Requires setting up correct `ASTContext`, essentially re-doing slang's work |
+| Syntax name comparison       | Match identifier names in syntax tree against parameter names | Dangerous: misses package scope, imports, hierarchical references           |
+| Instance variation heuristic | If parameter varies across instances → constructor arg        | Fragile: depends on specific design, doesn't generalize                     |
+| User annotation              | Let users mark parameters as runtime-only                     | Non-standard, user burden, rejected                                         |
+| Contribute to upstream slang | Add expression preservation to official slang                 | Uncertain acceptance, slang is a generic library                            |
+
+**Why Each Approach Fails**
+
+1. **Slang Type Analysis**: `PackedArrayType` only stores `ConstantRange range` - the folded value. No expression reference.
+
+2. **EvaluatedDimension Expressions**: Slang's `EvaluatedDimension` could store `rangeLeftExpr`/`rangeRightExpr` fields, but upstream slang master only stores folded constants. Expression preservation would require changes to slang itself.
+
+3. **Re-binding from Syntax**: `DeclaredType::getTypeSyntax()` gives us the parse tree, but syntax nodes have no semantic binding. We'd need to call `Expression::bind(syntax, context)` to get AST expressions we can analyze. This requires:
+   - Correct `ASTContext` with proper scope
+   - Understanding slang's binding internals
+   - Essentially duplicating work slang already did
+
+4. **Syntax Name Comparison**: Looking for identifier names like "WIDTH" in the syntax tree seems simple, but SystemVerilog has complex scoping:
+   - Package imports: `import pkg::WIDTH;`
+   - Hierarchical references: `parent.WIDTH`
+   - Local shadowing
+   - Proper binding handles all this; string matching doesn't.
+
+5. **Instance Variation Heuristic**: Detect if a parameter has the same value across all instances (→ template) vs varies (→ constructor). This doesn't generalize: a parameter might vary in one design but not another, and the classification should be based on semantic usage, not coincidental values in a specific design.
+
+**Current Decision: Accept Type-Based Classification**
+
+Given these tradeoffs, Lyra uses **type-based classification** (all integral parameters → template, strings/unpacked → constructor). This is conservative and correct, but creates unnecessary template specializations for non-type-affecting parameters like `BANK_ID`.
+
+The limitation is documented. If template bloat becomes a significant pain point in practice, the most viable path forward would be contributing expression preservation to upstream slang, enabling proper usage-based analysis.
+
 ## C++ Template Parameter Types
 
 ### The Structural Type Requirement
