@@ -130,7 +130,8 @@ auto CreateImplicitAlwaysComb(
 void ProcessModuleMember(
     const slang::ast::Symbol& symbol, mir::Module& module,
     std::unordered_set<const slang::ast::Symbol*>& port_symbols,
-    std::size_t& port_driver_counter, std::size_t& cont_assign_counter) {
+    std::size_t& port_driver_counter, std::size_t& cont_assign_counter,
+    ProcessCounters& process_counters) {
   using SK = slang::ast::SymbolKind;
 
   switch (symbol.kind) {
@@ -201,7 +202,7 @@ void ProcessModuleMember(
     case SK::ProceduralBlock: {
       const auto& procedural_block =
           symbol.as<slang::ast::ProceduralBlockSymbol>();
-      auto process = LowerProcess(procedural_block);
+      auto process = LowerProcess(procedural_block, process_counters);
       module.processes.push_back(std::move(process));
       break;
     }
@@ -390,7 +391,7 @@ void ProcessModuleMember(
       for (const auto& member : gen_block.members()) {
         ProcessModuleMember(
             member, module, port_symbols, port_driver_counter,
-            cont_assign_counter);
+            cont_assign_counter, process_counters);
       }
       break;
     }
@@ -483,10 +484,13 @@ auto LowerModule(const slang::ast::InstanceSymbol& instance_symbol)
   // Counter for generating unique continuous assignment process names
   std::size_t cont_assign_counter = 0;
 
+  // Counters for generating unique process names (initial, always, etc.)
+  ProcessCounters process_counters;
+
   for (const auto& symbol : body.members()) {
     ProcessModuleMember(
-        symbol, *module, port_symbols, port_driver_counter,
-        cont_assign_counter);
+        symbol, *module, port_symbols, port_driver_counter, cont_assign_counter,
+        process_counters);
   }
 
   return module;
