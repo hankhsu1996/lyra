@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_mir/call.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>

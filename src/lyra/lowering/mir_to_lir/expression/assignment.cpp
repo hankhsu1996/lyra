@@ -339,7 +339,7 @@ auto LowerAssignmentExpression(
 
         // Load intermediate arrays (all but the last index)
         std::vector<TempRef> intermediate_temps;
-        const Type* current_type = &base_type;
+        const Type* current_type = nullptr;
 
         // First level: load from variable
         auto recv_temp = builder.AllocateTemp("recv", base_type);
