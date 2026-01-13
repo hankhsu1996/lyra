@@ -61,7 +61,7 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
   // Initialize parameters from arguments
   for (size_t i = 0; i < func->parameters.size(); ++i) {
     const auto& param = func->parameters[i];
-    auto temp_ref = std::get<lir::TempRef>(instr.operands[i].value);
+    auto temp_ref = instr.operands[i].AsTempRef();
     RuntimeValue arg_value = temp_table.Read(temp_ref);
     frame->local_variables[param.variable.symbol] = std::move(arg_value);
   }
@@ -86,7 +86,7 @@ auto HandleReturn(
   // Get return value BEFORE popping (temp_table points to current frame)
   std::optional<RuntimeValue> return_value;
   if (!instr.operands.empty()) {
-    auto temp_ref = std::get<lir::TempRef>(instr.operands[0].value);
+    auto temp_ref = instr.operands[0].AsTempRef();
     return_value = temp_table.Read(temp_ref);
   }
 

@@ -379,20 +379,53 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           }
         }
       } else {
-        // Other non-display system calls: process all arguments normally
-        for (const auto* arg : call.arguments()) {
-          arguments.push_back(LowerExpression(*arg, arena));
-        }
-      }
-      // For mem_io tasks, check if first arg (filename) is a string literal
-      // This is needed by interpreter to properly decode the filename
-      bool is_mem_io =
-          func_info != nullptr &&
-          func_info->category == common::SystemFunctionCategory::kMemIo;
-      if (is_mem_io && !call.arguments().empty()) {
-        const auto& first_arg = *call.arguments()[0];
-        if (first_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
-          format_expr_is_literal = true;
+        // Check for mem_io tasks ($readmemh, $readmemb, $writememh, $writememb)
+        // Second argument is a write target (the memory array), not an input
+        bool is_mem_io =
+            func_info != nullptr &&
+            func_info->category == common::SystemFunctionCategory::kMemIo;
+
+        if (is_mem_io) {
+          auto args = call.arguments();
+          // First arg: filename (input) → arguments
+          if (!args.empty()) {
+            const auto& first_arg = *args[0];
+            arguments.push_back(LowerExpression(first_arg, arena));
+            // Check if filename is a string literal
+            if (first_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
+              format_expr_is_literal = true;
+            }
+          }
+          // Second arg: target array (write target) → output_targets
+          if (args.size() >= 2) {
+            const auto* target_arg = args[1];
+            if (target_arg->kind == slang::ast::ExpressionKind::NamedValue) {
+              const auto& named_value =
+                  target_arg->as<slang::ast::NamedValueExpression>();
+              auto type_result = LowerType(
+                  named_value.symbol.getType(), target_arg->sourceRange, arena);
+              if (!type_result) {
+                throw DiagnosticException(std::move(type_result.error()));
+              }
+              mir::AssignmentTarget target(&named_value.symbol);
+              target.base_type = *type_result;
+              output_targets.push_back(std::move(target));
+            } else {
+              throw DiagnosticException(
+                  Diagnostic::Error(
+                      target_arg->sourceRange,
+                      "mem_io target must be a simple variable"));
+            }
+          }
+          // Remaining args: start/end addresses (optional inputs) → arguments
+          for (size_t i = 2; i < args.size(); ++i) {
+            arguments.push_back(LowerExpression(*args[i], arena));
+          }
+        } else {
+          // Other non-display system calls: process all arguments normally
+          for (const auto* arg : call.arguments()) {
+            arguments.push_back(LowerExpression(*arg, arena));
+          }
         }
       }
     }

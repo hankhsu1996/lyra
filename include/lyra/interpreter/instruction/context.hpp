@@ -55,21 +55,20 @@ class InstructionContext {
   /// Read a temporary value from the temp table.
   [[nodiscard]] auto GetTemp(lir::TempRef temp) const -> RuntimeValue;
 
-  /// Read a variable (checks function locals, process locals, then flat storage
-  /// with port binding resolution)
-  [[nodiscard]] auto ReadVariable(const lir::Operand& operand) const
+  /// Read a variable by symbol (checks function locals, process locals, then
+  /// flat storage with port binding resolution).
+  [[nodiscard]] auto ReadVariable(common::SymbolRef symbol) const
       -> RuntimeValue;
 
-  /// Store a variable value with proper scoping and effect tracking.
+  /// Store a variable value by symbol with proper scoping and effect tracking.
   void StoreVariable(
-      const lir::Operand& operand, const RuntimeValue& value,
+      common::SymbolRef symbol, const RuntimeValue& value,
       bool is_non_blocking);
 
-  /// Store an element of an aggregate (array or struct/union).
-  /// Handles sensitivity tracking (UpdatePrevious) and modification recording.
+  /// Store an element to a temp aggregate (array or struct/union) in place.
+  /// This modifies the temp value directly; no sensitivity tracking needed.
   void StoreElement(
-      const lir::Operand& aggregate_operand, size_t index,
-      const RuntimeValue& element_value, bool is_non_blocking);
+      lir::TempRef aggregate, size_t index, const RuntimeValue& element_value);
 
   /// Read value through a pointer (dereference).
   [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;

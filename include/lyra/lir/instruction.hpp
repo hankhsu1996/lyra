@@ -9,11 +9,14 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/operand.hpp"
 
 namespace lyra::lir {
+
+using SymbolRef = common::SymbolRef;
 
 // Forward declaration for callee pointer
 struct Function;
@@ -35,20 +38,19 @@ enum class IntrinsicOpKind : uint8_t {
 enum class InstructionKind {
   // Memory operations
   kConstant,
-  kResolveVar,               // Produces Pointer<T> from symbol
-  kLoad,                     // Dereference Pointer<T> to get T
-  kStore,                    // Write T through Pointer<T>
-  kStoreNBA,                 // Non-blocking store through Pointer<T>
-  kResolveIndex,             // Pointer<Array<T>> + index -> Pointer<T>
-  kResolveField,             // Pointer<Struct> + field_id -> Pointer<FieldT>
-  kResolveSlice,             // Pointer<T> + offset + width -> SliceRef<U>
-  kLoadSlice,                // SliceRef<T> -> T (extract bits from storage)
-  kStoreSlice,               // SliceRef<T> + T -> void (read-modify-write)
-  kStoreElement,             // Store to array/struct: base[index] = value
-  kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
-  kExtractBits,              // Extract bits from value (rvalue): result =
-                             // value[offset+:width]
-  kAllocate,  // Allocate container with storage kind resolved at lowering
+  kResolveVar,    // Produces Pointer<T> from symbol
+  kLoad,          // Dereference Pointer<T> to get T
+  kStore,         // Write T through Pointer<T>
+  kStoreNBA,      // Non-blocking store through Pointer<T>
+  kResolveIndex,  // Pointer<Array<T>> + index -> Pointer<T>
+  kResolveField,  // Pointer<Struct> + field_id -> Pointer<FieldT>
+  kResolveSlice,  // Pointer<T> + offset + width -> SliceRef<U>
+  kLoadSlice,     // SliceRef<T> -> T (extract bits from storage)
+  kStoreSlice,    // SliceRef<T> + T -> void (read-modify-write)
+  kStoreElement,  // Store to array/struct: base[index] = value
+  kExtractBits,   // Extract bits from value (rvalue): result =
+                  // value[offset+:width]
+  kAllocate,      // Allocate container with storage kind resolved at lowering
 
   // Move operation
   kMove,
@@ -149,7 +151,6 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kLoadSlice:
     case InstructionKind::kStoreSlice:
     case InstructionKind::kStoreElement:
-    case InstructionKind::kStoreElementNonBlocking:
     case InstructionKind::kExtractBits:
     case InstructionKind::kAllocate:
     case InstructionKind::kMove:
@@ -439,14 +440,12 @@ struct Instruction {
   }
 
   // Store element to array/struct: base[index] = value
-  // base can be variable or temp (polymorphic)
-  // Sensitivity tracking only triggered if base is variable
-  static auto StoreElement(
-      Operand base, TempRef index, TempRef value, bool is_non_blocking = false)
+  // Store to array/struct element in-place.
+  // base is temp (SSA value); index is element index or field id.
+  static auto StoreElement(Operand base, TempRef index, TempRef value)
       -> Instruction {
     return Instruction{
-        .kind = is_non_blocking ? InstructionKind::kStoreElementNonBlocking
-                                : InstructionKind::kStoreElement,
+        .kind = InstructionKind::kStoreElement,
         .operands = {
             std::move(base), Operand::Temp(index), Operand::Temp(value)}};
   }
@@ -713,11 +712,6 @@ struct Instruction {
       case InstructionKind::kStoreElement:
         return fmt::format(
             "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
-            operands[2].ToString());
-
-      case InstructionKind::kStoreElementNonBlocking:
-        return fmt::format(
-            "stelnb {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
       case InstructionKind::kExtractBits:

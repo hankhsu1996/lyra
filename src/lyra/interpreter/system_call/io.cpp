@@ -171,9 +171,11 @@ auto HandleMemIO(
     const lir::Instruction& instr, bool is_read, bool is_hex,
     InstructionContext& ctx) -> InstructionResult {
   std::string_view task_name = is_read ? "$readmem" : "$writemem";
-  if (instr.operands.size() < 2 || instr.operands.size() > 4) {
+  // Operands: filename + optional start/end addresses (1-3 operands)
+  // Target array is in output_targets
+  if (instr.operands.empty() || instr.operands.size() > 3) {
     throw common::InternalError(
-        "interpreter", std::format("{} expects 2-4 operands", task_name));
+        "interpreter", std::format("{} expects 1-3 operands", task_name));
   }
   bool filename_is_string_literal = instr.format_string_is_literal;
   const auto filename_value = ctx.GetOperandValue(instr.operands[0]);
@@ -186,17 +188,22 @@ auto HandleMemIO(
     throw common::InternalError(
         "interpreter", std::format("{} filename must be a string", task_name));
   }
-  if (!instr.operands[1].IsVariable()) {
+  // Target array is in output_targets (write target), not operands
+  if (instr.output_targets.empty()) {
     throw common::InternalError(
-        "interpreter", std::format("{} target must be a variable", task_name));
+        "interpreter",
+        std::format(
+            "{} target must be specified in output_targets", task_name));
   }
-  auto target_value = ctx.ReadVariable(instr.operands[1]);
+  const auto* target_symbol = instr.output_targets[0];
+  auto target_value = ctx.ReadVariable(target_symbol);
   auto info = GetMemTargetInfo(target_value, target_value.type);
 
+  // Optional start/end addresses in operands[1] and operands[2]
   std::optional<int64_t> start_addr;
   std::optional<int64_t> end_addr;
-  if (instr.operands.size() >= 3) {
-    auto start_val = ctx.GetOperandValue(instr.operands[2]);
+  if (instr.operands.size() >= 2) {
+    auto start_val = ctx.GetOperandValue(instr.operands[1]);
     if (!start_val.IsTwoState() || start_val.IsWide()) {
       throw common::InternalError(
           "interpreter",
@@ -204,8 +211,8 @@ auto HandleMemIO(
     }
     start_addr = start_val.AsNarrow().AsInt64();
   }
-  if (instr.operands.size() == 4) {
-    auto end_val = ctx.GetOperandValue(instr.operands[3]);
+  if (instr.operands.size() == 3) {
+    auto end_val = ctx.GetOperandValue(instr.operands[2]);
     if (!end_val.IsTwoState() || end_val.IsWide()) {
       throw common::InternalError(
           "interpreter",
@@ -273,9 +280,9 @@ auto HandleMemIO(
     }
 
     if (info.is_unpacked) {
-      ctx.StoreVariable(instr.operands[1], target_value, false);
+      ctx.StoreVariable(target_symbol, target_value, false);
     } else {
-      ctx.StoreVariable(instr.operands[1], packed_value, false);
+      ctx.StoreVariable(target_symbol, packed_value, false);
     }
     return InstructionResult::Continue();
   };

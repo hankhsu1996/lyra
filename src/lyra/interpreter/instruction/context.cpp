@@ -52,11 +52,8 @@ auto InstructionContext::GetTemp(lir::TempRef temp) const -> RuntimeValue {
   return temp_table_->Read(temp);
 }
 
-auto InstructionContext::ReadVariable(const lir::Operand& operand) const
+auto InstructionContext::ReadVariable(common::SymbolRef symbol) const
     -> RuntimeValue {
-  assert(operand.IsVariable());
-  const auto* symbol = std::get<lir::SymbolRef>(operand.value);
-
   // Check function-local variables first (parameters and locals)
   if (!frame_->call_stack.empty()) {
     const auto& call_frame = frame_->call_stack.back();
@@ -81,11 +78,7 @@ auto InstructionContext::ReadVariable(const lir::Operand& operand) const
 }
 
 void InstructionContext::StoreVariable(
-    const lir::Operand& operand, const RuntimeValue& value,
-    bool is_non_blocking) {
-  assert(operand.IsVariable());
-  const auto* symbol = std::get<lir::SymbolRef>(operand.value);
-
+    common::SymbolRef symbol, const RuntimeValue& value, bool is_non_blocking) {
   // Deep copy arrays for value semantics
   const RuntimeValue actual_value = value.DeepCopy();
 
@@ -395,92 +388,26 @@ void InstructionContext::WritePointer(
   throw common::InternalError("interpreter", "unsupported pointer kind");
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const) - modifies via
+// shared_ptr
 void InstructionContext::StoreElement(
-    const lir::Operand& aggregate_operand, size_t index,
-    const RuntimeValue& element_value, bool is_non_blocking) {
-  // Temp operand: modify in place, no sensitivity tracking needed
-  if (!aggregate_operand.IsVariable()) {
-    auto aggregate_value = GetTemp(aggregate_operand.AsTempRef());
-    if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
-      auto actual_idx =
-          ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-      aggregate_value.SetElement(actual_idx, element_value);
-    } else {
-      aggregate_value.SetField(index, element_value);
-    }
-    return;
-  }
-
-  // Variable operand: need sensitivity tracking
-  const auto* symbol = std::get<lir::SymbolRef>(aggregate_operand.value);
-  auto aggregate_value = ReadVariable(aggregate_operand);
-
-  // Check if this is a local variable (no triggers needed)
-  bool is_local = false;
-  if (!frame_->call_stack.empty()) {
-    auto& call_frame = frame_->call_stack.back();
-    is_local = call_frame.local_variables.contains(symbol);
-  }
-  if (!is_local) {
-    is_local = frame_->variable_table.Exists(symbol);
-  }
-
-  // Compute actual index for arrays and queues
-  size_t actual_idx = index;
+    lir::TempRef aggregate, size_t index, const RuntimeValue& element_value) {
+  // Temp operand: modify in place via shared_ptr, no sensitivity tracking
+  // needed
+  auto aggregate_value = GetTemp(aggregate);
   if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
-    actual_idx =
+    auto actual_idx =
         ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-  }
-
-  // Resolve port bindings
-  auto [target_symbol, target_instance] = ResolveBinding(symbol);
-  const auto* actual_symbol =
-      (target_instance != nullptr) ? target_symbol : symbol;
-
-  if (is_non_blocking) {
-    // Queue NBA action with array index
-    effect_->RecordNbaAction(
-        {.symbol = actual_symbol,
-         .value = element_value.DeepCopy(),
-         .array_index = actual_idx});
-    return;
-  }
-
-  // Blocking assignment: snapshot before modification
-  if (!is_local) {
-    simulation_context_->variable_store.UpdatePrevious(actual_symbol);
-  }
-
-  // Perform the element store
-  if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
     aggregate_value.SetElement(actual_idx, element_value);
   } else {
     aggregate_value.SetField(index, element_value);
-  }
-
-  // Write modified aggregate back to flat storage
-  simulation_context_->variable_store.Write(actual_symbol, aggregate_value);
-
-  // Record modification for trigger system
-  if (!is_local) {
-    effect_->RecordVariableModification(actual_symbol);
   }
 }
 
 auto InstructionContext::GetOperandValue(const lir::Operand& operand) const
     -> RuntimeValue {
-  if (operand.IsTemp()) {
-    return GetTemp(operand.AsTempRef());
-  }
-  if (operand.IsVariable()) {
-    return ReadVariable(operand);
-  }
-  if (operand.IsConstant()) {
-    const auto& constant = std::get<lir::ConstantRef>(operand.value);
-    return RuntimeValue::FromConstant(constant);
-  }
-  throw common::InternalError(
-      "interpreter", "unexpected operand kind for instruction");
+  // Operands are always temps now (SSA form)
+  return GetTemp(operand.AsTempRef());
 }
 
 auto InstructionContext::EvalUnaryOp(

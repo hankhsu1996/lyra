@@ -10,7 +10,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
-#include "lyra/common/wide_bit_ops.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -183,26 +182,14 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
 
     case lir::InstructionKind::kStoreElement: {
       assert(instr.operands.size() == 3);
+      assert(instr.operands[0].IsTemp());
 
       auto index_value = ctx.GetTemp(instr.operands[1].AsTempRef());
       assert(!index_value.IsWide() && "element index cannot be wide");
       auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
       auto element_value = ctx.GetTemp(instr.operands[2].AsTempRef());
 
-      ctx.StoreElement(instr.operands[0], index, element_value, false);
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kStoreElementNonBlocking: {
-      assert(instr.operands.size() == 3);
-      assert(instr.operands[0].IsVariable());
-
-      auto index_value = ctx.GetTemp(instr.operands[1].AsTempRef());
-      assert(!index_value.IsWide() && "element index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-      auto element_value = ctx.GetTemp(instr.operands[2].AsTempRef());
-
-      ctx.StoreElement(instr.operands[0], index, element_value, true);
+      ctx.StoreElement(instr.operands[0].AsTempRef(), index, element_value);
       return InstructionResult::Continue();
     }
 

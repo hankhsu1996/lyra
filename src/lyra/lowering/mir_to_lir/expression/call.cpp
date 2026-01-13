@@ -161,16 +161,8 @@ auto LowerSystemCallExpression(
 
   auto lower_system_call_operand =
       [&](const mir::Expression& argument) -> Operand {
-    if (argument.kind == mir::Expression::Kind::kIdentifier) {
-      const auto& ident = mir::As<mir::IdentifierExpression>(argument);
-      return Operand::Variable(ident.symbol);
-    }
-    // For constant expressions, keep as constant operand to preserve metadata
-    if (argument.kind == mir::Expression::Kind::kConstant) {
-      const auto& lit = mir::As<mir::ConstantExpression>(argument);
-      auto constant_ref = builder.InternConstant(lit.constant);
-      return Operand::Constant(constant_ref);
-    }
+    // All arguments go through LowerExpression, which handles constants
+    // via Instruction::Constant instruction that writes to a temp.
     auto temp = LowerExpression(argument, builder);
     return Operand::Temp(temp);
   };
