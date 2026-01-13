@@ -25,33 +25,6 @@ using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
-namespace {
-
-// Emit kIntrinsicCall to load element from container.
-// Returns the result temp containing the loaded element.
-auto EmitLoadElement(
-    TempRef receiver, TempRef index, const Type& container_type,
-    const Type& element_type, LirBuilder& builder) -> TempRef {
-  void* intrinsic_fn =
-      interpreter::ResolveIntrinsicIndexRead(container_type.kind);
-  auto result = builder.AllocateTemp("elem", element_type);
-
-  auto instr = Instruction::IntrinsicCall(
-      intrinsic_fn, receiver, {index}, result, element_type);
-
-  // Set lower_bound for unpacked arrays
-  if (container_type.kind == Type::Kind::kUnpackedArray) {
-    const auto& array_data =
-        std::get<common::UnpackedArrayData>(container_type.data);
-    instr.lower_bound = array_data.lower_bound;
-  }
-
-  builder.AddInstruction(std::move(instr));
-  return result;
-}
-
-}  // namespace
-
 auto LowerAssignmentExpression(
     const mir::AssignmentExpression& assignment, LirBuilder& builder)
     -> lir::TempRef {
@@ -159,125 +132,40 @@ auto LowerAssignmentExpression(
 
     // Check if this is an unpacked struct/union field assignment
     if (!first_field.IsPacked()) {
-      // Handle nested unpacked struct/union field assignment
-      // For s.inner.x = value:
-      //   1. Load intermediate aggregates
-      //   2. Store value into innermost field
-      //   3. Store modified aggregates back up the chain
+      // Unpacked struct/union field assignment - use pointer chain
+      // For s.inner.x = value: ResolveVar(s) -> ResolveField(inner) ->
+      //   ResolveField(x) -> Store
+      // WritePointer handles the recursive write-back automatically.
+      const auto& base_type = *assignment.target.base_type;
 
-      if (field_path.size() == 1) {
-        // Single-level: direct store (optimized path)
-        size_t storage_index = assignment.target.base_type->IsUnpackedUnion()
-                                   ? 0
-                                   : first_field.index;
-        auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto index_constant = builder.InternConstant(
-            common::Constant::Int(static_cast<int32_t>(storage_index)));
+      // Start with pointer to the root variable
+      const auto* base_pointee = builder.GetContext()->InternType(base_type);
+      auto ptr =
+          builder.AllocateTemp("ptr", common::Type::Pointer(base_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveVar(ptr, assignment.target.symbol));
+
+      // Walk through field path, building pointer chain
+      const Type* current_type = &base_type;
+      for (const auto& field : field_path) {
+        // For union: ALWAYS use index 0 (shared storage)
+        size_t field_id = current_type->IsUnpackedUnion() ? 0 : field.index;
+
+        const auto* field_pointee =
+            builder.GetContext()->InternType(field.type);
+        auto field_ptr = builder.AllocateTemp(
+            "ptr_field", common::Type::Pointer(field_pointee));
         builder.AddInstruction(
-            Instruction::Constant(index_temp, index_constant));
+            Instruction::ResolveField(field_ptr, ptr, field_id));
+        ptr = field_ptr;
+        current_type = &field.type;
+      }
 
-        auto instruction = Instruction::StoreElement(
-            Operand::Variable(assignment.target.symbol), index_temp, value,
-            assignment.is_non_blocking);
-        builder.AddInstruction(std::move(instruction));
+      // Store through the final pointer
+      if (assignment.is_non_blocking) {
+        builder.AddInstruction(Instruction::StoreNBA(ptr, value));
       } else {
-        // Multi-level nested access: chain loads and stores
-        // Load intermediate aggregates from root to second-to-last
-        std::vector<TempRef> temps;
-        temps.reserve(field_path.size() - 1);
-
-        // First load from root variable
-        auto first_idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto first_idx_constant = builder.InternConstant(
-            common::Constant::Int(
-                static_cast<int32_t>(
-                    assignment.target.base_type->IsUnpackedUnion()
-                        ? 0
-                        : field_path[0].index)));
-        builder.AddInstruction(
-            Instruction::Constant(first_idx_temp, first_idx_constant));
-
-        const auto* pointee =
-            builder.GetContext()->InternType(*assignment.target.base_type);
-        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
-        builder.AddInstruction(
-            Instruction::ResolveVar(ptr, assignment.target.symbol));
-        auto recv_temp =
-            builder.AllocateTemp("recv", *assignment.target.base_type);
-        builder.AddInstruction(Instruction::Load(recv_temp, ptr));
-        auto first_temp = EmitLoadElement(
-            recv_temp, first_idx_temp, *assignment.target.base_type,
-            field_path[0].type, builder);
-        temps.push_back(first_temp);
-
-        // Load remaining intermediate aggregates
-        for (size_t i = 1; i < field_path.size() - 1; ++i) {
-          auto idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-          // Use parent's type to determine if it's a union
-          bool parent_is_union = field_path[i - 1].type.IsUnpackedUnion();
-          auto idx_constant = builder.InternConstant(
-              common::Constant::Int(
-                  static_cast<int32_t>(
-                      parent_is_union ? 0 : field_path[i].index)));
-          builder.AddInstruction(Instruction::Constant(idx_temp, idx_constant));
-
-          auto temp = EmitLoadElement(
-              temps.back(), idx_temp, field_path[i - 1].type,
-              field_path[i].type, builder);
-          temps.push_back(temp);
-        }
-
-        // Store value into innermost field
-        const auto& last_field = field_path.back();
-        auto last_idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-        // Use parent's type (second-to-last in path) to determine if union
-        bool parent_is_union =
-            field_path[field_path.size() - 2].type.IsUnpackedUnion();
-        auto last_idx_constant = builder.InternConstant(
-            common::Constant::Int(
-                static_cast<int32_t>(parent_is_union ? 0 : last_field.index)));
-        builder.AddInstruction(
-            Instruction::Constant(last_idx_temp, last_idx_constant));
-
-        builder.AddInstruction(
-            Instruction::StoreElement(
-                Operand::Temp(temps.back()), last_idx_temp, value,
-                assignment.is_non_blocking));
-
-        // Store modified aggregates back up the chain
-        for (size_t i = temps.size() - 1; i > 0; --i) {
-          auto idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-          // Use grandparent's type to determine if parent is a union
-          bool gparent_is_union =
-              (i >= 2) ? field_path[i - 2].type.IsUnpackedUnion()
-                       : assignment.target.base_type->IsUnpackedUnion();
-          auto idx_constant = builder.InternConstant(
-              common::Constant::Int(
-                  static_cast<int32_t>(
-                      gparent_is_union ? 0 : field_path[i].index)));
-          builder.AddInstruction(Instruction::Constant(idx_temp, idx_constant));
-
-          builder.AddInstruction(
-              Instruction::StoreElement(
-                  Operand::Temp(temps[i - 1]), idx_temp, temps[i],
-                  assignment.is_non_blocking));
-        }
-
-        // Store first intermediate back to root variable
-        auto root_idx_temp = builder.AllocateTemp("idx", common::Type::Int());
-        auto root_idx_constant = builder.InternConstant(
-            common::Constant::Int(
-                static_cast<int32_t>(
-                    assignment.target.base_type->IsUnpackedUnion()
-                        ? 0
-                        : field_path[0].index)));
-        builder.AddInstruction(
-            Instruction::Constant(root_idx_temp, root_idx_constant));
-
-        builder.AddInstruction(
-            Instruction::StoreElement(
-                Operand::Variable(assignment.target.symbol), root_idx_temp,
-                temps[0], assignment.is_non_blocking));
+        builder.AddInstruction(Instruction::Store(ptr, value));
       }
       return value;
     }

@@ -99,6 +99,26 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kResolveField: {
+      assert(instr.result.has_value());
+      assert(instr.temp_operands.size() == 1);
+
+      const auto& base_ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      assert(base_ptr_value.IsPointer());
+
+      // field_id is stored in lower_bound field
+      auto field_id = static_cast<size_t>(instr.lower_bound);
+
+      // Create FieldPointer with base and field_id
+      auto base_ptr = base_ptr_value.AsPointerStorage();
+      auto field_ptr = PointerValue::Field(base_ptr, field_id);
+
+      auto ptr_type = (*instr.result)->type;
+      ctx.WriteTemp(
+          instr.result.value(), RuntimeValue::Pointer(ptr_type, field_ptr));
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kStoreElement: {
       assert(instr.operands.size() == 3);
 

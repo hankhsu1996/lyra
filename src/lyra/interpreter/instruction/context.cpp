@@ -193,6 +193,16 @@ auto InstructionContext::ReadPointer(const PointerValue& ptr) const
     return container.AsQueue()[actual_idx].DeepCopy();
   }
 
+  if (ptr.IsField()) {
+    const auto& field_ptr = ptr.AsField();
+
+    // Read the struct through the base pointer
+    auto aggregate = ReadPointer(*field_ptr.base);
+
+    // Return the field value
+    return aggregate.GetField(field_ptr.field_id).DeepCopy();
+  }
+
   throw common::InternalError("interpreter", "unsupported pointer kind");
 }
 
@@ -268,6 +278,36 @@ void InstructionContext::WritePointer(
       container.SetElement(actual_idx, value);
     }
     WritePointer(*idx_ptr.base, container, false);
+    return;
+  }
+
+  if (ptr.IsField()) {
+    const auto& field_ptr = ptr.AsField();
+
+    // Read the struct through the base pointer
+    auto aggregate = ReadPointer(*field_ptr.base);
+
+    // Get root symbol for sensitivity tracking
+    const auto* root_symbol = ptr.GetRootSymbol();
+
+    if (is_non_blocking) {
+      // Resolve through port bindings for the root symbol
+      auto [target_symbol, target_instance] = ResolveBinding(root_symbol);
+      const auto* actual_symbol =
+          (target_instance != nullptr) ? target_symbol : root_symbol;
+      // For struct fields, we record NBA without array_index
+      // The whole struct will be replaced
+      aggregate.SetField(field_ptr.field_id, value);
+      effect_->RecordNbaAction(
+          {.symbol = actual_symbol,
+           .value = aggregate,
+           .array_index = std::nullopt});
+      return;
+    }
+
+    // Blocking: modify field and write back through base pointer
+    aggregate.SetField(field_ptr.field_id, value);
+    WritePointer(*field_ptr.base, aggregate, false);
     return;
   }
 

@@ -40,6 +40,7 @@ enum class InstructionKind {
   kStore,                    // Write T through Pointer<T>
   kStoreNBA,                 // Non-blocking store through Pointer<T>
   kResolveIndex,             // Pointer<Array<T>> + index -> Pointer<T>
+  kResolveField,             // Pointer<Struct> + field_id -> Pointer<FieldT>
   kStoreElement,             // Store to array/struct: base[index] = value
   kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
   kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
@@ -140,6 +141,7 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kStore:
     case InstructionKind::kStoreNBA:
     case InstructionKind::kResolveIndex:
+    case InstructionKind::kResolveField:
     case InstructionKind::kStoreElement:
     case InstructionKind::kStoreElementNonBlocking:
     case InstructionKind::kLoadPackedBits:
@@ -386,6 +388,19 @@ struct Instruction {
         .kind = InstructionKind::kResolveIndex,
         .result = result,
         .temp_operands = {base_ptr, index},
+    };
+  }
+
+  // Resolve struct field pointer: base_ptr.field_id -> Pointer<FieldT>
+  // base_ptr must be Pointer<Struct> or Pointer<Union>
+  // field_id is stored in lower_bound field (repurposed for field index)
+  static auto ResolveField(TempRef result, TempRef base_ptr, size_t field_id)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveField,
+        .result = result,
+        .temp_operands = {base_ptr},
+        .lower_bound = static_cast<int32_t>(field_id),
     };
   }
 
@@ -655,6 +670,11 @@ struct Instruction {
         return fmt::format(
             "resolve_index {}, {}[{}]", result.value(), temp_operands[0],
             temp_operands[1]);
+
+      case InstructionKind::kResolveField:
+        return fmt::format(
+            "resolve_field {}, {}.{}", result.value(), temp_operands[0],
+            lower_bound);
 
       case InstructionKind::kStoreElement:
         return fmt::format(

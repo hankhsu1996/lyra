@@ -27,7 +27,7 @@ using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
 // Check if an expression can be converted to a pointer chain
-// (i.e., it's an identifier or a chain of element selects leading to
+// (i.e., it's an identifier or a chain of element/field selects leading to
 // identifier)
 auto IsAddressable(const mir::Expression& expr) -> bool {
   if (expr.kind == mir::Expression::Kind::kIdentifier) {
@@ -36,6 +36,14 @@ auto IsAddressable(const mir::Expression& expr) -> bool {
   if (expr.kind == mir::Expression::Kind::kElementSelect) {
     const auto& elem_select = mir::As<mir::ElementSelectExpression>(expr);
     return IsAddressable(*elem_select.value);
+  }
+  if (expr.kind == mir::Expression::Kind::kMemberAccess) {
+    const auto& member = mir::As<mir::MemberAccessExpression>(expr);
+    // Only unpacked struct/union field access is addressable
+    if (member.value->type.IsUnpackedStruct() ||
+        member.value->type.IsUnpackedUnion()) {
+      return IsAddressable(*member.value);
+    }
   }
   return false;
 }
@@ -85,6 +93,55 @@ auto LowerToElementPointer(
   // Should not reach here - IsAddressable should have returned false
   throw common::InternalError(
       "lowering", "LowerToElementPointer called on non-addressable expression");
+}
+
+// Build a pointer to an addressable expression (variable, array element, or
+// struct field). Returns a Pointer<T> to the expression's storage location.
+auto LowerToPointer(const mir::Expression& expr, LirBuilder& builder)
+    -> TempRef {
+  if (expr.kind == mir::Expression::Kind::kIdentifier) {
+    // Base case: variable reference
+    const auto& id = mir::As<mir::IdentifierExpression>(expr);
+    const auto* pointee = builder.GetContext()->InternType(id.type);
+    auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+    builder.AddInstruction(Instruction::ResolveVar(ptr, id.symbol));
+    return ptr;
+  }
+
+  if (expr.kind == mir::Expression::Kind::kElementSelect) {
+    // Array element: get pointer to array, then resolve index
+    const auto& elem_select = mir::As<mir::ElementSelectExpression>(expr);
+    auto base_ptr = LowerToPointer(*elem_select.value, builder);
+    auto index = LowerExpression(*elem_select.selector, builder);
+
+    const auto* elem_pointee =
+        builder.GetContext()->InternType(elem_select.type);
+    auto elem_ptr =
+        builder.AllocateTemp("ptr_elem", common::Type::Pointer(elem_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveIndex(elem_ptr, base_ptr, index));
+    return elem_ptr;
+  }
+
+  if (expr.kind == mir::Expression::Kind::kMemberAccess) {
+    // Struct field: get pointer to struct, then resolve field
+    const auto& member = mir::As<mir::MemberAccessExpression>(expr);
+    auto base_ptr = LowerToPointer(*member.value, builder);
+
+    // For union: ALWAYS use index 0 (shared storage)
+    size_t field_id =
+        member.value->type.IsUnpackedUnion() ? 0 : member.bit_offset;
+
+    const auto* field_pointee = builder.GetContext()->InternType(member.type);
+    auto field_ptr =
+        builder.AllocateTemp("ptr_field", common::Type::Pointer(field_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveField(field_ptr, base_ptr, field_id));
+    return field_ptr;
+  }
+
+  throw common::InternalError(
+      "lowering", "LowerToPointer called on non-addressable expression");
 }
 
 auto LowerElementSelectExpression(
@@ -224,21 +281,32 @@ auto LowerMemberAccessExpression(
   // Check if this is an unpacked struct/union access
   if (member.value->type.IsUnpackedStruct() ||
       member.value->type.IsUnpackedUnion()) {
-    auto receiver = LowerExpression(*member.value, builder);
     auto result = builder.AllocateTemp("field", member.type);
 
     // For struct: bit_offset is reused as field_index
     // For union: ALWAYS use index 0 (shared storage)
-    size_t storage_index =
+    size_t field_id =
         member.value->type.IsUnpackedUnion() ? 0 : member.bit_offset;
 
-    // Emit constant for field index
+    // Use pointer-based approach if receiver is addressable
+    if (IsAddressable(*member.value)) {
+      auto base_ptr = LowerToPointer(*member.value, builder);
+      const auto* field_pointee = builder.GetContext()->InternType(member.type);
+      auto field_ptr = builder.AllocateTemp(
+          "ptr_field", common::Type::Pointer(field_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveField(field_ptr, base_ptr, field_id));
+      builder.AddInstruction(Instruction::Load(result, field_ptr));
+      return result;
+    }
+
+    // Non-addressable (e.g., function return): fall back to intrinsic
+    auto receiver = LowerExpression(*member.value, builder);
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-    auto index_constant = builder.InternConstant(
-        Constant::Int(static_cast<int32_t>(storage_index)));
+    auto index_constant =
+        builder.InternConstant(Constant::Int(static_cast<int32_t>(field_id)));
     builder.AddInstruction(Instruction::Constant(index_temp, index_constant));
 
-    // Resolve intrinsic for field access
     void* intrinsic_fn =
         interpreter::ResolveIntrinsicIndexRead(member.value->type.kind);
     builder.AddInstruction(
