@@ -192,10 +192,34 @@ auto ConstantValueToExpression(
           *type_result, std::move(field_exprs));
     }
 
-    // Unpacked array - not yet supported
+    // Unpacked array
+    if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+      const auto& array_type =
+          canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
+      std::vector<std::unique_ptr<mir::Expression>> elem_exprs;
+      elem_exprs.reserve(elements.size());
+
+      for (const auto& elem : elements) {
+        auto elem_result = ConstantValueToExpression(
+            elem, array_type.elementType, source_range, arena);
+        if (!elem_result) {
+          return std::unexpected(std::move(elem_result.error()));
+        }
+        elem_exprs.push_back(std::move(*elem_result));
+      }
+
+      auto type_result = LowerType(type, source_range, arena);
+      if (!type_result) {
+        return std::unexpected(std::move(type_result.error()));
+      }
+
+      return std::make_unique<mir::ArrayLiteralExpression>(
+          *type_result, std::move(elem_exprs));
+    }
+
     return std::unexpected(
         Diagnostic::Error(
-            source_range, "unpacked array constants not yet supported"));
+            source_range, "unsupported unpacked aggregate constant"));
   }
 
   return std::unexpected(

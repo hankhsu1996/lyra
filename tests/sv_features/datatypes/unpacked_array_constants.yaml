@@ -1,0 +1,104 @@
+feature: unpacked_array_constants
+description: Tests for unpacked arrays initialized with assignment patterns (parameter/localparam)
+
+cases:
+  - name: int_array_basic
+    description: Simple integer array parameter with assignment pattern
+    sv: |
+      module Test;
+        parameter int vals[3] = '{10, 20, 30};
+        int result;
+        initial begin
+          result = vals[0] + vals[1] + vals[2];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 60
+
+  - name: int_array_display
+    description: Display individual elements of an integer array parameter
+    sv: |
+      module Test;
+        parameter int vals[3] = '{10, 20, 30};
+        initial begin
+          $display("vals[0]=%0d vals[1]=%0d vals[2]=%0d", vals[0], vals[1], vals[2]);
+        end
+      endmodule
+    expect:
+      output: "vals[0]=10 vals[1]=20 vals[2]=30\n"
+
+  - name: localparam_array
+    description: Localparam array with assignment pattern
+    sv: |
+      module Test;
+        localparam int nums[4] = '{1, 2, 3, 4};
+        int result;
+        initial begin
+          result = nums[0] * nums[1] * nums[2] * nums[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 24
+
+  - name: packed_struct_array
+    description: Array of packed structs (like ibex PMP config)
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic lock;
+          logic [1:0] mode;
+          logic exec;
+          logic write;
+          logic read;
+        } pmp_cfg_t;
+
+        parameter pmp_cfg_t PmpCfgRst[4] = '{
+          '{lock: 1'b0, mode: 2'b00, exec: 1'b0, write: 1'b0, read: 1'b0},
+          '{lock: 1'b0, mode: 2'b00, exec: 1'b0, write: 1'b0, read: 1'b0},
+          '{lock: 1'b0, mode: 2'b01, exec: 1'b1, write: 1'b0, read: 1'b1},
+          '{lock: 1'b1, mode: 2'b10, exec: 1'b0, write: 1'b1, read: 1'b1}
+        };
+
+        int result;
+        initial begin
+          // PmpCfgRst[2] = 6'b001101 = 13
+          // PmpCfgRst[3] = 6'b110011 = 51
+          result = PmpCfgRst[2] + PmpCfgRst[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 64
+
+  - name: bit_array
+    description: Array of bit vectors
+    sv: |
+      module Test;
+        parameter bit [7:0] bytes[4] = '{8'hAA, 8'hBB, 8'hCC, 8'hDD};
+        int result;
+        initial begin
+          result = bytes[0] + bytes[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 391
+
+  - name: loop_over_param_array
+    description: Iterate over parameter array using loop
+    sv: |
+      module Test;
+        parameter int values[5] = '{1, 2, 4, 8, 16};
+        int sum;
+        initial begin
+          sum = 0;
+          for (int i = 0; i < 5; i++) begin
+            sum = sum + values[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 31
