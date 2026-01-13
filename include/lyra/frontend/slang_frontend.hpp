@@ -20,6 +20,7 @@ namespace lyra::frontend {
 
 struct FrontendOptions {
   std::vector<std::string> include_dirs;
+  std::vector<std::string> defines;
   std::vector<std::string> warning_options;
 };
 

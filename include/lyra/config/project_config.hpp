@@ -12,6 +12,7 @@ struct ProjectConfig {
   std::string top;
   std::vector<std::string> files;
   std::vector<std::string> incdir;
+  std::vector<std::string> defines;
   std::string out_dir = "out";
   std::vector<std::string> warning_options;
 

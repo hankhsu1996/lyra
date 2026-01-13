@@ -53,6 +53,7 @@ void WriteFile(const fs::path& path, const std::string& content) {
 struct CliOptions {
   std::vector<std::string> files;
   std::vector<std::string> incdir;
+  std::vector<std::string> defines;
   std::vector<std::string> cmdfiles_cwd;   // -f: paths relative to CWD
   std::vector<std::string> cmdfiles_file;  // -F: paths relative to file
   std::optional<std::string> top;
@@ -66,17 +67,29 @@ struct ResolvedConfig {
   std::string top;
   std::vector<std::string> files;
   std::vector<std::string> incdir;
+  std::vector<std::string> defines;
   std::string out_dir = "out";
   fs::path root_dir;
   std::vector<std::string> warning_options;
 };
 
-// Parse a command file (one file per line, # and // comments)
+// Result from parsing a command file
+struct CommandFileResult {
+  std::vector<std::string> files;
+  std::vector<std::string> incdirs;
+  std::vector<std::string> defines;
+};
+
+// Parse a command file supporting:
+// - File paths (one per line)
+// - Comments (# or //)
+// - +incdir+<path> for include directories
+// - +define+<macro> or +define+<macro>=<value> for defines
 // relative_to_file: if true, resolve relative paths from file's directory (-F)
 //                   if false, resolve relative paths from CWD (-f)
 auto ParseCommandFile(const fs::path& path, bool relative_to_file)
-    -> std::vector<std::string> {
-  std::vector<std::string> files;
+    -> CommandFileResult {
+  CommandFileResult result;
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error(
@@ -113,13 +126,30 @@ auto ParseCommandFile(const fs::path& path, bool relative_to_file)
       continue;
     }
 
+    // Handle +incdir+<path>
+    if (line.starts_with("+incdir+")) {
+      fs::path inc_path(line.substr(8));
+      if (inc_path.is_relative()) {
+        inc_path = base / inc_path;
+      }
+      result.incdirs.push_back(fs::absolute(inc_path).string());
+      continue;
+    }
+
+    // Handle +define+<macro> or +define+<macro>=<value>
+    if (line.starts_with("+define+")) {
+      result.defines.push_back(line.substr(8));
+      continue;
+    }
+
+    // Default: treat as file path
     fs::path p(line);
     if (p.is_relative()) {
       p = base / p;
     }
-    files.push_back(fs::absolute(p).string());
+    result.files.push_back(fs::absolute(p).string());
   }
-  return files;
+  return result;
 }
 
 // Resolve configuration from CLI options and optional lyra.toml
@@ -147,12 +177,21 @@ auto ResolveConfig(const CliOptions& cli)
 
   // Expand command files
   std::vector<std::string> cli_files = cli.files;
+  std::vector<std::string> cmdfile_incdirs;
+  std::vector<std::string> cmdfile_defines;
 
   // -f: paths relative to CWD
   for (const auto& f : cli.cmdfiles_cwd) {
     try {
       auto expanded = ParseCommandFile(f, false);
-      cli_files.insert(cli_files.end(), expanded.begin(), expanded.end());
+      cli_files.insert(
+          cli_files.end(), expanded.files.begin(), expanded.files.end());
+      cmdfile_incdirs.insert(
+          cmdfile_incdirs.end(), expanded.incdirs.begin(),
+          expanded.incdirs.end());
+      cmdfile_defines.insert(
+          cmdfile_defines.end(), expanded.defines.begin(),
+          expanded.defines.end());
     } catch (const std::exception& e) {
       return std::unexpected(e.what());
     }
@@ -162,7 +201,14 @@ auto ResolveConfig(const CliOptions& cli)
   for (const auto& f : cli.cmdfiles_file) {
     try {
       auto expanded = ParseCommandFile(f, true);
-      cli_files.insert(cli_files.end(), expanded.begin(), expanded.end());
+      cli_files.insert(
+          cli_files.end(), expanded.files.begin(), expanded.files.end());
+      cmdfile_incdirs.insert(
+          cmdfile_incdirs.end(), expanded.incdirs.begin(),
+          expanded.incdirs.end());
+      cmdfile_defines.insert(
+          cmdfile_defines.end(), expanded.defines.begin(),
+          expanded.defines.end());
     } catch (const std::exception& e) {
       return std::unexpected(e.what());
     }
@@ -187,9 +233,12 @@ auto ResolveConfig(const CliOptions& cli)
     return std::unexpected("no source files specified");
   }
 
-  // Incdir: CLI merges with TOML
+  // Incdir: TOML + command files + CLI (additive)
   if (toml) {
     resolved.incdir = toml->incdir;
+  }
+  for (const auto& inc : cmdfile_incdirs) {
+    resolved.incdir.push_back(inc);
   }
   for (const auto& inc : cli.incdir) {
     fs::path p(inc);
@@ -197,6 +246,17 @@ auto ResolveConfig(const CliOptions& cli)
       p = fs::absolute(p);
     }
     resolved.incdir.push_back(p.string());
+  }
+
+  // Defines: TOML + command files + CLI (additive)
+  if (toml) {
+    resolved.defines = toml->defines;
+  }
+  for (const auto& def : cmdfile_defines) {
+    resolved.defines.push_back(def);
+  }
+  for (const auto& def : cli.defines) {
+    resolved.defines.push_back(def);
   }
 
   // Warning options: CLI merges with TOML
@@ -230,6 +290,9 @@ auto ExtractCliOptions(const argparse::ArgumentParser& cmd) -> CliOptions {
   if (auto v = cmd.present<std::vector<std::string>>("-I")) {
     opts.incdir = *v;
   }
+  if (auto v = cmd.present<std::vector<std::string>>("-D")) {
+    opts.defines = *v;
+  }
   if (auto v = cmd.present<std::vector<std::string>>("-W")) {
     opts.warning_options = *v;
   }
@@ -257,8 +320,13 @@ void AddCliOptions(argparse::ArgumentParser& cmd) {
       .metavar("<dir>")
       .append();
 
+  cmd.add_argument("-D", "--define-macro")
+      .help("Define preprocessor macro (e.g., -DDEBUG or -DWIDTH=32)")
+      .metavar("<macro>")
+      .append();
+
   cmd.add_argument("-W")
-      .help("Warning control (e.g., -W no-unused)")
+      .help("Warning control (e.g., -Wno-unused)")
       .metavar("<warning>")
       .append();
 
@@ -469,6 +537,7 @@ auto GenerateMain(
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
     const std::vector<std::string>& inc_dirs,
+    const std::vector<std::string>& defines,
     const std::vector<std::string>& warning_options, const std::string& top)
     -> int;
 
@@ -482,9 +551,10 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
 
   try {
     if (use_interpreter) {
-      // TODO(hankhsu): Add include directory support to interpreter
       lyra::interpreter::InterpreterOptions options;
       options.plusargs = cli.plusargs;
+      options.include_dirs = config.incdir;
+      options.defines = config.defines;
       auto result = lyra::interpreter::Interpreter::RunFromFiles(
           config.files, config.top, options);
       std::cout << result.CapturedOutput();
@@ -500,8 +570,8 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
     // emit + build + run
     auto out_path = config.root_dir / config.out_dir;
     int result = EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.warning_options,
-        config.top);
+        config.files, out_path.string(), config.incdir, config.defines,
+        config.warning_options, config.top);
     if (result != 0) {
       return result;
     }
@@ -539,12 +609,14 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
     const std::vector<std::string>& inc_dirs,
+    const std::vector<std::string>& defines,
     const std::vector<std::string>& warning_options, const std::string& top)
     -> int {
   lyra::frontend::SlangFrontend frontend;
   try {
     lyra::frontend::FrontendOptions options;
     options.include_dirs = inc_dirs;
+    options.defines = defines;
     options.warning_options = warning_options;
     auto compilation = frontend.LoadFromFiles(source_files, options);
     if (!compilation) {
@@ -624,8 +696,8 @@ auto EmitCommand(const CliOptions& cli) -> int {
   try {
     auto out_path = config.root_dir / config.out_dir;
     return EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.warning_options,
-        config.top);
+        config.files, out_path.string(), config.incdir, config.defines,
+        config.warning_options, config.top);
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
@@ -647,6 +719,7 @@ auto CheckCommand(const CliOptions& cli) -> int {
   try {
     lyra::frontend::FrontendOptions options;
     options.include_dirs = config.incdir;
+    options.defines = config.defines;
     options.warning_options = config.warning_options;
     auto compilation = frontend.LoadFromFiles(config.files, options);
     if (!compilation) {
@@ -751,8 +824,8 @@ auto BuildCommand(const CliOptions& cli) -> int {
 
     // emit
     int result = EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.warning_options,
-        config.top);
+        config.files, out_path.string(), config.incdir, config.defines,
+        config.warning_options, config.top);
     if (result != 0) {
       return result;
     }
@@ -856,7 +929,7 @@ files = ["{}.sv"]
 
 auto main(int argc, char* argv[]) -> int {
   // Pre-process argv:
-  // 1. Expand -Wfoo to -W foo (like GCC/Clang/slang style)
+  // 1. Expand -Dfoo to -D foo and -Wfoo to -W foo (like GCC/Clang/slang style)
   // 2. Extract simulation args after "--" (argparse doesn't support natively)
   std::span args(argv, static_cast<size_t>(argc));
   std::vector<std::string> expanded_args;
@@ -870,6 +943,10 @@ auto main(int argc, char* argv[]) -> int {
       sim_args.emplace_back(arg);
     } else if (arg == "--") {
       past_separator = true;
+    } else if (arg.starts_with("-D") && arg.size() > 2 && arg[2] != '=') {
+      // Expand -DFOO to -D FOO (but not -D=foo which isn't valid anyway)
+      expanded_args.emplace_back("-D");
+      expanded_args.emplace_back(arg.substr(2));
     } else if (arg.starts_with("-W") && arg.size() > 2 && arg[2] != '=') {
       // Expand -Wfoo to -W foo (but not -W=foo which isn't valid anyway)
       expanded_args.emplace_back("-W");

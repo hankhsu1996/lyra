@@ -38,7 +38,10 @@ auto Interpreter::RunFromFiles(
     const std::vector<std::string>& paths, const std::string& top,
     const InterpreterOptions& options) -> InterpreterResult {
   frontend::SlangFrontend slang_frontend;
-  auto compilation = slang_frontend.LoadFromFiles(paths);
+  frontend::FrontendOptions frontend_options;
+  frontend_options.include_dirs = options.include_dirs;
+  frontend_options.defines = options.defines;
+  auto compilation = slang_frontend.LoadFromFiles(paths, frontend_options);
   auto source_manager = slang_frontend.GetSourceManagerPtr();
   return RunWithCompilation(
       std::move(compilation), std::move(source_manager), top, options);

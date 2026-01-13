@@ -11,8 +11,10 @@
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/numeric/Time.h>
+#include <slang/parsing/Preprocessor.h>
 #include <slang/syntax/SyntaxTree.h>
 #include <slang/text/SourceManager.h>
+#include <slang/util/Bag.h>
 #include <slang/util/LanguageVersion.h>
 
 #include "lyra/common/diagnostic.hpp"
@@ -51,13 +53,22 @@ auto SlangFrontend::LoadFromFiles(
     source_manager_->addUserDirectories(dir);
   }
 
+  // Set up preprocessor options for defines
+  slang::parsing::PreprocessorOptions pp_options;
+  pp_options.predefines = options.defines;
+  pp_options.predefineSource = "<command-line>";
+  pp_options.languageVersion = slang::LanguageVersion::v1800_2023;
+  slang::Bag bag;
+  bag.set(pp_options);
+
   slang::ast::CompilationOptions comp_options;
   comp_options.defaultTimeScale = MakeDefaultTimeScale();
   comp_options.languageVersion = slang::LanguageVersion::v1800_2023;
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   for (const auto& path : paths) {
-    auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager_);
+    auto result =
+        slang::syntax::SyntaxTree::fromFile(path, *source_manager_, bag);
     if (!result) {
       auto error_code = result.error().first;
       if (error_code == std::errc::no_such_file_or_directory) {
