@@ -156,7 +156,7 @@ std::string EscapeJsonString(const std::string& s) {
       case '\r': out += "\\r"; break;
       case '\t': out += "\\t"; break;
       default:
-        if (c < 0x20) {
+        if (c < 0x20 || c > 0x7F) {
           char buf[8];
           snprintf(buf, sizeof(buf), "\\u%04x", c);
           out += buf;
@@ -246,15 +246,15 @@ std::string EscapeJsonString(const std::string& s) {
 
   std::vector<std::string> compile_argv = {"clang++", "-std=c++23"};
   if (!pch_path.empty()) {
-    compile_argv.push_back("-include-pch");
-    compile_argv.push_back(pch_path.string());
+    compile_argv.emplace_back("-include-pch");
+    compile_argv.emplace_back(pch_path.string());
   }
-  compile_argv.push_back("-I" + sdk_include.string());
-  compile_argv.push_back("-I" + tmp_dir.string());
-  compile_argv.push_back("-I" + design_dir.string());
-  compile_argv.push_back("-o");
-  compile_argv.push_back(bin_path.string());
-  compile_argv.push_back(cpp_path.string());
+  compile_argv.emplace_back("-I" + sdk_include.string());
+  compile_argv.emplace_back("-I" + tmp_dir.string());
+  compile_argv.emplace_back("-I" + design_dir.string());
+  compile_argv.emplace_back("-o");
+  compile_argv.emplace_back(bin_path.string());
+  compile_argv.emplace_back(cpp_path.string());
 
   auto [compile_status, compile_output] = common::RunSubprocess(compile_argv);
   if (compile_status != 0) {

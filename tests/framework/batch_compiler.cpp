@@ -101,9 +101,17 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
   {
     std::ofstream out(header_path);
     out << "#pragma once\n";
+    // Standard library headers commonly used by generated code
+    out << "#include <array>\n";
+    out << "#include <cmath>\n";
+    out << "#include <filesystem>\n";
     out << "#include <iostream>\n";
+    out << "#include <print>\n";
     out << "#include <sstream>\n";
+    // SDK headers
     out << "#include <lyra/sdk/sdk.hpp>\n";
+    out << "#include <lyra/sdk/plusargs.hpp>\n";
+    out << "#include <lyra/sdk/runtime_config.hpp>\n";
   }
 
   auto [status, output] = common::RunSubprocess(
