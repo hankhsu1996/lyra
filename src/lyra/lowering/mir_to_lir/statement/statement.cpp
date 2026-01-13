@@ -73,6 +73,7 @@ auto LowerStatement(
       if (target.IsElementSelect()) {
         if (target.IsPacked()) {
           // Packed element assignment (possibly multi-dimensional)
+          // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
           const auto& base_type = *target.base_type;
           size_t element_width =
               GetElementWidthAfterIndices(base_type, target.indices.size());
@@ -80,6 +81,14 @@ auto LowerStatement(
               ComputeCompositeIndex(target.indices, base_type, builder);
           auto adjusted_index = AdjustForNonZeroLower(
               composite_index, base_type.GetElementLower(), builder);
+
+          // Get pointer to base variable
+          const auto* base_pointee =
+              builder.GetContext()->InternType(base_type);
+          auto base_ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(base_pointee));
+          builder.AddInstruction(
+              Instruction::ResolveVar(base_ptr, target.symbol));
 
           // Compute bit_offset = adjusted_index * element_width
           auto bit_offset =
@@ -95,11 +104,22 @@ auto LowerStatement(
                   {lir::Operand::Temp(adjusted_index),
                    lir::Operand::Temp(width_temp)}));
 
-          auto slice_type = common::Type::IntegralUnsigned(
+          // Create SliceRef type (packed array elements are unsigned)
+          auto slice_pointee_type = common::Type::IntegralUnsigned(
               static_cast<uint32_t>(element_width));
-          auto instruction = Instruction::StorePackedBits(
-              target.symbol, bit_offset, result_value, slice_type);
-          builder.AddInstruction(std::move(instruction));
+          const auto* slice_pointee =
+              builder.GetContext()->InternType(slice_pointee_type);
+          auto slice_ref_type = common::Type::SliceRef(slice_pointee);
+
+          // ResolveSlice: base_ptr + bit_offset + width -> slice_ptr
+          auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+          builder.AddInstruction(
+              Instruction::ResolveSlice(
+                  slice_ptr, base_ptr, bit_offset, width_temp));
+
+          // StoreSlice
+          builder.AddInstruction(
+              Instruction::StoreSlice(slice_ptr, result_value));
         } else {
           // Unpacked array element assignment: array[index] = value
           // Use pointer chain: ResolveVar -> ResolveIndex -> Store

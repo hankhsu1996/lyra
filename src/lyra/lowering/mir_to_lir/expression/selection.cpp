@@ -28,13 +28,18 @@ using IK = lir::InstructionKind;
 
 // Check if an expression can be converted to a pointer chain
 // (i.e., it's an identifier or a chain of element/field selects leading to
-// identifier)
+// identifier). Packed array element access is NOT addressable - it's a
+// bit slice within a bitvector, not a distinct storage location.
 auto IsAddressable(const mir::Expression& expr) -> bool {
   if (expr.kind == mir::Expression::Kind::kIdentifier) {
     return true;
   }
   if (expr.kind == mir::Expression::Kind::kElementSelect) {
     const auto& elem_select = mir::As<mir::ElementSelectExpression>(expr);
+    // Packed array element access is not addressable (it's a bit slice)
+    if (elem_select.value->type.IsBitvector()) {
+      return false;
+    }
     return IsAddressable(*elem_select.value);
   }
   if (expr.kind == mir::Expression::Kind::kMemberAccess) {
@@ -155,8 +160,7 @@ auto LowerElementSelectExpression(
 
   // Check if this is bitvector type (value) or unpacked array (variable)
   if (select.value->type.IsBitvector()) {
-    // Packed vector: lower the value, then select element/bit
-    auto value = LowerExpression(*select.value, builder);
+    // Packed vector element access
     int32_t lower = select.value->type.GetElementLower();
     auto adjusted_index = AdjustForNonZeroLower(index, lower, builder);
 
@@ -172,9 +176,21 @@ auto LowerElementSelectExpression(
             IK::kBinaryMultiply, bit_offset,
             {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
 
-    auto instruction =
-        Instruction::LoadPackedBits(result, value, bit_offset, select.type);
-    builder.AddInstruction(std::move(instruction));
+    if (IsAddressable(*select.value)) {
+      // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+      auto ptr = LowerToPointer(*select.value, builder);
+      const auto* slice_pointee = builder.GetContext()->InternType(select.type);
+      auto slice_ref =
+          builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveSlice(slice_ref, ptr, bit_offset, width_temp));
+      builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+    } else {
+      // ExtractBits approach for non-addressable expressions
+      auto value = LowerExpression(*select.value, builder);
+      builder.AddInstruction(
+          Instruction::ExtractBits(result, value, bit_offset, select.type));
+    }
     return result;
   }
 
@@ -213,8 +229,6 @@ auto LowerRangeSelectExpression(
     -> lir::TempRef {
   assert(range.value);
 
-  auto value = LowerExpression(*range.value, builder);
-
   // Compute LSB: for [7:4], LSB is 4
   int32_t lsb = std::min(range.left, range.right);
 
@@ -224,15 +238,34 @@ auto LowerRangeSelectExpression(
     lsb -= range.value->type.GetElementLower();
   }
 
-  // Create a constant for the LSB shift amount
+  // Create constants for LSB and width
   auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());
   auto lsb_constant = builder.InternConstant(Constant::Int(lsb));
   builder.AddInstruction(Instruction::Constant(lsb_temp, lsb_constant));
 
+  size_t width = range.type.GetBitWidth();
+  auto width_temp = builder.AllocateTemp("width", Type::Int());
+  auto width_constant =
+      builder.InternConstant(Constant::Int(static_cast<int32_t>(width)));
+  builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
+
   auto result = builder.AllocateTemp("slice", range.type);
-  auto instruction =
-      Instruction::LoadPackedBits(result, value, lsb_temp, range.type);
-  builder.AddInstruction(std::move(instruction));
+
+  if (IsAddressable(*range.value)) {
+    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    auto ptr = LowerToPointer(*range.value, builder);
+    const auto* slice_pointee = builder.GetContext()->InternType(range.type);
+    auto slice_ref =
+        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveSlice(slice_ref, ptr, lsb_temp, width_temp));
+    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+  } else {
+    // ExtractBits approach for non-addressable expressions
+    auto value = LowerExpression(*range.value, builder);
+    builder.AddInstruction(
+        Instruction::ExtractBits(result, value, lsb_temp, range.type));
+  }
   return result;
 }
 
@@ -242,7 +275,6 @@ auto LowerIndexedRangeSelectExpression(
   assert(indexed.value);
   assert(indexed.start);
 
-  auto value = LowerExpression(*indexed.value, builder);
   auto start = LowerExpression(*indexed.start, builder);
 
   TempRef lsb_temp;
@@ -267,9 +299,29 @@ auto LowerIndexedRangeSelectExpression(
   int32_t lower = indexed.value->type.GetElementLower();
   lsb_temp = AdjustForNonZeroLower(lsb_temp, lower, builder);
 
+  // Create width constant
+  auto width_temp = builder.AllocateTemp("width", Type::Int());
+  auto width_constant = builder.InternConstant(
+      Constant::Int(static_cast<int32_t>(indexed.width)));
+  builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
+
   auto result = builder.AllocateTemp("slice", indexed.type);
-  builder.AddInstruction(
-      Instruction::LoadPackedBits(result, value, lsb_temp, indexed.type));
+
+  if (IsAddressable(*indexed.value)) {
+    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    auto ptr = LowerToPointer(*indexed.value, builder);
+    const auto* slice_pointee = builder.GetContext()->InternType(indexed.type);
+    auto slice_ref =
+        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveSlice(slice_ref, ptr, lsb_temp, width_temp));
+    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+  } else {
+    // ExtractBits approach for non-addressable expressions
+    auto value = LowerExpression(*indexed.value, builder);
+    builder.AddInstruction(
+        Instruction::ExtractBits(result, value, lsb_temp, indexed.type));
+  }
   return result;
 }
 
@@ -316,18 +368,35 @@ auto LowerMemberAccessExpression(
   }
 
   // Packed struct: use bit extraction
-  auto value = LowerExpression(*member.value, builder);
-
-  // Create a constant for the bit offset (LSB position)
+  // Create constants for bit offset (LSB position) and width
   auto offset_temp = builder.AllocateTemp("offset", Type::Int());
   auto offset_constant = builder.InternConstant(
       Constant::Int(static_cast<int32_t>(member.bit_offset)));
   builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
-  // Use LoadPackedBits to extract the field bits
+  size_t width = member.type.GetBitWidth();
+  auto width_temp = builder.AllocateTemp("width", Type::Int());
+  auto width_constant =
+      builder.InternConstant(Constant::Int(static_cast<int32_t>(width)));
+  builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
+
   auto result = builder.AllocateTemp("field", member.type);
-  builder.AddInstruction(
-      Instruction::LoadPackedBits(result, value, offset_temp, member.type));
+
+  if (IsAddressable(*member.value)) {
+    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    auto ptr = LowerToPointer(*member.value, builder);
+    const auto* slice_pointee = builder.GetContext()->InternType(member.type);
+    auto slice_ref =
+        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveSlice(slice_ref, ptr, offset_temp, width_temp));
+    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+  } else {
+    // ExtractBits approach for non-addressable expressions
+    auto value = LowerExpression(*member.value, builder);
+    builder.AddInstruction(
+        Instruction::ExtractBits(result, value, offset_temp, member.type));
+  }
   return result;
 }
 

@@ -326,6 +326,10 @@ struct RuntimeValue {
     return type.kind == common::Type::Kind::kPointer;
   }
 
+  [[nodiscard]] auto IsSliceRef() const -> bool {
+    return type.kind == common::Type::Kind::kSliceRef;
+  }
+
   [[nodiscard]] auto AsPointer() const -> const PointerValue& {
     return *std::get<PointerStorage>(value);
   }
@@ -633,6 +637,9 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
     case common::Type::Kind::kPointer:
       throw common::InternalError(
           "DefaultValueForType", "Pointer<T> is an internal LIR type");
+    case common::Type::Kind::kSliceRef:
+      throw common::InternalError(
+          "DefaultValueForType", "SliceRef<T> is an internal LIR type");
   }
   throw common::InternalError(
       "DefaultValueForType",

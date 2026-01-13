@@ -171,26 +171,54 @@ auto LowerAssignmentExpression(
     }
 
     // Packed struct field assignment: my_struct.field = value
-    // Create literal for field bit offset
+    // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
+    const auto& base_type = *assignment.target.base_type;
+
+    // Get pointer to base variable
+    const auto* base_pointee = builder.GetContext()->InternType(base_type);
+    auto base_ptr =
+        builder.AllocateTemp("ptr", common::Type::Pointer(base_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveVar(base_ptr, assignment.target.symbol));
+
+    // Create offset temp
     auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
     auto offset_constant = builder.InternConstant(
         common::Constant::Int(static_cast<int32_t>(*first_field.bit_offset)));
     builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
-    // Create slice type with field width
-    auto slice_type = common::Type::IntegralUnsigned(
-        static_cast<uint32_t>(*first_field.bit_width));
+    // Create width temp
+    size_t field_width = *first_field.bit_width;
+    auto width_temp = builder.AllocateTemp("width", common::Type::Int());
+    auto width_constant = builder.InternConstant(
+        common::Constant::Int(static_cast<int32_t>(field_width)));
+    builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
 
-    // Emit StorePackedBits instruction
-    auto instruction = Instruction::StorePackedBits(
-        assignment.target.symbol, offset_temp, value, slice_type);
-    builder.AddInstruction(std::move(instruction));
+    // Create SliceRef type (preserve field signedness)
+    auto slice_pointee_type =
+        first_field.type.IsSigned()
+            ? common::Type::IntegralSigned(static_cast<uint32_t>(field_width))
+            : common::Type::IntegralUnsigned(
+                  static_cast<uint32_t>(field_width));
+    const auto* slice_pointee =
+        builder.GetContext()->InternType(slice_pointee_type);
+    auto slice_ref_type = common::Type::SliceRef(slice_pointee);
+
+    // ResolveSlice: base_ptr + offset + width -> slice_ptr
+    auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+    builder.AddInstruction(
+        Instruction::ResolveSlice(
+            slice_ptr, base_ptr, offset_temp, width_temp));
+
+    // StoreSlice
+    builder.AddInstruction(Instruction::StoreSlice(slice_ptr, value));
     return value;
   }
 
   if (assignment.target.IsElementSelect()) {
     if (assignment.target.IsPacked()) {
       // Packed element assignment (possibly multi-dimensional)
+      // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
       const auto& base_type = *assignment.target.base_type;
       size_t element_width = GetElementWidthAfterIndices(
           base_type, assignment.target.indices.size());
@@ -198,6 +226,13 @@ auto LowerAssignmentExpression(
           ComputeCompositeIndex(assignment.target.indices, base_type, builder);
       auto adjusted_index = AdjustForNonZeroLower(
           composite_index, base_type.GetElementLower(), builder);
+
+      // Get pointer to base variable
+      const auto* base_pointee = builder.GetContext()->InternType(base_type);
+      auto base_ptr =
+          builder.AllocateTemp("ptr", common::Type::Pointer(base_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveVar(base_ptr, assignment.target.symbol));
 
       // Compute bit_offset = adjusted_index * element_width
       auto bit_offset = builder.AllocateTemp("bit_offset", Type::Int());
@@ -210,11 +245,21 @@ auto LowerAssignmentExpression(
               IK::kBinaryMultiply, bit_offset,
               {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
 
-      auto slice_type =
+      // Create SliceRef type (packed array elements are unsigned)
+      auto slice_pointee_type =
           Type::IntegralUnsigned(static_cast<uint32_t>(element_width));
-      auto instruction = Instruction::StorePackedBits(
-          assignment.target.symbol, bit_offset, value, slice_type);
-      builder.AddInstruction(std::move(instruction));
+      const auto* slice_pointee =
+          builder.GetContext()->InternType(slice_pointee_type);
+      auto slice_ref_type = common::Type::SliceRef(slice_pointee);
+
+      // ResolveSlice: base_ptr + bit_offset + width -> slice_ptr
+      auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+      builder.AddInstruction(
+          Instruction::ResolveSlice(
+              slice_ptr, base_ptr, bit_offset, width_temp));
+
+      // StoreSlice
+      builder.AddInstruction(Instruction::StoreSlice(slice_ptr, value));
     } else {
       // Unpacked array element assignment - use pointer chain
       // For arr[i][j] = value: ResolveVar -> ResolveIndex(i) -> ResolveIndex(j)
@@ -237,13 +282,13 @@ auto LowerAssignmentExpression(
 
       // Walk through dimensions, building pointer chain
       const Type* current_type = &base_type;
-      for (size_t i = 0; i < index_temps.size(); ++i) {
+      for (const auto& index_temp : index_temps) {
         const Type& elem_type = current_type->GetElementType();
         const auto* elem_pointee = builder.GetContext()->InternType(elem_type);
         auto elem_ptr = builder.AllocateTemp(
             "ptr_elem", common::Type::Pointer(elem_pointee));
         builder.AddInstruction(
-            Instruction::ResolveIndex(elem_ptr, ptr, index_temps[i]));
+            Instruction::ResolveIndex(elem_ptr, ptr, index_temp));
         ptr = elem_ptr;
         current_type = &elem_type;
       }

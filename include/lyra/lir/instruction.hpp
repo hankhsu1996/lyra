@@ -41,10 +41,13 @@ enum class InstructionKind {
   kStoreNBA,                 // Non-blocking store through Pointer<T>
   kResolveIndex,             // Pointer<Array<T>> + index -> Pointer<T>
   kResolveField,             // Pointer<Struct> + field_id -> Pointer<FieldT>
+  kResolveSlice,             // Pointer<T> + offset + width -> SliceRef<U>
+  kLoadSlice,                // SliceRef<T> -> T (extract bits from storage)
+  kStoreSlice,               // SliceRef<T> + T -> void (read-modify-write)
   kStoreElement,             // Store to array/struct: base[index] = value
   kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
-  kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
-  kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
+  kExtractBits,              // Extract bits from value (rvalue): result =
+                             // value[offset+:width]
   kAllocate,  // Allocate container with storage kind resolved at lowering
 
   // Move operation
@@ -142,10 +145,12 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kStoreNBA:
     case InstructionKind::kResolveIndex:
     case InstructionKind::kResolveField:
+    case InstructionKind::kResolveSlice:
+    case InstructionKind::kLoadSlice:
+    case InstructionKind::kStoreSlice:
     case InstructionKind::kStoreElement:
     case InstructionKind::kStoreElementNonBlocking:
-    case InstructionKind::kLoadPackedBits:
-    case InstructionKind::kStorePackedBits:
+    case InstructionKind::kExtractBits:
     case InstructionKind::kAllocate:
     case InstructionKind::kMove:
       return InstructionCategory::kMemory;
@@ -404,6 +409,35 @@ struct Instruction {
     };
   }
 
+  // Resolve bit slice: base_ptr[offset +: width] -> SliceRef<T>
+  // Creates a slice reference for packed bit access
+  static auto ResolveSlice(
+      TempRef result, TempRef base_ptr, TempRef offset, TempRef width)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveSlice,
+        .result = result,
+        .temp_operands = {base_ptr, offset, width},
+    };
+  }
+
+  // Load value through a slice reference (extract bits from storage)
+  static auto LoadSlice(TempRef result, TempRef slice_ref) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoadSlice,
+        .result = result,
+        .temp_operands = {slice_ref},
+    };
+  }
+
+  // Store value through a slice reference (read-modify-write)
+  static auto StoreSlice(TempRef slice_ref, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreSlice,
+        .temp_operands = {slice_ref, value},
+    };
+  }
+
   // Store element to array/struct: base[index] = value
   // base can be variable or temp (polymorphic)
   // Sensitivity tracking only triggered if base is variable
@@ -417,30 +451,17 @@ struct Instruction {
             std::move(base), Operand::Temp(index), Operand::Temp(value)}};
   }
 
-  // Load bits from packed vector: result = value[bit_offset +: width]
-  // bit_offset is pre-computed (index * element_width for arrays, or literal
-  // for struct fields). Width comes from result_type.
-  static auto LoadPackedBits(
+  // Extract bits from value (rvalue): result = value[bit_offset +: width]
+  // For non-addressable expressions like (a+b)[7:4].
+  // Width comes from result_type.
+  static auto ExtractBits(
       TempRef result, TempRef value, TempRef bit_offset,
       common::Type result_type) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadPackedBits,
+        .kind = InstructionKind::kExtractBits,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = {Operand::Temp(value), Operand::Temp(bit_offset)}};
-  }
-
-  // Store bits to packed vector: variable[bit_offset +: width] = value
-  // bit_offset is pre-computed. Width comes from slice_type.
-  static auto StorePackedBits(
-      SymbolRef variable, TempRef bit_offset, TempRef value,
-      common::Type slice_type) -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kStorePackedBits,
-        .result_type = std::move(slice_type),
-        .operands = {
-            Operand::Variable(variable), Operand::Temp(bit_offset),
-            Operand::Temp(value)}};
+        .temp_operands = {value, bit_offset}};
   }
 
   // Allocate container with storage kind resolved at lowering time.
@@ -676,6 +697,19 @@ struct Instruction {
             "resolve_field {}, {}.{}", result.value(), temp_operands[0],
             lower_bound);
 
+      case InstructionKind::kResolveSlice:
+        return fmt::format(
+            "resolve_slice {}, {}[{}+:{}]", result.value(), temp_operands[0],
+            temp_operands[1], temp_operands[2]);
+
+      case InstructionKind::kLoadSlice:
+        return fmt::format(
+            "load_slice {}, {}", result.value(), temp_operands[0]);
+
+      case InstructionKind::kStoreSlice:
+        return fmt::format(
+            "store_slice {}, {}", temp_operands[0], temp_operands[1]);
+
       case InstructionKind::kStoreElement:
         return fmt::format(
             "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
@@ -686,15 +720,10 @@ struct Instruction {
             "stelnb {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
             operands[2].ToString());
 
-      case InstructionKind::kLoadPackedBits:
+      case InstructionKind::kExtractBits:
         return fmt::format(
-            "ldpb  {}, {}[{}+:]", result.value(), operands[0].ToString(),
-            operands[1].ToString());
-
-      case InstructionKind::kStorePackedBits:
-        return fmt::format(
-            "stpb  {}[{}+:], {}", operands[0].ToString(),
-            operands[1].ToString(), operands[2].ToString());
+            "extb  {}, {}[{}+:]", result.value(), temp_operands[0],
+            temp_operands[1]);
 
       case InstructionKind::kAllocate: {
         const char* storage_str =

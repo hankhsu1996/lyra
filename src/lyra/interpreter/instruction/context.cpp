@@ -12,9 +12,12 @@
 
 #include <fmt/format.h>
 
+#include "lyra/common/bit_utils.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/wide_bit.hpp"
+#include "lyra/common/wide_bit_ops.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_frame.hpp"
@@ -203,6 +206,37 @@ auto InstructionContext::ReadPointer(const PointerValue& ptr) const
     return aggregate.GetField(field_ptr.field_id).DeepCopy();
   }
 
+  if (ptr.IsSlice()) {
+    const auto& slice_ptr = ptr.AsSlice();
+
+    // Read the container through the base pointer
+    auto container = ReadPointer(*slice_ptr.base);
+    assert(container.IsTwoState());
+
+    size_t offset = slice_ptr.offset;
+    size_t width = slice_ptr.width;
+
+    // Extract bits from container
+    if (width <= 64) {
+      uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
+      uint64_t extracted = 0;
+      if (container.IsWide()) {
+        auto shifted = container.AsWideBit().ShiftRightLogical(offset);
+        extracted = shifted.GetWord(0) & mask;
+      } else {
+        extracted = (container.AsNarrow().AsUInt64() >> offset) & mask;
+      }
+      return RuntimeValue::IntegralUnsigned(extracted, width);
+    }
+    // Wide extraction
+    auto wide_value =
+        container.IsWide()
+            ? container.AsWideBit()
+            : common::WideBit::FromUInt64(container.AsNarrow().AsUInt64(), 2);
+    auto extracted = wide_value.ExtractSlice(offset, width);
+    return RuntimeValue::IntegralWide(std::move(extracted), width, false);
+  }
+
   throw common::InternalError("interpreter", "unsupported pointer kind");
 }
 
@@ -308,6 +342,53 @@ void InstructionContext::WritePointer(
     // Blocking: modify field and write back through base pointer
     aggregate.SetField(field_ptr.field_id, value);
     WritePointer(*field_ptr.base, aggregate, false);
+    return;
+  }
+
+  if (ptr.IsSlice()) {
+    const auto& slice_ptr = ptr.AsSlice();
+
+    // Read the container through the base pointer
+    auto container = ReadPointer(*slice_ptr.base);
+    assert(container.IsTwoState());
+
+    size_t offset = slice_ptr.offset;
+    size_t width = slice_ptr.width;
+
+    // Insert bits into container (read-modify-write)
+    size_t storage_width = container.type.GetBitWidth();
+    bool storage_is_signed = container.type.IsSigned();
+    bool storage_is_wide = container.IsWide();
+    bool slice_is_wide = width > 64;
+
+    RuntimeValue modified;
+    if (!storage_is_wide && !slice_is_wide) {
+      uint64_t slice_mask = common::MakeBitMask(static_cast<uint32_t>(width));
+      uint64_t clear_mask = ~(slice_mask << offset);
+      uint64_t merged = (container.AsNarrow().AsUInt64() & clear_mask) |
+                        ((value.AsNarrow().AsUInt64() & slice_mask) << offset);
+      modified = storage_is_signed
+                     ? RuntimeValue::IntegralSigned(
+                           static_cast<int64_t>(merged), storage_width)
+                     : RuntimeValue::IntegralUnsigned(merged, storage_width);
+    } else {
+      // Wide case - use WideBit operations
+      size_t storage_words = common::wide_ops::WordsForBits(storage_width);
+      auto current_wide =
+          storage_is_wide ? container.AsWideBit()
+                          : common::WideBit::FromUInt64(
+                                container.AsNarrow().AsUInt64(), storage_words);
+      auto value_wide = slice_is_wide
+                            ? value.AsWideBit()
+                            : common::WideBit::FromUInt64(
+                                  value.AsNarrow().AsUInt64(), storage_words);
+      auto merged = current_wide.InsertSlice(value_wide, offset, width);
+      modified = RuntimeValue::IntegralWide(
+          std::move(merged), storage_width, storage_is_signed);
+    }
+
+    // Write modified container back through base pointer
+    WritePointer(*slice_ptr.base, modified, is_non_blocking);
     return;
   }
 
