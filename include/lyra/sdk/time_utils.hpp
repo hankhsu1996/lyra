@@ -9,8 +9,8 @@ namespace lyra::sdk {
 /// Convert power of 10 to human-readable time unit string.
 ///
 /// Examples:
-///   -9 → "1ns", -8 → "10ns", -10 → "100ps"
-///   0 → "1s", 1 → "10s", 2 → "100s"
+///   -9 -> "1ns", -8 -> "10ns", -10 -> "100ps"
+///   0 -> "1s", 1 -> "10s", 2 -> "100s"
 ///
 /// Used by TimeScale::ToString() and $printtimescale.
 inline auto PowerToString(int8_t power) -> std::string {
@@ -26,7 +26,7 @@ inline auto PowerToString(int8_t power) -> std::string {
   } else {
     // Floor division for negatives: C++ integer division truncates toward zero,
     // but we need floor (toward -infinity). Formula: floor(x/n) = (x - (n-1)) /
-    // n Example: power=-8 → quotient=(-8-2)/3=-10/3=-3 → base=-9, magnitude=1
+    // n Example: power=-8 -> quotient=(-8-2)/3=-10/3=-3 -> base=-9, magnitude=1
     int quotient = (power - 2) / 3;
     base_power = quotient * 3;
     magnitude = power - base_power;

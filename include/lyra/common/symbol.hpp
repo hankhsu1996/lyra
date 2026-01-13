@@ -37,7 +37,7 @@ struct SymbolInfo {
 
   // Resolved constant value for parameters/localparams after elaboration.
   // INVARIANT: Only valid when kind == kParameter.
-  // Used by MIR→LIR to emit kConstant instead of variable load.
+  // Used by MIR->LIR to emit kConstant instead of variable load.
   std::optional<Constant> constant_value;
 };
 

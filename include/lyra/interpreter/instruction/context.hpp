@@ -79,7 +79,7 @@ class InstructionContext {
   [[nodiscard]] auto GetOperandValue(const lir::Operand& operand) const
       -> RuntimeValue;
 
-  /// Resolve symbol through port bindings (output port → parent signal).
+  /// Resolve symbol through port bindings (output port -> parent signal).
   /// Returns (resolved_symbol, target_instance) for flat storage lookup.
   [[nodiscard]] auto ResolveBinding(common::SymbolId symbol) const
       -> std::pair<common::SymbolId, std::shared_ptr<HierarchyContext>>;

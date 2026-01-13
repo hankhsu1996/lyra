@@ -122,7 +122,7 @@ auto LowerExpression(
           if (!common::IsTemplateParamType(*param_type_result)) {
             // Constructor params (non-template port params): preserve as
             // identifier for runtime access via class member (codegen).
-            // Register as parameter with constant value for MIR→LIR.
+            // Register as parameter with constant value for MIR->LIR.
             const auto& cv = param.getValue();
             auto constant_result = ConstantValueToConstant(cv);
             common::SymbolId sym_id =

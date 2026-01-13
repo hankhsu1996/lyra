@@ -603,7 +603,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         EmitExpression(*syscall.arguments[0], kPrecLowest);
         out_ << ")";
       } else if (syscall.name == "$clog2") {
-        // Ceiling of log base 2 (0 → 0)
+        // Ceiling of log base 2 (0 -> 0)
         out_ << "[](uint64_t n) { return n == 0 ? 0 : std::bit_width(n - 1); }("
                 "static_cast<uint64_t>(";
         EmitExpression(*syscall.arguments[0], kPrecLowest);

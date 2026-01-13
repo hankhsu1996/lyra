@@ -30,7 +30,7 @@ struct Port {
 };
 
 // Output port binding: maps child's output port to parent's signal storage.
-// Child writes to output port → actually writes to parent's signal.
+// Child writes to output port -> actually writes to parent's signal.
 struct OutputBinding {
   std::string port_name;  // Formal port name in child
   common::SymbolId signal{common::kInvalidSymbolId};  // Parent signal symbol
@@ -44,7 +44,7 @@ struct SubmoduleInstance {
   std::string module_type;               // e.g., "Counter"
   std::string module_signature;          // e.g., "Counter<8>" (for linking)
   const Module* child_module = nullptr;  // Resolved during linking
-  std::vector<OutputBinding> output_bindings;  // Output port → parent signal
+  std::vector<OutputBinding> output_bindings;  // Output port -> parent signal
 };
 
 /// Function parameter for user-defined functions.

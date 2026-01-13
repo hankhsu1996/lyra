@@ -358,7 +358,7 @@ void SimulationRunner::ElaborateSubmodules(
     std::string instance_path = parent_path + "." + submod.instance_name;
 
     // Build port bindings for this instance
-    // Output port bindings: child writes → parent signal
+    // Output port bindings: child writes -> parent signal
     // (Input ports use driver processes, no bindings needed)
     std::unordered_map<common::SymbolId, PortBinding> bindings;
     const auto& symbol_table = simulation_context_.get().symbol_table;

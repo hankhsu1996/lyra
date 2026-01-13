@@ -30,7 +30,7 @@ auto LowerIdentifierExpression(
     const mir::IdentifierExpression& identifier, LirBuilder& builder)
     -> lir::TempRef {
   // Check if the symbol has a constant value (for parameters).
-  // This enables MIR→LIR to emit constant instruction without MIR having
+  // This enables MIR->LIR to emit constant instruction without MIR having
   // a parameter_value field, keeping MIR clean.
   const auto& constant_opt =
       builder.GetSymbolTable().GetConstant(identifier.symbol);

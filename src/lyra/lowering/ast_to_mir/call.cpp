@@ -398,7 +398,7 @@ auto LowerCall(
 
         if (is_mem_io) {
           auto args = call.arguments();
-          // First arg: filename (input) → arguments
+          // First arg: filename (input) -> arguments
           if (!args.empty()) {
             const auto& first_arg = *args[0];
             arguments.push_back(LowerExpression(first_arg, arena, registrar));
@@ -407,7 +407,7 @@ auto LowerCall(
               format_expr_is_literal = true;
             }
           }
-          // Second arg: target array (write target) → output_targets
+          // Second arg: target array (write target) -> output_targets
           if (args.size() >= 2) {
             const auto* target_arg = args[1];
             // Output arguments are wrapped as Assignment with EmptyArgument

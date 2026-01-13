@@ -44,7 +44,7 @@ struct Port {
 };
 
 // Output port binding: maps child's output port to parent's signal storage.
-// Child writes to output port → actually writes to parent's signal.
+// Child writes to output port -> actually writes to parent's signal.
 // (Input ports use driver processes instead, no binding needed.)
 struct OutputBinding {
   std::string port_name;               // Formal port name in child module
@@ -60,7 +60,7 @@ struct SubmoduleInstance {
   std::string module_signature;   // e.g., "Counter<8>" (for linking)
   std::vector<ParameterOverride>
       parameter_overrides;                     // Template arguments for codegen
-  std::vector<OutputBinding> output_bindings;  // Output port → parent signal
+  std::vector<OutputBinding> output_bindings;  // Output port -> parent signal
 };
 
 // Module-level variable with optional initializer

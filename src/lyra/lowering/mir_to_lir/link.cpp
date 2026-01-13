@@ -141,7 +141,7 @@ void LinkFunctionCalls(
 }
 
 void LinkSubmodules(std::span<const std::unique_ptr<lir::Module>> modules) {
-  // Build instance_symbol → module lookup map
+  // Build instance_symbol -> module lookup map
   // Each instance gets its own LIR module, so this is 1:1
   std::unordered_map<common::SymbolId, const lir::Module*> module_map;
   for (const auto& module : modules) {

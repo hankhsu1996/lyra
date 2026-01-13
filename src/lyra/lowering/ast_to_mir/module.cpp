@@ -549,12 +549,12 @@ void ProcessModuleMember(
     // Compile-time resolved - no runtime representation needed
     case SK::TypeAlias:
       // Type aliases are unwrapped to canonical types by LowerType()
-      // Example: typedef logic [7:0] byte_t; → byte_t becomes logic[7:0]
+      // Example: typedef logic [7:0] byte_t; -> byte_t becomes logic[7:0]
       break;
 
     case SK::Parameter:
       // Compile-time constants - slang inlines values at use sites
-      // Example: parameter int WIDTH = 8; → WIDTH becomes literal 8
+      // Example: parameter int WIDTH = 8; -> WIDTH becomes literal 8
       break;
 
     case SK::Genvar:

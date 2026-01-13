@@ -24,7 +24,7 @@ struct PortBinding {
 struct HierarchyContext {
   std::string hierarchy_path;  // e.g., "top.counter1" (for debugging)
 
-  // Port bindings: port symbol → (target_symbol, target_instance)
+  // Port bindings: port symbol -> (target_symbol, target_instance)
   std::unordered_map<common::SymbolId, PortBinding> port_bindings;
 
   // Child instances for hierarchical access (populated during elaboration)
