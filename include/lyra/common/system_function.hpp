@@ -21,6 +21,7 @@ enum class SystemFunctionCategory : uint8_t {
   kMathIntegral,    // $clog2 (integral -> integral)
   kMemIo,           // $readmemh/$readmemb/$writememh/$writememb
   kPlusargs,        // $test$plusargs, $value$plusargs
+  kFileIo,          // $fopen, $fclose
 };
 
 /// Return type specification
@@ -140,9 +141,13 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   // Math: Integral
   {.name = "$clog2", .category = Cat::kMathIntegral, .min_args = 1, .max_args = 1, .return_type = Ret::kIntegral32, .cpp_function = ""},
 
-  // Command Line Input (LRM 21.6)
+  // Command Line Input
   {.name = "$test$plusargs", .category = Cat::kPlusargs, .min_args = 1, .max_args = 1, .return_type = Ret::kIntegral32, .cpp_function = ""},
   {.name = "$value$plusargs", .category = Cat::kPlusargs, .min_args = 2, .max_args = 2, .return_type = Ret::kIntegral32, .cpp_function = ""},
+
+  // File I/O
+  {.name = "$fopen", .category = Cat::kFileIo, .min_args = 1, .max_args = 2, .return_type = Ret::kIntegral32, .cpp_function = ""},
+  {.name = "$fclose", .category = Cat::kFileIo, .min_args = 1, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
 });
 // clang-format on
 // NOLINTEND(readability-identifier-naming)

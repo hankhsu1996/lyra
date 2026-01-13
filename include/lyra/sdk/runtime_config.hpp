@@ -12,6 +12,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/sdk/file_io.hpp"
+
 namespace lyra::sdk {
 
 // Default timescale constants
@@ -83,6 +85,9 @@ struct RuntimeConfig {
 
   // $timeformat state (units, precision, suffix, min_width)
   TimeFormatState time_format_state;
+
+  // File I/O state for $fopen/$fclose
+  FileManager file_manager;
 };
 
 /// RAII guard that installs a RuntimeConfig via thread-local storage.
@@ -199,6 +204,23 @@ inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
   return RuntimeScope::Current().time_format_state.FormatModuleTime(
       static_cast<uint64_t>(time_value), module_unit_power,
       RuntimeScope::Current().global_precision_power);
+}
+
+/// $fopen(filename) - MCD mode (write-only, OR-able).
+/// Returns multichannel descriptor (single bit set), or 0 on failure.
+inline auto FOpen(std::string_view filename) -> int32_t {
+  return RuntimeScope::Current().file_manager.FopenMcd(filename);
+}
+
+/// $fopen(filename, mode) - FD mode with explicit mode.
+/// Returns file descriptor (bit 31 set), or 0 on failure.
+inline auto FOpen(std::string_view filename, std::string_view mode) -> int32_t {
+  return RuntimeScope::Current().file_manager.FopenFd(filename, mode);
+}
+
+/// $fclose(descriptor) - close file and release handle.
+inline void FClose(int32_t descriptor) {
+  RuntimeScope::Current().file_manager.Fclose(descriptor);
 }
 
 }  // namespace lyra::sdk

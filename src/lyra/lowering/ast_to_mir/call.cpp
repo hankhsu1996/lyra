@@ -257,8 +257,14 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
               fmt::format("unsupported system call '{}'", name)));
     }
 
-    // Get task/function distinction from slang
-    bool is_task = call.getSubroutineKind() == slang::ast::SubroutineKind::Task;
+    // Look up function info from registry (single source of truth)
+    const auto* func_info = common::FindSystemFunction(name);
+
+    // Determine task/function from registry's return type, not slang
+    // (slang may misclassify some system tasks as functions)
+    bool is_task =
+        func_info != nullptr &&
+        func_info->return_type == common::SystemFunctionReturnType::kVoid;
 
     // Handle $timeunit($root), $timeprecision($root),
     // $printtimescale($root) Transform to $timeunit_root /
@@ -279,7 +285,6 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
     }
 
     // Check if this is a display-like or severity task
-    const auto* func_info = common::FindSystemFunction(name);
     bool is_display_like =
         func_info != nullptr &&
         (func_info->category == common::SystemFunctionCategory::kDisplay ||
@@ -287,12 +292,6 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
     bool is_severity_task =
         func_info != nullptr &&
         func_info->category == common::SystemFunctionCategory::kSeverity;
-
-    // Override is_task for severity tasks - slang classifies them as
-    // functions but they should be treated as tasks in codegen
-    if (is_severity_task) {
-      is_task = true;
-    }
 
     std::unique_ptr<mir::Expression> format_expr;
     bool format_expr_is_literal = false;

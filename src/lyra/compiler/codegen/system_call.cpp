@@ -523,6 +523,15 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
         "codegen", "mem I/O target must be an unpacked or packed array");
   }
 
+  // File I/O
+  if (syscall.name == "$fclose") {
+    Indent();
+    out_ << "lyra::sdk::FClose(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ");\n";
+    return;
+  }
+
   // Unrecognized system task - should have been rejected in AST-to-MIR lowering
   throw common::InternalError(
       "codegen", "unexpected system task: " + syscall.name);

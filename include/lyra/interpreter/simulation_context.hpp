@@ -13,6 +13,7 @@
 #include "lyra/interpreter/tracer.hpp"
 #include "lyra/interpreter/variable_store.hpp"
 #include "lyra/interpreter/variable_table.hpp"
+#include "lyra/sdk/file_io.hpp"
 #include "lyra/sdk/plusargs.hpp"
 
 namespace lyra::interpreter {
@@ -72,6 +73,9 @@ class SimulationContext {
   std::optional<MonitorState> active_monitor;
 
   sdk::PlusargsTable plusargs;
+
+  // File I/O state for $fopen/$fclose
+  sdk::FileManager file_manager;
 };
 
 }  // namespace lyra::interpreter
