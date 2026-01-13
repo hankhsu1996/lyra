@@ -1,14 +1,17 @@
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -312,41 +315,69 @@ auto LowerFunctionCallExpression(
 }
 
 auto LowerMethodCallExpression(
-    const mir::MethodCallExpression& mc, LirBuilder& builder) -> lir::TempRef {
-  auto receiver = LowerExpression(*mc.receiver, builder);
-  auto result = builder.AllocateTemp("method_call", mc.type);
+    const mir::MethodCallExpression& method_call, LirBuilder& builder)
+    -> lir::TempRef {
+  auto receiver = LowerExpression(*method_call.receiver, builder);
+  auto result = builder.AllocateTemp("method_call", method_call.type);
 
-  // Convert MIR enum members to LIR enum members (if present)
-  std::vector<lir::EnumMemberInfo> lir_members;
-  lir_members.reserve(mc.enum_members.size());
-  for (const auto& m : mc.enum_members) {
-    lir_members.push_back({.name = m.name, .value = m.value});
+  // Enum methods use kIntrinsicOp (value-semantic)
+  if (!method_call.enum_members.empty()) {
+    using enum common::BuiltinMethod;
+    using enum lir::IntrinsicOpKind;
+
+    auto to_op_kind = [](common::BuiltinMethod m) {
+      if (m == kNext) {
+        return kEnumNext;
+      }
+      if (m == kPrev) {
+        return kEnumPrev;
+      }
+      return kEnumName;
+    };
+    auto op_kind = to_op_kind(method_call.method);
+
+    std::vector<TempRef> args{receiver};
+
+    // next/prev take optional step argument (default 1)
+    if (method_call.method == kNext || method_call.method == kPrev) {
+      TempRef step_temp;
+      if (!method_call.args.empty()) {
+        step_temp = LowerExpression(*method_call.args[0], builder);
+      } else {
+        auto one = builder.InternConstant(Constant::Int(1));
+        step_temp = builder.AllocateTemp("step", Type::Int());
+        builder.AddInstruction(
+            Instruction::Basic(IK::kConstant, step_temp, one));
+      }
+      args.push_back(step_temp);
+    }
+
+    builder.AddInstruction(
+        Instruction::IntrinsicOp(
+            op_kind, std::move(args), result, method_call.type,
+            method_call.receiver->type));
+    return result;
   }
 
-  // For enum methods, extract step from args (first literal arg)
-  // For array/queue methods, lower all args as operands
-  int64_t step = 1;
-  std::vector<Operand> arg_operands;
+  // Container methods (array/queue) use kIntrinsicCall (reference-semantic)
+  auto method_name = mir::ToString(method_call.method);
+  void* intrinsic_fn = interpreter::ResolveIntrinsicMethod(
+      method_call.receiver->type.kind, method_name);
+  if (intrinsic_fn == nullptr) {
+    throw common::InternalError(
+        "LowerMethodCallExpression",
+        std::format("unknown intrinsic method: {}", method_name));
+  }
 
-  if (!lir_members.empty()) {
-    // Enum method: first arg is step (if present)
-    if (!mc.args.empty()) {
-      const auto& step_expr = mir::As<mir::ConstantExpression>(*mc.args[0]);
-      step = step_expr.constant.value.AsInt64();
-    }
-  } else {
-    // Array/queue method: lower all args as operands
-    arg_operands.reserve(mc.args.size());
-    for (const auto& arg : mc.args) {
-      auto arg_temp = LowerExpression(*arg, builder);
-      arg_operands.push_back(Operand::Temp(arg_temp));
-    }
+  std::vector<TempRef> args;
+  args.reserve(method_call.args.size());
+  for (const auto& arg : method_call.args) {
+    args.push_back(LowerExpression(*arg, builder));
   }
 
   builder.AddInstruction(
-      Instruction::MethodCall(
-          mc.method_name, receiver, std::move(arg_operands), result, mc.type,
-          step, std::move(lir_members)));
+      Instruction::IntrinsicCall(
+          intrinsic_fn, receiver, std::move(args), result, method_call.type));
   return result;
 }
 

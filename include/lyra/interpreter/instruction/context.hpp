@@ -9,6 +9,7 @@
 #include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
+#include "lyra/lir/context.hpp"
 #include "lyra/lir/operand.hpp"
 
 namespace lyra::interpreter {
@@ -52,7 +53,7 @@ class InstructionContext {
   // Operand access methods
 
   /// Read a temporary value from the temp table.
-  [[nodiscard]] auto GetTemp(const lir::Operand& operand) const -> RuntimeValue;
+  [[nodiscard]] auto GetTemp(lir::TempRef temp) const -> RuntimeValue;
 
   /// Read a variable (checks function locals, process locals, then flat storage
   /// with port binding resolution)

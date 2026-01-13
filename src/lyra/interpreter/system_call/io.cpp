@@ -255,7 +255,7 @@ auto HandleMemIO(
       }
       auto index = static_cast<size_t>(addr - min_addr);
       if (info.is_unpacked) {
-        target_value.SetElement(index, value);
+        target_value.AsArray()[index] = value;
       } else {
         packed_value =
             StorePackedElement(packed_value, index, info.element_width, value);
@@ -300,7 +300,7 @@ auto HandleMemIO(
       auto index = static_cast<size_t>(addr - min_addr);
       RuntimeValue element;
       if (info.is_unpacked) {
-        element = target_value.GetElement(index);
+        element = target_value.AsArray()[index];
       } else {
         element = ExtractPackedElement(target_value, index, info.element_width);
       }

@@ -5,6 +5,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -121,6 +122,23 @@ struct EnumData {
   bool is_signed = false;
   bool is_four_state = false;
   std::vector<EnumMember> members;
+
+  // Precomputed value→index mapping for O(1) lookup (built from members)
+  std::unordered_map<int64_t, size_t> value_to_index;
+
+  /// Build value_to_index from members. Call after populating members.
+  void BuildIndex() {
+    value_to_index.clear();
+    for (size_t i = 0; i < members.size(); ++i) {
+      value_to_index[members[i].value] = i;
+    }
+  }
+
+  /// Get index for value, or 0 if not found (matches SV enum behavior)
+  [[nodiscard]] auto GetIndex(int64_t value) const -> size_t {
+    auto it = value_to_index.find(value);
+    return it != value_to_index.end() ? it->second : 0;
+  }
 
   auto operator==(const EnumData& other) const -> bool;
   [[nodiscard]] auto Hash() const -> std::size_t;
@@ -305,14 +323,16 @@ struct Type {
   static auto Enum(
       size_t bit_width, bool is_signed, bool is_four_state,
       std::vector<EnumMember> members) -> Type {
+    EnumData enum_data{
+        .bit_width = bit_width,
+        .is_signed = is_signed,
+        .is_four_state = is_four_state,
+        .members = std::move(members),
+        .value_to_index = {}};
+    enum_data.BuildIndex();
     return Type{
         .kind = Kind::kEnum,
-        .data =
-            EnumData{
-                .bit_width = bit_width,
-                .is_signed = is_signed,
-                .is_four_state = is_four_state,
-                .members = std::move(members)},
+        .data = std::move(enum_data),
         .alias_name = std::nullopt};
   }
 
@@ -429,7 +449,7 @@ struct Type {
   [[nodiscard]] auto GetElementType() const -> const Type& {
     if (kind == Kind::kIntegral) {
       const auto& integral = std::get<IntegralData>(data);
-      if (integral.element_type) {
+      if (integral.element_type != nullptr) {
         return *integral.element_type;
       }
       throw std::runtime_error("Scalar integral type has no element type");
@@ -450,7 +470,7 @@ struct Type {
   [[nodiscard]] auto GetElementCount() const -> size_t {
     if (kind == Kind::kIntegral) {
       const auto& integral = std::get<IntegralData>(data);
-      if (integral.element_type) {
+      if (integral.element_type != nullptr) {
         return integral.element_count;
       }
       throw std::runtime_error("Scalar integral type has no element count");
@@ -498,7 +518,7 @@ struct Type {
   [[nodiscard]] auto GetElementWidth() const -> size_t {
     if (kind == Kind::kIntegral) {
       const auto& integral = std::get<IntegralData>(data);
-      if (integral.element_type) {
+      if (integral.element_type != nullptr) {
         return std::get<IntegralData>(integral.element_type->data).bit_width;
       }
       return 1;  // Scalar bit selection
@@ -577,7 +597,7 @@ struct Type {
         std::string base_name = ts.is_four_state ? "logic" : "bit";
         const auto* sign_str = ts.is_signed ? " signed" : "";
 
-        if (ts.element_type) {
+        if (ts.element_type != nullptr) {
           // Packed array: show dimensions
           auto msb =
               static_cast<int32_t>(ts.element_count) + ts.element_lower - 1;
@@ -682,7 +702,7 @@ inline auto IntegralData::Hash() const -> std::size_t {
   h ^= std::hash<size_t>{}(bit_width) + 0x9e3779b9 + (h << 6) + (h >> 2);
   h ^= std::hash<bool>{}(is_signed) + 0x9e3779b9 + (h << 6) + (h >> 2);
   h ^= std::hash<bool>{}(is_four_state) + 0x9e3779b9 + (h << 6) + (h >> 2);
-  if (element_type) {
+  if (element_type != nullptr) {
     h ^= element_type->Hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
   }
   h ^= std::hash<size_t>{}(element_count) + 0x9e3779b9 + (h << 6) + (h >> 2);

@@ -48,12 +48,11 @@ auto CreateWideFromInt64(int64_t value, size_t bit_width, bool sign_extend)
 auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   assert(instr.result.has_value());
-  assert(instr.result_type.has_value());
 
   switch (instr.kind) {
     case lir::InstructionKind::kConversion: {
-      const auto& src = ctx.GetTemp(instr.operands[0]);
-      const auto& target_type = instr.result_type.value();
+      const auto& src = ctx.GetTemp(instr.operands[0].AsTempRef());
+      const auto& target_type = (*instr.result)->type;
 
       // Handle string to string and real to real as no-op conversions.
       if ((src.type == common::Type::String() &&
@@ -226,12 +225,12 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
     }
 
     case lir::InstructionKind::kConcatenation: {
-      const auto& result_type = instr.result_type.value();
+      const auto& result_type = (*instr.result)->type;
 
       // String concatenation: collect strings and join
       if (result_type.kind == common::Type::Kind::kString) {
         std::string result;
-        for (const auto& operand : instr.operands) {
+        for (const auto& operand : instr.temp_operands) {
           const auto& val = ctx.GetTemp(operand);
           if (val.IsString()) {
             result += val.AsString();
@@ -249,8 +248,8 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
 
       // Collect operand values
       std::vector<RuntimeValue> operand_values;
-      operand_values.reserve(instr.operands.size());
-      for (const auto& operand : instr.operands) {
+      operand_values.reserve(instr.temp_operands.size());
+      for (const auto& operand : instr.temp_operands) {
         operand_values.push_back(ctx.GetTemp(operand));
       }
 

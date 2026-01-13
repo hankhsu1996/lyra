@@ -22,10 +22,9 @@ auto HandleConversionCalls(
   // $signed: reinterpret signedness, preserving bit pattern
   if (instr.system_call_name == "$signed") {
     assert(instr.result.has_value());
-    assert(instr.result_type.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    size_t target_width = instr.result_type->GetBitWidth();
+    size_t target_width = (*instr.result)->type.GetBitWidth();
     auto result =
         RuntimeValue::IntegralSigned(ExtractInt64FromSource(src), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
@@ -35,10 +34,9 @@ auto HandleConversionCalls(
   // $unsigned: reinterpret bits as unsigned
   if (instr.system_call_name == "$unsigned") {
     assert(instr.result.has_value());
-    assert(instr.result_type.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    size_t target_width = instr.result_type->GetBitWidth();
+    size_t target_width = (*instr.result)->type.GetBitWidth();
     auto result = RuntimeValue::IntegralUnsigned(
         static_cast<uint64_t>(ExtractInt64FromSource(src)), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
@@ -63,11 +61,11 @@ auto HandleConversionCalls(
   // $rtoi: convert real to integer by truncation toward zero
   if (instr.system_call_name == "$rtoi") {
     assert(instr.result.has_value());
-    assert(instr.result_type.has_value());
     assert(!instr.operands.empty());
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    size_t target_width = instr.result_type->GetBitWidth();
-    bool target_signed = instr.result_type->IsSigned();
+    const auto& target_type = (*instr.result)->type;
+    size_t target_width = target_type.GetBitWidth();
+    bool target_signed = target_type.IsSigned();
     auto raw_value = static_cast<int64_t>(src.AsDouble());
     auto result = target_signed
                       ? RuntimeValue::IntegralSigned(raw_value, target_width)

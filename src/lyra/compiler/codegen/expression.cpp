@@ -784,15 +784,28 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
 
     case mir::Expression::Kind::kArrayLiteral: {
       // Array/queue literal: '{elem0, elem1, ...}
-      // Emit as C++ initializer list: {val0, val1, ...}
       const auto& lit = mir::As<mir::ArrayLiteralExpression>(expr);
 
       out_ << ToCppType(expr.type) << "{";
-      for (size_t i = 0; i < lit.elements.size(); ++i) {
-        if (i > 0) {
-          out_ << ", ";
+      if (expr.type.IsQueue()) {
+        // BoundedQueue needs (max_bound, {elements...})
+        const auto& queue_data = std::get<common::QueueData>(expr.type.data);
+        out_ << queue_data.max_bound << ", {";
+        for (size_t i = 0; i < lit.elements.size(); ++i) {
+          if (i > 0) {
+            out_ << ", ";
+          }
+          EmitExpression(*lit.elements[i], kPrecLowest);
         }
-        EmitExpression(*lit.elements[i], kPrecLowest);
+        out_ << "}";
+      } else {
+        // Regular array: {val0, val1, ...}
+        for (size_t i = 0; i < lit.elements.size(); ++i) {
+          if (i > 0) {
+            out_ << ", ";
+          }
+          EmitExpression(*lit.elements[i], kPrecLowest);
+        }
       }
       out_ << "}";
       break;

@@ -204,7 +204,7 @@ auto LowerForeachLoop(
       // Synthesize size() method call on the array
       auto array_ref = LowerExpression(foreach_loop.arrayRef, arena);
       auto size_call = std::make_unique<mir::MethodCallExpression>(
-          common::Type::Int(), std::move(array_ref), "size");
+          common::Type::Int(), std::move(array_ref), mir::BuiltinMethod::kSize);
 
       condition = std::make_unique<mir::BinaryExpression>(
           mir::BinaryOperator::kLessThan, std::move(cond_var_ref),

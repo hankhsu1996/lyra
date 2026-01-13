@@ -3,9 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -59,21 +61,35 @@ auto LowerElementSelectExpression(
     return result;
   }
 
-  // Unpacked array element access
+  // Unpacked array/queue element access - use intrinsic
+  const auto& value_type = select.value->type;
+  void* intrinsic_fn = interpreter::ResolveIntrinsicIndexRead(value_type.kind);
+
+  // Compute lower_bound for unpacked arrays (queues always have 0)
+  int32_t lower_bound = 0;
+  if (value_type.kind == Type::Kind::kUnpackedArray) {
+    const auto& array_data =
+        std::get<common::UnpackedArrayData>(value_type.data);
+    lower_bound = array_data.lower_bound;
+  }
+
+  TempRef receiver;
   if (select.value->kind == mir::Expression::Kind::kIdentifier) {
     // Direct variable access: arr[i]
     const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-    auto instruction = Instruction::LoadElement(
-        result, Operand::Variable(array_id.symbol), index, select.type);
-    builder.AddInstruction(std::move(instruction));
-    return result;
+    receiver = builder.AllocateTemp("recv", value_type);
+    builder.AddInstruction(
+        Instruction::Basic(IK::kLoadVariable, receiver, array_id.symbol));
+  } else {
+    // Nested access (e.g., arr[i][j]): recursively lower the array expression
+    receiver = LowerExpression(*select.value, builder);
   }
 
-  // Nested access (e.g., arr[i][j]): recursively lower the array expression
-  auto array_temp = LowerExpression(*select.value, builder);
-  auto instruction = Instruction::LoadElement(
-      result, Operand::Temp(array_temp), index, select.type);
-  builder.AddInstruction(std::move(instruction));
+  // Emit kIntrinsicCall with receiver and index as args
+  auto instr = Instruction::IntrinsicCall(
+      intrinsic_fn, receiver, {index}, result, select.type);
+  instr.lower_bound = lower_bound;
+  builder.AddInstruction(std::move(instr));
   return result;
 }
 
@@ -153,7 +169,7 @@ auto LowerMemberAccessExpression(
   // Check if this is an unpacked struct/union access
   if (member.value->type.IsUnpackedStruct() ||
       member.value->type.IsUnpackedUnion()) {
-    auto value = LowerExpression(*member.value, builder);
+    auto receiver = LowerExpression(*member.value, builder);
     auto result = builder.AllocateTemp("field", member.type);
 
     // For struct: bit_offset is reused as field_index
@@ -161,17 +177,19 @@ auto LowerMemberAccessExpression(
     size_t storage_index =
         member.value->type.IsUnpackedUnion() ? 0 : member.bit_offset;
 
-    // Emit constant for storage index
+    // Emit constant for field index
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
     auto index_constant = builder.InternConstant(
         Constant::Int(static_cast<int32_t>(storage_index)));
     builder.AddInstruction(
         Instruction::Basic(IK::kConstant, index_temp, index_constant));
 
-    // Use unified LoadElement with temp operand
+    // Resolve intrinsic for field access
+    void* intrinsic_fn =
+        interpreter::ResolveIntrinsicIndexRead(member.value->type.kind);
     builder.AddInstruction(
-        Instruction::LoadElement(
-            result, Operand::Temp(value), index_temp, member.type));
+        Instruction::IntrinsicCall(
+            intrinsic_fn, receiver, {index_temp}, result, member.type));
     return result;
   }
 

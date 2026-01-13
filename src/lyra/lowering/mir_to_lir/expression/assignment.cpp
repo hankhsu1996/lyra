@@ -6,6 +6,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -24,6 +25,33 @@ using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
+namespace {
+
+// Emit kIntrinsicCall to load element from container.
+// Returns the result temp containing the loaded element.
+auto EmitLoadElement(
+    TempRef receiver, TempRef index, const Type& container_type,
+    const Type& element_type, LirBuilder& builder) -> TempRef {
+  void* intrinsic_fn =
+      interpreter::ResolveIntrinsicIndexRead(container_type.kind);
+  auto result = builder.AllocateTemp("elem", element_type);
+
+  auto instr = Instruction::IntrinsicCall(
+      intrinsic_fn, receiver, {index}, result, element_type);
+
+  // Set lower_bound for unpacked arrays
+  if (container_type.kind == Type::Kind::kUnpackedArray) {
+    const auto& array_data =
+        std::get<common::UnpackedArrayData>(container_type.data);
+    instr.lower_bound = array_data.lower_bound;
+  }
+
+  builder.AddInstruction(std::move(instr));
+  return result;
+}
+
+}  // namespace
+
 auto LowerAssignmentExpression(
     const mir::AssignmentExpression& assignment, LirBuilder& builder)
     -> lir::TempRef {
@@ -40,8 +68,8 @@ auto LowerAssignmentExpression(
         mir::As<mir::MethodCallExpression>(*assignment.value);
     const auto& receiver = *method_call.receiver;
     bool is_pop =
-        (method_call.method_name == "pop_back" ||
-         method_call.method_name == "pop_front");
+        (method_call.method == mir::BuiltinMethod::kPopBack ||
+         method_call.method == mir::BuiltinMethod::kPopFront);
 
     if (is_pop && receiver.kind == mir::Expression::Kind::kIdentifier) {
       const auto& ident = mir::As<mir::IdentifierExpression>(receiver);
@@ -61,16 +89,18 @@ auto LowerAssignmentExpression(
 
       // Create delete index: 0 for pop_front, size-1 for pop_back
       auto del_idx = builder.AllocateTemp("idx", common::Type::Int());
-      if (method_call.method_name == "pop_front") {
+      if (method_call.method == mir::BuiltinMethod::kPopFront) {
         auto zero_lit = builder.InternConstant(common::Constant::Int(0));
         builder.AddInstruction(
             Instruction::Basic(IK::kConstant, del_idx, zero_lit));
       } else {
         // pop_back: delete at size - 1
         auto size_temp = builder.AllocateTemp("sz", common::Type::Int());
+        void* size_fn =
+            interpreter::ResolveIntrinsicMethod(receiver.type.kind, "size");
         builder.AddInstruction(
-            Instruction::MethodCall(
-                "size", recv_temp, {}, size_temp, common::Type::Int(), 1, {}));
+            Instruction::IntrinsicCall(
+                size_fn, recv_temp, {}, size_temp, common::Type::Int()));
         auto one_lit = builder.InternConstant(common::Constant::Int(1));
         auto one_temp = builder.AllocateTemp("one", common::Type::Int());
         builder.AddInstruction(
@@ -82,12 +112,12 @@ auto LowerAssignmentExpression(
       }
 
       // Call delete(index) on receiver
-      std::vector<Operand> del_args = {Operand::Temp(del_idx)};
       auto del_result = builder.AllocateTemp("del", receiver.type);
+      void* delete_fn =
+          interpreter::ResolveIntrinsicMethod(receiver.type.kind, "delete");
       builder.AddInstruction(
-          Instruction::MethodCall(
-              "delete", recv_temp, std::move(del_args), del_result,
-              receiver.type, 1, {}));
+          Instruction::IntrinsicCall(
+              delete_fn, recv_temp, {del_idx}, del_result, receiver.type));
 
       // Store modified queue back to variable
       auto store_queue =
@@ -153,11 +183,14 @@ auto LowerAssignmentExpression(
             Instruction::Basic(
                 IK::kConstant, first_idx_temp, first_idx_constant));
 
-        auto first_temp = builder.AllocateTemp("agg", field_path[0].type);
+        auto recv_temp =
+            builder.AllocateTemp("recv", *assignment.target.base_type);
         builder.AddInstruction(
-            Instruction::LoadElement(
-                first_temp, Operand::Variable(assignment.target.symbol),
-                first_idx_temp, field_path[0].type));
+            Instruction::Basic(
+                IK::kLoadVariable, recv_temp, assignment.target.symbol));
+        auto first_temp = EmitLoadElement(
+            recv_temp, first_idx_temp, *assignment.target.base_type,
+            field_path[0].type, builder);
         temps.push_back(first_temp);
 
         // Load remaining intermediate aggregates
@@ -172,11 +205,9 @@ auto LowerAssignmentExpression(
           builder.AddInstruction(
               Instruction::Basic(IK::kConstant, idx_temp, idx_constant));
 
-          auto temp = builder.AllocateTemp("agg", field_path[i].type);
-          builder.AddInstruction(
-              Instruction::LoadElement(
-                  temp, Operand::Temp(temps.back()), idx_temp,
-                  field_path[i].type));
+          auto temp = EmitLoadElement(
+              temps.back(), idx_temp, field_path[i - 1].type,
+              field_path[i].type, builder);
           temps.push_back(temp);
         }
 
@@ -308,26 +339,25 @@ auto LowerAssignmentExpression(
 
         // Load intermediate arrays (all but the last index)
         std::vector<TempRef> intermediate_temps;
-        const Type* current_type = &base_type;
+        const Type* current_type = nullptr;
 
-        for (size_t i = 0; i < num_indices - 1; ++i) {
+        // First level: load from variable
+        auto recv_temp = builder.AllocateTemp("recv", base_type);
+        builder.AddInstruction(
+            Instruction::Basic(
+                IK::kLoadVariable, recv_temp, assignment.target.symbol));
+        const Type& first_elem_type = base_type.GetElementType();
+        auto first_temp = EmitLoadElement(
+            recv_temp, index_temps[0], base_type, first_elem_type, builder);
+        intermediate_temps.push_back(first_temp);
+        current_type = &first_elem_type;
+
+        // Subsequent levels: load from temp
+        for (size_t i = 1; i < num_indices - 1; ++i) {
           const Type& element_type = current_type->GetElementType();
-          auto temp = builder.AllocateTemp("arr", element_type);
-
-          if (i == 0) {
-            // First level: load from variable
-            auto instr = Instruction::LoadElement(
-                temp, Operand::Variable(assignment.target.symbol),
-                index_temps[i], element_type);
-            builder.AddInstruction(std::move(instr));
-          } else {
-            // Subsequent levels: load from temp
-            auto instr = Instruction::LoadElement(
-                temp, Operand::Temp(intermediate_temps.back()), index_temps[i],
-                element_type);
-            builder.AddInstruction(std::move(instr));
-          }
-
+          auto temp = EmitLoadElement(
+              intermediate_temps.back(), index_temps[i], *current_type,
+              element_type, builder);
           intermediate_temps.push_back(temp);
           current_type = &element_type;
         }

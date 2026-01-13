@@ -2,9 +2,102 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace lyra::common {
+
+/// Built-in method kinds for type-safe dispatch (no string matching at runtime)
+enum class BuiltinMethod : uint8_t {
+  // Container methods (array, queue)
+  kSize,
+  kDelete,
+  // Queue-only methods
+  kPushBack,
+  kPushFront,
+  kPopBack,
+  kPopFront,
+  kInsert,
+  // Enum methods
+  kFirst,
+  kLast,
+  kNext,
+  kPrev,
+  kName,
+};
+
+inline auto ToString(BuiltinMethod method) -> std::string_view {
+  switch (method) {
+    case BuiltinMethod::kSize:
+      return "size";
+    case BuiltinMethod::kDelete:
+      return "delete";
+    case BuiltinMethod::kPushBack:
+      return "push_back";
+    case BuiltinMethod::kPushFront:
+      return "push_front";
+    case BuiltinMethod::kPopBack:
+      return "pop_back";
+    case BuiltinMethod::kPopFront:
+      return "pop_front";
+    case BuiltinMethod::kInsert:
+      return "insert";
+    case BuiltinMethod::kFirst:
+      return "first";
+    case BuiltinMethod::kLast:
+      return "last";
+    case BuiltinMethod::kNext:
+      return "next";
+    case BuiltinMethod::kPrev:
+      return "prev";
+    case BuiltinMethod::kName:
+      return "name";
+  }
+  return "unknown";
+}
+
+/// Parse method name string to BuiltinMethod enum.
+/// Returns nullopt for unknown methods.
+inline auto ParseBuiltinMethod(std::string_view name)
+    -> std::optional<BuiltinMethod> {
+  if (name == "size") {
+    return BuiltinMethod::kSize;
+  }
+  if (name == "delete") {
+    return BuiltinMethod::kDelete;
+  }
+  if (name == "push_back") {
+    return BuiltinMethod::kPushBack;
+  }
+  if (name == "push_front") {
+    return BuiltinMethod::kPushFront;
+  }
+  if (name == "pop_back") {
+    return BuiltinMethod::kPopBack;
+  }
+  if (name == "pop_front") {
+    return BuiltinMethod::kPopFront;
+  }
+  if (name == "insert") {
+    return BuiltinMethod::kInsert;
+  }
+  if (name == "first") {
+    return BuiltinMethod::kFirst;
+  }
+  if (name == "last") {
+    return BuiltinMethod::kLast;
+  }
+  if (name == "next") {
+    return BuiltinMethod::kNext;
+  }
+  if (name == "prev") {
+    return BuiltinMethod::kPrev;
+  }
+  if (name == "name") {
+    return BuiltinMethod::kName;
+  }
+  return std::nullopt;
+}
 
 /// Built-in type kinds that have methods
 /// Maps to Type::Kind but only for types with built-in methods
@@ -39,7 +132,7 @@ enum class BuiltinMethodCategory : uint8_t {
 
 /// Metadata for a built-in method
 struct BuiltinMethodInfo {
-  std::string_view name;
+  BuiltinMethod method;
   BuiltinTypeKind receiver_type;
   BuiltinMethodCategory category;
   BuiltinMethodReturnType return_type;
@@ -53,7 +146,7 @@ struct BuiltinMethodInfo {
 inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
   // Dynamic array methods
   {
-    .name = "size",
+    .method = BuiltinMethod::kSize,
     .receiver_type = BuiltinTypeKind::kDynamicArray,
     .category = BuiltinMethodCategory::kArrayQuery,
     .return_type = BuiltinMethodReturnType::kInt,
@@ -62,7 +155,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = ".size()",
   },
   {
-    .name = "delete",
+    .method = BuiltinMethod::kDelete,
     .receiver_type = BuiltinTypeKind::kDynamicArray,
     .category = BuiltinMethodCategory::kArrayMutate,
     .return_type = BuiltinMethodReturnType::kVoid,
@@ -73,7 +166,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
 
   // Queue methods
   {
-    .name = "size",
+    .method = BuiltinMethod::kSize,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kArrayQuery,
     .return_type = BuiltinMethodReturnType::kInt,
@@ -82,7 +175,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = ".size()",
   },
   {
-    .name = "push_back",
+    .method = BuiltinMethod::kPushBack,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kQueuePush,
     .return_type = BuiltinMethodReturnType::kVoid,
@@ -91,7 +184,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: needs argument
   },
   {
-    .name = "push_front",
+    .method = BuiltinMethod::kPushFront,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kQueuePush,
     .return_type = BuiltinMethodReturnType::kVoid,
@@ -100,7 +193,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: needs argument
   },
   {
-    .name = "pop_back",
+    .method = BuiltinMethod::kPopBack,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kQueuePop,
     .return_type = BuiltinMethodReturnType::kElement,
@@ -109,7 +202,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: removes and returns
   },
   {
-    .name = "pop_front",
+    .method = BuiltinMethod::kPopFront,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kQueuePop,
     .return_type = BuiltinMethodReturnType::kElement,
@@ -118,7 +211,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: removes and returns
   },
   {
-    .name = "insert",
+    .method = BuiltinMethod::kInsert,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kQueueInsert,
     .return_type = BuiltinMethodReturnType::kVoid,
@@ -127,7 +220,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: needs index and item
   },
   {
-    .name = "delete",
+    .method = BuiltinMethod::kDelete,
     .receiver_type = BuiltinTypeKind::kQueue,
     .category = BuiltinMethodCategory::kArrayMutate,
     .return_type = BuiltinMethodReturnType::kVoid,
@@ -138,7 +231,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
 
   // Enum methods (require special handling for switch generation)
   {
-    .name = "next",
+    .method = BuiltinMethod::kNext,
     .receiver_type = BuiltinTypeKind::kEnum,
     .category = BuiltinMethodCategory::kEnumNext,
     .return_type = BuiltinMethodReturnType::kSelf,
@@ -147,7 +240,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: generate switch
   },
   {
-    .name = "prev",
+    .method = BuiltinMethod::kPrev,
     .receiver_type = BuiltinTypeKind::kEnum,
     .category = BuiltinMethodCategory::kEnumPrev,
     .return_type = BuiltinMethodReturnType::kSelf,
@@ -156,7 +249,7 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
     .cpp_expr = "",  // Special handling: generate switch
   },
   {
-    .name = "name",
+    .method = BuiltinMethod::kName,
     .receiver_type = BuiltinTypeKind::kEnum,
     .category = BuiltinMethodCategory::kEnumName,
     .return_type = BuiltinMethodReturnType::kString,
@@ -167,16 +260,27 @@ inline constexpr std::array kBuiltinMethods = std::to_array<BuiltinMethodInfo>({
 });
 // clang-format on
 
-/// Find built-in method by receiver type and name
-/// Returns nullptr if not found
-constexpr auto FindBuiltinMethod(BuiltinTypeKind type, std::string_view name)
+/// Find built-in method info by enum and receiver type.
+/// Returns nullptr if the method is not valid for the given type.
+constexpr auto GetMethodInfo(BuiltinMethod method, BuiltinTypeKind type)
     -> const BuiltinMethodInfo* {
   for (const auto& info : kBuiltinMethods) {
-    if (info.receiver_type == type && info.name == name) {
+    if (info.method == method && info.receiver_type == type) {
       return &info;
     }
   }
   return nullptr;
+}
+
+/// Find built-in method by receiver type and name (for AST→MIR parsing).
+/// Returns nullptr if not found.
+constexpr auto FindBuiltinMethod(BuiltinTypeKind type, std::string_view name)
+    -> const BuiltinMethodInfo* {
+  auto method = ParseBuiltinMethod(name);
+  if (!method) {
+    return nullptr;
+  }
+  return GetMethodInfo(*method, type);
 }
 
 /// Check if a method requires special handling (no direct C++ mapping)

@@ -7,14 +7,15 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <fmt/format.h>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/interpreter/process_frame.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_context.hpp"
@@ -136,146 +137,58 @@ auto HandleControlFlowOps(
       return RunSystemCall(instr, sim, frame, effect, temp_table, instance);
     }
 
-    case lir::InstructionKind::kMethodCall: {
-      // Generic method call - handles enum methods and array methods.
+    case lir::InstructionKind::kIntrinsicCall: {
       assert(instr.result.has_value());
-      assert(instr.result_type.has_value());
-      assert(!instr.operands.empty());
+      assert(!instr.temp_operands.empty());
+      assert(instr.intrinsic_fn != nullptr);
 
-      // Array/queue methods have empty enum_members
-      if (instr.enum_members.empty()) {
-        // SSA-style: mutating methods return the modified receiver as result
-        // This avoids mutation - each operation produces a new value
-        auto receiver = ctx.GetTemp(instr.operands[0]).DeepCopy();
-        auto& arr = receiver.AsArray();
+      auto receiver = ctx.GetTemp(instr.temp_operands[0]).DeepCopy();
 
-        // Helper to check if bounded queue is full (cannot add more elements)
-        auto is_queue_full = [&]() -> bool {
-          if (instr.result_type->IsQueue()) {
-            const auto& queue_data =
-                std::get<common::QueueData>(instr.result_type->data);
-            if (queue_data.max_bound > 0) {
-              size_t max_size = queue_data.max_bound + 1;
-              return arr.size() >= max_size;
-            }
-          }
-          return false;
-        };
-
-        if (instr.method_name == "size") {
-          auto size = static_cast<int32_t>(arr.size());
-          ctx.WriteTemp(
-              instr.result.value(), RuntimeValue::IntegralSigned(size, 32));
-        } else if (instr.method_name == "delete") {
-          if (instr.operands.size() > 1) {
-            auto index = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
-            if (index >= 0 && static_cast<size_t>(index) < arr.size()) {
-              arr.erase(arr.begin() + index);
-            }
-          } else {
-            arr.clear();
-          }
-          // Return modified receiver (SSA style)
-          ctx.WriteTemp(instr.result.value(), std::move(receiver));
-        } else if (instr.method_name == "push_back") {
-          if (!is_queue_full()) {
-            auto item = ctx.GetTemp(instr.operands[1]);
-            arr.push_back(std::move(item));
-          }
-          // Return modified receiver (SSA style)
-          ctx.WriteTemp(instr.result.value(), std::move(receiver));
-        } else if (instr.method_name == "push_front") {
-          if (!is_queue_full()) {
-            auto item = ctx.GetTemp(instr.operands[1]);
-            arr.insert(arr.begin(), std::move(item));
-          }
-          // Return modified receiver (SSA style)
-          ctx.WriteTemp(instr.result.value(), std::move(receiver));
-        } else if (instr.method_name == "pop_back") {
-          if (arr.empty()) {
-            ctx.WriteTemp(
-                instr.result.value(),
-                RuntimeValue::DefaultValueForType(*instr.result_type));
-          } else {
-            auto value = std::move(arr.back());
-            arr.pop_back();
-            ctx.WriteTemp(instr.result.value(), std::move(value));
-          }
-        } else if (instr.method_name == "pop_front") {
-          if (arr.empty()) {
-            ctx.WriteTemp(
-                instr.result.value(),
-                RuntimeValue::DefaultValueForType(*instr.result_type));
-          } else {
-            auto value = std::move(arr.front());
-            arr.erase(arr.begin());
-            ctx.WriteTemp(instr.result.value(), std::move(value));
-          }
-        } else if (instr.method_name == "insert") {
-          if (!is_queue_full()) {
-            auto index = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
-            auto item = ctx.GetTemp(instr.operands[2]);
-            if (index >= 0 && static_cast<size_t>(index) <= arr.size()) {
-              arr.insert(arr.begin() + index, std::move(item));
-            }
-          }
-          // Return modified receiver (SSA style)
-          ctx.WriteTemp(instr.result.value(), std::move(receiver));
-        } else {
-          assert(false && "unsupported array/queue method call");
-        }
-        return InstructionResult::Continue();
+      std::vector<RuntimeValue> args;
+      args.reserve(instr.temp_operands.size() - 1);
+      for (size_t i = 1; i < instr.temp_operands.size(); ++i) {
+        args.push_back(ctx.GetTemp(instr.temp_operands[i]));
       }
 
-      // Enum methods
-      const auto& receiver = ctx.GetTemp(instr.operands[0]);
-      int64_t current_value = receiver.AsNarrow().AsInt64();
-      const auto& members = instr.enum_members;
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      auto* fn = reinterpret_cast<IntrinsicFn>(instr.intrinsic_fn);
+      RuntimeValue result = fn(std::move(receiver), args, instr);
 
-      // Find current position in enum member list
-      size_t current_pos = 0;
-      bool found = false;
-      for (size_t i = 0; i < members.size(); ++i) {
-        if (members[i].value == current_value) {
-          current_pos = i;
-          found = true;
+      ctx.WriteTemp(instr.result.value(), std::move(result));
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kIntrinsicOp: {
+      assert(instr.result.has_value());
+      assert(instr.type_context.has_value());
+      assert(!instr.temp_operands.empty());
+
+      int64_t value = ctx.GetTemp(instr.temp_operands[0]).AsNarrow().AsInt64();
+      const auto& enum_data = instr.type_context->GetEnumData();
+
+      RuntimeValue result;
+      switch (instr.op_kind) {
+        case lir::IntrinsicOpKind::kEnumNext: {
+          int64_t step =
+              ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
+          result = ExecuteEnumNext(
+              value, step, enum_data, (*instr.result)->type.GetBitWidth());
+          break;
+        }
+        case lir::IntrinsicOpKind::kEnumPrev: {
+          int64_t step =
+              ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
+          result = ExecuteEnumPrev(
+              value, step, enum_data, (*instr.result)->type.GetBitWidth());
+          break;
+        }
+        case lir::IntrinsicOpKind::kEnumName: {
+          result = ExecuteEnumName(value, enum_data);
           break;
         }
       }
 
-      RuntimeValue result;
-      if (instr.method_name == "next") {
-        if (found) {
-          auto step = static_cast<size_t>(instr.method_step);
-          size_t target_pos = (current_pos + step) % members.size();
-          result = RuntimeValue::IntegralSigned(
-              members[target_pos].value, instr.result_type->GetBitWidth());
-        } else {
-          result =
-              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
-        }
-      } else if (instr.method_name == "prev") {
-        if (found) {
-          size_t step = static_cast<size_t>(instr.method_step) % members.size();
-          size_t target_pos =
-              (current_pos + members.size() - step) % members.size();
-          result = RuntimeValue::IntegralSigned(
-              members[target_pos].value, instr.result_type->GetBitWidth());
-        } else {
-          result =
-              RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
-        }
-      } else if (instr.method_name == "name") {
-        if (found) {
-          result = RuntimeValue::String(members[current_pos].name);
-        } else {
-          result = RuntimeValue::String("");
-        }
-      } else {
-        assert(false && "unsupported method call");
-      }
-
-      ctx.WriteTemp(instr.result.value(), result);
+      ctx.WriteTemp(instr.result.value(), std::move(result));
       return InstructionResult::Continue();
     }
 
@@ -292,7 +205,7 @@ auto HandleControlFlowOps(
       assert(instr.operands[1].IsLabel());
       assert(instr.operands[2].IsLabel());
 
-      const auto& condition = ctx.GetTemp(instr.operands[0]);
+      const auto& condition = ctx.GetTemp(instr.operands[0].AsTempRef());
       const auto& true_target =
           std::get<lir::LabelRef>(instr.operands[1].value);
       const auto& false_target =
@@ -335,7 +248,7 @@ auto HandleControlFlowOps(
       }
 
       auto& captures = sim.active_monitor->closure.captures;
-      auto value = ctx.GetTemp(instr.operands[0]);
+      auto value = ctx.GetTemp(instr.operands[0].AsTempRef());
 
       captures[instr.capture_name] = value;
       return InstructionResult::Continue();
