@@ -36,11 +36,12 @@ my_project/
 ```toml
 [package]
 name = "my_design"
-top = "Top"                    # Required: top module name
+top = "Top"                     # Required: top module name
 
 [sources]
-files = ["src/top.sv"]         # Required: source files
-incdir = ["include/"]          # Optional: include directories
+files = ["src/top.sv"]          # Required: source files
+incdir = ["include/"]           # Optional: include directories
+defines = ["DEBUG", "WIDTH=32"] # Optional: preprocessor defines
 
 [build]
 out_dir = "out"                # Optional: default "out"
@@ -79,6 +80,7 @@ The `run`, `build`, `emit`, and `check` commands accept these options:
 | ------------------------- | -------------------------------------------- |
 | `--top <module>`          | Top module name                              |
 | `-I, --include-directory` | Add include search path                      |
+| `-D,--define-macro`       | Define preprocessor macro (e.g., `-DDEBUG`)  |
 | `-W<warning>`             | Warning control (e.g., `-Wno-unused`)        |
 | `-f <file>`               | Command file (paths relative to CWD)         |
 | `-F <file>`               | Command file (paths relative to file itself) |
@@ -98,12 +100,39 @@ lyra run -i --top Testbench pkg.sv dut.sv tb.sv
 # Include directories
 lyra check --top Top -I include/ src/*.sv
 
+# Define macros
+lyra run --top Top -DDEBUG -DWIDTH=32 design.sv
+
 # Command file with paths relative to CWD
 lyra run --top Top -f sources.f
 
 # Command file with paths relative to file itself (like slang -F)
 lyra run --top Top -F lib/sources.f
 ```
+
+### Command File Format
+
+Command files (`.f` files) list source files and compilation options:
+
+```
+# Comment lines start with # or //
+// This is also a comment
+
+# Include directories
++incdir+vendor/ip/include
++incdir+../common/include
+
+# Preprocessor defines
++define+DEBUG
++define+WIDTH=32
+
+# Source files (one per line)
+rtl/top.sv
+rtl/submodule.sv
+```
+
+The `-f` flag resolves relative paths from the current working directory.
+The `-F` flag resolves relative paths from the command file's directory.
 
 ### Precedence Rules
 
@@ -113,6 +142,7 @@ When both `lyra.toml` and CLI arguments are provided:
 | --------- | ------------------------------------ |
 | `--top`   | CLI overrides lyra.toml              |
 | `-I`      | CLI merges with lyra.toml (additive) |
+| `-D`      | CLI merges with lyra.toml (additive) |
 | `-W`      | CLI merges with lyra.toml (additive) |
 | `<files>` | CLI replaces lyra.toml files         |
 

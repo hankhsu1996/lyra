@@ -11,6 +11,8 @@ struct InterpreterOptions {
   bool trace_basic_block = false;
   bool trace_process = false;
   std::vector<std::string> plusargs;
+  std::vector<std::string> include_dirs;
+  std::vector<std::string> defines;
 };
 
 }  // namespace lyra::interpreter

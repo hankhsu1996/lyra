@@ -121,6 +121,15 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
     }
   }
 
+  // Optional: defines
+  if (auto* defines_arr = sources["defines"].as_array()) {
+    for (const auto& elem : *defines_arr) {
+      if (auto str = elem.value<std::string>()) {
+        config.defines.push_back(*str);
+      }
+    }
+  }
+
   // [build] section (optional)
   if (auto build = tbl["build"]) {
     if (auto out_dir = build["out_dir"].value<std::string>()) {
