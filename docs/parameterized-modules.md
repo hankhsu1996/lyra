@@ -99,7 +99,7 @@ module MemoryBank #(
 
 With type-based classification, all three are template parameters → **64 template specializations** (one per BANK_ID).
 
-With usage-based classification, only DATA*WIDTH and ADDR_WIDTH are templates → **1 template specialization**, 64 instances with different `bank_id*` constructor args.
+With usage-based classification, only DATA_WIDTH and ADDR_WIDTH are templates → **1 template specialization**, 64 instances with different `bank_id_` constructor args.
 
 **Why This Matters**
 
