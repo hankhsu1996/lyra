@@ -726,6 +726,9 @@ auto CheckCommand(const CliOptions& cli) -> int {
       // Diagnostic already printed by frontend
       return 1;
     }
+
+    // Validate top module exists by attempting to lower
+    lyra::lowering::ast_to_mir::AstToMir(*compilation, config.top);
     return 0;
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic(), frontend.GetSourceManager());
