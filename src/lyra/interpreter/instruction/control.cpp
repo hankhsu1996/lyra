@@ -138,16 +138,15 @@ auto HandleControlFlowOps(
 
     case lir::InstructionKind::kIntrinsicCall: {
       assert(instr.result.has_value());
-      assert(instr.result_type.has_value());
-      assert(!instr.operands.empty());
+      assert(!instr.temp_operands.empty());
       assert(instr.intrinsic_fn != nullptr);
 
-      auto receiver = ctx.GetTemp(instr.operands[0]).DeepCopy();
+      auto receiver = ctx.GetTemp(instr.temp_operands[0]).DeepCopy();
 
       std::vector<RuntimeValue> args;
-      args.reserve(instr.operands.size() - 1);
-      for (size_t i = 1; i < instr.operands.size(); ++i) {
-        args.push_back(ctx.GetTemp(instr.operands[i]));
+      args.reserve(instr.temp_operands.size() - 1);
+      for (size_t i = 1; i < instr.temp_operands.size(); ++i) {
+        args.push_back(ctx.GetTemp(instr.temp_operands[i]));
       }
 
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -160,25 +159,26 @@ auto HandleControlFlowOps(
 
     case lir::InstructionKind::kIntrinsicOp: {
       assert(instr.result.has_value());
-      assert(instr.result_type.has_value());
       assert(instr.type_context.has_value());
-      assert(!instr.operands.empty());
+      assert(!instr.temp_operands.empty());
 
-      int64_t value = ctx.GetTemp(instr.operands[0]).AsNarrow().AsInt64();
+      int64_t value = ctx.GetTemp(instr.temp_operands[0]).AsNarrow().AsInt64();
       const auto& enum_data = instr.type_context->GetEnumData();
 
       RuntimeValue result;
       switch (instr.op_kind) {
         case lir::IntrinsicOpKind::kEnumNext: {
-          int64_t step = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+          int64_t step =
+              ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
           result = ExecuteEnumNext(
-              value, step, enum_data, instr.result_type->GetBitWidth());
+              value, step, enum_data, (*instr.result)->type.GetBitWidth());
           break;
         }
         case lir::IntrinsicOpKind::kEnumPrev: {
-          int64_t step = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+          int64_t step =
+              ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
           result = ExecuteEnumPrev(
-              value, step, enum_data, instr.result_type->GetBitWidth());
+              value, step, enum_data, (*instr.result)->type.GetBitWidth());
           break;
         }
         case lir::IntrinsicOpKind::kEnumName: {
@@ -204,7 +204,7 @@ auto HandleControlFlowOps(
       assert(instr.operands[1].IsLabel());
       assert(instr.operands[2].IsLabel());
 
-      const auto& condition = ctx.GetTemp(instr.operands[0]);
+      const auto& condition = ctx.GetTemp(instr.operands[0].AsTempRef());
       const auto& true_target =
           std::get<lir::LabelRef>(instr.operands[1].value);
       const auto& false_target =
@@ -247,7 +247,7 @@ auto HandleControlFlowOps(
       }
 
       auto& captures = sim.active_monitor->closure.captures;
-      auto value = ctx.GetTemp(instr.operands[0]);
+      auto value = ctx.GetTemp(instr.operands[0].AsTempRef());
 
       captures[instr.capture_name] = value;
       return InstructionResult::Continue();

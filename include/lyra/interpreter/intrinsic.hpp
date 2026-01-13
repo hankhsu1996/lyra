@@ -52,18 +52,6 @@ auto IntrinsicQueueInsert(
     RuntimeValue receiver, std::span<const RuntimeValue> args,
     const lir::Instruction& instr) -> RuntimeValue;
 
-auto IntrinsicEnumNext(
-    RuntimeValue receiver, std::span<const RuntimeValue> args,
-    const lir::Instruction& instr) -> RuntimeValue;
-
-auto IntrinsicEnumPrev(
-    RuntimeValue receiver, std::span<const RuntimeValue> args,
-    const lir::Instruction& instr) -> RuntimeValue;
-
-auto IntrinsicEnumName(
-    RuntimeValue receiver, std::span<const RuntimeValue> args,
-    const lir::Instruction& instr) -> RuntimeValue;
-
 /// Index read intrinsics - args[0] = index, returns element
 auto IntrinsicArrayIndex(
     RuntimeValue receiver, std::span<const RuntimeValue> args,

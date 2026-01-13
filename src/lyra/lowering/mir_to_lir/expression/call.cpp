@@ -335,7 +335,7 @@ auto LowerMethodCallExpression(
     };
     auto op_kind = to_op_kind(method_call.method);
 
-    std::vector<Operand> operands{Operand::Temp(receiver)};
+    std::vector<TempRef> args{receiver};
 
     // next/prev take optional step argument (default 1)
     if (method_call.method == kNext || method_call.method == kPrev) {
@@ -348,12 +348,12 @@ auto LowerMethodCallExpression(
         builder.AddInstruction(
             Instruction::Basic(IK::kConstant, step_temp, one));
       }
-      operands.push_back(Operand::Temp(step_temp));
+      args.push_back(step_temp);
     }
 
     builder.AddInstruction(
         Instruction::IntrinsicOp(
-            op_kind, std::move(operands), result, method_call.type,
+            op_kind, std::move(args), result, method_call.type,
             method_call.receiver->type));
     return result;
   }
@@ -368,17 +368,15 @@ auto LowerMethodCallExpression(
         std::format("unknown intrinsic method: {}", method_name));
   }
 
-  std::vector<Operand> arg_operands;
-  arg_operands.reserve(method_call.args.size());
+  std::vector<TempRef> args;
+  args.reserve(method_call.args.size());
   for (const auto& arg : method_call.args) {
-    auto arg_temp = LowerExpression(*arg, builder);
-    arg_operands.push_back(Operand::Temp(arg_temp));
+    args.push_back(LowerExpression(*arg, builder));
   }
 
   builder.AddInstruction(
       Instruction::IntrinsicCall(
-          intrinsic_fn, receiver, std::move(arg_operands), result,
-          method_call.type));
+          intrinsic_fn, receiver, std::move(args), result, method_call.type));
   return result;
 }
 

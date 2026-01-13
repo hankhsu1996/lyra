@@ -209,6 +209,13 @@ struct EnumMemberInfo {
   int64_t value;
 };
 
+/// Instruction operand storage conventions:
+///
+/// - `operands`: Mixed operand kinds (Temp, Variable, Constant, Label).
+///   Used by instructions that interact with memory, literals, or control flow.
+///
+/// - `temp_operands`: Pure value operands (TempRef only).
+///   Enforces SSA form at the type level. Used by value-semantic operations.
 struct Instruction {
   InstructionKind kind{};
 
@@ -216,8 +223,11 @@ struct Instruction {
   std::optional<TempRef> result{};
   std::optional<common::Type> result_type{};
 
-  // Operand values used by the instruction
+  // Mixed-kind operands (Temp, Variable, Constant, Label)
   std::vector<Operand> operands{};
+
+  // Pure value operands (TempRef only) for value-semantic operations
+  std::vector<TempRef> temp_operands{};
 
   // System call name (for kSystemCall)
   std::string system_call_name{};
@@ -243,11 +253,8 @@ struct Instruction {
   // The opcode determines how this type is used (e.g., enum member lookup).
   std::optional<common::Type> type_context{};
 
-  // For enum operations (kIntrinsicOp): step size and member info
-  int64_t method_step{1};  // For enum next(N)/prev(N), default 1
-  std::vector<EnumMemberInfo> enum_members{};  // Enum member layout
-  int32_t lower_bound{
-      0};  // Pre-computed lower bound for array index adjustment
+  // Pre-computed lower bound for array index adjustment
+  int32_t lower_bound{0};
 
   // For kAllocate: storage type resolved at lowering time
   StorageKind storage_kind{StorageKind::kVector};
@@ -434,38 +441,36 @@ struct Instruction {
   }
 
   // Builtin method call instruction (resolved function pointer dispatch)
-  // operands[0] = receiver, operands[1..] = method arguments
+  // temp_operands[0] = receiver, temp_operands[1..] = method arguments
+  // All args are TempRef, enforcing SSA form
   // fn is a type-erased BuiltinMethodFn pointer
   static auto IntrinsicCall(
-      void* fn, TempRef receiver, std::vector<Operand> args, TempRef result,
-      common::Type result_type, int64_t step = 1,
-      std::vector<EnumMemberInfo> members = {}) -> Instruction {
-    std::vector<Operand> operands;
-    operands.reserve(1 + args.size());
-    operands.push_back(Operand::Temp(receiver));
+      void* fn, TempRef receiver, std::vector<TempRef> args, TempRef result,
+      common::Type result_type) -> Instruction {
+    std::vector<TempRef> temp_ops;
+    temp_ops.reserve(1 + args.size());
+    temp_ops.push_back(receiver);
     for (auto& arg : args) {
-      operands.push_back(std::move(arg));
+      temp_ops.push_back(std::move(arg));
     }
     return Instruction{
         .kind = InstructionKind::kIntrinsicCall,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = std::move(operands),
-        .intrinsic_fn = fn,
-        .method_step = step,
-        .enum_members = std::move(members)};
+        .temp_operands = std::move(temp_ops),
+        .intrinsic_fn = fn};
   }
 
   // Value-semantic intrinsic operation (no receiver identity)
-  // operands are pure values, result_type derived from operation
+  // All args are pure values (TempRef), enforcing SSA form
   static auto IntrinsicOp(
-      IntrinsicOpKind op, std::vector<Operand> operands, TempRef result,
+      IntrinsicOpKind op, std::vector<TempRef> args, TempRef result,
       common::Type result_type, common::Type type_context) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kIntrinsicOp,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = std::move(operands),
+        .temp_operands = std::move(args),
         .op_kind = op,
         .type_context = std::move(type_context)};
   }
@@ -510,19 +515,15 @@ struct Instruction {
 
   // Concatenation: result = {op0, op1, ...}
   // Operands are ordered MSB to LSB (first operand is most significant)
+  // All operands are temps (value-semantic operation)
   static auto Concatenation(
       TempRef result, std::vector<TempRef> operands, common::Type result_type)
       -> Instruction {
-    std::vector<Operand> ops;
-    ops.reserve(operands.size());
-    for (auto& op : operands) {
-      ops.push_back(Operand::Temp(op));
-    }
     return Instruction{
         .kind = InstructionKind::kConcatenation,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = std::move(ops)};
+        .temp_operands = std::move(operands)};
   }
 
   // User-defined function call: result = function(args...)
@@ -794,11 +795,11 @@ struct Instruction {
 
       case InstructionKind::kConcatenation: {
         std::string args;
-        for (size_t i = 0; i < operands.size(); ++i) {
+        for (size_t i = 0; i < temp_operands.size(); ++i) {
           if (i > 0) {
             args += ", ";
           }
-          args += operands[i].ToString();
+          args += temp_operands[i].ToString();
         }
         return fmt::format("cat   {}, {{{}}}", result.value(), args);
       }
@@ -841,16 +842,16 @@ struct Instruction {
       }
 
       case InstructionKind::kIntrinsicCall: {
-        // Build args string from operands[1..]
+        // Build args string from temp_operands[1..]
         std::string args_str;
-        for (size_t i = 1; i < operands.size(); ++i) {
+        for (size_t i = 1; i < temp_operands.size(); ++i) {
           if (i > 1) {
             args_str += ", ";
           }
-          args_str += operands[i].ToString();
+          args_str += temp_operands[i].ToString();
         }
         return fmt::format(
-            "bcall {}, {}({})", result.value(), operands[0].ToString(),
+            "bcall {}, {}({})", result.value(), temp_operands[0].ToString(),
             args_str);
       }
 
@@ -868,11 +869,11 @@ struct Instruction {
             break;
         }
         std::string args_str;
-        for (size_t i = 0; i < operands.size(); ++i) {
+        for (size_t i = 0; i < temp_operands.size(); ++i) {
           if (i > 0) {
             args_str += ", ";
           }
-          args_str += operands[i].ToString();
+          args_str += temp_operands[i].ToString();
         }
         return fmt::format(
             "iop   {}, {}({})", result.value(), op_name, args_str);

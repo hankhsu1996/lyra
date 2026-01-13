@@ -118,12 +118,11 @@ auto LowerArrayLiteralExpression(
       // SSA style: push_back returns the modified queue
       // %q1 = push_back(%q0, element) -> %q1 is new queue with element
       auto next = builder.AllocateTemp("array_lit", lit.type);
-      std::vector<lir::Operand> args = {Operand::Temp(element_value)};
       void* push_back_fn = interpreter::ResolveIntrinsicMethod(
           common::Type::Kind::kQueue, "push_back");
       builder.AddInstruction(
           Instruction::IntrinsicCall(
-              push_back_fn, current, std::move(args), next, lit.type));
+              push_back_fn, current, {element_value}, next, lit.type));
       current = next;  // Chain: next iteration uses result of this one
     } else {
       // Use StoreElement for dynamic arrays

@@ -86,9 +86,8 @@ auto LowerElementSelectExpression(
   }
 
   // Emit kIntrinsicCall with receiver and index as args
-  std::vector<Operand> args = {Operand::Temp(index)};
   auto instr = Instruction::IntrinsicCall(
-      intrinsic_fn, receiver, std::move(args), result, select.type);
+      intrinsic_fn, receiver, {index}, result, select.type);
   instr.lower_bound = lower_bound;
   builder.AddInstruction(std::move(instr));
   return result;
@@ -188,10 +187,9 @@ auto LowerMemberAccessExpression(
     // Resolve intrinsic for field access
     void* intrinsic_fn =
         interpreter::ResolveIntrinsicIndexRead(member.value->type.kind);
-    std::vector<Operand> args = {Operand::Temp(index_temp)};
     builder.AddInstruction(
         Instruction::IntrinsicCall(
-            intrinsic_fn, receiver, std::move(args), result, member.type));
+            intrinsic_fn, receiver, {index_temp}, result, member.type));
     return result;
   }
 

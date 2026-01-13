@@ -83,7 +83,7 @@ auto IntrinsicQueuePopBack(
     const lir::Instruction& instr) -> RuntimeValue {
   auto& queue = receiver.AsQueue();
   if (queue.empty()) {
-    return RuntimeValue::DefaultValueForType(*instr.result_type);
+    return RuntimeValue::DefaultValueForType((*instr.result)->type);
   }
   auto value = std::move(queue.back());
   queue.pop_back();
@@ -95,7 +95,7 @@ auto IntrinsicQueuePopFront(
     const lir::Instruction& instr) -> RuntimeValue {
   auto& queue = receiver.AsQueue();
   if (queue.empty()) {
-    return RuntimeValue::DefaultValueForType(*instr.result_type);
+    return RuntimeValue::DefaultValueForType((*instr.result)->type);
   }
   auto value = std::move(queue.front());
   queue.pop_front();
@@ -113,70 +113,6 @@ auto IntrinsicQueueInsert(
         static_cast<size_t>(index), item);  // bounds check in BoundedQueue
   }
   return receiver;
-}
-
-auto IntrinsicEnumNext(
-    RuntimeValue receiver, std::span<const RuntimeValue> /*args*/,
-    const lir::Instruction& instr) -> RuntimeValue {
-  int64_t current_value = receiver.AsNarrow().AsInt64();
-  const auto& members = instr.enum_members;
-
-  size_t current_pos = 0;
-  bool found = false;
-  for (size_t i = 0; i < members.size(); ++i) {
-    if (members[i].value == current_value) {
-      current_pos = i;
-      found = true;
-      break;
-    }
-  }
-
-  if (found) {
-    auto step = static_cast<size_t>(instr.method_step);
-    size_t target_pos = (current_pos + step) % members.size();
-    return RuntimeValue::IntegralSigned(
-        members[target_pos].value, instr.result_type->GetBitWidth());
-  }
-  return RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
-}
-
-auto IntrinsicEnumPrev(
-    RuntimeValue receiver, std::span<const RuntimeValue> /*args*/,
-    const lir::Instruction& instr) -> RuntimeValue {
-  int64_t current_value = receiver.AsNarrow().AsInt64();
-  const auto& members = instr.enum_members;
-
-  size_t current_pos = 0;
-  bool found = false;
-  for (size_t i = 0; i < members.size(); ++i) {
-    if (members[i].value == current_value) {
-      current_pos = i;
-      found = true;
-      break;
-    }
-  }
-
-  if (found) {
-    size_t step = static_cast<size_t>(instr.method_step) % members.size();
-    size_t target_pos = (current_pos + members.size() - step) % members.size();
-    return RuntimeValue::IntegralSigned(
-        members[target_pos].value, instr.result_type->GetBitWidth());
-  }
-  return RuntimeValue::IntegralSigned(0, instr.result_type->GetBitWidth());
-}
-
-auto IntrinsicEnumName(
-    RuntimeValue receiver, std::span<const RuntimeValue> /*args*/,
-    const lir::Instruction& instr) -> RuntimeValue {
-  int64_t current_value = receiver.AsNarrow().AsInt64();
-  const auto& members = instr.enum_members;
-
-  for (const auto& member : members) {
-    if (member.value == current_value) {
-      return RuntimeValue::String(member.name);
-    }
-  }
-  return RuntimeValue::String("");
 }
 
 auto ExecuteEnumNext(
@@ -324,18 +260,6 @@ auto ResolveIntrinsicMethod(
     }
     if (method_name == "insert") {
       return reinterpret_cast<void*>(&IntrinsicQueueInsert);
-    }
-  }
-
-  if (receiver_kind == Kind::kEnum) {
-    if (method_name == "next") {
-      return reinterpret_cast<void*>(&IntrinsicEnumNext);
-    }
-    if (method_name == "prev") {
-      return reinterpret_cast<void*>(&IntrinsicEnumPrev);
-    }
-    if (method_name == "name") {
-      return reinterpret_cast<void*>(&IntrinsicEnumName);
     }
   }
 

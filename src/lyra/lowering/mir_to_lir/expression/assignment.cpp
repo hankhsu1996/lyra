@@ -36,9 +36,8 @@ auto EmitLoadElement(
       interpreter::ResolveIntrinsicIndexRead(container_type.kind);
   auto result = builder.AllocateTemp("elem", element_type);
 
-  std::vector<Operand> args = {Operand::Temp(index)};
   auto instr = Instruction::IntrinsicCall(
-      intrinsic_fn, receiver, std::move(args), result, element_type);
+      intrinsic_fn, receiver, {index}, result, element_type);
 
   // Set lower_bound for unpacked arrays
   if (container_type.kind == Type::Kind::kUnpackedArray) {
@@ -113,14 +112,12 @@ auto LowerAssignmentExpression(
       }
 
       // Call delete(index) on receiver
-      std::vector<Operand> del_args = {Operand::Temp(del_idx)};
       auto del_result = builder.AllocateTemp("del", receiver.type);
       void* delete_fn =
           interpreter::ResolveIntrinsicMethod(receiver.type.kind, "delete");
       builder.AddInstruction(
           Instruction::IntrinsicCall(
-              delete_fn, recv_temp, std::move(del_args), del_result,
-              receiver.type));
+              delete_fn, recv_temp, {del_idx}, del_result, receiver.type));
 
       // Store modified queue back to variable
       auto store_queue =

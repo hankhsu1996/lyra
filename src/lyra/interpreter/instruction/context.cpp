@@ -45,10 +45,8 @@ auto InstructionContext::ResolveBinding(common::SymbolRef symbol) const
   return {symbol, nullptr};
 }
 
-auto InstructionContext::GetTemp(const lir::Operand& operand) const
-    -> RuntimeValue {
-  assert(operand.IsTemp());
-  return temp_table_->Read(std::get<lir::TempRef>(operand.value));
+auto InstructionContext::GetTemp(lir::TempRef temp) const -> RuntimeValue {
+  return temp_table_->Read(temp);
 }
 
 auto InstructionContext::ReadVariable(const lir::Operand& operand) const
@@ -155,7 +153,7 @@ void InstructionContext::StoreElement(
     const RuntimeValue& element_value, bool is_non_blocking) {
   // Temp operand: modify in place, no sensitivity tracking needed
   if (!aggregate_operand.IsVariable()) {
-    auto aggregate_value = GetTemp(aggregate_operand);
+    auto aggregate_value = GetTemp(aggregate_operand.AsTempRef());
     if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
       auto actual_idx =
           ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
@@ -225,7 +223,7 @@ void InstructionContext::StoreElement(
 auto InstructionContext::GetOperandValue(const lir::Operand& operand) const
     -> RuntimeValue {
   if (operand.IsTemp()) {
-    return GetTemp(operand);
+    return GetTemp(operand.AsTempRef());
   }
   if (operand.IsVariable()) {
     return ReadVariable(operand);
@@ -241,7 +239,7 @@ auto InstructionContext::GetOperandValue(const lir::Operand& operand) const
 auto InstructionContext::EvalUnaryOp(
     const lir::Operand& operand, lir::TempRef result,
     const std::function<RuntimeValue(RuntimeValue)>& op) -> InstructionResult {
-  const auto result_value = op(GetTemp(operand));
+  const auto result_value = op(GetTemp(operand.AsTempRef()));
   temp_table_->Write(result, result_value);
   return InstructionResult::Continue();
 }
@@ -250,7 +248,8 @@ auto InstructionContext::EvalBinaryOp(
     const lir::Operand& lhs, const lir::Operand& rhs, lir::TempRef result,
     const std::function<RuntimeValue(RuntimeValue, RuntimeValue)>& op)
     -> InstructionResult {
-  const auto result_value = op(GetTemp(lhs), GetTemp(rhs));
+  const auto result_value =
+      op(GetTemp(lhs.AsTempRef()), GetTemp(rhs.AsTempRef()));
   temp_table_->Write(result, result_value);
   return InstructionResult::Continue();
 }

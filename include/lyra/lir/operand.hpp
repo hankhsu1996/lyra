@@ -57,6 +57,11 @@ struct Operand {
     return kind == Kind::kLabel;
   }
 
+  [[nodiscard]] auto AsTempRef() const -> TempRef {
+    assert(IsTemp());
+    return std::get<TempRef>(value);
+  }
+
   [[nodiscard]] auto ToString() const -> std::string {
     return std::visit(
         [](const auto& v) -> std::string {
