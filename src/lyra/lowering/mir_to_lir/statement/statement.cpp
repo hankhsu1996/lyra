@@ -102,11 +102,30 @@ auto LowerStatement(
           builder.AddInstruction(std::move(instruction));
         } else {
           // Unpacked array element assignment: array[index] = value
-          assert(target.indices.size() == 1);
-          auto index = LowerExpression(*target.indices[0], builder);
-          auto instruction = Instruction::StoreElement(
-              lir::Operand::Variable(target.symbol), index, result_value);
-          builder.AddInstruction(std::move(instruction));
+          // Use pointer chain: ResolveVar -> ResolveIndex -> Store
+          const auto& base_type = *target.base_type;
+
+          // Build pointer chain
+          const auto* arr_pointee = builder.GetContext()->InternType(base_type);
+          auto ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(arr_pointee));
+          builder.AddInstruction(Instruction::ResolveVar(ptr, target.symbol));
+
+          const common::Type* current_type = &base_type;
+          for (const auto& idx_expr : target.indices) {
+            auto index = LowerExpression(*idx_expr, builder);
+            const common::Type& elem_type = current_type->GetElementType();
+            const auto* elem_pointee =
+                builder.GetContext()->InternType(elem_type);
+            auto elem_ptr = builder.AllocateTemp(
+                "ptr_elem", common::Type::Pointer(elem_pointee));
+            builder.AddInstruction(
+                Instruction::ResolveIndex(elem_ptr, ptr, index));
+            ptr = elem_ptr;
+            current_type = &elem_type;
+          }
+
+          builder.AddInstruction(Instruction::Store(ptr, result_value));
         }
         break;
       }

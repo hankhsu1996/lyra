@@ -328,8 +328,11 @@ auto LowerAssignmentExpression(
           assignment.target.symbol, bit_offset, value, slice_type);
       builder.AddInstruction(std::move(instruction));
     } else {
-      // Unpacked array element assignment
-      size_t num_indices = assignment.target.indices.size();
+      // Unpacked array element assignment - use pointer chain
+      // For arr[i][j] = value: ResolveVar -> ResolveIndex(i) -> ResolveIndex(j)
+      // -> Store The recursive load-modify-store is handled by WritePointer in
+      // the interpreter.
+      const auto& base_type = *assignment.target.base_type;
 
       // Lower all indices
       std::vector<TempRef> index_temps;
@@ -337,68 +340,31 @@ auto LowerAssignmentExpression(
         index_temps.push_back(LowerExpression(*idx_expr, builder));
       }
 
-      if (num_indices == 1) {
-        // 1D: simple store
-        auto instruction = Instruction::StoreElement(
-            Operand::Variable(assignment.target.symbol), index_temps[0], value,
-            assignment.is_non_blocking);
-        builder.AddInstruction(std::move(instruction));
-      } else {
-        // Multi-dimensional: copy-modify-store pattern
-        // For arr[i][j] = value: load arr[i], modify [j], store back
-        const auto& base_type = *assignment.target.base_type;
+      // Build pointer chain starting from the variable
+      const auto* arr_pointee = builder.GetContext()->InternType(base_type);
+      auto ptr =
+          builder.AllocateTemp("ptr", common::Type::Pointer(arr_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveVar(ptr, assignment.target.symbol));
 
-        // Load intermediate arrays (all but the last index)
-        std::vector<TempRef> intermediate_temps;
-        const Type* current_type = nullptr;
-
-        // First level: load from variable
-        const auto* pointee = builder.GetContext()->InternType(base_type);
-        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+      // Walk through dimensions, building pointer chain
+      const Type* current_type = &base_type;
+      for (size_t i = 0; i < index_temps.size(); ++i) {
+        const Type& elem_type = current_type->GetElementType();
+        const auto* elem_pointee = builder.GetContext()->InternType(elem_type);
+        auto elem_ptr = builder.AllocateTemp(
+            "ptr_elem", common::Type::Pointer(elem_pointee));
         builder.AddInstruction(
-            Instruction::ResolveVar(ptr, assignment.target.symbol));
-        auto recv_temp = builder.AllocateTemp("recv", base_type);
-        builder.AddInstruction(Instruction::Load(recv_temp, ptr));
-        const Type& first_elem_type = base_type.GetElementType();
-        auto first_temp = EmitLoadElement(
-            recv_temp, index_temps[0], base_type, first_elem_type, builder);
-        intermediate_temps.push_back(first_temp);
-        current_type = &first_elem_type;
+            Instruction::ResolveIndex(elem_ptr, ptr, index_temps[i]));
+        ptr = elem_ptr;
+        current_type = &elem_type;
+      }
 
-        // Subsequent levels: load from temp
-        for (size_t i = 1; i < num_indices - 1; ++i) {
-          const Type& element_type = current_type->GetElementType();
-          auto temp = EmitLoadElement(
-              intermediate_temps.back(), index_temps[i], *current_type,
-              element_type, builder);
-          intermediate_temps.push_back(temp);
-          current_type = &element_type;
-        }
-
-        // Store value to the innermost array using the last index
-        auto store_instr = Instruction::StoreElement(
-            Operand::Temp(intermediate_temps.back()), index_temps.back(),
-            value);
-        builder.AddInstruction(std::move(store_instr));
-
-        // Store back intermediate arrays in reverse order (3D+).
-        // For arr[i][j][k] = v (3D), this stores temp0[j] = temp1.
-        // Store-backs may be redundant due to shared_ptr semantics in
-        // RuntimeValue, but kept for correctness regardless of storage
-        // implementation.
-        auto num_intermediates = static_cast<int>(intermediate_temps.size());
-        for (int i = num_intermediates - 1; i >= 1; --i) {
-          auto instr = Instruction::StoreElement(
-              Operand::Temp(intermediate_temps[i - 1]), index_temps[i],
-              intermediate_temps[i]);
-          builder.AddInstruction(std::move(instr));
-        }
-
-        // Store back to the base variable
-        auto final_store = Instruction::StoreElement(
-            Operand::Variable(assignment.target.symbol), index_temps[0],
-            intermediate_temps[0], assignment.is_non_blocking);
-        builder.AddInstruction(std::move(final_store));
+      // Store through the final pointer
+      if (assignment.is_non_blocking) {
+        builder.AddInstruction(Instruction::StoreNBA(ptr, value));
+      } else {
+        builder.AddInstruction(Instruction::Store(ptr, value));
       }
     }
     return value;

@@ -77,6 +77,28 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kResolveIndex: {
+      assert(instr.result.has_value());
+      assert(instr.temp_operands.size() == 2);
+
+      const auto& base_ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      assert(base_ptr_value.IsPointer());
+
+      const auto& index_value = ctx.GetTemp(instr.temp_operands[1]);
+      assert(!index_value.IsWide() && "array index cannot be wide");
+      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
+
+      // Create IndexPointer with base and index
+      // Note: lower_bound adjustment happens in ReadPointer/WritePointer
+      auto base_ptr = base_ptr_value.AsPointerStorage();
+      auto elem_ptr = PointerValue::Index(base_ptr, index);
+
+      auto ptr_type = (*instr.result)->type;
+      ctx.WriteTemp(
+          instr.result.value(), RuntimeValue::Pointer(ptr_type, elem_ptr));
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kStoreElement: {
       assert(instr.operands.size() == 3);
 

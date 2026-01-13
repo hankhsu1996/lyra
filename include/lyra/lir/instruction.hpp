@@ -39,6 +39,7 @@ enum class InstructionKind {
   kLoad,                     // Dereference Pointer<T> to get T
   kStore,                    // Write T through Pointer<T>
   kStoreNBA,                 // Non-blocking store through Pointer<T>
+  kResolveIndex,             // Pointer<Array<T>> + index -> Pointer<T>
   kStoreElement,             // Store to array/struct: base[index] = value
   kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
   kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
@@ -138,6 +139,7 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kLoad:
     case InstructionKind::kStore:
     case InstructionKind::kStoreNBA:
+    case InstructionKind::kResolveIndex:
     case InstructionKind::kStoreElement:
     case InstructionKind::kStoreElementNonBlocking:
     case InstructionKind::kLoadPackedBits:
@@ -373,6 +375,17 @@ struct Instruction {
     return Instruction{
         .kind = InstructionKind::kStoreNBA,
         .temp_operands = {pointer, value},
+    };
+  }
+
+  // Resolve array element pointer: base_ptr[index] -> Pointer<T>
+  // base_ptr must be Pointer<Array<T>> or Pointer<Queue<T>>
+  static auto ResolveIndex(TempRef result, TempRef base_ptr, TempRef index)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveIndex,
+        .result = result,
+        .temp_operands = {base_ptr, index},
     };
   }
 
@@ -637,6 +650,11 @@ struct Instruction {
 
       case InstructionKind::kStoreNBA:
         return fmt::format("nba   {}, {}", temp_operands[0], temp_operands[1]);
+
+      case InstructionKind::kResolveIndex:
+        return fmt::format(
+            "resolve_index {}, {}[{}]", result.value(), temp_operands[0],
+            temp_operands[1]);
 
       case InstructionKind::kStoreElement:
         return fmt::format(

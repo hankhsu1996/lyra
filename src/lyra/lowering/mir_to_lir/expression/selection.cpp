@@ -26,6 +26,67 @@ using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
 
+// Check if an expression can be converted to a pointer chain
+// (i.e., it's an identifier or a chain of element selects leading to
+// identifier)
+auto IsAddressable(const mir::Expression& expr) -> bool {
+  if (expr.kind == mir::Expression::Kind::kIdentifier) {
+    return true;
+  }
+  if (expr.kind == mir::Expression::Kind::kElementSelect) {
+    const auto& elem_select = mir::As<mir::ElementSelectExpression>(expr);
+    return IsAddressable(*elem_select.value);
+  }
+  return false;
+}
+
+// Build a pointer chain to an array element.
+// For arr[i]: ResolveVar(arr) -> ResolveIndex(i)
+// For arr[i][j]: ResolveVar(arr) -> ResolveIndex(i) -> ResolveIndex(j)
+// Note: lower_bound adjustment happens at runtime in ReadPointer/WritePointer.
+// The index stored in IndexPointer is the raw SV index.
+auto LowerToElementPointer(
+    const mir::Expression& expr, TempRef index, const Type& element_type,
+    LirBuilder& builder) -> TempRef {
+  if (expr.kind == mir::Expression::Kind::kIdentifier) {
+    // Base case: variable reference
+    const auto& id = mir::As<mir::IdentifierExpression>(expr);
+    const auto* arr_pointee = builder.GetContext()->InternType(id.type);
+    auto ptr_arr =
+        builder.AllocateTemp("ptr", common::Type::Pointer(arr_pointee));
+    builder.AddInstruction(Instruction::ResolveVar(ptr_arr, id.symbol));
+
+    // ResolveIndex to get pointer to element (stores raw SV index)
+    const auto* elem_pointee = builder.GetContext()->InternType(element_type);
+    auto ptr_elem =
+        builder.AllocateTemp("ptr_elem", common::Type::Pointer(elem_pointee));
+    builder.AddInstruction(Instruction::ResolveIndex(ptr_elem, ptr_arr, index));
+    return ptr_elem;
+  }
+
+  if (expr.kind == mir::Expression::Kind::kElementSelect) {
+    // Recursive case: nested array access (arr[i][j])
+    const auto& elem_select = mir::As<mir::ElementSelectExpression>(expr);
+
+    // Recursively get pointer to the intermediate element
+    auto outer_index = LowerExpression(*elem_select.selector, builder);
+    auto ptr_outer = LowerToElementPointer(
+        *elem_select.value, outer_index, elem_select.type, builder);
+
+    // ResolveIndex from the intermediate pointer
+    const auto* elem_pointee = builder.GetContext()->InternType(element_type);
+    auto ptr_elem =
+        builder.AllocateTemp("ptr_elem", common::Type::Pointer(elem_pointee));
+    builder.AddInstruction(
+        Instruction::ResolveIndex(ptr_elem, ptr_outer, index));
+    return ptr_elem;
+  }
+
+  // Should not reach here - IsAddressable should have returned false
+  throw common::InternalError(
+      "lowering", "LowerToElementPointer called on non-addressable expression");
+}
+
 auto LowerElementSelectExpression(
     const mir::ElementSelectExpression& select, LirBuilder& builder)
     -> lir::TempRef {
@@ -60,37 +121,33 @@ auto LowerElementSelectExpression(
     return result;
   }
 
-  // Unpacked array/queue element access - use intrinsic
+  // Unpacked array/queue element access
   const auto& value_type = select.value->type;
-  void* intrinsic_fn = interpreter::ResolveIntrinsicIndexRead(value_type.kind);
 
-  // Compute lower_bound for unpacked arrays (queues always have 0)
-  int32_t lower_bound = 0;
-  if (value_type.kind == Type::Kind::kUnpackedArray) {
-    const auto& array_data =
-        std::get<common::UnpackedArrayData>(value_type.data);
-    lower_bound = array_data.lower_bound;
-  }
-
-  TempRef receiver;
-  if (select.value->kind == mir::Expression::Kind::kIdentifier) {
-    // Direct variable access: arr[i]
-    const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
-    const auto* pointee = builder.GetContext()->InternType(value_type);
-    auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
-    builder.AddInstruction(Instruction::ResolveVar(ptr, array_id.symbol));
-    receiver = builder.AllocateTemp("recv", value_type);
-    builder.AddInstruction(Instruction::Load(receiver, ptr));
+  // Use pointer-based approach if addressable, otherwise fall back to intrinsic
+  if (IsAddressable(*select.value)) {
+    // Lower bound adjustment happens at runtime in ReadPointer
+    auto ptr_elem =
+        LowerToElementPointer(*select.value, index, select.type, builder);
+    builder.AddInstruction(Instruction::Load(result, ptr_elem));
   } else {
-    // Nested access (e.g., arr[i][j]): recursively lower the array expression
-    receiver = LowerExpression(*select.value, builder);
+    // Non-addressable expression (e.g., function return): use intrinsic
+    // Compute lower_bound for unpacked arrays (queues always have 0)
+    int32_t lower_bound = 0;
+    if (value_type.kind == Type::Kind::kUnpackedArray) {
+      const auto& array_data =
+          std::get<common::UnpackedArrayData>(value_type.data);
+      lower_bound = array_data.lower_bound;
+    }
+    auto receiver = LowerExpression(*select.value, builder);
+    void* intrinsic_fn =
+        interpreter::ResolveIntrinsicIndexRead(value_type.kind);
+    auto instr = Instruction::IntrinsicCall(
+        intrinsic_fn, receiver, {index}, result, select.type);
+    instr.lower_bound = lower_bound;
+    builder.AddInstruction(std::move(instr));
   }
 
-  // Emit kIntrinsicCall with receiver and index as args
-  auto instr = Instruction::IntrinsicCall(
-      intrinsic_fn, receiver, {index}, result, select.type);
-  instr.lower_bound = lower_bound;
-  builder.AddInstruction(std::move(instr));
   return result;
 }
 

@@ -119,77 +119,6 @@ void InstructionContext::StoreVariable(
   }
 }
 
-auto InstructionContext::ReadPointer(const PointerValue& ptr) const
-    -> RuntimeValue {
-  // Phase B: Only VarPointer is supported
-  assert(ptr.IsVar() && "Only VarPointer supported in Phase B");
-  const auto* symbol = ptr.AsVar().symbol;
-
-  // Check function-local variables first (parameters and locals)
-  if (!frame_->call_stack.empty()) {
-    const auto& call_frame = frame_->call_stack.back();
-    auto it = call_frame.local_variables.find(symbol);
-    if (it != call_frame.local_variables.end()) {
-      return it->second;
-    }
-  }
-
-  // Check process-local next
-  if (frame_->variable_table.Exists(symbol)) {
-    return frame_->variable_table.Read(symbol);
-  }
-
-  // Resolve through port bindings (output port -> target signal)
-  auto [target_symbol, target_instance] = ResolveBinding(symbol);
-
-  // Read from flat storage (either resolved target or original symbol)
-  const auto* actual_symbol =
-      (target_instance != nullptr) ? target_symbol : symbol;
-  return simulation_context_->variable_store.Read(actual_symbol);
-}
-
-void InstructionContext::WritePointer(
-    const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking) {
-  // Phase B: Only VarPointer is supported
-  assert(ptr.IsVar() && "Only VarPointer supported in Phase B");
-  const auto* symbol = ptr.AsVar().symbol;
-
-  // Deep copy arrays for value semantics
-  const RuntimeValue actual_value = value.DeepCopy();
-
-  // Check function-local variables first (parameters and locals)
-  if (!frame_->call_stack.empty()) {
-    auto& call_frame = frame_->call_stack.back();
-    auto it = call_frame.local_variables.find(symbol);
-    if (it != call_frame.local_variables.end()) {
-      it->second = actual_value;
-      return;
-    }
-  }
-
-  // Check process-local next
-  if (frame_->variable_table.Exists(symbol)) {
-    frame_->variable_table.Write(symbol, actual_value);
-    return;
-  }
-
-  // Resolve through port bindings (output port -> target signal)
-  auto [target_symbol, target_instance] = ResolveBinding(symbol);
-  const auto* actual_symbol =
-      (target_instance != nullptr) ? target_symbol : symbol;
-
-  // Write to flat storage
-  if (!is_non_blocking) {
-    simulation_context_->variable_store.Write(actual_symbol, actual_value);
-    effect_->RecordVariableModification(actual_symbol);
-  } else {
-    effect_->RecordNbaAction(
-        {.symbol = actual_symbol,
-         .value = actual_value,
-         .array_index = std::nullopt});
-  }
-}
-
 namespace {
 
 /// Compute actual array index after adjusting for lower bound.
@@ -218,6 +147,132 @@ auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
 }
 
 }  // namespace
+
+auto InstructionContext::ReadPointer(const PointerValue& ptr) const
+    -> RuntimeValue {
+  if (ptr.IsVar()) {
+    const auto* symbol = ptr.AsVar().symbol;
+
+    // Check function-local variables first (parameters and locals)
+    if (!frame_->call_stack.empty()) {
+      const auto& call_frame = frame_->call_stack.back();
+      auto it = call_frame.local_variables.find(symbol);
+      if (it != call_frame.local_variables.end()) {
+        return it->second;
+      }
+    }
+
+    // Check process-local next
+    if (frame_->variable_table.Exists(symbol)) {
+      return frame_->variable_table.Read(symbol);
+    }
+
+    // Resolve through port bindings (output port -> target signal)
+    auto [target_symbol, target_instance] = ResolveBinding(symbol);
+
+    // Read from flat storage (either resolved target or original symbol)
+    const auto* actual_symbol =
+        (target_instance != nullptr) ? target_symbol : symbol;
+    return simulation_context_->variable_store.Read(actual_symbol);
+  }
+
+  if (ptr.IsIndex()) {
+    const auto& idx_ptr = ptr.AsIndex();
+
+    // Read the container through the base pointer
+    auto container = ReadPointer(*idx_ptr.base);
+
+    // Compute actual index (adjust for lower bound)
+    auto actual_idx =
+        ComputeArrayIndex(container, static_cast<int64_t>(idx_ptr.index));
+
+    // Return the element
+    if (container.IsArray()) {
+      return container.AsArray()[actual_idx].DeepCopy();
+    }
+    return container.AsQueue()[actual_idx].DeepCopy();
+  }
+
+  throw common::InternalError("interpreter", "unsupported pointer kind");
+}
+
+void InstructionContext::WritePointer(
+    const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking) {
+  if (ptr.IsVar()) {
+    const auto* symbol = ptr.AsVar().symbol;
+
+    // Deep copy arrays for value semantics
+    const RuntimeValue actual_value = value.DeepCopy();
+
+    // Check function-local variables first (parameters and locals)
+    if (!frame_->call_stack.empty()) {
+      auto& call_frame = frame_->call_stack.back();
+      auto it = call_frame.local_variables.find(symbol);
+      if (it != call_frame.local_variables.end()) {
+        it->second = actual_value;
+        return;
+      }
+    }
+
+    // Check process-local next
+    if (frame_->variable_table.Exists(symbol)) {
+      frame_->variable_table.Write(symbol, actual_value);
+      return;
+    }
+
+    // Resolve through port bindings (output port -> target signal)
+    auto [target_symbol, target_instance] = ResolveBinding(symbol);
+    const auto* actual_symbol =
+        (target_instance != nullptr) ? target_symbol : symbol;
+
+    // Write to flat storage
+    if (!is_non_blocking) {
+      simulation_context_->variable_store.Write(actual_symbol, actual_value);
+      effect_->RecordVariableModification(actual_symbol);
+    } else {
+      effect_->RecordNbaAction(
+          {.symbol = actual_symbol,
+           .value = actual_value,
+           .array_index = std::nullopt});
+    }
+    return;
+  }
+
+  if (ptr.IsIndex()) {
+    const auto& idx_ptr = ptr.AsIndex();
+
+    // Read the container through the base pointer
+    auto container = ReadPointer(*idx_ptr.base);
+
+    // Compute actual index
+    auto actual_idx =
+        ComputeArrayIndex(container, static_cast<int64_t>(idx_ptr.index));
+
+    // Get root symbol for sensitivity tracking
+    const auto* root_symbol = ptr.GetRootSymbol();
+
+    if (is_non_blocking) {
+      // Resolve through port bindings for the root symbol
+      auto [target_symbol, target_instance] = ResolveBinding(root_symbol);
+      const auto* actual_symbol =
+          (target_instance != nullptr) ? target_symbol : root_symbol;
+      effect_->RecordNbaAction(
+          {.symbol = actual_symbol,
+           .value = value.DeepCopy(),
+           .array_index = actual_idx});
+      return;
+    }
+
+    // Blocking: modify element and write back through base pointer
+    if (container.IsArray() || container.IsQueue()) {
+      container.SetElement(actual_idx, value);
+    }
+    WritePointer(*idx_ptr.base, container, false);
+    return;
+  }
+
+  throw common::InternalError("interpreter", "unsupported pointer kind");
+}
 
 void InstructionContext::StoreElement(
     const lir::Operand& aggregate_operand, size_t index,
