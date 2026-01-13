@@ -70,7 +70,8 @@ auto LowerFunctionCallExpression(
     const mir::FunctionCallExpression& call, LirBuilder& builder)
     -> lir::TempRef;
 auto LowerMethodCallExpression(
-    const mir::MethodCallExpression& mc, LirBuilder& builder) -> lir::TempRef;
+    const mir::MethodCallExpression& method_call, LirBuilder& builder)
+    -> lir::TempRef;
 
 // Aggregate lowering
 auto LowerConcatenationExpression(

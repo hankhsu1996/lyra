@@ -99,12 +99,9 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
     case common::Type::Kind::kQueue: {
       const auto& queue_data = std::get<common::QueueData>(type.data);
       auto element_type = ToCppType(*queue_data.element_type);
-      if (queue_data.max_bound > 0) {
-        return std::format(
-            "lyra::sdk::BoundedQueue<{}, {}>", element_type,
-            queue_data.max_bound);
-      }
-      return std::format("std::deque<{}>", element_type);
+      // Use BoundedQueue for all queues (bounded and unbounded)
+      // max_bound=0 means unbounded, handled at runtime
+      return std::format("lyra::sdk::BoundedQueue<{}>", element_type);
     }
     case common::Type::Kind::kPackedStruct: {
       // Packed structs are bitvectors - same as kIntegral

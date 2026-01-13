@@ -19,15 +19,18 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lir/context.hpp"
+#include "lyra/sdk/bounded_queue.hpp"
 
 namespace lyra {
 
 struct RuntimeValue;
 
-// Array storage uses shared_ptr to allow value semantics while supporting
+// Storage types use shared_ptr to allow value semantics while supporting
 // recursive RuntimeValue definition
 using ArrayStorage = std::shared_ptr<std::vector<RuntimeValue>>;
-using ValueVariant = std::variant<common::ValueStorage, ArrayStorage>;
+using QueueStorage = std::shared_ptr<sdk::BoundedQueue<RuntimeValue>>;
+using ValueVariant =
+    std::variant<common::ValueStorage, ArrayStorage, QueueStorage>;
 
 struct RuntimeValue {
  public:
@@ -51,6 +54,12 @@ struct RuntimeValue {
         .type = std::move(type),
         .value =
             std::make_shared<std::vector<RuntimeValue>>(std::move(elements))};
+  }
+
+  static auto Queue(common::Type type, size_t max_bound = 0) -> RuntimeValue {
+    return RuntimeValue{
+        .type = std::move(type),
+        .value = std::make_shared<sdk::BoundedQueue<RuntimeValue>>(max_bound)};
   }
 
   static auto IntegralSigned(int64_t value, size_t bit_width) -> RuntimeValue {
@@ -180,12 +189,15 @@ struct RuntimeValue {
     return AsScalar().AsWideBit();
   }
 
-  // Array accessors - assumes value holds ArrayStorage
-  // Queues also use ArrayStorage (std::vector<RuntimeValue>)
+  // Array accessors - assumes value holds ArrayStorage (vector)
   [[nodiscard]] auto IsArray() const -> bool {
     return type.kind == common::Type::Kind::kUnpackedArray ||
-           type.kind == common::Type::Kind::kDynamicArray ||
-           type.kind == common::Type::Kind::kQueue;
+           type.kind == common::Type::Kind::kDynamicArray;
+  }
+
+  // Queue accessor - assumes value holds QueueStorage (BoundedQueue)
+  [[nodiscard]] auto IsQueue() const -> bool {
+    return type.kind == common::Type::Kind::kQueue;
   }
 
   [[nodiscard]] auto IsUnpackedStruct() const -> bool {
@@ -204,12 +216,27 @@ struct RuntimeValue {
     return *std::get<ArrayStorage>(value);
   }
 
+  [[nodiscard]] auto AsQueue() const -> const sdk::BoundedQueue<RuntimeValue>& {
+    return *std::get<QueueStorage>(value);
+  }
+
+  [[nodiscard]] auto AsQueue() -> sdk::BoundedQueue<RuntimeValue>& {
+    return *std::get<QueueStorage>(value);
+  }
+
   [[nodiscard]] auto GetElement(size_t index) const -> const RuntimeValue& {
+    if (IsQueue()) {
+      return AsQueue()[index];
+    }
     return AsArray()[index];
   }
 
   auto SetElement(size_t index, RuntimeValue element) -> void {
-    AsArray()[index] = std::move(element);
+    if (IsQueue()) {
+      AsQueue()[index] = std::move(element);
+    } else {
+      AsArray()[index] = std::move(element);
+    }
   }
 
   // Struct/union field accessors - use ArrayStorage indexed by position
@@ -237,6 +264,18 @@ struct RuntimeValue {
           result += ", ";
         }
         result += arr[i].ToString();
+      }
+      result += "}";
+      return result;
+    }
+    if (IsQueue()) {
+      std::string result = "{";
+      const auto& queue = *std::get<QueueStorage>(value);
+      for (size_t i = 0; i < queue.size(); ++i) {
+        if (i > 0) {
+          result += ", ";
+        }
+        result += queue[i].ToString();
       }
       result += "}";
       return result;
@@ -316,8 +355,9 @@ struct RuntimeValue {
     return narrow_fn(AsNarrow());
   }
 
-  // Note: Can't use default comparison because ArrayStorage is shared_ptr
-  // and we want value equality for arrays, structs, and unions
+  // Note: Can't use default comparison because ArrayStorage/QueueStorage are
+  // shared_ptr and we want value equality for arrays, queues, structs, and
+  // unions
   [[nodiscard]] auto operator==(const RuntimeValue& rhs) const -> bool {
     if (type != rhs.type) {
       return false;
@@ -326,10 +366,14 @@ struct RuntimeValue {
       return *std::get<ArrayStorage>(value) ==
              *std::get<ArrayStorage>(rhs.value);
     }
+    if (IsQueue()) {
+      return *std::get<QueueStorage>(value) ==
+             *std::get<QueueStorage>(rhs.value);
+    }
     return AsScalar() == rhs.AsScalar();
   }
 
-  // Deep copy for value semantics - recursively copies nested arrays.
+  // Deep copy for value semantics - recursively copies nested arrays/queues.
   // Uses std::visit for exhaustive handling: when a new storage type is added
   // to ValueVariant, the compiler will error here, forcing explicit handling.
   [[nodiscard]] auto DeepCopy() const -> RuntimeValue {
@@ -348,6 +392,15 @@ struct RuntimeValue {
             }
             return std::make_shared<std::vector<RuntimeValue>>(
                 std::move(copied));
+          } else {
+            static_assert(std::is_same_v<T, QueueStorage>);
+            // Reference semantics - must deep copy (preserve max_bound)
+            auto copied = std::make_shared<sdk::BoundedQueue<RuntimeValue>>(
+                v->max_bound());
+            for (const auto& elem : *v) {
+              copied->push_back(elem.DeepCopy());
+            }
+            return copied;
           }
         },
         value);
@@ -393,9 +446,11 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
     case common::Type::Kind::kDynamicArray:
       // Dynamic arrays default to empty (size 0)
       return Array(type, {});
-    case common::Type::Kind::kQueue:
-      // Queues default to empty (size 0)
-      return Array(type, {});
+    case common::Type::Kind::kQueue: {
+      // Queues default to empty (size 0) with bound from type
+      const auto& queue_data = std::get<common::QueueData>(type.data);
+      return Queue(type, queue_data.max_bound);
+    }
     case common::Type::Kind::kPackedStruct: {
       // Packed structs are bitvectors - initialize to all zeros
       auto data = std::get<common::PackedStructData>(type.data);

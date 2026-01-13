@@ -18,20 +18,23 @@ namespace lyra::lir {
 // Forward declaration for callee pointer
 struct Function;
 
+/// Storage kind for container allocation (resolved at lowering time)
+enum class StorageKind : uint8_t {
+  kVector,  // std::vector - arrays, structs, unions
+  kDeque,   // std::deque - queues
+};
+
 enum class InstructionKind {
   // Memory operations
   kConstant,
   kLoadVariable,
   kStoreVariable,
   kStoreVariableNonBlocking,
-  kLoadElement,              // Load from array/struct: base[index]
   kStoreElement,             // Store to array/struct: base[index] = value
   kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
   kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
   kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
-  kCreateAggregate,  // Create default-initialized struct/array in temp
-  kNewDynamicArray,  // Allocate/resize dynamic array: new[size] or
-                     // new[size](init)
+  kAllocate,  // Allocate container with storage kind resolved at lowering
 
   // Move operation
   kMove,
@@ -93,8 +96,7 @@ enum class InstructionKind {
   kWaitEvent,
   kDelay,
   kSystemCall,
-  kMethodCall,  // Generic method call (enum methods, future: string/class
-                // methods)
+  kIntrinsicCall,
   kJump,
   kBranch,
 
@@ -124,13 +126,11 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kLoadVariable:
     case InstructionKind::kStoreVariable:
     case InstructionKind::kStoreVariableNonBlocking:
-    case InstructionKind::kLoadElement:
     case InstructionKind::kStoreElement:
     case InstructionKind::kStoreElementNonBlocking:
     case InstructionKind::kLoadPackedBits:
     case InstructionKind::kStorePackedBits:
-    case InstructionKind::kCreateAggregate:
-    case InstructionKind::kNewDynamicArray:
+    case InstructionKind::kAllocate:
     case InstructionKind::kMove:
       return InstructionCategory::kMemory;
 
@@ -179,7 +179,7 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kWaitEvent:
     case InstructionKind::kDelay:
     case InstructionKind::kSystemCall:
-    case InstructionKind::kMethodCall:
+    case InstructionKind::kIntrinsicCall:
     case InstructionKind::kJump:
     case InstructionKind::kBranch:
     case InstructionKind::kCall:
@@ -219,12 +219,18 @@ struct Instruction {
   // Event name
   std::vector<common::Trigger> wait_triggers{};
 
-  // Method call: method name and metadata
-  // For enum methods: method_name is "next", "prev", or "name"
-  // operands[0] = receiver
-  std::string method_name{};
-  int64_t method_step{1};  // For next(N)/prev(N), default 1
-  std::vector<EnumMemberInfo> enum_members{};
+  // Intrinsic call: type-erased function pointer for builtin methods.
+  // Uses void* because LIR cannot depend on interpreter types (layering).
+  // At execution time, interpreter casts to IntrinsicFn and calls.
+  // operands[0] = receiver, operands[1..] = args
+  void* intrinsic_fn{nullptr};  // NOLINT(google-runtime-int)
+  int64_t method_step{1};       // For enum next(N)/prev(N), default 1
+  std::vector<EnumMemberInfo> enum_members{};  // For enum methods
+  int32_t lower_bound{
+      0};  // Pre-computed lower bound for array index adjustment
+
+  // For kAllocate: storage type resolved at lowering time
+  StorageKind storage_kind{StorageKind::kVector};
 
   // For $monitor: name of synthesized check function.
   std::string monitor_check_function_name{};
@@ -307,18 +313,6 @@ struct Instruction {
         .operands = {Operand::Variable(variable), Operand::Temp(value)}};
   }
 
-  // Load element from array/struct: result = base[index]
-  // base can be variable or temp (polymorphic)
-  static auto LoadElement(
-      TempRef result, Operand base, TempRef index, common::Type element_type)
-      -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kLoadElement,
-        .result = result,
-        .result_type = std::move(element_type),
-        .operands = {std::move(base), Operand::Temp(index)}};
-  }
-
   // Store element to array/struct: base[index] = value
   // base can be variable or temp (polymorphic)
   // Sensitivity tracking only triggered if base is variable
@@ -358,31 +352,27 @@ struct Instruction {
             Operand::Temp(value)}};
   }
 
-  // Create default-initialized aggregate (struct or array) in temp
-  static auto CreateAggregate(TempRef result, common::Type aggregate_type)
-      -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kCreateAggregate,
-        .result = result,
-        .result_type = std::move(aggregate_type),
-        .operands = {}};
-  }
-
-  // Create new dynamic array: result = new[size] or new[size](init)
-  // operands[0] = size temp
-  // operands[1] = init array temp (optional)
-  static auto NewDynamicArray(
-      TempRef result, TempRef size, common::Type result_type,
+  // Allocate container with storage kind resolved at lowering time.
+  // For fixed-size: operands empty (size from type)
+  // For dynamic: operands[0] = size, operands[1] = init (optional)
+  static auto Allocate(
+      TempRef result, common::Type type, StorageKind storage,
+      std::optional<TempRef> size = std::nullopt,
       std::optional<TempRef> init = std::nullopt) -> Instruction {
-    std::vector<Operand> ops = {Operand::Temp(size)};
-    if (init) {
-      ops.push_back(Operand::Temp(*init));
+    std::vector<Operand> ops;
+    if (size) {
+      ops.push_back(Operand::Temp(*size));
+      if (init) {
+        ops.push_back(Operand::Temp(*init));
+      }
     }
-    return Instruction{
-        .kind = InstructionKind::kNewDynamicArray,
-        .result = result,
-        .result_type = std::move(result_type),
-        .operands = std::move(ops)};
+    Instruction instr;
+    instr.kind = InstructionKind::kAllocate;
+    instr.result = result;
+    instr.result_type = std::move(type);
+    instr.operands = std::move(ops);
+    instr.storage_kind = storage;
+    return instr;
   }
 
   static auto WaitEvent(std::vector<common::Trigger> triggers) -> Instruction {
@@ -423,14 +413,13 @@ struct Instruction {
         std::move(name), std::move(operands), result, std::move(result_type));
   }
 
-  // Method call instruction (enum methods, array/queue methods)
+  // Builtin method call instruction (resolved function pointer dispatch)
   // operands[0] = receiver, operands[1..] = method arguments
-  // For enum methods: method_step and enum_members are used
-  // For array/queue methods: arguments are in operands[1..]
-  static auto MethodCall(
-      std::string method, TempRef receiver, std::vector<Operand> args,
-      TempRef result, common::Type result_type, int64_t step,
-      std::vector<EnumMemberInfo> members) -> Instruction {
+  // fn is a type-erased BuiltinMethodFn pointer
+  static auto IntrinsicCall(
+      void* fn, TempRef receiver, std::vector<Operand> args, TempRef result,
+      common::Type result_type, int64_t step = 1,
+      std::vector<EnumMemberInfo> members = {}) -> Instruction {
     std::vector<Operand> operands;
     operands.reserve(1 + args.size());
     operands.push_back(Operand::Temp(receiver));
@@ -438,11 +427,11 @@ struct Instruction {
       operands.push_back(std::move(arg));
     }
     return Instruction{
-        .kind = InstructionKind::kMethodCall,
+        .kind = InstructionKind::kIntrinsicCall,
         .result = result,
         .result_type = std::move(result_type),
         .operands = std::move(operands),
-        .method_name = std::move(method),
+        .intrinsic_fn = fn,
         .method_step = step,
         .enum_members = std::move(members)};
   }
@@ -572,11 +561,6 @@ struct Instruction {
         return fmt::format(
             "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
 
-      case InstructionKind::kLoadElement:
-        return fmt::format(
-            "ldel  {}, {}[{}]", result.value(), operands[0].ToString(),
-            operands[1].ToString());
-
       case InstructionKind::kStoreElement:
         return fmt::format(
             "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
@@ -597,17 +581,21 @@ struct Instruction {
             "stpb  {}[{}+:], {}", operands[0].ToString(),
             operands[1].ToString(), operands[2].ToString());
 
-      case InstructionKind::kCreateAggregate:
-        return fmt::format("crag  {}", result.value());
-
-      case InstructionKind::kNewDynamicArray:
-        if (operands.size() > 1) {
+      case InstructionKind::kAllocate: {
+        const char* storage_str =
+            storage_kind == StorageKind::kDeque ? "deque" : "vector";
+        if (operands.empty()) {
+          return fmt::format("alloc {}, {}", result.value(), storage_str);
+        }
+        if (operands.size() == 1) {
           return fmt::format(
-              "newarr {}, new[{}]({})", result.value(), operands[0].ToString(),
-              operands[1].ToString());
+              "alloc {}, {}[{}]", result.value(), storage_str,
+              operands[0].ToString());
         }
         return fmt::format(
-            "newarr {}, new[{}]", result.value(), operands[0].ToString());
+            "alloc {}, {}[{}]({})", result.value(), storage_str,
+            operands[0].ToString(), operands[1].ToString());
+      }
 
       case InstructionKind::kMove:
         return fmt::format(
@@ -818,7 +806,7 @@ struct Instruction {
         return fmt::format("call  {} {}", system_call_name, args);
       }
 
-      case InstructionKind::kMethodCall: {
+      case InstructionKind::kIntrinsicCall: {
         // Build args string from operands[1..]
         std::string args_str;
         for (size_t i = 1; i < operands.size(); ++i) {
@@ -827,13 +815,9 @@ struct Instruction {
           }
           args_str += operands[i].ToString();
         }
-        // For enum next/prev, show step if non-default
-        if (enum_members.empty() && args_str.empty() && method_step != 1) {
-          args_str = std::to_string(method_step);
-        }
         return fmt::format(
-            "mcall {}, {}.{}({})", result.value(), operands[0].ToString(),
-            method_name, args_str);
+            "bcall {}, {}({})", result.value(), operands[0].ToString(),
+            args_str);
       }
 
       case InstructionKind::kJump:

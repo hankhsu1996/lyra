@@ -1,10 +1,12 @@
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -59,14 +61,13 @@ auto LowerNewArrayExpression(
   auto size = LowerExpression(*new_arr.size_expr, builder);
   auto result = builder.AllocateTemp("new_array", new_arr.type);
 
+  std::optional<TempRef> init = std::nullopt;
   if (new_arr.init_expr) {
-    auto init = LowerExpression(*new_arr.init_expr, builder);
-    builder.AddInstruction(
-        Instruction::NewDynamicArray(result, size, new_arr.type, init));
-  } else {
-    builder.AddInstruction(
-        Instruction::NewDynamicArray(result, size, new_arr.type));
+    init = LowerExpression(*new_arr.init_expr, builder);
   }
+  builder.AddInstruction(
+      Instruction::Allocate(
+          result, new_arr.type, lir::StorageKind::kVector, size, init));
   return result;
 }
 
@@ -75,7 +76,8 @@ auto LowerUnpackedStructLiteralExpression(
     -> lir::TempRef {
   // Create struct literal by storing field values into a new struct
   auto result = builder.AllocateTemp("struct_lit", lit.type);
-  builder.AddInstruction(Instruction::CreateAggregate(result, lit.type));
+  builder.AddInstruction(
+      Instruction::Allocate(result, lit.type, lir::StorageKind::kVector));
 
   for (size_t i = 0; i < lit.field_values.size(); ++i) {
     auto field_value = LowerExpression(*lit.field_values[i], builder);
@@ -100,7 +102,9 @@ auto LowerArrayLiteralExpression(
     -> lir::TempRef {
   // Create array/queue literal by building up values in SSA style
   auto current = builder.AllocateTemp("array_lit", lit.type);
-  builder.AddInstruction(Instruction::CreateAggregate(current, lit.type));
+  auto storage =
+      lit.type.IsQueue() ? lir::StorageKind::kDeque : lir::StorageKind::kVector;
+  builder.AddInstruction(Instruction::Allocate(current, lit.type, storage));
 
   // For queues, use push_back to add elements (SSA style: each returns new
   // queue) For dynamic arrays, use StoreElement (dynamic array starts with
@@ -115,9 +119,11 @@ auto LowerArrayLiteralExpression(
       // %q1 = push_back(%q0, element) -> %q1 is new queue with element
       auto next = builder.AllocateTemp("array_lit", lit.type);
       std::vector<lir::Operand> args = {Operand::Temp(element_value)};
+      void* push_back_fn = interpreter::ResolveIntrinsicMethod(
+          common::Type::Kind::kQueue, "push_back");
       builder.AddInstruction(
-          Instruction::MethodCall(
-              "push_back", current, std::move(args), next, lit.type, 1, {}));
+          Instruction::IntrinsicCall(
+              push_back_fn, current, std::move(args), next, lit.type));
       current = next;  // Chain: next iteration uses result of this one
     } else {
       // Use StoreElement for dynamic arrays

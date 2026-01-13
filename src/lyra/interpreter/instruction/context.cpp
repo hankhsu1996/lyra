@@ -136,11 +136,13 @@ auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
 
   auto actual_idx = static_cast<size_t>(sv_index - lower_bound);
 
-  if (actual_idx >= array_value.AsArray().size()) {
+  size_t container_size = array_value.IsQueue() ? array_value.AsQueue().size()
+                                                : array_value.AsArray().size();
+  if (actual_idx >= container_size) {
     throw std::runtime_error(
         fmt::format(
             "array index {} out of bounds (size {})", sv_index,
-            array_value.AsArray().size()));
+            container_size));
   }
 
   return actual_idx;
@@ -154,7 +156,7 @@ void InstructionContext::StoreElement(
   // Temp operand: modify in place, no sensitivity tracking needed
   if (!aggregate_operand.IsVariable()) {
     auto aggregate_value = GetTemp(aggregate_operand);
-    if (aggregate_value.IsArray()) {
+    if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
       auto actual_idx =
           ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
       aggregate_value.SetElement(actual_idx, element_value);
@@ -178,9 +180,9 @@ void InstructionContext::StoreElement(
     is_local = frame_->variable_table.Exists(symbol);
   }
 
-  // Compute actual index for arrays
+  // Compute actual index for arrays and queues
   size_t actual_idx = index;
-  if (aggregate_value.IsArray()) {
+  if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
     actual_idx =
         ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
   }
@@ -205,7 +207,7 @@ void InstructionContext::StoreElement(
   }
 
   // Perform the element store
-  if (aggregate_value.IsArray()) {
+  if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
     aggregate_value.SetElement(actual_idx, element_value);
   } else {
     aggregate_value.SetField(index, element_value);

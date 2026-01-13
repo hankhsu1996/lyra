@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/interpreter/intrinsic.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"
@@ -312,15 +314,30 @@ auto LowerFunctionCallExpression(
 }
 
 auto LowerMethodCallExpression(
-    const mir::MethodCallExpression& mc, LirBuilder& builder) -> lir::TempRef {
-  auto receiver = LowerExpression(*mc.receiver, builder);
-  auto result = builder.AllocateTemp("method_call", mc.type);
+    const mir::MethodCallExpression& method_call, LirBuilder& builder)
+    -> lir::TempRef {
+  auto receiver = LowerExpression(*method_call.receiver, builder);
+  auto result = builder.AllocateTemp("method_call", method_call.type);
 
   // Convert MIR enum members to LIR enum members (if present)
   std::vector<lir::EnumMemberInfo> lir_members;
-  lir_members.reserve(mc.enum_members.size());
-  for (const auto& m : mc.enum_members) {
-    lir_members.push_back({.name = m.name, .value = m.value});
+  lir_members.reserve(method_call.enum_members.size());
+  for (const auto& member : method_call.enum_members) {
+    lir_members.push_back({.name = member.name, .value = member.value});
+  }
+
+  // Determine receiver type kind for method resolution
+  // Enum methods have enum_members populated; array/queue methods don't
+  auto receiver_kind = lir_members.empty() ? method_call.receiver->type.kind
+                                           : common::Type::Kind::kEnum;
+
+  // Resolve intrinsic method at lowering time
+  void* intrinsic_fn = interpreter::ResolveIntrinsicMethod(
+      receiver_kind, method_call.method_name);
+  if (intrinsic_fn == nullptr) {
+    throw common::InternalError(
+        "LowerMethodCallExpression",
+        "unknown intrinsic method: " + method_call.method_name);
   }
 
   // For enum methods, extract step from args (first literal arg)
@@ -330,23 +347,24 @@ auto LowerMethodCallExpression(
 
   if (!lir_members.empty()) {
     // Enum method: first arg is step (if present)
-    if (!mc.args.empty()) {
-      const auto& step_expr = mir::As<mir::ConstantExpression>(*mc.args[0]);
+    if (!method_call.args.empty()) {
+      const auto& step_expr =
+          mir::As<mir::ConstantExpression>(*method_call.args[0]);
       step = step_expr.constant.value.AsInt64();
     }
   } else {
     // Array/queue method: lower all args as operands
-    arg_operands.reserve(mc.args.size());
-    for (const auto& arg : mc.args) {
+    arg_operands.reserve(method_call.args.size());
+    for (const auto& arg : method_call.args) {
       auto arg_temp = LowerExpression(*arg, builder);
       arg_operands.push_back(Operand::Temp(arg_temp));
     }
   }
 
   builder.AddInstruction(
-      Instruction::MethodCall(
-          mc.method_name, receiver, std::move(arg_operands), result, mc.type,
-          step, std::move(lir_members)));
+      Instruction::IntrinsicCall(
+          intrinsic_fn, receiver, std::move(arg_operands), result,
+          method_call.type, step, std::move(lir_members)));
   return result;
 }
 

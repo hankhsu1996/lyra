@@ -3,11 +3,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -22,35 +19,6 @@
 #include "lyra/lir/operand.hpp"
 
 namespace lyra::interpreter {
-
-namespace {
-
-/// Compute the actual array index after adjusting for lower bound and checking
-/// bounds. Returns the adjusted index or throws DiagnosticException if out of
-/// bounds.
-auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
-    -> size_t {
-  // Dynamic arrays always have lower_bound 0
-  int32_t lower_bound = 0;
-  if (array_value.type.kind == common::Type::Kind::kUnpackedArray) {
-    const auto& array_data =
-        std::get<common::UnpackedArrayData>(array_value.type.data);
-    lower_bound = array_data.lower_bound;
-  }
-
-  auto actual_idx = static_cast<size_t>(sv_index - lower_bound);
-
-  if (actual_idx >= array_value.AsArray().size()) {
-    throw std::runtime_error(
-        fmt::format(
-            "array index {} out of bounds (size {})", sv_index,
-            array_value.AsArray().size()));
-  }
-
-  return actual_idx;
-}
-
-}  // namespace
 
 auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
@@ -89,32 +57,6 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadElement: {
-      assert(instr.operands.size() == 2);
-      assert(instr.result.has_value());
-
-      RuntimeValue base_value;
-      if (instr.operands[0].IsVariable()) {
-        base_value = ctx.ReadVariable(instr.operands[0]);
-      } else {
-        base_value = ctx.GetTemp(instr.operands[0]);
-      }
-
-      auto index_value = ctx.GetTemp(instr.operands[1]);
-      assert(!index_value.IsWide() && "element index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-
-      if (base_value.IsArray()) {
-        auto actual_idx =
-            ComputeArrayIndex(base_value, static_cast<int64_t>(index));
-        ctx.WriteTemp(instr.result.value(), base_value.GetElement(actual_idx));
-      } else {
-        assert(base_value.IsUnpackedStruct() || base_value.IsUnpackedUnion());
-        ctx.WriteTemp(instr.result.value(), base_value.GetField(index));
-      }
-      return InstructionResult::Continue();
-    }
-
     case lir::InstructionKind::kStoreElement: {
       assert(instr.operands.size() == 3);
 
@@ -140,50 +82,46 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kCreateAggregate: {
+    case lir::InstructionKind::kAllocate: {
       assert(instr.result.has_value());
       assert(instr.result_type.has_value());
 
-      auto aggregate_value =
-          RuntimeValue::DefaultValueForType(*instr.result_type);
-      ctx.WriteTemp(instr.result.value(), std::move(aggregate_value));
-      return InstructionResult::Continue();
-    }
+      if (instr.operands.empty()) {
+        // Fixed-size allocation: use DefaultValueForType
+        auto value = RuntimeValue::DefaultValueForType(*instr.result_type);
+        ctx.WriteTemp(instr.result.value(), std::move(value));
+      } else {
+        // Dynamic allocation with size (and optional init)
+        auto size_val = ctx.GetOperandValue(instr.operands[0]);
+        auto size = static_cast<size_t>(size_val.AsNarrow().AsInt64());
 
-    case lir::InstructionKind::kNewDynamicArray: {
-      assert(instr.result.has_value());
-      assert(instr.result_type.has_value());
-      assert(!instr.operands.empty());
+        const auto& dyn_data =
+            std::get<common::DynamicArrayData>(instr.result_type->data);
+        const auto& elem_type = *dyn_data.element_type;
 
-      auto size_val = ctx.GetOperandValue(instr.operands[0]);
-      auto size = static_cast<size_t>(size_val.AsNarrow().AsInt64());
+        std::vector<RuntimeValue> elements;
+        elements.reserve(size);
 
-      const auto& dyn_data =
-          std::get<common::DynamicArrayData>(instr.result_type->data);
-      const auto& elem_type = *dyn_data.element_type;
-
-      std::vector<RuntimeValue> elements;
-      elements.reserve(size);
-
-      if (instr.operands.size() > 1) {
-        const auto& init = ctx.GetOperandValue(instr.operands[1]);
-        const auto& init_arr = init.AsArray();
-        for (size_t i = 0; i < size; ++i) {
-          if (i < init_arr.size()) {
-            elements.push_back(init_arr[i].DeepCopy());
-          } else {
+        if (instr.operands.size() > 1) {
+          const auto& init = ctx.GetOperandValue(instr.operands[1]);
+          const auto& init_arr = init.AsArray();
+          for (size_t i = 0; i < size; ++i) {
+            if (i < init_arr.size()) {
+              elements.push_back(init_arr[i].DeepCopy());
+            } else {
+              elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
+            }
+          }
+        } else {
+          for (size_t i = 0; i < size; ++i) {
             elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
           }
         }
-      } else {
-        for (size_t i = 0; i < size; ++i) {
-          elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
-        }
-      }
 
-      ctx.WriteTemp(
-          instr.result.value(),
-          RuntimeValue::Array(*instr.result_type, std::move(elements)));
+        ctx.WriteTemp(
+            instr.result.value(),
+            RuntimeValue::Array(*instr.result_type, std::move(elements)));
+      }
       return InstructionResult::Continue();
     }
 

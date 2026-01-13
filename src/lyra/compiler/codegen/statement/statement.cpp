@@ -250,6 +250,11 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       if (decl.initializer) {
         out_ << " = ";
         EmitExpression(*decl.initializer);
+      } else if (decl.variable.type.IsQueue()) {
+        // BoundedQueue needs max_bound in constructor
+        const auto& queue_data =
+            std::get<common::QueueData>(decl.variable.type.data);
+        out_ << "{" << queue_data.max_bound << "}";
       } else {
         out_ << "{}";
       }

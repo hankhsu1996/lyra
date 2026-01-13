@@ -632,6 +632,11 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
+    } else if (mod_var.variable.type.IsQueue()) {
+      // BoundedQueue needs max_bound in constructor
+      const auto& queue_data =
+          std::get<common::QueueData>(mod_var.variable.type.data);
+      out_ << "{" << queue_data.max_bound << "}";
     } else {
       out_ << "{}";
     }
@@ -653,6 +658,11 @@ void Codegen::EmitGenerateScopeStruct(const mir::GenerateScope& scope) {
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
+    } else if (mod_var.variable.type.IsQueue()) {
+      // BoundedQueue needs max_bound in constructor
+      const auto& queue_data =
+          std::get<common::QueueData>(mod_var.variable.type.data);
+      out_ << "{" << queue_data.max_bound << "}";
     } else {
       out_ << "{}";
     }
