@@ -413,9 +413,9 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     used_features_ |= CodegenFeature::kDisplay;
     Indent();
     out_ << "std::println(std::cout, \"Time scale of ($root) is {} / "
-            "{}\", lyra::sdk::PowerToString(lyra::sdk::global_precision_"
-            "power), lyra::sdk::PowerToString(lyra::sdk::global_"
-            "precision_power));\n";
+            "{}\", lyra::sdk::PowerToString(lyra::sdk::GlobalPrecisionPower"
+            "()), lyra::sdk::PowerToString(lyra::sdk::GlobalPrecisionPower"
+            "()));\n";
     return;
   }
 

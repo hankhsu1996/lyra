@@ -30,6 +30,9 @@ bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
 # YAML parsing for test data
 bazel_dep(name = "yaml-cpp", version = "0.8.0")
 
+# JSON parsing for test results
+bazel_dep(name = "nlohmann_json", version = "3.11.3")
+
 # TOML parsing for config files
 bazel_dep(name = "tomlplusplus", version = "3.4.0")
 

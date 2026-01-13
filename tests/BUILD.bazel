@@ -13,12 +13,24 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "batch_compiler",
+    srcs = ["framework/batch_compiler.cpp"],
+    hdrs = ["framework/batch_compiler.hpp"],
+    deps = [
+        ":test_framework",
+        "//:core",
+        "@nlohmann_json//:json",
+    ],
+)
+
 # CLI test framework
 cc_library(
     name = "cli_test_fixture",
     srcs = ["cli/cli_test_fixture.cpp"],
     hdrs = ["cli/cli_test_fixture.hpp"],
     deps = [
+        "//:core",
         "@googletest//:gtest",
     ],
 )
@@ -70,20 +82,24 @@ cc_binary(
     data = glob(["sv_features/**/*.yaml"]) + ["//:embedded_headers"],
     deps = [
         "//:core",
+        "//tests:batch_compiler",
         "//tests:test_framework",
         "@googletest//:gtest",
     ],
 )
 
-# Full test suite with sharding (for CI or running everything)
+# Full test suite - no sharding because batch compilation amortizes C++ compile
+# cost across all tests. With sharding, each shard redundantly compiles the
+# full batch (~17s each), wasting CPU cycles with no wall-clock benefit.
 cc_test(
     name = "sv_feature_tests",
     size = "large",
     srcs = ["framework/sv_feature_tests.cpp"],
     data = glob(["sv_features/**/*.yaml"]) + ["//:embedded_headers"],
-    shard_count = 10,
+    shard_count = 1,
     deps = [
         "//:core",
+        "//tests:batch_compiler",
         "//tests:test_framework",
         "@googletest//:gtest",
     ],

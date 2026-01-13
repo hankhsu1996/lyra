@@ -419,7 +419,7 @@ auto GenerateMain(
       lyra::common::TimeScale::kDefaultPrecisionPower) {
     precision_init = std::format(
         "    // Initialize global precision for %t formatting\n"
-        "    lyra::sdk::global_precision_power = {};\n",
+        "    lyra::sdk::SetGlobalPrecisionPower({});\n",
         static_cast<int>(global_precision_power));
   }
 

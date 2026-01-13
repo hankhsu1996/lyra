@@ -119,9 +119,11 @@ class Codegen {
       -> std::string;
 
   // Generate packages header content (namespaces with type definitions)
+  // @param emit_file_header If true, emit #pragma once, SDK includes, and type
+  //        aliases at file scope. False for batch compilation.
   auto GeneratePackages(
-      const std::vector<std::unique_ptr<mir::Package>>& packages)
-      -> std::string;
+      const std::vector<std::unique_ptr<mir::Package>>& packages,
+      bool emit_file_header = true) -> std::string;
 
   // Generate complete module header with #pragma once and conditional includes
   // @param module The module to generate code for
@@ -142,6 +144,22 @@ class Codegen {
       const std::vector<std::unique_ptr<mir::Module>>& modules,
       bool has_packages) -> std::vector<ModuleOutput>;
 
+  // Generate batch test content with Run() entry point.
+  // Combines packages and modules into a namespace, plus a Run(TestInvocation)
+  // function that handles RuntimeScope setup, simulation, and result
+  // collection.
+  // @param namespace_name Unique namespace for this test (e.g., "test_0")
+  // @param packages Package definitions
+  // @param modules Module definitions (top module is last)
+  // @param top_module_name Name of the top-level module to instantiate
+  // @param variables_to_read Variable names to read from DUT after simulation
+  auto GenerateBatchTestContent(
+      std::string_view namespace_name,
+      const std::vector<std::unique_ptr<mir::Package>>& packages,
+      const std::vector<std::unique_ptr<mir::Module>>& modules,
+      std::string_view top_module_name,
+      const std::vector<std::string>& variables_to_read) -> std::string;
+
   // Get global precision power after Generate() has been called
   // Used by main.cpp generation to initialize lyra::sdk::global_precision_power
   [[nodiscard]] auto GetGlobalPrecisionPower() const -> int8_t {
@@ -155,6 +173,7 @@ class Codegen {
 
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
+  void EmitUsingDirectives(const mir::Module& module);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
   void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);
