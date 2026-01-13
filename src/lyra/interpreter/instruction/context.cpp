@@ -146,6 +146,11 @@ auto ComputeArrayIndex(const RuntimeValue& array_value, int64_t sv_index)
 
 auto InstructionContext::ReadPointer(const PointerValue& ptr) const
     -> RuntimeValue {
+  if (ptr.IsAlloc()) {
+    auto id = ptr.AsAlloc().allocation_id;
+    return frame_->ReadAnonymous(id);
+  }
+
   if (ptr.IsVar()) {
     const auto* symbol = ptr.AsVar().symbol;
 
@@ -235,6 +240,16 @@ auto InstructionContext::ReadPointer(const PointerValue& ptr) const
 
 void InstructionContext::WritePointer(
     const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking) {
+  if (ptr.IsAlloc()) {
+    if (is_non_blocking) {
+      throw common::InternalError(
+          "interpreter", "non-blocking assignment to anonymous storage");
+    }
+    auto id = ptr.AsAlloc().allocation_id;
+    frame_->WriteAnonymous(id, value.DeepCopy());
+    return;
+  }
+
   if (ptr.IsVar()) {
     const auto* symbol = ptr.AsVar().symbol;
 
@@ -285,6 +300,20 @@ void InstructionContext::WritePointer(
     auto actual_idx =
         ComputeArrayIndex(container, static_cast<int64_t>(idx_ptr.index));
 
+    // For anonymous allocations, no sensitivity tracking needed
+    if (!ptr.HasRootSymbol()) {
+      if (is_non_blocking) {
+        throw common::InternalError(
+            "interpreter", "non-blocking assignment to anonymous storage");
+      }
+      // Blocking: modify element and write back through base pointer
+      if (container.IsArray() || container.IsQueue()) {
+        container.SetElement(actual_idx, value);
+      }
+      WritePointer(*idx_ptr.base, container, false);
+      return;
+    }
+
     // Get root symbol for sensitivity tracking
     const auto* root_symbol = ptr.GetRootSymbol();
 
@@ -313,6 +342,18 @@ void InstructionContext::WritePointer(
 
     // Read the struct through the base pointer
     auto aggregate = ReadPointer(*field_ptr.base);
+
+    // For anonymous allocations, no sensitivity tracking needed
+    if (!ptr.HasRootSymbol()) {
+      if (is_non_blocking) {
+        throw common::InternalError(
+            "interpreter", "non-blocking assignment to anonymous storage");
+      }
+      // Blocking: modify field and write back through base pointer
+      aggregate.SetField(field_ptr.field_id, value);
+      WritePointer(*field_ptr.base, aggregate, false);
+      return;
+    }
 
     // Get root symbol for sensitivity tracking
     const auto* root_symbol = ptr.GetRootSymbol();
@@ -388,22 +429,6 @@ void InstructionContext::WritePointer(
   throw common::InternalError("interpreter", "unsupported pointer kind");
 }
 
-// NOLINTNEXTLINE(readability-make-member-function-const) - modifies via
-// shared_ptr
-void InstructionContext::StoreElement(
-    lir::TempRef aggregate, size_t index, const RuntimeValue& element_value) {
-  // Temp operand: modify in place via shared_ptr, no sensitivity tracking
-  // needed
-  auto aggregate_value = GetTemp(aggregate);
-  if (aggregate_value.IsArray() || aggregate_value.IsQueue()) {
-    auto actual_idx =
-        ComputeArrayIndex(aggregate_value, static_cast<int64_t>(index));
-    aggregate_value.SetElement(actual_idx, element_value);
-  } else {
-    aggregate_value.SetField(index, element_value);
-  }
-}
-
 auto InstructionContext::GetOperandValue(const lir::Operand& operand) const
     -> RuntimeValue {
   // Operands are always temps now (SSA form)
@@ -430,6 +455,10 @@ auto InstructionContext::EvalBinaryOp(
 
 void InstructionContext::WriteTemp(lir::TempRef result, RuntimeValue value) {
   temp_table_->Write(result, std::move(value));
+}
+
+auto InstructionContext::AllocateAnonymous(RuntimeValue initial) -> uint64_t {
+  return frame_->AllocateAnonymous(std::move(initial));
 }
 
 }  // namespace lyra::interpreter

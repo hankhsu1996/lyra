@@ -47,7 +47,6 @@ enum class InstructionKind {
   kResolveSlice,  // Pointer<T> + offset + width -> SliceRef<U>
   kLoadSlice,     // SliceRef<T> -> T (extract bits from storage)
   kStoreSlice,    // SliceRef<T> + T -> void (read-modify-write)
-  kStoreElement,  // Store to array/struct: base[index] = value
   kExtractBits,   // Extract bits from value (rvalue): result =
                   // value[offset+:width]
   kAllocate,      // Allocate container with storage kind resolved at lowering
@@ -150,7 +149,6 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kResolveSlice:
     case InstructionKind::kLoadSlice:
     case InstructionKind::kStoreSlice:
-    case InstructionKind::kStoreElement:
     case InstructionKind::kExtractBits:
     case InstructionKind::kAllocate:
     case InstructionKind::kMove:
@@ -439,17 +437,6 @@ struct Instruction {
     };
   }
 
-  // Store element to array/struct: base[index] = value
-  // Store to array/struct element in-place.
-  // base is temp (SSA value); index is element index or field id.
-  static auto StoreElement(Operand base, TempRef index, TempRef value)
-      -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kStoreElement,
-        .operands = {
-            std::move(base), Operand::Temp(index), Operand::Temp(value)}};
-  }
-
   // Extract bits from value (rvalue): result = value[bit_offset +: width]
   // For non-addressable expressions like (a+b)[7:4].
   // Width comes from result_type.
@@ -708,11 +695,6 @@ struct Instruction {
       case InstructionKind::kStoreSlice:
         return fmt::format(
             "store_slice {}, {}", temp_operands[0], temp_operands[1]);
-
-      case InstructionKind::kStoreElement:
-        return fmt::format(
-            "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
-            operands[2].ToString());
 
       case InstructionKind::kExtractBits:
         return fmt::format(

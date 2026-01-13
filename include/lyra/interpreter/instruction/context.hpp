@@ -65,17 +65,16 @@ class InstructionContext {
       common::SymbolRef symbol, const RuntimeValue& value,
       bool is_non_blocking);
 
-  /// Store an element to a temp aggregate (array or struct/union) in place.
-  /// This modifies the temp value directly; no sensitivity tracking needed.
-  void StoreElement(
-      lir::TempRef aggregate, size_t index, const RuntimeValue& element_value);
-
   /// Read value through a pointer (dereference).
   [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;
 
   /// Write value through a pointer.
   void WritePointer(
       const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking);
+
+  /// Allocate anonymous storage and return its ID.
+  /// Used by kAllocate to create addressable temporary storage.
+  auto AllocateAnonymous(RuntimeValue initial) -> uint64_t;
 
   /// Get value from any operand type (temp, variable, or literal).
   [[nodiscard]] auto GetOperandValue(const lir::Operand& operand) const

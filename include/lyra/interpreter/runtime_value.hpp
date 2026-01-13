@@ -55,11 +55,19 @@ struct SlicePointer {
   size_t width;
 };
 
+// Pointer to anonymous allocated storage (from kAllocate)
+// Unlike VarPointer, this has no symbol - storage is managed by ProcessFrame
+struct AllocPointer {
+  uint64_t allocation_id;
+};
+
 // Runtime representation of Pointer<T> typed SSA values.
-// Used by kResolveVar, kResolveField, kResolveIndex, kResolveSlice
-// instructions.
+// Used by kResolveVar, kResolveField, kResolveIndex, kResolveSlice,
+// kAllocate instructions.
 struct PointerValue {
-  std::variant<VarPointer, FieldPointer, IndexPointer, SlicePointer> data;
+  std::variant<
+      VarPointer, FieldPointer, IndexPointer, SlicePointer, AllocPointer>
+      data;
 
   [[nodiscard]] auto IsVar() const -> bool {
     return std::holds_alternative<VarPointer>(data);
@@ -75,6 +83,10 @@ struct PointerValue {
 
   [[nodiscard]] auto IsSlice() const -> bool {
     return std::holds_alternative<SlicePointer>(data);
+  }
+
+  [[nodiscard]] auto IsAlloc() const -> bool {
+    return std::holds_alternative<AllocPointer>(data);
   }
 
   [[nodiscard]] auto AsVar() const -> const VarPointer& {
@@ -93,10 +105,15 @@ struct PointerValue {
     return std::get<SlicePointer>(data);
   }
 
-  // Get the root symbol by walking up the pointer chain
+  [[nodiscard]] auto AsAlloc() const -> const AllocPointer& {
+    return std::get<AllocPointer>(data);
+  }
+
+  // Get the root symbol by walking up the pointer chain.
+  // Throws if the root is AllocPointer (anonymous storage has no symbol).
   [[nodiscard]] auto GetRootSymbol() const -> common::SymbolRef {
     const PointerValue* current = this;
-    while (!current->IsVar()) {
+    while (!current->IsVar() && !current->IsAlloc()) {
       if (current->IsField()) {
         current = current->AsField().base.get();
       } else if (current->IsIndex()) {
@@ -105,7 +122,26 @@ struct PointerValue {
         current = current->AsSlice().base.get();
       }
     }
+    if (current->IsAlloc()) {
+      throw common::InternalError(
+          "interpreter", "GetRootSymbol called on anonymous allocation");
+    }
     return current->AsVar().symbol;
+  }
+
+  // Check if this pointer chain has a root symbol (false for AllocPointer)
+  [[nodiscard]] auto HasRootSymbol() const -> bool {
+    const PointerValue* current = this;
+    while (!current->IsVar() && !current->IsAlloc()) {
+      if (current->IsField()) {
+        current = current->AsField().base.get();
+      } else if (current->IsIndex()) {
+        current = current->AsIndex().base.get();
+      } else {
+        current = current->AsSlice().base.get();
+      }
+    }
+    return current->IsVar();
   }
 
   // Factory methods
@@ -129,6 +165,11 @@ struct PointerValue {
     return std::make_shared<PointerValue>(PointerValue{
         .data = SlicePointer{
             .base = std::move(base), .offset = offset, .width = width}});
+  }
+
+  static auto Alloc(uint64_t allocation_id) -> PointerStorage {
+    return std::make_shared<PointerValue>(
+        PointerValue{.data = AllocPointer{.allocation_id = allocation_id}});
   }
 };
 

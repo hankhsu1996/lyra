@@ -180,23 +180,62 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreElement: {
-      assert(instr.operands.size() == 3);
-      assert(instr.operands[0].IsTemp());
-
-      auto index_value = ctx.GetTemp(instr.operands[1].AsTempRef());
-      assert(!index_value.IsWide() && "element index cannot be wide");
-      auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
-      auto element_value = ctx.GetTemp(instr.operands[2].AsTempRef());
-
-      ctx.StoreElement(instr.operands[0].AsTempRef(), index, element_value);
-      return InstructionResult::Continue();
-    }
-
     case lir::InstructionKind::kAllocate: {
       assert(instr.result.has_value());
       const auto& result_type = (*instr.result)->type;
 
+      // NEW: If result type is Pointer<T>, allocate T in anonymous storage
+      // and return a pointer to it. This is the memory-form approach.
+      if (result_type.IsPointer()) {
+        const auto& alloc_type = result_type.GetPointeeType();
+        RuntimeValue storage_value;
+
+        if (instr.operands.empty()) {
+          // Fixed-size allocation
+          storage_value = RuntimeValue::DefaultValueForType(alloc_type);
+        } else {
+          // Dynamic allocation with size (and optional init)
+          auto size_val = ctx.GetOperandValue(instr.operands[0]);
+          auto size = static_cast<size_t>(size_val.AsNarrow().AsInt64());
+
+          const auto& dyn_data =
+              std::get<common::DynamicArrayData>(alloc_type.data);
+          const auto& elem_type = *dyn_data.element_type;
+
+          std::vector<RuntimeValue> elements;
+          elements.reserve(size);
+
+          if (instr.operands.size() > 1) {
+            const auto& init = ctx.GetOperandValue(instr.operands[1]);
+            const auto& init_arr = init.AsArray();
+            for (size_t i = 0; i < size; ++i) {
+              if (i < init_arr.size()) {
+                elements.push_back(init_arr[i].DeepCopy());
+              } else {
+                elements.push_back(
+                    RuntimeValue::DefaultValueForType(elem_type));
+              }
+            }
+          } else {
+            for (size_t i = 0; i < size; ++i) {
+              elements.push_back(RuntimeValue::DefaultValueForType(elem_type));
+            }
+          }
+
+          storage_value = RuntimeValue::Array(alloc_type, std::move(elements));
+        }
+
+        // Allocate in anonymous storage and return pointer
+        auto alloc_id = ctx.AllocateAnonymous(std::move(storage_value));
+        auto ptr = PointerValue::Alloc(alloc_id);
+        ctx.WriteTemp(
+            instr.result.value(),
+            RuntimeValue::Pointer(result_type, std::move(ptr)));
+        return InstructionResult::Continue();
+      }
+
+      // LEGACY: Non-pointer result type (backward compatibility)
+      // This path will be removed once lowering is updated.
       if (instr.operands.empty()) {
         // Fixed-size allocation: use DefaultValueForType
         auto value = RuntimeValue::DefaultValueForType(result_type);
