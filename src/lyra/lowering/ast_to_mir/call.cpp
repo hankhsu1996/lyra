@@ -22,7 +22,6 @@
 #include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -461,7 +460,8 @@ auto LowerCall(
               const auto& assign = arg->as<slang::ast::AssignmentExpression>();
               if (assign.right().kind ==
                   slang::ast::ExpressionKind::EmptyArgument) {
-                arguments.push_back(LowerExpression(assign.left(), arena, registrar));
+                arguments.push_back(
+                    LowerExpression(assign.left(), arena, registrar));
                 continue;
               }
             }
