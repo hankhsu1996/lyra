@@ -24,6 +24,14 @@ enum class StorageKind : uint8_t {
   kDeque,   // std::deque - queues
 };
 
+/// Value-semantic intrinsic operation kinds.
+/// Unlike kIntrinsicCall (reference-semantic), these operate on pure values.
+enum class IntrinsicOpKind : uint8_t {
+  kEnumNext,  // Navigate to next enum value with step
+  kEnumPrev,  // Navigate to previous enum value with step
+  kEnumName,  // Get string name of enum value
+};
+
 enum class InstructionKind {
   // Memory operations
   kConstant,
@@ -96,7 +104,9 @@ enum class InstructionKind {
   kWaitEvent,
   kDelay,
   kSystemCall,
-  kIntrinsicCall,
+  kIntrinsicCall,  // Reference-semantic: method on container (fn pointer
+                   // dispatch)
+  kIntrinsicOp,    // Value-semantic: pure operation on values (enum switch)
   kJump,
   kBranch,
 
@@ -180,6 +190,7 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kDelay:
     case InstructionKind::kSystemCall:
     case InstructionKind::kIntrinsicCall:
+    case InstructionKind::kIntrinsicOp:
     case InstructionKind::kJump:
     case InstructionKind::kBranch:
     case InstructionKind::kCall:
@@ -224,8 +235,13 @@ struct Instruction {
   // At execution time, interpreter casts to IntrinsicFn and calls.
   // operands[0] = receiver, operands[1..] = args
   void* intrinsic_fn{nullptr};  // NOLINT(google-runtime-int)
-  int64_t method_step{1};       // For enum next(N)/prev(N), default 1
-  std::vector<EnumMemberInfo> enum_members{};  // For enum methods
+
+  // For kIntrinsicOp: which value-semantic operation to perform
+  IntrinsicOpKind op_kind{IntrinsicOpKind::kEnumNext};
+
+  // For enum operations (kIntrinsicOp): step size and member info
+  int64_t method_step{1};  // For enum next(N)/prev(N), default 1
+  std::vector<EnumMemberInfo> enum_members{};  // Enum member layout
   int32_t lower_bound{
       0};  // Pre-computed lower bound for array index adjustment
 
@@ -434,6 +450,19 @@ struct Instruction {
         .intrinsic_fn = fn,
         .method_step = step,
         .enum_members = std::move(members)};
+  }
+
+  // Value-semantic intrinsic operation (no receiver identity)
+  // operands are pure values, result_type derived from operation
+  static auto IntrinsicOp(
+      IntrinsicOpKind op, std::vector<Operand> operands, TempRef result,
+      common::Type result_type) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kIntrinsicOp,
+        .result = result,
+        .result_type = std::move(result_type),
+        .operands = std::move(operands),
+        .op_kind = op};
   }
 
   // System call for $monitor with check function name
@@ -818,6 +847,30 @@ struct Instruction {
         return fmt::format(
             "bcall {}, {}({})", result.value(), operands[0].ToString(),
             args_str);
+      }
+
+      case InstructionKind::kIntrinsicOp: {
+        const char* op_name = "?";
+        switch (op_kind) {
+          case IntrinsicOpKind::kEnumNext:
+            op_name = "enum_next";
+            break;
+          case IntrinsicOpKind::kEnumPrev:
+            op_name = "enum_prev";
+            break;
+          case IntrinsicOpKind::kEnumName:
+            op_name = "enum_name";
+            break;
+        }
+        std::string args_str;
+        for (size_t i = 0; i < operands.size(); ++i) {
+          if (i > 0) {
+            args_str += ", ";
+          }
+          args_str += operands[i].ToString();
+        }
+        return fmt::format(
+            "iop   {}, {}({})", result.value(), op_name, args_str);
       }
 
       case InstructionKind::kJump:

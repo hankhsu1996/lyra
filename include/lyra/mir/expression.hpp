@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/symbol.hpp"
@@ -26,6 +27,11 @@ using Constant = common::Constant;
 using SymbolRef = common::SymbolRef;
 using HierarchicalPathElement = common::HierarchicalPathElement;
 using common::FormatHierarchicalPath;
+
+// Re-export from common for convenience
+using BuiltinMethod = common::BuiltinMethod;
+using common::ParseBuiltinMethod;
+using common::ToString;
 
 class Expression {
  public:
@@ -806,26 +812,27 @@ class MethodCallExpression : public Expression {
   static constexpr Kind kKindValue = Kind::kMethodCall;
 
   std::unique_ptr<Expression> receiver;
-  std::string method_name;
+  BuiltinMethod method;
   std::vector<std::unique_ptr<Expression>> args;
 
   // Only populated for enum receivers (needed for switch codegen)
   std::vector<EnumMemberInfo> enum_members;
 
   MethodCallExpression(
-      Type type, std::unique_ptr<Expression> receiver, std::string method_name,
+      Type type, std::unique_ptr<Expression> receiver, BuiltinMethod method,
       std::vector<std::unique_ptr<Expression>> args = {},
       std::vector<EnumMemberInfo> enum_members = {})
       : Expression(kKindValue, std::move(type)),
         receiver(std::move(receiver)),
-        method_name(std::move(method_name)),
+        method(method),
         args(std::move(args)),
         enum_members(std::move(enum_members)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
     if (args.empty()) {
-      return fmt::format("{}.{}()", receiver->ToString(), method_name);
+      return fmt::format(
+          "{}.{}()", receiver->ToString(), mir::ToString(method));
     }
     std::vector<std::string> arg_strs;
     arg_strs.reserve(args.size());
@@ -833,7 +840,7 @@ class MethodCallExpression : public Expression {
       arg_strs.push_back(arg->ToString());
     }
     return fmt::format(
-        "{}.{}({})", receiver->ToString(), method_name,
+        "{}.{}({})", receiver->ToString(), mir::ToString(method),
         fmt::join(arg_strs, ", "));
   }
 

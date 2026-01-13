@@ -63,31 +63,41 @@ Two value types with distinct purposes:
 
 The separation follows LLVM's design where `llvm::Constant` is distinct from runtime values. `RuntimeValue::FromConstant()` converts at the interpreter boundary.
 
-## Built-in Methods
+## Intrinsic Operations
 
-Built-in methods (`.size()`, `.push_back()`, `.next()`, etc.) are compiler intrinsics with fixed semantics known at compile time. They are NOT user-defined functions.
+Intrinsic operations (`.size()`, `.push_back()`, `.next()`, etc.) are compiler intrinsics with fixed semantics known at compile time. They are NOT user-defined functions.
 
-### Dispatch Architecture
+### Method vs Op
 
-Method dispatch is resolved at MIR→LIR lowering time, not at runtime:
+The key distinction is **identity** (reference vs value semantics):
 
-- **MIR→LIR**: Resolves method name + receiver type → function pointer
-- **LIR**: Stores resolved function pointer in instruction
-- **Interpreter**: Calls function pointer directly (no string comparison)
+| Category             | Semantics                                                           | Example                         |
+| -------------------- | ------------------------------------------------------------------- | ------------------------------- |
+| **Intrinsic Method** | Receiver has identity (two arrays with same contents are different) | `array.size()`, `queue.push(x)` |
+| **Intrinsic Op**     | Operands are pure values (two equal values are indistinguishable)   | `enum.next(v)`, `enum.name()`   |
 
-This eliminates O(n) string comparisons on every method call and catches typos at compile time.
+Enum operations look like methods syntactically (`s.next()`), but the "receiver" is passed by value - no identity. This makes them Ops, not Methods.
+
+### Dispatch
+
+| Kind   | Resolved at      | LIR stores               | Interpreter |
+| ------ | ---------------- | ------------------------ | ----------- |
+| Method | MIR→LIR lowering | Function pointer         | Direct call |
+| Op     | MIR→LIR lowering | Enum (`IntrinsicOpKind`) | Switch      |
+
+Some ops fold to constants at lowering (`enum.first()`, `$bits(type)`) and never become runtime instructions.
 
 ### Type Metadata Access
 
-Built-in methods access type metadata through the receiver's type pointer (e.g., `receiver.type->enum_members`). No special context parameter needed. The receiver carries everything, matching how production languages work (Python `self.__class__`, Java `getClass()`).
+Intrinsic operations access type metadata through the receiver's type pointer. No special context parameter needed - the receiver carries everything.
 
-### Supported Methods
+### Supported Operations
 
-| Receiver    | Methods                                                                |
+| Receiver    | Operations                                                             |
 | ----------- | ---------------------------------------------------------------------- |
 | array/queue | `size()`, `delete()`                                                   |
 | queue       | `push_back()`, `push_front()`, `pop_back()`, `pop_front()`, `insert()` |
-| enum        | `next()`, `prev()`, `name()`                                           |
+| enum        | `first()`, `last()`, `next()`, `prev()`, `name()`                      |
 
 ## Design Decisions
 

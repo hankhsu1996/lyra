@@ -69,8 +69,8 @@ auto LowerAssignmentExpression(
         mir::As<mir::MethodCallExpression>(*assignment.value);
     const auto& receiver = *method_call.receiver;
     bool is_pop =
-        (method_call.method_name == "pop_back" ||
-         method_call.method_name == "pop_front");
+        (method_call.method == mir::BuiltinMethod::kPopBack ||
+         method_call.method == mir::BuiltinMethod::kPopFront);
 
     if (is_pop && receiver.kind == mir::Expression::Kind::kIdentifier) {
       const auto& ident = mir::As<mir::IdentifierExpression>(receiver);
@@ -90,7 +90,7 @@ auto LowerAssignmentExpression(
 
       // Create delete index: 0 for pop_front, size-1 for pop_back
       auto del_idx = builder.AllocateTemp("idx", common::Type::Int());
-      if (method_call.method_name == "pop_front") {
+      if (method_call.method == mir::BuiltinMethod::kPopFront) {
         auto zero_lit = builder.InternConstant(common::Constant::Int(0));
         builder.AddInstruction(
             Instruction::Basic(IK::kConstant, del_idx, zero_lit));

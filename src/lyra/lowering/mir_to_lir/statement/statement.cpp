@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <unordered_set>
 #include <utility>
 
 #include "lyra/common/constant.hpp"
@@ -130,10 +129,12 @@ auto LowerStatement(
         // Check if this is a mutating method that returns the modified
         // receiver. Note: pop_back/pop_front return the element, not the
         // receiver, so they are handled separately in assignment lowering.
-        static const std::unordered_set<std::string> kMutatingMethods = {
-            "push_back", "push_front", "insert", "delete"};
-
-        bool is_mutating = kMutatingMethods.contains(method_call.method_name);
+        auto m = method_call.method;
+        bool is_mutating =
+            (m == mir::BuiltinMethod::kPushBack ||
+             m == mir::BuiltinMethod::kPushFront ||
+             m == mir::BuiltinMethod::kInsert ||
+             m == mir::BuiltinMethod::kDelete);
 
         if (is_mutating &&
             receiver.kind == mir::Expression::Kind::kIdentifier) {

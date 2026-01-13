@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -332,12 +333,13 @@ auto LowerMethodCallExpression(
                                            : common::Type::Kind::kEnum;
 
   // Resolve intrinsic method at lowering time
-  void* intrinsic_fn = interpreter::ResolveIntrinsicMethod(
-      receiver_kind, method_call.method_name);
+  auto method_name = mir::ToString(method_call.method);
+  void* intrinsic_fn =
+      interpreter::ResolveIntrinsicMethod(receiver_kind, method_name);
   if (intrinsic_fn == nullptr) {
     throw common::InternalError(
         "LowerMethodCallExpression",
-        "unknown intrinsic method: " + method_call.method_name);
+        std::format("unknown intrinsic method: {}", method_name));
   }
 
   // For enum methods, extract step from args (first literal arg)

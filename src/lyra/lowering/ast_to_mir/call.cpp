@@ -160,16 +160,17 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           throw DiagnosticException(std::move(type_result.error()));
         }
 
+        auto method = mir::ParseBuiltinMethod(subroutine_name);
+        if (!method) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  fmt::format("unknown enum method '{}'", subroutine_name)));
+        }
         return std::make_unique<mir::MethodCallExpression>(
-            *type_result, std::move(receiver), std::string(subroutine_name),
-            std::move(args), std::move(members));
+            *type_result, std::move(receiver), *method, std::move(args),
+            std::move(members));
       }
-
-      // Unknown enum method
-      throw DiagnosticException(
-          Diagnostic::Error(
-              expression.sourceRange,
-              fmt::format("unknown enum method '{}'", subroutine_name)));
     }
 
     // Handle dynamic array built-in methods: size() and delete()
@@ -178,13 +179,15 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kDynamicArray, subroutine_name);
       if (method_info != nullptr) {
+        auto method = mir::ParseBuiltinMethod(subroutine_name);
+        assert(method && "builtin method registry and enum out of sync");
         auto receiver = LowerExpression(first_arg, arena);
         auto return_type =
             (method_info->return_type == common::BuiltinMethodReturnType::kInt)
                 ? common::Type::Int()
                 : common::Type::Void();
         return std::make_unique<mir::MethodCallExpression>(
-            return_type, std::move(receiver), std::string(subroutine_name));
+            return_type, std::move(receiver), *method);
       }
     }
 
@@ -226,6 +229,9 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           return_type = *queue_type_result;
         }
 
+        auto method = mir::ParseBuiltinMethod(subroutine_name);
+        assert(method && "builtin method registry and enum out of sync");
+
         // Collect method arguments (skip first arg which is receiver)
         std::vector<std::unique_ptr<mir::Expression>> args;
         for (size_t i = 1; i < call.arguments().size(); ++i) {
@@ -233,8 +239,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         }
 
         return std::make_unique<mir::MethodCallExpression>(
-            return_type, std::move(receiver), std::string(subroutine_name),
-            std::move(args));
+            return_type, std::move(receiver), *method, std::move(args));
       }
     }
   }

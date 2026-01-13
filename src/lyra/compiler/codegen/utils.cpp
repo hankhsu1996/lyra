@@ -298,14 +298,13 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
   }
 
   // Look up method in registry
-  const auto* method_info =
-      common::FindBuiltinMethod(type_kind, mc.method_name);
+  auto method_name = mir::ToString(mc.method);
+  const auto* method_info = common::FindBuiltinMethod(type_kind, method_name);
   if (method_info == nullptr) {
     throw common::InternalError(
-        "Codegen::EmitMethodCall",
-        std::format(
-            "unknown method '{}' on type '{}'", mc.method_name,
-            receiver_type.ToString()));
+        "Codegen::EmitMethodCall", std::format(
+                                       "unknown method '{}' on type '{}'",
+                                       method_name, receiver_type.ToString()));
   }
 
   // Dispatch based on category from registry
@@ -356,7 +355,7 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
     case Cat::kQueuePush:
       // push_back(item) or push_front(item)
       EmitExpression(*mc.receiver, kPrecLowest);
-      out_ << "." << mc.method_name << "(";
+      out_ << "." << method_name << "(";
       EmitExpression(*mc.args[0], kPrecLowest);
       out_ << ")";
       return;
@@ -366,8 +365,8 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
       out_ << "[&]() { auto& _q_ = ";
       EmitExpression(*mc.receiver, kPrecLowest);
       out_ << "; auto _v_ = _q_."
-           << (mc.method_name == "pop_front" ? "front" : "back") << "(); _q_."
-           << mc.method_name << "(); return _v_; }()";
+           << (mc.method == mir::BuiltinMethod::kPopFront ? "front" : "back")
+           << "(); _q_." << method_name << "(); return _v_; }()";
       return;
     case Cat::kQueueInsert:
       // insert(index, item)
