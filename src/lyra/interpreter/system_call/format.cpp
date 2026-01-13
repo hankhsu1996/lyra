@@ -19,28 +19,33 @@
 namespace lyra::interpreter {
 
 auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
-  if (name == "$write") {
+  // $write and $fwrite (no newline)
+  if (name == "$write" || name == "$fwrite") {
     return {.default_format = 'd', .append_newline = false};
   }
-  if (name == "$writeb") {
+  if (name == "$writeb" || name == "$fwriteb") {
     return {.default_format = 'b', .append_newline = false};
   }
-  if (name == "$writeo") {
+  if (name == "$writeo" || name == "$fwriteo") {
     return {.default_format = 'o', .append_newline = false};
   }
-  if (name == "$writeh") {
+  if (name == "$writeh" || name == "$fwriteh") {
     return {.default_format = 'h', .append_newline = false};
   }
-  if (name == "$displayb" || name == "$strobeb" || name == "$monitorb") {
+  // Display/strobe/monitor variants with newline
+  if (name == "$displayb" || name == "$strobeb" || name == "$monitorb" ||
+      name == "$fdisplayb" || name == "$fstrobeb" || name == "$fmonitorb") {
     return {.default_format = 'b', .append_newline = true};
   }
-  if (name == "$displayo" || name == "$strobeo" || name == "$monitoro") {
+  if (name == "$displayo" || name == "$strobeo" || name == "$monitoro" ||
+      name == "$fdisplayo" || name == "$fstrobeo" || name == "$fmonitoro") {
     return {.default_format = 'o', .append_newline = true};
   }
-  if (name == "$displayh" || name == "$strobeh" || name == "$monitorh") {
+  if (name == "$displayh" || name == "$strobeh" || name == "$monitorh" ||
+      name == "$fdisplayh" || name == "$fstrobeh" || name == "$fmonitorh") {
     return {.default_format = 'h', .append_newline = true};
   }
-  // $display, $strobe, $monitor (default)
+  // $display, $fdisplay, $strobe, $fstrobe, $monitor, $fmonitor (default)
   return {.default_format = 'd', .append_newline = true};
 }
 

@@ -1,0 +1,240 @@
+feature: file_output
+description: Tests for $fdisplay and $fwrite system tasks
+
+cases:
+  - name: fdisplay_mcd_stdout
+    description: $fdisplay with MCD bit 0 writes to stdout/transcript
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplay(1, "hello from fdisplay");
+            end
+          endmodule
+    expect:
+      output: |
+        hello from fdisplay
+
+  - name: fwrite_mcd_stdout
+    description: $fwrite with MCD bit 0 writes to stdout without newline
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fwrite(1, "no");
+              $fwrite(1, "newline");
+              $display("");
+            end
+          endmodule
+    expect:
+      output: |
+        nonewline
+
+  - name: fdisplay_format_string
+    description: $fdisplay with format string
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplay(1, "value=%d", 42);
+            end
+          endmodule
+    expect:
+      output: |
+        value=42
+
+  - name: fdisplay_multiple_args
+    description: $fdisplay with multiple format arguments
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int a = 10, b = 20;
+            initial begin
+              $fdisplay(1, "a=%d b=%d sum=%d", a, b, a+b);
+            end
+          endmodule
+    expect:
+      output: |
+        a=10 b=20 sum=30
+
+  - name: fdisplayh_hex_format
+    description: $fdisplayh uses hex format by default
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplayh(1, 255);
+            end
+          endmodule
+    expect:
+      output: |
+        ff
+
+  - name: fdisplayb_binary_format
+    description: $fdisplayb uses binary format by default
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [3:0] x = 4'b1010;
+            initial begin
+              $fdisplayb(1, x);
+            end
+          endmodule
+    expect:
+      output: |
+        1010
+
+  - name: fdisplayo_octal_format
+    description: $fdisplayo uses octal format by default
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplayo(1, 63);
+            end
+          endmodule
+    expect:
+      output: |
+        77
+
+  - name: fdisplay_file_then_close
+    description: $fdisplay to file followed by close
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int opened;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              opened = (fd != 0) ? 1 : 0;
+              $fdisplay(fd, "written to file");
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      variables:
+        opened: 1
+
+  - name: fdisplay_empty
+    description: $fdisplay with only descriptor prints newline
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fwrite(1, "before");
+              $fdisplay(1);
+              $fwrite(1, "after");
+              $display("");
+            end
+          endmodule
+    expect:
+      output: |
+        before
+        after
+
+  - name: fwrite_empty
+    description: $fwrite with only descriptor does nothing
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fwrite(1, "only");
+              $fwrite(1);
+              $fwrite(1, "this");
+              $display("");
+            end
+          endmodule
+    expect:
+      output: |
+        onlythis
+
+  - name: fdisplay_invalid_descriptor
+    description: $fdisplay with invalid descriptor (0) is silently ignored
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplay(0, "should not appear");
+              $display("OK");
+            end
+          endmodule
+    expect:
+      output: |
+        OK
+
+  - name: fdisplay_mcd_or
+    description: $fdisplay with OR-ed MCD writes to multiple channels
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd1, fd2;
+            initial begin
+              fd1 = $fopen("out1.txt");
+              fd2 = $fopen("out2.txt");
+              // OR with bit 0 also writes to stdout
+              $fdisplay(1 | fd1 | fd2, "to all three");
+              $fclose(fd1);
+              $fclose(fd2);
+            end
+          endmodule
+    expect:
+      output: |
+        to all three
+
+  - name: fwriteh_hex_format
+    description: $fwriteh uses hex format without newline
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fwriteh(1, 255);
+              $display("");
+            end
+          endmodule
+    expect:
+      output: |
+        ff
+
+  - name: fwrite_descriptor_expression
+    description: $fwrite with descriptor as variable expression
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int desc;
+            initial begin
+              desc = 1;
+              $fwrite(desc, "via variable");
+              $display("");
+            end
+          endmodule
+    expect:
+      output: |
+        via variable
+
+  - name: fdisplay_packed_literal_format
+    description: $fdisplay with packed string literal (regression test)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fdisplay(1, "val=%d end", 99);
+            end
+          endmodule
+    expect:
+      output: |
+        val=99 end

@@ -150,6 +150,48 @@ class FileManager {
     }
   }
 
+  /// Write content to file(s) specified by descriptor.
+  /// Handles both MCD (multichannel, OR-able) and FD (single file) modes.
+  /// Invalid or closed descriptors are silently ignored per LRM.
+  ///
+  /// @param descriptor MCD (bit mask, MSB clear) or FD (MSB set)
+  /// @param content The text to write
+  /// @param transcript_sink Output stream for transcript (stdout/MCD bit 0)
+  void WriteToDescriptor(
+      uint32_t descriptor, std::string_view content,
+      std::ostream& transcript_sink) {
+    if (descriptor == 0) {
+      return;  // Invalid/closed
+    }
+
+    if ((descriptor & 0x8000'0000U) != 0) {
+      // FD mode - single file
+      uint32_t index = descriptor & 0x7FFF'FFFFU;
+      if (index == 1 || index == 2) {
+        // stdout (1) or stderr (2) -> transcript
+        transcript_sink << content;
+      } else if (auto it = fd_table_.find(static_cast<int32_t>(index));
+                 it != fd_table_.end()) {
+        *it->second << content;
+      }
+      // Invalid index: silently ignored
+    } else {
+      // MCD mode - check each bit
+      if ((descriptor & 1U) != 0) {
+        transcript_sink << content;  // bit 0 = transcript
+      }
+      for (uint32_t bit = 1; bit <= 30; ++bit) {
+        if ((descriptor & (1U << bit)) != 0) {
+          auto mask = static_cast<int32_t>(1U << bit);
+          if (auto it = mcd_channels_.find(mask); it != mcd_channels_.end()) {
+            *it->second << content;
+          }
+          // Bit set but no channel: silently ignored (closed or never opened)
+        }
+      }
+    }
+  }
+
  private:
   // Standard streams in FD model (bit 31 set | stream index).
   // Index 0 = stdin, 1 = stdout, 2 = stderr.

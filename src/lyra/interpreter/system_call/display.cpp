@@ -22,6 +22,61 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   auto& simulation_context = ctx.GetSimulationContext();
 
+  // Handle file output variants ($fdisplay, $fwrite)
+  if (instr.system_call_name == "$fdisplay" ||
+      instr.system_call_name == "$fdisplayb" ||
+      instr.system_call_name == "$fdisplayo" ||
+      instr.system_call_name == "$fdisplayh" ||
+      instr.system_call_name == "$fwrite" ||
+      instr.system_call_name == "$fwriteb" ||
+      instr.system_call_name == "$fwriteo" ||
+      instr.system_call_name == "$fwriteh") {
+    auto props = GetDisplayVariantProps(instr.system_call_name);
+
+    // operands[0] = descriptor, operands[1..] = format args
+    // format_operand = format string (if present)
+    if (instr.operands.empty()) {
+      return InstructionResult::Continue();  // Invalid - no descriptor
+    }
+
+    // Get descriptor from first operand
+    auto descriptor_value = ctx.GetOperandValue(instr.operands[0]);
+    auto descriptor =
+        static_cast<uint32_t>(descriptor_value.AsNarrow().AsInt64());
+
+    // Collect remaining arguments (prepend format_operand if present)
+    std::vector<RuntimeValue> arg_values;
+    if (instr.format_operand) {
+      arg_values.push_back(ctx.GetOperandValue(*instr.format_operand));
+    }
+    for (size_t i = 1; i < instr.operands.size(); ++i) {
+      arg_values.push_back(ctx.GetOperandValue(instr.operands[i]));
+    }
+
+    // Create time format context for %t specifier
+    TimeFormatContext time_ctx{
+        .time_format = simulation_context.time_format,
+        .module_unit_power = simulation_context.timescale
+                                 ? simulation_context.timescale->unit_power
+                                 : common::TimeScale::kDefaultUnitPower,
+        .global_precision_power = simulation_context.global_precision_power};
+
+    // Format message
+    std::string message = FormatMessage(
+        arg_values, instr.format_string_is_literal, props.default_format,
+        &time_ctx);
+
+    if (props.append_newline) {
+      message += "\n";
+    }
+
+    // Write to file(s) via descriptor
+    simulation_context.file_manager.WriteToDescriptor(
+        descriptor, message, simulation_context.display_output);
+
+    return InstructionResult::Continue();
+  }
+
   // Handle all display/write variants
   if (instr.system_call_name == "$display" ||
       instr.system_call_name == "$displayb" ||

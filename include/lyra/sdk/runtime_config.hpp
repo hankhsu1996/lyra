@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iostream>
 #include <map>
 #include <span>
 #include <string>
@@ -221,6 +222,13 @@ inline auto FOpen(std::string_view filename, std::string_view mode) -> int32_t {
 /// $fclose(descriptor) - close file and release handle.
 inline void FClose(int32_t descriptor) {
   RuntimeScope::Current().file_manager.Fclose(descriptor);
+}
+
+/// Write content to file descriptor(s) - used by $fdisplay/$fwrite codegen.
+/// Routes to appropriate file(s) or stdout based on descriptor type.
+inline void FWrite(int32_t descriptor, std::string_view content) {
+  RuntimeScope::Current().file_manager.WriteToDescriptor(
+      static_cast<uint32_t>(descriptor), content, std::cout);
 }
 
 }  // namespace lyra::sdk

@@ -317,6 +317,115 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     return;
   }
 
+  // Handle file output variants ($fdisplay, $fwrite)
+  if (syscall.name == "$fdisplay" || syscall.name == "$fdisplayb" ||
+      syscall.name == "$fdisplayo" || syscall.name == "$fdisplayh" ||
+      syscall.name == "$fwrite" || syscall.name == "$fwriteb" ||
+      syscall.name == "$fwriteo" || syscall.name == "$fwriteh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // arguments[0] = descriptor, remaining = format args
+    // format_expr = optional format string
+
+    // Empty call (descriptor only) - just newline for $fdisplay
+    if (!syscall.format_expr && syscall.arguments.size() == 1) {
+      if (props.use_println) {
+        Indent();
+        out_ << "lyra::sdk::FWrite(";
+        EmitExpression(*syscall.arguments[0]);
+        out_ << ", \"\\n\");\n";
+      }
+      // $fwrite with no content does nothing
+      return;
+    }
+
+    // Extract format string info
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
+
+    // Build the FWrite call with formatted content
+    Indent();
+    out_ << "lyra::sdk::FWrite(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ", ";
+
+    // Format the content using std::format
+    if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      // Simple string literal (no format specifiers)
+      if (syscall.arguments.size() == 1) {
+        // String only
+        out_ << "\"" << common::EscapeForCppString(fmt_info.text);
+        if (props.use_println) {
+          out_ << "\\n";
+        }
+        out_ << "\");\n";
+        return;
+      }
+      // String prefix + values - emit prefix + std::format for values
+      std::string fmt_str;
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+          fmt_str += "{:";
+          fmt_str += props.default_format;
+          fmt_str += "}";
+        } else {
+          fmt_str += "{}";
+        }
+      }
+      if (props.use_println) {
+        fmt_str += "\\n";
+      }
+      out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\" + "
+           << "std::format(\"" << fmt_str << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      return;
+    }
+
+    if (fmt_info.has_format_specifiers) {
+      // Format string with specifiers
+      auto cpp_fmt = common::TransformToStdFormat(fmt_info.text);
+      if (props.use_println) {
+        cpp_fmt += "\\n";
+      }
+      out_ << "std::format(\"" << cpp_fmt << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      return;
+    }
+
+    // No format string - generate default format from arg types
+    std::string fmt_str;
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+        fmt_str += "{:";
+        fmt_str += props.default_format;
+        fmt_str += "}";
+      } else {
+        fmt_str += "{}";
+      }
+    }
+    if (props.use_println) {
+      fmt_str += "\\n";
+    }
+    out_ << "std::format(\"" << fmt_str << "\"";
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      out_ << ", ";
+      EmitExpression(*syscall.arguments[i]);
+    }
+    out_ << "));\n";
+    return;
+  }
+
   // Handle all display/write variants
   if (syscall.name == "$display" || syscall.name == "$displayb" ||
       syscall.name == "$displayo" || syscall.name == "$displayh" ||
