@@ -16,6 +16,7 @@
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
 #include "lyra/lir/context.hpp"
@@ -24,13 +25,160 @@
 namespace lyra {
 
 struct RuntimeValue;
+struct PointerValue;
+
+// Pointer value for address-of operations (ResolveVar, ResolveIndex, etc.)
+// Forms a linked chain where Field/Index/Slice have a base pointer.
+using PointerStorage = std::shared_ptr<PointerValue>;
+
+// Pointer to a variable (root of pointer chain)
+struct VarPointer {
+  common::SymbolRef symbol;
+};
+
+// Pointer to a struct field
+struct FieldPointer {
+  PointerStorage base;
+  size_t field_id;
+};
+
+// Pointer to an array element
+struct IndexPointer {
+  PointerStorage base;
+  size_t index;
+};
+
+// Pointer to a bit slice
+struct SlicePointer {
+  PointerStorage base;
+  size_t offset;
+  size_t width;
+};
+
+// Pointer to anonymous allocated storage (from kAllocate)
+// Unlike VarPointer, this has no symbol - storage is managed by ProcessFrame
+struct AllocPointer {
+  uint64_t allocation_id;
+};
+
+// Runtime representation of Pointer<T> typed SSA values.
+// Used by kResolveVar, kResolveField, kResolveIndex, kResolveSlice,
+// kAllocate instructions.
+struct PointerValue {
+  std::variant<
+      VarPointer, FieldPointer, IndexPointer, SlicePointer, AllocPointer>
+      data;
+
+  [[nodiscard]] auto IsVar() const -> bool {
+    return std::holds_alternative<VarPointer>(data);
+  }
+
+  [[nodiscard]] auto IsField() const -> bool {
+    return std::holds_alternative<FieldPointer>(data);
+  }
+
+  [[nodiscard]] auto IsIndex() const -> bool {
+    return std::holds_alternative<IndexPointer>(data);
+  }
+
+  [[nodiscard]] auto IsSlice() const -> bool {
+    return std::holds_alternative<SlicePointer>(data);
+  }
+
+  [[nodiscard]] auto IsAlloc() const -> bool {
+    return std::holds_alternative<AllocPointer>(data);
+  }
+
+  [[nodiscard]] auto AsVar() const -> const VarPointer& {
+    return std::get<VarPointer>(data);
+  }
+
+  [[nodiscard]] auto AsField() const -> const FieldPointer& {
+    return std::get<FieldPointer>(data);
+  }
+
+  [[nodiscard]] auto AsIndex() const -> const IndexPointer& {
+    return std::get<IndexPointer>(data);
+  }
+
+  [[nodiscard]] auto AsSlice() const -> const SlicePointer& {
+    return std::get<SlicePointer>(data);
+  }
+
+  [[nodiscard]] auto AsAlloc() const -> const AllocPointer& {
+    return std::get<AllocPointer>(data);
+  }
+
+  // Get the root symbol by walking up the pointer chain.
+  // Throws if the root is AllocPointer (anonymous storage has no symbol).
+  [[nodiscard]] auto GetRootSymbol() const -> common::SymbolRef {
+    const PointerValue* current = this;
+    while (!current->IsVar() && !current->IsAlloc()) {
+      if (current->IsField()) {
+        current = current->AsField().base.get();
+      } else if (current->IsIndex()) {
+        current = current->AsIndex().base.get();
+      } else {
+        current = current->AsSlice().base.get();
+      }
+    }
+    if (current->IsAlloc()) {
+      throw common::InternalError(
+          "interpreter", "GetRootSymbol called on anonymous allocation");
+    }
+    return current->AsVar().symbol;
+  }
+
+  // Check if this pointer chain has a root symbol (false for AllocPointer)
+  [[nodiscard]] auto HasRootSymbol() const -> bool {
+    const PointerValue* current = this;
+    while (!current->IsVar() && !current->IsAlloc()) {
+      if (current->IsField()) {
+        current = current->AsField().base.get();
+      } else if (current->IsIndex()) {
+        current = current->AsIndex().base.get();
+      } else {
+        current = current->AsSlice().base.get();
+      }
+    }
+    return current->IsVar();
+  }
+
+  // Factory methods
+  static auto Var(common::SymbolRef symbol) -> PointerStorage {
+    return std::make_shared<PointerValue>(
+        PointerValue{.data = VarPointer{.symbol = symbol}});
+  }
+
+  static auto Field(PointerStorage base, size_t field_id) -> PointerStorage {
+    return std::make_shared<PointerValue>(PointerValue{
+        .data = FieldPointer{.base = std::move(base), .field_id = field_id}});
+  }
+
+  static auto Index(PointerStorage base, size_t index) -> PointerStorage {
+    return std::make_shared<PointerValue>(PointerValue{
+        .data = IndexPointer{.base = std::move(base), .index = index}});
+  }
+
+  static auto Slice(PointerStorage base, size_t offset, size_t width)
+      -> PointerStorage {
+    return std::make_shared<PointerValue>(PointerValue{
+        .data = SlicePointer{
+            .base = std::move(base), .offset = offset, .width = width}});
+  }
+
+  static auto Alloc(uint64_t allocation_id) -> PointerStorage {
+    return std::make_shared<PointerValue>(
+        PointerValue{.data = AllocPointer{.allocation_id = allocation_id}});
+  }
+};
 
 // Storage types use shared_ptr to allow value semantics while supporting
 // recursive RuntimeValue definition
 using ArrayStorage = std::shared_ptr<std::vector<RuntimeValue>>;
 using QueueStorage = std::shared_ptr<sdk::BoundedQueue<RuntimeValue>>;
-using ValueVariant =
-    std::variant<common::ValueStorage, ArrayStorage, QueueStorage>;
+using ValueVariant = std::variant<
+    common::ValueStorage, ArrayStorage, QueueStorage, PointerStorage>;
 
 struct RuntimeValue {
  public:
@@ -112,6 +260,13 @@ struct RuntimeValue {
         .type = is_signed ? common::Type::IntegralSigned(bit_width)
                           : common::Type::IntegralUnsigned(bit_width),
         .value = ValueVariant(common::ValueStorage(std::move(value)))};
+  }
+
+  // Factory for pointer values (used by kResolveVar, kResolveIndex, etc.)
+  static auto Pointer(common::Type pointer_type, PointerStorage ptr)
+      -> RuntimeValue {
+    return RuntimeValue{
+        .type = std::move(pointer_type), .value = std::move(ptr)};
   }
 
   // Concatenate multiple operands into a single result.
@@ -206,6 +361,22 @@ struct RuntimeValue {
 
   [[nodiscard]] auto IsUnpackedUnion() const -> bool {
     return type.kind == common::Type::Kind::kUnpackedUnion;
+  }
+
+  [[nodiscard]] auto IsPointer() const -> bool {
+    return type.kind == common::Type::Kind::kPointer;
+  }
+
+  [[nodiscard]] auto IsSliceRef() const -> bool {
+    return type.kind == common::Type::Kind::kSliceRef;
+  }
+
+  [[nodiscard]] auto AsPointer() const -> const PointerValue& {
+    return *std::get<PointerStorage>(value);
+  }
+
+  [[nodiscard]] auto AsPointerStorage() const -> PointerStorage {
+    return std::get<PointerStorage>(value);
   }
 
   [[nodiscard]] auto AsArray() const -> const std::vector<RuntimeValue>& {
@@ -392,8 +563,7 @@ struct RuntimeValue {
             }
             return std::make_shared<std::vector<RuntimeValue>>(
                 std::move(copied));
-          } else {
-            static_assert(std::is_same_v<T, QueueStorage>);
+          } else if constexpr (std::is_same_v<T, QueueStorage>) {
             // Reference semantics - must deep copy (preserve max_bound)
             auto copied = std::make_shared<sdk::BoundedQueue<RuntimeValue>>(
                 v->max_bound());
@@ -401,6 +571,10 @@ struct RuntimeValue {
               copied->push_back(elem.DeepCopy());
             }
             return copied;
+          } else {
+            static_assert(std::is_same_v<T, PointerStorage>);
+            // Pointer values are immutable - shallow copy is sufficient
+            return v;
           }
         },
         value);
@@ -501,6 +675,12 @@ inline auto RuntimeValue::DefaultValueForType(const common::Type& type)
       }
       return IntegralUnsigned(0, data.bit_width);
     }
+    case common::Type::Kind::kPointer:
+      throw common::InternalError(
+          "DefaultValueForType", "Pointer<T> is an internal LIR type");
+    case common::Type::Kind::kSliceRef:
+      throw common::InternalError(
+          "DefaultValueForType", "SliceRef<T> is an internal LIR type");
   }
   throw common::InternalError(
       "DefaultValueForType",

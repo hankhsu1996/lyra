@@ -15,7 +15,6 @@
 #include "lyra/interpreter/system_call/format.hpp"
 #include "lyra/interpreter/temp_table.hpp"
 #include "lyra/lir/instruction.hpp"
-#include "lyra/lir/operand.hpp"
 #include "lyra/sdk/plusargs.hpp"
 
 namespace lyra::interpreter {
@@ -163,22 +162,21 @@ auto HandleControlCalls(const lir::Instruction& instr, InstructionContext& ctx)
     }
 
     int32_t matched = 0;
+    const auto* target_symbol = instr.output_targets[0];
     if (spec == 'd' || spec == 'D') {
       auto result = query.ValuePlusargsInt(format);
       if (result.matched) {
         matched = 1;
-        auto target_operand = lir::Operand::Variable(instr.output_targets[0]);
         ctx.StoreVariable(
-            target_operand, RuntimeValue::IntegralSigned(result.value, 32),
+            target_symbol, RuntimeValue::IntegralSigned(result.value, 32),
             false);
       }
     } else if (spec == 's' || spec == 'S') {
       auto result = query.ValuePlusargsString(format);
       if (result.matched) {
         matched = 1;
-        auto target_operand = lir::Operand::Variable(instr.output_targets[0]);
         ctx.StoreVariable(
-            target_operand, RuntimeValue::String(result.value), false);
+            target_symbol, RuntimeValue::String(result.value), false);
       }
     }
 

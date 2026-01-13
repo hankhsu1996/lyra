@@ -74,69 +74,101 @@ auto LowerNewArrayExpression(
 auto LowerUnpackedStructLiteralExpression(
     const mir::UnpackedStructLiteralExpression& lit, LirBuilder& builder)
     -> lir::TempRef {
-  // Create struct literal by storing field values into a new struct
-  auto result = builder.AllocateTemp("struct_lit", lit.type);
-  builder.AddInstruction(
-      Instruction::Allocate(result, lit.type, lir::StorageKind::kVector));
+  // Memory-form: Allocate → ResolveField → Store → Load
+  // This enforces that all mutation happens through addresses.
 
+  // Create pointer type for struct
+  const auto* struct_type = builder.GetContext()->InternType(lit.type);
+  auto ptr_type = common::Type::Pointer(struct_type);
+
+  // Allocate storage, get pointer
+  auto ptr = builder.AllocateTemp("struct_ptr", ptr_type);
+  builder.AddInstruction(
+      Instruction::Allocate(ptr, ptr_type, lir::StorageKind::kVector));
+
+  // Store each field through pointer
+  const auto& struct_data = std::get<common::UnpackedStructData>(lit.type.data);
   for (size_t i = 0; i < lit.field_values.size(); ++i) {
     auto field_value = LowerExpression(*lit.field_values[i], builder);
 
-    // Emit constant for field index
-    auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-    auto index_constant =
-        builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, index_temp, index_constant));
+    // Get field type and create pointer to field
+    const auto* field_type =
+        builder.GetContext()->InternType(*struct_data.fields[i].field_type);
+    auto field_ptr_type = common::Type::Pointer(field_type);
+    auto field_ptr = builder.AllocateTemp("field_ptr", field_ptr_type);
 
-    // Use unified StoreElement with temp operand
-    builder.AddInstruction(
-        Instruction::StoreElement(
-            Operand::Temp(result), index_temp, field_value));
+    builder.AddInstruction(Instruction::ResolveField(field_ptr, ptr, i));
+    builder.AddInstruction(Instruction::Store(field_ptr, field_value));
   }
+
+  // Load final value from pointer
+  auto result = builder.AllocateTemp("struct_lit", lit.type);
+  builder.AddInstruction(Instruction::Load(result, ptr));
   return result;
 }
 
 auto LowerArrayLiteralExpression(
     const mir::ArrayLiteralExpression& lit, LirBuilder& builder)
     -> lir::TempRef {
-  // Create array/queue literal by building up values in SSA style
-  auto current = builder.AllocateTemp("array_lit", lit.type);
-  auto storage =
-      lit.type.IsQueue() ? lir::StorageKind::kDeque : lir::StorageKind::kVector;
-  builder.AddInstruction(Instruction::Allocate(current, lit.type, storage));
-
-  // For queues, use push_back to add elements (SSA style: each returns new
-  // queue) For dynamic arrays, use StoreElement (dynamic array starts with
-  // size)
+  // For queues, use SSA-style push_back (already correct, no mutation)
+  // For arrays, use memory-form: Allocate → ResolveIndex → Store → Load
   bool is_queue = lit.type.IsQueue();
 
-  for (size_t i = 0; i < lit.elements.size(); ++i) {
-    auto element_value = LowerExpression(*lit.elements[i], builder);
+  if (is_queue) {
+    // SSA-style: push_back returns new queue, chain them
+    auto current = builder.AllocateTemp("queue_lit", lit.type);
+    builder.AddInstruction(
+        Instruction::Allocate(current, lit.type, lir::StorageKind::kDeque));
 
-    if (is_queue) {
-      // SSA style: push_back returns the modified queue
-      // %q1 = push_back(%q0, element) -> %q1 is new queue with element
-      auto next = builder.AllocateTemp("array_lit", lit.type);
+    for (size_t i = 0; i < lit.elements.size(); ++i) {
+      auto element_value = LowerExpression(*lit.elements[i], builder);
+
+      auto next = builder.AllocateTemp("queue_lit", lit.type);
       void* push_back_fn = interpreter::ResolveIntrinsicMethod(
           common::Type::Kind::kQueue, "push_back");
       builder.AddInstruction(
           Instruction::IntrinsicCall(
               push_back_fn, current, {element_value}, next, lit.type));
-      current = next;  // Chain: next iteration uses result of this one
-    } else {
-      // Use StoreElement for dynamic arrays
-      auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
-      auto index_constant =
-          builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
-      builder.AddInstruction(
-          Instruction::Basic(IK::kConstant, index_temp, index_constant));
-      builder.AddInstruction(
-          Instruction::StoreElement(
-              Operand::Temp(current), index_temp, element_value));
+      current = next;
     }
+    return current;
   }
-  return current;
+
+  // Memory-form for arrays: Allocate → ResolveIndex → Store → Load
+  const auto* array_type = builder.GetContext()->InternType(lit.type);
+  auto ptr_type = common::Type::Pointer(array_type);
+
+  // Allocate storage, get pointer
+  auto ptr = builder.AllocateTemp("array_ptr", ptr_type);
+  builder.AddInstruction(
+      Instruction::Allocate(ptr, ptr_type, lir::StorageKind::kVector));
+
+  // Get element type
+  const auto& elem_type = lit.type.GetElementType();
+  const auto* elem_type_ptr = builder.GetContext()->InternType(elem_type);
+  auto elem_ptr_type = common::Type::Pointer(elem_type_ptr);
+
+  // Store each element through pointer
+  for (size_t i = 0; i < lit.elements.size(); ++i) {
+    auto element_value = LowerExpression(*lit.elements[i], builder);
+
+    // Create index constant
+    auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
+    auto index_constant =
+        builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
+    builder.AddInstruction(Instruction::Constant(index_temp, index_constant));
+
+    // Resolve element pointer and store
+    auto elem_ptr = builder.AllocateTemp("elem_ptr", elem_ptr_type);
+    builder.AddInstruction(
+        Instruction::ResolveIndex(elem_ptr, ptr, index_temp));
+    builder.AddInstruction(Instruction::Store(elem_ptr, element_value));
+  }
+
+  // Load final value from pointer
+  auto result = builder.AllocateTemp("array_lit", lit.type);
+  builder.AddInstruction(Instruction::Load(result, ptr));
+  return result;
 }
 
 }  // namespace lyra::lowering::mir_to_lir

@@ -55,21 +55,26 @@ class InstructionContext {
   /// Read a temporary value from the temp table.
   [[nodiscard]] auto GetTemp(lir::TempRef temp) const -> RuntimeValue;
 
-  /// Read a variable (checks function locals, process locals, then flat storage
-  /// with port binding resolution)
-  [[nodiscard]] auto ReadVariable(const lir::Operand& operand) const
+  /// Read a variable by symbol (checks function locals, process locals, then
+  /// flat storage with port binding resolution).
+  [[nodiscard]] auto ReadVariable(common::SymbolRef symbol) const
       -> RuntimeValue;
 
-  /// Store a variable value with proper scoping and effect tracking.
+  /// Store a variable value by symbol with proper scoping and effect tracking.
   void StoreVariable(
-      const lir::Operand& operand, const RuntimeValue& value,
+      common::SymbolRef symbol, const RuntimeValue& value,
       bool is_non_blocking);
 
-  /// Store an element of an aggregate (array or struct/union).
-  /// Handles sensitivity tracking (UpdatePrevious) and modification recording.
-  void StoreElement(
-      const lir::Operand& aggregate_operand, size_t index,
-      const RuntimeValue& element_value, bool is_non_blocking);
+  /// Read value through a pointer (dereference).
+  [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;
+
+  /// Write value through a pointer.
+  void WritePointer(
+      const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking);
+
+  /// Allocate anonymous storage and return its ID.
+  /// Used by kAllocate to create addressable temporary storage.
+  auto AllocateAnonymous(RuntimeValue initial) -> uint64_t;
 
   /// Get value from any operand type (temp, variable, or literal).
   [[nodiscard]] auto GetOperandValue(const lir::Operand& operand) const

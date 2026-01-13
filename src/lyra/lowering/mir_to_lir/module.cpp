@@ -11,6 +11,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/module.hpp"
@@ -99,9 +100,12 @@ auto LowerModule(
     for (const auto& mod_var : module.variables) {
       if (mod_var.initializer) {
         auto result = LowerExpression(*mod_var.initializer, builder);
-        auto store_instr = lir::Instruction::StoreVariable(
-            mod_var.variable.symbol, result, false);
-        builder.AddInstruction(std::move(store_instr));
+        const auto* pointee =
+            builder.GetContext()->InternType(mod_var.variable.type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            lir::Instruction::ResolveVar(ptr, mod_var.variable.symbol));
+        builder.AddInstruction(lir::Instruction::Store(ptr, result));
       }
     }
 
@@ -244,9 +248,13 @@ auto LowerPackages(std::span<const std::unique_ptr<mir::Package>> packages)
       for (const auto& var : pkg->variables) {
         if (var.initializer) {
           auto init_result = LowerExpression(*var.initializer, builder);
-          auto store_instr = lir::Instruction::StoreVariable(
-              var.variable.symbol, init_result, false);
-          builder.AddInstruction(std::move(store_instr));
+          const auto* pointee =
+              builder.GetContext()->InternType(var.variable.type);
+          auto ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+          builder.AddInstruction(
+              lir::Instruction::ResolveVar(ptr, var.variable.symbol));
+          builder.AddInstruction(lir::Instruction::Store(ptr, init_result));
         }
       }
     }

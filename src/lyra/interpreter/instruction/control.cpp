@@ -61,7 +61,7 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
   // Initialize parameters from arguments
   for (size_t i = 0; i < func->parameters.size(); ++i) {
     const auto& param = func->parameters[i];
-    auto temp_ref = std::get<lir::TempRef>(instr.operands[i].value);
+    auto temp_ref = instr.operands[i].AsTempRef();
     RuntimeValue arg_value = temp_table.Read(temp_ref);
     frame->local_variables[param.variable.symbol] = std::move(arg_value);
   }
@@ -86,7 +86,7 @@ auto HandleReturn(
   // Get return value BEFORE popping (temp_table points to current frame)
   std::optional<RuntimeValue> return_value;
   if (!instr.operands.empty()) {
-    auto temp_ref = std::get<lir::TempRef>(instr.operands[0].value);
+    auto temp_ref = instr.operands[0].AsTempRef();
     return_value = temp_table.Read(temp_ref);
   }
 
@@ -120,12 +120,10 @@ auto HandleControlFlowOps(
       return InstructionResult::WaitEvent(instr.wait_triggers);
 
     case lir::InstructionKind::kDelay: {
-      assert(instr.operands[0].IsConstant());
-      const auto& constant =
-          std::get<lir::ConstantRef>(instr.operands[0].value);
-      const auto delay_amount =
-          RuntimeValue::FromConstant(constant).AsNarrow().AsUInt64();
-      return InstructionResult::Delay(delay_amount);
+      assert(instr.delay_amount.has_value());
+      const auto delay_value =
+          RuntimeValue::FromConstant(*instr.delay_amount).AsNarrow().AsUInt64();
+      return InstructionResult::Delay(delay_value);
     }
 
     case lir::InstructionKind::kSystemCall: {
@@ -193,26 +191,18 @@ auto HandleControlFlowOps(
     }
 
     case lir::InstructionKind::kJump: {
-      assert(instr.operands.size() == 1);
-      assert(instr.operands[0].IsLabel());
-      const auto& target = std::get<lir::LabelRef>(instr.operands[0].value);
-      return InstructionResult::Jump(target);
+      assert(instr.jump_target.has_value());
+      return InstructionResult::Jump(*instr.jump_target);
     }
 
     case lir::InstructionKind::kBranch: {
-      assert(instr.operands.size() == 3);
-      assert(instr.operands[0].IsTemp());
-      assert(instr.operands[1].IsLabel());
-      assert(instr.operands[2].IsLabel());
+      assert(instr.temp_operands.size() == 1);
+      assert(instr.branch_true.has_value());
+      assert(instr.branch_false.has_value());
 
-      const auto& condition = ctx.GetTemp(instr.operands[0].AsTempRef());
-      const auto& true_target =
-          std::get<lir::LabelRef>(instr.operands[1].value);
-      const auto& false_target =
-          std::get<lir::LabelRef>(instr.operands[2].value);
-
+      const auto& condition = ctx.GetTemp(instr.temp_operands[0]);
       return InstructionResult::Jump(
-          IsTruthy(condition) ? true_target : false_target);
+          IsTruthy(condition) ? *instr.branch_true : *instr.branch_false);
     }
 
     case lir::InstructionKind::kCall:

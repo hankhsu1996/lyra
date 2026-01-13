@@ -85,11 +85,13 @@ class LirContext {
   auto AllocateTemp(std::string name, common::Type type) -> TempRef;
   auto InternLabel(std::string_view name) -> LabelRef;
   auto InternConstant(const common::Constant& constant) -> ConstantRef;
+  auto InternType(const common::Type& type) -> const common::Type*;
 
  private:
   std::deque<TempSymbol> temp_storage_;
   std::unordered_set<std::string> label_pool_;
   std::deque<common::Constant> constant_storage_;
+  std::deque<common::Type> type_storage_;
 
   struct ConstantPtrHash {
     auto operator()(const common::Constant* ptr) const -> std::size_t;

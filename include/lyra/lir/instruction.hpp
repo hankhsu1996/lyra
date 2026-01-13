@@ -9,11 +9,14 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lir/operand.hpp"
 
 namespace lyra::lir {
+
+using SymbolRef = common::SymbolRef;
 
 // Forward declaration for callee pointer
 struct Function;
@@ -35,14 +38,18 @@ enum class IntrinsicOpKind : uint8_t {
 enum class InstructionKind {
   // Memory operations
   kConstant,
-  kLoadVariable,
-  kStoreVariable,
-  kStoreVariableNonBlocking,
-  kStoreElement,             // Store to array/struct: base[index] = value
-  kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
-  kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
-  kStorePackedBits,  // Insert bits to packed: vec[offset+:width] = value
-  kAllocate,  // Allocate container with storage kind resolved at lowering
+  kResolveVar,    // Produces Pointer<T> from symbol
+  kLoad,          // Dereference Pointer<T> to get T
+  kStore,         // Write T through Pointer<T>
+  kStoreNBA,      // Non-blocking store through Pointer<T>
+  kResolveIndex,  // Pointer<Array<T>> + index -> Pointer<T>
+  kResolveField,  // Pointer<Struct> + field_id -> Pointer<FieldT>
+  kResolveSlice,  // Pointer<T> + offset + width -> SliceRef<U>
+  kLoadSlice,     // SliceRef<T> -> T (extract bits from storage)
+  kStoreSlice,    // SliceRef<T> + T -> void (read-modify-write)
+  kExtractBits,   // Extract bits from value (rvalue): result =
+                  // value[offset+:width]
+  kAllocate,      // Allocate container with storage kind resolved at lowering
 
   // Move operation
   kMove,
@@ -133,13 +140,16 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
   switch (kind) {
     // Memory operations
     case InstructionKind::kConstant:
-    case InstructionKind::kLoadVariable:
-    case InstructionKind::kStoreVariable:
-    case InstructionKind::kStoreVariableNonBlocking:
-    case InstructionKind::kStoreElement:
-    case InstructionKind::kStoreElementNonBlocking:
-    case InstructionKind::kLoadPackedBits:
-    case InstructionKind::kStorePackedBits:
+    case InstructionKind::kResolveVar:
+    case InstructionKind::kLoad:
+    case InstructionKind::kStore:
+    case InstructionKind::kStoreNBA:
+    case InstructionKind::kResolveIndex:
+    case InstructionKind::kResolveField:
+    case InstructionKind::kResolveSlice:
+    case InstructionKind::kLoadSlice:
+    case InstructionKind::kStoreSlice:
+    case InstructionKind::kExtractBits:
     case InstructionKind::kAllocate:
     case InstructionKind::kMove:
       return InstructionCategory::kMemory;
@@ -229,6 +239,20 @@ struct Instruction {
   // Pure value operands (TempRef only) for value-semantic operations
   std::vector<TempRef> temp_operands{};
 
+  // Control flow labels (dedicated fields, not operands)
+  std::optional<LabelRef> jump_target{};   // For kJump
+  std::optional<LabelRef> branch_true{};   // For kBranch
+  std::optional<LabelRef> branch_false{};  // For kBranch
+
+  // Constant reference (dedicated field, not operand)
+  std::optional<ConstantRef> constant{};  // For kConstant
+
+  // Symbol for kResolveVar (dedicated field, not operand)
+  std::optional<SymbolRef> symbol{};
+
+  // Delay amount (dedicated field, not operand)
+  std::optional<ConstantRef> delay_amount{};  // For kDelay
+
   // System call name (for kSystemCall)
   std::string system_call_name{};
   std::vector<SymbolRef> output_targets{};
@@ -306,22 +330,6 @@ struct Instruction {
         .operands = {Operand::Temp(operand)}};
   }
 
-  static auto Basic(InstructionKind kind, TempRef result, SymbolRef operand)
-      -> Instruction {
-    return Instruction{
-        .kind = kind,
-        .result = std::move(result),
-        .operands = {Operand::Variable(operand)}};
-  }
-
-  static auto Basic(InstructionKind kind, TempRef result, ConstantRef operand)
-      -> Instruction {
-    return Instruction{
-        .kind = kind,
-        .result = std::move(result),
-        .operands = {Operand::Constant(operand)}};
-  }
-
   static auto WithType(
       InstructionKind kind, TempRef result, TempRef operand,
       common::Type result_type) -> Instruction {
@@ -332,51 +340,114 @@ struct Instruction {
         .operands = {Operand::Temp(operand)}};
   }
 
-  static auto StoreVariable(
-      SymbolRef variable, TempRef value, bool is_non_blocking) -> Instruction {
-    return Instruction{
-        .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
-                                : InstructionKind::kStoreVariable,
-        .operands = {Operand::Variable(variable), Operand::Temp(value)}};
-  }
-
-  // Store element to array/struct: base[index] = value
-  // base can be variable or temp (polymorphic)
-  // Sensitivity tracking only triggered if base is variable
-  static auto StoreElement(
-      Operand base, TempRef index, TempRef value, bool is_non_blocking = false)
+  static auto Constant(TempRef result, ConstantRef constant_ref)
       -> Instruction {
     return Instruction{
-        .kind = is_non_blocking ? InstructionKind::kStoreElementNonBlocking
-                                : InstructionKind::kStoreElement,
-        .operands = {
-            std::move(base), Operand::Temp(index), Operand::Temp(value)}};
+        .kind = InstructionKind::kConstant,
+        .result = result,
+        .constant = constant_ref,
+    };
   }
 
-  // Load bits from packed vector: result = value[bit_offset +: width]
-  // bit_offset is pre-computed (index * element_width for arrays, or literal
-  // for struct fields). Width comes from result_type.
-  static auto LoadPackedBits(
+  // Create a pointer to a variable.
+  // The result temp's type should be Pointer<T> where T is the variable's type.
+  static auto ResolveVar(TempRef result, SymbolRef sym) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveVar,
+        .result = result,
+        .symbol = sym,
+    };
+  }
+
+  // Load value through a pointer
+  static auto Load(TempRef result, TempRef pointer) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoad,
+        .result = result,
+        .temp_operands = {pointer},
+    };
+  }
+
+  // Store value through a pointer (blocking)
+  static auto Store(TempRef pointer, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStore,
+        .temp_operands = {pointer, value},
+    };
+  }
+
+  // Store value through a pointer (non-blocking assignment)
+  static auto StoreNBA(TempRef pointer, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreNBA,
+        .temp_operands = {pointer, value},
+    };
+  }
+
+  // Resolve array element pointer: base_ptr[index] -> Pointer<T>
+  // base_ptr must be Pointer<Array<T>> or Pointer<Queue<T>>
+  static auto ResolveIndex(TempRef result, TempRef base_ptr, TempRef index)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveIndex,
+        .result = result,
+        .temp_operands = {base_ptr, index},
+    };
+  }
+
+  // Resolve struct field pointer: base_ptr.field_id -> Pointer<FieldT>
+  // base_ptr must be Pointer<Struct> or Pointer<Union>
+  // field_id is stored in lower_bound field (repurposed for field index)
+  static auto ResolveField(TempRef result, TempRef base_ptr, size_t field_id)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveField,
+        .result = result,
+        .temp_operands = {base_ptr},
+        .lower_bound = static_cast<int32_t>(field_id),
+    };
+  }
+
+  // Resolve bit slice: base_ptr[offset +: width] -> SliceRef<T>
+  // Creates a slice reference for packed bit access
+  static auto ResolveSlice(
+      TempRef result, TempRef base_ptr, TempRef offset, TempRef width)
+      -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveSlice,
+        .result = result,
+        .temp_operands = {base_ptr, offset, width},
+    };
+  }
+
+  // Load value through a slice reference (extract bits from storage)
+  static auto LoadSlice(TempRef result, TempRef slice_ref) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoadSlice,
+        .result = result,
+        .temp_operands = {slice_ref},
+    };
+  }
+
+  // Store value through a slice reference (read-modify-write)
+  static auto StoreSlice(TempRef slice_ref, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreSlice,
+        .temp_operands = {slice_ref, value},
+    };
+  }
+
+  // Extract bits from value (rvalue): result = value[bit_offset +: width]
+  // For non-addressable expressions like (a+b)[7:4].
+  // Width comes from result_type.
+  static auto ExtractBits(
       TempRef result, TempRef value, TempRef bit_offset,
       common::Type result_type) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kLoadPackedBits,
+        .kind = InstructionKind::kExtractBits,
         .result = result,
         .result_type = std::move(result_type),
-        .operands = {Operand::Temp(value), Operand::Temp(bit_offset)}};
-  }
-
-  // Store bits to packed vector: variable[bit_offset +: width] = value
-  // bit_offset is pre-computed. Width comes from slice_type.
-  static auto StorePackedBits(
-      SymbolRef variable, TempRef bit_offset, TempRef value,
-      common::Type slice_type) -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kStorePackedBits,
-        .result_type = std::move(slice_type),
-        .operands = {
-            Operand::Variable(variable), Operand::Temp(bit_offset),
-            Operand::Temp(value)}};
+        .temp_operands = {value, bit_offset}};
   }
 
   // Allocate container with storage kind resolved at lowering time.
@@ -408,9 +479,11 @@ struct Instruction {
         .wait_triggers = std::move(triggers)};
   }
 
-  static auto Delay(Operand delay) -> Instruction {
+  static auto Delay(ConstantRef delay) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kDelay, .operands = {std::move(delay)}};
+        .kind = InstructionKind::kDelay,
+        .delay_amount = delay,
+    };
   }
 
   // System call instruction
@@ -500,7 +573,9 @@ struct Instruction {
 
   static auto Jump(LabelRef label) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kJump, .operands = {Operand::Label(label)}};
+        .kind = InstructionKind::kJump,
+        .jump_target = label,
+    };
   }
 
   static auto Branch(
@@ -508,9 +583,10 @@ struct Instruction {
       -> Instruction {
     return Instruction{
         .kind = InstructionKind::kBranch,
-        .operands = {
-            Operand::Temp(condition), Operand::Label(true_label),
-            Operand::Label(false_label)}};
+        .temp_operands = {condition},
+        .branch_true = true_label,
+        .branch_false = false_label,
+    };
   }
 
   // Concatenation: result = {op0, op1, ...}
@@ -582,39 +658,48 @@ struct Instruction {
       // Memory operations
       case InstructionKind::kConstant:
         return fmt::format(
-            "const {}, {}", result.value(), operands[0].ToString());
+            "const {}, {}", result.value(), constant->ToString());
 
-      case InstructionKind::kLoadVariable:
+      case InstructionKind::kResolveVar:
         return fmt::format(
-            "load  {}, {}", result.value(), operands[0].ToString());
+            "resolve_var {}, {}", result.value(), (*symbol)->name);
 
-      case InstructionKind::kStoreVariable:
-        return fmt::format(
-            "store {}, {}", operands[0].ToString(), operands[1].ToString());
+      case InstructionKind::kLoad:
+        return fmt::format("load  {}, {}", result.value(), temp_operands[0]);
 
-      case InstructionKind::kStoreVariableNonBlocking:
-        return fmt::format(
-            "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
+      case InstructionKind::kStore:
+        return fmt::format("store {}, {}", temp_operands[0], temp_operands[1]);
 
-      case InstructionKind::kStoreElement:
-        return fmt::format(
-            "stel  {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
-            operands[2].ToString());
+      case InstructionKind::kStoreNBA:
+        return fmt::format("nba   {}, {}", temp_operands[0], temp_operands[1]);
 
-      case InstructionKind::kStoreElementNonBlocking:
+      case InstructionKind::kResolveIndex:
         return fmt::format(
-            "stelnb {}[{}], {}", operands[0].ToString(), operands[1].ToString(),
-            operands[2].ToString());
+            "resolve_index {}, {}[{}]", result.value(), temp_operands[0],
+            temp_operands[1]);
 
-      case InstructionKind::kLoadPackedBits:
+      case InstructionKind::kResolveField:
         return fmt::format(
-            "ldpb  {}, {}[{}+:]", result.value(), operands[0].ToString(),
-            operands[1].ToString());
+            "resolve_field {}, {}.{}", result.value(), temp_operands[0],
+            lower_bound);
 
-      case InstructionKind::kStorePackedBits:
+      case InstructionKind::kResolveSlice:
         return fmt::format(
-            "stpb  {}[{}+:], {}", operands[0].ToString(),
-            operands[1].ToString(), operands[2].ToString());
+            "resolve_slice {}, {}[{}+:{}]", result.value(), temp_operands[0],
+            temp_operands[1], temp_operands[2]);
+
+      case InstructionKind::kLoadSlice:
+        return fmt::format(
+            "load_slice {}, {}", result.value(), temp_operands[0]);
+
+      case InstructionKind::kStoreSlice:
+        return fmt::format(
+            "store_slice {}, {}", temp_operands[0], temp_operands[1]);
+
+      case InstructionKind::kExtractBits:
+        return fmt::format(
+            "extb  {}, {}[{}+:]", result.value(), temp_operands[0],
+            temp_operands[1]);
 
       case InstructionKind::kAllocate: {
         const char* storage_str =
@@ -819,7 +904,7 @@ struct Instruction {
         return "complete";
 
       case InstructionKind::kDelay:
-        return fmt::format("delay {}", operands[0].ToString());
+        return fmt::format("delay {}", delay_amount->ToString());
 
       case InstructionKind::kSystemCall: {
         std::string args;
@@ -880,17 +965,18 @@ struct Instruction {
       }
 
       case InstructionKind::kJump:
-        if (operands.size() == 1) {
-          return fmt::format("jump  {}", operands[0].ToString());
+        if (jump_target.has_value()) {
+          return fmt::format("jump  {}", jump_target->ToString());
         } else {
           return "(invalid jump)";
         }
 
       case InstructionKind::kBranch:
-        if (operands.size() == 3) {
+        if (temp_operands.size() == 1 && branch_true.has_value() &&
+            branch_false.has_value()) {
           return fmt::format(
-              "br    {}, {}, {}", operands[0].ToString(),
-              operands[1].ToString(), operands[2].ToString());
+              "br    {}, {}, {}", temp_operands[0].ToString(),
+              branch_true->ToString(), branch_false->ToString());
         } else {
           return "(invalid branch)";
         }

@@ -37,9 +37,13 @@ auto LowerStatement(
 
       if (declaration.initializer) {
         auto result = LowerExpression(*declaration.initializer, builder);
-        auto instruction = Instruction::StoreVariable(
-            declaration.variable.symbol, result, false);
-        builder.AddInstruction(std::move(instruction));
+        // Store through pointer
+        const auto* pointee =
+            builder.GetContext()->InternType(declaration.variable.type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            Instruction::ResolveVar(ptr, declaration.variable.symbol));
+        builder.AddInstruction(Instruction::Store(ptr, result));
       }
       break;
     }
@@ -55,16 +59,21 @@ auto LowerStatement(
 
       if (target.IsHierarchical()) {
         // Hierarchical assignment uses target_symbol directly (flat storage
-        // model)
-        auto instruction = Instruction::StoreVariable(
-            target.target_symbol, result_value, false);
-        builder.AddInstruction(std::move(instruction));
+        // model). Use the result value's type for the pointer (types should
+        // match after implicit conversion).
+        const auto& value_type = result_value->type;
+        const auto* pointee = builder.GetContext()->InternType(value_type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            Instruction::ResolveVar(ptr, target.target_symbol));
+        builder.AddInstruction(Instruction::Store(ptr, result_value));
         break;
       }
 
       if (target.IsElementSelect()) {
         if (target.IsPacked()) {
           // Packed element assignment (possibly multi-dimensional)
+          // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
           const auto& base_type = *target.base_type;
           size_t element_width =
               GetElementWidthAfterIndices(base_type, target.indices.size());
@@ -73,6 +82,14 @@ auto LowerStatement(
           auto adjusted_index = AdjustForNonZeroLower(
               composite_index, base_type.GetElementLower(), builder);
 
+          // Get pointer to base variable
+          const auto* base_pointee =
+              builder.GetContext()->InternType(base_type);
+          auto base_ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(base_pointee));
+          builder.AddInstruction(
+              Instruction::ResolveVar(base_ptr, target.symbol));
+
           // Compute bit_offset = adjusted_index * element_width
           auto bit_offset =
               builder.AllocateTemp("bit_offset", common::Type::Int());
@@ -80,34 +97,67 @@ auto LowerStatement(
               common::Constant::Int(static_cast<int32_t>(element_width)));
           auto width_temp = builder.AllocateTemp("width", common::Type::Int());
           builder.AddInstruction(
-              Instruction::Basic(
-                  lir::InstructionKind::kConstant, width_temp, width_constant));
+              Instruction::Constant(width_temp, width_constant));
           builder.AddInstruction(
               Instruction::Basic(
                   lir::InstructionKind::kBinaryMultiply, bit_offset,
                   {lir::Operand::Temp(adjusted_index),
                    lir::Operand::Temp(width_temp)}));
 
-          auto slice_type = common::Type::IntegralUnsigned(
+          // Create SliceRef type (packed array elements are unsigned)
+          auto slice_pointee_type = common::Type::IntegralUnsigned(
               static_cast<uint32_t>(element_width));
-          auto instruction = Instruction::StorePackedBits(
-              target.symbol, bit_offset, result_value, slice_type);
-          builder.AddInstruction(std::move(instruction));
+          const auto* slice_pointee =
+              builder.GetContext()->InternType(slice_pointee_type);
+          auto slice_ref_type = common::Type::SliceRef(slice_pointee);
+
+          // ResolveSlice: base_ptr + bit_offset + width -> slice_ptr
+          auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+          builder.AddInstruction(
+              Instruction::ResolveSlice(
+                  slice_ptr, base_ptr, bit_offset, width_temp));
+
+          // StoreSlice
+          builder.AddInstruction(
+              Instruction::StoreSlice(slice_ptr, result_value));
         } else {
           // Unpacked array element assignment: array[index] = value
-          assert(target.indices.size() == 1);
-          auto index = LowerExpression(*target.indices[0], builder);
-          auto instruction = Instruction::StoreElement(
-              lir::Operand::Variable(target.symbol), index, result_value);
-          builder.AddInstruction(std::move(instruction));
+          // Use pointer chain: ResolveVar -> ResolveIndex -> Store
+          const auto& base_type = *target.base_type;
+
+          // Build pointer chain
+          const auto* arr_pointee = builder.GetContext()->InternType(base_type);
+          auto ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(arr_pointee));
+          builder.AddInstruction(Instruction::ResolveVar(ptr, target.symbol));
+
+          const common::Type* current_type = &base_type;
+          for (const auto& idx_expr : target.indices) {
+            auto index = LowerExpression(*idx_expr, builder);
+            const common::Type& elem_type = current_type->GetElementType();
+            const auto* elem_pointee =
+                builder.GetContext()->InternType(elem_type);
+            auto elem_ptr = builder.AllocateTemp(
+                "ptr_elem", common::Type::Pointer(elem_pointee));
+            builder.AddInstruction(
+                Instruction::ResolveIndex(elem_ptr, ptr, index));
+            ptr = elem_ptr;
+            current_type = &elem_type;
+          }
+
+          builder.AddInstruction(Instruction::Store(ptr, result_value));
         }
         break;
       }
 
-      // Store the result to the target variable
-      auto instruction =
-          Instruction::StoreVariable(target.symbol, result_value, false);
-      builder.AddInstruction(std::move(instruction));
+      // Store the result to the target variable through pointer.
+      // Use base_type if available, otherwise use the result value's type.
+      const auto& var_type =
+          target.base_type.has_value() ? *target.base_type : result_value->type;
+      const auto* pointee = builder.GetContext()->InternType(var_type);
+      auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+      builder.AddInstruction(Instruction::ResolveVar(ptr, target.symbol));
+      builder.AddInstruction(Instruction::Store(ptr, result_value));
       break;
     }
 
@@ -142,9 +192,11 @@ auto LowerStatement(
           // Lower the method call
           auto result = LowerExpression(expr, builder);
           // Store result back to the receiver variable (SSA writeback)
-          auto store_instr =
-              Instruction::StoreVariable(ident.symbol, result, false);
-          builder.AddInstruction(std::move(store_instr));
+          const auto* pointee = builder.GetContext()->InternType(ident.type);
+          auto ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+          builder.AddInstruction(Instruction::ResolveVar(ptr, ident.symbol));
+          builder.AddInstruction(Instruction::Store(ptr, result));
           break;
         }
       }
@@ -171,8 +223,7 @@ auto LowerStatement(
           delay.delay_amount * lowering_context.DelayMultiplier();
       auto delay_amount = common::Constant::ULongInt(scaled_delay);
       auto delay_interned = builder.InternConstant(delay_amount);
-      auto instruction =
-          Instruction::Delay(lir::Operand::Constant(delay_interned));
+      auto instruction = Instruction::Delay(delay_interned);
       builder.AddInstruction(std::move(instruction));
       break;
     }
