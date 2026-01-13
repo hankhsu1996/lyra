@@ -424,21 +424,25 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
     used_features_ |= CodegenFeature::kMemIo;
     bool is_read = syscall.name == "$readmemh" || syscall.name == "$readmemb";
     bool is_hex = syscall.name == "$readmemh" || syscall.name == "$writememh";
-    bool has_start = syscall.arguments.size() >= 3;
-    bool has_end = syscall.arguments.size() == 4;
 
-    if (syscall.arguments.size() < 2 || syscall.arguments.size() > 4) {
-      throw common::InternalError("codegen", "mem I/O expects 2-4 arguments");
+    // After AST->MIR lowering refactor:
+    // - arguments[0] = filename
+    // - arguments[1] = start address (optional)
+    // - arguments[2] = end address (optional)
+    // - output_targets[0] = target array
+    bool has_start = syscall.arguments.size() >= 2;
+    bool has_end = syscall.arguments.size() == 3;
+
+    if (syscall.arguments.size() < 1 || syscall.arguments.size() > 3) {
+      throw common::InternalError("codegen", "mem I/O expects 1-3 arguments");
+    }
+    if (syscall.output_targets.size() != 1) {
+      throw common::InternalError("codegen", "mem I/O expects 1 output target");
     }
 
-    const auto& target_expr = *syscall.arguments[1];
-    if (target_expr.kind != mir::Expression::Kind::kIdentifier) {
-      throw common::InternalError(
-          "codegen", "mem I/O target must be a named variable");
-    }
-
-    const auto& target = mir::As<mir::IdentifierExpression>(target_expr);
-    const auto& target_type = target_expr.type;
+    const auto& target = syscall.output_targets[0];
+    assert(target.base_type.has_value());
+    const auto& target_type = *target.base_type;
 
     // Helper to emit filename as C++ string literal
     auto emit_filename = [&]() {
@@ -472,13 +476,13 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
       emit_filename();
       out_ << ", " << (has_start ? "true" : "false") << ", ";
       if (has_start) {
-        EmitExpression(*syscall.arguments[2]);
+        EmitExpression(*syscall.arguments[1]);
       } else {
         out_ << "0";
       }
       out_ << ", " << (has_end ? "true" : "false") << ", ";
       if (has_end) {
-        EmitExpression(*syscall.arguments[3]);
+        EmitExpression(*syscall.arguments[2]);
       } else {
         out_ << "0";
       }
@@ -501,13 +505,13 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
       emit_filename();
       out_ << ", " << (has_start ? "true" : "false") << ", ";
       if (has_start) {
-        EmitExpression(*syscall.arguments[2]);
+        EmitExpression(*syscall.arguments[1]);
       } else {
         out_ << "0";
       }
       out_ << ", " << (has_end ? "true" : "false") << ", ";
       if (has_end) {
-        EmitExpression(*syscall.arguments[3]);
+        EmitExpression(*syscall.arguments[2]);
       } else {
         out_ << "0";
       }
