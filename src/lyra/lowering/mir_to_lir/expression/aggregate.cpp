@@ -86,8 +86,7 @@ auto LowerUnpackedStructLiteralExpression(
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
     auto index_constant =
         builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, index_temp, index_constant));
+    builder.AddInstruction(Instruction::Constant(index_temp, index_constant));
 
     // Use unified StoreElement with temp operand
     builder.AddInstruction(
@@ -129,8 +128,7 @@ auto LowerArrayLiteralExpression(
       auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
       auto index_constant =
           builder.InternConstant(Constant::Int(static_cast<int32_t>(i)));
-      builder.AddInstruction(
-          Instruction::Basic(IK::kConstant, index_temp, index_constant));
+      builder.AddInstruction(Instruction::Constant(index_temp, index_constant));
       builder.AddInstruction(
           Instruction::StoreElement(
               Operand::Temp(current), index_temp, element_value));

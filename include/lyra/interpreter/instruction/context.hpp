@@ -71,6 +71,13 @@ class InstructionContext {
       const lir::Operand& aggregate_operand, size_t index,
       const RuntimeValue& element_value, bool is_non_blocking);
 
+  /// Read value through a pointer (dereference).
+  [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;
+
+  /// Write value through a pointer.
+  void WritePointer(
+      const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking);
+
   /// Get value from any operand type (temp, variable, or literal).
   [[nodiscard]] auto GetOperandValue(const lir::Operand& operand) const
       -> RuntimeValue;

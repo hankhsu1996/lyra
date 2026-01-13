@@ -239,8 +239,7 @@ auto LowerSystemCallExpression(
       operands.empty() && !is_monitor) {
     auto temp = builder.AllocateTemp("sys", system_call.type);
     auto const_one = builder.InternConstant(Constant::Int(1));
-    auto instruction = Instruction::Basic(IK::kConstant, temp, const_one);
-    builder.AddInstruction(std::move(instruction));
+    builder.AddInstruction(Instruction::Constant(temp, const_one));
     operands.push_back(Operand::Temp(temp));
   }
 
@@ -346,8 +345,7 @@ auto LowerMethodCallExpression(
       } else {
         auto one = builder.InternConstant(Constant::Int(1));
         step_temp = builder.AllocateTemp("step", Type::Int());
-        builder.AddInstruction(
-            Instruction::Basic(IK::kConstant, step_temp, one));
+        builder.AddInstruction(Instruction::Constant(step_temp, one));
       }
       args.push_back(step_temp);
     }

@@ -173,9 +173,7 @@ void LowerRepeatLoop(
   // Condition block: counter > 0
   builder.StartBlock(cond_label);
   auto zero_temp = builder.AllocateTemp("zero", Type::Int());
-  builder.AddInstruction(
-      Instruction::Basic(
-          IK::kConstant, zero_temp, Operand::Constant(zero_constant)));
+  builder.AddInstruction(Instruction::Constant(zero_temp, zero_constant));
   auto cond_temp = builder.AllocateTemp("repeat.cond", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(
@@ -193,9 +191,7 @@ void LowerRepeatLoop(
   // Step block: counter = counter - 1
   builder.StartBlock(step_label);
   auto one_temp = builder.AllocateTemp("one", Type::Int());
-  builder.AddInstruction(
-      Instruction::Basic(
-          IK::kConstant, one_temp, Operand::Constant(one_constant)));
+  builder.AddInstruction(Instruction::Constant(one_temp, one_constant));
   auto new_counter = builder.AllocateTemp("repeat.new_counter", Type::Int());
   builder.AddInstruction(
       Instruction::Basic(

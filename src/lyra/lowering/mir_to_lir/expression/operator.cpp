@@ -212,18 +212,19 @@ auto LowerIncrementDecrementExpression(
   const auto& identifier =
       mir::As<mir::IdentifierExpression>(*expression.operand);
 
+  // Resolve variable pointer (used for both load and store)
+  const auto* pointee = builder.GetContext()->InternType(identifier.type);
+  auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+  builder.AddInstruction(Instruction::ResolveVar(ptr, identifier.symbol));
+
   // Load the current value
   auto load_temp = builder.AllocateTemp("load", identifier.type);
-  auto load_instruction =
-      Instruction::Basic(IK::kLoadVariable, load_temp, identifier.symbol);
-  builder.AddInstruction(std::move(load_instruction));
+  builder.AddInstruction(Instruction::Load(load_temp, ptr));
 
   // Create a literal instruction for the constant 1
   auto const_one_temp = builder.AllocateTemp("const", identifier.type);
   auto const_one = builder.InternConstant(Constant::Int(1));
-  auto const_instruction =
-      Instruction::Basic(IK::kConstant, const_one_temp, const_one);
-  builder.AddInstruction(std::move(const_instruction));
+  builder.AddInstruction(Instruction::Constant(const_one_temp, const_one));
 
   // Compute the new value (add/subtract 1)
   auto operation_temp = builder.AllocateTemp("op", identifier.type);
@@ -241,10 +242,8 @@ auto LowerIncrementDecrementExpression(
       {Operand::Temp(load_temp), Operand::Temp(const_one_temp)});
   builder.AddInstruction(std::move(operation_instruction));
 
-  // Store the updated value
-  auto store_instruction =
-      Instruction::StoreVariable(identifier.symbol, operation_temp, false);
-  builder.AddInstruction(std::move(store_instruction));
+  // Store the updated value (reuse ptr from above)
+  builder.AddInstruction(Instruction::Store(ptr, operation_temp));
 
   // Return either the old or new value based on pre/post operation
   if (expression.op == Operator::kPreincrement ||

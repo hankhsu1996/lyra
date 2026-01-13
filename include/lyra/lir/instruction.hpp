@@ -35,9 +35,10 @@ enum class IntrinsicOpKind : uint8_t {
 enum class InstructionKind {
   // Memory operations
   kConstant,
-  kLoadVariable,
-  kStoreVariable,
-  kStoreVariableNonBlocking,
+  kResolveVar,               // Produces Pointer<T> from symbol
+  kLoad,                     // Dereference Pointer<T> to get T
+  kStore,                    // Write T through Pointer<T>
+  kStoreNBA,                 // Non-blocking store through Pointer<T>
   kStoreElement,             // Store to array/struct: base[index] = value
   kStoreElementNonBlocking,  // NBA to array/struct: base[index] <= value
   kLoadPackedBits,           // Extract bits from packed: vec[offset+:width]
@@ -133,9 +134,10 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
   switch (kind) {
     // Memory operations
     case InstructionKind::kConstant:
-    case InstructionKind::kLoadVariable:
-    case InstructionKind::kStoreVariable:
-    case InstructionKind::kStoreVariableNonBlocking:
+    case InstructionKind::kResolveVar:
+    case InstructionKind::kLoad:
+    case InstructionKind::kStore:
+    case InstructionKind::kStoreNBA:
     case InstructionKind::kStoreElement:
     case InstructionKind::kStoreElementNonBlocking:
     case InstructionKind::kLoadPackedBits:
@@ -229,6 +231,20 @@ struct Instruction {
   // Pure value operands (TempRef only) for value-semantic operations
   std::vector<TempRef> temp_operands{};
 
+  // Control flow labels (dedicated fields, not operands)
+  std::optional<LabelRef> jump_target{};   // For kJump
+  std::optional<LabelRef> branch_true{};   // For kBranch
+  std::optional<LabelRef> branch_false{};  // For kBranch
+
+  // Constant reference (dedicated field, not operand)
+  std::optional<ConstantRef> constant{};  // For kConstant
+
+  // Symbol for kResolveVar (dedicated field, not operand)
+  std::optional<SymbolRef> symbol{};
+
+  // Delay amount (dedicated field, not operand)
+  std::optional<ConstantRef> delay_amount{};  // For kDelay
+
   // System call name (for kSystemCall)
   std::string system_call_name{};
   std::vector<SymbolRef> output_targets{};
@@ -306,22 +322,6 @@ struct Instruction {
         .operands = {Operand::Temp(operand)}};
   }
 
-  static auto Basic(InstructionKind kind, TempRef result, SymbolRef operand)
-      -> Instruction {
-    return Instruction{
-        .kind = kind,
-        .result = std::move(result),
-        .operands = {Operand::Variable(operand)}};
-  }
-
-  static auto Basic(InstructionKind kind, TempRef result, ConstantRef operand)
-      -> Instruction {
-    return Instruction{
-        .kind = kind,
-        .result = std::move(result),
-        .operands = {Operand::Constant(operand)}};
-  }
-
   static auto WithType(
       InstructionKind kind, TempRef result, TempRef operand,
       common::Type result_type) -> Instruction {
@@ -332,12 +332,48 @@ struct Instruction {
         .operands = {Operand::Temp(operand)}};
   }
 
-  static auto StoreVariable(
-      SymbolRef variable, TempRef value, bool is_non_blocking) -> Instruction {
+  static auto Constant(TempRef result, ConstantRef constant_ref)
+      -> Instruction {
     return Instruction{
-        .kind = is_non_blocking ? InstructionKind::kStoreVariableNonBlocking
-                                : InstructionKind::kStoreVariable,
-        .operands = {Operand::Variable(variable), Operand::Temp(value)}};
+        .kind = InstructionKind::kConstant,
+        .result = result,
+        .constant = constant_ref,
+    };
+  }
+
+  // Create a pointer to a variable.
+  // The result temp's type should be Pointer<T> where T is the variable's type.
+  static auto ResolveVar(TempRef result, SymbolRef sym) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kResolveVar,
+        .result = result,
+        .symbol = sym,
+    };
+  }
+
+  // Load value through a pointer
+  static auto Load(TempRef result, TempRef pointer) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kLoad,
+        .result = result,
+        .temp_operands = {pointer},
+    };
+  }
+
+  // Store value through a pointer (blocking)
+  static auto Store(TempRef pointer, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStore,
+        .temp_operands = {pointer, value},
+    };
+  }
+
+  // Store value through a pointer (non-blocking assignment)
+  static auto StoreNBA(TempRef pointer, TempRef value) -> Instruction {
+    return Instruction{
+        .kind = InstructionKind::kStoreNBA,
+        .temp_operands = {pointer, value},
+    };
   }
 
   // Store element to array/struct: base[index] = value
@@ -408,9 +444,11 @@ struct Instruction {
         .wait_triggers = std::move(triggers)};
   }
 
-  static auto Delay(Operand delay) -> Instruction {
+  static auto Delay(ConstantRef delay) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kDelay, .operands = {std::move(delay)}};
+        .kind = InstructionKind::kDelay,
+        .delay_amount = delay,
+    };
   }
 
   // System call instruction
@@ -500,7 +538,9 @@ struct Instruction {
 
   static auto Jump(LabelRef label) -> Instruction {
     return Instruction{
-        .kind = InstructionKind::kJump, .operands = {Operand::Label(label)}};
+        .kind = InstructionKind::kJump,
+        .jump_target = label,
+    };
   }
 
   static auto Branch(
@@ -508,9 +548,10 @@ struct Instruction {
       -> Instruction {
     return Instruction{
         .kind = InstructionKind::kBranch,
-        .operands = {
-            Operand::Temp(condition), Operand::Label(true_label),
-            Operand::Label(false_label)}};
+        .temp_operands = {condition},
+        .branch_true = true_label,
+        .branch_false = false_label,
+    };
   }
 
   // Concatenation: result = {op0, op1, ...}
@@ -582,19 +623,20 @@ struct Instruction {
       // Memory operations
       case InstructionKind::kConstant:
         return fmt::format(
-            "const {}, {}", result.value(), operands[0].ToString());
+            "const {}, {}", result.value(), constant->ToString());
 
-      case InstructionKind::kLoadVariable:
+      case InstructionKind::kResolveVar:
         return fmt::format(
-            "load  {}, {}", result.value(), operands[0].ToString());
+            "resolve_var {}, {}", result.value(), (*symbol)->name);
 
-      case InstructionKind::kStoreVariable:
-        return fmt::format(
-            "store {}, {}", operands[0].ToString(), operands[1].ToString());
+      case InstructionKind::kLoad:
+        return fmt::format("load  {}, {}", result.value(), temp_operands[0]);
 
-      case InstructionKind::kStoreVariableNonBlocking:
-        return fmt::format(
-            "nba   {}, {}", operands[0].ToString(), operands[1].ToString());
+      case InstructionKind::kStore:
+        return fmt::format("store {}, {}", temp_operands[0], temp_operands[1]);
+
+      case InstructionKind::kStoreNBA:
+        return fmt::format("nba   {}, {}", temp_operands[0], temp_operands[1]);
 
       case InstructionKind::kStoreElement:
         return fmt::format(
@@ -819,7 +861,7 @@ struct Instruction {
         return "complete";
 
       case InstructionKind::kDelay:
-        return fmt::format("delay {}", operands[0].ToString());
+        return fmt::format("delay {}", delay_amount->ToString());
 
       case InstructionKind::kSystemCall: {
         std::string args;
@@ -880,17 +922,18 @@ struct Instruction {
       }
 
       case InstructionKind::kJump:
-        if (operands.size() == 1) {
-          return fmt::format("jump  {}", operands[0].ToString());
+        if (jump_target.has_value()) {
+          return fmt::format("jump  {}", jump_target->ToString());
         } else {
           return "(invalid jump)";
         }
 
       case InstructionKind::kBranch:
-        if (operands.size() == 3) {
+        if (temp_operands.size() == 1 && branch_true.has_value() &&
+            branch_false.has_value()) {
           return fmt::format(
-              "br    {}, {}, {}", operands[0].ToString(),
-              operands[1].ToString(), operands[2].ToString());
+              "br    {}, {}, {}", temp_operands[0].ToString(),
+              branch_true->ToString(), branch_false->ToString());
         } else {
           return "(invalid branch)";
         }

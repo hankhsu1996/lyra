@@ -26,8 +26,7 @@ auto LowerConstantExpression(
   auto result =
       builder.AllocateTemp("const", constant_expression.constant.type);
   auto constant = builder.InternConstant(constant_expression.constant);
-  auto instruction = Instruction::Basic(IK::kConstant, result, constant);
-  builder.AddInstruction(std::move(instruction));
+  builder.AddInstruction(Instruction::Constant(result, constant));
   return result;
 }
 
@@ -50,15 +49,17 @@ auto LowerIdentifierExpression(
     }
     auto result = builder.AllocateTemp("param", identifier.type);
     auto interned = builder.InternConstant(*constant_result);
-    auto instruction = Instruction::Basic(IK::kConstant, result, interned);
-    builder.AddInstruction(std::move(instruction));
+    builder.AddInstruction(Instruction::Constant(result, interned));
     return result;
   }
 
+  // Create pointer to variable, then load through it
+  const auto* pointee = builder.GetContext()->InternType(identifier.type);
+  auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+  builder.AddInstruction(Instruction::ResolveVar(ptr, identifier.symbol));
+
   auto result = builder.AllocateTemp("load", identifier.type);
-  auto instruction =
-      Instruction::Basic(IK::kLoadVariable, result, identifier.symbol);
-  builder.AddInstruction(std::move(instruction));
+  builder.AddInstruction(Instruction::Load(result, ptr));
   return result;
 }
 
@@ -77,8 +78,7 @@ auto LowerEnumValueExpression(
                             Constant::IntegralUnsigned(
                                 static_cast<uint64_t>(enum_val.value), width));
 
-  auto instruction = Instruction::Basic(IK::kConstant, result, constant);
-  builder.AddInstruction(std::move(instruction));
+  builder.AddInstruction(Instruction::Constant(result, constant));
   return result;
 }
 

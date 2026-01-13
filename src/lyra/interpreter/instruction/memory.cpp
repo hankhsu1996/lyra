@@ -24,36 +24,56 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
     -> InstructionResult {
   switch (instr.kind) {
     case lir::InstructionKind::kConstant: {
-      assert(instr.operands.size() == 1);
-      assert(instr.operands[0].IsConstant());
+      assert(instr.constant.has_value());
       assert(instr.result.has_value());
 
-      const auto& constant =
-          std::get<lir::ConstantRef>(instr.operands[0].value);
-      RuntimeValue value = RuntimeValue::FromConstant(constant);
+      RuntimeValue value = RuntimeValue::FromConstant(*instr.constant);
       ctx.WriteTemp(instr.result.value(), value);
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kLoadVariable: {
-      const auto& value = ctx.ReadVariable(instr.operands[0]);
-      ctx.WriteTemp(instr.result.value(), value);
+    case lir::InstructionKind::kResolveVar: {
+      assert(instr.symbol.has_value());
+      assert(instr.result.has_value());
+
+      // Create a pointer value pointing to the variable
+      auto ptr = PointerValue::Var(*instr.symbol);
+      auto ptr_type = (*instr.result)->type;
+      ctx.WriteTemp(instr.result.value(), RuntimeValue::Pointer(ptr_type, ptr));
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreVariable: {
-      const auto variable = instr.operands[0];
-      const auto value = ctx.GetTemp(instr.operands[1].AsTempRef());
-      assert(variable.IsVariable());
-      ctx.StoreVariable(variable, value, false);
+    case lir::InstructionKind::kLoad: {
+      assert(instr.result.has_value());
+      assert(instr.temp_operands.size() == 1);
+
+      const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      assert(ptr_value.IsPointer());
+
+      RuntimeValue loaded = ctx.ReadPointer(ptr_value.AsPointer());
+      ctx.WriteTemp(instr.result.value(), std::move(loaded));
       return InstructionResult::Continue();
     }
 
-    case lir::InstructionKind::kStoreVariableNonBlocking: {
-      const auto variable = instr.operands[0];
-      const auto value = ctx.GetTemp(instr.operands[1].AsTempRef());
-      assert(variable.IsVariable());
-      ctx.StoreVariable(variable, value, true);
+    case lir::InstructionKind::kStore: {
+      assert(instr.temp_operands.size() == 2);
+
+      const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      const auto& value = ctx.GetTemp(instr.temp_operands[1]);
+      assert(ptr_value.IsPointer());
+
+      ctx.WritePointer(ptr_value.AsPointer(), value, false);
+      return InstructionResult::Continue();
+    }
+
+    case lir::InstructionKind::kStoreNBA: {
+      assert(instr.temp_operands.size() == 2);
+
+      const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      const auto& value = ctx.GetTemp(instr.temp_operands[1]);
+      assert(ptr_value.IsPointer());
+
+      ctx.WritePointer(ptr_value.AsPointer(), value, true);
       return InstructionResult::Continue();
     }
 

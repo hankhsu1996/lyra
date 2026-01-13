@@ -37,9 +37,13 @@ auto LowerStatement(
 
       if (declaration.initializer) {
         auto result = LowerExpression(*declaration.initializer, builder);
-        auto instruction = Instruction::StoreVariable(
-            declaration.variable.symbol, result, false);
-        builder.AddInstruction(std::move(instruction));
+        // Store through pointer
+        const auto* pointee =
+            builder.GetContext()->InternType(declaration.variable.type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            Instruction::ResolveVar(ptr, declaration.variable.symbol));
+        builder.AddInstruction(Instruction::Store(ptr, result));
       }
       break;
     }
@@ -55,10 +59,14 @@ auto LowerStatement(
 
       if (target.IsHierarchical()) {
         // Hierarchical assignment uses target_symbol directly (flat storage
-        // model)
-        auto instruction = Instruction::StoreVariable(
-            target.target_symbol, result_value, false);
-        builder.AddInstruction(std::move(instruction));
+        // model). Use the result value's type for the pointer (types should
+        // match after implicit conversion).
+        const auto& value_type = result_value->type;
+        const auto* pointee = builder.GetContext()->InternType(value_type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            Instruction::ResolveVar(ptr, target.target_symbol));
+        builder.AddInstruction(Instruction::Store(ptr, result_value));
         break;
       }
 
@@ -80,8 +88,7 @@ auto LowerStatement(
               common::Constant::Int(static_cast<int32_t>(element_width)));
           auto width_temp = builder.AllocateTemp("width", common::Type::Int());
           builder.AddInstruction(
-              Instruction::Basic(
-                  lir::InstructionKind::kConstant, width_temp, width_constant));
+              Instruction::Constant(width_temp, width_constant));
           builder.AddInstruction(
               Instruction::Basic(
                   lir::InstructionKind::kBinaryMultiply, bit_offset,
@@ -104,10 +111,14 @@ auto LowerStatement(
         break;
       }
 
-      // Store the result to the target variable
-      auto instruction =
-          Instruction::StoreVariable(target.symbol, result_value, false);
-      builder.AddInstruction(std::move(instruction));
+      // Store the result to the target variable through pointer.
+      // Use base_type if available, otherwise use the result value's type.
+      const auto& var_type =
+          target.base_type.has_value() ? *target.base_type : result_value->type;
+      const auto* pointee = builder.GetContext()->InternType(var_type);
+      auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+      builder.AddInstruction(Instruction::ResolveVar(ptr, target.symbol));
+      builder.AddInstruction(Instruction::Store(ptr, result_value));
       break;
     }
 
@@ -142,9 +153,11 @@ auto LowerStatement(
           // Lower the method call
           auto result = LowerExpression(expr, builder);
           // Store result back to the receiver variable (SSA writeback)
-          auto store_instr =
-              Instruction::StoreVariable(ident.symbol, result, false);
-          builder.AddInstruction(std::move(store_instr));
+          const auto* pointee = builder.GetContext()->InternType(ident.type);
+          auto ptr =
+              builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+          builder.AddInstruction(Instruction::ResolveVar(ptr, ident.symbol));
+          builder.AddInstruction(Instruction::Store(ptr, result));
           break;
         }
       }
@@ -171,8 +184,7 @@ auto LowerStatement(
           delay.delay_amount * lowering_context.DelayMultiplier();
       auto delay_amount = common::Constant::ULongInt(scaled_delay);
       auto delay_interned = builder.InternConstant(delay_amount);
-      auto instruction =
-          Instruction::Delay(lir::Operand::Constant(delay_interned));
+      auto instruction = Instruction::Delay(delay_interned);
       builder.AddInstruction(std::move(instruction));
       break;
     }

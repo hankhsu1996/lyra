@@ -116,6 +116,16 @@ struct EnumMember {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
+// Pointer data - stores the pointee type for Pointer<T>
+// Used internally by LIR for address-of operations (ResolveVar, ResolveIndex,
+// etc.)
+struct PointerData {
+  const Type* pointee_type;  // arena-interned
+
+  auto operator==(const PointerData& other) const -> bool;
+  [[nodiscard]] auto Hash() const -> std::size_t;
+};
+
 // Enum data - stores underlying type info and member list
 struct EnumData {
   size_t bit_width;
@@ -157,14 +167,15 @@ struct Type {
     kPackedStruct,
     kUnpackedStruct,
     kUnpackedUnion,
-    kEnum
+    kEnum,
+    kPointer
   };
 
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
       QueueData, PackedStructData, UnpackedStructData, UnpackedUnionData,
-      EnumData>
+      EnumData, PointerData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -336,6 +347,15 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
+  // Create a pointer type (internal LIR type for address-of operations)
+  // pointee must be arena-interned pointer
+  static auto Pointer(const Type* pointee) -> Type {
+    return Type{
+        .kind = Kind::kPointer,
+        .data = PointerData{.pointee_type = pointee},
+        .alias_name = std::nullopt};
+  }
+
   // Is this a scalar integral (no packed array structure)?
   [[nodiscard]] auto IsScalar() const -> bool {
     if (kind != Kind::kIntegral) {
@@ -404,6 +424,11 @@ struct Type {
     return kind == Kind::kEnum;
   }
 
+  // Is this a pointer type (internal LIR type)?
+  [[nodiscard]] auto IsPointer() const -> bool {
+    return kind == Kind::kPointer;
+  }
+
   // Get struct fields (only valid for packed structs)
   [[nodiscard]] auto GetPackedStructFields() const
       -> const std::vector<PackedStructField>& {
@@ -442,6 +467,14 @@ struct Type {
   // Get enum members (only valid for enum types)
   [[nodiscard]] auto GetEnumMembers() const -> const std::vector<EnumMember>& {
     return GetEnumData().members;
+  }
+
+  // Get pointee type (only valid for pointer types)
+  [[nodiscard]] auto GetPointeeType() const -> const Type& {
+    if (kind != Kind::kPointer) {
+      throw std::runtime_error("Type is not a pointer");
+    }
+    return *std::get<PointerData>(data).pointee_type;
   }
 
   // Get element type for indexing (works for packed, unpacked, and dynamic
@@ -670,6 +703,12 @@ struct Type {
             fmt::format("enum {}[{}]{}", base_name, ed.bit_width, sign_str);
         break;
       }
+      case Kind::kPointer: {
+        const auto& pd = std::get<PointerData>(data);
+        structural_str =
+            fmt::format("Pointer<{}>", pd.pointee_type->ToString());
+        break;
+      }
     }
 
     // Include alias name if present
@@ -840,6 +879,14 @@ inline auto EnumData::Hash() const -> std::size_t {
   return h;
 }
 
+inline auto PointerData::operator==(const PointerData& other) const -> bool {
+  return *pointee_type == *other.pointee_type;
+}
+
+inline auto PointerData::Hash() const -> std::size_t {
+  return pointee_type->Hash();
+}
+
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -866,6 +913,8 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "unpacked_union";
     case Type::Kind::kEnum:
       return "enum";
+    case Type::Kind::kPointer:
+      return "pointer";
   }
   std::abort();
 }

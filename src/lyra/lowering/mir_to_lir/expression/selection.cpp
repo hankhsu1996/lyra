@@ -48,8 +48,7 @@ auto LowerElementSelectExpression(
     auto width_constant = builder.InternConstant(
         Constant::Int(static_cast<int32_t>(element_width)));
     auto width_temp = builder.AllocateTemp("width", Type::Int());
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, width_temp, width_constant));
+    builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
     builder.AddInstruction(
         Instruction::Basic(
             IK::kBinaryMultiply, bit_offset,
@@ -77,9 +76,11 @@ auto LowerElementSelectExpression(
   if (select.value->kind == mir::Expression::Kind::kIdentifier) {
     // Direct variable access: arr[i]
     const auto& array_id = mir::As<mir::IdentifierExpression>(*select.value);
+    const auto* pointee = builder.GetContext()->InternType(value_type);
+    auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+    builder.AddInstruction(Instruction::ResolveVar(ptr, array_id.symbol));
     receiver = builder.AllocateTemp("recv", value_type);
-    builder.AddInstruction(
-        Instruction::Basic(IK::kLoadVariable, receiver, array_id.symbol));
+    builder.AddInstruction(Instruction::Load(receiver, ptr));
   } else {
     // Nested access (e.g., arr[i][j]): recursively lower the array expression
     receiver = LowerExpression(*select.value, builder);
@@ -112,9 +113,7 @@ auto LowerRangeSelectExpression(
   // Create a constant for the LSB shift amount
   auto lsb_temp = builder.AllocateTemp("lsb", Type::Int());
   auto lsb_constant = builder.InternConstant(Constant::Int(lsb));
-  auto lsb_instruction =
-      Instruction::Basic(IK::kConstant, lsb_temp, lsb_constant);
-  builder.AddInstruction(std::move(lsb_instruction));
+  builder.AddInstruction(Instruction::Constant(lsb_temp, lsb_constant));
 
   auto result = builder.AllocateTemp("slice", range.type);
   auto instruction =
@@ -141,8 +140,7 @@ auto LowerIndexedRangeSelectExpression(
     auto offset_temp = builder.AllocateTemp("offset", Type::Int());
     auto offset_constant =
         builder.InternConstant(Constant::Int(indexed.width - 1));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
+    builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
     lsb_temp = builder.AllocateTemp("lsb", Type::Int());
     builder.AddInstruction(
@@ -181,8 +179,7 @@ auto LowerMemberAccessExpression(
     auto index_temp = builder.AllocateTemp("idx", common::Type::Int());
     auto index_constant = builder.InternConstant(
         Constant::Int(static_cast<int32_t>(storage_index)));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, index_temp, index_constant));
+    builder.AddInstruction(Instruction::Constant(index_temp, index_constant));
 
     // Resolve intrinsic for field access
     void* intrinsic_fn =
@@ -200,8 +197,7 @@ auto LowerMemberAccessExpression(
   auto offset_temp = builder.AllocateTemp("offset", Type::Int());
   auto offset_constant = builder.InternConstant(
       Constant::Int(static_cast<int32_t>(member.bit_offset)));
-  builder.AddInstruction(
-      Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
+  builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
   // Use LoadPackedBits to extract the field bits
   auto result = builder.AllocateTemp("field", member.type);
@@ -214,10 +210,12 @@ auto LowerHierarchicalReferenceExpression(
     const mir::HierarchicalReferenceExpression& hier_ref, LirBuilder& builder)
     -> lir::TempRef {
   // Hierarchical reference uses target_symbol directly (flat storage model)
+  const auto* pointee = builder.GetContext()->InternType(hier_ref.type);
+  auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+  builder.AddInstruction(Instruction::ResolveVar(ptr, hier_ref.target_symbol));
+
   auto result = builder.AllocateTemp("hier", hier_ref.type);
-  auto instruction =
-      Instruction::Basic(IK::kLoadVariable, result, hier_ref.target_symbol);
-  builder.AddInstruction(std::move(instruction));
+  builder.AddInstruction(Instruction::Load(result, ptr));
   return result;
 }
 

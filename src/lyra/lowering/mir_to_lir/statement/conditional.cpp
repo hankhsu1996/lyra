@@ -33,9 +33,7 @@ void EmitWarning(const char* message, LirBuilder& builder) {
       Instruction::SystemCall("$warning", std::vector<Operand>{});
   auto format_constant = builder.InternConstant(Constant::String(message));
   auto format_temp = builder.AllocateTemp("warning.fmt", Type::String());
-  builder.AddInstruction(
-      Instruction::Basic(
-          IK::kConstant, format_temp, Operand::Constant(format_constant)));
+  builder.AddInstruction(Instruction::Constant(format_temp, format_constant));
   warning_instr.format_operand = Operand::Temp(format_temp);
   warning_instr.format_string_is_literal = true;
   builder.AddInstruction(std::move(warning_instr));
@@ -59,9 +57,7 @@ auto EvalCaseItemMatch(
       auto mask_constant =
           builder.InternConstant(Constant::UInt(static_cast<uint32_t>(mask)));
       auto mask_temp = builder.AllocateTemp("case.mask", Type::UInt());
-      builder.AddInstruction(
-          Instruction::Basic(
-              IK::kConstant, mask_temp, Operand::Constant(mask_constant)));
+      builder.AddInstruction(Instruction::Constant(mask_temp, mask_constant));
       auto masked_cond = builder.AllocateTemp("case.masked_cond", Type::UInt());
       builder.AddInstruction(
           Instruction::Basic(
@@ -102,8 +98,7 @@ void EmitOverlapCheck(
   auto one_lit = builder.InternConstant(Constant::Int(1));
   auto one_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".one", Type::Int());
-  builder.AddInstruction(
-      Instruction::Basic(IK::kConstant, one_temp, Operand::Constant(one_lit)));
+  builder.AddInstruction(Instruction::Constant(one_temp, one_lit));
 
   auto overlap_cond =
       builder.AllocateTemp(std::string(label_prefix) + ".overlap", Type::Int());
@@ -139,9 +134,7 @@ void EmitNoMatchCheck(
     const char* label_prefix, LirBuilder& builder) {
   auto zero_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".zero", Type::Int());
-  builder.AddInstruction(
-      Instruction::Basic(
-          IK::kConstant, zero_temp, Operand::Constant(zero_lit)));
+  builder.AddInstruction(Instruction::Constant(zero_temp, zero_lit));
 
   auto no_match_cond = builder.AllocateTemp(
       std::string(label_prefix) + ".no_match", Type::Int());
@@ -176,9 +169,7 @@ auto CountMatches(
   auto zero_lit = builder.InternConstant(Constant::Int(0));
   auto count_temp =
       builder.AllocateTemp(std::string(label_prefix) + ".count", Type::Int());
-  builder.AddInstruction(
-      Instruction::Basic(
-          IK::kConstant, count_temp, Operand::Constant(zero_lit)));
+  builder.AddInstruction(Instruction::Constant(count_temp, zero_lit));
 
   for (auto match : match_temps) {
     auto match_as_int = builder.AllocateTemp(
@@ -279,9 +270,7 @@ void LowerConditionalStatement(
     // Track if any branch was taken
     auto zero_lit = builder.InternConstant(Constant::Int(0));
     auto matched_temp = builder.AllocateTemp("if.matched", Type::Int());
-    builder.AddInstruction(
-        Instruction::Basic(
-            IK::kConstant, matched_temp, Operand::Constant(zero_lit)));
+    builder.AddInstruction(Instruction::Constant(matched_temp, zero_lit));
 
     auto one_lit = builder.InternConstant(Constant::Int(1));
 
@@ -304,9 +293,7 @@ void LowerConditionalStatement(
       builder.StartBlock(body_label);
       // Set matched = 1
       auto one_temp = builder.AllocateTemp("if.one", Type::Int());
-      builder.AddInstruction(
-          Instruction::Basic(
-              IK::kConstant, one_temp, Operand::Constant(one_lit)));
+      builder.AddInstruction(Instruction::Constant(one_temp, one_lit));
       builder.AddInstruction(
           Instruction::Basic(IK::kMove, matched_temp, one_temp));
 
@@ -326,9 +313,7 @@ void LowerConditionalStatement(
       builder.StartBlock(else_label);
       // Set matched = 1 (else counts as a match)
       auto one_temp = builder.AllocateTemp("if.one", Type::Int());
-      builder.AddInstruction(
-          Instruction::Basic(
-              IK::kConstant, one_temp, Operand::Constant(one_lit)));
+      builder.AddInstruction(Instruction::Constant(one_temp, one_lit));
       builder.AddInstruction(
           Instruction::Basic(IK::kMove, matched_temp, one_temp));
       LowerStatement(*final_else, builder, lowering_context);
@@ -339,9 +324,7 @@ void LowerConditionalStatement(
       builder.StartBlock(else_label);
 
       auto zero_temp = builder.AllocateTemp("if.zero", Type::Int());
-      builder.AddInstruction(
-          Instruction::Basic(
-              IK::kConstant, zero_temp, Operand::Constant(zero_lit)));
+      builder.AddInstruction(Instruction::Constant(zero_temp, zero_lit));
 
       auto no_match_cond = builder.AllocateTemp("if.no_match", Type::Int());
       builder.AddInstruction(

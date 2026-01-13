@@ -119,6 +119,77 @@ void InstructionContext::StoreVariable(
   }
 }
 
+auto InstructionContext::ReadPointer(const PointerValue& ptr) const
+    -> RuntimeValue {
+  // Phase B: Only VarPointer is supported
+  assert(ptr.IsVar() && "Only VarPointer supported in Phase B");
+  const auto* symbol = ptr.AsVar().symbol;
+
+  // Check function-local variables first (parameters and locals)
+  if (!frame_->call_stack.empty()) {
+    const auto& call_frame = frame_->call_stack.back();
+    auto it = call_frame.local_variables.find(symbol);
+    if (it != call_frame.local_variables.end()) {
+      return it->second;
+    }
+  }
+
+  // Check process-local next
+  if (frame_->variable_table.Exists(symbol)) {
+    return frame_->variable_table.Read(symbol);
+  }
+
+  // Resolve through port bindings (output port -> target signal)
+  auto [target_symbol, target_instance] = ResolveBinding(symbol);
+
+  // Read from flat storage (either resolved target or original symbol)
+  const auto* actual_symbol =
+      (target_instance != nullptr) ? target_symbol : symbol;
+  return simulation_context_->variable_store.Read(actual_symbol);
+}
+
+void InstructionContext::WritePointer(
+    const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking) {
+  // Phase B: Only VarPointer is supported
+  assert(ptr.IsVar() && "Only VarPointer supported in Phase B");
+  const auto* symbol = ptr.AsVar().symbol;
+
+  // Deep copy arrays for value semantics
+  const RuntimeValue actual_value = value.DeepCopy();
+
+  // Check function-local variables first (parameters and locals)
+  if (!frame_->call_stack.empty()) {
+    auto& call_frame = frame_->call_stack.back();
+    auto it = call_frame.local_variables.find(symbol);
+    if (it != call_frame.local_variables.end()) {
+      it->second = actual_value;
+      return;
+    }
+  }
+
+  // Check process-local next
+  if (frame_->variable_table.Exists(symbol)) {
+    frame_->variable_table.Write(symbol, actual_value);
+    return;
+  }
+
+  // Resolve through port bindings (output port -> target signal)
+  auto [target_symbol, target_instance] = ResolveBinding(symbol);
+  const auto* actual_symbol =
+      (target_instance != nullptr) ? target_symbol : symbol;
+
+  // Write to flat storage
+  if (!is_non_blocking) {
+    simulation_context_->variable_store.Write(actual_symbol, actual_value);
+    effect_->RecordVariableModification(actual_symbol);
+  } else {
+    effect_->RecordNbaAction(
+        {.symbol = actual_symbol,
+         .value = actual_value,
+         .array_index = std::nullopt});
+  }
+}
+
 namespace {
 
 /// Compute actual array index after adjusting for lower bound.

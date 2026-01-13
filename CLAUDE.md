@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                    |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns           |
 | `docs/architecture.md`             | Component relationships, data flow                   |
+| `docs/lir-design.md`               | SSA principles, pointer types, instruction design    |
+| `docs/type-system.md`              | Type interning, type kinds                           |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model                   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
 | `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |

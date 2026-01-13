@@ -29,8 +29,7 @@ auto AdjustForNonZeroLower(
   }
   auto offset_temp = builder.AllocateTemp("offset", Type::Int());
   auto offset_constant = builder.InternConstant(Constant::Int(lower_bound));
-  builder.AddInstruction(
-      Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
+  builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
   auto adjusted = builder.AllocateTemp("adj_idx", Type::Int());
   builder.AddInstruction(
@@ -68,8 +67,7 @@ auto ComputeCompositeIndex(
     // composite = composite * inner_count + indices[i]
     auto count_temp = builder.AllocateTemp("cnt", Type::Int());
     auto count_constant = builder.InternConstant(Constant::Int(inner_count));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, count_temp, count_constant));
+    builder.AddInstruction(Instruction::Constant(count_temp, count_constant));
 
     auto mul_temp = builder.AllocateTemp("mul", Type::Int());
     builder.AddInstruction(

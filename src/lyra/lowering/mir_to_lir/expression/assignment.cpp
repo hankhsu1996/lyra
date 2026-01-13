@@ -77,22 +77,31 @@ auto LowerAssignmentExpression(
       // Lower the pop method call (returns element)
       auto element = LowerExpression(*assignment.value, builder);
 
-      // Store element to target
-      auto store_elem = Instruction::StoreVariable(
-          assignment.target.symbol, element, assignment.is_non_blocking);
-      builder.AddInstruction(std::move(store_elem));
+      // Store element to target through pointer
+      const auto& target_type = element->type;
+      const auto* target_pointee =
+          builder.GetContext()->InternType(target_type);
+      auto target_ptr =
+          builder.AllocateTemp("ptr", common::Type::Pointer(target_pointee));
+      builder.AddInstruction(
+          Instruction::ResolveVar(target_ptr, assignment.target.symbol));
+      builder.AddInstruction(Instruction::Store(target_ptr, element));
 
       // Emit delete operation to shrink the queue
+      // First, resolve and load the queue variable
+      const auto* recv_pointee =
+          builder.GetContext()->InternType(receiver.type);
+      auto recv_ptr =
+          builder.AllocateTemp("ptr", common::Type::Pointer(recv_pointee));
+      builder.AddInstruction(Instruction::ResolveVar(recv_ptr, ident.symbol));
       auto recv_temp = builder.AllocateTemp("recv", receiver.type);
-      builder.AddInstruction(
-          Instruction::Basic(IK::kLoadVariable, recv_temp, ident.symbol));
+      builder.AddInstruction(Instruction::Load(recv_temp, recv_ptr));
 
       // Create delete index: 0 for pop_front, size-1 for pop_back
       auto del_idx = builder.AllocateTemp("idx", common::Type::Int());
       if (method_call.method == mir::BuiltinMethod::kPopFront) {
         auto zero_lit = builder.InternConstant(common::Constant::Int(0));
-        builder.AddInstruction(
-            Instruction::Basic(IK::kConstant, del_idx, zero_lit));
+        builder.AddInstruction(Instruction::Constant(del_idx, zero_lit));
       } else {
         // pop_back: delete at size - 1
         auto size_temp = builder.AllocateTemp("sz", common::Type::Int());
@@ -103,8 +112,7 @@ auto LowerAssignmentExpression(
                 size_fn, recv_temp, {}, size_temp, common::Type::Int()));
         auto one_lit = builder.InternConstant(common::Constant::Int(1));
         auto one_temp = builder.AllocateTemp("one", common::Type::Int());
-        builder.AddInstruction(
-            Instruction::Basic(IK::kConstant, one_temp, one_lit));
+        builder.AddInstruction(Instruction::Constant(one_temp, one_lit));
         builder.AddInstruction(
             Instruction::Basic(
                 IK::kBinarySubtract, del_idx,
@@ -119,10 +127,9 @@ auto LowerAssignmentExpression(
           Instruction::IntrinsicCall(
               delete_fn, recv_temp, {del_idx}, del_result, receiver.type));
 
-      // Store modified queue back to variable
-      auto store_queue =
-          Instruction::StoreVariable(ident.symbol, del_result, false);
-      builder.AddInstruction(std::move(store_queue));
+      // Store modified queue back to variable through pointer
+      // (reuse the resolved recv_ptr from above)
+      builder.AddInstruction(Instruction::Store(recv_ptr, del_result));
 
       return element;
     }
@@ -132,9 +139,17 @@ auto LowerAssignmentExpression(
 
   if (assignment.target.IsHierarchical()) {
     // Hierarchical assignment uses target_symbol directly (flat storage model)
-    auto instruction = Instruction::StoreVariable(
-        assignment.target.target_symbol, value, assignment.is_non_blocking);
-    builder.AddInstruction(std::move(instruction));
+    // Use the value's type for the pointer (types should match after implicit
+    // conversion).
+    const auto* pointee = builder.GetContext()->InternType(value->type);
+    auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+    builder.AddInstruction(
+        Instruction::ResolveVar(ptr, assignment.target.target_symbol));
+    if (assignment.is_non_blocking) {
+      builder.AddInstruction(Instruction::StoreNBA(ptr, value));
+    } else {
+      builder.AddInstruction(Instruction::Store(ptr, value));
+    }
     return value;
   }
 
@@ -159,7 +174,7 @@ auto LowerAssignmentExpression(
         auto index_constant = builder.InternConstant(
             common::Constant::Int(static_cast<int32_t>(storage_index)));
         builder.AddInstruction(
-            Instruction::Basic(IK::kConstant, index_temp, index_constant));
+            Instruction::Constant(index_temp, index_constant));
 
         auto instruction = Instruction::StoreElement(
             Operand::Variable(assignment.target.symbol), index_temp, value,
@@ -180,14 +195,16 @@ auto LowerAssignmentExpression(
                         ? 0
                         : field_path[0].index)));
         builder.AddInstruction(
-            Instruction::Basic(
-                IK::kConstant, first_idx_temp, first_idx_constant));
+            Instruction::Constant(first_idx_temp, first_idx_constant));
 
+        const auto* pointee =
+            builder.GetContext()->InternType(*assignment.target.base_type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+        builder.AddInstruction(
+            Instruction::ResolveVar(ptr, assignment.target.symbol));
         auto recv_temp =
             builder.AllocateTemp("recv", *assignment.target.base_type);
-        builder.AddInstruction(
-            Instruction::Basic(
-                IK::kLoadVariable, recv_temp, assignment.target.symbol));
+        builder.AddInstruction(Instruction::Load(recv_temp, ptr));
         auto first_temp = EmitLoadElement(
             recv_temp, first_idx_temp, *assignment.target.base_type,
             field_path[0].type, builder);
@@ -202,8 +219,7 @@ auto LowerAssignmentExpression(
               common::Constant::Int(
                   static_cast<int32_t>(
                       parent_is_union ? 0 : field_path[i].index)));
-          builder.AddInstruction(
-              Instruction::Basic(IK::kConstant, idx_temp, idx_constant));
+          builder.AddInstruction(Instruction::Constant(idx_temp, idx_constant));
 
           auto temp = EmitLoadElement(
               temps.back(), idx_temp, field_path[i - 1].type,
@@ -221,8 +237,7 @@ auto LowerAssignmentExpression(
             common::Constant::Int(
                 static_cast<int32_t>(parent_is_union ? 0 : last_field.index)));
         builder.AddInstruction(
-            Instruction::Basic(
-                IK::kConstant, last_idx_temp, last_idx_constant));
+            Instruction::Constant(last_idx_temp, last_idx_constant));
 
         builder.AddInstruction(
             Instruction::StoreElement(
@@ -240,8 +255,7 @@ auto LowerAssignmentExpression(
               common::Constant::Int(
                   static_cast<int32_t>(
                       gparent_is_union ? 0 : field_path[i].index)));
-          builder.AddInstruction(
-              Instruction::Basic(IK::kConstant, idx_temp, idx_constant));
+          builder.AddInstruction(Instruction::Constant(idx_temp, idx_constant));
 
           builder.AddInstruction(
               Instruction::StoreElement(
@@ -258,8 +272,7 @@ auto LowerAssignmentExpression(
                         ? 0
                         : field_path[0].index)));
         builder.AddInstruction(
-            Instruction::Basic(
-                IK::kConstant, root_idx_temp, root_idx_constant));
+            Instruction::Constant(root_idx_temp, root_idx_constant));
 
         builder.AddInstruction(
             Instruction::StoreElement(
@@ -274,8 +287,7 @@ auto LowerAssignmentExpression(
     auto offset_temp = builder.AllocateTemp("offset", common::Type::Int());
     auto offset_constant = builder.InternConstant(
         common::Constant::Int(static_cast<int32_t>(*first_field.bit_offset)));
-    builder.AddInstruction(
-        Instruction::Basic(IK::kConstant, offset_temp, offset_constant));
+    builder.AddInstruction(Instruction::Constant(offset_temp, offset_constant));
 
     // Create slice type with field width
     auto slice_type = common::Type::IntegralUnsigned(
@@ -304,8 +316,7 @@ auto LowerAssignmentExpression(
       auto width_constant = builder.InternConstant(
           Constant::Int(static_cast<int32_t>(element_width)));
       auto width_temp = builder.AllocateTemp("width", Type::Int());
-      builder.AddInstruction(
-          Instruction::Basic(IK::kConstant, width_temp, width_constant));
+      builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
       builder.AddInstruction(
           Instruction::Basic(
               IK::kBinaryMultiply, bit_offset,
@@ -342,10 +353,12 @@ auto LowerAssignmentExpression(
         const Type* current_type = nullptr;
 
         // First level: load from variable
-        auto recv_temp = builder.AllocateTemp("recv", base_type);
+        const auto* pointee = builder.GetContext()->InternType(base_type);
+        auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
         builder.AddInstruction(
-            Instruction::Basic(
-                IK::kLoadVariable, recv_temp, assignment.target.symbol));
+            Instruction::ResolveVar(ptr, assignment.target.symbol));
+        auto recv_temp = builder.AllocateTemp("recv", base_type);
+        builder.AddInstruction(Instruction::Load(recv_temp, ptr));
         const Type& first_elem_type = base_type.GetElementType();
         auto first_temp = EmitLoadElement(
             recv_temp, index_temps[0], base_type, first_elem_type, builder);
@@ -391,10 +404,20 @@ auto LowerAssignmentExpression(
     return value;
   }
 
-  // Simple variable assignment
-  auto instruction = Instruction::StoreVariable(
-      assignment.target.symbol, value, assignment.is_non_blocking);
-  builder.AddInstruction(std::move(instruction));
+  // Simple variable assignment through pointer
+  // Use base_type if available, otherwise use the value's type.
+  const auto& var_type = assignment.target.base_type.has_value()
+                             ? *assignment.target.base_type
+                             : value->type;
+  const auto* pointee = builder.GetContext()->InternType(var_type);
+  auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
+  builder.AddInstruction(
+      Instruction::ResolveVar(ptr, assignment.target.symbol));
+  if (assignment.is_non_blocking) {
+    builder.AddInstruction(Instruction::StoreNBA(ptr, value));
+  } else {
+    builder.AddInstruction(Instruction::Store(ptr, value));
+  }
   return value;
 }
 

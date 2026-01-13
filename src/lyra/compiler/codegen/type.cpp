@@ -170,6 +170,9 @@ auto Codegen::ToCppType(const common::Type& type) -> std::string {
       }
       return std::format("Bit<{}>", width);
     }
+    case common::Type::Kind::kPointer:
+      throw common::InternalError(
+          "ToCppType", "Pointer<T> is an internal LIR type");
   }
   throw common::InternalError(
       "ToCppType", std::format("unhandled type kind: {}", type.ToString()));

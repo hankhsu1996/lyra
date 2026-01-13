@@ -12,10 +12,10 @@
 namespace lyra::lir {
 
 using SymbolRef = common::SymbolRef;
-using OperandValue = std::variant<TempRef, SymbolRef, ConstantRef, LabelRef>;
+using OperandValue = std::variant<TempRef, SymbolRef, ConstantRef>;
 
 struct Operand {
-  enum class Kind { kTemp, kVariable, kConstant, kLabel };
+  enum class Kind { kTemp, kVariable, kConstant };
 
   Kind kind;
   OperandValue value{};
@@ -37,10 +37,6 @@ struct Operand {
     return Make(Kind::kConstant, constant);
   }
 
-  static auto Label(LabelRef label) -> Operand {
-    return Make(Kind::kLabel, label);
-  }
-
   [[nodiscard]] auto IsTemp() const -> bool {
     return kind == Kind::kTemp;
   }
@@ -51,10 +47,6 @@ struct Operand {
 
   [[nodiscard]] auto IsConstant() const -> bool {
     return kind == Kind::kConstant;
-  }
-
-  [[nodiscard]] auto IsLabel() const -> bool {
-    return kind == Kind::kLabel;
   }
 
   [[nodiscard]] auto AsTempRef() const -> TempRef {
@@ -72,8 +64,6 @@ struct Operand {
             return std::string(v->name);
           } else if constexpr (std::is_same_v<T, ConstantRef>) {
             return v->ToString();
-          } else if constexpr (std::is_same_v<T, LabelRef>) {
-            return *v;
           }
         },
         value);
@@ -116,8 +106,6 @@ struct fmt::formatter<lyra::lir::Operand::Kind> {
         return fmt::format_to(ctx.out(), "variable");
       case K::kConstant:
         return fmt::format_to(ctx.out(), "constant");
-      case K::kLabel:
-        return fmt::format_to(ctx.out(), "label");
     }
     return fmt::format_to(ctx.out(), "unknown");
   }

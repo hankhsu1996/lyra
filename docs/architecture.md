@@ -119,22 +119,9 @@ In the interpreter, **Process** and **Function** are distinct execution models r
 
 **C++ analogy**: A Process is analogous to a C++ coroutine (can suspend and resume), while a Function is analogous to a regular C++ function (runs to completion). The `ProcessFrame` is the interpreter's equivalent of a coroutine frame.
 
-### LIR Design Philosophy
+### LIR Design
 
-LIR is a register-based IR using named temporaries (`%t0`, `%t1`) that maps to LLVM IR's SSA form.
-
-**Two elaboration models:**
-
-| Path                      | Elaboration                    | Variable Access                           |
-| ------------------------- | ------------------------------ | ----------------------------------------- |
-| C++ codegen               | Runtime (C++ builds hierarchy) | `this->u_child_.value` - member traversal |
-| MIR -> LIR -> Interpreter | Compile-time (slang resolves)  | `$symbol` - flat lookup by unique pointer |
-
-**Design guidance:**
-
-- **Variable access**: follow slang's model - symbol is a unique compile-time resolved address
-- **Operations** (arithmetic, control flow): think RISC-V assembly - register-based, explicit data flow
-- **Method calls on complex types** (arrays, queues, classes): think RISC-V function calls - object pointer as `this`, call instruction for methods
+LIR is a register-based IR using Static Single Assignment (SSA) form. See `docs/lir-design.md` for SSA principles, pointer types, and instruction design.
 
 ## Data Flow
 
@@ -162,6 +149,6 @@ Slang's `SourceManager` owns the memory backing source text, and many slang type
 
 ## Interpreter Value Model
 
-See `docs/type-system.md` for the unified type system and value representation.
+See `docs/type-system.md` for type interning and `docs/lir-design.md` for value representation and intrinsic operations.
 
-The interpreter uses a single `Value` type with a pointer to an interned type. Types are allocated through a `TypeArena` and compared by pointer equality. Built-in methods are resolved to function pointers at MIR→LIR lowering time, eliminating runtime string dispatch.
+The interpreter uses `RuntimeValue` with a pointer to an interned type. Types are allocated through a `TypeArena` and compared by pointer equality. Intrinsic methods are resolved to function pointers at MIR→LIR lowering time.

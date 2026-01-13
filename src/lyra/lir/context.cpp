@@ -34,6 +34,11 @@ auto LirContext::InternConstant(const common::Constant& constant)
   return ConstantRef{.ptr = ptr};
 }
 
+auto LirContext::InternType(const common::Type& type) -> const common::Type* {
+  type_storage_.push_back(type);
+  return &type_storage_.back();
+}
+
 auto LirContext::ConstantPtrHash::operator()(const common::Constant* ptr) const
     -> std::size_t {
   return ptr->Hash();
