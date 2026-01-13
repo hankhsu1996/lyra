@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -359,12 +360,22 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         if (args.size() >= 2) {
           // Second arg is output variable
           const auto* output_arg = args[1];
-          if (output_arg->kind == slang::ast::ExpressionKind::NamedValue) {
+          const slang::ast::Expression* actual_output = output_arg;
+          if (output_arg->kind == slang::ast::ExpressionKind::Assignment) {
+            const auto& assign =
+                output_arg->as<slang::ast::AssignmentExpression>();
+            if (assign.right().kind ==
+                slang::ast::ExpressionKind::EmptyArgument) {
+              actual_output = &assign.left();
+            }
+          }
+          if (actual_output->kind == slang::ast::ExpressionKind::NamedValue) {
             const auto& named_value =
-                output_arg->as<slang::ast::NamedValueExpression>();
+                actual_output->as<slang::ast::NamedValueExpression>();
             // Get the type of the output variable for codegen
             auto type_result = LowerType(
-                named_value.symbol.getType(), output_arg->sourceRange, arena);
+                named_value.symbol.getType(), actual_output->sourceRange,
+                arena);
             if (!type_result) {
               throw DiagnosticException(std::move(type_result.error()));
             }
@@ -399,11 +410,22 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           // Second arg: target array (write target) → output_targets
           if (args.size() >= 2) {
             const auto* target_arg = args[1];
-            if (target_arg->kind == slang::ast::ExpressionKind::NamedValue) {
+            // Output arguments are wrapped as Assignment with EmptyArgument
+            const slang::ast::Expression* actual_target = target_arg;
+            if (target_arg->kind == slang::ast::ExpressionKind::Assignment) {
+              const auto& assign =
+                  target_arg->as<slang::ast::AssignmentExpression>();
+              if (assign.right().kind ==
+                  slang::ast::ExpressionKind::EmptyArgument) {
+                actual_target = &assign.left();
+              }
+            }
+            if (actual_target->kind == slang::ast::ExpressionKind::NamedValue) {
               const auto& named_value =
-                  target_arg->as<slang::ast::NamedValueExpression>();
+                  actual_target->as<slang::ast::NamedValueExpression>();
               auto type_result = LowerType(
-                  named_value.symbol.getType(), target_arg->sourceRange, arena);
+                  named_value.symbol.getType(), actual_target->sourceRange,
+                  arena);
               if (!type_result) {
                 throw DiagnosticException(std::move(type_result.error()));
               }
@@ -419,11 +441,29 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
           }
           // Remaining args: start/end addresses (optional inputs) → arguments
           for (size_t i = 2; i < args.size(); ++i) {
-            arguments.push_back(LowerExpression(*args[i], arena));
+            const auto* arg = args[i];
+            // Skip empty arguments (optional args not provided)
+            if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
+              continue;
+            }
+            arguments.push_back(LowerExpression(*arg, arena));
           }
         } else {
           // Other non-display system calls: process all arguments normally
           for (const auto* arg : call.arguments()) {
+            // Skip empty arguments (optional args not provided)
+            if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
+              continue;
+            }
+            // Output arguments are wrapped as Assignment with EmptyArgument
+            if (arg->kind == slang::ast::ExpressionKind::Assignment) {
+              const auto& assign = arg->as<slang::ast::AssignmentExpression>();
+              if (assign.right().kind ==
+                  slang::ast::ExpressionKind::EmptyArgument) {
+                arguments.push_back(LowerExpression(assign.left(), arena));
+                continue;
+              }
+            }
             arguments.push_back(LowerExpression(*arg, arena));
           }
         }
