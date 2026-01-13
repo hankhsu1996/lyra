@@ -571,7 +571,7 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
       } else if (
           syscall.name == "$timeunit_root" ||
           syscall.name == "$timeprecision_root") {
-        out_ << "lyra::sdk::global_precision_power";
+        out_ << "lyra::sdk::GlobalPrecisionPower()";
       } else if (syscall.name == "$signed") {
         EmitExpression(*syscall.arguments[0], kPrecPrimary);
         out_ << ".ToSigned()";

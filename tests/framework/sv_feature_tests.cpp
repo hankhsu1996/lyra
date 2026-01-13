@@ -17,6 +17,7 @@
 #include "lyra/interpreter/interpreter.hpp"
 #include "lyra/interpreter/interpreter_options.hpp"
 #include "lyra/interpreter/interpreter_result.hpp"
+#include "tests/framework/batch_compiler.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/yaml_loader.hpp"
 
@@ -205,22 +206,13 @@ TEST_P(SvFeatureTest, CppCodegen) {
     vars.push_back(var);
   }
 
-  compiler::CompilerResult result;
-  if (test_case.IsMultiFile()) {
-    auto paths = WriteTempFiles(test_case.files, test_case.name);
-    auto sv_paths = FilterSvFiles(paths);
-    ScopedCurrentPath current_dir(
-        std::filesystem::path(paths.front()).parent_path());
-    result =
-        compiler::Compiler::RunFromFiles(sv_paths, vars, test_case.plusargs);
-  } else {
-    result = compiler::Compiler::RunFromSource(
-        test_case.sv_code, vars, test_case.plusargs);
-  }
-  ASSERT_TRUE(result.Success()) << result.ErrorMessage();
+  auto result = BatchCompiler::Instance().RunTest(test_case, vars);
+  ASSERT_TRUE(result.success) << result.error_message;
 
   for (const auto& [var, expected] : test_case.expected_values) {
-    auto actual = result.ReadVariable(var);
+    auto it = result.variables.find(var);
+    ASSERT_TRUE(it != result.variables.end()) << "Variable not found: " << var;
+    auto actual = it->second;
     std::visit(
         [&](auto&& exp_val) {
           using T = std::decay_t<decltype(exp_val)>;
@@ -239,11 +231,11 @@ TEST_P(SvFeatureTest, CppCodegen) {
   }
 
   if (test_case.expected_time.has_value()) {
-    EXPECT_EQ(result.FinalTime(), test_case.expected_time.value());
+    EXPECT_EQ(result.final_time, test_case.expected_time.value());
   }
 
   if (test_case.expected_output.has_value()) {
-    AssertOutput(result.CapturedOutput(), test_case.expected_output.value());
+    AssertOutput(result.captured_output, test_case.expected_output.value());
   }
 }
 

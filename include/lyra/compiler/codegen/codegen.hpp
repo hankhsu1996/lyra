@@ -119,9 +119,11 @@ class Codegen {
       -> std::string;
 
   // Generate packages header content (namespaces with type definitions)
+  // @param emit_file_header If true, emit #pragma once, SDK includes, and type
+  //        aliases at file scope. False for batch compilation.
   auto GeneratePackages(
-      const std::vector<std::unique_ptr<mir::Package>>& packages)
-      -> std::string;
+      const std::vector<std::unique_ptr<mir::Package>>& packages,
+      bool emit_file_header = true) -> std::string;
 
   // Generate complete module header with #pragma once and conditional includes
   // @param module The module to generate code for
@@ -142,6 +144,14 @@ class Codegen {
       const std::vector<std::unique_ptr<mir::Module>>& modules,
       bool has_packages) -> std::vector<ModuleOutput>;
 
+  // Generate batch content for test compilation.
+  // Combines packages and modules into a single string wrapped in namespace.
+  // SDK includes are emitted outside the namespace, body inside.
+  auto GenerateBatchContent(
+      std::string_view namespace_name,
+      const std::vector<std::unique_ptr<mir::Package>>& packages,
+      const std::vector<std::unique_ptr<mir::Module>>& modules) -> std::string;
+
   // Get global precision power after Generate() has been called
   // Used by main.cpp generation to initialize lyra::sdk::global_precision_power
   [[nodiscard]] auto GetGlobalPrecisionPower() const -> int8_t {
@@ -155,6 +165,7 @@ class Codegen {
 
  private:
   void EmitHeader(const mir::Module& module, bool uses_arrays);
+  void EmitUsingDirectives(const mir::Module& module);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
   void EmitParamsStruct(const mir::Module& module);
   void EmitClass(const mir::Module& module);

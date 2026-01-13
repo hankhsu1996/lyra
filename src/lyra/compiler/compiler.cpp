@@ -170,8 +170,8 @@ auto Compiler::CompileAndRun(
   // $timeunit/$timeprecision)
   if (codegen.GetGlobalPrecisionPower() !=
       common::TimeScale::kDefaultPrecisionPower) {
-    main_code << "  lyra::sdk::global_precision_power = "
-              << static_cast<int>(codegen.GetGlobalPrecisionPower()) << ";\n";
+    main_code << "  lyra::sdk::SetGlobalPrecisionPower("
+              << static_cast<int>(codegen.GetGlobalPrecisionPower()) << ");\n";
   }
   main_code << "  " << top.name << " dut;\n";
   // Redirect cout to capture $display output

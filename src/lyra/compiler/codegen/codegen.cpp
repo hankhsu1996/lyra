@@ -100,6 +100,9 @@ auto Codegen::Generate(
   // Emit SDK includes only for first module in file
   if (emit_file_header) {
     EmitHeader(module, UsesArrayType(module));
+  } else {
+    // Even without full header, emit using directives for package imports
+    EmitUsingDirectives(module);
   }
 
   // Emit params struct and primary template forward declaration if requested
@@ -163,7 +166,10 @@ void Codegen::EmitHeader(const mir::Module& module, bool uses_arrays) {
 
   Line("");
 
-  // Emit using directives for package imports
+  EmitUsingDirectives(module);
+}
+
+void Codegen::EmitUsingDirectives(const mir::Module& module) {
   for (const auto& pkg_name : module.wildcard_imports) {
     Line(std::format("using namespace {};", pkg_name));
   }
@@ -747,7 +753,8 @@ void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
 }
 
 auto Codegen::GeneratePackages(
-    const std::vector<std::unique_ptr<mir::Package>>& packages) -> std::string {
+    const std::vector<std::unique_ptr<mir::Package>>& packages,
+    bool emit_file_header) -> std::string {
   out_.str("");
   indent_ = 0;
   used_type_aliases_ = TypeAlias::kNone;
@@ -808,6 +815,10 @@ auto Codegen::GeneratePackages(
     indent_--;
     Line(std::format("}}  // namespace {}", pkg->name));
     Line("");
+  }
+
+  if (!emit_file_header) {
+    return out_.str();
   }
 
   // Generate header with all SDK type aliases at file scope.
@@ -887,6 +898,93 @@ auto Codegen::GenerateAllModules(
   }
 
   return outputs;
+}
+
+auto Codegen::GenerateBatchContent(
+    std::string_view namespace_name,
+    const std::vector<std::unique_ptr<mir::Package>>& packages,
+    const std::vector<std::unique_ptr<mir::Module>>& modules) -> std::string {
+  bool has_packages = !packages.empty();
+
+  // Accumulate used features across all modules
+  CodegenFeature all_features = CodegenFeature::kNone;
+  bool uses_arrays = false;
+
+  // Generate packages content (without file header for batch mode)
+  std::string packages_content;
+  if (has_packages) {
+    packages_content = GeneratePackages(packages, false);
+  }
+
+  // Generate modules content (without file headers)
+  std::ostringstream modules_content;
+  std::unordered_set<std::string> emitted_signatures;
+
+  for (const auto& mir : modules) {
+    if (emitted_signatures.contains(mir->signature)) {
+      continue;
+    }
+    emitted_signatures.insert(mir->signature);
+
+    // Generate without file header (no #pragma once, no includes)
+    std::string content = Generate(*mir, has_packages, false, true);
+    modules_content << content;
+
+    // Accumulate features
+    all_features = all_features | used_features_;
+
+    // Check for arrays
+    auto is_array = [](const auto& item) {
+      return item.variable.type.kind == common::Type::Kind::kUnpackedArray;
+    };
+    if (std::ranges::any_of(mir->variables, is_array) ||
+        std::ranges::any_of(mir->ports, is_array)) {
+      uses_arrays = true;
+    }
+  }
+
+  // Build output: includes outside namespace, body inside
+  std::ostringstream out;
+
+  // System headers
+  if (uses_arrays) {
+    out << "#include <array>\n";
+  }
+  if ((all_features & CodegenFeature::kCmath) != CodegenFeature::kNone) {
+    out << "#include <cmath>\n";
+  }
+  if ((all_features & CodegenFeature::kDisplay) != CodegenFeature::kNone) {
+    out << "#include <iostream>\n";
+    out << "#include <print>\n";
+  }
+
+  // SDK headers
+  out << "#include <lyra/sdk/sdk.hpp>\n";
+  if ((all_features & CodegenFeature::kMemIo) != CodegenFeature::kNone) {
+    out << "#include <lyra/sdk/mem_io.hpp>\n";
+  }
+  if ((all_features & CodegenFeature::kPlusargs) != CodegenFeature::kNone) {
+    out << "#include <lyra/sdk/plusargs.hpp>\n";
+  }
+
+  // SDK type aliases inside namespace when packages exist
+  // This keeps aliases scoped to this test's namespace
+  out << "namespace " << namespace_name << " {\n";
+  if (has_packages) {
+    out << "template <std::size_t N, bool S = false>\n";
+    out << "using Bit = lyra::sdk::Bit<N, S>;\n";
+    out << "using Int = lyra::sdk::Int;\n";
+    out << "using LongInt = lyra::sdk::LongInt;\n";
+    out << "using ShortInt = lyra::sdk::ShortInt;\n";
+    out << "using Byte = lyra::sdk::Byte;\n";
+    out << "using Real = double;\n";
+    out << "using ShortReal = float;\n";
+  }
+  out << packages_content;
+  out << modules_content.str();
+  out << "}  // namespace " << namespace_name << "\n";
+
+  return out.str();
 }
 
 void Codegen::BuildEscapeMap(const mir::Module& module) {
