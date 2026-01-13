@@ -239,6 +239,10 @@ struct Instruction {
   // For kIntrinsicOp: which value-semantic operation to perform
   IntrinsicOpKind op_kind{IntrinsicOpKind::kEnumNext};
 
+  // For kIntrinsicOp: type context required to interpret the operation.
+  // The opcode determines how this type is used (e.g., enum member lookup).
+  std::optional<common::Type> type_context{};
+
   // For enum operations (kIntrinsicOp): step size and member info
   int64_t method_step{1};  // For enum next(N)/prev(N), default 1
   std::vector<EnumMemberInfo> enum_members{};  // Enum member layout
@@ -456,13 +460,14 @@ struct Instruction {
   // operands are pure values, result_type derived from operation
   static auto IntrinsicOp(
       IntrinsicOpKind op, std::vector<Operand> operands, TempRef result,
-      common::Type result_type) -> Instruction {
+      common::Type result_type, common::Type type_context) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kIntrinsicOp,
         .result = result,
         .result_type = std::move(result_type),
         .operands = std::move(operands),
-        .op_kind = op};
+        .op_kind = op,
+        .type_context = std::move(type_context)};
   }
 
   // System call for $monitor with check function name

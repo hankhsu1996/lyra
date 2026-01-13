@@ -94,6 +94,18 @@ auto IntrinsicFieldSet(
     RuntimeValue receiver, std::span<const RuntimeValue> args,
     const lir::Instruction& instr) -> RuntimeValue;
 
+/// Pure enum operations for kIntrinsicOp (O(1) via precomputed index)
+auto ExecuteEnumNext(
+    int64_t value, int64_t step, const common::EnumData& enum_data,
+    size_t bit_width) -> RuntimeValue;
+
+auto ExecuteEnumPrev(
+    int64_t value, int64_t step, const common::EnumData& enum_data,
+    size_t bit_width) -> RuntimeValue;
+
+auto ExecuteEnumName(int64_t value, const common::EnumData& enum_data)
+    -> RuntimeValue;
+
 /// Resolves method intrinsic by receiver type and method name
 auto ResolveIntrinsicMethod(
     common::Type::Kind receiver_kind, std::string_view method_name) -> void*;

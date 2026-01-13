@@ -89,7 +89,9 @@ Some ops fold to constants at lowering (`enum.first()`, `$bits(type)`) and never
 
 ### Type Metadata Access
 
-Intrinsic operations access type metadata through the receiver's type pointer. No special context parameter needed - the receiver carries everything.
+Intrinsic operations access type metadata through type pointers stored in the instruction at lowering time. This follows the principle that all semantic decisions happen at lowering, not runtime.
+
+For `kIntrinsicOp`, the instruction stores a `type_context` field providing the type needed to interpret the operation. This is necessary because `result_type` may differ from the operand type (e.g., `enum.name()` returns string, but needs the enum type for member lookup).
 
 ### Supported Operations
 

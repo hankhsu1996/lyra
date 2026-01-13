@@ -353,7 +353,8 @@ auto LowerMethodCallExpression(
 
     builder.AddInstruction(
         Instruction::IntrinsicOp(
-            op_kind, std::move(operands), result, method_call.type));
+            op_kind, std::move(operands), result, method_call.type,
+            method_call.receiver->type));
     return result;
   }
 

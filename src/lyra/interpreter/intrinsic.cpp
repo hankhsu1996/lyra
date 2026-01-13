@@ -179,6 +179,31 @@ auto IntrinsicEnumName(
   return RuntimeValue::String("");
 }
 
+auto ExecuteEnumNext(
+    int64_t value, int64_t step, const common::EnumData& enum_data,
+    size_t bit_width) -> RuntimeValue {
+  size_t pos = enum_data.GetIndex(value);
+  size_t target = (pos + static_cast<size_t>(step)) % enum_data.members.size();
+  return RuntimeValue::IntegralSigned(
+      enum_data.members[target].value, bit_width);
+}
+
+auto ExecuteEnumPrev(
+    int64_t value, int64_t step, const common::EnumData& enum_data,
+    size_t bit_width) -> RuntimeValue {
+  size_t pos = enum_data.GetIndex(value);
+  size_t n = enum_data.members.size();
+  size_t target = (pos + n - (static_cast<size_t>(step) % n)) % n;
+  return RuntimeValue::IntegralSigned(
+      enum_data.members[target].value, bit_width);
+}
+
+auto ExecuteEnumName(int64_t value, const common::EnumData& enum_data)
+    -> RuntimeValue {
+  size_t pos = enum_data.GetIndex(value);
+  return RuntimeValue::String(enum_data.members[pos].name);
+}
+
 auto IntrinsicArrayIndex(
     RuntimeValue receiver, std::span<const RuntimeValue> args,
     const lir::Instruction& instr) -> RuntimeValue {

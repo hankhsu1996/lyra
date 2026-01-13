@@ -158,6 +158,39 @@ auto HandleControlFlowOps(
       return InstructionResult::Continue();
     }
 
+    case lir::InstructionKind::kIntrinsicOp: {
+      assert(instr.result.has_value());
+      assert(instr.result_type.has_value());
+      assert(instr.type_context.has_value());
+      assert(!instr.operands.empty());
+
+      int64_t value = ctx.GetTemp(instr.operands[0]).AsNarrow().AsInt64();
+      const auto& enum_data = instr.type_context->GetEnumData();
+
+      RuntimeValue result;
+      switch (instr.op_kind) {
+        case lir::IntrinsicOpKind::kEnumNext: {
+          int64_t step = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+          result = ExecuteEnumNext(
+              value, step, enum_data, instr.result_type->GetBitWidth());
+          break;
+        }
+        case lir::IntrinsicOpKind::kEnumPrev: {
+          int64_t step = ctx.GetTemp(instr.operands[1]).AsNarrow().AsInt64();
+          result = ExecuteEnumPrev(
+              value, step, enum_data, instr.result_type->GetBitWidth());
+          break;
+        }
+        case lir::IntrinsicOpKind::kEnumName: {
+          result = ExecuteEnumName(value, enum_data);
+          break;
+        }
+      }
+
+      ctx.WriteTemp(instr.result.value(), std::move(result));
+      return InstructionResult::Continue();
+    }
+
     case lir::InstructionKind::kJump: {
       assert(instr.operands.size() == 1);
       assert(instr.operands[0].IsLabel());
