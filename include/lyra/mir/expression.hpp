@@ -489,7 +489,6 @@ class SystemCallExpression : public Expression {
   // For non-display tasks: general arguments.
   std::vector<std::unique_ptr<Expression>> arguments;
   std::vector<AssignmentTarget> output_targets;
-  bool is_task = false;
 
   // True if format_expr (or first argument for mem_io tasks) is a string
   // literal. For display tasks: enables compile-time format parsing. For
@@ -504,22 +503,19 @@ class SystemCallExpression : public Expression {
 
   SystemCallExpression(
       std::string name, std::vector<std::unique_ptr<Expression>> args,
-      Type return_type, bool is_task = false)
+      Type return_type)
       : Expression(kKindValue, std::move(return_type)),
         name(std::move(name)),
-        arguments(std::move(args)),
-        is_task(is_task) {
+        arguments(std::move(args)) {
   }
 
   SystemCallExpression(
       std::string name, std::vector<std::unique_ptr<Expression>> args,
-      std::vector<AssignmentTarget> outputs, Type return_type,
-      bool is_task = false)
+      std::vector<AssignmentTarget> outputs, Type return_type)
       : Expression(kKindValue, std::move(return_type)),
         name(std::move(name)),
         arguments(std::move(args)),
-        output_targets(std::move(outputs)),
-        is_task(is_task) {
+        output_targets(std::move(outputs)) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {

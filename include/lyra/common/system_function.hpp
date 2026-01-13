@@ -41,6 +41,11 @@ struct SystemFunctionInfo {
   uint8_t max_args;
   SystemFunctionReturnType return_type;
   std::string_view cpp_function;  // Direct C++ mapping (e.g., "std::sin")
+
+  // True = coroutine task (needs co_await). This is different from slang's
+  // SubroutineKind which classifies by return type (void = Task). We need
+  // our own field because slang doesn't know which void calls need coroutine.
+  bool is_task = false;
 };
 
 // Shorter aliases for readability in the table below
@@ -51,9 +56,9 @@ using Ret = SystemFunctionReturnType;
 // clang-format off
 inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>({
   // Simulation Control Tasks
-  {.name = "$finish", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
-  {.name = "$stop", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
-  {.name = "$exit", .category = Cat::kSimControl, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$finish", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = "", .is_task = true},
+  {.name = "$stop", .category = Cat::kSimControl, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = "", .is_task = true},
+  {.name = "$exit", .category = Cat::kSimControl, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = "", .is_task = true},
 
   // Severity Tasks
   {.name = "$fatal", .category = Cat::kSeverity, .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},

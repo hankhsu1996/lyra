@@ -22,7 +22,7 @@ using codegen::GetDisplayVariantProps;
 using codegen::IntegralConstantToString;
 using codegen::kPrecEquality;
 
-void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
+void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   // Simulation control tasks: $finish, $stop, $exit
   if (syscall.name == "$finish" || syscall.name == "$stop" ||
       syscall.name == "$exit") {

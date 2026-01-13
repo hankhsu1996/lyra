@@ -257,14 +257,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
               fmt::format("unsupported system call '{}'", name)));
     }
 
-    // Look up function info from registry (single source of truth)
+    // Use registry (not slang) as source of truth for system call semantics.
     const auto* func_info = common::FindSystemFunction(name);
-
-    // Determine task/function from registry's return type, not slang
-    // (slang may misclassify some system tasks as functions)
-    bool is_task =
-        func_info != nullptr &&
-        func_info->return_type == common::SystemFunctionReturnType::kVoid;
 
     // Handle $timeunit($root), $timeprecision($root),
     // $printtimescale($root) Transform to $timeunit_root /
@@ -476,7 +470,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
     }
     auto syscall = std::make_unique<mir::SystemCallExpression>(
         effective_name, std::move(arguments), std::move(output_targets),
-        *return_type_result, is_task);
+        *return_type_result);
     if (format_expr) {
       syscall->format_expr = std::move(format_expr);
     }
