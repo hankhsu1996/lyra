@@ -45,8 +45,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
         if (storage_is_wide || element_is_wide) {
           // Wide storage or wide element - use InsertSlice
           // Generate: vec = vec.InsertSlice(val, bit_position, element_width)
-          out_ << Escape(assign.target.symbol->name) << " = "
-               << Escape(assign.target.symbol->name) << ".InsertSlice(";
+          out_ << Escape(Name(assign.target.symbol)) << " = "
+               << Escape(Name(assign.target.symbol)) << ".InsertSlice(";
           EmitExpression(*assign.value);
           out_ << ", ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
@@ -57,8 +57,8 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
           // adj_idx)
           used_type_aliases_ |= TypeAlias::kBit;
           uint64_t mask = common::MakeBitMask(element_width);
-          out_ << Escape(assign.target.symbol->name) << " = ("
-               << Escape(assign.target.symbol->name) << " & ~(Bit<"
+          out_ << Escape(Name(assign.target.symbol)) << " = ("
+               << Escape(Name(assign.target.symbol)) << " & ~(Bit<"
                << total_width << ">{" << mask << "ULL} << ";
           EmitCompositePackedBitPosition(assign.target.indices, base_type);
           out_ << ")) | ((Bit<" << total_width << ">{";
@@ -250,7 +250,7 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
       const auto& decl = mir::As<mir::VariableDeclarationStatement>(stmt);
       Indent();
       out_ << ToCppType(decl.variable.type) << " "
-           << Escape(decl.variable.symbol->name);
+           << Escape(Name(decl.variable.symbol));
       if (decl.initializer) {
         out_ << " = ";
         EmitExpression(*decl.initializer);

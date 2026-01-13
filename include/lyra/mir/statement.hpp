@@ -125,7 +125,7 @@ class VariableDeclarationStatement : public Statement {
   [[nodiscard]] auto ToString(int indent) const -> std::string override {
     auto init = initializer ? " = " + initializer->ToString() : "";
     return std::format(
-        "{}var {}{}\n", common::Indent(indent), variable.symbol->name, init);
+        "{}var sym#{}{}\n", common::Indent(indent), variable.symbol, init);
   }
 };
 
@@ -140,8 +140,8 @@ class AssignStatement : public Statement {
   }
 
   // Convenience constructor for simple variable assignment
-  AssignStatement(SymbolRef sym, std::unique_ptr<Expression> v)
-      : Statement(kKindValue), target(std::move(sym)), value(std::move(v)) {
+  AssignStatement(SymbolId sym, std::unique_ptr<Expression> v)
+      : Statement(kKindValue), target(sym), value(std::move(v)) {
   }
 
   void Accept(MirVisitor& visitor) const override {

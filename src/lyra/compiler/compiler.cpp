@@ -107,6 +107,7 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
 auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
     const std::vector<std::unique_ptr<mir::Package>>& packages,
+    const common::SymbolTable& symbol_table,
     const std::vector<std::string>& variables_to_read,
     const std::vector<std::string>& plusargs) -> CompilerResult {
   CompilerResult result;
@@ -118,7 +119,7 @@ auto Compiler::CompileAndRun(
   auto cpp_path = tmp_dir / "test_main.cpp";
   auto bin_path = tmp_dir / "sim";
 
-  Codegen codegen;
+  Codegen codegen(symbol_table);
 
   // Generate packages header if there are packages
   bool has_packages = !packages.empty();
@@ -349,8 +350,8 @@ auto Compiler::RunFromSource(
   auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
   return CompileAndRun(
-      lowering_result.modules, lowering_result.packages, variables_to_read,
-      plusargs);
+      lowering_result.modules, lowering_result.packages,
+      lowering_result.symbol_table, variables_to_read, plusargs);
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
@@ -372,8 +373,8 @@ auto Compiler::RunFromFiles(
   auto lowering_result = lowering::ast_to_mir::AstToMir(*compilation, "");
 
   return CompileAndRun(
-      lowering_result.modules, lowering_result.packages, variables_to_read,
-      plusargs);
+      lowering_result.modules, lowering_result.packages,
+      lowering_result.symbol_table, variables_to_read, plusargs);
 }
 
 }  // namespace lyra::compiler

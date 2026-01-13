@@ -162,7 +162,7 @@ auto HandleControlCalls(const lir::Instruction& instr, InstructionContext& ctx)
     }
 
     int32_t matched = 0;
-    const auto* target_symbol = instr.output_targets[0];
+    auto target_symbol = instr.output_targets[0];
     if (spec == 'd' || spec == 'D') {
       auto result = query.ValuePlusargsInt(format);
       if (result.matched) {

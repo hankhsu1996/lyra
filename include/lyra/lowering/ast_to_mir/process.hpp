@@ -15,6 +15,8 @@ class ProceduralBlockSymbol;
 
 namespace lyra::lowering::ast_to_mir {
 
+class SymbolRegistrar;
+
 // Counters for generating unique process names within a module.
 // Passed by reference so each module maintains independent numbering.
 struct ProcessCounters {
@@ -28,7 +30,7 @@ struct ProcessCounters {
 // Lowers a slang AST ProceduralBlockSymbol into a MIR Process.
 auto LowerProcess(
     const slang::ast::ProceduralBlockSymbol& procedural_block,
-    ProcessCounters& counters, common::TypeArena& arena)
-    -> std::unique_ptr<mir::Process>;
+    ProcessCounters& counters, common::TypeArena& arena,
+    SymbolRegistrar& registrar) -> std::unique_ptr<mir::Process>;
 
 }  // namespace lyra::lowering::ast_to_mir

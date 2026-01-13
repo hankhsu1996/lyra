@@ -14,8 +14,6 @@ class SourceManager;
 
 namespace lyra::interpreter {
 
-using SymbolRef = common::SymbolRef;
-
 // A wrapper that represents the result of running a simulation.
 // Includes the final execution state and the total simulation time.
 // Note: source_manager must be kept alive because symbol->name is a string_view
@@ -29,8 +27,7 @@ struct InterpreterResult {
 
   [[nodiscard]] auto ReadVariable(const std::string& name) const
       -> RuntimeValue {
-    // Read from flat variable store
-    return context->variable_store.ReadFromName(name);
+    return context->variable_store.ReadFromName(name, context->symbol_table);
   }
 
   [[nodiscard]] auto FinalTime() const -> uint64_t {

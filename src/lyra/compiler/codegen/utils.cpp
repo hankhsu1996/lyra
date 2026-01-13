@@ -119,16 +119,17 @@ auto EscapeQualifiedName(std::string_view qualified_name) -> std::string {
 }
 
 auto FormatCppInstancePath(
-    const std::vector<common::HierarchicalPathElement>& elements)
-    -> std::string {
+    const std::vector<common::HierarchicalPathElement>& elements,
+    const common::SymbolNameResolver& resolver) -> std::string {
   std::string path;
   bool need_dot = false;
   for (const auto& elem : elements) {
-    if (!elem.symbol->name.empty()) {
+    auto name = resolver.Name(elem.symbol);
+    if (!name.empty()) {
       if (need_dot) {
         path += ".";
       }
-      path += EscapeIdentifier(elem.symbol->name) + "_";
+      path += EscapeIdentifier(name) + "_";
       need_dot = true;
     }
     if (elem.array_index) {
@@ -259,14 +260,15 @@ void Codegen::EmitSliceShift(
 
 void Codegen::EmitHierarchicalPath(
     const std::vector<mir::HierarchicalPathElement>& instance_path,
-    mir::SymbolRef target_symbol) {
+    common::SymbolId target_symbol) {
   // Emit hierarchical path: u_child.signal -> u_child_.signal
   // Uses common helper for instance path formatting.
-  std::string path = codegen::FormatCppInstancePath(instance_path);
+  std::string path =
+      codegen::FormatCppInstancePath(instance_path, *name_resolver_);
   if (!path.empty()) {
     out_ << path << ".";
   }
-  out_ << Escape(target_symbol->name);
+  out_ << Escape(Name(target_symbol));
 }
 
 void Codegen::EmitHierarchicalPath(const std::vector<std::string>& path) {
@@ -438,12 +440,13 @@ void Codegen::Line(const std::string& text) {
 auto Codegen::GetTriggerPath(const common::Trigger& trigger) const
     -> std::string {
   // Use common helper for instance path formatting
-  std::string path = codegen::FormatCppInstancePath(trigger.instance_path);
+  std::string path =
+      codegen::FormatCppInstancePath(trigger.instance_path, *name_resolver_);
   // Emit variable name
   if (!path.empty()) {
     path += ".";
   }
-  path += Escape(trigger.variable->name);
+  path += Escape(Name(trigger.variable));
   // Append _ for port reference members
   if (port_symbols_.contains(trigger.variable)) {
     path += "_";

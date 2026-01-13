@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
@@ -19,6 +20,7 @@ namespace lyra::lowering::ast_to_mir {
 /// contain pointers to arena-allocated nested types).
 struct LoweringResult {
   common::TypeArena type_arena;
+  common::SymbolTable symbol_table;
   std::vector<std::unique_ptr<mir::Package>> packages;
   std::vector<std::unique_ptr<mir::Module>> modules;
 };

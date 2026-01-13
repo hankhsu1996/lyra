@@ -16,7 +16,8 @@
 
 namespace lyra::lir {
 
-using SymbolRef = common::SymbolRef;
+using SymbolId = common::SymbolId;
+using common::kInvalidSymbolId;
 
 // Forward declaration for callee pointer
 struct Function;
@@ -248,14 +249,14 @@ struct Instruction {
   std::optional<ConstantRef> constant{};  // For kConstant
 
   // Symbol for kResolveVar (dedicated field, not operand)
-  std::optional<SymbolRef> symbol{};
+  std::optional<SymbolId> symbol{};
 
   // Delay amount (dedicated field, not operand)
   std::optional<ConstantRef> delay_amount{};  // For kDelay
 
   // System call name (for kSystemCall)
   std::string system_call_name{};
-  std::vector<SymbolRef> output_targets{};
+  std::vector<SymbolId> output_targets{};
 
   // Function call (for kCall)
   std::string called_function_name{};  // For error messages and ToString()
@@ -351,7 +352,7 @@ struct Instruction {
 
   // Create a pointer to a variable.
   // The result temp's type should be Pointer<T> where T is the variable's type.
-  static auto ResolveVar(TempRef result, SymbolRef sym) -> Instruction {
+  static auto ResolveVar(TempRef result, SymbolId sym) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kResolveVar,
         .result = result,
@@ -661,8 +662,7 @@ struct Instruction {
             "const {}, {}", result.value(), constant->ToString());
 
       case InstructionKind::kResolveVar:
-        return fmt::format(
-            "resolve_var {}, {}", result.value(), (*symbol)->name);
+        return fmt::format("resolve_var {}, sym#{}", result.value(), *symbol);
 
       case InstructionKind::kLoad:
         return fmt::format("load  {}, {}", result.value(), temp_operands[0]);
@@ -918,7 +918,7 @@ struct Instruction {
           if (!args.empty()) {
             args += ", ";
           }
-          args += "out:" + std::string(target->name);
+          args += fmt::format("out:sym#{}", target);
         }
         if (args.empty()) {
           return fmt::format("call  {}", system_call_name);

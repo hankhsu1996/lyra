@@ -39,7 +39,7 @@ struct WaitingProcessInfo {
 struct ProcessInstanceVarKey {
   std::shared_ptr<lir::Process> process;
   std::shared_ptr<HierarchyContext> instance;
-  SymbolRef variable;
+  common::SymbolId variable;
 
   auto operator==(const ProcessInstanceVarKey& other) const -> bool {
     return process.get() == other.process.get() &&
@@ -51,7 +51,7 @@ struct ProcessInstanceVarKeyHash {
   auto operator()(const ProcessInstanceVarKey& key) const -> std::size_t {
     auto h1 = std::hash<lir::Process*>{}(key.process.get());
     auto h2 = std::hash<HierarchyContext*>{}(key.instance.get());
-    auto h3 = std::hash<SymbolRef>{}(key.variable);
+    auto h3 = std::hash<common::SymbolId>{}(key.variable);
     return h1 ^ (h2 << 1) ^ (h3 << 2);
   }
 };
@@ -85,7 +85,7 @@ class TriggerManager {
   void RegisterWaitingProcess(
       const std::shared_ptr<lir::Process>& process,
       const std::shared_ptr<HierarchyContext>& binding_instance,
-      const SymbolRef& variable, common::EdgeKind edge_kind,
+      common::SymbolId variable, common::EdgeKind edge_kind,
       std::size_t block_index, std::size_t instruction_index,
       ProcessHandle handle);
 
@@ -102,7 +102,7 @@ class TriggerManager {
 
   // WaitMap: variable -> set of (process, instance) keys waiting on it
   using WaitMap = std::unordered_map<
-      SymbolRef,
+      common::SymbolId,
       std::unordered_set<ProcessInstanceKey, ProcessInstanceKeyHash>>;
   // WaitSet: (process, instance, variable) -> waiting info
   // Each (process, instance, variable) tuple has its own edge kind
@@ -111,7 +111,7 @@ class TriggerManager {
 
   WaitMap wait_map_;
   WaitSet wait_set_;
-  std::vector<SymbolRef> vars_to_remove_;
+  std::vector<common::SymbolId> vars_to_remove_;
   std::reference_wrapper<SimulationContext> context_;
 };
 

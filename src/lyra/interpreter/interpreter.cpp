@@ -56,16 +56,16 @@ auto Interpreter::RunWithCompilation(
   // If top is empty, returns all modules (for backwards compatibility).
   auto lowering_result = AstToMir(*compilation, top);
 
-  // Lower all modules to LIR
+  // Lower all modules to LIR (pass symbol_table for parameter constant lookup)
   std::vector<std::unique_ptr<lir::Module>> lir_modules;
   lir_modules.reserve(lowering_result.modules.size());
   for (const auto& mir : lowering_result.modules) {
-    lir_modules.push_back(MirToLir(*mir));
+    lir_modules.push_back(MirToLir(*mir, lowering_result.symbol_table));
   }
 
   // Lower packages to LIR (init process + functions)
-  auto pkg_result =
-      lowering::mir_to_lir::LowerPackages(lowering_result.packages);
+  auto pkg_result = lowering::mir_to_lir::LowerPackages(
+      lowering_result.packages, lowering_result.symbol_table);
 
   // Link phase: resolve references to pointers.
   // Must be called after all lowering completes and before simulation starts.
@@ -81,20 +81,23 @@ auto Interpreter::RunWithCompilation(
   }
 
   auto context = std::make_unique<SimulationContext>();
-  // Initialize plusargs from options
   context->plusargs = sdk::PlusargsTable(options.plusargs);
-  // Use multi-module constructor for hierarchical support
-  SimulationRunner runner(
-      lir_modules, lowering_result.packages, pkg_result.init_process,
-      pkg_result.context, std::move(pkg_result.functions), *context);
-  runner.Run();
+  context->symbol_table = std::move(lowering_result.symbol_table);
 
-  return InterpreterResult{
+  InterpreterResult result{
       .compilation = std::move(compilation),
       .context = std::move(context),
-      .lir_context = lir_modules.back()->context,  // Last is top module
-      .top_instance = runner.GetTopInstance(),
+      .lir_context = lir_modules.back()->context,
+      .top_instance = nullptr,
       .source_manager = std::move(source_manager)};
+
+  SimulationRunner runner(
+      lir_modules, lowering_result.packages, pkg_result.init_process,
+      pkg_result.context, std::move(pkg_result.functions), *result.context);
+  runner.Run();
+
+  result.top_instance = runner.GetTopInstance();
+  return result;
 }
 
 }  // namespace lyra::interpreter

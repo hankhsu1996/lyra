@@ -8,6 +8,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/lir/basic_block.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
@@ -27,8 +28,18 @@ enum class ProceduralContext {
 
 class LirBuilder {
  public:
-  explicit LirBuilder(
-      std::string module_name, std::shared_ptr<lir::LirContext> context);
+  // symbol_table is stored as reference - caller must ensure it outlives
+  // the lowering operation. LIR stores only SymbolId, not table pointers.
+  LirBuilder(
+      std::string module_name, std::shared_ptr<lir::LirContext> context,
+      const common::SymbolTable& symbol_table);
+
+  // Non-copyable, non-movable (reference member, short-lived by design)
+  LirBuilder(const LirBuilder&) = delete;
+  auto operator=(const LirBuilder&) -> LirBuilder& = delete;
+  LirBuilder(LirBuilder&&) = delete;
+  auto operator=(LirBuilder&&) -> LirBuilder& = delete;
+  ~LirBuilder() = default;
 
   // Module interface
   void BeginModule();
@@ -78,6 +89,11 @@ class LirBuilder {
     return context_;
   }
 
+  // Symbol table for looking up constant values during lowering
+  [[nodiscard]] auto GetSymbolTable() const -> const common::SymbolTable& {
+    return symbol_table_;
+  }
+
   // Additional helpers
   auto MakeLabel(const std::string& hint) -> lir::LabelRef;
   auto MakeSyntheticFunctionName(const std::string& hint) -> std::string;
@@ -88,6 +104,7 @@ class LirBuilder {
   std::string module_name_;
   std::unique_ptr<lir::Module> module_;
   std::shared_ptr<lir::LirContext> context_;
+  const common::SymbolTable& symbol_table_;
 
   std::vector<std::shared_ptr<lir::Process>> processes_;
   std::shared_ptr<lir::Process> current_process_;

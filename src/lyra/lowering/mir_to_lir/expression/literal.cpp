@@ -1,10 +1,6 @@
 #include "lyra/lowering/ast_to_mir/literal.hpp"
 
 #include <cstdint>
-#include <stdexcept>
-#include <utility>
-
-#include <slang/ast/symbols/ParameterSymbols.h>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
@@ -33,22 +29,14 @@ auto LowerConstantExpression(
 auto LowerIdentifierExpression(
     const mir::IdentifierExpression& identifier, LirBuilder& builder)
     -> lir::TempRef {
-  // Parameter symbols (from constructor params) need to be resolved to their
-  // constant values for the interpreter. In codegen, these are accessed as
-  // class members, but the interpreter uses flat symbol tables.
-  if (identifier.symbol->kind == slang::ast::SymbolKind::Parameter) {
-    const auto& param = identifier.symbol->as<slang::ast::ParameterSymbol>();
-    const auto& cv = param.getValue();
-    auto constant_result = ast_to_mir::ConstantValueToConstant(cv);
-    if (!constant_result) {
-      // Struct-typed parameters can't be converted to simple constants.
-      // This is a limitation of the interpreter for non-template param types.
-      throw std::runtime_error(
-          "Unsupported: unpacked struct/string port parameters not yet "
-          "supported in interpreter. Use 'lyra run' (codegen) instead.");
-    }
+  // Check if the symbol has a constant value (for parameters).
+  // This enables MIR→LIR to emit constant instruction without MIR having
+  // a parameter_value field, keeping MIR clean.
+  const auto& constant_opt =
+      builder.GetSymbolTable().GetConstant(identifier.symbol);
+  if (constant_opt.has_value()) {
     auto result = builder.AllocateTemp("param", identifier.type);
-    auto interned = builder.InternConstant(*constant_result);
+    auto interned = builder.InternConstant(*constant_opt);
     builder.AddInstruction(Instruction::Constant(result, interned));
     return result;
   }

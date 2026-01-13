@@ -19,9 +19,11 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 
@@ -29,9 +31,10 @@ namespace lyra::lowering::ast_to_mir {
 
 auto LowerAssignment(
     const slang::ast::AssignmentExpression& assignment,
-    common::TypeArena& arena) -> std::unique_ptr<mir::Expression> {
+    common::TypeArena& arena, SymbolRegistrar& registrar)
+    -> std::unique_ptr<mir::Expression> {
   const auto& left = assignment.left();
-  auto value = LowerExpression(assignment.right(), arena);
+  auto value = LowerExpression(assignment.right(), arena, registrar);
   auto is_non_blocking = assignment.isNonBlocking();
 
   // Simple variable assignment
@@ -57,7 +60,7 @@ auto LowerAssignment(
     }
 
     return std::make_unique<mir::AssignmentExpression>(
-        &target, std::move(value), is_non_blocking);
+        registrar.Register(&target), std::move(value), is_non_blocking);
   }
 
   // Element select assignment (arr[i] = value or arr[i][j] = value)
@@ -68,7 +71,7 @@ auto LowerAssignment(
 
     while (current->kind == slang::ast::ExpressionKind::ElementSelect) {
       const auto& es = current->as<slang::ast::ElementSelectExpression>();
-      indices.push_back(LowerExpression(es.selector(), arena));
+      indices.push_back(LowerExpression(es.selector(), arena, registrar));
       current = &es.value();
     }
 
@@ -94,7 +97,8 @@ auto LowerAssignment(
     }
 
     mir::AssignmentTarget target(
-        &array_symbol, std::move(indices), *base_type_result);
+        registrar.Register(&array_symbol), std::move(indices),
+        *base_type_result);
     return std::make_unique<mir::AssignmentExpression>(
         std::move(target), std::move(value), is_non_blocking);
   }
@@ -105,16 +109,17 @@ auto LowerAssignment(
     const auto& hier_expr = left.as<slang::ast::HierarchicalValueExpression>();
 
     // Target symbol (the variable being assigned)
-    mir::SymbolRef target_symbol = &hier_expr.symbol;
+    mir::SymbolId target_symbol = registrar.Register(&hier_expr.symbol);
 
     // Instance path with array indices (for path traversal)
     std::vector<mir::HierarchicalPathElement> instance_path;
     for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
       const auto& elem = hier_expr.ref.path[i];
+      auto elem_id = registrar.Register(elem.symbol);
       if (const auto* idx = std::get_if<int32_t>(&elem.selector)) {
-        instance_path.emplace_back(elem.symbol, *idx);
+        instance_path.emplace_back(elem_id, *idx);
       } else {
-        instance_path.emplace_back(elem.symbol);
+        instance_path.emplace_back(elem_id);
       }
     }
 
@@ -203,7 +208,8 @@ auto LowerAssignment(
     // Reverse the field path (we built it from leaf to root)
     std::ranges::reverse(field_path);
 
-    mir::AssignmentTarget target(root_symbol, std::move(field_path), root_type);
+    mir::AssignmentTarget target(
+        registrar.Register(root_symbol), std::move(field_path), root_type);
     return std::make_unique<mir::AssignmentExpression>(
         std::move(target), std::move(value), is_non_blocking);
   }

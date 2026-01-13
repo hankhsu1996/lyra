@@ -8,16 +8,16 @@
 
 namespace lyra::interpreter {
 
-using SymbolRef = common::SymbolRef;
+using SymbolId = common::SymbolId;
 
 // Tracks a variable modification (symbol alone identifies the variable in flat
 // storage)
 struct VariableChangeRecord {
-  SymbolRef symbol;
+  SymbolId symbol;
 };
 
 struct NbaAction {
-  SymbolRef symbol;
+  SymbolId symbol;
   RuntimeValue value;
   std::optional<size_t> array_index;  // For element writes: arr[index] <= value
 };
@@ -31,7 +31,7 @@ class ProcessEffect {
   ProcessEffect() = default;
 
   // Core effect recording methods
-  void RecordVariableModification(const SymbolRef& symbol) {
+  void RecordVariableModification(SymbolId symbol) {
     modified_variables_.push_back({.symbol = symbol});
   }
 

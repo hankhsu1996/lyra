@@ -18,8 +18,8 @@ class Process {
     std::string result = common::Indent(indent) + "process " + name + "\n";
 
     for (const auto& var : variables) {
-      result += common::Indent(indent + 1) + "var " +
-                std::string(var.symbol->name) + "\n";
+      result +=
+          common::Indent(indent + 1) + fmt::format("var sym#{}\n", var.symbol);
     }
 
     if (body) {

@@ -57,13 +57,12 @@ class InstructionContext {
 
   /// Read a variable by symbol (checks function locals, process locals, then
   /// flat storage with port binding resolution).
-  [[nodiscard]] auto ReadVariable(common::SymbolRef symbol) const
+  [[nodiscard]] auto ReadVariable(common::SymbolId symbol) const
       -> RuntimeValue;
 
   /// Store a variable value by symbol with proper scoping and effect tracking.
   void StoreVariable(
-      common::SymbolRef symbol, const RuntimeValue& value,
-      bool is_non_blocking);
+      common::SymbolId symbol, const RuntimeValue& value, bool is_non_blocking);
 
   /// Read value through a pointer (dereference).
   [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;
@@ -82,8 +81,8 @@ class InstructionContext {
 
   /// Resolve symbol through port bindings (output port → parent signal).
   /// Returns (resolved_symbol, target_instance) for flat storage lookup.
-  [[nodiscard]] auto ResolveBinding(common::SymbolRef symbol) const
-      -> std::pair<common::SymbolRef, std::shared_ptr<HierarchyContext>>;
+  [[nodiscard]] auto ResolveBinding(common::SymbolId symbol) const
+      -> std::pair<common::SymbolId, std::shared_ptr<HierarchyContext>>;
 
   // Operation evaluation helpers
 

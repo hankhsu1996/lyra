@@ -40,8 +40,8 @@ InstructionContext::InstructionContext(
       hierarchy_context_(std::move(hierarchy_context)) {
 }
 
-auto InstructionContext::ResolveBinding(common::SymbolRef symbol) const
-    -> std::pair<common::SymbolRef, std::shared_ptr<HierarchyContext>> {
+auto InstructionContext::ResolveBinding(common::SymbolId symbol) const
+    -> std::pair<common::SymbolId, std::shared_ptr<HierarchyContext>> {
   if (hierarchy_context_ != nullptr) {
     return hierarchy_context_->ResolveBinding(symbol);
   }
@@ -52,7 +52,7 @@ auto InstructionContext::GetTemp(lir::TempRef temp) const -> RuntimeValue {
   return temp_table_->Read(temp);
 }
 
-auto InstructionContext::ReadVariable(common::SymbolRef symbol) const
+auto InstructionContext::ReadVariable(common::SymbolId symbol) const
     -> RuntimeValue {
   // Check function-local variables first (parameters and locals)
   if (!frame_->call_stack.empty()) {
@@ -72,13 +72,12 @@ auto InstructionContext::ReadVariable(common::SymbolRef symbol) const
   auto [target_symbol, target_instance] = ResolveBinding(symbol);
 
   // Read from flat storage (either resolved target or original symbol)
-  const auto* actual_symbol =
-      (target_instance != nullptr) ? target_symbol : symbol;
+  auto actual_symbol = (target_instance != nullptr) ? target_symbol : symbol;
   return simulation_context_->variable_store.Read(actual_symbol);
 }
 
 void InstructionContext::StoreVariable(
-    common::SymbolRef symbol, const RuntimeValue& value, bool is_non_blocking) {
+    common::SymbolId symbol, const RuntimeValue& value, bool is_non_blocking) {
   // Deep copy arrays for value semantics
   const RuntimeValue actual_value = value.DeepCopy();
 
@@ -100,8 +99,7 @@ void InstructionContext::StoreVariable(
 
   // Resolve through port bindings (output port -> target signal)
   auto [target_symbol, target_instance] = ResolveBinding(symbol);
-  const auto* actual_symbol =
-      (target_instance != nullptr) ? target_symbol : symbol;
+  auto actual_symbol = (target_instance != nullptr) ? target_symbol : symbol;
 
   // Write to flat storage
   if (!is_non_blocking) {
@@ -152,7 +150,7 @@ auto InstructionContext::ReadPointer(const PointerValue& ptr) const
   }
 
   if (ptr.IsVar()) {
-    const auto* symbol = ptr.AsVar().symbol;
+    auto symbol = ptr.AsVar().symbol;
 
     // Check function-local variables first (parameters and locals)
     if (!frame_->call_stack.empty()) {
@@ -172,8 +170,7 @@ auto InstructionContext::ReadPointer(const PointerValue& ptr) const
     auto [target_symbol, target_instance] = ResolveBinding(symbol);
 
     // Read from flat storage (either resolved target or original symbol)
-    const auto* actual_symbol =
-        (target_instance != nullptr) ? target_symbol : symbol;
+    auto actual_symbol = (target_instance != nullptr) ? target_symbol : symbol;
     return simulation_context_->variable_store.Read(actual_symbol);
   }
 
@@ -251,7 +248,7 @@ void InstructionContext::WritePointer(
   }
 
   if (ptr.IsVar()) {
-    const auto* symbol = ptr.AsVar().symbol;
+    auto symbol = ptr.AsVar().symbol;
 
     // Deep copy arrays for value semantics
     const RuntimeValue actual_value = value.DeepCopy();
@@ -274,8 +271,7 @@ void InstructionContext::WritePointer(
 
     // Resolve through port bindings (output port -> target signal)
     auto [target_symbol, target_instance] = ResolveBinding(symbol);
-    const auto* actual_symbol =
-        (target_instance != nullptr) ? target_symbol : symbol;
+    auto actual_symbol = (target_instance != nullptr) ? target_symbol : symbol;
 
     // Write to flat storage
     if (!is_non_blocking) {
@@ -315,12 +311,12 @@ void InstructionContext::WritePointer(
     }
 
     // Get root symbol for sensitivity tracking
-    const auto* root_symbol = ptr.GetRootSymbol();
+    auto root_symbol = ptr.GetRootSymbol();
 
     if (is_non_blocking) {
       // Resolve through port bindings for the root symbol
       auto [target_symbol, target_instance] = ResolveBinding(root_symbol);
-      const auto* actual_symbol =
+      auto actual_symbol =
           (target_instance != nullptr) ? target_symbol : root_symbol;
       effect_->RecordNbaAction(
           {.symbol = actual_symbol,
@@ -356,12 +352,12 @@ void InstructionContext::WritePointer(
     }
 
     // Get root symbol for sensitivity tracking
-    const auto* root_symbol = ptr.GetRootSymbol();
+    auto root_symbol = ptr.GetRootSymbol();
 
     if (is_non_blocking) {
       // Resolve through port bindings for the root symbol
       auto [target_symbol, target_instance] = ResolveBinding(root_symbol);
-      const auto* actual_symbol =
+      auto actual_symbol =
           (target_instance != nullptr) ? target_symbol : root_symbol;
       // For struct fields, we record NBA without array_index
       // The whole struct will be replaced

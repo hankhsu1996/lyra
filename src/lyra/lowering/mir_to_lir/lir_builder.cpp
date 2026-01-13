@@ -9,6 +9,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lir/basic_block.hpp"
@@ -20,8 +21,11 @@
 namespace lyra::lowering::mir_to_lir {
 
 LirBuilder::LirBuilder(
-    std::string module_name, std::shared_ptr<lir::LirContext> context)
-    : module_name_(std::move(module_name)), context_(std::move(context)) {
+    std::string module_name, std::shared_ptr<lir::LirContext> context,
+    const common::SymbolTable& symbol_table)
+    : module_name_(std::move(module_name)),
+      context_(std::move(context)),
+      symbol_table_(symbol_table) {
 }
 
 void LirBuilder::BeginModule() {

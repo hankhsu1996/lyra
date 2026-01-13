@@ -32,13 +32,14 @@ struct Port {
 // Output port binding: maps child's output port to parent's signal storage.
 // Child writes to output port → actually writes to parent's signal.
 struct OutputBinding {
-  std::string port_name;     // Formal port name in child module
-  common::SymbolRef signal;  // Parent signal symbol reference
+  std::string port_name;  // Formal port name in child
+  common::SymbolId signal{common::kInvalidSymbolId};  // Parent signal symbol
 };
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  common::SymbolRef instance_symbol;     // Instance symbol (for interpreter)
+  common::SymbolId instance_symbol{
+      common::kInvalidSymbolId};         // For interpreter
   std::string instance_name;             // e.g., "counter1" (for codegen)
   std::string module_type;               // e.g., "Counter"
   std::string module_signature;          // e.g., "Counter<8>" (for linking)
@@ -87,7 +88,7 @@ struct Function {
       if (i > 0) {
         out += ", ";
       }
-      out += std::string(parameters[i].variable.symbol->name);
+      out += fmt::format("sym#{}", parameters[i].variable.symbol);
     }
     out += ")\n";
 
@@ -95,7 +96,7 @@ struct Function {
     if (!local_variables.empty()) {
       out += fmt::format("{}  locals:", indent);
       for (const auto& local : local_variables) {
-        out += fmt::format(" {}", local.symbol->name);
+        out += fmt::format(" sym#{}", local.symbol);
       }
       out += "\n";
     }
@@ -114,7 +115,8 @@ struct Function {
 struct Module {
   std::string name;
   std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
-  common::SymbolRef instance_symbol = nullptr;  // Slang instance symbol
+  common::SymbolId instance_symbol{
+      common::kInvalidSymbolId};  // Instance symbol
   std::optional<common::TimeScale> timescale;
   int8_t global_precision_power = common::TimeScale::kDefaultPrecisionPower;
   std::vector<Port> ports;
@@ -175,10 +177,10 @@ struct Module {
         }
         if (mode == common::FormatMode::kContextual) {
           out += fmt::format(
-              "{}{} {}\n", common::Indent(indentation_level + 2), dir_str,
-              port.variable.symbol->name);
+              "{}{} sym#{}\n", common::Indent(indentation_level + 2), dir_str,
+              port.variable.symbol);
         } else {
-          out += fmt::format("  {} {}\n", dir_str, port.variable.symbol->name);
+          out += fmt::format("  {} sym#{}\n", dir_str, port.variable.symbol);
         }
       }
     }
@@ -192,7 +194,7 @@ struct Module {
     }
 
     for (const auto& var : variables) {
-      out += fmt::format("{} ", var.symbol->name);
+      out += fmt::format("sym#{} ", var.symbol);
     }
 
     out += "\n";
@@ -220,8 +222,7 @@ struct Module {
             out += ", ";
           }
           first = false;
-          out +=
-              fmt::format(".{}({})", binding.port_name, binding.signal->name);
+          out += fmt::format(".{}(sym#{})", binding.port_name, binding.signal);
         }
         out += ")\n";
       }

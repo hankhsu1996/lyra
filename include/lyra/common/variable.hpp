@@ -6,7 +6,7 @@
 namespace lyra::common {
 
 struct Variable {
-  SymbolRef symbol{};
+  SymbolId symbol{kInvalidSymbolId};
   Type type;
 };
 

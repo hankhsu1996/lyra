@@ -23,11 +23,13 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/assignment.hpp"
 #include "lyra/lowering/ast_to_mir/call.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 #include "lyra/mir/operators.hpp"
@@ -35,8 +37,8 @@
 namespace lyra::lowering::ast_to_mir {
 
 auto LowerExpression(
-    const slang::ast::Expression& expression, common::TypeArena& arena)
-    -> std::unique_ptr<mir::Expression> {
+    const slang::ast::Expression& expression, common::TypeArena& arena,
+    SymbolRegistrar& registrar) -> std::unique_ptr<mir::Expression> {
   switch (expression.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
       const auto& literal = expression.as<slang::ast::IntegerLiteral>();
@@ -119,9 +121,17 @@ auto LowerExpression(
 
           if (!common::IsTemplateParamType(*param_type_result)) {
             // Constructor params (non-template port params): preserve as
-            // identifier for runtime access via class member
+            // identifier for runtime access via class member (codegen).
+            // Register as parameter with constant value for MIR→LIR.
+            const auto& cv = param.getValue();
+            auto constant_result = ConstantValueToConstant(cv);
+            common::SymbolId sym_id =
+                constant_result
+                    ? registrar.RegisterParameter(
+                          &named_value.symbol, std::move(*constant_result))
+                    : registrar.Register(&named_value.symbol);
             return std::make_unique<mir::IdentifierExpression>(
-                *param_type_result, &named_value.symbol);
+                *param_type_result, sym_id);
           }
         }
 
@@ -142,7 +152,7 @@ auto LowerExpression(
         throw DiagnosticException(std::move(type_result.error()));
       }
       return std::make_unique<mir::IdentifierExpression>(
-          *type_result, &named_value.symbol);
+          *type_result, registrar.Register(&named_value.symbol));
     }
 
     case slang::ast::ExpressionKind::UnaryOp: {
@@ -166,7 +176,8 @@ auto LowerExpression(
                 "increment/decrement requires a variable operand"));
       }
 
-      auto operand = LowerExpression(unary_expression.operand(), arena);
+      auto operand =
+          LowerExpression(unary_expression.operand(), arena, registrar);
 
       return std::make_unique<mir::UnaryExpression>(
           mir_operator, std::move(operand));
@@ -212,8 +223,8 @@ auto LowerExpression(
                     mir_operator)));
       }
 
-      auto left = LowerExpression(binary_expression.left(), arena);
-      auto right = LowerExpression(binary_expression.right(), arena);
+      auto left = LowerExpression(binary_expression.left(), arena, registrar);
+      auto right = LowerExpression(binary_expression.right(), arena, registrar);
 
       // Get result type from slang (important for comparison operators which
       // return 1-bit, not the operand type)
@@ -240,12 +251,12 @@ auto LowerExpression(
                     conditional_expression.conditions.size())));
       }
 
-      auto condition =
-          LowerExpression(*conditional_expression.conditions[0].expr, arena);
+      auto condition = LowerExpression(
+          *conditional_expression.conditions[0].expr, arena, registrar);
       auto true_expression =
-          LowerExpression(conditional_expression.left(), arena);
+          LowerExpression(conditional_expression.left(), arena, registrar);
       auto false_expression =
-          LowerExpression(conditional_expression.right(), arena);
+          LowerExpression(conditional_expression.right(), arena, registrar);
       return std::make_unique<mir::TernaryExpression>(
           std::move(condition), std::move(true_expression),
           std::move(false_expression));
@@ -253,13 +264,15 @@ auto LowerExpression(
 
     case slang::ast::ExpressionKind::Assignment:
       return LowerAssignment(
-          expression.as<slang::ast::AssignmentExpression>(), arena);
+          expression.as<slang::ast::AssignmentExpression>(), arena, registrar);
 
     case slang::ast::ExpressionKind::ElementSelect: {
       const auto& element_select =
           expression.as<slang::ast::ElementSelectExpression>();
-      auto array_value = LowerExpression(element_select.value(), arena);
-      auto selector = LowerExpression(element_select.selector(), arena);
+      auto array_value =
+          LowerExpression(element_select.value(), arena, registrar);
+      auto selector =
+          LowerExpression(element_select.selector(), arena, registrar);
 
       // Get the element type from the array type
       auto type_result =
@@ -282,7 +295,7 @@ auto LowerExpression(
         throw DiagnosticException(std::move(type_result.error()));
       }
 
-      auto value = LowerExpression(range_select.value(), arena);
+      auto value = LowerExpression(range_select.value(), arena, registrar);
       auto selection_kind = range_select.getSelectionKind();
 
       if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
@@ -306,7 +319,7 @@ auto LowerExpression(
       }
 
       // Indexed part-select: a[i+:4] or a[i-:4]
-      auto start = LowerExpression(range_select.left(), arena);
+      auto start = LowerExpression(range_select.left(), arena, registrar);
 
       // Width must be constant
       const auto* width_cv = range_select.right().getConstant();
@@ -328,12 +341,13 @@ auto LowerExpression(
     }
 
     case slang::ast::ExpressionKind::Call:
-      return LowerCall(expression.as<slang::ast::CallExpression>(), arena);
+      return LowerCall(
+          expression.as<slang::ast::CallExpression>(), arena, registrar);
 
     case slang::ast::ExpressionKind::Conversion: {
       const auto& conversion =
           expression.as<slang::ast::ConversionExpression>();
-      auto value = LowerExpression(conversion.operand(), arena);
+      auto value = LowerExpression(conversion.operand(), arena, registrar);
       auto type_result =
           LowerType(*conversion.type, expression.sourceRange, arena);
       if (!type_result) {
@@ -348,16 +362,17 @@ auto LowerExpression(
           expression.as<slang::ast::HierarchicalValueExpression>();
 
       // Target symbol
-      mir::SymbolRef target_symbol = &hier_expr.symbol;
+      mir::SymbolId target_symbol = registrar.Register(&hier_expr.symbol);
 
       // Instance path with array indices (all but last element in path)
       std::vector<mir::HierarchicalPathElement> instance_path;
       for (size_t i = 0; i + 1 < hier_expr.ref.path.size(); ++i) {
         const auto& elem = hier_expr.ref.path[i];
+        auto elem_id = registrar.Register(elem.symbol);
         if (const auto* idx = std::get_if<int32_t>(&elem.selector)) {
-          instance_path.emplace_back(elem.symbol, *idx);
+          instance_path.emplace_back(elem_id, *idx);
         } else {
-          instance_path.emplace_back(elem.symbol);
+          instance_path.emplace_back(elem_id);
         }
       }
 
@@ -391,7 +406,7 @@ auto LowerExpression(
           // Skip zero-width operands (e.g., {0{x}} inside concatenation)
           continue;
         }
-        operands.push_back(LowerExpression(*operand, arena));
+        operands.push_back(LowerExpression(*operand, arena, registrar));
       }
 
       // For queues/dynamic arrays, create an ArrayLiteralExpression
@@ -425,7 +440,7 @@ auto LowerExpression(
       }
 
       // Lower the inner expression (concat() returns the replicated expression)
-      auto operand = LowerExpression(rep_expr.concat(), arena);
+      auto operand = LowerExpression(rep_expr.concat(), arena, registrar);
 
       // Get the result type from slang
       auto type_result =
@@ -441,7 +456,7 @@ auto LowerExpression(
     case slang::ast::ExpressionKind::MemberAccess: {
       const auto& member_access =
           expression.as<slang::ast::MemberAccessExpression>();
-      auto value = LowerExpression(member_access.value(), arena);
+      auto value = LowerExpression(member_access.value(), arena, registrar);
 
       // Get field info from the FieldSymbol
       const auto& field = member_access.member.as<slang::ast::FieldSymbol>();
@@ -523,7 +538,7 @@ auto LowerExpression(
         std::vector<std::unique_ptr<mir::Expression>> operands;
         operands.reserve(elements.size());
         for (const auto* element : elements) {
-          operands.push_back(LowerExpression(*element, arena));
+          operands.push_back(LowerExpression(*element, arena, registrar));
         }
 
         // Check if unpacked struct (use canonical type to handle typedefs)
@@ -552,10 +567,10 @@ auto LowerExpression(
 
     case slang::ast::ExpressionKind::NewArray: {
       const auto& new_array = expression.as<slang::ast::NewArrayExpression>();
-      auto size = LowerExpression(new_array.sizeExpr(), arena);
+      auto size = LowerExpression(new_array.sizeExpr(), arena, registrar);
       std::unique_ptr<mir::Expression> init = nullptr;
       if (new_array.initExpr() != nullptr) {
-        init = LowerExpression(*new_array.initExpr(), arena);
+        init = LowerExpression(*new_array.initExpr(), arena, registrar);
       }
       auto type_result =
           LowerType(*expression.type, expression.sourceRange, arena);

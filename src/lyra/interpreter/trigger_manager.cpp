@@ -2,19 +2,20 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"
 #include "lyra/interpreter/process_handle.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/simulation_runner.hpp"
-#include "lyra/interpreter/variable_table.hpp"
 #include "lyra/lir/process.hpp"
 
 namespace lyra::interpreter {
@@ -22,7 +23,7 @@ namespace lyra::interpreter {
 void TriggerManager::RegisterWaitingProcess(
     const std::shared_ptr<lir::Process>& process,
     const std::shared_ptr<HierarchyContext>& binding_instance,
-    const SymbolRef& variable, common::EdgeKind edge_kind,
+    common::SymbolId variable, common::EdgeKind edge_kind,
     std::size_t block_index, std::size_t instruction_index,
     ProcessHandle handle) {
   // Use binding_instance in the key since that's where we detect changes
@@ -101,10 +102,12 @@ auto TriggerManager::CheckTriggers(
         proc_names.push_back(k.process->name);
       }
 
+      std::string symbol_name =
+          context_.get().symbol_table.GetInfo(modified.symbol).name;
       std::string trace_detail = fmt::format(
           "Trigger on variable '{}': old = {}, new = {}, triggered "
           "process(es) = {}",
-          modified.symbol->name, old_value.ToString(), new_value.ToString(),
+          symbol_name, old_value.ToString(), new_value.ToString(),
           fmt::join(proc_names, ", "));
 
       context_.get().tracer.Record(trace_detail);

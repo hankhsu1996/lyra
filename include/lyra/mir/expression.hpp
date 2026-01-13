@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -24,9 +25,10 @@ namespace lyra::mir {
 
 using Type = common::Type;
 using Constant = common::Constant;
-using SymbolRef = common::SymbolRef;
+using SymbolId = common::SymbolId;
 using HierarchicalPathElement = common::HierarchicalPathElement;
 using common::FormatHierarchicalPath;
+using common::kInvalidSymbolId;
 
 // Re-export from common for convenience
 using BuiltinMethod = common::BuiltinMethod;
@@ -150,14 +152,14 @@ class ConstantExpression : public Expression {
 class IdentifierExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kIdentifier;
-  SymbolRef symbol;
+  SymbolId symbol;
 
-  IdentifierExpression(Type type, SymbolRef symbol)
+  IdentifierExpression(Type type, SymbolId symbol)
       : Expression(kKindValue, type), symbol(symbol) {
   }
 
   [[nodiscard]] auto ToString() const -> std::string override {
-    return fmt::format("{}:{}", symbol->name, type);
+    return fmt::format("sym#{}:{}", symbol, type);
   }
 
   void Accept(MirVisitor& visitor) const override {
@@ -311,34 +313,34 @@ struct FieldPathElement {
 // - Hierarchical reference (path like "child.port" or "gen_block[0].signal")
 // - Struct/union field (symbol + field_path for nested access)
 struct AssignmentTarget {
-  SymbolRef symbol;  // The base variable (nullptr for hierarchical)
+  SymbolId symbol{kInvalidSymbolId};  // The base variable (invalid for hier)
   std::vector<std::unique_ptr<Expression>>
       indices;                    // Indices for element select (empty = simple)
   std::optional<Type> base_type;  // Type of base variable (for element select)
 
   // For hierarchical targets
-  SymbolRef target_symbol{nullptr};
+  SymbolId target_symbol{kInvalidSymbolId};
   std::vector<HierarchicalPathElement> instance_path;
 
   // For struct/union field assignment (supports nested: s.inner.x = value)
   std::vector<FieldPathElement> field_path;  // Empty = not a field assignment
 
   // Constructor for simple variable assignment
-  explicit AssignmentTarget(SymbolRef sym)
-      : symbol(std::move(sym)), indices(), base_type(std::nullopt) {
+  explicit AssignmentTarget(SymbolId sym)
+      : symbol(sym), indices(), base_type(std::nullopt) {
   }
 
   // Constructor for single-index element select assignment
-  AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index)
-      : symbol(std::move(sym)), indices(), base_type(std::nullopt) {
+  AssignmentTarget(SymbolId sym, std::unique_ptr<Expression> index)
+      : symbol(sym), indices(), base_type(std::nullopt) {
     if (index) {
       indices.push_back(std::move(index));
     }
   }
 
   // Constructor for single-index element select assignment with base type
-  AssignmentTarget(SymbolRef sym, std::unique_ptr<Expression> index, Type type)
-      : symbol(std::move(sym)), indices(), base_type(std::move(type)) {
+  AssignmentTarget(SymbolId sym, std::unique_ptr<Expression> index, Type type)
+      : symbol(sym), indices(), base_type(std::move(type)) {
     if (index) {
       indices.push_back(std::move(index));
     }
@@ -346,16 +348,14 @@ struct AssignmentTarget {
 
   // Constructor for multi-index element select assignment with base type
   AssignmentTarget(
-      SymbolRef sym, std::vector<std::unique_ptr<Expression>> idxs, Type type)
-      : symbol(std::move(sym)),
-        indices(std::move(idxs)),
-        base_type(std::move(type)) {
+      SymbolId sym, std::vector<std::unique_ptr<Expression>> idxs, Type type)
+      : symbol(sym), indices(std::move(idxs)), base_type(std::move(type)) {
   }
 
   // Constructor for hierarchical reference assignment
   AssignmentTarget(
-      SymbolRef target, std::vector<HierarchicalPathElement> instances)
-      : symbol(nullptr),
+      SymbolId target, std::vector<HierarchicalPathElement> instances)
+      : symbol(kInvalidSymbolId),
         indices(),
         target_symbol(target),
         instance_path(std::move(instances)) {
@@ -363,17 +363,17 @@ struct AssignmentTarget {
 
   // Constructor for struct/union field assignment (single level)
   AssignmentTarget(
-      SymbolRef sym, std::string name, size_t field_index, Type field_type,
+      SymbolId sym, std::string field_name, size_t field_index, Type field_type,
       Type struct_type)
-      : symbol(std::move(sym)), indices(), base_type(std::move(struct_type)) {
+      : symbol(sym), indices(), base_type(std::move(struct_type)) {
     field_path.emplace_back(
-        std::move(name), field_index, std::move(field_type));
+        std::move(field_name), field_index, std::move(field_type));
   }
 
   // Constructor for struct/union field assignment (nested path)
   AssignmentTarget(
-      SymbolRef sym, std::vector<FieldPathElement> path, Type struct_type)
-      : symbol(std::move(sym)),
+      SymbolId sym, std::vector<FieldPathElement> path, Type struct_type)
+      : symbol(sym),
         indices(),
         base_type(std::move(struct_type)),
         field_path(std::move(path)) {
@@ -388,7 +388,7 @@ struct AssignmentTarget {
   }
 
   [[nodiscard]] auto IsHierarchical() const -> bool {
-    return target_symbol != nullptr;
+    return target_symbol != kInvalidSymbolId;
   }
 
   [[nodiscard]] auto IsStructFieldAssignment() const -> bool {
@@ -399,17 +399,18 @@ struct AssignmentTarget {
     if (IsHierarchical()) {
       return FormatHierarchicalPath(instance_path, target_symbol);
     }
+    std::string base_name = fmt::format("sym#{}", symbol);
     if (IsStructFieldAssignment()) {
-      std::string result = std::string(symbol->name);
+      std::string result = base_name;
       for (const auto& elem : field_path) {
         result += fmt::format(".{}", elem.name);
       }
       return result;
     }
     if (indices.empty()) {
-      return std::string(symbol->name);
+      return base_name;
     }
-    std::string result = std::string(symbol->name);
+    std::string result = base_name;
     for (const auto& idx : indices) {
       result += fmt::format("[{}]", idx->ToString());
     }
@@ -435,9 +436,9 @@ class AssignmentExpression : public Expression {
 
   // Convenience constructor for simple variable assignment
   AssignmentExpression(
-      SymbolRef sym, std::shared_ptr<Expression> v, bool is_non_blocking)
+      SymbolId sym, std::shared_ptr<Expression> v, bool is_non_blocking)
       : Expression(kKindValue, v->type),
-        target(std::move(sym)),
+        target(sym),
         value(std::move(v)),
         is_non_blocking(is_non_blocking) {
   }
@@ -626,11 +627,11 @@ class HierarchicalReferenceExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kHierarchicalReference;
 
-  SymbolRef target_symbol;                             // Target variable symbol
+  SymbolId target_symbol;                              // Target variable symbol
   std::vector<HierarchicalPathElement> instance_path;  // Instance traversal
 
   HierarchicalReferenceExpression(
-      SymbolRef target, std::vector<HierarchicalPathElement> instances,
+      SymbolId target, std::vector<HierarchicalPathElement> instances,
       Type type)
       : Expression(kKindValue, std::move(type)),
         target_symbol(target),

@@ -40,9 +40,9 @@ auto MapPortDirection(mir::PortDirection dir) -> lir::PortDirection {
   throw common::InternalError("mir_to_lir", "unknown port direction");
 }
 
-// Extract symbol reference from a port connection signal expression.
-// For simple identifier expressions, returns the symbol directly.
-auto ExtractSignalSymbol(const mir::Expression& expr) -> common::SymbolRef {
+// Extract symbol ID from a port connection signal expression.
+// For simple identifier expressions, returns the symbol ID directly.
+auto ExtractSignalSymbol(const mir::Expression& expr) -> common::SymbolId {
   if (expr.kind == mir::Expression::Kind::kIdentifier) {
     return mir::As<mir::IdentifierExpression>(expr).symbol;
   }
@@ -54,8 +54,8 @@ auto ExtractSignalSymbol(const mir::Expression& expr) -> common::SymbolRef {
 }  // namespace
 
 auto LowerModule(
-    const mir::Module& module, std::optional<int8_t> global_precision)
-    -> std::unique_ptr<lir::Module> {
+    const mir::Module& module, const common::SymbolTable& symbol_table,
+    std::optional<int8_t> global_precision) -> std::unique_ptr<lir::Module> {
   if (module.name.empty()) {
     throw common::InternalError("mir_to_lir", "module has empty name");
   }
@@ -66,7 +66,7 @@ auto LowerModule(
                        : common::TimeScale::kDefaultPrecisionPower);
 
   auto lir_context = std::make_shared<lir::LirContext>();
-  LirBuilder builder(module.name, lir_context);
+  LirBuilder builder(module.name, lir_context, symbol_table);
   LoweringContext lowering_context;
 
   // Set timescale context for delay scaling
@@ -189,29 +189,9 @@ auto LowerModule(
   return lir_module;
 }
 
-auto LowerModules(std::span<const std::unique_ptr<mir::Module>> modules)
-    -> std::vector<std::unique_ptr<lir::Module>> {
-  // Phase 1: Collect timescales from all modules
-  std::vector<std::optional<common::TimeScale>> timescales;
-  timescales.reserve(modules.size());
-  for (const auto& module : modules) {
-    timescales.push_back(module->timescale);
-  }
-
-  // Phase 2: Compute global precision as finest among all modules
-  int8_t global_precision = common::ComputeGlobalPrecision(timescales);
-
-  // Phase 3: Lower each module with shared global precision
-  std::vector<std::unique_ptr<lir::Module>> result;
-  result.reserve(modules.size());
-  for (const auto& module : modules) {
-    result.push_back(LowerModule(*module, global_precision));
-  }
-  return result;
-}
-
-auto LowerPackages(std::span<const std::unique_ptr<mir::Package>> packages)
-    -> PackageLoweringResult {
+auto LowerPackages(
+    std::span<const std::unique_ptr<mir::Package>> packages,
+    const common::SymbolTable& symbol_table) -> PackageLoweringResult {
   PackageLoweringResult result;
   result.context = std::make_shared<lir::LirContext>();
 
@@ -220,7 +200,7 @@ auto LowerPackages(std::span<const std::unique_ptr<mir::Package>> packages)
   }
 
   // Use a single builder for all package lowering
-  LirBuilder builder("__packages", result.context);
+  LirBuilder builder("__packages", result.context, symbol_table);
   builder.BeginModule();
 
   LoweringContext lowering_context;

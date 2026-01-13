@@ -1,6 +1,5 @@
 #include "lyra/interpreter/variable_table.hpp"
 
-#include <string>
 #include <utility>
 
 #include <fmt/core.h>
@@ -11,57 +10,44 @@
 
 namespace lyra::interpreter {
 
-void ModuleVariableTable::Write(
-    const SymbolRef& symbol, const RuntimeValue& value) {
+void ModuleVariableTable::Write(SymbolId symbol, const RuntimeValue& value) {
   variables_[symbol] = value;
 }
 
-auto ModuleVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
+auto ModuleVariableTable::Read(SymbolId symbol) const -> RuntimeValue {
   auto it = variables_.find(symbol);
   if (it == variables_.end()) {
     throw DiagnosticException(
         Diagnostic::Error(
-            {}, "variable not found: " + std::string(symbol->name)));
+            {}, fmt::format("variable not found: sym#{}", symbol)));
   }
   return it->second;
 }
 
-auto ModuleVariableTable::ReadFromName(const std::string& name) const
-    -> RuntimeValue {
-  for (const auto& [symbol, value] : variables_) {
-    if (std::string(symbol->name) == name) {
-      return value;
-    }
-  }
-  throw DiagnosticException(
-      Diagnostic::Error({}, "variable not found: " + name));
-}
-
-auto ModuleVariableTable::ReadPrevious(const SymbolRef& symbol) const
-    -> RuntimeValue {
+auto ModuleVariableTable::ReadPrevious(SymbolId symbol) const -> RuntimeValue {
   auto it = previous_variables_.find(symbol);
   if (it == previous_variables_.end()) {
     throw DiagnosticException(
         Diagnostic::Error(
             {}, fmt::format(
-                    "cannot read from previous variables: {}", symbol->name)));
+                    "cannot read from previous variables: sym#{}", symbol)));
   }
   return it->second;
 }
 
 void ModuleVariableTable::UpdatePrevious(
-    const SymbolRef& symbol, const RuntimeValue& value) {
+    SymbolId symbol, const RuntimeValue& value) {
   // Deep copy to ensure independent storage for trigger detection.
   // Arrays use shared_ptr internally, so shallow copy would alias.
   previous_variables_[symbol] = value.DeepCopy();
 }
 
-auto ModuleVariableTable::Exists(const SymbolRef& symbol) const -> bool {
+auto ModuleVariableTable::Exists(SymbolId symbol) const -> bool {
   return variables_.contains(symbol);
 }
 
 void ModuleVariableTable::CreateVariable(
-    const SymbolRef& symbol, RuntimeValue initial_value) {
+    SymbolId symbol, RuntimeValue initial_value) {
   variables_[symbol] = std::move(initial_value);
 }
 
@@ -73,38 +59,26 @@ void ModuleVariableTable::InitializeVariable(const common::Variable& variable) {
   }
 }
 
-void ProcessVariableTable::Write(
-    const SymbolRef& symbol, const RuntimeValue& value) {
+void ProcessVariableTable::Write(SymbolId symbol, const RuntimeValue& value) {
   variables_[symbol] = value;
 }
 
-auto ProcessVariableTable::Read(const SymbolRef& symbol) const -> RuntimeValue {
+auto ProcessVariableTable::Read(SymbolId symbol) const -> RuntimeValue {
   auto it = variables_.find(symbol);
   if (it == variables_.end()) {
     throw DiagnosticException(
         Diagnostic::Error(
-            {}, "variable not found: " + std::string(symbol->name)));
+            {}, fmt::format("variable not found: sym#{}", symbol)));
   }
   return it->second;
 }
 
-auto ProcessVariableTable::ReadFromName(const std::string& name) const
-    -> RuntimeValue {
-  for (const auto& [symbol, value] : variables_) {
-    if (std::string(symbol->name) == name) {
-      return value;
-    }
-  }
-  throw DiagnosticException(
-      Diagnostic::Error({}, "variable not found: " + name));
-}
-
-auto ProcessVariableTable::Exists(const SymbolRef& symbol) const -> bool {
+auto ProcessVariableTable::Exists(SymbolId symbol) const -> bool {
   return variables_.contains(symbol);
 }
 
 void ProcessVariableTable::CreateVariable(
-    const SymbolRef& symbol, RuntimeValue initial_value) {
+    SymbolId symbol, RuntimeValue initial_value) {
   variables_[symbol] = std::move(initial_value);
 }
 

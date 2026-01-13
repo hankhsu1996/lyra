@@ -29,9 +29,9 @@ struct CallFrame {
   std::optional<lir::TempRef> return_value_dest;
 
   /// Local variable storage (parameters + locals)
-  /// Key: symbol reference from the function's parameter/local variable
+  /// Key: SymbolId from the function's parameter/local variable
   /// Value: runtime value stored
-  std::unordered_map<common::SymbolRef, RuntimeValue> local_variables;
+  std::unordered_map<common::SymbolId, RuntimeValue> local_variables;
 
   /// Function-local temp storage (for reentrant/recursive calls)
   /// Each call frame has its own temps to avoid conflicts

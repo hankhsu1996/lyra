@@ -12,8 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <slang/ast/Symbol.h>
-
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
@@ -103,6 +102,10 @@ struct ModuleOutput {
 
 class Codegen {
  public:
+  explicit Codegen(const common::SymbolNameResolver& resolver)
+      : name_resolver_(&resolver) {
+  }
+
   // Generate module class code (without header guards or includes)
   // @param skip_sdk_aliases If true, skip emitting SDK type aliases (Bit, Int,
   // etc.)
@@ -172,6 +175,24 @@ class Codegen {
   }
 
  private:
+  const common::SymbolNameResolver* name_resolver_ = nullptr;
+
+  // Helper to look up symbol name
+  [[nodiscard]] auto Name(common::SymbolId id) const -> std::string_view {
+    return name_resolver_->Name(id);
+  }
+
+  // Helper to look up symbol scope kind
+  [[nodiscard]] auto ScopeKind(common::SymbolId id) const
+      -> common::SymbolScopeKind {
+    return name_resolver_->ScopeKind(id);
+  }
+
+  // Helper to look up symbol scope name
+  [[nodiscard]] auto ScopeName(common::SymbolId id) const -> std::string_view {
+    return name_resolver_->ScopeName(id);
+  }
+
   void EmitHeader(const mir::Module& module, bool uses_arrays);
   void EmitUsingDirectives(const mir::Module& module);
   void EmitPrimaryTemplateDecl(const mir::Module& module);
@@ -206,7 +227,7 @@ class Codegen {
       int32_t width_offset);
   void EmitHierarchicalPath(
       const std::vector<mir::HierarchicalPathElement>& instance_path,
-      mir::SymbolRef target_symbol);
+      common::SymbolId target_symbol);
   void EmitHierarchicalPath(const std::vector<std::string>& path);
   void EmitMethodCall(const mir::MethodCallExpression& mc);
   void EmitEnumNavMethod(const mir::MethodCallExpression& mc, bool is_next);
@@ -249,11 +270,11 @@ class Codegen {
   [[nodiscard]] auto DelayMultiplier() const -> uint64_t;
 
   // Track port symbols for identifier emission (append _ suffix)
-  std::unordered_set<const slang::ast::Symbol*> port_symbols_;
+  std::unordered_set<common::SymbolId> port_symbols_;
 
   // Track constructor param symbols for identifier emission (append _ suffix)
   // These are non-template params stored as class members.
-  std::unordered_set<const slang::ast::Symbol*> constructor_param_symbols_;
+  std::unordered_set<common::SymbolId> constructor_param_symbols_;
 
   // Track which type aliases are used for conditional emission
   TypeAlias used_type_aliases_ = TypeAlias::kNone;

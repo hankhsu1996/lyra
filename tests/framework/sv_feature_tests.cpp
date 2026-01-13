@@ -12,8 +12,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/compiler/compiler.hpp"
-#include "lyra/compiler/compiler_result.hpp"
 #include "lyra/interpreter/interpreter.hpp"
 #include "lyra/interpreter/interpreter_options.hpp"
 #include "lyra/interpreter/interpreter_result.hpp"

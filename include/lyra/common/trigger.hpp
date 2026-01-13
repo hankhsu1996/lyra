@@ -13,7 +13,7 @@ enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
 
 struct Trigger {
   EdgeKind edge_kind;
-  SymbolRef variable;
+  SymbolId variable;
   std::vector<HierarchicalPathElement> instance_path;  // Empty for local
 
   [[nodiscard]] auto IsHierarchical() const -> bool {
@@ -21,12 +21,7 @@ struct Trigger {
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
-    std::string path_str;
-    if (!instance_path.empty()) {
-      path_str = FormatHierarchicalPath(instance_path, variable);
-    } else {
-      path_str = variable->name;
-    }
+    std::string path_str = fmt::format("sym#{}", variable);
     switch (edge_kind) {
       case EdgeKind::kAnyChange:
         return path_str;
@@ -40,7 +35,7 @@ struct Trigger {
   }
 
   // Factory for local signal (no hierarchical path)
-  static auto AnyChange(const SymbolRef& variable) -> Trigger {
+  static auto AnyChange(SymbolId variable) -> Trigger {
     return Trigger{
         .edge_kind = EdgeKind::kAnyChange,
         .variable = variable,
@@ -49,8 +44,8 @@ struct Trigger {
 
   // Factory for hierarchical signal
   static auto AnyChange(
-      const SymbolRef& variable,
-      std::vector<HierarchicalPathElement> instance_path) -> Trigger {
+      SymbolId variable, std::vector<HierarchicalPathElement> instance_path)
+      -> Trigger {
     return Trigger{
         .edge_kind = EdgeKind::kAnyChange,
         .variable = variable,

@@ -10,17 +10,19 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
 auto LowerFunction(
-    const slang::ast::SubroutineSymbol& subroutine, common::TypeArena& arena)
-    -> mir::FunctionDefinition {
+    const slang::ast::SubroutineSymbol& subroutine, common::TypeArena& arena,
+    SymbolRegistrar& registrar) -> mir::FunctionDefinition {
   mir::FunctionDefinition func;
   func.name = std::string(subroutine.name);
 
@@ -51,7 +53,7 @@ auto LowerFunction(
     }
 
     common::Variable param_var{
-        .symbol = arg,
+        .symbol = registrar.Register(arg),
         .type = *type_result,
     };
     func.parameters.push_back(
@@ -75,7 +77,7 @@ auto LowerFunction(
       }
 
       common::Variable local_var{
-          .symbol = &var_symbol,
+          .symbol = registrar.Register(&var_symbol),
           .type = *type_result,
       };
       func.local_variables.push_back(std::move(local_var));
@@ -83,7 +85,7 @@ auto LowerFunction(
   }
 
   // Lower the function body
-  func.body = LowerStatement(subroutine.getBody(), arena);
+  func.body = LowerStatement(subroutine.getBody(), arena, registrar);
 
   return func;
 }

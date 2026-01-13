@@ -16,19 +16,21 @@
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/function.hpp"
 #include "lyra/lowering/ast_to_mir/literal.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/package.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
 auto LowerPackage(
-    const slang::ast::PackageSymbol& pkg_symbol, common::TypeArena& arena)
-    -> std::unique_ptr<mir::Package> {
+    const slang::ast::PackageSymbol& pkg_symbol, common::TypeArena& arena,
+    SymbolRegistrar& registrar) -> std::unique_ptr<mir::Package> {
   auto package = std::make_unique<mir::Package>();
   package->name = std::string(pkg_symbol.name);
 
@@ -76,7 +78,7 @@ auto LowerPackage(
       }
 
       common::Variable variable{
-          .symbol = &param_symbol,
+          .symbol = registrar.Register(&param_symbol),
           .type = *type_result,
       };
 
@@ -106,13 +108,13 @@ auto LowerPackage(
       }
 
       common::Variable variable{
-          .symbol = &var_symbol,
+          .symbol = registrar.Register(&var_symbol),
           .type = *type_result,
       };
 
       std::unique_ptr<mir::Expression> init_expr = nullptr;
       if (const auto* initializer = var_symbol.getInitializer()) {
-        init_expr = LowerExpression(*initializer, arena);
+        init_expr = LowerExpression(*initializer, arena, registrar);
       }
 
       package->variables.push_back(
@@ -132,7 +134,7 @@ auto LowerPackage(
                 "tasks in packages are not yet supported"));
       }
 
-      package->functions.push_back(LowerFunction(subroutine, arena));
+      package->functions.push_back(LowerFunction(subroutine, arena, registrar));
     }
   }
 
