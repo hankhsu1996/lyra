@@ -59,17 +59,40 @@ auto MakeUniqueTempDir() -> std::filesystem::path {
 
 auto GetOrCreatePch(const std::filesystem::path& sdk_include)
     -> std::filesystem::path {
+  // Get clang version for cache key
+  auto [clang_status, clang_version] =
+      common::RunSubprocess({"clang++", "--version"});
+  if (clang_status != 0) {
+    return {};  // Can't determine version, skip PCH
+  }
+
+  // Hash clang version (first line contains version info)
+  auto first_line = clang_version.substr(0, clang_version.find('\n'));
+  size_t clang_hash = std::hash<std::string>{}(first_line);
+
+  // Hash SDK header content
+  auto sdk_header = sdk_include / "lyra" / "sdk" / "sdk.hpp";
+  std::ifstream sdk_in(sdk_header);
+  std::string sdk_content(
+      (std::istreambuf_iterator<char>(sdk_in)),
+      std::istreambuf_iterator<char>());
+  size_t sdk_hash = std::hash<std::string>{}(sdk_content);
+
+  // Combined cache key
+  std::ostringstream key;
+  key << std::hex << clang_hash << "_" << sdk_hash;
+
   std::filesystem::path pch_dir;
   const char* test_tmpdir = std::getenv("TEST_TMPDIR");
   if (test_tmpdir != nullptr) {
-    pch_dir = test_tmpdir;
+    pch_dir = std::filesystem::path(test_tmpdir) / "pch" / key.str();
   } else {
-    pch_dir = std::filesystem::temp_directory_path() / "lyra";
+    pch_dir =
+        std::filesystem::temp_directory_path() / "lyra" / "pch" / key.str();
   }
   std::filesystem::create_directories(pch_dir);
 
   auto pch_path = pch_dir / "lyra_batch.pch";
-
   if (std::filesystem::exists(pch_path)) {
     return pch_path;
   }
@@ -187,12 +210,25 @@ void BatchCompiler::EnsurePrepared() {
   std::call_once(preparation_flag_, [this] {
     std::cerr << "Preparing batch compilation...\n";
     std::cerr.flush();
+
+    std::string current_phase = "initialization";
+
     try {
+      current_phase = "yaml_loading";
       CollectTestsForShard();
+
+      current_phase = "batch_preparation";
       PrepareBatch();
+
       prepared_ = true;
     } catch (const std::exception& e) {
-      preparation_error_ = e.what();
+      std::ostringstream error;
+      error << "Batch preparation failed during " << current_phase;
+      error << "\n\nError: " << e.what();
+      if (!batch_dir_.empty()) {
+        error << "\n\nWork directory: " << batch_dir_.string();
+      }
+      preparation_error_ = error.str();
     }
   });
 }
@@ -236,7 +272,13 @@ void BatchCompiler::PrepareBatch() {
   std::filesystem::create_directories(design_dir);
 
   for (size_t i = 0; i < test_cases_.size(); ++i) {
-    prepared_tests_.push_back(PrepareTest(test_cases_[i], i));
+    try {
+      prepared_tests_.push_back(PrepareTest(test_cases_[i], i));
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+          "test " + std::to_string(i) + " (" + test_cases_[i].name +
+          "): " + e.what());
+    }
   }
 
   std::ostringstream combined;
@@ -416,18 +458,21 @@ void BatchCompiler::Compile() {
 
   std::vector<std::string> compile_argv = {"clang++", "-std=c++23"};
   if (!pch_path.empty()) {
-    compile_argv.push_back("-include-pch");
-    compile_argv.push_back(pch_path.string());
+    compile_argv.emplace_back("-include-pch");
+    compile_argv.emplace_back(pch_path.string());
   }
-  compile_argv.push_back("-I" + sdk_include.string());
-  compile_argv.push_back("-I" + batch_dir_.string());
-  compile_argv.push_back("-o");
-  compile_argv.push_back(binary_path_.string());
-  compile_argv.push_back(main_path.string());
+  compile_argv.emplace_back("-I" + sdk_include.string());
+  compile_argv.emplace_back("-I" + batch_dir_.string());
+  compile_argv.emplace_back("-o");
+  compile_argv.emplace_back(binary_path_.string());
+  compile_argv.emplace_back(main_path.string());
 
   auto [status, output] = common::RunSubprocess(compile_argv);
   if (status != 0) {
-    throw std::runtime_error("Batch compilation failed: " + output);
+    std::ostringstream error;
+    error << "clang++ failed (exit " << status << ")\n";
+    error << "Output:\n" << output;
+    throw std::runtime_error(error.str());
   }
 }
 
