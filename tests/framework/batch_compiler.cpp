@@ -375,7 +375,8 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
   main << "      case '\\r': out += \"\\\\r\"; break;\n";
   main << "      case '\\t': out += \"\\\\t\"; break;\n";
   main << "      default:\n";
-  main << "        if (static_cast<unsigned char>(c) < 0x20) {\n";
+  main << "        if (static_cast<unsigned char>(c) < 0x20 || "
+          "static_cast<unsigned char>(c) > 0x7F) {\n";
   main << "          char buf[8];\n";
   main << "          std::snprintf(buf, sizeof(buf), \"\\\\u%04x\", "
           "static_cast<unsigned char>(c));\n";
@@ -404,20 +405,23 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
   main << "  lyra::sdk::TestInvocation invocation{work_dir, plusargs, "
           "argv[0]};\n\n";
 
-  main << "  lyra::sdk::TestResult result;\n";
-  main << "  switch (test_index) {\n";
-
-  for (size_t i = 0; i < prepared_tests_.size(); ++i) {
-    const auto& pt = prepared_tests_[i];
-    main << "    case " << i << ": result = " << pt.namespace_name
-         << "::Run(invocation); break;\n";
+  // Generate function pointer array for O(1) dispatch
+  main << "  using TestFunc = lyra::sdk::TestResult(*)(const "
+          "lyra::sdk::TestInvocation&);\n";
+  main << "  constexpr TestFunc kTests[] = {\n";
+  for (const auto& pt : prepared_tests_) {
+    main << "    " << pt.namespace_name << "::Run,\n";
   }
+  main << "  };\n\n";
 
-  main << "    default:\n";
-  main << "      std::cerr << \"Unknown test index: \" << test_index << "
+  main << "  if (test_index < 0 || static_cast<size_t>(test_index) >= "
+       << prepared_tests_.size() << ") {\n";
+  main << "    std::cerr << \"Unknown test index: \" << test_index << "
           "\"\\n\";\n";
-  main << "      return 1;\n";
-  main << "  }\n\n";
+  main << "    return 1;\n";
+  main << "  }\n";
+  main
+      << "  lyra::sdk::TestResult result = kTests[test_index](invocation);\n\n";
 
   // Write result to JSON file (atomic: write tmp, then rename)
   main << "  std::string tmp_path = work_dir + \"/result.json.tmp\";\n";
