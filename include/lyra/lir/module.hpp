@@ -61,7 +61,7 @@ struct Function {
   std::vector<FunctionParameter> parameters;
   std::vector<common::Variable> local_variables;
   std::vector<std::unique_ptr<BasicBlock>> blocks;
-  LabelRef entry_label{nullptr};  // First block's label
+  std::optional<LabelRef> entry_label;  // First block's label
 
   [[nodiscard]] auto FindBlockIndexByLabel(LabelRef label) const
       -> std::optional<size_t> {

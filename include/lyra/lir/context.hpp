@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <fmt/core.h>
@@ -12,13 +13,16 @@
 
 namespace lyra::lir {
 
+using TempId = uint32_t;
+
 struct TempSymbol {
   std::string name;
   common::Type type;
 };
 
 struct TempRef {
-  TempSymbol* ptr;
+  TempId id;
+  TempSymbol* ptr;  // Cached pointer for fast access
 
   [[nodiscard]] auto operator*() const -> TempSymbol& {
     return *ptr;
@@ -34,12 +38,15 @@ struct TempRef {
 
   [[nodiscard]] friend auto operator==(const TempRef& a, const TempRef& b)
       -> bool {
-    return a.ptr == b.ptr;
+    return a.id == b.id;
   }
 };
 
+using LabelId = uint32_t;
+
 struct LabelRef {
-  const std::string* ptr;
+  LabelId id;
+  const std::string* ptr;  // Cached pointer for fast access
 
   [[nodiscard]] auto operator*() const -> const std::string& {
     return *ptr;
@@ -55,7 +62,7 @@ struct LabelRef {
 
   [[nodiscard]] friend auto operator==(const LabelRef& a, const LabelRef& b)
       -> bool {
-    return a.ptr == b.ptr;
+    return a.id == b.id;
   }
 };
 
@@ -89,7 +96,8 @@ class LirContext {
 
  private:
   std::deque<TempSymbol> temp_storage_;
-  std::unordered_set<std::string> label_pool_;
+  std::deque<std::string> label_storage_;
+  std::unordered_map<std::string, LabelId> label_index_;
   std::deque<common::Constant> constant_storage_;
   std::deque<common::Type> type_storage_;
 
@@ -113,14 +121,14 @@ namespace std {
 template <>
 struct hash<lyra::lir::TempRef> {
   auto operator()(const lyra::lir::TempRef& ref) const -> std::size_t {
-    return std::hash<void*>{}(ref.ptr);
+    return std::hash<lyra::lir::TempId>{}(ref.id);
   }
 };
 
 template <>
 struct hash<lyra::lir::LabelRef> {
   auto operator()(const lyra::lir::LabelRef& ref) const -> std::size_t {
-    return std::hash<const void*>{}(ref.ptr);
+    return std::hash<lyra::lir::LabelId>{}(ref.id);
   }
 };
 

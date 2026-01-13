@@ -11,13 +11,20 @@
 namespace lyra::lir {
 
 auto LirContext::AllocateTemp(std::string name, common::Type type) -> TempRef {
+  auto id = static_cast<TempId>(temp_storage_.size());
   temp_storage_.push_back(TempSymbol{.name = std::move(name), .type = type});
-  return TempRef{.ptr = &temp_storage_.back()};
+  return TempRef{.id = id, .ptr = &temp_storage_.back()};
 }
 
 auto LirContext::InternLabel(std::string_view name) -> LabelRef {
-  auto [it, _] = label_pool_.emplace(name);
-  return LabelRef{.ptr = &*it};
+  auto it = label_index_.find(std::string(name));
+  if (it != label_index_.end()) {
+    return LabelRef{.id = it->second, .ptr = &label_storage_[it->second]};
+  }
+  auto id = static_cast<LabelId>(label_storage_.size());
+  label_storage_.emplace_back(name);
+  label_index_.emplace(label_storage_.back(), id);
+  return LabelRef{.id = id, .ptr = &label_storage_.back()};
 }
 
 auto LirContext::InternConstant(const common::Constant& constant)
