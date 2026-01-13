@@ -4,10 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace lyra::sdk {
@@ -55,6 +57,15 @@ struct TestInvocation {
   std::string_view work_dir;
   std::span<const std::string_view> plusargs;
   std::string_view exe;  // For diagnostics
+};
+
+/// Output from a test run - returned by the generated Run() entry point.
+/// Contains all simulation results so the runner doesn't need SDK knowledge.
+struct TestResult {
+  std::string captured_output;
+  uint64_t final_time = 0;
+  int exit_code = 0;
+  std::map<std::string, std::variant<int64_t, double>> variables;
 };
 
 /// All mutable simulation state that needs to be scoped per-test.

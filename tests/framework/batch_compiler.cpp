@@ -19,7 +19,6 @@
 
 #include <slang/ast/Compilation.h>
 
-#include "lyra/common/timescale.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
@@ -319,8 +318,9 @@ auto BatchCompiler::PrepareTest(const TestCase& test, size_t index)
 
   compiler::Codegen codegen;
 
-  pt.wrapped_code = codegen.GenerateBatchContent(
-      pt.namespace_name, lowering_result.packages, lowering_result.modules);
+  pt.wrapped_code = codegen.GenerateBatchTestContent(
+      pt.namespace_name, lowering_result.packages, lowering_result.modules,
+      pt.top_module_name, pt.variables);
   pt.global_precision_power = codegen.GetGlobalPrecisionPower();
 
   return pt;
@@ -329,14 +329,12 @@ auto BatchCompiler::PrepareTest(const TestCase& test, size_t index)
 auto BatchCompiler::GenerateBatchMain() -> std::string {
   std::ostringstream main;
 
-  main << "#include <cstdlib>\n";
-  main << "#include <filesystem>\n";
   main << "#include <iomanip>\n";
   main << "#include <iostream>\n";
-  main << "#include <sstream>\n";
   main << "#include <string>\n";
-  main << "#include <lyra/sdk/plusargs.hpp>\n";
-  main << "#include <lyra/sdk/scheduler.hpp>\n";
+  main << "#include <string_view>\n";
+  main << "#include <vector>\n";
+  main << "#include <lyra/sdk/runtime_config.hpp>\n";
   main << "#include \"design/all_tests.hpp\"\n\n";
 
   main << "int main(int argc, char* argv[]) {\n";
@@ -345,48 +343,46 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
           "[+plusargs...]\\n\";\n";
   main << "    return 1;\n";
   main << "  }\n\n";
+
   main << "  int test_index = std::stoi(argv[1]);\n";
-  main << "  std::filesystem::current_path(argv[2]);\n";
-  // InitPlusargs skips argv[0] (assumes program name), so pass argv+2 so the
-  // work_dir is skipped and plusargs start at index 1 of the span.
-  main << "  lyra::sdk::InitPlusargs({argv + 2, "
-          "static_cast<size_t>(argc - 2)});\n\n";
+  main << "  std::string_view work_dir = argv[2];\n";
+  main << "  std::vector<std::string_view> plusargs;\n";
+  main << "  for (int i = 3; i < argc; ++i) {\n";
+  main << "    plusargs.emplace_back(argv[i]);\n";
+  main << "  }\n";
+  main << "  lyra::sdk::TestInvocation invocation{work_dir, plusargs, "
+          "argv[0]};\n\n";
+
+  main << "  lyra::sdk::TestResult result;\n";
   main << "  switch (test_index) {\n";
 
   for (size_t i = 0; i < prepared_tests_.size(); ++i) {
     const auto& pt = prepared_tests_[i];
-    main << "    case " << i << ": {\n";
-    // Set global precision for this test (needed for $printtimescale($root))
-    if (pt.global_precision_power !=
-        common::TimeScale::kDefaultPrecisionPower) {
-      main << "      lyra::sdk::SetGlobalPrecisionPower("
-           << static_cast<int>(pt.global_precision_power) << ");\n";
-    }
-    main << "      " << pt.namespace_name << "::" << pt.top_module_name
-         << " dut;\n";
-    main << "      std::ostringstream captured;\n";
-    main << "      auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
-    main << "      auto result = dut.Run();\n";
-    main << "      std::cout.rdbuf(old_buf);\n";
-    main << "      std::cout << \"__output__=\" << captured.str() << "
-            "\"__end_output__\" << std::endl;\n";
-    for (const auto& var : pt.variables) {
-      main << "      std::cout << \"" << var << "=\" << std::showpoint << dut."
-           << var << " << std::noshowpoint << std::endl;\n";
-    }
-    main << "      std::cout << \"__time__=\" << result.final_time << "
-            "std::endl;\n";
-    main << "      std::cout << \"__stopped__=\" << result.exit_code << "
-            "std::endl;\n";
-    main << "      break;\n";
-    main << "    }\n";
+    main << "    case " << i << ": result = " << pt.namespace_name
+         << "::Run(invocation); break;\n";
   }
 
   main << "    default:\n";
   main << "      std::cerr << \"Unknown test index: \" << test_index << "
           "\"\\n\";\n";
   main << "      return 1;\n";
+  main << "  }\n\n";
+
+  // Output result in parseable format
+  main << "  std::cout << \"__output__=\" << result.captured_output << "
+          "\"__end_output__\" << std::endl;\n";
+  main << "  for (const auto& [name, value] : result.variables) {\n";
+  main << "    std::cout << name << \"=\";\n";
+  main << "    if (std::holds_alternative<double>(value)) {\n";
+  main << "      std::cout << std::showpoint << std::get<double>(value) << "
+          "std::noshowpoint;\n";
+  main << "    } else {\n";
+  main << "      std::cout << std::get<int64_t>(value);\n";
+  main << "    }\n";
+  main << "    std::cout << std::endl;\n";
   main << "  }\n";
+  main << "  std::cout << \"__time__=\" << result.final_time << std::endl;\n";
+  main << "  std::cout << \"__stopped__=\" << result.exit_code << std::endl;\n";
   main << "  return 0;\n";
   main << "}\n";
 

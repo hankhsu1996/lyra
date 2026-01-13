@@ -144,13 +144,21 @@ class Codegen {
       const std::vector<std::unique_ptr<mir::Module>>& modules,
       bool has_packages) -> std::vector<ModuleOutput>;
 
-  // Generate batch content for test compilation.
-  // Combines packages and modules into a single string wrapped in namespace.
-  // SDK includes are emitted outside the namespace, body inside.
-  auto GenerateBatchContent(
+  // Generate batch test content with Run() entry point.
+  // Combines packages and modules into a namespace, plus a Run(TestInvocation)
+  // function that handles RuntimeScope setup, simulation, and result
+  // collection.
+  // @param namespace_name Unique namespace for this test (e.g., "test_0")
+  // @param packages Package definitions
+  // @param modules Module definitions (top module is last)
+  // @param top_module_name Name of the top-level module to instantiate
+  // @param variables_to_read Variable names to read from DUT after simulation
+  auto GenerateBatchTestContent(
       std::string_view namespace_name,
       const std::vector<std::unique_ptr<mir::Package>>& packages,
-      const std::vector<std::unique_ptr<mir::Module>>& modules) -> std::string;
+      const std::vector<std::unique_ptr<mir::Module>>& modules,
+      std::string_view top_module_name,
+      const std::vector<std::string>& variables_to_read) -> std::string;
 
   // Get global precision power after Generate() has been called
   // Used by main.cpp generation to initialize lyra::sdk::global_precision_power

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -900,10 +901,12 @@ auto Codegen::GenerateAllModules(
   return outputs;
 }
 
-auto Codegen::GenerateBatchContent(
+auto Codegen::GenerateBatchTestContent(
     std::string_view namespace_name,
     const std::vector<std::unique_ptr<mir::Package>>& packages,
-    const std::vector<std::unique_ptr<mir::Module>>& modules) -> std::string {
+    const std::vector<std::unique_ptr<mir::Module>>& modules,
+    std::string_view top_module_name,
+    const std::vector<std::string>& variables_to_read) -> std::string {
   bool has_packages = !packages.empty();
 
   // Accumulate used features across all modules
@@ -920,7 +923,13 @@ auto Codegen::GenerateBatchContent(
   std::ostringstream modules_content;
   std::unordered_set<std::string> emitted_signatures;
 
+  // Find the top module for variable type lookup
+  const mir::Module* top_module = nullptr;
   for (const auto& mir : modules) {
+    if (mir->name == top_module_name) {
+      top_module = mir.get();
+    }
+
     if (emitted_signatures.contains(mir->signature)) {
       continue;
     }
@@ -943,6 +952,17 @@ auto Codegen::GenerateBatchContent(
     }
   }
 
+  // Build variable type map for Run() generation
+  std::unordered_map<std::string, common::Type> var_types;
+  if (top_module != nullptr) {
+    for (const auto& port : top_module->ports) {
+      var_types[std::string(port.variable.symbol->name)] = port.variable.type;
+    }
+    for (const auto& var : top_module->variables) {
+      var_types[std::string(var.variable.symbol->name)] = var.variable.type;
+    }
+  }
+
   // Build output: includes outside namespace, body inside
   std::ostringstream out;
 
@@ -953,19 +973,21 @@ auto Codegen::GenerateBatchContent(
   if ((all_features & CodegenFeature::kCmath) != CodegenFeature::kNone) {
     out << "#include <cmath>\n";
   }
+  // Always need iostream/sstream for Run() output capture
+  out << "#include <filesystem>\n";
+  out << "#include <iostream>\n";
   if ((all_features & CodegenFeature::kDisplay) != CodegenFeature::kNone) {
-    out << "#include <iostream>\n";
     out << "#include <print>\n";
   }
+  out << "#include <sstream>\n";
 
   // SDK headers
   out << "#include <lyra/sdk/sdk.hpp>\n";
   if ((all_features & CodegenFeature::kMemIo) != CodegenFeature::kNone) {
     out << "#include <lyra/sdk/mem_io.hpp>\n";
   }
-  if ((all_features & CodegenFeature::kPlusargs) != CodegenFeature::kNone) {
-    out << "#include <lyra/sdk/plusargs.hpp>\n";
-  }
+  // Always need plusargs for Run()
+  out << "#include <lyra/sdk/plusargs.hpp>\n";
 
   // SDK type aliases inside namespace when packages exist
   // This keeps aliases scoped to this test's namespace
@@ -982,6 +1004,53 @@ auto Codegen::GenerateBatchContent(
   }
   out << packages_content;
   out << modules_content.str();
+
+  // Generate Run(TestInvocation) entry point
+  out << "\n";
+  out << "inline auto Run(const lyra::sdk::TestInvocation& inv) "
+         "-> lyra::sdk::TestResult {\n";
+  out << "  lyra::sdk::RuntimeConfig config;\n";
+  out << "  config.global_precision_power = "
+      << static_cast<int>(global_precision_power_) << ";\n";
+  out << "  lyra::sdk::RuntimeScope scope(config);\n";
+  out << "\n";
+  out << "  std::filesystem::current_path(inv.work_dir);\n";
+  out << "  std::vector<std::string> plusargs;\n";
+  out << "  for (auto arg : inv.plusargs) {\n";
+  out << "    plusargs.emplace_back(arg);\n";
+  out << "  }\n";
+  out << "  lyra::sdk::InitPlusargs(std::move(plusargs));\n";
+  out << "\n";
+  out << "  " << top_module_name << " dut;\n";
+  out << "  std::ostringstream captured;\n";
+  out << "  auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
+  out << "  auto sim_result = dut.Run();\n";
+  out << "  std::cout.rdbuf(old_buf);\n";
+  out << "\n";
+  out << "  lyra::sdk::TestResult result;\n";
+  out << "  result.captured_output = captured.str();\n";
+  out << "  result.final_time = sim_result.final_time;\n";
+  out << "  result.exit_code = sim_result.exit_code;\n";
+
+  // Emit variable reads with proper type casts
+  for (const auto& var_name : variables_to_read) {
+    auto it = var_types.find(var_name);
+    if (it != var_types.end()) {
+      const auto& type = it->second;
+      if (type.kind == common::Type::Kind::kReal ||
+          type.kind == common::Type::Kind::kShortReal) {
+        out << "  result.variables[\"" << var_name
+            << "\"] = static_cast<double>(dut." << var_name << ");\n";
+      } else {
+        out << "  result.variables[\"" << var_name
+            << "\"] = static_cast<int64_t>(dut." << var_name << ");\n";
+      }
+    }
+  }
+
+  out << "  return result;\n";
+  out << "}\n";
+
   out << "}  // namespace " << namespace_name << "\n";
 
   return out.str();
