@@ -57,6 +57,7 @@ struct CliOptions {
   std::vector<std::string> cmdfiles_file;  // -F: paths relative to file
   std::optional<std::string> top;
   std::vector<std::string> plusargs;
+  std::vector<std::string> warning_options;
 };
 
 // Resolved configuration after merging CLI and lyra.toml
@@ -67,6 +68,7 @@ struct ResolvedConfig {
   std::vector<std::string> incdir;
   std::string out_dir = "out";
   fs::path root_dir;
+  std::vector<std::string> warning_options;
 };
 
 // Parse a command file (one file per line, # and // comments)
@@ -197,6 +199,14 @@ auto ResolveConfig(const CliOptions& cli)
     resolved.incdir.push_back(p.string());
   }
 
+  // Warning options: CLI merges with TOML
+  if (toml) {
+    resolved.warning_options = toml->warning_options;
+  }
+  for (const auto& w : cli.warning_options) {
+    resolved.warning_options.push_back(w);
+  }
+
   // Top: CLI overrides TOML
   if (cli.top) {
     resolved.top = *cli.top;
@@ -220,6 +230,9 @@ auto ExtractCliOptions(const argparse::ArgumentParser& cmd) -> CliOptions {
   if (auto v = cmd.present<std::vector<std::string>>("-I")) {
     opts.incdir = *v;
   }
+  if (auto v = cmd.present<std::vector<std::string>>("-W")) {
+    opts.warning_options = *v;
+  }
   if (auto v = cmd.present<std::vector<std::string>>("-f")) {
     opts.cmdfiles_cwd = *v;
   }
@@ -242,6 +255,11 @@ void AddCliOptions(argparse::ArgumentParser& cmd) {
   cmd.add_argument("-I", "--include-directory")
       .help("Add include search path (merges with lyra.toml)")
       .metavar("<dir>")
+      .append();
+
+  cmd.add_argument("-W")
+      .help("Warning control (e.g., -W no-unused)")
+      .metavar("<warning>")
       .append();
 
   cmd.add_argument("-f")
@@ -450,7 +468,9 @@ auto GenerateMain(
 // Forward declaration
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
-    const std::vector<std::string>& inc_dirs, const std::string& top) -> int;
+    const std::vector<std::string>& inc_dirs,
+    const std::vector<std::string>& warning_options, const std::string& top)
+    -> int;
 
 auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
   auto config_result = ResolveConfig(cli);
@@ -480,7 +500,8 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
     // emit + build + run
     auto out_path = config.root_dir / config.out_dir;
     int result = EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.top);
+        config.files, out_path.string(), config.incdir, config.warning_options,
+        config.top);
     if (result != 0) {
       return result;
     }
@@ -517,11 +538,14 @@ auto RunCommand(const CliOptions& cli, bool use_interpreter) -> int {
 
 auto EmitCommandInternal(
     const std::vector<std::string>& source_files, const std::string& out_dir,
-    const std::vector<std::string>& inc_dirs, const std::string& top) -> int {
+    const std::vector<std::string>& inc_dirs,
+    const std::vector<std::string>& warning_options, const std::string& top)
+    -> int {
   lyra::frontend::SlangFrontend frontend;
   try {
     lyra::frontend::FrontendOptions options;
     options.include_dirs = inc_dirs;
+    options.warning_options = warning_options;
     auto compilation = frontend.LoadFromFiles(source_files, options);
     if (!compilation) {
       // Diagnostic already printed by frontend
@@ -600,7 +624,8 @@ auto EmitCommand(const CliOptions& cli) -> int {
   try {
     auto out_path = config.root_dir / config.out_dir;
     return EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.top);
+        config.files, out_path.string(), config.incdir, config.warning_options,
+        config.top);
   } catch (const lyra::DiagnosticException& e) {
     lyra::PrintDiagnostic(e.GetDiagnostic());
     return 1;
@@ -622,6 +647,7 @@ auto CheckCommand(const CliOptions& cli) -> int {
   try {
     lyra::frontend::FrontendOptions options;
     options.include_dirs = config.incdir;
+    options.warning_options = config.warning_options;
     auto compilation = frontend.LoadFromFiles(config.files, options);
     if (!compilation) {
       // Diagnostic already printed by frontend
@@ -725,7 +751,8 @@ auto BuildCommand(const CliOptions& cli) -> int {
 
     // emit
     int result = EmitCommandInternal(
-        config.files, out_path.string(), config.incdir, config.top);
+        config.files, out_path.string(), config.incdir, config.warning_options,
+        config.top);
     if (result != 0) {
       return result;
     }
@@ -828,20 +855,37 @@ files = ["{}.sv"]
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
-  // Pre-process argv to extract simulation args after "--"
-  // argparse doesn't support "--" separator natively (see p-ranav/argparse#62)
+  // Pre-process argv:
+  // 1. Expand -Wfoo to -W foo (like GCC/Clang/slang style)
+  // 2. Extract simulation args after "--" (argparse doesn't support natively)
   std::span args(argv, static_cast<size_t>(argc));
+  std::vector<std::string> expanded_args;
   std::vector<std::string> sim_args;
-  int filtered_argc = argc;
+  bool past_separator = false;
+
+  expanded_args.emplace_back(args[0]);  // Program name
   for (size_t i = 1; i < args.size(); ++i) {
-    if (std::string_view(args[i]) == "--") {
-      filtered_argc = static_cast<int>(i);
-      for (size_t j = i + 1; j < args.size(); ++j) {
-        sim_args.emplace_back(args[j]);
-      }
-      break;
+    std::string_view arg = args[i];
+    if (past_separator) {
+      sim_args.emplace_back(arg);
+    } else if (arg == "--") {
+      past_separator = true;
+    } else if (arg.starts_with("-W") && arg.size() > 2 && arg[2] != '=') {
+      // Expand -Wfoo to -W foo (but not -W=foo which isn't valid anyway)
+      expanded_args.emplace_back("-W");
+      expanded_args.emplace_back(arg.substr(2));
+    } else {
+      expanded_args.emplace_back(arg);
     }
   }
+
+  // Build argv for argparse
+  std::vector<char*> expanded_argv;
+  expanded_argv.reserve(expanded_args.size());
+  for (auto& s : expanded_args) {
+    expanded_argv.push_back(s.data());
+  }
+  int filtered_argc = static_cast<int>(expanded_argv.size());
 
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("SystemVerilog simulator");
@@ -898,7 +942,7 @@ auto main(int argc, char* argv[]) -> int {
   program.add_subparser(init_cmd);
 
   try {
-    program.parse_args(filtered_argc, argv);
+    program.parse_args(filtered_argc, expanded_argv.data());
   } catch (const std::exception& err) {
     lyra::PrintDiagnostic(lyra::Diagnostic::Error({}, err.what()));
     std::cerr << program;

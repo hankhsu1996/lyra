@@ -44,6 +44,9 @@ incdir = ["include/"]          # Optional: include directories
 
 [build]
 out_dir = "out"                # Optional: default "out"
+
+[diagnostics]
+warnings = ["no-unused"]       # Optional: warning control
 ```
 
 ## Commands
@@ -76,6 +79,7 @@ The `run`, `build`, `emit`, and `check` commands accept these options:
 | ------------------------- | -------------------------------------------- |
 | `--top <module>`          | Top module name                              |
 | `-I, --include-directory` | Add include search path                      |
+| `-W<warning>`             | Warning control (e.g., `-Wno-unused`)        |
 | `-f <file>`               | Command file (paths relative to CWD)         |
 | `-F <file>`               | Command file (paths relative to file itself) |
 | `<files...>`              | Source files (positional)                    |
@@ -109,6 +113,7 @@ When both `lyra.toml` and CLI arguments are provided:
 | --------- | ------------------------------------ |
 | `--top`   | CLI overrides lyra.toml              |
 | `-I`      | CLI merges with lyra.toml (additive) |
+| `-W`      | CLI merges with lyra.toml (additive) |
 | `<files>` | CLI replaces lyra.toml files         |
 
 ### Output Structure (`lyra emit` -> `out/`)
