@@ -84,11 +84,13 @@ auto SlangFrontend::LoadFromFiles(
     diag_client->showColors(true);
     diag_engine.addClient(diag_client);
 
-    // Promote certain warnings to errors - these warnings result in invalid
-    // AST nodes that we cannot lower, so they must be treated as errors
-    std::vector<std::string> warning_options = {
-        "error=finish-num",  // Invalid $fatal/$finish argument
-    };
+    // Start with user-provided warning options
+    std::vector<std::string> warning_options = options.warning_options;
+
+    // Append built-in defaults - these warnings result in invalid AST nodes
+    // that we cannot lower, so they must be treated as errors
+    warning_options.emplace_back("error=finish-num");
+
     diag_engine.setWarningOptions(warning_options);
 
     // Issue all diagnostics through the engine
