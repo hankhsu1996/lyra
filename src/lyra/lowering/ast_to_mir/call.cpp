@@ -457,8 +457,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
             }
             // Output arguments are wrapped as Assignment with EmptyArgument
             if (arg->kind == slang::ast::ExpressionKind::Assignment) {
-              const auto& assign =
-                  arg->as<slang::ast::AssignmentExpression>();
+              const auto& assign = arg->as<slang::ast::AssignmentExpression>();
               if (assign.right().kind ==
                   slang::ast::ExpressionKind::EmptyArgument) {
                 arguments.push_back(LowerExpression(assign.left(), arena));
