@@ -143,7 +143,7 @@ struct EnumData {
   bool is_four_state = false;
   std::vector<EnumMember> members;
 
-  // Precomputed value→index mapping for O(1) lookup (built from members)
+  // Precomputed value->index mapping for O(1) lookup (built from members)
   std::unordered_map<int64_t, size_t> value_to_index;
 
   /// Build value_to_index from members. Call after populating members.

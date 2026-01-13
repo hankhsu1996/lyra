@@ -334,7 +334,7 @@ void SimulationRunner::ElaborateHierarchy() {
 
   // Create top module instance context (no port bindings)
   auto top_instance = std::make_shared<HierarchyContext>(
-      top.name, std::unordered_map<common::SymbolRef, PortBinding>{});
+      top.name, std::unordered_map<common::SymbolId, PortBinding>{});
 
   // Initialize top module variables in flat storage
   InitializeModuleVariables(top);
@@ -358,14 +358,15 @@ void SimulationRunner::ElaborateSubmodules(
     std::string instance_path = parent_path + "." + submod.instance_name;
 
     // Build port bindings for this instance
-    // Output port bindings: child writes → parent signal
+    // Output port bindings: child writes -> parent signal
     // (Input ports use driver processes, no bindings needed)
-    std::unordered_map<common::SymbolRef, PortBinding> bindings;
+    std::unordered_map<common::SymbolId, PortBinding> bindings;
+    const auto& symbol_table = simulation_context_.get().symbol_table;
     for (const auto& output_binding : submod.output_bindings) {
       // Find the port in child module
       const lir::Port* port_ptr = nullptr;
       for (const auto& port : child->ports) {
-        if (std::string(port.variable.symbol->name) ==
+        if (symbol_table.Name(port.variable.symbol) ==
             output_binding.port_name) {
           port_ptr = &port;
           break;

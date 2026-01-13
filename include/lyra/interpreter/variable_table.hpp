@@ -8,35 +8,33 @@
 
 namespace lyra::interpreter {
 
-using SymbolRef = common::SymbolRef;
+using SymbolId = common::SymbolId;
 
 class ModuleVariableTable {
  public:
-  void Write(const SymbolRef &symbol, const RuntimeValue &value);
-  auto Read(const SymbolRef &symbol) const -> RuntimeValue;
-  auto ReadFromName(const std::string &name) const -> RuntimeValue;
-  auto ReadPrevious(const SymbolRef &symbol) const -> RuntimeValue;
-  void UpdatePrevious(const SymbolRef &symbol, const RuntimeValue &value);
-  auto Exists(const SymbolRef &symbol) const -> bool;
-  void CreateVariable(const SymbolRef &symbol, RuntimeValue initial_value);
+  void Write(SymbolId symbol, const RuntimeValue &value);
+  auto Read(SymbolId symbol) const -> RuntimeValue;
+  auto ReadPrevious(SymbolId symbol) const -> RuntimeValue;
+  void UpdatePrevious(SymbolId symbol, const RuntimeValue &value);
+  auto Exists(SymbolId symbol) const -> bool;
+  void CreateVariable(SymbolId symbol, RuntimeValue initial_value);
   void InitializeVariable(const common::Variable &variable);
 
  private:
-  std::unordered_map<SymbolRef, RuntimeValue> variables_;
-  std::unordered_map<SymbolRef, RuntimeValue> previous_variables_;
+  std::unordered_map<SymbolId, RuntimeValue> variables_;
+  std::unordered_map<SymbolId, RuntimeValue> previous_variables_;
 };
 
 class ProcessVariableTable {
  public:
-  void Write(const SymbolRef &symbol, const RuntimeValue &value);
-  auto Read(const SymbolRef &symbol) const -> RuntimeValue;
-  auto ReadFromName(const std::string &name) const -> RuntimeValue;
-  auto Exists(const SymbolRef &symbol) const -> bool;
-  void CreateVariable(const SymbolRef &symbol, RuntimeValue initial_value);
+  void Write(SymbolId symbol, const RuntimeValue &value);
+  auto Read(SymbolId symbol) const -> RuntimeValue;
+  auto Exists(SymbolId symbol) const -> bool;
+  void CreateVariable(SymbolId symbol, RuntimeValue initial_value);
   void InitializeVariable(const common::Variable &variable);
 
  private:
-  std::unordered_map<SymbolRef, RuntimeValue> variables_;
+  std::unordered_map<SymbolId, RuntimeValue> variables_;
 };
 
 }  // namespace lyra::interpreter

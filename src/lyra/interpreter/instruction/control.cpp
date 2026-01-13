@@ -72,7 +72,8 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
         RuntimeValue::DefaultValueForType(local.type);
   }
 
-  return InstructionResult::CallFunction(func->entry_label, std::move(frame));
+  return InstructionResult::CallFunction(
+      func->entry_label.value(), std::move(frame));
 }
 
 /// Handle kReturn instruction: get return value, pop frame, store result.

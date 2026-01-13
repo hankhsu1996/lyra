@@ -74,7 +74,7 @@ auto LowerNewArrayExpression(
 auto LowerUnpackedStructLiteralExpression(
     const mir::UnpackedStructLiteralExpression& lit, LirBuilder& builder)
     -> lir::TempRef {
-  // Memory-form: Allocate → ResolveField → Store → Load
+  // Memory-form: Allocate -> ResolveField -> Store -> Load
   // This enforces that all mutation happens through addresses.
 
   // Create pointer type for struct
@@ -111,7 +111,7 @@ auto LowerArrayLiteralExpression(
     const mir::ArrayLiteralExpression& lit, LirBuilder& builder)
     -> lir::TempRef {
   // For queues, use SSA-style push_back (already correct, no mutation)
-  // For arrays, use memory-form: Allocate → ResolveIndex → Store → Load
+  // For arrays, use memory-form: Allocate -> ResolveIndex -> Store -> Load
   bool is_queue = lit.type.IsQueue();
 
   if (is_queue) {
@@ -134,7 +134,7 @@ auto LowerArrayLiteralExpression(
     return current;
   }
 
-  // Memory-form for arrays: Allocate → ResolveIndex → Store → Load
+  // Memory-form for arrays: Allocate -> ResolveIndex -> Store -> Load
   const auto* array_type = builder.GetContext()->InternType(lit.type);
   auto ptr_type = common::Type::Pointer(array_type);
 

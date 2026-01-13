@@ -72,8 +72,8 @@ struct TimeScale {
   /// the divisor is 1000 (divide internal ps by 1000 to get ns).
   ///
   /// Note: Mathematically identical to DelayMultiplier() - the same factor
-  /// that scales delays up (timeunit → precision) also scales time queries
-  /// down (precision → timeunit). Separate methods for semantic clarity at
+  /// that scales delays up (timeunit -> precision) also scales time queries
+  /// down (precision -> timeunit). Separate methods for semantic clarity at
   /// call sites.
   [[nodiscard]] auto TimeDivisor(int8_t global_precision_power) const
       -> uint64_t {

@@ -33,7 +33,7 @@ using PointerStorage = std::shared_ptr<PointerValue>;
 
 // Pointer to a variable (root of pointer chain)
 struct VarPointer {
-  common::SymbolRef symbol;
+  common::SymbolId symbol;
 };
 
 // Pointer to a struct field
@@ -109,9 +109,9 @@ struct PointerValue {
     return std::get<AllocPointer>(data);
   }
 
-  // Get the root symbol by walking up the pointer chain.
+  // Get the root symbol ID by walking up the pointer chain.
   // Throws if the root is AllocPointer (anonymous storage has no symbol).
-  [[nodiscard]] auto GetRootSymbol() const -> common::SymbolRef {
+  [[nodiscard]] auto GetRootSymbol() const -> common::SymbolId {
     const PointerValue* current = this;
     while (!current->IsVar() && !current->IsAlloc()) {
       if (current->IsField()) {
@@ -145,7 +145,7 @@ struct PointerValue {
   }
 
   // Factory methods
-  static auto Var(common::SymbolRef symbol) -> PointerStorage {
+  static auto Var(common::SymbolId symbol) -> PointerStorage {
     return std::make_shared<PointerValue>(
         PointerValue{.data = VarPointer{.symbol = symbol}});
   }

@@ -472,7 +472,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       const auto& arr = std::get<common::UnpackedArrayData>(target_type.data);
       Indent();
       out_ << "lyra::sdk::" << (is_read ? "ReadMemArray(" : "WriteMemArray(")
-           << target.symbol->name << ", " << arr.lower_bound << ", ";
+           << Name(target.symbol) << ", " << arr.lower_bound << ", ";
       emit_filename();
       out_ << ", " << (has_start ? "true" : "false") << ", ";
       if (has_start) {
@@ -500,7 +500,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       int32_t lower_bound = integral.element_lower;
       Indent();
       out_ << "lyra::sdk::" << (is_read ? "ReadMemPacked(" : "WriteMemPacked(")
-           << target.symbol->name << ", " << element_width << ", "
+           << Name(target.symbol) << ", " << element_width << ", "
            << element_count << ", " << lower_bound << ", ";
       emit_filename();
       out_ << ", " << (has_start ? "true" : "false") << ", ";

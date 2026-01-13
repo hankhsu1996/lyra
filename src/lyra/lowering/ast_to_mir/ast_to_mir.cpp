@@ -12,9 +12,11 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/module.hpp"
 #include "lyra/lowering/ast_to_mir/package.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::ast_to_mir {
@@ -26,27 +28,28 @@ void CollectModulesRecursive(
     const slang::ast::InstanceSymbol& instance,
     std::vector<std::unique_ptr<mir::Module>>& modules,
     std::unordered_set<const slang::ast::InstanceSymbol*>& visited,
-    common::TypeArena& arena);
+    common::TypeArena& arena, SymbolRegistrar& registrar);
 
 // Collect instances from a scope (module body or generate block)
 void CollectInstancesFromScope(
     const slang::ast::Scope& scope,
     std::vector<std::unique_ptr<mir::Module>>& modules,
     std::unordered_set<const slang::ast::InstanceSymbol*>& visited,
-    common::TypeArena& arena) {
+    common::TypeArena& arena, SymbolRegistrar& registrar) {
   for (const auto& member : scope.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
       const auto& child = member.as<slang::ast::InstanceSymbol>();
-      CollectModulesRecursive(child, modules, visited, arena);
+      CollectModulesRecursive(child, modules, visited, arena, registrar);
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
       const auto& gen_block = member.as<slang::ast::GenerateBlockSymbol>();
       if (!gen_block.isUninstantiated) {
-        CollectInstancesFromScope(gen_block, modules, visited, arena);
+        CollectInstancesFromScope(
+            gen_block, modules, visited, arena, registrar);
       }
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
       const auto& gen_array = member.as<slang::ast::GenerateBlockArraySymbol>();
       for (const auto* entry : gen_array.entries) {
-        CollectInstancesFromScope(*entry, modules, visited, arena);
+        CollectInstancesFromScope(*entry, modules, visited, arena, registrar);
       }
     }
   }
@@ -61,7 +64,7 @@ void CollectModulesRecursive(
     const slang::ast::InstanceSymbol& instance,
     std::vector<std::unique_ptr<mir::Module>>& modules,
     std::unordered_set<const slang::ast::InstanceSymbol*>& visited,
-    common::TypeArena& arena) {
+    common::TypeArena& arena, SymbolRegistrar& registrar) {
   // Guard against revisiting same instance (defensive, shouldn't happen)
   if (visited.contains(&instance)) {
     return;
@@ -70,10 +73,10 @@ void CollectModulesRecursive(
 
   // First, recurse into child instances (depth-first)
   // This includes instances inside generate blocks
-  CollectInstancesFromScope(instance.body, modules, visited, arena);
+  CollectInstancesFromScope(instance.body, modules, visited, arena, registrar);
 
   // Then add this module (after all children are processed)
-  modules.push_back(LowerModule(instance, arena));
+  modules.push_back(LowerModule(instance, arena, registrar));
 }
 
 }  // namespace
@@ -82,12 +85,15 @@ auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
     -> LoweringResult {
   LoweringResult result;
 
+  // Create registrar as short-lived frontend adapter for this lowering run
+  SymbolRegistrar registrar(result.symbol_table);
+
   // Phase 1: Lower all packages (except built-in std package)
   for (const auto* pkg : compilation.getPackages()) {
     if (pkg->name == "std") {
       continue;  // Skip built-in std package
     }
-    result.packages.push_back(LowerPackage(*pkg, result.type_arena));
+    result.packages.push_back(LowerPackage(*pkg, result.type_arena, registrar));
   }
 
   // Phase 2: Lower modules
@@ -112,7 +118,8 @@ auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
         if (instance_symbol.body.name == top) {
           std::unordered_set<const slang::ast::InstanceSymbol*> visited;
           CollectModulesRecursive(
-              instance_symbol, result.modules, visited, result.type_arena);
+              instance_symbol, result.modules, visited, result.type_arena,
+              registrar);
           return result;  // Returns all modules in dependency order
         }
         continue;  // Skip non-matching modules
@@ -139,10 +146,12 @@ auto AstToMir(slang::ast::Compilation& compilation, const std::string& top)
   if (top_instances.size() == 1) {
     std::unordered_set<const slang::ast::InstanceSymbol*> visited;
     CollectModulesRecursive(
-        *top_instances[0], result.modules, visited, result.type_arena);
+        *top_instances[0], result.modules, visited, result.type_arena,
+        registrar);
   } else {
     for (const auto* instance : top_instances) {
-      result.modules.push_back(LowerModule(*instance, result.type_arena));
+      result.modules.push_back(
+          LowerModule(*instance, result.type_arena, registrar));
     }
   }
 

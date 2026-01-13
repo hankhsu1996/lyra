@@ -195,7 +195,7 @@ auto HandleMemIO(
         std::format(
             "{} target must be specified in output_targets", task_name));
   }
-  const auto* target_symbol = instr.output_targets[0];
+  auto target_symbol = instr.output_targets[0];
   auto target_value = ctx.ReadVariable(target_symbol);
   auto info = GetMemTargetInfo(target_value, target_value.type);
 

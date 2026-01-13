@@ -6,8 +6,6 @@
 #include <utility>
 #include <vector>
 
-#include <slang/ast/Symbol.h>
-
 #include "lyra/common/indent.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
@@ -24,8 +22,8 @@ struct ModuleParameter {
   std::string name;                           // "WIDTH"
   common::Type type;                          // int
   std::unique_ptr<Expression> default_value;  // LiteralExpression(8) or nullptr
-  const slang::ast::Symbol* symbol{};  // Slang symbol for constructor param
-                                       // identifier emission
+  common::SymbolId symbol{common::kInvalidSymbolId};  // For constructor param
+                                                      // identifier emission
 };
 
 // Parameter override at instantiation site (for template arguments in C++
@@ -46,7 +44,7 @@ struct Port {
 };
 
 // Output port binding: maps child's output port to parent's signal storage.
-// Child writes to output port → actually writes to parent's signal.
+// Child writes to output port -> actually writes to parent's signal.
 // (Input ports use driver processes instead, no binding needed.)
 struct OutputBinding {
   std::string port_name;               // Formal port name in child module
@@ -55,13 +53,14 @@ struct OutputBinding {
 
 // Submodule instantiation
 struct SubmoduleInstance {
-  common::SymbolRef instance_symbol;  // Instance symbol (for interpreter)
-  std::string instance_name;          // e.g., "counter1" (for codegen)
-  std::string module_type;            // e.g., "Counter" (base name)
-  std::string module_signature;       // e.g., "Counter<8>" (for linking)
+  common::SymbolId instance_symbol{
+      common::kInvalidSymbolId};  // For interpreter
+  std::string instance_name;      // e.g., "counter1" (for codegen)
+  std::string module_type;        // e.g., "Counter" (base name)
+  std::string module_signature;   // e.g., "Counter<8>" (for linking)
   std::vector<ParameterOverride>
       parameter_overrides;                     // Template arguments for codegen
-  std::vector<OutputBinding> output_bindings;  // Output port → parent signal
+  std::vector<OutputBinding> output_bindings;  // Output port -> parent signal
 };
 
 // Module-level variable with optional initializer
@@ -75,8 +74,8 @@ struct ModuleVariable {
 // if/case-generate creates a single scope. The nesting structure allows
 // arbitrary depth of generate blocks.
 struct GenerateScope {
-  std::string name;                          // Block name ("gen_block")
-  common::SymbolRef symbol;                  // Slang symbol
+  std::string name;  // Block name ("gen_block")
+  common::SymbolId symbol{common::kInvalidSymbolId};  // Generate scope symbol
   std::optional<size_t> array_size;          // nullopt = single, value = array
   std::vector<ModuleVariable> variables;     // Variables declared in scope
   std::vector<GenerateScope> nested_scopes;  // Nested generate blocks
@@ -108,13 +107,13 @@ struct FunctionDefinition {
         result += ", ";
       }
       first = false;
-      result += std::string(param.variable.symbol->name);
+      result += fmt::format("sym#{}", param.variable.symbol);
     }
     result += ")\n";
 
     for (const auto& var : local_variables) {
-      result += common::Indent(indent + 1) + "var " +
-                std::string(var.symbol->name) + "\n";
+      result +=
+          common::Indent(indent + 1) + fmt::format("var sym#{}\n", var.symbol);
     }
 
     if (body) {
@@ -129,7 +128,8 @@ class Module {
  public:
   std::string name;
   std::string signature;  // e.g., "Counter<8>" (for linking/deduplication)
-  common::SymbolRef instance_symbol = nullptr;  // Slang instance symbol
+  common::SymbolId instance_symbol{
+      common::kInvalidSymbolId};  // Instance symbol
   std::optional<common::TimeScale> timescale;
   std::vector<ModuleParameter>
       parameters;  // Template parameters for C++ codegen
@@ -167,8 +167,8 @@ class Module {
             dir_str = "inout";
             break;
         }
-        result += common::Indent(indent + 1) + dir_str + " " +
-                  std::string(port.variable.symbol->name) + "\n";
+        result += common::Indent(indent + 1) + dir_str +
+                  fmt::format(" sym#{}\n", port.variable.symbol);
       }
       result += "\n";
     }
@@ -176,8 +176,8 @@ class Module {
     // Print variables
     if (!variables.empty()) {
       for (const auto& mod_var : variables) {
-        result += common::Indent(indent + 1) + "var " +
-                  std::string(mod_var.variable.symbol->name);
+        result += common::Indent(indent + 1) +
+                  fmt::format("var sym#{}", mod_var.variable.symbol);
         if (mod_var.initializer) {
           result += " = " + mod_var.initializer->ToString();
         }

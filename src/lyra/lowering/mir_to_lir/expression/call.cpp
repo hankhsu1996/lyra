@@ -248,7 +248,7 @@ auto LowerSystemCallExpression(
   }
 
   // Collect output targets for system calls like $value$plusargs
-  std::vector<lir::SymbolRef> output_targets;
+  std::vector<common::SymbolId> output_targets;
   for (const auto& target : system_call.output_targets) {
     output_targets.push_back(target.symbol);
   }

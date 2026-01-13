@@ -635,7 +635,7 @@ auto EmitCommandInternal(
     // Copy SDK headers
     WriteSdkHeaders(out_path);
 
-    lyra::compiler::Codegen codegen;
+    lyra::compiler::Codegen codegen(lowering_result.symbol_table);
 
     // Generate packages header if there are packages
     bool has_packages = !lowering_result.packages.empty();
@@ -769,8 +769,9 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
                     << type_decl.type.ToString() << "\n";
         }
         for (const auto& var : pkg->variables) {
-          std::cout << "  var " << var.variable.symbol->name << ": "
-                    << var.variable.type.ToString();
+          std::cout << "  var "
+                    << lowering_result.symbol_table.Name(var.variable.symbol)
+                    << ": " << var.variable.type.ToString();
           if (var.initializer) {
             std::cout << " = " << var.initializer->ToString();
           }
@@ -783,7 +784,7 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
     for (const auto& mir : lowering_result.modules) {
       switch (format) {
         case DumpFormat::kCpp: {
-          lyra::compiler::Codegen codegen;
+          lyra::compiler::Codegen codegen(lowering_result.symbol_table);
           std::cout << codegen.Generate(*mir);
           break;
         }
@@ -792,7 +793,8 @@ auto DumpCommand(const std::vector<std::string>& files, DumpFormat format)
           break;
         }
         case DumpFormat::kLir: {
-          auto lir = lyra::lowering::mir_to_lir::MirToLir(*mir);
+          auto lir = lyra::lowering::mir_to_lir::MirToLir(
+              *mir, lowering_result.symbol_table);
           std::cout << lir->ToString(lyra::common::FormatMode::kContextual);
           break;
         }

@@ -272,7 +272,7 @@ constexpr auto GetMethodInfo(BuiltinMethod method, BuiltinTypeKind type)
   return nullptr;
 }
 
-/// Find built-in method by receiver type and name (for AST→MIR parsing).
+/// Find built-in method by receiver type and name (for AST->MIR parsing).
 /// Returns nullptr if not found.
 constexpr auto FindBuiltinMethod(BuiltinTypeKind type, std::string_view name)
     -> const BuiltinMethodInfo* {

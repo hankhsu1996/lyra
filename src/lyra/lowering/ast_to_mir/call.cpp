@@ -26,13 +26,15 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
+#include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
 
 namespace lyra::lowering::ast_to_mir {
 
-auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
-    -> std::unique_ptr<mir::Expression> {
+auto LowerCall(
+    const slang::ast::CallExpression& call, common::TypeArena& arena,
+    SymbolRegistrar& registrar) -> std::unique_ptr<mir::Expression> {
   const auto& expression = static_cast<const slang::ast::Expression&>(call);
 
   // Handle compile-time constant calls (includes enum methods like first(),
@@ -126,7 +128,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kEnum, subroutine_name);
       if (method_info != nullptr) {
-        auto receiver = LowerExpression(first_arg, arena);
+        auto receiver = LowerExpression(first_arg, arena, registrar);
 
         // Collect enum member info for codegen
         std::vector<mir::EnumMemberInfo> members;
@@ -183,7 +185,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       if (method_info != nullptr) {
         auto method = mir::ParseBuiltinMethod(subroutine_name);
         assert(method && "builtin method registry and enum out of sync");
-        auto receiver = LowerExpression(first_arg, arena);
+        auto receiver = LowerExpression(first_arg, arena, registrar);
         auto return_type =
             (method_info->return_type == common::BuiltinMethodReturnType::kInt)
                 ? common::Type::Int()
@@ -198,7 +200,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       const auto* method_info = common::FindBuiltinMethod(
           common::BuiltinTypeKind::kQueue, subroutine_name);
       if (method_info != nullptr) {
-        auto receiver = LowerExpression(first_arg, arena);
+        auto receiver = LowerExpression(first_arg, arena, registrar);
 
         // Determine return type based on method
         // For SSA semantics: mutating methods return the modified receiver
@@ -237,7 +239,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         // Collect method arguments (skip first arg which is receiver)
         std::vector<std::unique_ptr<mir::Expression>> args;
         for (size_t i = 1; i < call.arguments().size(); ++i) {
-          args.push_back(LowerExpression(*call.arguments()[i], arena));
+          args.push_back(
+              LowerExpression(*call.arguments()[i], arena, registrar));
         }
 
         return std::make_unique<mir::MethodCallExpression>(
@@ -313,7 +316,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       // For $fatal, first argument is finish_number (goes to arguments[0])
       if (name == "$fatal") {
         if (!call.arguments().empty()) {
-          arguments.push_back(LowerExpression(*call.arguments()[0], arena));
+          arguments.push_back(
+              LowerExpression(*call.arguments()[0], arena, registrar));
         } else {
           // Default finish_number is 1 if no arguments
           arguments.push_back(
@@ -329,7 +333,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         const auto& format_arg = *call.arguments()[format_idx];
         if (format_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
           // Extract format string into format_expr
-          format_expr = LowerExpression(format_arg, arena);
+          format_expr = LowerExpression(format_arg, arena, registrar);
           format_expr_is_literal = true;
           args_start_idx = format_idx + 1;  // Skip format in arguments
         } else {
@@ -340,7 +344,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
 
       // Add remaining arguments (format args / values to display)
       for (size_t i = args_start_idx; i < call.arguments().size(); ++i) {
-        arguments.push_back(LowerExpression(*call.arguments()[i], arena));
+        arguments.push_back(
+            LowerExpression(*call.arguments()[i], arena, registrar));
       }
     } else if (!is_root_variant) {
       // Handle $value$plusargs specially: second argument is output target
@@ -348,7 +353,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
         auto args = call.arguments();
         if (!args.empty()) {
           // First arg is format string (input)
-          arguments.push_back(LowerExpression(*args[0], arena));
+          arguments.push_back(LowerExpression(*args[0], arena, registrar));
         }
         if (args.size() >= 2) {
           // Second arg is output variable
@@ -372,7 +377,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
             if (!type_result) {
               throw DiagnosticException(std::move(type_result.error()));
             }
-            mir::AssignmentTarget target(&named_value.symbol);
+            mir::AssignmentTarget target(
+                registrar.Register(&named_value.symbol));
             target.base_type = *type_result;
             output_targets.push_back(std::move(target));
           } else {
@@ -391,16 +397,16 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
 
         if (is_mem_io) {
           auto args = call.arguments();
-          // First arg: filename (input) → arguments
+          // First arg: filename (input) -> arguments
           if (!args.empty()) {
             const auto& first_arg = *args[0];
-            arguments.push_back(LowerExpression(first_arg, arena));
+            arguments.push_back(LowerExpression(first_arg, arena, registrar));
             // Check if filename is a string literal
             if (first_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
               format_expr_is_literal = true;
             }
           }
-          // Second arg: target array (write target) → output_targets
+          // Second arg: target array (write target) -> output_targets
           if (args.size() >= 2) {
             const auto* target_arg = args[1];
             // Output arguments are wrapped as Assignment with EmptyArgument
@@ -422,7 +428,8 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
               if (!type_result) {
                 throw DiagnosticException(std::move(type_result.error()));
               }
-              mir::AssignmentTarget target(&named_value.symbol);
+              mir::AssignmentTarget target(
+                  registrar.Register(&named_value.symbol));
               target.base_type = *type_result;
               output_targets.push_back(std::move(target));
             } else {
@@ -432,14 +439,14 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
                       "mem_io target must be a simple variable"));
             }
           }
-          // Remaining args: start/end addresses (optional inputs) → arguments
+          // Remaining args: start/end addresses (optional inputs) -> arguments
           for (size_t i = 2; i < args.size(); ++i) {
             const auto* arg = args[i];
             // Skip empty arguments (optional args not provided)
             if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
               continue;
             }
-            arguments.push_back(LowerExpression(*arg, arena));
+            arguments.push_back(LowerExpression(*arg, arena, registrar));
           }
         } else {
           // Other non-display system calls: process all arguments normally
@@ -453,11 +460,12 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
               const auto& assign = arg->as<slang::ast::AssignmentExpression>();
               if (assign.right().kind ==
                   slang::ast::ExpressionKind::EmptyArgument) {
-                arguments.push_back(LowerExpression(assign.left(), arena));
+                arguments.push_back(
+                    LowerExpression(assign.left(), arena, registrar));
                 continue;
               }
             }
-            arguments.push_back(LowerExpression(*arg, arena));
+            arguments.push_back(LowerExpression(*arg, arena, registrar));
           }
         }
       }
@@ -510,7 +518,7 @@ auto LowerCall(const slang::ast::CallExpression& call, common::TypeArena& arena)
       // Lower arguments
       std::vector<std::unique_ptr<mir::Expression>> arguments;
       for (const auto* arg : call.arguments()) {
-        arguments.push_back(LowerExpression(*arg, arena));
+        arguments.push_back(LowerExpression(*arg, arena, registrar));
       }
 
       // Get return type

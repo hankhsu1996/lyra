@@ -22,7 +22,6 @@ namespace lyra::interpreter {
 struct HierarchyContext;
 
 using SimulationTime = uint64_t;
-using SymbolRef = common::SymbolRef;
 
 /// State for active $monitor.
 /// Only one monitor can be active at a time.
@@ -76,6 +75,9 @@ class SimulationContext {
 
   // File I/O state for $fopen/$fclose
   sdk::FileManager file_manager;
+
+  // Symbol table for resolving SymbolId to names (for diagnostics)
+  common::SymbolTable symbol_table;
 };
 
 }  // namespace lyra::interpreter

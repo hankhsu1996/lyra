@@ -157,3 +157,21 @@ Expressions like `(a+b)[7:4]` have no storage location. Using `ExtractBits` corr
 **Why one canonical form instead of keeping LoadPackedBits/StorePackedBits?**
 
 Two semantic encodings for the same operation creates maintenance burden - every optimization and analysis must handle both forms. One canonical IR form; optimization can lower to specialized instructions in a later phase if needed.
+
+## Memory Management
+
+`LirContext` owns all interned entities:
+
+| Arena               | Storage                   | Purpose                  |
+| ------------------- | ------------------------- | ------------------------ |
+| `temp_storage_`     | `std::deque<TempSymbol>`  | SSA temp names and types |
+| `label_storage_`    | `std::deque<std::string>` | Basic block labels       |
+| `label_index_`      | `unordered_map`           | Label name → ID lookup   |
+| `constant_storage_` | `std::deque<Constant>`    | Interned constant values |
+| `type_storage_`     | `std::deque<Type>`        | Interned type objects    |
+
+**Lifetime semantics:** Leak-until-termination. All allocations persist for the entire compilation. References (`TempRef`, `LabelRef`, `ConstantRef`) remain valid for the lifetime of the `LirContext`.
+
+**Why deque?** `std::deque` guarantees pointer stability - existing element addresses remain valid when new elements are added. This is critical since refs cache raw pointers for fast access.
+
+**Identity:** Refs now carry explicit IDs (`TempId`, `LabelId`) for identity comparison and hashing, decoupled from pointer values. This enables future serialization and arena compaction without changing ref semantics.

@@ -13,8 +13,6 @@
 
 namespace lyra::interpreter {
 
-using SymbolRef = common::SymbolRef;
-
 // Result of running a Process execution
 struct ProcessResult {
   enum class Kind { kComplete, kDelay, kScheduleInactive, kWaitEvent, kFinish };

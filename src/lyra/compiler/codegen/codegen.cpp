@@ -360,7 +360,7 @@ void Codegen::EmitClass(const mir::Module& module) {
   for (const auto& port : module.ports) {
     if (port.direction == mir::PortDirection::kInput) {
       std::string type_str = ToCppType(port.variable.type);
-      Line(type_str + " " + Escape(port.variable.symbol->name) + ";");
+      Line(type_str + " " + Escape(Name(port.variable.symbol)) + ";");
     }
   }
 
@@ -396,7 +396,7 @@ void Codegen::EmitClass(const mir::Module& module) {
     }
     first = false;
     std::string type_str = ToCppType(port.variable.type);
-    out_ << type_str << "& " << Escape(port.variable.symbol->name);
+    out_ << type_str << "& " << Escape(Name(port.variable.symbol));
   }
 
   out_ << ") : Module(\"" << module.name << "\")";
@@ -414,8 +414,8 @@ void Codegen::EmitClass(const mir::Module& module) {
     if (port.direction == mir::PortDirection::kInput) {
       continue;  // Input ports are public variables, not reference members
     }
-    out_ << ", " << Escape(port.variable.symbol->name) << "_("
-         << Escape(port.variable.symbol->name) << ")";
+    out_ << ", " << Escape(Name(port.variable.symbol)) << "_("
+         << Escape(Name(port.variable.symbol)) << ")";
   }
 
   // Submodule initializers - pass output port bindings as references
@@ -491,7 +491,7 @@ void Codegen::EmitClass(const mir::Module& module) {
       continue;  // Input ports declared as public variables above
     }
     std::string type_str = ToCppType(port.variable.type);
-    Line(type_str + "& " + Escape(port.variable.symbol->name) + "_;");
+    Line(type_str + "& " + Escape(Name(port.variable.symbol)) + "_;");
   }
 
   // Submodule members (after port references so they can use them)
@@ -635,7 +635,7 @@ void Codegen::EmitVariables(const std::vector<mir::ModuleVariable>& variables) {
   for (const auto& mod_var : variables) {
     std::string type_str = ToCppType(mod_var.variable.type);
     Indent();
-    out_ << type_str << " " << Escape(mod_var.variable.symbol->name);
+    out_ << type_str << " " << Escape(Name(mod_var.variable.symbol));
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
@@ -661,7 +661,7 @@ void Codegen::EmitGenerateScopeStruct(const mir::GenerateScope& scope) {
   for (const auto& mod_var : scope.variables) {
     std::string type_str = ToCppType(mod_var.variable.type);
     Indent();
-    out_ << type_str << " " << Escape(mod_var.variable.symbol->name);
+    out_ << type_str << " " << Escape(Name(mod_var.variable.symbol));
     if (mod_var.initializer) {
       out_ << " = ";
       EmitExpression(*mod_var.initializer);
@@ -737,7 +737,7 @@ void Codegen::EmitFunction(const mir::FunctionDefinition& function) {
     }
     first = false;
     out_ << ToCppType(param.variable.type) << " "
-         << Escape(param.variable.symbol->name);
+         << Escape(Name(param.variable.symbol));
   }
 
   out_ << ") -> " << ToCppType(function.return_type) << " {\n";
@@ -788,7 +788,7 @@ auto Codegen::GeneratePackages(
       std::string type_str = ToCppType(param.variable.type);
       Indent();
       out_ << "inline constexpr " << type_str << " "
-           << Escape(param.variable.symbol->name) << "{";
+           << Escape(Name(param.variable.symbol)) << "{";
       EmitExpression(*param.initializer);
       out_ << "};\n";
     }
@@ -797,7 +797,7 @@ auto Codegen::GeneratePackages(
     for (const auto& var : pkg->variables) {
       std::string type_str = ToCppType(var.variable.type);
       Indent();
-      out_ << "inline " << type_str << " " << Escape(var.variable.symbol->name);
+      out_ << "inline " << type_str << " " << Escape(Name(var.variable.symbol));
       if (var.initializer) {
         out_ << "{";
         EmitExpression(*var.initializer);
@@ -956,10 +956,10 @@ auto Codegen::GenerateBatchTestContent(
   std::unordered_map<std::string, common::Type> var_types;
   if (top_module != nullptr) {
     for (const auto& port : top_module->ports) {
-      var_types[std::string(port.variable.symbol->name)] = port.variable.type;
+      var_types[std::string(Name(port.variable.symbol))] = port.variable.type;
     }
     for (const auto& var : top_module->variables) {
-      var_types[std::string(var.variable.symbol->name)] = var.variable.type;
+      var_types[std::string(Name(var.variable.symbol))] = var.variable.type;
     }
   }
 
@@ -1064,19 +1064,19 @@ void Codegen::BuildEscapeMap(const mir::Module& module) {
 
   // Port names
   for (const auto& port : module.ports) {
-    all_names.insert(port.variable.symbol->name);
+    all_names.insert(Name(port.variable.symbol));
   }
 
   // Module variable names
   for (const auto& var : module.variables) {
-    all_names.insert(var.variable.symbol->name);
+    all_names.insert(Name(var.variable.symbol));
   }
 
   // Function names and their parameter names
   for (const auto& func : module.functions) {
     all_names.insert(func.name);
     for (const auto& param : func.parameters) {
-      all_names.insert(param.variable.symbol->name);
+      all_names.insert(Name(param.variable.symbol));
     }
   }
 
@@ -1107,19 +1107,19 @@ void Codegen::BuildEscapeMap(const mir::Package& package) {
 
   // Parameter names
   for (const auto& param : package.parameters) {
-    all_names.insert(param.variable.symbol->name);
+    all_names.insert(Name(param.variable.symbol));
   }
 
   // Variable names
   for (const auto& var : package.variables) {
-    all_names.insert(var.variable.symbol->name);
+    all_names.insert(Name(var.variable.symbol));
   }
 
   // Function names and their parameter names
   for (const auto& func : package.functions) {
     all_names.insert(func.name);
     for (const auto& param : func.parameters) {
-      all_names.insert(param.variable.symbol->name);
+      all_names.insert(Name(param.variable.symbol));
     }
   }
 

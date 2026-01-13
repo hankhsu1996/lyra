@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/common/hierarchical_path.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/mir/operators.hpp"
 
 namespace lyra::compiler::codegen {
@@ -15,8 +16,8 @@ namespace lyra::compiler::codegen {
 // Example: [{gen_block, null}, {"", 0}] -> "gen_block_[0]"
 // Note: Does NOT include the target variable - just the path to reach it.
 auto FormatCppInstancePath(
-    const std::vector<common::HierarchicalPathElement>& elements)
-    -> std::string;
+    const std::vector<common::HierarchicalPathElement>& elements,
+    const common::SymbolNameResolver& resolver) -> std::string;
 
 // Returns true if name is a C++ reserved keyword.
 auto IsCppKeyword(std::string_view name) -> bool;

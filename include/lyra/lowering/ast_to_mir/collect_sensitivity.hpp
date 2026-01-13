@@ -10,7 +10,7 @@
 
 namespace lyra::lowering::ast_to_mir {
 
-using SymbolRef = common::SymbolRef;
+using SymbolId = common::SymbolId;
 using HierarchicalPathElement = common::HierarchicalPathElement;
 
 // Represents a sensitivity item: a symbol with optional instance path.
@@ -18,7 +18,7 @@ using HierarchicalPathElement = common::HierarchicalPathElement;
 // For hierarchical references, instance_path contains the traversal with
 // indices.
 struct SensitivityItem {
-  SymbolRef symbol;
+  SymbolId symbol;
   std::vector<HierarchicalPathElement> instance_path;
 
   auto operator==(const SensitivityItem& other) const -> bool {

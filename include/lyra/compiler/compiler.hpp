@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/common/symbol.hpp"
 #include "lyra/compiler/compiler_result.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
@@ -26,6 +27,7 @@ class Compiler {
   static auto CompileAndRun(
       const std::vector<std::unique_ptr<mir::Module>>& modules,
       const std::vector<std::unique_ptr<mir::Package>>& packages,
+      const common::SymbolTable& symbol_table,
       const std::vector<std::string>& variables_to_read,
       const std::vector<std::string>& plusargs) -> CompilerResult;
 };

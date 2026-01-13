@@ -348,7 +348,7 @@ auto BatchCompiler::PrepareTest(const TestCase& test, size_t index)
   // Get top module name (last module in dependency order)
   pt.top_module_name = lowering_result.modules.back()->name;
 
-  compiler::Codegen codegen;
+  compiler::Codegen codegen(lowering_result.symbol_table);
 
   pt.wrapped_code = codegen.GenerateBatchTestContent(
       pt.namespace_name, lowering_result.packages, lowering_result.modules,
