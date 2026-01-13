@@ -190,7 +190,7 @@ class Codegen {
   void EmitDoWhileLoop(const mir::DoWhileStatement& do_while);
   void EmitForLoop(const mir::ForStatement& for_stmt);
   void EmitRepeatLoop(const mir::RepeatStatement& repeat_stmt);
-  void EmitSystemTask(const mir::SystemCallExpression& syscall);
+  void EmitVoidSystemCall(const mir::SystemCallExpression& syscall);
   void EmitExpression(const mir::Expression& expr, int parent_prec = 0);
   void EmitConstantExpression(
       const mir::Expression& expr);  // For template args

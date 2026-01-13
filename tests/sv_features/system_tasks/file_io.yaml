@@ -1,0 +1,127 @@
+feature: file_io
+description: Tests for $fopen and $fclose system tasks
+
+cases:
+  - name: fopen_fd_write
+    description: $fopen with mode returns FD (bit 31 set)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int has_bit31;
+            initial begin
+              fd = $fopen("test.txt", "w");
+              // FD has bit 31 set
+              has_bit31 = (fd < 0) ? 1 : 0;
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      variables:
+        has_bit31: 1
+
+  - name: fopen_mcd
+    description: $fopen without mode returns MCD (power of 2, bit 31 clear)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            int is_power_of_two;
+            int bit31_clear;
+            initial begin
+              mcd = $fopen("test.txt");
+              // MCD is power of 2 and bit 31 is clear
+              is_power_of_two = ((mcd & (mcd - 1)) == 0 && mcd != 0) ? 1 : 0;
+              bit31_clear = (mcd >= 0) ? 1 : 0;
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        is_power_of_two: 1
+        bit31_clear: 1
+
+  - name: fopen_failure
+    description: $fopen returns 0 on failure
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            initial begin
+              // Try to read a nonexistent file
+              fd = $fopen("/nonexistent/path/file.txt", "r");
+            end
+          endmodule
+    expect:
+      variables:
+        fd: 0
+
+  - name: fopen_close_reopen
+    description: Closing a file and opening again works
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd1, mcd2;
+            int both_valid;
+            initial begin
+              mcd1 = $fopen("test1.txt");
+              $fclose(mcd1);
+              // After closing, we can open another file
+              mcd2 = $fopen("test2.txt");
+              // Both should be valid MCD (power of 2, bit 31 clear)
+              both_valid = (mcd1 > 0 && mcd2 > 0) ? 1 : 0;
+              $fclose(mcd2);
+            end
+          endmodule
+    expect:
+      variables:
+        both_valid: 1
+
+  - name: fopen_multiple_mcd
+    description: Multiple MCD opens return different channels
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd1, mcd2;
+            int different;
+            initial begin
+              mcd1 = $fopen("test1.txt");
+              mcd2 = $fopen("test2.txt");
+              different = (mcd1 != mcd2) ? 1 : 0;
+              $fclose(mcd1);
+              $fclose(mcd2);
+            end
+          endmodule
+    expect:
+      variables:
+        different: 1
+
+  - name: fopen_modes
+    description: Test various file open modes
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd_w, fd_r, fd_a, fd_rw;
+            int all_valid;
+            initial begin
+              fd_w = $fopen("test_w.txt", "w");
+              fd_a = $fopen("test_a.txt", "a");
+              fd_rw = $fopen("test_rw.txt", "w+");
+              $fclose(fd_w);
+              $fclose(fd_a);
+              $fclose(fd_rw);
+              // Read mode fails for new file
+              fd_r = $fopen("nonexistent.txt", "r");
+              // Check all write modes succeeded (bit 31 set = negative)
+              all_valid = (fd_w < 0 && fd_a < 0 && fd_rw < 0 && fd_r == 0) ? 1 : 0;
+            end
+          endmodule
+    expect:
+      variables:
+        all_valid: 1

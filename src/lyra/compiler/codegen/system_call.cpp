@@ -22,7 +22,7 @@ using codegen::GetDisplayVariantProps;
 using codegen::IntegralConstantToString;
 using codegen::kPrecEquality;
 
-void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
+void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   // Simulation control tasks: $finish, $stop, $exit
   if (syscall.name == "$finish" || syscall.name == "$stop" ||
       syscall.name == "$exit") {
@@ -521,6 +521,15 @@ void Codegen::EmitSystemTask(const mir::SystemCallExpression& syscall) {
 
     throw common::InternalError(
         "codegen", "mem I/O target must be an unpacked or packed array");
+  }
+
+  // File I/O
+  if (syscall.name == "$fclose") {
+    Indent();
+    out_ << "lyra::sdk::FClose(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ");\n";
+    return;
   }
 
   // Unrecognized system task - should have been rejected in AST-to-MIR lowering

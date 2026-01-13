@@ -7,6 +7,7 @@
 
 #include "lyra/common/bit_utils.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
@@ -76,15 +77,18 @@ void Codegen::EmitStatement(const mir::Statement& stmt) {
     }
     case mir::Statement::Kind::kExpression: {
       const auto& expr_stmt = mir::As<mir::ExpressionStatement>(stmt);
-      // Handle system tasks specially (not system functions)
+      // Handle void system calls specially (used as statements, not
+      // expressions)
       if (expr_stmt.expression->kind == mir::Expression::Kind::kSystemCall) {
         const auto& syscall =
             mir::As<mir::SystemCallExpression>(*expr_stmt.expression);
-        if (syscall.is_task) {
-          EmitSystemTask(syscall);
+        const auto* info = common::FindSystemFunction(syscall.name);
+        if (info != nullptr &&
+            info->return_type == common::SystemFunctionReturnType::kVoid) {
+          EmitVoidSystemCall(syscall);
           break;
         }
-        // System functions fall through to expression handling
+        // Non-void system functions fall through to expression handling
       }
       // Check if expression is an assignment that produces an unused value
       // (packed struct field or packed element assignment uses comma

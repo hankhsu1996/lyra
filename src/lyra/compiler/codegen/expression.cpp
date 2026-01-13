@@ -642,6 +642,19 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
                                   : "ValuePlusargsInt(");
         EmitStringLiteralArg(*syscall.arguments[0]);
         out_ << ", " << Escape(output_target.symbol->name) << ")";
+      } else if (syscall.name == "$fopen") {
+        // $fopen - 1 arg = MCD mode, 2 args = FD mode
+        if (syscall.arguments.size() == 1) {
+          out_ << "lyra::sdk::FOpen(";
+          EmitStringLiteralArg(*syscall.arguments[0]);
+          out_ << ")";
+        } else {
+          out_ << "lyra::sdk::FOpen(";
+          EmitStringLiteralArg(*syscall.arguments[0]);
+          out_ << ", ";
+          EmitStringLiteralArg(*syscall.arguments[1]);
+          out_ << ")";
+        }
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(

@@ -12,6 +12,7 @@
 #include "lyra/interpreter/system_call/control.hpp"
 #include "lyra/interpreter/system_call/conversion.hpp"
 #include "lyra/interpreter/system_call/display.hpp"
+#include "lyra/interpreter/system_call/file_io.hpp"
 #include "lyra/interpreter/system_call/io.hpp"
 #include "lyra/interpreter/system_call/math.hpp"
 #include "lyra/interpreter/system_call/time.hpp"
@@ -60,6 +61,9 @@ auto RunSystemCall(
 
       case Cat::kMemIo:
         return HandleMemIoCalls(instr, ctx);
+
+      case Cat::kFileIo:
+        return HandleFileIoCalls(instr, ctx);
     }
   }
 
