@@ -1,31 +1,25 @@
 #include "lyra/compiler/compiler.hpp"
 
-#include <array>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <memory>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <sys/wait.h>
-#include <utility>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/subprocess.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/compiler/compiler_result.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
-#include "lyra/mir/module.hpp"
-#include "lyra/mir/package.hpp"
 
 namespace lyra::compiler {
 
@@ -45,6 +39,7 @@ auto GetSdkIncludePath() -> std::filesystem::path {
 
 auto MakeUniqueTempDir() -> std::filesystem::path {
   static std::random_device rd;
+  // NOLINTNEXTLINE(cppcoreguidelines-narrowing-conversions)
   static std::mt19937 gen(rd());
   static std::uniform_int_distribution<uint64_t> dis;
 
@@ -61,23 +56,6 @@ auto MakeUniqueTempDir() -> std::filesystem::path {
   auto unique_dir = base / std::to_string(dis(gen));
   std::filesystem::create_directories(unique_dir);
   return unique_dir;
-}
-
-auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
-  std::array<char, 128> buffer{};
-  std::string result;
-  // clang-format off
-  // popen/pclose are POSIX functions provided by <cstdio>
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);  // NOLINT(misc-include-cleaner)
-  // clang-format on
-  if (!pipe) {
-    return {-1, "popen failed"};
-  }
-  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-    result += buffer.data();
-  }
-  int status = pclose(pipe.release());   // NOLINT(misc-include-cleaner)
-  return {WEXITSTATUS(status), result};  // NOLINT(misc-include-cleaner)
 }
 
 // Generate precompiled header if it doesn't exist, return path to PCH file.
@@ -112,10 +90,9 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
   }
 
   // Generate PCH
-  std::string gen_cmd = "clang++ -std=c++23 -x c++-header -I" +
-                        sdk_include.string() + " -o " + pch_path.string() +
-                        " " + header_path.string() + " 2>&1";
-  auto [status, output] = ExecuteCommand(gen_cmd);
+  auto [status, output] = common::RunSubprocess(
+      {"clang++", "-std=c++23", "-x", "c++-header", "-I" + sdk_include.string(),
+       "-o", pch_path.string(), header_path.string()});
   if (status != 0) {
     // PCH generation failed - return empty path (will compile without PCH)
     return {};
@@ -126,6 +103,7 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
 
 }  // namespace
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 auto Compiler::CompileAndRun(
     const std::vector<std::unique_ptr<mir::Module>>& modules,
     const std::vector<std::unique_ptr<mir::Package>>& packages,
@@ -161,9 +139,38 @@ auto Compiler::CompileAndRun(
   // Use last module as top (modules are in dependency order)
   const auto& top = *modules.back();
 
-  // Build main() that captures display output and prints results
+  // Build main() that captures display output and writes JSON result
+  auto json_path = tmp_dir / "result.json";
   std::ostringstream main_code;
-  main_code << "\nint main(int argc, char* argv[]) {\n";
+
+  // Emit JSON string escape helper (generated code can't use nlohmann/json)
+  main_code << R"(
+std::string EscapeJsonString(const std::string& s) {
+  std::string out;
+  out.reserve(s.size() + 16);
+  for (unsigned char c : s) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (c < 0x20) {
+          char buf[8];
+          snprintf(buf, sizeof(buf), "\\u%04x", c);
+          out += buf;
+        } else {
+          out += static_cast<char>(c);
+        }
+    }
+  }
+  return out;
+}
+
+)";
+
+  main_code << "int main(int argc, char* argv[]) {\n";
   main_code
       << "  lyra::sdk::InitPlusargs({argv, static_cast<size_t>(argc)});\n";
   // Initialize global precision only if not default (for
@@ -179,19 +186,36 @@ auto Compiler::CompileAndRun(
   main_code << "  auto* old_buf = std::cout.rdbuf(captured.rdbuf());\n";
   main_code << "  auto result = dut.Run();\n";
   main_code << "  std::cout.rdbuf(old_buf);\n";
-  // Output captured display with markers
-  main_code << "  std::cout << \"__output__=\" << captured.str() "
-            << "<< \"__end_output__\" << std::endl;\n";
+
+  // Write JSON result with atomic rename
+  main_code << "  std::ofstream out(\""
+            << (tmp_dir / "result.json.tmp").string() << "\");\n";
+  main_code << "  out << \"{\";\n";
+  main_code << "  out << \"\\\"schema_version\\\":1,\";\n";
+  main_code << "  out << \"\\\"captured_output\\\":\\\"\" << "
+               "EscapeJsonString(captured.str()) << \"\\\",\";\n";
+  main_code
+      << "  out << \"\\\"final_time\\\":\" << result.final_time << \",\";\n";
+  main_code
+      << "  out << \"\\\"exit_code\\\":\" << result.exit_code << \",\";\n";
+  main_code << "  out << \"\\\"variables\\\":{\";\n";
+
+  // Emit variable serialization
+  bool first_var = true;
   for (const auto& var : variables_to_read) {
-    // Use std::showpoint to always show decimal point for floats (e.g., 4.0 not
-    // 4)
-    main_code << "  std::cout << \"" << var << "=\" << std::showpoint << dut."
-              << var << " << std::noshowpoint << std::endl;\n";
+    if (!first_var) {
+      main_code << "  out << \",\";\n";
+    }
+    first_var = false;
+    main_code << "  out << \"\\\"" << var << "\\\":\" << std::showpoint << dut."
+              << var << " << std::noshowpoint;\n";
   }
-  main_code
-      << "  std::cout << \"__time__=\" << result.final_time << std::endl;\n";
-  main_code
-      << "  std::cout << \"__stopped__=\" << result.exit_code << std::endl;\n";
+
+  main_code << "  out << \"}\";\n";  // close variables
+  main_code << "  out << \"}\";\n";  // close root
+  main_code << "  out.close();\n";
+  main_code << "  std::rename(\"" << (tmp_dir / "result.json.tmp").string()
+            << "\", \"" << json_path.string() << "\");\n";
   main_code << "  return 0;\n";
   main_code << "}\n";
 
@@ -220,70 +244,78 @@ auto Compiler::CompileAndRun(
   auto sdk_include = GetSdkIncludePath();
   auto pch_path = GetOrCreatePch(sdk_include);
 
-  std::string compile_cmd = "clang++ -std=c++23 ";
+  std::vector<std::string> compile_argv = {"clang++", "-std=c++23"};
   if (!pch_path.empty()) {
-    compile_cmd += "-include-pch " + pch_path.string() + " ";
+    compile_argv.push_back("-include-pch");
+    compile_argv.push_back(pch_path.string());
   }
-  compile_cmd += "-I" + sdk_include.string() + " -I" + tmp_dir.string() +
-                 " -I" + design_dir.string() + " -o " + bin_path.string() +
-                 " " + cpp_path.string() + " 2>&1";
-  auto [compile_status, compile_output] = ExecuteCommand(compile_cmd);
+  compile_argv.push_back("-I" + sdk_include.string());
+  compile_argv.push_back("-I" + tmp_dir.string());
+  compile_argv.push_back("-I" + design_dir.string());
+  compile_argv.push_back("-o");
+  compile_argv.push_back(bin_path.string());
+  compile_argv.push_back(cpp_path.string());
+
+  auto [compile_status, compile_output] = common::RunSubprocess(compile_argv);
   if (compile_status != 0) {
     result.error_message_ = "Compilation failed: " + compile_output;
     return result;
   }
 
   // Run with plusargs
-  std::string run_cmd = bin_path.string();
+  std::vector<std::string> run_argv = {bin_path.string()};
   for (const auto& arg : plusargs) {
-    run_cmd += " " + arg;
+    run_argv.push_back(arg);
   }
-  auto [run_status, run_output] = ExecuteCommand(run_cmd);
+  auto [run_status, run_output] = common::RunSubprocess(run_argv);
   if (run_status != 0) {
     result.error_message_ =
         "Execution failed with status " + std::to_string(run_status);
     return result;
   }
 
-  // Parse output
-  // Format: "__output__=...contents...__end_output__\nvar=value\n__time__=N\n"
-
-  // Extract captured output (between __output__= and __end_output__)
-  constexpr std::string_view kOutputStart = "__output__=";
-  constexpr std::string_view kOutputEnd = "__end_output__";
-  auto output_start = run_output.find(kOutputStart);
-  auto output_end = run_output.find(kOutputEnd);
-  if (output_start != std::string::npos && output_end != std::string::npos) {
-    auto content_start = output_start + kOutputStart.size();
-    result.captured_output_ =
-        run_output.substr(content_start, output_end - content_start);
+  // Read JSON result file
+  std::ifstream json_in(json_path);
+  if (!json_in) {
+    result.error_message_ = "Missing result.json at " + json_path.string();
+    return result;
   }
 
-  // Parse variable values and time
-  std::istringstream iss(run_output);
-  std::string line;
-  while (std::getline(iss, line)) {
-    // Skip the output marker line
-    if (line.starts_with("__output__=")) {
-      continue;
-    }
-    auto eq_pos = line.find('=');
-    if (eq_pos != std::string::npos) {
-      std::string name = line.substr(0, eq_pos);
-      if (name == "__time__") {
-        result.final_time_ = std::stoull(line.substr(eq_pos + 1));
-      } else {
-        std::string value_str = line.substr(eq_pos + 1);
-        // Detect floating-point by presence of '.', 'e', 'E', or special values
-        if (value_str.find('.') != std::string::npos ||
-            value_str.find('e') != std::string::npos ||
-            value_str.find('E') != std::string::npos || value_str == "inf" ||
-            value_str == "-inf" || value_str == "nan") {
-          result.variables_[name] = std::stod(value_str);
-        } else {
-          result.variables_[name] = std::stoll(value_str);
-        }
-      }
+  nlohmann::json j;
+  try {
+    j = nlohmann::json::parse(json_in);
+  } catch (const nlohmann::json::parse_error& e) {
+    result.error_message_ = std::string("JSON parse error: ") + e.what();
+    return result;
+  }
+
+  // Strict parsing: require all expected fields
+  if (!j.contains("schema_version")) {
+    result.error_message_ = "Harness error: missing schema_version in JSON";
+    return result;
+  }
+  if (!j.contains("captured_output")) {
+    result.error_message_ = "Harness error: missing captured_output in JSON";
+    return result;
+  }
+  if (!j.contains("final_time")) {
+    result.error_message_ = "Harness error: missing final_time in JSON";
+    return result;
+  }
+  if (!j.contains("variables")) {
+    result.error_message_ = "Harness error: missing variables in JSON";
+    return result;
+  }
+
+  result.captured_output_ = j["captured_output"].get<std::string>();
+  result.final_time_ = j["final_time"].get<uint64_t>();
+
+  // Parse variables
+  for (const auto& [name, value] : j["variables"].items()) {
+    if (value.is_number_float()) {
+      result.variables_[name] = value.get<double>();
+    } else {
+      result.variables_[name] = value.get<int64_t>();
     }
   }
 
@@ -299,6 +331,7 @@ auto CompilerResult::ReadVariable(const std::string& name) const -> TestValue {
   return it->second;
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 auto Compiler::RunFromSource(
     const std::string& code, const std::vector<std::string>& variables_to_read,
     const std::vector<std::string>& plusargs) -> CompilerResult {
@@ -320,6 +353,7 @@ auto Compiler::RunFromSource(
       plusargs);
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 auto Compiler::RunFromFiles(
     const std::vector<std::string>& paths,
     const std::vector<std::string>& variables_to_read,

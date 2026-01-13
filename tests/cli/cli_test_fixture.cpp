@@ -1,12 +1,12 @@
 #include "tests/cli/cli_test_fixture.hpp"
 
-#include <array>
-#include <cstdio>
 #include <cstdlib>
 #include <format>
 #include <fstream>
 #include <random>
 #include <sstream>
+
+#include "lyra/common/subprocess.hpp"
 
 namespace lyra::test {
 namespace {
@@ -16,27 +16,6 @@ auto GenerateRandomSuffix() -> std::string {
   static std::mt19937 gen(rd());
   static std::uniform_int_distribution<> dis(0, 999999);
   return std::to_string(dis(gen));
-}
-
-// Execute command and capture output
-// Uses popen to capture combined stdout/stderr
-auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
-  std::string output;
-  std::array<char, 4096> buffer{};
-
-  FILE* pipe = popen(cmd.c_str(), "r");
-  if (pipe == nullptr) {
-    return {-1, "Failed to execute command"};
-  }
-
-  while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-    output += buffer.data();
-  }
-
-  int status = pclose(pipe);
-  int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-
-  return {exit_code, output};
 }
 
 }  // namespace
@@ -89,17 +68,14 @@ auto CliTestFixture::RunIn(
 auto CliTestFixture::RunImpl(
     const std::filesystem::path& working_dir,
     const std::vector<std::string>& args) -> CliResult {
-  // Build command string
-  std::ostringstream cmd;
-  cmd << "cd " << working_dir.string() << " && " << lyra_bin_.string();
+  // Build argv vector
+  std::vector<std::string> argv;
+  argv.push_back(lyra_bin_.string());
   for (const auto& arg : args) {
-    // Simple escaping for shell
-    cmd << " '" << arg << "'";
+    argv.push_back(arg);
   }
-  // Redirect stderr to stdout so we capture both
-  cmd << " 2>&1";
 
-  auto [exit_code, output] = ExecuteCommand(cmd.str());
+  auto [exit_code, output] = common::RunSubprocess(argv, working_dir);
 
   return CliResult{
       .exit_code = exit_code,

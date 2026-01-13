@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -57,8 +58,8 @@ class BatchCompiler {
   std::map<std::string, size_t> name_to_index_;
   std::filesystem::path batch_dir_;
   std::filesystem::path binary_path_;
+  std::once_flag preparation_flag_;
   bool prepared_ = false;
-  bool preparation_attempted_ = false;
   std::string preparation_error_;
 };
 

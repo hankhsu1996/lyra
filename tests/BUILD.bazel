@@ -20,6 +20,7 @@ cc_library(
     deps = [
         ":test_framework",
         "//:core",
+        "@nlohmann_json//:json",
     ],
 )
 
@@ -29,6 +30,7 @@ cc_library(
     srcs = ["cli/cli_test_fixture.cpp"],
     hdrs = ["cli/cli_test_fixture.hpp"],
     deps = [
+        "//:core",
         "@googletest//:gtest",
     ],
 )

@@ -1,38 +1,22 @@
 #include "lyra/toolchain/toolchain.hpp"
 
-#include <array>
-#include <cstdio>
 #include <expected>
 #include <format>
-#include <memory>
 #include <regex>
 #include <string>
+
+#include "lyra/common/subprocess.hpp"
 
 namespace lyra::toolchain {
 
 namespace {
 
-// Execute command and capture stdout
-auto ExecuteCommand(const std::string& cmd) -> std::string {
-  std::array<char, 256> buffer{};
-  std::string result;
-  // NOLINTBEGIN(misc-include-cleaner): popen/pclose are in <cstdio>
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(
-      popen(cmd.c_str(), "r"), pclose);
-  // NOLINTEND(misc-include-cleaner)
-  if (!pipe) {
-    return "";
-  }
-  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) !=
-         nullptr) {
-    result += buffer.data();
-  }
-  return result;
-}
-
 // Check if command exists using 'which'
 auto FindExecutable(const std::string& name) -> std::string {
-  std::string result = ExecuteCommand("which " + name + " 2>/dev/null");
+  auto [status, result] = common::RunSubprocess({"which", name});
+  if (status != 0) {
+    return "";
+  }
   // Remove trailing newline
   if (!result.empty() && result.back() == '\n') {
     result.pop_back();
@@ -49,7 +33,8 @@ auto CheckCmake(int min_major, int min_minor)
     return std::unexpected("cmake not found in PATH");
   }
 
-  auto version_output = ExecuteCommand("cmake --version 2>/dev/null");
+  auto [cmake_status, version_output] =
+      common::RunSubprocess({"cmake", "--version"});
   // Parse: "cmake version 3.28.1"
   std::regex version_regex(R"(cmake version (\d+)\.(\d+))");
   std::smatch match;
@@ -78,7 +63,8 @@ auto CheckClangPlusPlus() -> std::expected<ToolInfo, std::string> {
         "clang++ not found in PATH (required for C++23 support)");
   }
 
-  auto version_output = ExecuteCommand("clang++ --version 2>/dev/null");
+  auto [clang_status, version_output] =
+      common::RunSubprocess({"clang++", "--version"});
   // Parse: "clang version 18.0.0" or "Ubuntu clang version 18.0.0"
   std::regex version_regex(R"(clang version (\d+)\.(\d+))");
   std::smatch match;

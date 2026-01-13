@@ -1,28 +1,29 @@
 #include "tests/framework/batch_compiler.hpp"
 
-#include <array>
+#include <algorithm>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <memory>
+#include <mutex>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <sys/wait.h>
 #include <utility>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/subprocess.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/frontend/slang_frontend.hpp"
 #include "lyra/lowering/ast_to_mir/ast_to_mir.hpp"
-#include "tests/framework/yaml_loader.hpp"
+#include "tests/framework/test_case.hpp"
+#include "tests/framework/yaml_loader.hpp"  // NOLINT(misc-include-cleaner)
 
 namespace lyra::test {
 
@@ -38,6 +39,7 @@ auto GetSdkIncludePath() -> std::filesystem::path {
 
 auto MakeUniqueTempDir() -> std::filesystem::path {
   static std::random_device rd;
+  // NOLINTNEXTLINE(cppcoreguidelines-narrowing-conversions)
   static std::mt19937 gen(rd());
   static std::uniform_int_distribution<uint64_t> dis;
 
@@ -53,24 +55,6 @@ auto MakeUniqueTempDir() -> std::filesystem::path {
   auto unique_dir = base / std::to_string(dis(gen));
   std::filesystem::create_directories(unique_dir);
   return unique_dir;
-}
-
-auto ExecuteCommand(const std::string& cmd) -> std::pair<int, std::string> {
-  std::array<char, 128> buffer{};
-  std::string result;
-  // NOLINTNEXTLINE(misc-include-cleaner)
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(
-      popen(cmd.c_str(), "r"), pclose);
-  if (!pipe) {
-    return {-1, "popen failed"};
-  }
-  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-    result += buffer.data();
-  }
-  // NOLINTNEXTLINE(misc-include-cleaner)
-  int status = pclose(pipe.release());
-  // NOLINTNEXTLINE(misc-include-cleaner)
-  return {WEXITSTATUS(status), result};
 }
 
 auto GetOrCreatePch(const std::filesystem::path& sdk_include)
@@ -99,10 +83,9 @@ auto GetOrCreatePch(const std::filesystem::path& sdk_include)
     out << "#include <lyra/sdk/sdk.hpp>\n";
   }
 
-  std::string gen_cmd = "clang++ -std=c++23 -x c++-header -I" +
-                        sdk_include.string() + " -o " + pch_path.string() +
-                        " " + header_path.string() + " 2>&1";
-  auto [status, output] = ExecuteCommand(gen_cmd);
+  auto [status, output] = common::RunSubprocess(
+      {"clang++", "-std=c++23", "-x", "c++-header", "-I" + sdk_include.string(),
+       "-o", pch_path.string(), header_path.string()});
   if (status != 0) {
     return {};
   }
@@ -201,20 +184,20 @@ auto BatchCompiler::RunTest(
 }
 
 void BatchCompiler::EnsurePrepared() {
-  if (prepared_ || preparation_attempted_) {
-    return;
-  }
-
-  preparation_attempted_ = true;
-  try {
-    CollectTestsForShard();
-    PrepareBatch();
-    prepared_ = true;
-  } catch (const std::exception& e) {
-    preparation_error_ = e.what();
-  }
+  std::call_once(preparation_flag_, [this] {
+    std::cerr << "Preparing batch compilation...\n";
+    std::cerr.flush();
+    try {
+      CollectTestsForShard();
+      PrepareBatch();
+      prepared_ = true;
+    } catch (const std::exception& e) {
+      preparation_error_ = e.what();
+    }
+  });
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void BatchCompiler::CollectTestsForShard() {
   // Collect ALL tests regardless of sharding - gtest will only run tests
   // assigned to this shard, but we need all tests in the batch because
@@ -303,10 +286,9 @@ auto BatchCompiler::PrepareTest(const TestCase& test, size_t index)
   std::unique_ptr<slang::ast::Compilation> compilation;
 
   if (test.IsMultiFile()) {
-    auto old_cwd = std::filesystem::current_path();
-    std::filesystem::current_path(pt.work_dir);
-    compilation = frontend.LoadFromFiles(sv_paths);
-    std::filesystem::current_path(old_cwd);
+    frontend::FrontendOptions options;
+    options.include_dirs.push_back(pt.work_dir.string());
+    compilation = frontend.LoadFromFiles(sv_paths, options);
   } else {
     compilation = frontend.LoadFromString(test.sv_code);
   }
@@ -329,6 +311,8 @@ auto BatchCompiler::PrepareTest(const TestCase& test, size_t index)
 auto BatchCompiler::GenerateBatchMain() -> std::string {
   std::ostringstream main;
 
+  main << "#include <cstdio>\n";
+  main << "#include <fstream>\n";
   main << "#include <iomanip>\n";
   main << "#include <iostream>\n";
   main << "#include <string>\n";
@@ -336,6 +320,31 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
   main << "#include <vector>\n";
   main << "#include <lyra/sdk/runtime_config.hpp>\n";
   main << "#include \"design/all_tests.hpp\"\n\n";
+
+  // Emit JSON string escape helper
+  main << "std::string EscapeJsonString(const std::string& s) {\n";
+  main << "  std::string out;\n";
+  main << "  out.reserve(s.size() + 16);\n";
+  main << "  for (char c : s) {\n";
+  main << "    switch (c) {\n";
+  main << "      case '\\\"': out += \"\\\\\\\"\"; break;\n";
+  main << "      case '\\\\': out += \"\\\\\\\\\"; break;\n";
+  main << "      case '\\n': out += \"\\\\n\"; break;\n";
+  main << "      case '\\r': out += \"\\\\r\"; break;\n";
+  main << "      case '\\t': out += \"\\\\t\"; break;\n";
+  main << "      default:\n";
+  main << "        if (static_cast<unsigned char>(c) < 0x20) {\n";
+  main << "          char buf[8];\n";
+  main << "          std::snprintf(buf, sizeof(buf), \"\\\\u%04x\", "
+          "static_cast<unsigned char>(c));\n";
+  main << "          out += buf;\n";
+  main << "        } else {\n";
+  main << "          out += c;\n";
+  main << "        }\n";
+  main << "    }\n";
+  main << "  }\n";
+  main << "  return out;\n";
+  main << "}\n\n";
 
   main << "int main(int argc, char* argv[]) {\n";
   main << "  if (argc < 3) {\n";
@@ -345,7 +354,7 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
   main << "  }\n\n";
 
   main << "  int test_index = std::stoi(argv[1]);\n";
-  main << "  std::string_view work_dir = argv[2];\n";
+  main << "  std::string work_dir = argv[2];\n";
   main << "  std::vector<std::string_view> plusargs;\n";
   main << "  for (int i = 3; i < argc; ++i) {\n";
   main << "    plusargs.emplace_back(argv[i]);\n";
@@ -368,21 +377,31 @@ auto BatchCompiler::GenerateBatchMain() -> std::string {
   main << "      return 1;\n";
   main << "  }\n\n";
 
-  // Output result in parseable format
-  main << "  std::cout << \"__output__=\" << result.captured_output << "
-          "\"__end_output__\" << std::endl;\n";
+  // Write result to JSON file (atomic: write tmp, then rename)
+  main << "  std::string tmp_path = work_dir + \"/result.json.tmp\";\n";
+  main << "  std::string final_path = work_dir + \"/result.json\";\n";
+  main << "  std::ofstream out(tmp_path);\n";
+  main << "  out << \"{\";\n";
+  main << "  out << \"\\\"schema_version\\\":1,\";\n";
+  main << "  out << \"\\\"captured_output\\\":\\\"\" << "
+          "EscapeJsonString(result.captured_output) << \"\\\",\";\n";
+  main << "  out << \"\\\"final_time\\\":\" << result.final_time << \",\";\n";
+  main << "  out << \"\\\"exit_code\\\":\" << result.exit_code << \",\";\n";
+  main << "  out << \"\\\"variables\\\":{\";\n";
+  main << "  bool first = true;\n";
   main << "  for (const auto& [name, value] : result.variables) {\n";
-  main << "    std::cout << name << \"=\";\n";
+  main << "    if (!first) out << \",\";\n";
+  main << "    first = false;\n";
+  main << "    out << \"\\\"\" << name << \"\\\":\";\n";
   main << "    if (std::holds_alternative<double>(value)) {\n";
-  main << "      std::cout << std::showpoint << std::get<double>(value) << "
-          "std::noshowpoint;\n";
+  main << "      out << std::setprecision(17) << std::get<double>(value);\n";
   main << "    } else {\n";
-  main << "      std::cout << std::get<int64_t>(value);\n";
+  main << "      out << std::get<int64_t>(value);\n";
   main << "    }\n";
-  main << "    std::cout << std::endl;\n";
   main << "  }\n";
-  main << "  std::cout << \"__time__=\" << result.final_time << std::endl;\n";
-  main << "  std::cout << \"__stopped__=\" << result.exit_code << std::endl;\n";
+  main << "  out << \"}}\";\n";
+  main << "  out.close();\n";
+  main << "  std::rename(tmp_path.c_str(), final_path.c_str());\n";
   main << "  return 0;\n";
   main << "}\n";
 
@@ -395,16 +414,18 @@ void BatchCompiler::Compile() {
   auto main_path = batch_dir_ / "batch_main.cpp";
   binary_path_ = batch_dir_ / "sim";
 
-  std::string compile_cmd = "clang++ -std=c++23 ";
+  std::vector<std::string> compile_argv = {"clang++", "-std=c++23"};
   if (!pch_path.empty()) {
-    compile_cmd += "-include-pch " + pch_path.string() + " ";
+    compile_argv.push_back("-include-pch");
+    compile_argv.push_back(pch_path.string());
   }
-  compile_cmd += "-I" + sdk_include.string() + " ";
-  compile_cmd += "-I" + batch_dir_.string() + " ";
-  compile_cmd += "-o " + binary_path_.string() + " ";
-  compile_cmd += main_path.string() + " 2>&1";
+  compile_argv.push_back("-I" + sdk_include.string());
+  compile_argv.push_back("-I" + batch_dir_.string());
+  compile_argv.push_back("-o");
+  compile_argv.push_back(binary_path_.string());
+  compile_argv.push_back(main_path.string());
 
-  auto [status, output] = ExecuteCommand(compile_cmd);
+  auto [status, output] = common::RunSubprocess(compile_argv);
   if (status != 0) {
     throw std::runtime_error("Batch compilation failed: " + output);
   }
@@ -417,59 +438,64 @@ auto BatchCompiler::Execute(
 
   const auto& pt = prepared_tests_[index];
 
-  std::string run_cmd = binary_path_.string();
-  run_cmd += " " + std::to_string(index);
-  run_cmd += " " + pt.work_dir.string();
+  std::vector<std::string> run_argv = {
+      binary_path_.string(), std::to_string(index), pt.work_dir.string()};
   for (const auto& arg : pt.plusargs) {
-    run_cmd += " " + arg;
+    run_argv.push_back(arg);
   }
 
-  auto [status, output] = ExecuteCommand(run_cmd);
+  auto [status, output] = common::RunSubprocess(run_argv);
+
+  // Exit code is primary signal - non-zero means crash
   if (status != 0) {
     result.error_message =
         "Execution failed with status " + std::to_string(status);
+    if (!output.empty()) {
+      result.error_message += "\nOutput: " + output;
+    }
     return result;
   }
 
-  constexpr std::string_view kOutputStart = "__output__=";
-  constexpr std::string_view kOutputEnd = "__end_output__";
-  auto output_start = output.find(kOutputStart);
-  auto output_end = output.find(kOutputEnd);
-  if (output_start != std::string::npos && output_end != std::string::npos) {
-    auto content_start = output_start + kOutputStart.size();
-    result.captured_output =
-        output.substr(content_start, output_end - content_start);
+  // Read JSON result file
+  auto json_path = pt.work_dir / "result.json";
+  std::ifstream json_in(json_path);
+  if (!json_in) {
+    result.error_message =
+        "Harness error: missing result.json at " + json_path.string();
+    return result;
   }
 
-  std::istringstream iss(output);
-  std::string line;
-  while (std::getline(iss, line)) {
-    if (line.starts_with("__output__=")) {
-      continue;
+  try {
+    nlohmann::json j = nlohmann::json::parse(json_in);
+
+    // Strict parsing - missing fields = harness failure
+    if (!j.contains("schema_version")) {
+      result.error_message = "Harness error: missing schema_version in JSON";
+      return result;
     }
-    auto eq_pos = line.find('=');
-    if (eq_pos != std::string::npos) {
-      std::string name = line.substr(0, eq_pos);
-      std::string value_str = line.substr(eq_pos + 1);
-      if (name == "__time__") {
-        result.final_time = std::stoull(value_str);
-      } else if (name == "__stopped__") {
-        // ignore exit code for now
+    if (!j.contains("captured_output") || !j.contains("final_time") ||
+        !j.contains("variables")) {
+      result.error_message = "Harness error: missing required fields in JSON";
+      return result;
+    }
+
+    result.captured_output = j["captured_output"].get<std::string>();
+    result.final_time = j["final_time"].get<uint64_t>();
+
+    for (const auto& [name, value] : j["variables"].items()) {
+      if (value.is_number_float()) {
+        result.variables[name] = value.get<double>();
       } else {
-        // Parse variable value (int or double)
-        if (value_str.find('.') != std::string::npos ||
-            value_str.find('e') != std::string::npos ||
-            value_str.find('E') != std::string::npos || value_str == "inf" ||
-            value_str == "-inf" || value_str == "nan") {
-          result.variables[name] = std::stod(value_str);
-        } else {
-          result.variables[name] = std::stoll(value_str);
-        }
+        result.variables[name] = value.get<int64_t>();
       }
     }
+
+    result.success = true;
+  } catch (const nlohmann::json::exception& e) {
+    result.error_message =
+        "Harness error: failed to parse result.json: " + std::string(e.what());
   }
 
-  result.success = true;
   return result;
 }
 
