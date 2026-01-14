@@ -37,8 +37,9 @@ struct Waiter {
 /// Lifetime: The module instance must outlive the scheduler (guaranteed by
 /// Module::Run which creates scheduler on stack).
 struct MonitorState {
-  explicit MonitorState(std::function<void()> check_fn)
-      : check_and_print(std::move(check_fn)) {
+  explicit MonitorState(
+      std::function<void()> check_fn, std::optional<uint32_t> fd = std::nullopt)
+      : check_and_print(std::move(check_fn)), file_descriptor(fd) {
   }
 
   MonitorState(const MonitorState&) = delete;
@@ -49,6 +50,10 @@ struct MonitorState {
 
   bool enabled = true;
   std::function<void()> check_and_print;  // Mutable lambda with captured state
+
+  // File descriptor for $fmonitor output (for $fclose cancellation).
+  // nullopt = stdout ($monitor), has value = file output ($fmonitor)
+  std::optional<uint32_t> file_descriptor;
 };
 
 class Scheduler {
@@ -108,14 +113,23 @@ class Scheduler {
   // Uses perfect forwarding to avoid intermediate std::function construction
   // when passing a lambda directly.
   template <typename F>
-  void SetMonitor(F&& check_and_print) {
-    active_monitor_.emplace(std::forward<F>(check_and_print));
+  void SetMonitor(
+      F&& check_and_print,
+      std::optional<uint32_t> file_descriptor = std::nullopt) {
+    active_monitor_.emplace(std::forward<F>(check_and_print), file_descriptor);
   }
 
   // Enable/disable monitor output ($monitoron/$monitoroff)
   void SetMonitorEnabled(bool enabled) {
     if (active_monitor_) {
       active_monitor_->enabled = enabled;
+    }
+  }
+
+  // Cancel $fmonitor if its file descriptor matches (for $fclose)
+  void CancelMonitorIfFileDescriptor(uint32_t descriptor) {
+    if (active_monitor_ && active_monitor_->file_descriptor == descriptor) {
+      active_monitor_.reset();
     }
   }
 

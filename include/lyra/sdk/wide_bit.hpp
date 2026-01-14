@@ -218,9 +218,9 @@ class WideBit {
     return true;
   }
 
-  // Conversion to bool
-  // NOLINTNEXTLINE(google-explicit-constructor)
-  constexpr operator bool() const {
+  // Explicit conversion to bool
+  // Made explicit to prevent silent narrowing in function overload resolution.
+  explicit constexpr operator bool() const {
     return !IsZero();
   }
 

@@ -41,7 +41,13 @@ struct MonitorState {
   // of monitored expressions for change detection. This persists across check
   // process calls, matching codegen's mutable lambda capture semantics.
   // Accessed via kLoadCapture/kStoreCapture instructions.
+  // For $fmonitor, also contains "__file_descriptor" for output routing.
   CallFrame closure;
+
+  // File descriptor for $fmonitor output (typed field for $fclose
+  // cancellation). nullopt = stdout ($monitor), has value = file output
+  // ($fmonitor)
+  std::optional<uint32_t> file_descriptor;
 };
 
 class SimulationContext {

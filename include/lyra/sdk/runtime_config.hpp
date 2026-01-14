@@ -208,27 +208,28 @@ inline auto FormatTimeValue(T time_value, int8_t module_unit_power)
 }
 
 /// $fopen(filename) - MCD mode (write-only, OR-able).
-/// Returns multichannel descriptor (single bit set), or 0 on failure.
-inline auto FOpen(std::string_view filename) -> int32_t {
+/// Returns FileDescriptor. Use .ToInt32() for assignment to SV int.
+inline auto FOpen(std::string_view filename) -> FileDescriptor {
   return RuntimeScope::Current().file_manager.FopenMcd(filename);
 }
 
 /// $fopen(filename, mode) - FD mode with explicit mode.
-/// Returns file descriptor (bit 31 set), or 0 on failure.
-inline auto FOpen(std::string_view filename, std::string_view mode) -> int32_t {
+/// Returns FileDescriptor. Use .ToInt32() for assignment to SV int.
+inline auto FOpen(std::string_view filename, std::string_view mode)
+    -> FileDescriptor {
   return RuntimeScope::Current().file_manager.FopenFd(filename, mode);
 }
 
 /// $fclose(descriptor) - close file and release handle.
-inline void FClose(int32_t descriptor) {
-  RuntimeScope::Current().file_manager.Fclose(descriptor);
+inline void FClose(FileDescriptor fd) {
+  RuntimeScope::Current().file_manager.Fclose(fd);
 }
 
 /// Write content to file descriptor(s) - used by $fdisplay/$fwrite codegen.
 /// Routes to appropriate file(s) or stdout based on descriptor type.
-inline void FWrite(int32_t descriptor, std::string_view content) {
+inline void FWrite(FileDescriptor fd, std::string_view content) {
   RuntimeScope::Current().file_manager.WriteToDescriptor(
-      static_cast<uint32_t>(descriptor), content, std::cout);
+      fd, content, std::cout);
 }
 
 }  // namespace lyra::sdk

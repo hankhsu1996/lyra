@@ -649,16 +649,17 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
         out_ << ", " << Escape(Name(output_target.symbol)) << ")";
       } else if (syscall.name == "$fopen") {
         // $fopen - 1 arg = MCD mode, 2 args = FD mode
+        // Returns FileDescriptor, convert to int32 for SV integer assignment
         if (syscall.arguments.size() == 1) {
           out_ << "lyra::sdk::FOpen(";
           EmitStringLiteralArg(*syscall.arguments[0]);
-          out_ << ")";
+          out_ << ").ToInt32()";
         } else {
           out_ << "lyra::sdk::FOpen(";
           EmitStringLiteralArg(*syscall.arguments[0]);
           out_ << ", ";
           EmitStringLiteralArg(*syscall.arguments[1]);
-          out_ << ")";
+          out_ << ").ToInt32()";
         }
       } else {
         // System tasks like $display, $finish are handled in statement context

@@ -238,3 +238,157 @@ cases:
     expect:
       output: |
         val=99 end
+
+  - name: fstrobe_basic
+    description: $fstrobe writes to file in Postponed region
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fstrobe(1, "strobe output");
+              $display("display first");
+            end
+          endmodule
+    expect:
+      output: |
+        display first
+        strobe output
+
+  - name: fstrobe_format_string
+    description: $fstrobe with format arguments
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 42;
+            initial begin
+              $fstrobe(1, "x=%d", x);
+            end
+          endmodule
+    expect:
+      output: |
+        x=42
+
+  - name: fstrobeh_hex
+    description: $fstrobeh uses hex format
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $fstrobeh(1, 255);
+            end
+          endmodule
+    expect:
+      output: |
+        ff
+
+  - name: fmonitor_initial_print
+    description: $fmonitor prints immediately on registration
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 10;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+            end
+          endmodule
+    expect:
+      output: |
+        x=10
+
+  - name: fmonitor_change_detection
+    description: $fmonitor prints on value change to file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+              #1 x = 2;
+              #1 x = 3;
+            end
+          endmodule
+    expect:
+      output: |
+        x=1
+        x=2
+        x=3
+
+  - name: fmonitorh_hex
+    description: $fmonitorh uses hex format
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 255;
+            initial begin
+              $fmonitorh(1, x);
+            end
+          endmodule
+    expect:
+      output: |
+        ff
+
+  - name: fclose_cancels_fmonitor
+    description: $fclose cancels active $fmonitor to that file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fmonitor(fd, "x=%d", x);
+              #1 x = 2;
+              $fclose(fd);
+              #1 x = 3;
+              $display("done");
+            end
+          endmodule
+    expect:
+      output: |
+        done
+
+  - name: fmonitor_replace
+    description: New $fmonitor replaces active one (old monitor does not print)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1, y = 10;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+              #1 x = 2;
+              $fmonitor(1, "y=%d", y);
+              #1 y = 20;
+              #1 x = 3;
+            end
+          endmodule
+    expect:
+      output: |
+        x=1
+        y=10
+        y=20
+
+  - name: fstrobe_after_fclose
+    description: $fstrobe to closed file is silently ignored
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fstrobe(fd, "should not appear");
+              $fclose(fd);
+              $display("done");
+            end
+          endmodule
+    expect:
+      output: |
+        done

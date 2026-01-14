@@ -31,15 +31,16 @@ using IK = lir::InstructionKind;
 
 namespace {
 
-// Synthesizes a check process for $monitor that periodically re-evaluates
-// monitored expressions and prints when any change.
+// Synthesizes a check process for $monitor/$fmonitor that periodically
+// re-evaluates monitored expressions and prints when any change.
 // format_literal: optional format string literal (nullptr if no format string)
-// display_call: display variant to use ($display, $displayb, $displayo,
-// $displayh)
+// display_call: display variant to use ($display, $fdisplay, etc.)
+// descriptor_temp: optional file descriptor temp for $fmonitor variants
 auto SynthesizeMonitorCheckProcess(
     const std::vector<const mir::Expression*>& monitored_exprs,
     const mir::Expression* format_literal, const std::string& display_call,
-    LirBuilder& builder) -> std::string {
+    LirBuilder& builder, std::optional<TempRef> descriptor_temp = std::nullopt)
+    -> std::string {
   // Generate unique process name
   std::string process_name = builder.MakeSyntheticFunctionName("monitor_check");
 
@@ -59,6 +60,16 @@ auto SynthesizeMonitorCheckProcess(
   auto make_capture_name = [](size_t i) {
     return "__capture_prev_" + std::to_string(i);
   };
+  constexpr auto kDescriptorCaptureName = "__file_descriptor";
+
+  // For $fmonitor: load file descriptor from capture
+  std::optional<TempRef> fd_temp;
+  if (descriptor_temp) {
+    TempRef fd = builder.AllocateTemp("fd", Type::Int());
+    builder.AddInstruction(
+        Instruction::LoadCapture(fd, kDescriptorCaptureName, Type::Int()));
+    fd_temp = fd;
+  }
 
   // Phase 1: Evaluate all monitored expressions
   std::vector<TempRef> current_temps;
@@ -106,17 +117,20 @@ auto SynthesizeMonitorCheckProcess(
       Instruction::Branch(any_changed, print_label, end_label));
   builder.EndBlock();
 
-  // do_print block: emit $display and store new prev values
+  // do_print block: emit $display/$fdisplay and store new prev values
   builder.StartBlock(print_label);
 
-  // Build operands for $display: current values (format string is separate)
+  // Build operands: [descriptor] + current values (format string is separate)
   std::vector<Operand> display_operands;
+  if (fd_temp) {
+    // $fdisplay: first operand is file descriptor
+    display_operands.push_back(Operand::Temp(*fd_temp));
+  }
   for (const auto& temp : current_temps) {
     display_operands.push_back(Operand::Temp(temp));
   }
 
-  // Use the provided display variant ($display, $displayb, $displayo,
-  // $displayh)
+  // Use the provided display variant ($display, $fdisplay, etc.)
   auto display_instr =
       Instruction::SystemCall(display_call, std::move(display_operands));
   if (format_literal != nullptr) {
@@ -155,6 +169,9 @@ auto LowerSystemCallExpression(
   bool is_monitor =
       (system_call.name == "$monitor" || system_call.name == "$monitorb" ||
        system_call.name == "$monitoro" || system_call.name == "$monitorh");
+  bool is_fmonitor =
+      (system_call.name == "$fmonitor" || system_call.name == "$fmonitorb" ||
+       system_call.name == "$fmonitoro" || system_call.name == "$fmonitorh");
 
   std::vector<Operand> operands;
   std::vector<TempRef> arguments;
@@ -167,18 +184,30 @@ auto LowerSystemCallExpression(
     return Operand::Temp(temp);
   };
 
-  if (is_monitor) {
+  if (is_monitor || is_fmonitor) {
     // Format string is now in format_expr (separate from arguments)
     const mir::Expression* format_literal = nullptr;
     if (system_call.format_expr && system_call.format_expr_is_literal) {
       format_literal = system_call.format_expr->get();
     }
 
+    // For $fmonitor, first argument is file descriptor
+    std::optional<TempRef> descriptor_temp;
+    size_t first_monitored_idx = 0;
+    if (is_fmonitor && !system_call.arguments.empty()) {
+      TempRef desc = LowerExpression(*system_call.arguments[0], builder);
+      arguments.push_back(desc);  // Include in instruction operands
+      descriptor_temp = desc;
+      first_monitored_idx = 1;
+    }
+
     // Collect pointers to monitored expressions for synthesis
-    // All arguments are now monitored values (format string is separate)
+    // For $monitor: all arguments; for $fmonitor: arguments[1..]
     std::vector<const mir::Expression*> monitored_exprs;
 
-    for (const auto& argument : system_call.arguments) {
+    for (size_t i = first_monitored_idx; i < system_call.arguments.size();
+         ++i) {
+      const auto& argument = system_call.arguments[i];
       if (argument) {
         // Collect expression for check function synthesis
         monitored_exprs.push_back(argument.get());
@@ -190,23 +219,27 @@ auto LowerSystemCallExpression(
     }
 
     // Determine display variant based on monitor variant
-    // $monitor -> $display, $monitorb -> $displayb, etc.
+    // $monitor -> $display, $fmonitor -> $fdisplay, etc.
     std::string display_call;
-    if (system_call.name == "$monitor") {
-      display_call = "$display";
-    } else if (system_call.name == "$monitorb") {
-      display_call = "$displayb";
-    } else if (system_call.name == "$monitoro") {
-      display_call = "$displayo";
-    } else if (system_call.name == "$monitorh") {
-      display_call = "$displayh";
+    if (system_call.name == "$monitor" || system_call.name == "$fmonitor") {
+      display_call = is_fmonitor ? "$fdisplay" : "$display";
+    } else if (
+        system_call.name == "$monitorb" || system_call.name == "$fmonitorb") {
+      display_call = is_fmonitor ? "$fdisplayb" : "$displayb";
+    } else if (
+        system_call.name == "$monitoro" || system_call.name == "$fmonitoro") {
+      display_call = is_fmonitor ? "$fdisplayo" : "$displayo";
+    } else if (
+        system_call.name == "$monitorh" || system_call.name == "$fmonitorh") {
+      display_call = is_fmonitor ? "$fdisplayh" : "$displayh";
     } else {
-      display_call = "$display";  // fallback
+      display_call = is_fmonitor ? "$fdisplay" : "$display";  // fallback
     }
 
     // Synthesize the check process for periodic re-evaluation
     std::string check_process_name = SynthesizeMonitorCheckProcess(
-        monitored_exprs, format_literal, display_call, builder);
+        monitored_exprs, format_literal, display_call, builder,
+        descriptor_temp);
 
     auto instruction = Instruction::SystemCallWithMonitor(
         system_call.name, std::move(arguments), std::move(check_process_name));

@@ -344,9 +344,9 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
           EmitExpression(*mc.receiver, kPrecLowest);
           out_ << ".erase(";
           EmitExpression(*mc.receiver, kPrecLowest);
-          out_ << ".begin() + ";
+          out_ << ".begin() + static_cast<ptrdiff_t>(";
           EmitExpression(*mc.args[0], kPrecLowest);
-          out_ << ")";
+          out_ << "))";
         }
       } else {
         // Dynamic array delete - always .clear()
@@ -375,9 +375,9 @@ void Codegen::EmitMethodCall(const mir::MethodCallExpression& mc) {
       EmitExpression(*mc.receiver, kPrecLowest);
       out_ << ".insert(";
       EmitExpression(*mc.receiver, kPrecLowest);
-      out_ << ".begin() + ";
+      out_ << ".begin() + static_cast<ptrdiff_t>(";
       EmitExpression(*mc.args[0], kPrecLowest);
-      out_ << ", ";
+      out_ << "), ";
       EmitExpression(*mc.args[1], kPrecLowest);
       out_ << ")";
       return;
