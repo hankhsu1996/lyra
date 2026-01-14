@@ -10,6 +10,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/wide_bit.hpp"
+#include "lyra/interpreter/address.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -34,10 +35,12 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       assert(instr.symbol.has_value());
       assert(instr.result.has_value());
 
-      // Create a pointer value pointing to the variable
-      auto ptr = PointerValue::Var(*instr.symbol);
+      // Create an address pointing to the variable
+      auto addr = Address::Var(*instr.symbol);
       auto ptr_type = (*instr.result)->type;
-      ctx.WriteTemp(instr.result.value(), RuntimeValue::Pointer(ptr_type, ptr));
+      ctx.WriteTemp(
+          instr.result.value(),
+          RuntimeValue::Pointer(ptr_type, std::move(addr)));
       return InstructionResult::Continue();
     }
 
@@ -48,7 +51,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
       assert(ptr_value.IsPointer());
 
-      RuntimeValue loaded = ctx.ReadPointer(ptr_value.AsPointer());
+      RuntimeValue loaded = ctx.ResolveForRead(ptr_value.AsAddress());
       ctx.WriteTemp(instr.result.value(), std::move(loaded));
       return InstructionResult::Continue();
     }
@@ -60,7 +63,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       const auto& value = ctx.GetTemp(instr.temp_operands[1]);
       assert(ptr_value.IsPointer());
 
-      ctx.WritePointer(ptr_value.AsPointer(), value, false);
+      ctx.ResolveForWrite(ptr_value.AsAddress(), value, false);
       return InstructionResult::Continue();
     }
 
@@ -71,7 +74,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       const auto& value = ctx.GetTemp(instr.temp_operands[1]);
       assert(ptr_value.IsPointer());
 
-      ctx.WritePointer(ptr_value.AsPointer(), value, true);
+      ctx.ResolveForWrite(ptr_value.AsAddress(), value, true);
       return InstructionResult::Continue();
     }
 
@@ -86,14 +89,14 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       assert(!index_value.IsWide() && "array index cannot be wide");
       auto index = static_cast<size_t>(index_value.AsNarrow().AsInt64());
 
-      // Create IndexPointer with base and index
-      // Note: lower_bound adjustment happens in ReadPointer/WritePointer
-      auto base_ptr = base_ptr_value.AsPointerStorage();
-      auto elem_ptr = PointerValue::Index(base_ptr, index);
+      // Build address by appending index to base address path
+      auto elem_addr =
+          base_ptr_value.AsAddress().WithIndex(static_cast<uint32_t>(index));
 
       auto ptr_type = (*instr.result)->type;
       ctx.WriteTemp(
-          instr.result.value(), RuntimeValue::Pointer(ptr_type, elem_ptr));
+          instr.result.value(),
+          RuntimeValue::Pointer(ptr_type, std::move(elem_addr)));
       return InstructionResult::Continue();
     }
 
@@ -105,78 +108,82 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       assert(base_ptr_value.IsPointer());
 
       // field_id is stored in lower_bound field
-      auto field_id = static_cast<size_t>(instr.lower_bound);
+      auto field_id = static_cast<uint32_t>(instr.lower_bound);
 
-      // Create FieldPointer with base and field_id
-      auto base_ptr = base_ptr_value.AsPointerStorage();
-      auto field_ptr = PointerValue::Field(base_ptr, field_id);
+      // Build address by appending field to base address path
+      auto field_addr = base_ptr_value.AsAddress().WithField(field_id);
 
       auto ptr_type = (*instr.result)->type;
       ctx.WriteTemp(
-          instr.result.value(), RuntimeValue::Pointer(ptr_type, field_ptr));
-      return InstructionResult::Continue();
-    }
-
-    case lir::InstructionKind::kResolveSlice: {
-      assert(instr.result.has_value());
-      assert(instr.temp_operands.size() == 3);
-
-      const auto& base_ptr_value = ctx.GetTemp(instr.temp_operands[0]);
-      assert(base_ptr_value.IsPointer());
-
-      const auto& offset_value = ctx.GetTemp(instr.temp_operands[1]);
-      const auto& width_value = ctx.GetTemp(instr.temp_operands[2]);
-      assert(!offset_value.IsWide() && "bit offset cannot be wide");
-      assert(!width_value.IsWide() && "bit width cannot be wide");
-      auto offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
-      auto width = static_cast<size_t>(width_value.AsNarrow().AsInt64());
-
-      // Create SlicePointer with base, offset, and width
-      auto base_ptr = base_ptr_value.AsPointerStorage();
-      auto slice_ptr = PointerValue::Slice(base_ptr, offset, width);
-
-      auto slice_ref_type = (*instr.result)->type;
-      ctx.WriteTemp(
           instr.result.value(),
-          RuntimeValue::Pointer(slice_ref_type, slice_ptr));
+          RuntimeValue::Pointer(ptr_type, std::move(field_addr)));
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kLoadSlice: {
       assert(instr.result.has_value());
-      assert(instr.temp_operands.size() == 1);
+      assert(instr.temp_operands.size() == 3);
 
-      const auto& slice_ref_value = ctx.GetTemp(instr.temp_operands[0]);
-      assert(slice_ref_value.IsSliceRef());
+      const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
+      assert(ptr_value.IsPointer());
 
-      // Get signedness from SliceRef pointee type
-      const auto& pointee_type = slice_ref_value.type.GetSliceRefPointeeType();
-      bool is_signed = pointee_type.IsSigned();
+      const auto& offset_value = ctx.GetTemp(instr.temp_operands[1]);
+      const auto& width_value = ctx.GetTemp(instr.temp_operands[2]);
+      assert(!offset_value.IsWide() && "bit offset cannot be wide");
+      assert(!width_value.IsWide() && "bit width cannot be wide");
+      auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
+      auto width = static_cast<size_t>(width_value.AsNarrow().AsInt64());
 
-      RuntimeValue loaded = ctx.ReadPointer(slice_ref_value.AsPointer());
+      // Read the parent storage
+      RuntimeValue parent = ctx.ResolveForRead(ptr_value.AsAddress());
 
-      // Apply correct signedness (ReadPointer returns unsigned)
-      if (is_signed && !loaded.IsWide()) {
-        size_t width = pointee_type.GetBitWidth();
-        loaded =
-            RuntimeValue::IntegralSigned(loaded.AsNarrow().AsInt64(), width);
-      } else if (is_signed && loaded.IsWide()) {
-        size_t width = pointee_type.GetBitWidth();
-        loaded = RuntimeValue::IntegralWide(loaded.AsWideBit(), width, true);
+      // Extract bits from the parent value
+      const auto& result_type = (*instr.result)->type;
+      bool is_signed = result_type.IsSigned();
+
+      RuntimeValue result;
+      if (width <= 64) {
+        uint64_t mask = common::MakeBitMask(static_cast<uint32_t>(width));
+        uint64_t extracted = 0;
+        if (parent.IsWide()) {
+          auto shifted = parent.AsWideBit().ShiftRightLogical(bit_offset);
+          extracted = shifted.GetWord(0) & mask;
+        } else {
+          extracted = (parent.AsNarrow().AsUInt64() >> bit_offset) & mask;
+        }
+        result = is_signed ? RuntimeValue::IntegralSigned(
+                                 static_cast<int64_t>(extracted), width)
+                           : RuntimeValue::IntegralUnsigned(extracted, width);
+      } else {
+        auto wide_value =
+            parent.IsWide()
+                ? parent.AsWideBit()
+                : common::WideBit::FromUInt64(parent.AsNarrow().AsUInt64(), 2);
+        auto extracted = wide_value.ExtractSlice(bit_offset, width);
+        result =
+            RuntimeValue::IntegralWide(std::move(extracted), width, is_signed);
       }
 
-      ctx.WriteTemp(instr.result.value(), std::move(loaded));
+      ctx.WriteTemp(instr.result.value(), std::move(result));
       return InstructionResult::Continue();
     }
 
     case lir::InstructionKind::kStoreSlice: {
-      assert(instr.temp_operands.size() == 2);
+      assert(instr.temp_operands.size() == 4);
 
-      const auto& slice_ref_value = ctx.GetTemp(instr.temp_operands[0]);
+      const auto& ptr_value = ctx.GetTemp(instr.temp_operands[0]);
       const auto& value = ctx.GetTemp(instr.temp_operands[1]);
-      assert(slice_ref_value.IsSliceRef());
+      const auto& offset_value = ctx.GetTemp(instr.temp_operands[2]);
+      const auto& width_value = ctx.GetTemp(instr.temp_operands[3]);
+      assert(ptr_value.IsPointer());
+      assert(!offset_value.IsWide() && "bit offset cannot be wide");
+      assert(!width_value.IsWide() && "bit width cannot be wide");
 
-      ctx.WritePointer(slice_ref_value.AsPointer(), value, false);
+      auto bit_offset = static_cast<size_t>(offset_value.AsNarrow().AsInt64());
+      auto width = static_cast<size_t>(width_value.AsNarrow().AsInt64());
+
+      ctx.ResolveForWriteSlice(
+          ptr_value.AsAddress(), value, bit_offset, width, false);
       return InstructionResult::Continue();
     }
 
@@ -184,8 +191,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       assert(instr.result.has_value());
       const auto& result_type = (*instr.result)->type;
 
-      // NEW: If result type is Pointer<T>, allocate T in anonymous storage
-      // and return a pointer to it. This is the memory-form approach.
+      // Pointer<T> result: allocate T in anonymous storage and return pointer
       if (result_type.IsPointer()) {
         const auto& alloc_type = result_type.GetPointeeType();
         RuntimeValue storage_value;
@@ -227,15 +233,14 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
 
         // Allocate in anonymous storage and return pointer
         auto alloc_id = ctx.AllocateAnonymous(std::move(storage_value));
-        auto ptr = PointerValue::Alloc(alloc_id);
+        auto addr = Address::Alloc(alloc_id);
         ctx.WriteTemp(
             instr.result.value(),
-            RuntimeValue::Pointer(result_type, std::move(ptr)));
+            RuntimeValue::Pointer(result_type, std::move(addr)));
         return InstructionResult::Continue();
       }
 
-      // LEGACY: Non-pointer result type (backward compatibility)
-      // This path will be removed once lowering is updated.
+      // Non-pointer result: direct value allocation (used for queues)
       if (instr.operands.empty()) {
         // Fixed-size allocation: use DefaultValueForType
         auto value = RuntimeValue::DefaultValueForType(result_type);

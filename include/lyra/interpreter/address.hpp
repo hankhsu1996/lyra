@@ -3,11 +3,10 @@
 #include <cstdint>
 #include <variant>
 
-#include <absl/container/inlined_vector.h>
-
+#include "absl/container/inlined_vector.h"
 #include "lyra/common/symbol.hpp"
 
-namespace lyra::interpreter {
+namespace lyra {
 
 // Allocation ID for anonymous storage (from kAllocate instruction)
 using AllocationId = uint64_t;
@@ -90,4 +89,4 @@ struct Address {
   auto operator==(const Address& other) const -> bool = default;
 };
 
-}  // namespace lyra::interpreter
+}  // namespace lyra

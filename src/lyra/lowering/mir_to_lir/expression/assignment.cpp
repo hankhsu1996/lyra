@@ -175,7 +175,7 @@ auto LowerAssignmentExpression(
       // Unpacked struct/union field assignment - use pointer chain
       // For s.inner.x = value: ResolveVar(s) -> ResolveField(inner) ->
       //   ResolveField(x) -> Store
-      // WritePointer handles the recursive write-back automatically.
+      // ResolveForWrite handles the read-modify-write automatically.
       const auto& base_type = *assignment.target.base_type;
 
       // Start with pointer to the root variable
@@ -211,7 +211,7 @@ auto LowerAssignmentExpression(
     }
 
     // Packed struct field assignment: my_struct.field = value
-    // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
+    // Direct slice store through pointer
     const auto& base_type = *assignment.target.base_type;
 
     // Get pointer to base variable
@@ -234,31 +234,16 @@ auto LowerAssignmentExpression(
         common::Constant::Int(static_cast<int32_t>(field_width)));
     builder.AddInstruction(Instruction::Constant(width_temp, width_constant));
 
-    // Create SliceRef type (preserve field signedness)
-    auto slice_pointee_type =
-        first_field.type.IsSigned()
-            ? common::Type::IntegralSigned(static_cast<uint32_t>(field_width))
-            : common::Type::IntegralUnsigned(
-                  static_cast<uint32_t>(field_width));
-    const auto* slice_pointee =
-        builder.GetContext()->InternType(slice_pointee_type);
-    auto slice_ref_type = common::Type::SliceRef(slice_pointee);
-
-    // ResolveSlice: base_ptr + offset + width -> slice_ptr
-    auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+    // Direct slice store: base_ptr[offset +: width] = value
     builder.AddInstruction(
-        Instruction::ResolveSlice(
-            slice_ptr, base_ptr, offset_temp, width_temp));
-
-    // StoreSlice
-    builder.AddInstruction(Instruction::StoreSlice(slice_ptr, value));
+        Instruction::StoreSlice(base_ptr, value, offset_temp, width_temp));
     return value;
   }
 
   if (assignment.target.IsElementSelect()) {
     if (assignment.target.IsPacked()) {
       // Packed element assignment (possibly multi-dimensional)
-      // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
+      // Direct slice store through pointer
       const auto& base_type = *assignment.target.base_type;
       size_t element_width = GetElementWidthAfterIndices(
           base_type, assignment.target.indices.size());
@@ -285,26 +270,13 @@ auto LowerAssignmentExpression(
               IK::kBinaryMultiply, bit_offset,
               {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
 
-      // Create SliceRef type (packed array elements are unsigned)
-      auto slice_pointee_type =
-          Type::IntegralUnsigned(static_cast<uint32_t>(element_width));
-      const auto* slice_pointee =
-          builder.GetContext()->InternType(slice_pointee_type);
-      auto slice_ref_type = common::Type::SliceRef(slice_pointee);
-
-      // ResolveSlice: base_ptr + bit_offset + width -> slice_ptr
-      auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+      // Direct slice store: base_ptr[bit_offset +: width] = value
       builder.AddInstruction(
-          Instruction::ResolveSlice(
-              slice_ptr, base_ptr, bit_offset, width_temp));
-
-      // StoreSlice
-      builder.AddInstruction(Instruction::StoreSlice(slice_ptr, value));
+          Instruction::StoreSlice(base_ptr, value, bit_offset, width_temp));
     } else {
       // Unpacked array element assignment - use pointer chain
       // For arr[i][j] = value: ResolveVar -> ResolveIndex(i) -> ResolveIndex(j)
-      // -> Store The recursive load-modify-store is handled by WritePointer in
-      // the interpreter.
+      // -> Store. The read-modify-write is handled by ResolveForWrite.
       const auto& base_type = *assignment.target.base_type;
 
       // Lower all indices

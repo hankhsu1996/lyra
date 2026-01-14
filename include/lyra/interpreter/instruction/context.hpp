@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "lyra/common/symbol.hpp"
+#include "lyra/interpreter/address.hpp"
 #include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -64,12 +65,17 @@ class InstructionContext {
   void StoreVariable(
       common::SymbolId symbol, const RuntimeValue& value, bool is_non_blocking);
 
-  /// Read value through a pointer (dereference).
-  [[nodiscard]] auto ReadPointer(const PointerValue& ptr) const -> RuntimeValue;
+  /// Resolve address and read value (flat path traversal).
+  [[nodiscard]] auto ResolveForRead(const Address& addr) const -> RuntimeValue;
 
-  /// Write value through a pointer.
-  void WritePointer(
-      const PointerValue& ptr, const RuntimeValue& value, bool is_non_blocking);
+  /// Resolve address and write value (flat path traversal).
+  void ResolveForWrite(
+      const Address& addr, const RuntimeValue& value, bool is_non_blocking);
+
+  /// Resolve address and write slice (read-modify-write for bit fields).
+  void ResolveForWriteSlice(
+      const Address& addr, const RuntimeValue& value, size_t bit_offset,
+      size_t width, bool is_non_blocking);
 
   /// Allocate anonymous storage and return its ID.
   /// Used by kAllocate to create addressable temporary storage.

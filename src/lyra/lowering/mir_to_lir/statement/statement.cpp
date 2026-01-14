@@ -72,7 +72,7 @@ auto LowerStatement(
       if (target.IsElementSelect()) {
         if (target.IsPacked()) {
           // Packed element assignment (possibly multi-dimensional)
-          // Use SliceRef approach: ResolveVar -> ResolveSlice -> StoreSlice
+          // ResolveVar -> compute bit offset -> StoreSlice directly
           const auto& base_type = *target.base_type;
           size_t element_width =
               GetElementWidthAfterIndices(base_type, target.indices.size());
@@ -103,22 +103,10 @@ auto LowerStatement(
                   {lir::Operand::Temp(adjusted_index),
                    lir::Operand::Temp(width_temp)}));
 
-          // Create SliceRef type (packed array elements are unsigned)
-          auto slice_pointee_type = common::Type::IntegralUnsigned(
-              static_cast<uint32_t>(element_width));
-          const auto* slice_pointee =
-              builder.GetContext()->InternType(slice_pointee_type);
-          auto slice_ref_type = common::Type::SliceRef(slice_pointee);
-
-          // ResolveSlice: base_ptr + bit_offset + width -> slice_ptr
-          auto slice_ptr = builder.AllocateTemp("slice_ptr", slice_ref_type);
+          // Direct StoreSlice: base_ptr[bit_offset +: width] = result_value
           builder.AddInstruction(
-              Instruction::ResolveSlice(
-                  slice_ptr, base_ptr, bit_offset, width_temp));
-
-          // StoreSlice
-          builder.AddInstruction(
-              Instruction::StoreSlice(slice_ptr, result_value));
+              Instruction::StoreSlice(
+                  base_ptr, result_value, bit_offset, width_temp));
         } else {
           // Unpacked array element assignment: array[index] = value
           // Use pointer chain: ResolveVar -> ResolveIndex -> Store

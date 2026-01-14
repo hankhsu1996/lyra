@@ -754,8 +754,7 @@ class FunctionCallExpression : public Expression {
 
 // Member access expression for packed structs: struct_val.field_name
 // At MIR level, we preserve the field metadata for downstream phases
-// At LIR level, this becomes SliceRef/LoadSlice (addressable) or ExtractBits
-// (rvalue)
+// At LIR level, this becomes LoadSlice (addressable) or ExtractBits (rvalue)
 class MemberAccessExpression : public Expression {
  public:
   static constexpr Kind kKindValue = Kind::kMemberAccess;

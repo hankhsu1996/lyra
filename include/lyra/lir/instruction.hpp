@@ -45,9 +45,8 @@ enum class InstructionKind {
   kStoreNBA,      // Non-blocking store through Pointer<T>
   kResolveIndex,  // Pointer<Array<T>> + index -> Pointer<T>
   kResolveField,  // Pointer<Struct> + field_id -> Pointer<FieldT>
-  kResolveSlice,  // Pointer<T> + offset + width -> SliceRef<U>
-  kLoadSlice,     // SliceRef<T> -> T (extract bits from storage)
-  kStoreSlice,    // SliceRef<T> + T -> void (read-modify-write)
+  kLoadSlice,     // Pointer<T> + offset + width -> U (extract bits)
+  kStoreSlice,    // Pointer<T> + value + offset + width -> void (bit write)
   kExtractBits,   // Extract bits from value (rvalue): result =
                   // value[offset+:width]
   kAllocate,      // Allocate container with storage kind resolved at lowering
@@ -147,7 +146,6 @@ constexpr auto GetInstructionCategory(InstructionKind kind)
     case InstructionKind::kStoreNBA:
     case InstructionKind::kResolveIndex:
     case InstructionKind::kResolveField:
-    case InstructionKind::kResolveSlice:
     case InstructionKind::kLoadSlice:
     case InstructionKind::kStoreSlice:
     case InstructionKind::kExtractBits:
@@ -409,32 +407,26 @@ struct Instruction {
     };
   }
 
-  // Resolve bit slice: base_ptr[offset +: width] -> SliceRef<T>
-  // Creates a slice reference for packed bit access
-  static auto ResolveSlice(
-      TempRef result, TempRef base_ptr, TempRef offset, TempRef width)
+  // Load value through bit slice: result = ptr[offset +: width]
+  // ptr is Pointer<T>, offset and width are temps with bit positions
+  static auto LoadSlice(
+      TempRef result, TempRef ptr, TempRef offset, TempRef width)
       -> Instruction {
-    return Instruction{
-        .kind = InstructionKind::kResolveSlice,
-        .result = result,
-        .temp_operands = {base_ptr, offset, width},
-    };
-  }
-
-  // Load value through a slice reference (extract bits from storage)
-  static auto LoadSlice(TempRef result, TempRef slice_ref) -> Instruction {
     return Instruction{
         .kind = InstructionKind::kLoadSlice,
         .result = result,
-        .temp_operands = {slice_ref},
+        .temp_operands = {ptr, offset, width},
     };
   }
 
-  // Store value through a slice reference (read-modify-write)
-  static auto StoreSlice(TempRef slice_ref, TempRef value) -> Instruction {
+  // Store value through bit slice: ptr[offset +: width] = value
+  // ptr is Pointer<T>, performs read-modify-write
+  static auto StoreSlice(
+      TempRef ptr, TempRef value, TempRef offset, TempRef width)
+      -> Instruction {
     return Instruction{
         .kind = InstructionKind::kStoreSlice,
-        .temp_operands = {slice_ref, value},
+        .temp_operands = {ptr, value, offset, width},
     };
   }
 
@@ -683,18 +675,15 @@ struct Instruction {
             "resolve_field {}, {}.{}", result.value(), temp_operands[0],
             lower_bound);
 
-      case InstructionKind::kResolveSlice:
-        return fmt::format(
-            "resolve_slice {}, {}[{}+:{}]", result.value(), temp_operands[0],
-            temp_operands[1], temp_operands[2]);
-
       case InstructionKind::kLoadSlice:
         return fmt::format(
-            "load_slice {}, {}", result.value(), temp_operands[0]);
+            "load_slice {}, {}[{}+:{}]", result.value(), temp_operands[0],
+            temp_operands[1], temp_operands[2]);
 
       case InstructionKind::kStoreSlice:
         return fmt::format(
-            "store_slice {}, {}", temp_operands[0], temp_operands[1]);
+            "store_slice {}[{}+:{}], {}", temp_operands[0], temp_operands[2],
+            temp_operands[3], temp_operands[1]);
 
       case InstructionKind::kExtractBits:
         return fmt::format(
