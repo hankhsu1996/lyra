@@ -412,6 +412,61 @@ class Bit {
     return *this;
   }
 
+  constexpr auto operator*=(Bit other) -> Bit& {
+    value_ = static_cast<Storage>((value_ * other.value_) & kMask);
+    return *this;
+  }
+
+  constexpr auto operator/=(Bit other) -> Bit& {
+    if constexpr (Signed) {
+      auto result = SignedValue() / other.SignedValue();
+      value_ = static_cast<Storage>(result & kMask);
+    } else {
+      value_ = static_cast<Storage>((value_ / other.value_) & kMask);
+    }
+    return *this;
+  }
+
+  constexpr auto operator%=(Bit other) -> Bit& {
+    if constexpr (Signed) {
+      auto result = SignedValue() % other.SignedValue();
+      value_ = static_cast<Storage>(result & kMask);
+    } else {
+      value_ = static_cast<Storage>((value_ % other.value_) & kMask);
+    }
+    return *this;
+  }
+
+  template <typename T>
+    requires std::is_integral_v<T>
+  constexpr auto operator<<=(T amount) -> Bit& {
+    value_ = static_cast<Storage>((value_ << amount) & kMask);
+    return *this;
+  }
+
+  template <typename T>
+    requires std::is_integral_v<T>
+  constexpr auto operator>>=(T amount) -> Bit& {
+    if constexpr (Signed) {
+      auto result = SignedValue() >> amount;
+      value_ = static_cast<Storage>(result & kMask);
+    } else {
+      value_ = static_cast<Storage>(value_ >> amount);
+    }
+    return *this;
+  }
+
+  // Shift compound assignment with Bit type as shift amount
+  template <std::size_t W, bool S>
+  constexpr auto operator<<=(Bit<W, S> amount) -> Bit& {
+    return *this <<= amount.Value();
+  }
+
+  template <std::size_t W, bool S>
+  constexpr auto operator>>=(Bit<W, S> amount) -> Bit& {
+    return *this >>= amount.Value();
+  }
+
   // Pre/post increment/decrement
   constexpr auto operator++() -> Bit& {
     value_ = static_cast<Storage>((value_ + 1) & kMask);

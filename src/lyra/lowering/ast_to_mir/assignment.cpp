@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -12,30 +13,109 @@
 #include <fmt/format.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/expression.hpp"
 #include "lyra/lowering/ast_to_mir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_mir/type.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/operators.hpp"
 
 namespace lyra::lowering::ast_to_mir {
+
+namespace {
+
+// Helpers for compound assignment lowering.
+//
+// Slang expands `x op= y` to `x = x op y` where the inner `x` is an
+// LValueReference. The assignment node carries explicit metadata:
+//   - assignment.op.has_value() -> true for compound assignments
+//   - *assignment.op -> the binary operator (source of truth)
+//
+// We use assignment.op as the authoritative signal, NOT pattern matching.
+// These helpers only exist to extract the user's RHS operand from slang's
+// expanded BinaryOp, skipping the LValueReference placeholder. Conversion
+// nodes are unwrapped only for shape detection; the returned RHS preserves
+// any Conversion wrappers for correct type semantics.
+
+auto UnwrapConversions(const slang::ast::Expression& expr)
+    -> const slang::ast::Expression& {
+  const slang::ast::Expression* current = &expr;
+  while (current->kind == slang::ast::ExpressionKind::Conversion) {
+    current = &current->as<slang::ast::ConversionExpression>().operand();
+  }
+  return *current;
+}
+
+auto IsLValueReference(const slang::ast::Expression& expr) -> bool {
+  return UnwrapConversions(expr).kind ==
+         slang::ast::ExpressionKind::LValueReference;
+}
+
+auto ExtractCompoundAssignmentRhs(const slang::ast::Expression& rhs)
+    -> const slang::ast::Expression& {
+  const auto& unwrapped = UnwrapConversions(rhs);
+
+  if (unwrapped.kind != slang::ast::ExpressionKind::BinaryOp) {
+    throw DiagnosticException(
+        Diagnostic::Error(
+            rhs.sourceRange,
+            "compound assignment RHS must be a binary expression"));
+  }
+
+  const auto& binary = unwrapped.as<slang::ast::BinaryExpression>();
+  bool left_is_lvalue_ref = IsLValueReference(binary.left());
+  bool right_is_lvalue_ref = IsLValueReference(binary.right());
+
+  // Return raw operand (with Conversion intact) - only unwrapped for detection
+  if (left_is_lvalue_ref && !right_is_lvalue_ref) {
+    return binary.right();
+  }
+  if (right_is_lvalue_ref && !left_is_lvalue_ref) {
+    return binary.left();
+  }
+
+  throw DiagnosticException(
+      Diagnostic::Error(
+          rhs.sourceRange,
+          "compound assignment: expected exactly one LValueReference operand"));
+}
+
+}  // namespace
 
 auto LowerAssignment(
     const slang::ast::AssignmentExpression& assignment,
     common::TypeArena& arena, SymbolRegistrar& registrar)
     -> std::unique_ptr<mir::Expression> {
   const auto& left = assignment.left();
-  auto value = LowerExpression(assignment.right(), arena, registrar);
   auto is_non_blocking = assignment.isNonBlocking();
+
+  // For compound assignments (x op= y), we don't use slang's expanded form.
+  // Instead, we store the operator and just the RHS operand. The MIR->LIR
+  // lowering will generate: ptr = resolve(target); old = load(ptr);
+  //                         new = old op rhs; store(ptr, new)
+  // This ensures single evaluation of the lvalue for read-modify-write.
+  std::optional<mir::BinaryOperator> compound_op;
+  std::unique_ptr<mir::Expression> value;
+
+  if (assignment.op.has_value()) {
+    // Compound assignment: extract RHS and convert operator
+    compound_op = mir::ConvertSlangBinaryOperatorToMir(*assignment.op);
+    const auto& rhs = ExtractCompoundAssignmentRhs(assignment.right());
+    value = LowerExpression(rhs, arena, registrar);
+  } else {
+    // Regular assignment
+    value = LowerExpression(assignment.right(), arena, registrar);
+  }
 
   // Simple variable assignment
   if (left.kind == slang::ast::ExpressionKind::NamedValue) {
@@ -59,8 +139,15 @@ auto LowerAssignment(
       }
     }
 
+    auto target_id = registrar.Register(&target);
+    if (compound_op) {
+      mir::AssignmentTarget mir_target(target_id);
+      return std::make_unique<mir::AssignmentExpression>(
+          std::move(mir_target), std::move(value), is_non_blocking,
+          compound_op);
+    }
     return std::make_unique<mir::AssignmentExpression>(
-        registrar.Register(&target), std::move(value), is_non_blocking);
+        target_id, std::move(value), is_non_blocking);
   }
 
   // Element select assignment (arr[i] = value or arr[i][j] = value)
@@ -100,7 +187,7 @@ auto LowerAssignment(
         registrar.Register(&array_symbol), std::move(indices),
         *base_type_result);
     return std::make_unique<mir::AssignmentExpression>(
-        std::move(target), std::move(value), is_non_blocking);
+        std::move(target), std::move(value), is_non_blocking, compound_op);
   }
 
   // Hierarchical assignment (child.signal = value or gen_block[0].signal =
@@ -125,7 +212,7 @@ auto LowerAssignment(
 
     mir::AssignmentTarget target(target_symbol, std::move(instance_path));
     return std::make_unique<mir::AssignmentExpression>(
-        std::move(target), std::move(value), is_non_blocking);
+        std::move(target), std::move(value), is_non_blocking, compound_op);
   }
 
   // Struct/union field assignment (supports nested: s.inner.x = value)
@@ -211,7 +298,7 @@ auto LowerAssignment(
     mir::AssignmentTarget target(
         registrar.Register(root_symbol), std::move(field_path), root_type);
     return std::make_unique<mir::AssignmentExpression>(
-        std::move(target), std::move(value), is_non_blocking);
+        std::move(target), std::move(value), is_non_blocking, compound_op);
   }
 
   throw DiagnosticException(

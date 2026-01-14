@@ -425,13 +425,20 @@ class AssignmentExpression : public Expression {
   std::shared_ptr<Expression> value;
   bool is_non_blocking;
 
+  // For compound assignments (x += y, x ^= y, etc.): the operator to apply.
+  // When set, the assignment means: target = Load(target) <compound_op> value
+  // This ensures single evaluation of the lvalue for read-modify-write.
+  std::optional<BinaryOperator> compound_op;
+
   AssignmentExpression(
       AssignmentTarget target, std::shared_ptr<Expression> v,
-      bool is_non_blocking)
+      bool is_non_blocking,
+      std::optional<BinaryOperator> compound_op = std::nullopt)
       : Expression(kKindValue, v->type),
         target(std::move(target)),
         value(std::move(v)),
-        is_non_blocking(is_non_blocking) {
+        is_non_blocking(is_non_blocking),
+        compound_op(compound_op) {
   }
 
   // Convenience constructor for simple variable assignment
@@ -443,7 +450,16 @@ class AssignmentExpression : public Expression {
         is_non_blocking(is_non_blocking) {
   }
 
+  [[nodiscard]] auto IsCompoundAssignment() const -> bool {
+    return compound_op.has_value();
+  }
+
   [[nodiscard]] auto ToString() const -> std::string override {
+    if (compound_op) {
+      return fmt::format(
+          "({} {}= {})", target.ToString(), *compound_op,
+          value ? value->ToString() : "<null>");
+    }
     return fmt::format(
         "({} = {})", target.ToString(), value ? value->ToString() : "<null>");
   }

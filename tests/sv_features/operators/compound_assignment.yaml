@@ -1,0 +1,229 @@
+feature: compound_assignment
+description: Tests for compound assignment operators (+=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, etc.)
+
+cases:
+  - name: add_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          x += 5;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 15
+
+  - name: sub_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 20;
+          x -= 7;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 13
+
+  - name: mul_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 6;
+          x *= 7;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+
+  - name: div_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 100;
+          x /= 4;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 25
+
+  - name: mod_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 17;
+          x %= 5;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+
+  - name: and_assign
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'b11110000;
+          x &= 8'b10101010;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 160  # 0b10100000 = 160
+
+  - name: or_assign
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'b11110000;
+          x |= 8'b00001111;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 255
+
+  - name: xor_assign
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          x ^= 3;  // 5 ^ 3 = 6
+        end
+      endmodule
+    expect:
+      variables:
+        x: 6
+
+  - name: left_shift_assign
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'd1;
+          x <<= 4;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+
+  - name: right_shift_assign
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'd64;
+          x >>= 2;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+
+  - name: chained_compound
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          x += 3;
+          x *= 2;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+
+  - name: array_element_compound
+    sv: |
+      module Test;
+        int arr[3];
+        int result;
+        initial begin
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[1] += 5;
+          result = arr[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 25
+
+  - name: compound_with_expression
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 10;
+          y = 3;
+          x += y * 2;  // x = x + (y * 2) = 10 + 6 = 16
+        end
+      endmodule
+    expect:
+      variables:
+        x: 16
+        y: 3
+
+  - name: side_effect_index_postinc
+    description: Verifies index with side-effect (i++) is evaluated only once for read-modify-write
+    sv: |
+      module Test;
+        int arr[3];
+        int i;
+        int r0, r1, r2;  // Result variables
+        initial begin
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          i = 1;
+          arr[i++] += 10;  // Should: read arr[1]=200, write 210 to arr[1], i becomes 2
+          r0 = arr[0];
+          r1 = arr[1];
+          r2 = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 100  # arr[0] unchanged
+        r1: 210  # arr[1] = 200 + 10
+        r2: 300  # arr[2] unchanged
+        i: 2     # i incremented once
+
+  - name: side_effect_index_preinc
+    description: Verifies index with pre-increment (++i) is evaluated only once
+    sv: |
+      module Test;
+        int arr[3];
+        int i;
+        int r0, r1, r2;  // Result variables
+        initial begin
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          i = 0;
+          arr[++i] += 50;  // Should: i becomes 1, read arr[1]=200, write 250 to arr[1]
+          r0 = arr[0];
+          r1 = arr[1];
+          r2 = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 100  # arr[0] unchanged
+        r1: 250  # arr[1] = 200 + 50
+        r2: 300  # arr[2] unchanged
+        i: 1     # i incremented once

@@ -14,6 +14,7 @@
 #include "lyra/lowering/mir_to_lir/helpers.hpp"
 #include "lyra/lowering/mir_to_lir/lir_builder.hpp"
 #include "lyra/mir/expression.hpp"
+#include "lyra/mir/operators.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -23,6 +24,47 @@ using Operand = lir::Operand;
 using TempRef = lir::TempRef;
 using Instruction = lir::Instruction;
 using IK = lir::InstructionKind;
+
+namespace {
+
+// Convert MIR BinaryOperator to LIR InstructionKind for compound assignments
+auto MirBinaryOpToLirKind(mir::BinaryOperator op) -> IK {
+  using Operator = mir::BinaryOperator;
+  switch (op) {
+    case Operator::kAddition:
+      return IK::kBinaryAdd;
+    case Operator::kSubtraction:
+      return IK::kBinarySubtract;
+    case Operator::kMultiplication:
+      return IK::kBinaryMultiply;
+    case Operator::kDivision:
+      return IK::kBinaryDivide;
+    case Operator::kModulo:
+      return IK::kBinaryModulo;
+    case Operator::kBitwiseAnd:
+      return IK::kBinaryBitwiseAnd;
+    case Operator::kBitwiseOr:
+      return IK::kBinaryBitwiseOr;
+    case Operator::kBitwiseXor:
+      return IK::kBinaryBitwiseXor;
+    case Operator::kBitwiseXnor:
+      return IK::kBinaryBitwiseXnor;
+    case Operator::kLogicalShiftLeft:
+      return IK::kBinaryLogicalShiftLeft;
+    case Operator::kLogicalShiftRight:
+      return IK::kBinaryLogicalShiftRight;
+    case Operator::kArithmeticShiftLeft:
+      return IK::kBinaryArithmeticShiftLeft;
+    case Operator::kArithmeticShiftRight:
+      return IK::kBinaryArithmeticShiftRight;
+    default:
+      // Comparison operators don't make sense for compound assignment
+      assert(false && "unsupported operator for compound assignment");
+      return IK::kBinaryAdd;  // unreachable
+  }
+}
+
+}  // namespace
 
 auto LowerAssignmentExpression(
     const mir::AssignmentExpression& assignment, LirBuilder& builder)
@@ -292,11 +334,26 @@ auto LowerAssignmentExpression(
         current_type = &elem_type;
       }
 
+      // For compound assignment, load old value, compute, then store
+      TempRef store_value = value;
+      if (assignment.IsCompoundAssignment()) {
+        auto old_value = builder.AllocateTemp("old", *current_type);
+        builder.AddInstruction(Instruction::Load(old_value, ptr));
+
+        auto new_value = builder.AllocateTemp("new", *current_type);
+        auto op_kind = MirBinaryOpToLirKind(*assignment.compound_op);
+        builder.AddInstruction(
+            Instruction::Basic(
+                op_kind, new_value,
+                {Operand::Temp(old_value), Operand::Temp(value)}));
+        store_value = new_value;
+      }
+
       // Store through the final pointer
       if (assignment.is_non_blocking) {
-        builder.AddInstruction(Instruction::StoreNBA(ptr, value));
+        builder.AddInstruction(Instruction::StoreNBA(ptr, store_value));
       } else {
-        builder.AddInstruction(Instruction::Store(ptr, value));
+        builder.AddInstruction(Instruction::Store(ptr, store_value));
       }
     }
     return value;
@@ -311,12 +368,28 @@ auto LowerAssignmentExpression(
   auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
   builder.AddInstruction(
       Instruction::ResolveVar(ptr, assignment.target.symbol));
-  if (assignment.is_non_blocking) {
-    builder.AddInstruction(Instruction::StoreNBA(ptr, value));
-  } else {
-    builder.AddInstruction(Instruction::Store(ptr, value));
+
+  // For compound assignment, load old value, compute, then store
+  TempRef store_value = value;
+  if (assignment.IsCompoundAssignment()) {
+    auto old_value = builder.AllocateTemp("old", var_type);
+    builder.AddInstruction(Instruction::Load(old_value, ptr));
+
+    auto new_value = builder.AllocateTemp("new", var_type);
+    auto op_kind = MirBinaryOpToLirKind(*assignment.compound_op);
+    builder.AddInstruction(
+        Instruction::Basic(
+            op_kind, new_value,
+            {Operand::Temp(old_value), Operand::Temp(value)}));
+    store_value = new_value;
   }
-  return value;
+
+  if (assignment.is_non_blocking) {
+    builder.AddInstruction(Instruction::StoreNBA(ptr, store_value));
+  } else {
+    builder.AddInstruction(Instruction::Store(ptr, store_value));
+  }
+  return store_value;
 }
 
 }  // namespace lyra::lowering::mir_to_lir
