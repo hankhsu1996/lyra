@@ -37,7 +37,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
 
       // Create an address pointing to the variable
       auto addr = Address::Var(*instr.symbol);
-      auto ptr_type = (*instr.result)->type;
+      auto ptr_type = ctx.GetTempType(*instr.result);
       ctx.WriteTemp(
           instr.result.value(),
           RuntimeValue::Pointer(ptr_type, std::move(addr)));
@@ -93,7 +93,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       auto elem_addr =
           base_ptr_value.AsAddress().WithIndex(static_cast<uint32_t>(index));
 
-      auto ptr_type = (*instr.result)->type;
+      auto ptr_type = ctx.GetTempType(*instr.result);
       ctx.WriteTemp(
           instr.result.value(),
           RuntimeValue::Pointer(ptr_type, std::move(elem_addr)));
@@ -113,7 +113,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       // Build address by appending field to base address path
       auto field_addr = base_ptr_value.AsAddress().WithField(field_id);
 
-      auto ptr_type = (*instr.result)->type;
+      auto ptr_type = ctx.GetTempType(*instr.result);
       ctx.WriteTemp(
           instr.result.value(),
           RuntimeValue::Pointer(ptr_type, std::move(field_addr)));
@@ -138,7 +138,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
       RuntimeValue parent = ctx.ResolveForRead(ptr_value.AsAddress());
 
       // Extract bits from the parent value
-      const auto& result_type = (*instr.result)->type;
+      const auto& result_type = ctx.GetTempType(*instr.result);
       bool is_signed = result_type.IsSigned();
 
       RuntimeValue result;
@@ -189,7 +189,7 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
 
     case lir::InstructionKind::kAllocate: {
       assert(instr.result.has_value());
-      const auto& result_type = (*instr.result)->type;
+      const auto& result_type = ctx.GetTempType(*instr.result);
 
       // Pointer<T> result: allocate T in anonymous storage and return pointer
       if (result_type.IsPointer()) {

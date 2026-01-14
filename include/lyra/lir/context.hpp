@@ -106,25 +106,12 @@ inline auto GetHintPrefix(HintId hint) -> std::string_view {
   return "t";  // Fallback
 }
 
-struct TempSymbol {
-  std::string name;
-  common::Type type;
-};
-
 struct TempRef {
   TempId id;
-  TempSymbol* ptr;  // Cached pointer for fast access
-
-  [[nodiscard]] auto operator*() const -> TempSymbol& {
-    return *ptr;
-  }
-
-  [[nodiscard]] auto operator->() const -> TempSymbol* {
-    return ptr;
-  }
+  HintId hint;
 
   [[nodiscard]] auto ToString() const -> std::string {
-    return ptr->name;
+    return fmt::format("%{}_{}", GetHintPrefix(hint), id);
   }
 
   [[nodiscard]] friend auto operator==(const TempRef& a, const TempRef& b)
@@ -181,14 +168,13 @@ struct ConstantRef {
 class LirContext {
  public:
   // Allocate temp with explicit per-unit ID (for vector-based TempTable)
-  auto AllocateTempWithId(TempId id, std::string name, common::Type type)
+  static auto AllocateTempWithId(TempId id, HintId hint, common::Type type)
       -> TempRef;
   auto InternLabel(std::string_view name) -> LabelRef;
   auto InternConstant(const common::Constant& constant) -> ConstantRef;
   auto InternType(const common::Type& type) -> const common::Type*;
 
  private:
-  std::deque<TempSymbol> temp_storage_;
   std::deque<std::string> label_storage_;
   std::unordered_map<std::string, LabelId> label_index_;
   std::deque<common::Constant> constant_storage_;

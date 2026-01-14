@@ -18,7 +18,7 @@ struct Operand {
     return Operand{.temp = t};
   }
 
-  [[nodiscard]] auto IsTemp() const -> bool {
+  [[nodiscard]] static auto IsTemp() -> bool {
     return true;
   }
 
@@ -27,7 +27,7 @@ struct Operand {
   }
 
   [[nodiscard]] auto ToString() const -> std::string {
-    return temp->name;
+    return temp.ToString();
   }
 };
 

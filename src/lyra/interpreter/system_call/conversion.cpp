@@ -24,7 +24,7 @@ auto HandleConversionCalls(
     assert(instr.result.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    size_t target_width = (*instr.result)->type.GetBitWidth();
+    size_t target_width = ctx.GetTempType(*instr.result).GetBitWidth();
     auto result =
         RuntimeValue::IntegralSigned(ExtractInt64FromSource(src), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
@@ -36,7 +36,7 @@ auto HandleConversionCalls(
     assert(instr.result.has_value());
     assert(instr.operands.size() == 1);
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    size_t target_width = (*instr.result)->type.GetBitWidth();
+    size_t target_width = ctx.GetTempType(*instr.result).GetBitWidth();
     auto result = RuntimeValue::IntegralUnsigned(
         static_cast<uint64_t>(ExtractInt64FromSource(src)), target_width);
     ctx.GetTempTable().Write(instr.result.value(), result);
@@ -63,7 +63,7 @@ auto HandleConversionCalls(
     assert(instr.result.has_value());
     assert(!instr.operands.empty());
     const auto& src = ctx.GetOperandValue(instr.operands[0]);
-    const auto& target_type = (*instr.result)->type;
+    const auto& target_type = ctx.GetTempType(*instr.result);
     size_t target_width = target_type.GetBitWidth();
     bool target_signed = target_type.IsSigned();
     auto raw_value = static_cast<int64_t>(src.AsDouble());

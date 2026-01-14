@@ -25,6 +25,9 @@ class ProcessFrame {
  public:
   ProcessFrame() = default;
 
+  /// The process being executed (for temp type lookup).
+  const lir::Process* process = nullptr;
+
   ProcessVariableTable variable_table;
   TempTable temp_table;
 

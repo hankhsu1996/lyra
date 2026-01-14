@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
@@ -11,10 +10,8 @@
 namespace lyra::lir {
 
 auto LirContext::AllocateTempWithId(
-    TempId id, std::string name, common::Type type) -> TempRef {
-  // Store metadata in temp_storage_ (for TempRef.ptr), but use provided ID
-  temp_storage_.push_back(TempSymbol{.name = std::move(name), .type = type});
-  return TempRef{.id = id, .ptr = &temp_storage_.back()};
+    TempId id, HintId hint, common::Type /*type*/) -> TempRef {
+  return TempRef{.id = id, .hint = hint};
 }
 
 auto LirContext::InternLabel(std::string_view name) -> LabelRef {

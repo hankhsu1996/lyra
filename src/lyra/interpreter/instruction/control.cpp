@@ -172,14 +172,16 @@ auto HandleControlFlowOps(
           int64_t step =
               ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
           result = ExecuteEnumNext(
-              value, step, enum_data, (*instr.result)->type.GetBitWidth());
+              value, step, enum_data,
+              ctx.GetTempType(*instr.result).GetBitWidth());
           break;
         }
         case lir::IntrinsicOpKind::kEnumPrev: {
           int64_t step =
               ctx.GetTemp(instr.temp_operands[1]).AsNarrow().AsInt64();
           result = ExecuteEnumPrev(
-              value, step, enum_data, (*instr.result)->type.GetBitWidth());
+              value, step, enum_data,
+              ctx.GetTempType(*instr.result).GetBitWidth());
           break;
         }
         case lir::IntrinsicOpKind::kEnumName: {

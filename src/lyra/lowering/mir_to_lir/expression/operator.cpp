@@ -103,8 +103,8 @@ auto LowerBinaryExpression(
 
   IK kind{};
 
-  const bool is_lhs_string = lhs->type == Type::String();
-  const bool is_rhs_string = rhs->type == Type::String();
+  const bool is_lhs_string = expression.left->type == Type::String();
+  const bool is_rhs_string = expression.right->type == Type::String();
   const bool is_string = is_lhs_string || is_rhs_string;
 
   // String operand restrictions and unsupported operators are validated in

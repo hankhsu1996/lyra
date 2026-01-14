@@ -250,6 +250,7 @@ void SimulationRunner::CheckMonitor() {
 
   // Create temporary frame for process execution
   ProcessFrame frame;
+  frame.process = process.get();
   frame.temp_table.Init(process->temps.size());
   ProcessEffect effect;
 
@@ -281,6 +282,7 @@ void SimulationRunner::InitializePackageVariables() {
   // Then execute the init process (if any) to set actual values
   if (package_init_process_) {
     ProcessFrame frame;
+    frame.process = package_init_process_.get();
     frame.temp_table.Init(package_init_process_->temps.size());
     ProcessEffect effect;
     RunProcess(
@@ -317,6 +319,7 @@ void SimulationRunner::ScheduleModuleProcesses(
     // Create frame in centralized storage and get handle
     ProcessInstanceKey key{.process = process, .instance = instance};
     auto [it, inserted] = process_frames_.emplace(key, ProcessFrame{});
+    it->second.process = process.get();
     it->second.temp_table.Init(process->temps.size());
     ProcessHandle handle{key};
 
