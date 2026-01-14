@@ -41,6 +41,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        "@abseil-cpp//absl/container:inlined_vector",
         "@nlohmann_json//:json",
         "@slang",
         "@spdlog",
