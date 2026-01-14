@@ -1,7 +1,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"

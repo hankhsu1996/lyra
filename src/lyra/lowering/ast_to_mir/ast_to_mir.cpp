@@ -12,7 +12,6 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/module.hpp"
 #include "lyra/lowering/ast_to_mir/package.hpp"

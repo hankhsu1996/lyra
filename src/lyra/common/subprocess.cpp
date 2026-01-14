@@ -3,9 +3,13 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <optional>
 #include <spawn.h>
+#include <string>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace lyra::common {

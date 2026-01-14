@@ -13,6 +13,7 @@
 #include "lyra/common/builtin_method.hpp"
 #include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"

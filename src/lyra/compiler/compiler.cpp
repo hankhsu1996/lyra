@@ -10,11 +10,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include <slang/ast/Compilation.h>
 
+// NOLINTNEXTLINE(misc-include-cleaner): RunSubprocess is only declared here
 #include "lyra/common/subprocess.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
 #include "lyra/compiler/compiler_result.hpp"

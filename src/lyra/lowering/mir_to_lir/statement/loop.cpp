@@ -1,5 +1,4 @@
 #include <cassert>
-#include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"

@@ -13,7 +13,6 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_mir/collect_sensitivity.hpp"
