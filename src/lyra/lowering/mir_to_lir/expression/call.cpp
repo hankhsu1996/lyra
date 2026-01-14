@@ -30,6 +30,17 @@ using IK = lir::InstructionKind;
 
 namespace {
 
+// Check if an expression is a string constant (format string literal).
+// After AST→MIR normalization, string literals are always string-typed
+// constants.
+auto IsStringLiteralConstant(const mir::Expression& expr) -> bool {
+  if (expr.kind != mir::Expression::Kind::kConstant) {
+    return false;
+  }
+  const auto& constant_expr = mir::As<mir::ConstantExpression>(expr);
+  return constant_expr.constant.type.kind == common::Type::Kind::kString;
+}
+
 // Synthesizes a check process for $monitor/$fmonitor that periodically
 // re-evaluates monitored expressions and prints when any change.
 // format_literal: optional format string literal (nullptr if no format string)
@@ -186,7 +197,8 @@ auto LowerSystemCallExpression(
   if (is_monitor || is_fmonitor) {
     // Format string is now in format_expr (separate from arguments)
     const mir::Expression* format_literal = nullptr;
-    if (system_call.format_expr && system_call.format_expr_is_literal) {
+    if (system_call.format_expr &&
+        IsStringLiteralConstant(**system_call.format_expr)) {
       format_literal = system_call.format_expr->get();
     }
 
@@ -292,7 +304,11 @@ auto LowerSystemCallExpression(
                 system_call.name, std::move(operands), result, system_call.type)
           : Instruction::SystemCall(system_call.name, std::move(operands));
   instruction.format_operand = format_operand;
-  instruction.format_string_is_literal = system_call.format_expr_is_literal;
+  // Detect format string literal by type (string constants are always literals
+  // after AST→MIR normalization)
+  instruction.format_string_is_literal =
+      system_call.format_expr.has_value() &&
+      IsStringLiteralConstant(**system_call.format_expr);
   instruction.source_file = system_call.source_file;
   instruction.source_line = system_call.source_line;
   instruction.output_targets = std::move(output_targets);

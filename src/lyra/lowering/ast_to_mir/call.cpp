@@ -22,6 +22,7 @@
 #include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
+#include "lyra/common/display_variant.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -53,6 +54,63 @@ auto IsSformatTask(std::string_view name) -> bool {
 /// Check if a system call name is $sformatf (returns string, no output target)
 auto IsSformatfFunction(std::string_view name) -> bool {
   return name == "$sformatf";
+}
+
+/// Convert a bit-packed integral constant to a string constant.
+/// Slang sometimes represents string literals as integral (bit-packed) types.
+/// This normalizes them to actual string constants at the AST→MIR boundary.
+auto IntegralConstantToString(const common::Constant& c) -> std::string {
+  std::string result;
+  if (c.type.kind != common::Type::Kind::kIntegral) {
+    return result;
+  }
+  auto data = std::get<common::IntegralData>(c.type.data);
+  size_t width = data.bit_width;
+
+  if (c.value.IsInt64()) {
+    auto bits = static_cast<uint64_t>(c.value.AsInt64());
+    for (size_t i = width; i >= 8; i -= 8) {
+      auto ch = static_cast<uint8_t>((bits >> (i - 8)) & 0xFF);
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  } else if (c.value.IsWideBit()) {
+    const auto& wide = c.value.AsWideBit();
+    for (size_t i = width; i >= 8; i -= 8) {
+      size_t byte_start = i - 8;
+      uint8_t ch = 0;
+      for (size_t b = 0; b < 8; ++b) {
+        ch |= static_cast<uint8_t>(wide.GetBit(byte_start + b) << b);
+      }
+      if (ch != 0) {
+        result += static_cast<char>(ch);
+      }
+    }
+  }
+  return result;
+}
+
+/// Normalize a format expression: if it's an integral constant that was
+/// originally a string literal (bit-packed), convert it to a string constant.
+/// This ensures format strings have consistent string type in MIR.
+auto NormalizeFormatExpression(std::unique_ptr<mir::Expression> expr)
+    -> std::unique_ptr<mir::Expression> {
+  if (expr->kind != mir::Expression::Kind::kConstant) {
+    return expr;
+  }
+  const auto& constant_expr = mir::As<mir::ConstantExpression>(*expr);
+  if (!constant_expr.constant.is_string_literal) {
+    return expr;
+  }
+  if (constant_expr.constant.type.kind == common::Type::Kind::kString) {
+    // Already a string constant
+    return expr;
+  }
+  // Convert integral (bit-packed) to string
+  std::string str = IntegralConstantToString(constant_expr.constant);
+  return std::make_unique<mir::ConstantExpression>(
+      common::Constant::String(std::move(str)));
 }
 
 }  // namespace
@@ -316,7 +374,6 @@ auto LowerCall(
         func_info->category == common::SystemFunctionCategory::kSeverity;
 
     std::unique_ptr<mir::Expression> format_expr;
-    bool format_expr_is_literal = false;
     std::vector<std::unique_ptr<mir::Expression>> arguments;
     std::vector<mir::AssignmentTarget> output_targets;
 
@@ -370,9 +427,8 @@ auto LowerCall(
                   "$sformatf requires a format string argument"));
         }
         const auto& format_arg = *call.arguments()[0];
-        format_expr = LowerExpression(format_arg, arena, registrar);
-        format_expr_is_literal =
-            format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+        format_expr = NormalizeFormatExpression(
+            LowerExpression(format_arg, arena, registrar));
         // Add remaining arguments (skip format string)
         for (size_t i = 1; i < call.arguments().size(); ++i) {
           arguments.push_back(
@@ -436,9 +492,8 @@ auto LowerCall(
                     "$sformat requires a format string argument"));
           }
           const auto& format_arg = *call.arguments()[1];
-          format_expr = LowerExpression(format_arg, arena, registrar);
-          format_expr_is_literal =
-              format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+          format_expr = NormalizeFormatExpression(
+              LowerExpression(format_arg, arena, registrar));
           // Add remaining arguments (skip output and format)
           for (size_t i = 2; i < call.arguments().size(); ++i) {
             arguments.push_back(
@@ -468,18 +523,16 @@ auto LowerCall(
           is_format_string =
               format_arg.kind == slang::ast::ExpressionKind::StringLiteral ||
               format_arg.type->isString();
-          format_expr_is_literal =
-              format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
         } else {
           // Regular display: only string literals are format strings
           is_format_string =
               format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
-          format_expr_is_literal = is_format_string;
         }
 
         if (is_format_string) {
           // Extract format string into format_expr
-          format_expr = LowerExpression(format_arg, arena, registrar);
+          format_expr = NormalizeFormatExpression(
+              LowerExpression(format_arg, arena, registrar));
           args_start_idx = format_idx + 1;  // Skip format in arguments
         } else {
           // First arg is a value, not a format string
@@ -543,13 +596,11 @@ auto LowerCall(
         if (is_mem_io) {
           auto args = call.arguments();
           // First arg: filename (input) -> arguments
+          // Normalize string literals (bit-packed integrals -> string type)
           if (!args.empty()) {
             const auto& first_arg = *args[0];
-            arguments.push_back(LowerExpression(first_arg, arena, registrar));
-            // Check if filename is a string literal
-            if (first_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
-              format_expr_is_literal = true;
-            }
+            arguments.push_back(NormalizeFormatExpression(
+                LowerExpression(first_arg, arena, registrar)));
           }
           // Second arg: target array (write target) -> output_targets
           if (args.size() >= 2) {
@@ -627,7 +678,7 @@ auto LowerCall(
     if (format_expr) {
       syscall->format_expr = std::move(format_expr);
     }
-    syscall->format_expr_is_literal = format_expr_is_literal;
+    syscall->display_props = common::GetDisplayVariantProps(effective_name);
     syscall->source_file = std::move(source_file);
     syscall->source_line = source_line;
     return syscall;
