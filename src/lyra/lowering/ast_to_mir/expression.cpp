@@ -518,6 +518,36 @@ auto LowerExpression(
 
     case slang::ast::ExpressionKind::SimpleAssignmentPattern:
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      // Handle unpacked arrays (fixed-size) - slang expands default patterns
+      if (expression.type->isUnpackedArray()) {
+        auto type_result = LowerType(*expression.type, expression.sourceRange);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+
+        // Get expanded elements from slang (handles '{default: value} patterns)
+        std::span<const slang::ast::Expression* const> elements;
+        if (expression.kind ==
+            slang::ast::ExpressionKind::SimpleAssignmentPattern) {
+          elements =
+              expression.as<slang::ast::SimpleAssignmentPatternExpression>()
+                  .elements();
+        } else {
+          elements =
+              expression.as<slang::ast::StructuredAssignmentPatternExpression>()
+                  .elements();
+        }
+
+        std::vector<std::unique_ptr<mir::Expression>> mir_elements;
+        mir_elements.reserve(elements.size());
+        for (const auto* elem : elements) {
+          mir_elements.push_back(LowerExpression(*elem));
+        }
+
+        return std::make_unique<mir::ArrayLiteralExpression>(
+            *type_result, std::move(mir_elements));
+      }
+
       // Both pattern types provide elements() in field declaration order.
       auto lower_struct_literal =
           [&](std::span<const slang::ast::Expression* const> elements)
@@ -526,7 +556,8 @@ auto LowerExpression(
           throw DiagnosticException(
               Diagnostic::Error(
                   expression.sourceRange,
-                  "only struct assignment patterns are supported"));
+                  "unsupported assignment pattern for non-struct/non-array "
+                  "type"));
         }
 
         auto type_result =

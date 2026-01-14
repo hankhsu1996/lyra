@@ -273,3 +273,61 @@ cases:
     expect:
       variables:
         result: 10
+
+  # Default assignment pattern tests
+
+  - name: default_pattern_basic
+    description: Basic default pattern for fixed array
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          static bit [7:0] arr[3] = '{default: 8'hAB};
+          result = arr[0] + arr[1] + arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 513
+
+  - name: default_pattern_int
+    description: Default pattern with int element type
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          static int arr[4] = '{default: 42};
+          result = arr[0] + arr[1] + arr[2] + arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 168
+
+  - name: default_pattern_zero
+    description: Default pattern with zero value
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          static logic [15:0] arr[2] = '{default: '0};
+          result = arr[0] + arr[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: default_pattern_all_ones
+    description: Default pattern with all ones
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          static bit [3:0] arr[2] = '{default: '1};
+          result = arr[0] + arr[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
