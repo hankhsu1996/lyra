@@ -154,7 +154,7 @@ auto LowerModule(
     lir_func.local_variables = mir_func.local_variables;
 
     // Lower function body to basic blocks
-    builder.BeginFunction(mir_func.name);
+    builder.BeginFunction(mir_func.name, lir_func.temps);
 
     auto entry_label = builder.MakeLabel("entry");
     builder.StartBlock(entry_label);
@@ -260,7 +260,7 @@ auto LowerPackages(
       lir_func->local_variables = mir_func.local_variables;
 
       // Lower function body to basic blocks
-      builder.BeginFunction(lir_func->name);
+      builder.BeginFunction(lir_func->name, lir_func->temps);
 
       auto entry_label = builder.MakeLabel("entry");
       builder.StartBlock(entry_label);

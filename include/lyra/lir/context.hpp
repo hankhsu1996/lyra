@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <string>
@@ -14,6 +15,96 @@
 namespace lyra::lir {
 
 using TempId = uint32_t;
+
+// Type-safe temp ID for process temps
+struct ProcessTempId {
+  uint32_t value;
+  static constexpr uint32_t kInvalid = UINT32_MAX;
+
+  auto operator==(const ProcessTempId&) const -> bool = default;
+  [[nodiscard]] auto IsValid() const -> bool {
+    return value != kInvalid;
+  }
+};
+
+// Type-safe temp ID for function temps
+struct FunctionTempId {
+  uint32_t value;
+  static constexpr uint32_t kInvalid = UINT32_MAX;
+
+  auto operator==(const FunctionTempId&) const -> bool = default;
+  [[nodiscard]] auto IsValid() const -> bool {
+    return value != kInvalid;
+  }
+};
+
+// Hint IDs for common temp purposes - for readable debug output
+enum class HintId : uint16_t {
+  kGeneric = 0,  // %t_<id>
+  kPtr,          // %ptr_<id>
+  kLhs,          // %lhs_<id>
+  kRhs,          // %rhs_<id>
+  kResult,       // %result_<id>
+  kCond,         // %cond_<id>
+  kIndex,        // %idx_<id>
+  kCounter,      // %cnt_<id>
+  kTernary,      // %ternary_<id>
+  kSlice,        // %slice_<id>
+  kValue,        // %val_<id>
+  kArg,          // %arg_<id>
+  kRet,          // %ret_<id>
+  kBound,        // %bound_<id>
+  kOffset,       // %offset_<id>
+  kWidth,        // %width_<id>
+  kElem,         // %elem_<id>
+};
+
+// Metadata for a temp - stored per Process/Function
+struct TempMeta {
+  const common::Type* type;  // Interned pointer
+  HintId hint;               // For readable debug output
+};
+
+// Get hint prefix for debug output
+inline auto GetHintPrefix(HintId hint) -> std::string_view {
+  switch (hint) {
+    case HintId::kGeneric:
+      return "t";
+    case HintId::kPtr:
+      return "ptr";
+    case HintId::kLhs:
+      return "lhs";
+    case HintId::kRhs:
+      return "rhs";
+    case HintId::kResult:
+      return "result";
+    case HintId::kCond:
+      return "cond";
+    case HintId::kIndex:
+      return "idx";
+    case HintId::kCounter:
+      return "cnt";
+    case HintId::kTernary:
+      return "ternary";
+    case HintId::kSlice:
+      return "slice";
+    case HintId::kValue:
+      return "val";
+    case HintId::kArg:
+      return "arg";
+    case HintId::kRet:
+      return "ret";
+    case HintId::kBound:
+      return "bound";
+    case HintId::kOffset:
+      return "offset";
+    case HintId::kWidth:
+      return "width";
+    case HintId::kElem:
+      return "elem";
+  }
+  return "t";  // Fallback
+}
 
 struct TempSymbol {
   std::string name;
@@ -89,7 +180,9 @@ struct ConstantRef {
 
 class LirContext {
  public:
-  auto AllocateTemp(std::string name, common::Type type) -> TempRef;
+  // Allocate temp with explicit per-unit ID (for vector-based TempTable)
+  auto AllocateTempWithId(TempId id, std::string name, common::Type type)
+      -> TempRef;
   auto InternLabel(std::string_view name) -> LabelRef;
   auto InternConstant(const common::Constant& constant) -> ConstantRef;
   auto InternType(const common::Type& type) -> const common::Type*;

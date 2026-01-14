@@ -56,6 +56,7 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
   // Create call frame (return address will be set by process_runner)
   auto frame = std::make_unique<CallFrame>();
   frame->function = func;
+  frame->temp_table.Init(func->temps.size());
   frame->return_value_dest = instr.result;
 
   // Initialize parameters from arguments

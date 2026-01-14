@@ -25,17 +25,30 @@ namespace lyra {
 
 struct RuntimeValue;
 
+// Empty marker for uninitialized temps - read is a compiler bug
+struct UninitValue {};
+
 // Storage types use shared_ptr to allow value semantics while supporting
 // recursive RuntimeValue definition
 using ArrayStorage = std::shared_ptr<std::vector<RuntimeValue>>;
 using QueueStorage = std::shared_ptr<sdk::BoundedQueue<RuntimeValue>>;
-using ValueVariant =
-    std::variant<common::ValueStorage, ArrayStorage, QueueStorage, Address>;
+using ValueVariant = std::variant<
+    UninitValue, common::ValueStorage, ArrayStorage, QueueStorage, Address>;
 
 struct RuntimeValue {
  public:
   common::Type type;
-  ValueVariant value;
+  ValueVariant value = UninitValue{};  // Default to uninit
+
+  // Factory for uninitialized value (used by TempTable::Init)
+  static auto Uninit() -> RuntimeValue {
+    return RuntimeValue{};
+  }
+
+  // Check if value is uninitialized
+  [[nodiscard]] auto IsUninit() const -> bool {
+    return std::holds_alternative<UninitValue>(value);
+  }
 
   static auto FromConstant(lir::ConstantRef constant) -> RuntimeValue {
     return FromConstant(*constant.ptr);
@@ -394,7 +407,10 @@ struct RuntimeValue {
     auto copied_value = std::visit(
         [](const auto& v) -> ValueVariant {
           using T = std::decay_t<decltype(v)>;
-          if constexpr (std::is_same_v<T, common::ValueStorage>) {
+          if constexpr (std::is_same_v<T, UninitValue>) {
+            // Uninit - return as-is (should not be copied in normal use)
+            return v;
+          } else if constexpr (std::is_same_v<T, common::ValueStorage>) {
             // Value semantics - shallow copy is sufficient
             return v;
           } else if constexpr (std::is_same_v<T, ArrayStorage>) {

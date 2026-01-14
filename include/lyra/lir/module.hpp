@@ -58,6 +58,7 @@ struct FunctionParameter {
 // Function definition (user-defined functions)
 struct Function {
   std::string name;
+  std::vector<TempMeta> temps;  // Function owns its temps
   common::Type return_type;
   std::vector<FunctionParameter> parameters;
   std::vector<common::Variable> local_variables;

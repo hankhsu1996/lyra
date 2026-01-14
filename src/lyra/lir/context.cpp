@@ -10,8 +10,9 @@
 
 namespace lyra::lir {
 
-auto LirContext::AllocateTemp(std::string name, common::Type type) -> TempRef {
-  auto id = static_cast<TempId>(temp_storage_.size());
+auto LirContext::AllocateTempWithId(
+    TempId id, std::string name, common::Type type) -> TempRef {
+  // Store metadata in temp_storage_ (for TempRef.ptr), but use provided ID
   temp_storage_.push_back(TempSymbol{.name = std::move(name), .type = type});
   return TempRef{.id = id, .ptr = &temp_storage_.back()};
 }
