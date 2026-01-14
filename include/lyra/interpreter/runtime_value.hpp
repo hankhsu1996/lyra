@@ -27,7 +27,8 @@ struct RuntimeValue;
 
 /// Interpreter-internal sentinel for uninitialized temp slots.
 /// NOT a legal SystemVerilog value - reading an uninit temp is a compiler bug.
-/// Only TempTable should check for this; no instruction or value logic should care.
+/// Only TempTable should check for this; no instruction or value logic should
+/// care.
 struct UninitValue {};
 
 // Storage types use shared_ptr to allow value semantics while supporting
