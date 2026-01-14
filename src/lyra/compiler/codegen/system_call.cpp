@@ -19,7 +19,6 @@
 namespace lyra::compiler {
 
 using codegen::ExtractFormatString;
-using codegen::GetDisplayVariantProps;
 using codegen::IntegralConstantToString;
 using codegen::kPrecEquality;
 
@@ -132,7 +131,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   if (syscall.name == "$strobe" || syscall.name == "$strobeb" ||
       syscall.name == "$strobeo" || syscall.name == "$strobeh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
 
     // Wrap print in lambda scheduled to Postponed region
     Line("lyra::sdk::current_scheduler->SchedulePostponed([=, this]() {");
@@ -173,7 +172,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
     if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+          syscall.arguments, 0, sv_fmt, "std::println",
+          common::RadixToChar(props->radix));
     } else {
       Line("std::println(std::cout, \"\");");
     }
@@ -186,7 +186,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   if (syscall.name == "$monitor" || syscall.name == "$monitorb" ||
       syscall.name == "$monitoro" || syscall.name == "$monitorh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
 
     // Empty call - print newline once (no values to monitor for changes)
     if (!syscall.format_expr && syscall.arguments.empty()) {
@@ -264,7 +265,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       }
       if (!syscall.arguments.empty()) {
         EmitFormattedPrint(
-            syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+            syscall.arguments, 0, sv_fmt, "std::println", default_format);
       } else {
         Line("std::println(std::cout, \"\");");
       }
@@ -297,7 +298,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       }
       if (!syscall.arguments.empty()) {
         EmitFormattedPrint(
-            syscall.arguments, 0, sv_fmt, "std::println", props.default_format);
+            syscall.arguments, 0, sv_fmt, "std::println", default_format);
       } else {
         Line("std::println(std::cout, \"\");");
       }
@@ -322,7 +323,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   if (syscall.name == "$fmonitor" || syscall.name == "$fmonitorb" ||
       syscall.name == "$fmonitoro" || syscall.name == "$fmonitorh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
 
     // arguments[0] = descriptor, arguments[1..] = values to monitor
 
@@ -418,7 +420,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
           if (syscall.arguments[i]->type.kind ==
               common::Type::Kind::kIntegral) {
             fmt_str += "{:";
-            fmt_str += props.default_format;
+            fmt_str += default_format;
             fmt_str += "}";
           } else {
             fmt_str += "{}";
@@ -468,7 +470,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
           if (syscall.arguments[i]->type.kind ==
               common::Type::Kind::kIntegral) {
             fmt_str += "{:";
-            fmt_str += props.default_format;
+            fmt_str += default_format;
             fmt_str += "}";
           } else {
             fmt_str += "{}";
@@ -495,14 +497,16 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       syscall.name == "$fwrite" || syscall.name == "$fwriteb" ||
       syscall.name == "$fwriteo" || syscall.name == "$fwriteh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
+    bool append_newline = props->append_newline;
 
     // arguments[0] = descriptor, remaining = format args
     // format_expr = optional format string
 
     // Empty call (descriptor only) - just newline for $fdisplay
     if (!syscall.format_expr && syscall.arguments.size() == 1) {
-      if (props.use_println) {
+      if (append_newline) {
         Indent();
         out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<"
                 "uint32_t>(";
@@ -532,7 +536,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       if (syscall.arguments.size() == 1) {
         // String only
         out_ << "\"" << common::EscapeForCppString(fmt_info.text);
-        if (props.use_println) {
+        if (append_newline) {
           out_ << "\\n";
         }
         out_ << "\");\n";
@@ -543,13 +547,13 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       for (size_t i = 1; i < syscall.arguments.size(); ++i) {
         if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
           fmt_str += "{:";
-          fmt_str += props.default_format;
+          fmt_str += default_format;
           fmt_str += "}";
         } else {
           fmt_str += "{}";
         }
       }
-      if (props.use_println) {
+      if (append_newline) {
         fmt_str += "\\n";
       }
       out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\" + "
@@ -565,7 +569,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     if (fmt_info.has_format_specifiers) {
       // Format string with specifiers
       auto cpp_fmt = common::TransformToStdFormat(fmt_info.text);
-      if (props.use_println) {
+      if (append_newline) {
         cpp_fmt += "\\n";
       }
       out_ << "std::format(\"" << cpp_fmt << "\"";
@@ -582,13 +586,13 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     for (size_t i = 1; i < syscall.arguments.size(); ++i) {
       if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
         fmt_str += "{:";
-        fmt_str += props.default_format;
+        fmt_str += default_format;
         fmt_str += "}";
       } else {
         fmt_str += "{}";
       }
     }
-    if (props.use_println) {
+    if (append_newline) {
       fmt_str += "\\n";
     }
     out_ << "std::format(\"" << fmt_str << "\"";
@@ -604,7 +608,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   if (syscall.name == "$fstrobe" || syscall.name == "$fstrobeb" ||
       syscall.name == "$fstrobeo" || syscall.name == "$fstrobeh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
 
     // arguments[0] = descriptor, remaining = format args
     // Wrap in lambda scheduled to Postponed region
@@ -652,7 +657,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       for (size_t i = 1; i < syscall.arguments.size(); ++i) {
         if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
           fmt_str += "{:";
-          fmt_str += props.default_format;
+          fmt_str += default_format;
           fmt_str += "}";
         } else {
           fmt_str += "{}";
@@ -690,7 +695,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     for (size_t i = 1; i < syscall.arguments.size(); ++i) {
       if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
         fmt_str += "{:";
-        fmt_str += props.default_format;
+        fmt_str += default_format;
         fmt_str += "}";
       } else {
         fmt_str += "{}";
@@ -714,13 +719,14 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
       syscall.name == "$write" || syscall.name == "$writeb" ||
       syscall.name == "$writeo" || syscall.name == "$writeh") {
     used_features_ |= CodegenFeature::kDisplay;
-    auto props = GetDisplayVariantProps(syscall.name);
-    std::string_view print_fn =
-        props.use_println ? "std::println" : "std::print";
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
+    bool append_newline = props->append_newline;
+    std::string_view print_fn = append_newline ? "std::println" : "std::print";
 
     // Empty call - just print newline if needed
     if (!syscall.format_expr && syscall.arguments.empty()) {
-      if (props.use_println) {
+      if (append_newline) {
         Line("std::println(std::cout, \"\");");
       }
       // $write with no args does nothing
@@ -752,8 +758,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
     if (!syscall.arguments.empty()) {
       EmitFormattedPrint(
-          syscall.arguments, 0, sv_fmt, print_fn, props.default_format);
-    } else if (props.use_println) {
+          syscall.arguments, 0, sv_fmt, print_fn, default_format);
+    } else if (append_newline) {
       // No more args, but need newline
       Line("std::println(std::cout, \"\");");
     }
@@ -764,7 +770,8 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   if (syscall.name == "$sformat" || syscall.name == "$swrite" ||
       syscall.name == "$swriteb" || syscall.name == "$swriteo" ||
       syscall.name == "$swriteh") {
-    auto props = GetDisplayVariantProps(syscall.name);
+    auto props = common::GetDisplayVariantProps(syscall.name);
+    char default_format = common::RadixToChar(props->radix);
 
     if (syscall.output_targets.empty()) {
       throw common::InternalError("codegen", syscall.name + " requires output");
@@ -814,7 +821,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
           if (syscall.arguments[i]->type.kind ==
               common::Type::Kind::kIntegral) {
             fmt_str += "{:";
-            fmt_str += props.default_format;
+            fmt_str += default_format;
             fmt_str += "}";
           } else {
             fmt_str += "{}";
@@ -839,7 +846,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
           if (syscall.arguments[i]->type.kind ==
               common::Type::Kind::kIntegral) {
             fmt_str += "{:";
-            fmt_str += props.default_format;
+            fmt_str += default_format;
             fmt_str += "}";
           } else {
             fmt_str += "{}";

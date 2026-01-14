@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/common/display_variant.hpp"
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/interpreter/call_frame.hpp"
@@ -32,7 +33,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$fwriteb" ||
       instr.system_call_name == "$fwriteo" ||
       instr.system_call_name == "$fwriteh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // operands[0] = descriptor, operands[1..] = format args
     // format_operand = format string (if present)
@@ -64,10 +65,10 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
     // Format message
     std::string message = FormatMessage(
-        arg_values, instr.format_string_is_literal, props.default_format,
-        &time_ctx);
+        arg_values, instr.format_string_is_literal,
+        common::RadixToChar(props->radix), &time_ctx);
 
-    if (props.append_newline) {
+    if (props->append_newline) {
       message += "\n";
     }
 
@@ -84,8 +85,10 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$fstrobeb" ||
       instr.system_call_name == "$fstrobeo" ||
       instr.system_call_name == "$fstrobeh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
     bool first_is_string_literal = instr.format_string_is_literal;
+    char default_format = common::RadixToChar(props->radix);
+    bool append_newline = props->append_newline;
 
     // operands[0] = descriptor, operands[1..] = format args
     if (instr.operands.empty()) {
@@ -117,13 +120,13 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     // Queue the output for Postponed region
     ctx.GetEffect().RecordPostponedAction(
         PostponedAction{
-            .action = [&simulation_context, props, descriptor,
-                       arg_values = std::move(arg_values), time_ctx,
+            .action = [&simulation_context, default_format, append_newline,
+                       descriptor, arg_values = std::move(arg_values), time_ctx,
                        first_is_string_literal]() {
               std::string message = FormatMessage(
-                  arg_values, first_is_string_literal, props.default_format,
+                  arg_values, first_is_string_literal, default_format,
                   &time_ctx);
-              if (props.append_newline) {
+              if (append_newline) {
                 message += "\n";
               }
               simulation_context.file_manager.WriteToDescriptor(
@@ -142,7 +145,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$writeb" ||
       instr.system_call_name == "$writeo" ||
       instr.system_call_name == "$writeh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // Collect argument values (prepend format_operand if present)
     std::vector<RuntimeValue> arg_values;
@@ -163,11 +166,11 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
     // Format and output message
     std::string message = FormatMessage(
-        arg_values, instr.format_string_is_literal, props.default_format,
-        &time_ctx);
+        arg_values, instr.format_string_is_literal,
+        common::RadixToChar(props->radix), &time_ctx);
     simulation_context.display_output << message;
 
-    if (props.append_newline) {
+    if (props->append_newline) {
       simulation_context.display_output << "\n";
     }
     return InstructionResult::Continue();
@@ -175,7 +178,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
   // Handle $sformatf - pure function returning formatted string
   if (instr.system_call_name == "$sformatf") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // Collect argument values (format_operand is format string, operands are
     // args)
@@ -197,8 +200,8 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
     // Format message (no newline for $sformatf)
     std::string result = FormatMessage(
-        arg_values, instr.format_string_is_literal, props.default_format,
-        &time_ctx);
+        arg_values, instr.format_string_is_literal,
+        common::RadixToChar(props->radix), &time_ctx);
 
     // Store result in the temp
     assert(instr.result.has_value());
@@ -213,7 +216,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$swriteb" ||
       instr.system_call_name == "$swriteo" ||
       instr.system_call_name == "$swriteh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // Collect argument values (format_operand + operands, NOT output_targets)
     std::vector<RuntimeValue> arg_values;
@@ -234,8 +237,8 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
     // Format message (no newline for $sformat/$swrite)
     std::string result = FormatMessage(
-        arg_values, instr.format_string_is_literal, props.default_format,
-        &time_ctx);
+        arg_values, instr.format_string_is_literal,
+        common::RadixToChar(props->radix), &time_ctx);
 
     // Store result in output variable (overwrite, not append)
     ctx.StoreVariable(
@@ -248,8 +251,10 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$strobeb" ||
       instr.system_call_name == "$strobeo" ||
       instr.system_call_name == "$strobeh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
     bool first_is_string_literal = instr.format_string_is_literal;
+    char default_format = common::RadixToChar(props->radix);
+    bool append_newline = props->append_newline;
 
     // Collect argument values now (prepend format_operand if present)
     std::vector<RuntimeValue> arg_values;
@@ -271,14 +276,14 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     // Queue the output for Postponed region
     ctx.GetEffect().RecordPostponedAction(
         PostponedAction{
-            .action = [&simulation_context, props,
+            .action = [&simulation_context, default_format, append_newline,
                        arg_values = std::move(arg_values), time_ctx,
                        first_is_string_literal]() {
               std::string message = FormatMessage(
-                  arg_values, first_is_string_literal, props.default_format,
+                  arg_values, first_is_string_literal, default_format,
                   &time_ctx);
               simulation_context.display_output << message;
-              if (props.append_newline) {
+              if (append_newline) {
                 simulation_context.display_output << "\n";
               }
             }});
@@ -290,7 +295,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$monitorb" ||
       instr.system_call_name == "$monitoro" ||
       instr.system_call_name == "$monitorh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // Check if format_operand is a string literal
     bool first_is_string_literal = instr.format_string_is_literal;
@@ -325,7 +330,8 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       if (fmt_info.is_string_literal) {
         format_string = fmt_info.text;  // Use as prefix
       }
-      format_string += BuildFormatString(format_args, props.default_format);
+      format_string +=
+          BuildFormatString(format_args, common::RadixToChar(props->radix));
     }
 
     // Get time format context
@@ -340,7 +346,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     // Print immediately on first call (IEEE 1800 §21.2.3)
     simulation_context.display_output
         << FormatDisplay(format_string, format_args, &time_ctx);
-    if (props.append_newline) {
+    if (props->append_newline) {
       simulation_context.display_output << "\n";
     }
 
@@ -383,7 +389,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       instr.system_call_name == "$fmonitorb" ||
       instr.system_call_name == "$fmonitoro" ||
       instr.system_call_name == "$fmonitorh") {
-    auto props = GetDisplayVariantProps(instr.system_call_name);
+    auto props = common::GetDisplayVariantProps(instr.system_call_name);
 
     // operands[0] = descriptor, operands[1..] = values to monitor
     if (instr.operands.empty()) {
@@ -427,7 +433,8 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       if (fmt_info.is_string_literal) {
         format_string = fmt_info.text;  // Use as prefix
       }
-      format_string += BuildFormatString(format_args, props.default_format);
+      format_string +=
+          BuildFormatString(format_args, common::RadixToChar(props->radix));
     }
 
     // Get time format context
@@ -442,7 +449,7 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     // Print immediately on first call (IEEE 1800-2023 21.2.3)
     std::string initial_message =
         FormatDisplay(format_string, format_args, &time_ctx);
-    if (props.append_newline) {
+    if (props->append_newline) {
       initial_message += "\n";
     }
     simulation_context.file_manager.WriteToDescriptor(
