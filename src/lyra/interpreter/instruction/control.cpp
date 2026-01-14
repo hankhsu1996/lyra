@@ -126,14 +126,8 @@ auto HandleControlFlowOps(
       return InstructionResult::Delay(delay_value);
     }
 
-    case lir::InstructionKind::kSystemCall: {
-      auto& sim = ctx.GetSimulationContext();
-      auto& frame = ctx.GetFrame();
-      auto& effect = ctx.GetEffect();
-      auto& temp_table = ctx.GetTempTable();
-      const auto& instance = ctx.GetHierarchyContext();
-      return RunSystemCall(instr, sim, frame, effect, temp_table, instance);
-    }
+    case lir::InstructionKind::kSystemCall:
+      return RunSystemCall(instr, ctx);
 
     case lir::InstructionKind::kIntrinsicCall: {
       assert(instr.result.has_value());

@@ -80,11 +80,11 @@ auto IntrinsicQueuePushFront(
 
 auto IntrinsicQueuePopBack(
     RuntimeValue receiver, std::span<const RuntimeValue> /*args*/,
-    const lir::Instruction& /*instr*/) -> RuntimeValue {
+    const lir::Instruction& instr) -> RuntimeValue {
   auto& queue = receiver.AsQueue();
   if (queue.empty()) {
-    // Return default value for queue's element type
-    return RuntimeValue::DefaultValueForType(receiver.type.GetElementType());
+    // Return default value for result type (element type set at lowering)
+    return RuntimeValue::DefaultValueForType(*instr.result_type);
   }
   auto value = std::move(queue.back());
   queue.pop_back();
@@ -93,11 +93,11 @@ auto IntrinsicQueuePopBack(
 
 auto IntrinsicQueuePopFront(
     RuntimeValue receiver, std::span<const RuntimeValue> /*args*/,
-    const lir::Instruction& /*instr*/) -> RuntimeValue {
+    const lir::Instruction& instr) -> RuntimeValue {
   auto& queue = receiver.AsQueue();
   if (queue.empty()) {
-    // Return default value for queue's element type
-    return RuntimeValue::DefaultValueForType(receiver.type.GetElementType());
+    // Return default value for result type (element type set at lowering)
+    return RuntimeValue::DefaultValueForType(*instr.result_type);
   }
   auto value = std::move(queue.front());
   queue.pop_front();

@@ -231,8 +231,8 @@ auto HandleMemoryOps(const lir::Instruction& instr, InstructionContext& ctx)
           storage_value = RuntimeValue::Array(alloc_type, std::move(elements));
         }
 
-        // Allocate in anonymous storage and return pointer
-        auto alloc_id = ctx.AllocateAnonymous(std::move(storage_value));
+        // Allocate in permanent storage and return pointer
+        auto alloc_id = ctx.AllocatePermanent(std::move(storage_value));
         auto addr = Address::Alloc(alloc_id);
         ctx.WriteTemp(
             instr.result.value(),

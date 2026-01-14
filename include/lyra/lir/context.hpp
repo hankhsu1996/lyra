@@ -84,6 +84,28 @@ inline auto GetHintPrefix(HintId hint) -> std::string_view {
   return "t";  // Fallback
 }
 
+/// Reference to a temporary value in LIR.
+///
+/// TempRef is a lightweight handle identified by an integer ID. The ID is
+/// scoped to the defining unit (Process or Function) and indexes into that
+/// unit's temps vector for metadata lookup.
+///
+/// ## Invariants
+///
+/// - **Scope**: TempRef IDs are valid only within their defining unit.
+///   A TempRef from Process A cannot be used to index Function B's temps.
+///   The interpreter enforces this via separate TempTable instances per frame.
+///
+/// - **Type lookup**: TempRef does not carry type information. At lowering
+///   time, get types from MIR expressions. At runtime, use per-unit metadata
+///   via InstructionContext::GetTempType() or frame->process->temps[id].type.
+///
+/// - **Immutability**: Process::temps and Function::temps are immutable after
+///   lowering. Frame construction captures temp count; violating this invariant
+///   causes out-of-bounds access.
+///
+/// - **Debug names**: The hint field provides human-readable prefixes for
+///   debug output (e.g., %ptr_0, %val_1). It has no semantic meaning.
 struct TempRef {
   TempId id;
   HintId hint;
