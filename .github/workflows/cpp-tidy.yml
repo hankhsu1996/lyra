@@ -36,14 +36,17 @@ jobs:
           clang++ --version
           clang-tidy-20 --version
 
-      - name: Build
-        run: bazel build //...
-
-      - name: Generate compile_commands.json
-        run: bazel run //:refresh_compile_commands
-
-      - name: Run clang-tidy
-        run: |
-          CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
-          echo "Files to check: $CPP_FILES"
-          run-clang-tidy-20 -p . -j $(nproc) -header-filter='^.*(src|include)/lyra/.*' $CPP_FILES
+      # Disabled until new pipeline is ready
+      # - name: Build
+      #   run: bazel build //...
+      #
+      # - name: Generate compile_commands.json
+      #   run: bazel run //:refresh_compile_commands
+      #
+      # - name: Run clang-tidy
+      #   run: |
+      #     CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
+      #     echo "Files to check: $CPP_FILES"
+      #     run-clang-tidy-20 -p . -j $(nproc) -header-filter='^.*(src|include)/lyra/.*' $CPP_FILES
+      - name: Skip (no code yet)
+        run: echo "clang-tidy disabled until new pipeline"

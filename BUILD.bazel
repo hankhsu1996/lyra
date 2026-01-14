@@ -1,62 +1,6 @@
-"""
-Build file for Lyra SystemVerilog simulator.
-"""
-
-load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("//tools:embed.bzl", "embed_headers")
-
-# Generate compile_commands.json for clangd and clang-tidy
-refresh_compile_commands(
-    name = "refresh_compile_commands",
-    exclude_external_sources = True,
-    targets = {
-        "//:lyra": "",
-        "//tests:sv_feature_tests": "",
-    },
-)
-
-# Headers embedded in generated C++ projects
-filegroup(
-    name = "embedded_headers",
-    srcs = glob(["include/lyra/sdk/*.hpp"]) + [
-        "include/lyra/common/mem_io.hpp",
-        "include/lyra/common/simulation_region.hpp",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-# Generate embedded SDK header
-embed_headers(
-    name = "embedded_sdk",
-    srcs = [":embedded_headers"],
-    out = "embedded_sdk.hpp",
-    strip_prefix = "include/",
-)
-
-cc_library(
-    name = "core",
-    srcs = glob(["src/lyra/**/*.cpp"]),
-    hdrs = glob(["include/lyra/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "@abseil-cpp//absl/container:inlined_vector",
-        "@nlohmann_json//:json",
-        "@slang",
-        "@spdlog",
-        "@tomlplusplus",
-    ],
-)
-
-cc_binary(
-    name = "lyra",
-    srcs = ["src/bin/lyra.cpp"],
-    includes = ["include"],
-    visibility = ["//tests:__pkg__"],
-    deps = [
-        "//:core",
-        "//:embedded_sdk",
-        "@argparse",
-    ],
-)
+# Lyra SystemVerilog Simulator
+#
+# Legacy code moved to src/lyra_legacy and include/lyra_legacy.
+# New pipeline will be built in src/lyra and include/lyra.
+#
+# Test specs preserved in tests/sv_features/*.yaml
