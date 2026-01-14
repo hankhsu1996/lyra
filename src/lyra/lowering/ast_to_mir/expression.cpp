@@ -519,50 +519,58 @@ auto LowerExpression(
     case slang::ast::ExpressionKind::SimpleAssignmentPattern:
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
       // Both pattern types provide elements() in field declaration order.
-      auto lower_struct_literal =
-          [&](std::span<const slang::ast::Expression* const> elements)
-          -> std::unique_ptr<mir::Expression> {
-        if (!expression.type->isStruct()) {
-          throw DiagnosticException(
-              Diagnostic::Error(
-                  expression.sourceRange,
-                  "only struct assignment patterns are supported"));
-        }
-
-        auto type_result =
-            LowerType(*expression.type, expression.sourceRange, arena);
-        if (!type_result) {
-          throw DiagnosticException(std::move(type_result.error()));
-        }
-
-        std::vector<std::unique_ptr<mir::Expression>> operands;
-        operands.reserve(elements.size());
-        for (const auto* element : elements) {
-          operands.push_back(LowerExpression(*element, arena, registrar));
-        }
-
-        // Check if unpacked struct (use canonical type to handle typedefs)
-        const auto& canonical = expression.type->getCanonicalType();
-        if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
-          // Unpacked struct: create UnpackedStructLiteralExpression
-          return std::make_unique<mir::UnpackedStructLiteralExpression>(
-              *type_result, std::move(operands));
-        }
-
-        // Packed struct: concatenation of fields (first = MSB)
-        return std::make_unique<mir::ConcatenationExpression>(
-            std::move(operands), *type_result);
-      };
-
-      if (expression.kind ==
-          slang::ast::ExpressionKind::SimpleAssignmentPattern) {
-        return lower_struct_literal(
-            expression.as<slang::ast::SimpleAssignmentPatternExpression>()
-                .elements());
+      // Slang expands default setters into elements() for arrays.
+      auto type_result =
+          LowerType(*expression.type, expression.sourceRange, arena);
+      if (!type_result) {
+        throw DiagnosticException(std::move(type_result.error()));
       }
-      return lower_struct_literal(
-          expression.as<slang::ast::StructuredAssignmentPatternExpression>()
-              .elements());
+
+      // Get elements from either pattern type
+      auto get_elements =
+          [&]() -> std::span<const slang::ast::Expression* const> {
+        if (expression.kind ==
+            slang::ast::ExpressionKind::SimpleAssignmentPattern) {
+          return expression.as<slang::ast::SimpleAssignmentPatternExpression>()
+              .elements();
+        }
+        return expression
+            .as<slang::ast::StructuredAssignmentPatternExpression>()
+            .elements();
+      };
+      auto elements = get_elements();
+
+      std::vector<std::unique_ptr<mir::Expression>> operands;
+      operands.reserve(elements.size());
+      for (const auto* element : elements) {
+        operands.push_back(LowerExpression(*element, arena, registrar));
+      }
+
+      // Handle arrays (fixed-size unpacked arrays)
+      if (expression.type->isArray()) {
+        return std::make_unique<mir::ArrayLiteralExpression>(
+            *type_result, std::move(operands));
+      }
+
+      // Handle structs
+      if (!expression.type->isStruct()) {
+        throw DiagnosticException(
+            Diagnostic::Error(
+                expression.sourceRange,
+                "only struct and array assignment patterns are supported"));
+      }
+
+      // Check if unpacked struct (use canonical type to handle typedefs)
+      const auto& canonical = expression.type->getCanonicalType();
+      if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
+        // Unpacked struct: create UnpackedStructLiteralExpression
+        return std::make_unique<mir::UnpackedStructLiteralExpression>(
+            *type_result, std::move(operands));
+      }
+
+      // Packed struct: concatenation of fields (first = MSB)
+      return std::make_unique<mir::ConcatenationExpression>(
+          std::move(operands), *type_result);
     }
 
     case slang::ast::ExpressionKind::NewArray: {

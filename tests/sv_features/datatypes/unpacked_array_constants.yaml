@@ -65,3 +65,47 @@ cases:
     expect:
       variables:
         sum: 15
+
+  - name: default_zero
+    sv: |
+      module Test;
+        int arr[4] = '{default: 0};
+        int result;
+        initial result = arr[0] + arr[1] + arr[2] + arr[3];
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: default_value
+    sv: |
+      module Test;
+        int arr[3] = '{default: 5};
+        int result;
+        initial result = arr[0] + arr[1] + arr[2];
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: default_with_override
+    sv: |
+      module Test;
+        int arr[4] = '{default: 1, 2: 10};
+        int result;
+        initial result = arr[0] + arr[1] + arr[2] + arr[3];
+      endmodule
+    expect:
+      variables:
+        result: 13
+
+  - name: bit_array_default
+    sv: |
+      module Test;
+        bit unused[3] = '{default: 1'b0};
+        int result;
+        initial result = unused[0] + unused[1] + unused[2];
+      endmodule
+    expect:
+      variables:
+        result: 0
