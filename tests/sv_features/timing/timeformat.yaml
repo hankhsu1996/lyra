@@ -16,7 +16,7 @@ cases:
       endmodule
     expect:
       time: 10000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "10"
@@ -31,7 +31,7 @@ cases:
       endmodule
     expect:
       time: 0
-      output:
+      stdout:
         contains:
           - "Time:"
           - "0"
@@ -51,7 +51,7 @@ cases:
       endmodule
     expect:
       time: 25000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "25"
@@ -70,7 +70,7 @@ cases:
       endmodule
     expect:
       time: 25000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "25.00"
@@ -89,7 +89,7 @@ cases:
       endmodule
     expect:
       time: 5000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "5000"
@@ -112,7 +112,7 @@ cases:
       endmodule
     expect:
       time: 10000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "10"
@@ -136,7 +136,7 @@ cases:
       endmodule
     expect:
       time: 10000
-      output:
+      stdout:
         contains:
           - "In ps:"
           - "10000"
@@ -160,7 +160,7 @@ cases:
       endmodule
     expect:
       time: 5000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "5000"
@@ -181,7 +181,7 @@ cases:
       endmodule
     expect:
       time: 3000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "3"
@@ -200,7 +200,7 @@ cases:
       endmodule
     expect:
       time: 12345
-      output:
+      stdout:
         contains:
           - "Time:"
           - "12.34500"
@@ -219,7 +219,7 @@ cases:
       endmodule
     expect:
       time: 42000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "42"
@@ -240,7 +240,7 @@ cases:
       endmodule
     expect:
       time: 10000
-      output:
+      stdout:
         contains:
           - "Time:"
           - "10"
@@ -259,7 +259,7 @@ cases:
       endmodule
     expect:
       time: 1000
-      output:
+      stdout:
         contains:
           - "Default:"
           - "1"

@@ -331,7 +331,8 @@ auto LowerCall(
       // File output tasks: first argument is descriptor
       if (is_file_output) {
         if (!call.arguments().empty()) {
-          arguments.push_back(LowerExpression(*call.arguments()[0], arena));
+          arguments.push_back(
+              LowerExpression(*call.arguments()[0], arena, registrar));
         }
         format_idx = 1;
         args_start_idx = 1;

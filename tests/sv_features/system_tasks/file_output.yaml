@@ -13,7 +13,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         hello from fdisplay
 
   - name: fwrite_mcd_stdout
@@ -29,7 +29,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         nonewline
 
   - name: fdisplay_format_string
@@ -43,7 +43,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         value=42
 
   - name: fdisplay_multiple_args
@@ -58,7 +58,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         a=10 b=20 sum=30
 
   - name: fdisplayh_hex_format
@@ -72,7 +72,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         ff
 
   - name: fdisplayb_binary_format
@@ -87,7 +87,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         1010
 
   - name: fdisplayo_octal_format
@@ -101,7 +101,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         77
 
   - name: fdisplay_file_then_close
@@ -137,7 +137,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         before
         after
 
@@ -155,7 +155,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         onlythis
 
   - name: fdisplay_invalid_descriptor
@@ -170,7 +170,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         OK
 
   - name: fdisplay_mcd_or
@@ -190,7 +190,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         to all three
 
   - name: fwriteh_hex_format
@@ -205,7 +205,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         ff
 
   - name: fwrite_descriptor_expression
@@ -222,7 +222,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         via variable
 
   - name: fdisplay_packed_literal_format
@@ -236,7 +236,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         val=99 end
 
   - name: fstrobe_basic
@@ -251,7 +251,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         display first
         strobe output
 
@@ -267,7 +267,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         x=42
 
   - name: fstrobeh_hex
@@ -281,7 +281,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         ff
 
   - name: fmonitor_initial_print
@@ -296,7 +296,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         x=10
 
   - name: fmonitor_change_detection
@@ -313,7 +313,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         x=1
         x=2
         x=3
@@ -330,7 +330,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         ff
 
   - name: fclose_cancels_fmonitor
@@ -351,7 +351,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         done
 
   - name: fmonitor_replace
@@ -370,7 +370,7 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         x=1
         y=10
         y=20
@@ -390,5 +390,128 @@ cases:
             end
           endmodule
     expect:
-      output: |
+      stdout: |
         done
+
+  - name: fdisplay_to_file_verified
+    description: $fdisplay writes to actual file (content verified)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fdisplay(fd, "hello world");
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      files:
+        output.txt: "hello world\n"
+
+  - name: mcd_or_both_files_verified
+    description: MCD OR writes to both files (both verified)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd1, mcd2;
+            initial begin
+              mcd1 = $fopen("file1.txt");
+              mcd2 = $fopen("file2.txt");
+              $fdisplay(mcd1 | mcd2, "to both");
+              $fclose(mcd1);
+              $fclose(mcd2);
+            end
+          endmodule
+    expect:
+      files:
+        file1.txt: "to both\n"
+        file2.txt: "to both\n"
+
+  - name: fstrobe_after_fclose_file_empty
+    description: $fstrobe to closed file produces empty file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fstrobe(fd, "should not appear");
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      files:
+        output.txt: ""
+
+  - name: fmonitor_cancel_verified
+    description: $fclose cancels $fmonitor (no writes after close)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fmonitor(fd, "x=%d", x);
+              #1 x = 2;
+              // IMPORTANT: This #1 is required for correct region ordering.
+              // $fmonitor writes in Postponed region at end of time step.
+              // Without this delay, $fclose executes in Active region of
+              // time 1 (same step as x=2), cancelling the monitor BEFORE
+              // Postponed runs. The delay ensures x=2 writes before close.
+              #1;
+              $fclose(fd);
+              #1 x = 3;  // After close - should not write
+            end
+          endmodule
+    expect:
+      files:
+        output.txt:
+          contains:
+            - "x=1"
+            - "x=2"
+          not_contains:
+            - "x=3"
+
+  - name: fwrite_multiple_lines
+    description: Multiple $fwrite calls to same file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fwrite(fd, "line1");
+              $fdisplay(fd);
+              $fwrite(fd, "line2");
+              $fdisplay(fd);
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      files:
+        output.txt: "line1\nline2\n"
+
+  - name: mcd_stdout_and_file_verified
+    description: MCD OR with stdout and file (both verified)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            initial begin
+              mcd = $fopen("log.txt");
+              $fdisplay(1 | mcd, "dual output");
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      stdout: "dual output\n"
+      files:
+        log.txt: "dual output\n"

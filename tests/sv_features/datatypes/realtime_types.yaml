@@ -10,7 +10,7 @@ cases:
         initial $display("%f", x);
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: realtime_declaration_with_init
     sv: |
@@ -19,7 +19,7 @@ cases:
         initial $display("%f", x);
       endmodule
     expect:
-      output: "3.140000\n"
+      stdout: "3.140000\n"
 
   - name: realtime_local_variable
     sv: |
@@ -30,7 +30,7 @@ cases:
         end
       endmodule
     expect:
-      output: "2.500000\n"
+      stdout: "2.500000\n"
 
   - name: realtime_assignment
     sv: |
@@ -42,7 +42,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.250000\n"
+      stdout: "1.250000\n"
 
   # Arithmetic operation tests
   - name: realtime_add
@@ -57,7 +57,7 @@ cases:
         end
       endmodule
     expect:
-      output: "4.000000\n"
+      stdout: "4.000000\n"
 
   - name: realtime_subtract
     sv: |
@@ -71,7 +71,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.500000\n"
+      stdout: "3.500000\n"
 
   - name: realtime_multiply
     sv: |
@@ -85,7 +85,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10.000000\n"
+      stdout: "10.000000\n"
 
   - name: realtime_divide
     sv: |
@@ -99,7 +99,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.000000\n"
+      stdout: "3.000000\n"
 
   # Comparison operation tests
   - name: realtime_equal_true
@@ -110,7 +110,7 @@ cases:
         initial $display("%d", a == b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: realtime_not_equal_true
     sv: |
@@ -120,7 +120,7 @@ cases:
         initial $display("%d", a != b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: realtime_less_than_true
     sv: |
@@ -130,7 +130,7 @@ cases:
         initial $display("%d", a < b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: realtime_greater_than_true
     sv: |
@@ -140,7 +140,7 @@ cases:
         initial $display("%d", a > b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   # Type conversion tests
   - name: int_to_realtime_conversion
@@ -154,7 +154,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42.000000\n"
+      stdout: "42.000000\n"
 
   - name: realtime_to_int_conversion
     sv: |
@@ -167,7 +167,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3\n"
+      stdout: "3\n"
 
   - name: realtime_as_condition
     sv: |
@@ -181,4 +181,4 @@ cases:
         end
       endmodule
     expect:
-      output: "nonzero\n"
+      stdout: "nonzero\n"

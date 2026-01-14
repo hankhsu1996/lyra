@@ -29,7 +29,7 @@ cases:
     expect:
       variables:
         x: 42
-      output: ""
+      stdout: ""
 
   - name: finish_with_arg_1
     sv: |
@@ -43,7 +43,7 @@ cases:
     expect:
       variables:
         x: 10
-      output:
+      stdout:
         contains:
           - "$finish called at time 0"
 
@@ -59,7 +59,7 @@ cases:
     expect:
       variables:
         x: 5
-      output:
+      stdout:
         contains:
           - "$finish called at time 0"
 
@@ -77,7 +77,7 @@ cases:
     expect:
       variables:
         x: 1
-      output:
+      stdout:
         contains:
           - "$finish called at time 100"
 
@@ -108,7 +108,7 @@ cases:
     expect:
       variables:
         x: 99
-      output:
+      stdout:
         contains:
           - "$stop called at time 0"
 
@@ -124,7 +124,7 @@ cases:
     expect:
       variables:
         x: 7
-      output: ""
+      stdout: ""
 
   - name: stop_after_delay
     sv: |
@@ -140,7 +140,7 @@ cases:
     expect:
       variables:
         x: 1
-      output:
+      stdout:
         contains:
           - "$stop called at time 50"
 
@@ -171,7 +171,7 @@ cases:
     expect:
       variables:
         x: 33
-      output:
+      stdout:
         contains:
           - "$exit called at time 0"
 

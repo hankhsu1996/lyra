@@ -494,6 +494,7 @@ auto BatchCompiler::Execute(
   BatchTestResult result;
 
   const auto& pt = prepared_tests_[index];
+  result.work_dir = pt.work_dir;  // Always set for file verification
 
   std::vector<std::string> run_argv = {
       binary_path_.string(), std::to_string(index), pt.work_dir.string()};

@@ -8,7 +8,7 @@ cases:
         initial $display("Hello World");
       endmodule
     expect:
-      output: "Hello World\n"
+      stdout: "Hello World\n"
 
   - name: display_empty
     sv: |
@@ -16,7 +16,7 @@ cases:
         initial $display();
       endmodule
     expect:
-      output: "\n"
+      stdout: "\n"
 
   - name: display_integer
     sv: |
@@ -28,7 +28,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: display_multiple_values
     sv: |
@@ -41,7 +41,7 @@ cases:
         end
       endmodule
     expect:
-      output: "a=10 b=20\n"
+      stdout: "a=10 b=20\n"
 
   - name: display_hex_format
     sv: |
@@ -53,7 +53,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ff\n"
+      stdout: "ff\n"
 
   - name: display_binary_format
     sv: |
@@ -65,7 +65,7 @@ cases:
         end
       endmodule
     expect:
-      output: "101\n"
+      stdout: "101\n"
 
   - name: display_multiple_calls
     sv: |
@@ -76,7 +76,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         line 1
         line 2
 
@@ -90,7 +90,7 @@ cases:
         end
       endmodule
     expect:
-      output: "99\n"
+      stdout: "99\n"
 
   - name: display_contains_check
     sv: |
@@ -101,7 +101,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "data"
           - "more"
@@ -116,7 +116,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.500000\n"
+      stdout: "1.500000\n"
 
   - name: display_real_with_precision
     sv: |
@@ -128,7 +128,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.142\n"
+      stdout: "3.142\n"
 
   - name: display_integer_width
     sv: |
@@ -140,7 +140,7 @@ cases:
         end
       endmodule
     expect:
-      output: "   42\n"
+      stdout: "   42\n"
 
   - name: display_integer_zero_pad
     sv: |
@@ -152,7 +152,7 @@ cases:
         end
       endmodule
     expect:
-      output: "00042\n"
+      stdout: "00042\n"
 
   - name: display_hex_zero_pad
     sv: |
@@ -164,7 +164,7 @@ cases:
         end
       endmodule
     expect:
-      output: "00ff\n"
+      stdout: "00ff\n"
 
   - name: display_binary_zero_pad
     sv: |
@@ -176,7 +176,7 @@ cases:
         end
       endmodule
     expect:
-      output: "00000101\n"
+      stdout: "00000101\n"
 
   - name: display_string_width
     sv: |
@@ -188,7 +188,7 @@ cases:
         end
       endmodule
     expect:
-      output: "[   hi]\n"
+      stdout: "[   hi]\n"
 
   - name: display_string_left_align
     sv: |
@@ -200,7 +200,7 @@ cases:
         end
       endmodule
     expect:
-      output: "[hi   ]\n"
+      stdout: "[hi   ]\n"
 
   # $write variants (no newline)
   - name: write_no_newline
@@ -212,7 +212,7 @@ cases:
         end
       endmodule
     expect:
-      output: "nonewline"
+      stdout: "nonewline"
 
   - name: write_empty_does_nothing
     sv: |
@@ -223,7 +223,7 @@ cases:
         end
       endmodule
     expect:
-      output: "done"
+      stdout: "done"
 
   - name: writeh_default_hex
     sv: |
@@ -235,7 +235,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ff"
+      stdout: "ff"
 
   - name: writeb_default_binary
     sv: |
@@ -247,7 +247,7 @@ cases:
         end
       endmodule
     expect:
-      output: "101"
+      stdout: "101"
 
   - name: writeo_default_octal
     sv: |
@@ -259,7 +259,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10"
+      stdout: "10"
 
   # $display variants (with newline, different default format)
   - name: displayh_default_hex
@@ -272,7 +272,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ff\n"
+      stdout: "ff\n"
 
   - name: displayb_default_binary
     sv: |
@@ -284,7 +284,7 @@ cases:
         end
       endmodule
     expect:
-      output: "101\n"
+      stdout: "101\n"
 
   - name: displayo_default_octal
     sv: |
@@ -296,7 +296,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10\n"
+      stdout: "10\n"
 
   # Format string overrides default
   - name: displayh_with_format_uses_format
@@ -309,7 +309,7 @@ cases:
         end
       endmodule
     expect:
-      output: "255\n"
+      stdout: "255\n"
 
   - name: writeb_with_format_uses_format
     sv: |
@@ -321,7 +321,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ff"
+      stdout: "ff"
 
   # Multiple values with variant default
   - name: displayh_multiple_values
@@ -335,7 +335,7 @@ cases:
         end
       endmodule
     expect:
-      output: "aff\n"
+      stdout: "aff\n"
 
   # Mixed types - integers use variant format, others use default
   - name: displayh_mixed_types
@@ -350,7 +350,7 @@ cases:
         end
       endmodule
     expect:
-      output: "fftest\n"
+      stdout: "fftest\n"
 
   # Wide bit vectors (>64 bits) with decimal format
   # Note: Codegen has a limitation with very large literal values (>64 bits),
@@ -366,7 +366,7 @@ cases:
         end
       endmodule
     expect:
-      output: "12345678901234567890\n"
+      stdout: "12345678901234567890\n"
 
   - name: wide_decimal_zero
     sv: |
@@ -378,7 +378,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: wide_decimal_no_format_string
     sv: |
@@ -390,7 +390,7 @@ cases:
         end
       endmodule
     expect:
-      output: "999999999999999999\n"
+      stdout: "999999999999999999\n"
 
   - name: wide_decimal_computed
     sv: |
@@ -405,4 +405,4 @@ cases:
         end
       endmodule
     expect:
-      output: "10234567890123456789\n"
+      stdout: "10234567890123456789\n"

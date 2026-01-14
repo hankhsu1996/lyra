@@ -21,7 +21,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=1\nx=2\nx=3\n"
+      stdout: "x=1\nx=2\nx=3\n"
 
   - name: monitor_no_change_no_print
     sv: |
@@ -35,7 +35,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=5\nx=10\n"
+      stdout: "x=5\nx=10\n"
 
   - name: monitor_replaces_previous
     # Note: In this test, a=2 and $monitor("b=%0d", b) happen in the same time slot.
@@ -52,7 +52,7 @@ cases:
         end
       endmodule
     expect:
-      output: "a=1\nb=1\nb=2\n"
+      stdout: "a=1\nb=1\nb=2\n"
 
   - name: monitoroff_monitoron
     # Note: $monitoroff takes effect before CheckMonitor runs.
@@ -73,7 +73,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=1\nx=3\nx=4\n"
+      stdout: "x=1\nx=3\nx=4\n"
 
   - name: monitor_multiple_vars
     sv: |
@@ -88,7 +88,7 @@ cases:
         end
       endmodule
     expect:
-      output: "a=1 b=10\na=2 b=10\na=2 b=20\na=3 b=20\n"
+      stdout: "a=1 b=10\na=2 b=10\na=2 b=20\na=3 b=20\n"
 
   - name: monitorb_binary
     sv: |
@@ -101,7 +101,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10101010\n11110000\n"
+      stdout: "10101010\n11110000\n"
 
   - name: monitoro_octal
     sv: |
@@ -114,7 +114,7 @@ cases:
         end
       endmodule
     expect:
-      output: "755\n123\n"
+      stdout: "755\n123\n"
 
   - name: monitorh_hex
     sv: |
@@ -127,7 +127,7 @@ cases:
         end
       endmodule
     expect:
-      output: "beef\ncafe\n"
+      stdout: "beef\ncafe\n"
 
   - name: monitor_empty
     sv: |
@@ -135,7 +135,7 @@ cases:
         initial $monitor();
       endmodule
     expect:
-      output: "\n"
+      stdout: "\n"
 
   - name: monitor_vs_display_timing
     # Demonstrates timing difference:
@@ -156,7 +156,7 @@ cases:
         end
       endmodule
     expect:
-      output: "M x=0\nD1 x=0\nD2 x=1\nD3 x=2\nM x=2\n"
+      stdout: "M x=0\nD1 x=0\nD2 x=1\nD3 x=2\nM x=2\n"
 
   - name: monitor_multiple_vars_simultaneous_change
     # Tests that when multiple monitored variables change in the same time step,
@@ -175,7 +175,7 @@ cases:
         end
       endmodule
     expect:
-      output: "a=1 b=2 c=3\na=10 b=20 c=30\n"
+      stdout: "a=1 b=2 c=3\na=10 b=20 c=30\n"
 
   - name: monitor_constant_only
     # Format string with no variables - prints once, never again (no values to track)
@@ -187,7 +187,7 @@ cases:
         end
       endmodule
     expect:
-      output: "constant message\nafter delay\n"
+      stdout: "constant message\nafter delay\n"
 
   - name: monitor_single_var
     # Explicit test for single variable monitoring
@@ -202,7 +202,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=101\nx=1010\nx=1111\n"
+      stdout: "x=101\nx=1010\nx=1111\n"
 
   - name: monitoron_monitoroff_multiple_cycles
     # Tests multiple enable/disable cycles.
@@ -227,7 +227,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=0\nx=2\nx=4\nx=5\n"
+      stdout: "x=0\nx=2\nx=4\nx=5\n"
 
   - name: monitoron_monitoroff_no_active_monitor
     # $monitoron/$monitoroff are no-ops when no monitor is active
@@ -240,7 +240,7 @@ cases:
         end
       endmodule
     expect:
-      output: "done\n"
+      stdout: "done\n"
 
   - name: monitor_real_type
     # Tests monitoring real (floating-point) values
@@ -255,7 +255,7 @@ cases:
         end
       endmodule
     expect:
-      output: "r=3.140000\nr=2.710000\nr=1.000000\n"
+      stdout: "r=3.140000\nr=2.710000\nr=1.000000\n"
 
   - name: monitor_complex_expression
     # Tests monitoring a complex expression (a + b).
@@ -271,7 +271,7 @@ cases:
         end
       endmodule
     expect:
-      output: "sum=3\nsum=5\nsum=7\n"
+      stdout: "sum=3\nsum=5\nsum=7\n"
 
   - name: monitor_complex_expression_multiply
     # Tests monitoring a multiplication expression
@@ -286,7 +286,7 @@ cases:
         end
       endmodule
     expect:
-      output: "product=6\nproduct=12\nproduct=20\n"
+      stdout: "product=6\nproduct=12\nproduct=20\n"
 
   - name: monitor_mixed_vars_and_expressions
     # Tests monitoring both simple variables and complex expressions
@@ -301,7 +301,7 @@ cases:
         end
       endmodule
     expect:
-      output: "a=1 b=2 sum=3\na=10 b=2 sum=12\na=10 b=20 sum=30\n"
+      stdout: "a=1 b=2 sum=3\na=10 b=2 sum=12\na=10 b=20 sum=30\n"
 
   - name: monitor_ternary_expression
     # Tests monitoring a ternary (conditional) expression
@@ -316,7 +316,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result=1\nresult=0\nresult=1\n"
+      stdout: "result=1\nresult=0\nresult=1\n"
 
   - name: monitor_nested_ternary
     # Tests monitoring nested ternary expressions
@@ -331,7 +331,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result=1\nresult=0\nresult=2\n"
+      stdout: "result=1\nresult=0\nresult=2\n"
 
   - name: monitor_nested_expression
     # Tests monitoring a nested arithmetic expression
@@ -347,7 +347,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result=-3\nresult=-4\nresult=4\n"
+      stdout: "result=-3\nresult=-4\nresult=4\n"
 
   - name: monitor_comparison_operators
     # Tests monitoring comparison operator expressions
@@ -362,7 +362,7 @@ cases:
         end
       endmodule
     expect:
-      output: "eq=1 gt=0 lt=0\neq=0 gt=1 lt=0\neq=0 gt=0 lt=1\n"
+      stdout: "eq=1 gt=0 lt=0\neq=0 gt=1 lt=0\neq=0 gt=0 lt=1\n"
 
   - name: monitor_logical_operators
     # Tests monitoring logical operator expressions (&&, ||)
@@ -377,7 +377,7 @@ cases:
         end
       endmodule
     expect:
-      output: "and=0 or=1\nand=0 or=0\nand=0 or=1\n"
+      stdout: "and=0 or=1\nand=0 or=0\nand=0 or=1\n"
 
   # NOTE: Bitwise operators in $monitor expressions have codegen type issues
   # that need investigation. Working in interpreter.
@@ -395,7 +395,7 @@ cases:
         end
       endmodule
     expect:
-      output: "sum=4.000000 product=3.750000\nsum=4.500000 product=4.500000\nsum=5.000000 product=6.000000\n"
+      stdout: "sum=4.000000 product=3.750000\nsum=4.500000 product=4.500000\nsum=5.000000 product=6.000000\n"
 
   - name: monitor_unary_operators
     # Tests monitoring unary operator expressions
@@ -410,7 +410,7 @@ cases:
         end
       endmodule
     expect:
-      output: "neg=-5 not=0\nneg=0 not=1\nneg=3 not=0\n"
+      stdout: "neg=-5 not=0\nneg=0 not=1\nneg=3 not=0\n"
 
   # NOTE: Shift operators in $monitor expressions have codegen issues
   # that need investigation.

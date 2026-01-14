@@ -27,7 +27,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "result = 11"
           - "result = 21"
@@ -60,7 +60,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "doubled = 10, tripled = 15"
           - "doubled = 14, tripled = 21"
@@ -97,7 +97,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "sum = 15"
           - "sum = 25"
@@ -133,7 +133,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "result = 10"
           - "result = 20"
@@ -170,7 +170,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "result = 15"
           - "result = 25"

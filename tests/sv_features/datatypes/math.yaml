@@ -13,7 +13,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: clog2_one
     description: $clog2(1) = 0 (2^0 = 1)
@@ -24,7 +24,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: clog2_two
     description: $clog2(2) = 1 (2^1 = 2)
@@ -35,7 +35,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: clog2_powers_of_two
     description: $clog2 of exact powers of 2
@@ -49,7 +49,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         2
         3
         4
@@ -67,7 +67,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         2
         3
         3
@@ -84,7 +84,7 @@ cases:
         end
       endmodule
     expect:
-      output: "7\n"
+      stdout: "7\n"
 
   # Basic Real Math
 
@@ -98,7 +98,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.000000
 
@@ -113,7 +113,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.000000
         2.000000
@@ -128,7 +128,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         1.000000
         2.718282
 
@@ -144,7 +144,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.000000
         2.000000
@@ -161,7 +161,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         1.000000
         2.000000
         -2.000000
@@ -177,7 +177,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         2.000000
         3.000000
         -1.000000
@@ -194,7 +194,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         1.000000
         2.000000
         8.000000
@@ -214,7 +214,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.000000
 
@@ -230,7 +230,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         1.000000
         -1.000000
 
@@ -243,7 +243,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: asin_basic
     description: $asin - arc-sine
@@ -255,7 +255,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.570796
 
@@ -269,7 +269,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         1.570796
 
@@ -283,7 +283,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         0.785398
 
@@ -297,7 +297,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         0.000000
         0.785398
 
@@ -311,7 +311,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         5.000000
         13.000000
 
@@ -326,7 +326,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: cosh_basic
     description: $cosh - hyperbolic cosine
@@ -337,7 +337,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.000000\n"
+      stdout: "1.000000\n"
 
   - name: tanh_basic
     description: $tanh - hyperbolic tangent
@@ -348,7 +348,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: asinh_basic
     description: $asinh - inverse hyperbolic sine
@@ -359,7 +359,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: acosh_basic
     description: $acosh - inverse hyperbolic cosine
@@ -370,7 +370,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: atanh_basic
     description: $atanh - inverse hyperbolic tangent
@@ -381,4 +381,4 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"

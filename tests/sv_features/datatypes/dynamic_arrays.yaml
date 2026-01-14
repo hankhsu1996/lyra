@@ -203,7 +203,7 @@ cases:
         end
       endmodule
     expect:
-      output: "size=3, arr[1]=200\n"
+      stdout: "size=3, arr[1]=200\n"
 
   - name: module_level_decl
     description: Dynamic array declared at module level

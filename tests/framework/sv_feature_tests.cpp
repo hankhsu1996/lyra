@@ -135,6 +135,57 @@ void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
   }
 }
 
+// Normalize line endings to Unix style (\n)
+auto NormalizeNewlines(std::string str) -> std::string {
+  std::erase(str, '\r');
+  return str;
+}
+
+void AssertFiles(
+    const std::filesystem::path& work_dir,
+    const std::map<std::string, ExpectedOutput>& expected_files) {
+  for (const auto& [filename, expected] : expected_files) {
+    auto file_path = work_dir / filename;
+    ASSERT_TRUE(std::filesystem::exists(file_path))
+        << "Expected file not found: " << filename << "\n"
+        << "Work directory: " << work_dir << "\n"
+        << "Available files: " << [&] {
+             std::string files;
+             for (const auto& entry :
+                  std::filesystem::directory_iterator(work_dir)) {
+               if (!files.empty()) {
+                 files += ", ";
+               }
+               files += entry.path().filename().string();
+             }
+             return files.empty() ? "(none)" : files;
+           }();
+
+    std::ifstream in(file_path);
+    std::string actual(
+        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    actual = NormalizeNewlines(actual);
+
+    if (expected.IsExact()) {
+      auto expected_normalized = NormalizeNewlines(expected.exact.value());
+      EXPECT_EQ(actual, expected_normalized) << "File: " << filename;
+    } else {
+      for (const auto& substring : expected.contains) {
+        EXPECT_TRUE(actual.find(substring) != std::string::npos)
+            << "File " << filename << " should contain: \"" << substring
+            << "\"\n"
+            << "Actual content: \"" << actual << "\"";
+      }
+    }
+    for (const auto& substring : expected.not_contains) {
+      EXPECT_TRUE(actual.find(substring) == std::string::npos)
+          << "File " << filename << " should NOT contain: \"" << substring
+          << "\"\n"
+          << "Actual content: \"" << actual << "\"";
+    }
+  }
+}
+
 class SvFeatureTest : public testing::TestWithParam<TestCase> {};
 
 TEST_P(SvFeatureTest, Interpreter) {
@@ -149,12 +200,22 @@ TEST_P(SvFeatureTest, Interpreter) {
   options.plusargs = test_case.plusargs;
 
   interpreter::InterpreterResult result;
+  std::filesystem::path work_dir;
+
   if (test_case.IsMultiFile()) {
     auto paths = WriteTempFiles(test_case.files, test_case.name);
     auto sv_paths = FilterSvFiles(paths);
-    ScopedCurrentPath current_dir(
-        std::filesystem::path(paths.front()).parent_path());
+    work_dir = std::filesystem::path(paths.front()).parent_path();
+    ScopedCurrentPath current_dir(work_dir);
     result = interpreter::Interpreter::RunFromFiles(sv_paths, "", options);
+  } else if (!test_case.expected_files.empty()) {
+    // Single-file tests need a work_dir if they have file expectations
+    work_dir =
+        std::filesystem::temp_directory_path() / "lyra_test" / test_case.name;
+    std::filesystem::create_directories(work_dir);
+    ScopedCurrentPath current_dir(work_dir);
+    result =
+        interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
   } else {
     result =
         interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
@@ -185,8 +246,12 @@ TEST_P(SvFeatureTest, Interpreter) {
     EXPECT_EQ(result.FinalTime(), test_case.expected_time.value());
   }
 
-  if (test_case.expected_output.has_value()) {
-    AssertOutput(result.CapturedOutput(), test_case.expected_output.value());
+  if (test_case.expected_stdout.has_value()) {
+    AssertOutput(result.CapturedOutput(), test_case.expected_stdout.value());
+  }
+
+  if (!test_case.expected_files.empty()) {
+    AssertFiles(work_dir, test_case.expected_files);
   }
 }
 
@@ -232,8 +297,12 @@ TEST_P(SvFeatureTest, CppCodegen) {
     EXPECT_EQ(result.final_time, test_case.expected_time.value());
   }
 
-  if (test_case.expected_output.has_value()) {
-    AssertOutput(result.captured_output, test_case.expected_output.value());
+  if (test_case.expected_stdout.has_value()) {
+    AssertOutput(result.captured_output, test_case.expected_stdout.value());
+  }
+
+  if (!test_case.expected_files.empty()) {
+    AssertFiles(result.work_dir, test_case.expected_files);
   }
 }
 
