@@ -7,7 +7,7 @@ IncludeBlocks: Regroup
 IncludeCategories:
   - Regex: '^"(lyra)/.*"'
     Priority: 3
-  - Regex: "^<(slang|fmt|spdlog|catch2|llvm|core|frontend|lowering|mir|lir).*>"
+  - Regex: "^<(absl|slang|fmt|spdlog|catch2|llvm|core|frontend|lowering|mir|lir).*>"
     Priority: 2
   - Regex: "^<.*>"
     Priority: 1

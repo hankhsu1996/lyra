@@ -55,8 +55,8 @@ auto IsAddressable(const mir::Expression& expr) -> bool {
 // Build a pointer chain to an array element.
 // For arr[i]: ResolveVar(arr) -> ResolveIndex(i)
 // For arr[i][j]: ResolveVar(arr) -> ResolveIndex(i) -> ResolveIndex(j)
-// Note: lower_bound adjustment happens at runtime in ReadPointer/WritePointer.
-// The index stored in IndexPointer is the raw SV index.
+// Note: lower_bound adjustment happens at runtime in ResolveForRead/Write.
+// The index stored in the Address path is the raw SV index.
 auto LowerToElementPointer(
     const mir::Expression& expr, TempRef index, const Type& element_type,
     LirBuilder& builder) -> TempRef {
@@ -176,14 +176,10 @@ auto LowerElementSelectExpression(
             {Operand::Temp(adjusted_index), Operand::Temp(width_temp)}));
 
     if (IsAddressable(*select.value)) {
-      // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+      // Direct slice load: ptr[bit_offset +: width]
       auto ptr = LowerToPointer(*select.value, builder);
-      const auto* slice_pointee = builder.GetContext()->InternType(select.type);
-      auto slice_ref =
-          builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
       builder.AddInstruction(
-          Instruction::ResolveSlice(slice_ref, ptr, bit_offset, width_temp));
-      builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+          Instruction::LoadSlice(result, ptr, bit_offset, width_temp));
     } else {
       // ExtractBits approach for non-addressable expressions
       auto value = LowerExpression(*select.value, builder);
@@ -198,7 +194,7 @@ auto LowerElementSelectExpression(
 
   // Use pointer-based approach if addressable, otherwise fall back to intrinsic
   if (IsAddressable(*select.value)) {
-    // Lower bound adjustment happens at runtime in ReadPointer
+    // Lower bound adjustment happens at runtime in ResolveForRead
     auto ptr_elem =
         LowerToElementPointer(*select.value, index, select.type, builder);
     builder.AddInstruction(Instruction::Load(result, ptr_elem));
@@ -251,14 +247,10 @@ auto LowerRangeSelectExpression(
   auto result = builder.AllocateTemp("slice", range.type);
 
   if (IsAddressable(*range.value)) {
-    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    // Direct slice load: ptr[lsb +: width]
     auto ptr = LowerToPointer(*range.value, builder);
-    const auto* slice_pointee = builder.GetContext()->InternType(range.type);
-    auto slice_ref =
-        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
     builder.AddInstruction(
-        Instruction::ResolveSlice(slice_ref, ptr, lsb_temp, width_temp));
-    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+        Instruction::LoadSlice(result, ptr, lsb_temp, width_temp));
   } else {
     // ExtractBits approach for non-addressable expressions
     auto value = LowerExpression(*range.value, builder);
@@ -307,14 +299,10 @@ auto LowerIndexedRangeSelectExpression(
   auto result = builder.AllocateTemp("slice", indexed.type);
 
   if (IsAddressable(*indexed.value)) {
-    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    // Direct slice load: ptr[lsb +: width]
     auto ptr = LowerToPointer(*indexed.value, builder);
-    const auto* slice_pointee = builder.GetContext()->InternType(indexed.type);
-    auto slice_ref =
-        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
     builder.AddInstruction(
-        Instruction::ResolveSlice(slice_ref, ptr, lsb_temp, width_temp));
-    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+        Instruction::LoadSlice(result, ptr, lsb_temp, width_temp));
   } else {
     // ExtractBits approach for non-addressable expressions
     auto value = LowerExpression(*indexed.value, builder);
@@ -382,14 +370,10 @@ auto LowerMemberAccessExpression(
   auto result = builder.AllocateTemp("field", member.type);
 
   if (IsAddressable(*member.value)) {
-    // SliceRef approach: ResolveVar -> ResolveSlice -> LoadSlice
+    // Direct slice load: ptr[offset +: width]
     auto ptr = LowerToPointer(*member.value, builder);
-    const auto* slice_pointee = builder.GetContext()->InternType(member.type);
-    auto slice_ref =
-        builder.AllocateTemp("slice_ref", Type::SliceRef(slice_pointee));
     builder.AddInstruction(
-        Instruction::ResolveSlice(slice_ref, ptr, offset_temp, width_temp));
-    builder.AddInstruction(Instruction::LoadSlice(result, slice_ref));
+        Instruction::LoadSlice(result, ptr, offset_temp, width_temp));
   } else {
     // ExtractBits approach for non-addressable expressions
     auto value = LowerExpression(*member.value, builder);

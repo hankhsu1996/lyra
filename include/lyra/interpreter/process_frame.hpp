@@ -35,7 +35,7 @@ class ProcessFrame {
   /// Anonymous storage arena for kAllocate results.
   /// Maps allocation IDs to their RuntimeValue storage.
   /// Storage is allocated here when kAllocate produces Pointer<T>,
-  /// and accessed through AllocPointer in ReadPointer/WritePointer.
+  /// and accessed through Address::AllocRoot in ResolveForRead/Write.
   std::unordered_map<uint64_t, RuntimeValue> anonymous_storage;
   uint64_t next_alloc_id = 0;
 

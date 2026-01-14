@@ -126,16 +126,6 @@ struct PointerData {
   [[nodiscard]] auto Hash() const -> std::size_t;
 };
 
-// SliceRef data - stores the pointee type for SliceRef<T>
-// Used internally by LIR for packed bit slice operations (ResolveSlice)
-// Unlike Pointer<T>, writes through SliceRef require read-modify-write
-struct SliceRefData {
-  const Type* pointee_type;  // arena-interned
-
-  auto operator==(const SliceRefData& other) const -> bool;
-  [[nodiscard]] auto Hash() const -> std::size_t;
-};
-
 // Enum data - stores underlying type info and member list
 struct EnumData {
   size_t bit_width;
@@ -178,15 +168,14 @@ struct Type {
     kUnpackedStruct,
     kUnpackedUnion,
     kEnum,
-    kPointer,
-    kSliceRef
+    kPointer
   };
 
   Kind kind{};
   std::variant<
       std::monostate, IntegralData, UnpackedArrayData, DynamicArrayData,
       QueueData, PackedStructData, UnpackedStructData, UnpackedUnionData,
-      EnumData, PointerData, SliceRefData>
+      EnumData, PointerData>
       data{};
 
   // Optional type alias name for typedef'd types (e.g., "Byte" for typedef
@@ -367,15 +356,6 @@ struct Type {
         .alias_name = std::nullopt};
   }
 
-  // Create a slice ref type (internal LIR type for packed bit slice operations)
-  // pointee must be arena-interned pointer
-  static auto SliceRef(const Type* pointee) -> Type {
-    return Type{
-        .kind = Kind::kSliceRef,
-        .data = SliceRefData{.pointee_type = pointee},
-        .alias_name = std::nullopt};
-  }
-
   // Is this a scalar integral (no packed array structure)?
   [[nodiscard]] auto IsScalar() const -> bool {
     if (kind != Kind::kIntegral) {
@@ -449,11 +429,6 @@ struct Type {
     return kind == Kind::kPointer;
   }
 
-  // Is this a slice ref type (internal LIR type for packed bit slices)?
-  [[nodiscard]] auto IsSliceRef() const -> bool {
-    return kind == Kind::kSliceRef;
-  }
-
   // Get struct fields (only valid for packed structs)
   [[nodiscard]] auto GetPackedStructFields() const
       -> const std::vector<PackedStructField>& {
@@ -500,14 +475,6 @@ struct Type {
       throw std::runtime_error("Type is not a pointer");
     }
     return *std::get<PointerData>(data).pointee_type;
-  }
-
-  // Get pointee type (only valid for slice ref types)
-  [[nodiscard]] auto GetSliceRefPointeeType() const -> const Type& {
-    if (kind != Kind::kSliceRef) {
-      throw std::runtime_error("Type is not a slice ref");
-    }
-    return *std::get<SliceRefData>(data).pointee_type;
   }
 
   // Get element type for indexing (works for packed, unpacked, and dynamic
@@ -742,12 +709,6 @@ struct Type {
             fmt::format("Pointer<{}>", pd.pointee_type->ToString());
         break;
       }
-      case Kind::kSliceRef: {
-        const auto& sd = std::get<SliceRefData>(data);
-        structural_str =
-            fmt::format("SliceRef<{}>", sd.pointee_type->ToString());
-        break;
-      }
     }
 
     // Include alias name if present
@@ -926,14 +887,6 @@ inline auto PointerData::Hash() const -> std::size_t {
   return pointee_type->Hash();
 }
 
-inline auto SliceRefData::operator==(const SliceRefData& other) const -> bool {
-  return *pointee_type == *other.pointee_type;
-}
-
-inline auto SliceRefData::Hash() const -> std::size_t {
-  return pointee_type->Hash();
-}
-
 inline auto ToString(Type::Kind kind) -> std::string {
   switch (kind) {
     case Type::Kind::kVoid:
@@ -962,8 +915,6 @@ inline auto ToString(Type::Kind kind) -> std::string {
       return "enum";
     case Type::Kind::kPointer:
       return "pointer";
-    case Type::Kind::kSliceRef:
-      return "slice_ref";
   }
   std::abort();
 }
