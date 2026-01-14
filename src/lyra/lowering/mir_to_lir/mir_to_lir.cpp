@@ -2,7 +2,6 @@
 
 #include <memory>
 
-#include "lyra/common/symbol.hpp"
 #include "lyra/lir/module.hpp"
 #include "lyra/lowering/mir_to_lir/module.hpp"
 #include "lyra/mir/module.hpp"

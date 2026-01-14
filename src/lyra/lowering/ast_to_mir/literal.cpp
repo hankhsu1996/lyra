@@ -5,6 +5,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 

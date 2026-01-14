@@ -1,8 +1,6 @@
 #include "lyra/lowering/ast_to_mir/function.hpp"
 
-#include <memory>
 #include <utility>
-#include <vector>
 
 #include <fmt/format.h>
 #include <slang/ast/Symbol.h>
@@ -10,7 +8,6 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lowering/ast_to_mir/statement.hpp"

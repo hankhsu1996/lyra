@@ -26,7 +26,6 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/symbol.hpp"
 #include "lyra/common/timescale.hpp"
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
@@ -133,13 +132,13 @@ auto CreateImplicitAlwaysComb(
 // Context for module lowering - groups parameters threaded through all
 // functions.
 struct ModuleLoweringContext {
-  mir::Module* module;
-  std::unordered_set<const slang::ast::Symbol*>* port_symbols;
-  std::size_t* port_driver_counter;
-  std::size_t* cont_assign_counter;
-  ProcessCounters* process_counters;
-  common::TypeArena* arena;
-  SymbolRegistrar* registrar;
+  mir::Module* module = nullptr;
+  std::unordered_set<const slang::ast::Symbol*>* port_symbols = nullptr;
+  std::size_t* port_driver_counter = nullptr;
+  std::size_t* cont_assign_counter = nullptr;
+  ProcessCounters* process_counters = nullptr;
+  common::TypeArena* arena = nullptr;
+  SymbolRegistrar* registrar = nullptr;
 };
 
 // Generate Block Lowering Architecture

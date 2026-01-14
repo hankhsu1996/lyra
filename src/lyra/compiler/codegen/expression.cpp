@@ -4,9 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <memory>
 #include <string>
-#include <vector>
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>

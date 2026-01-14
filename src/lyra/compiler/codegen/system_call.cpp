@@ -1,3 +1,4 @@
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -823,7 +824,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     bool has_start = syscall.arguments.size() >= 2;
     bool has_end = syscall.arguments.size() == 3;
 
-    if (syscall.arguments.size() < 1 || syscall.arguments.size() > 3) {
+    if (syscall.arguments.empty() || syscall.arguments.size() > 3) {
       throw common::InternalError("codegen", "mem I/O expects 1-3 arguments");
     }
     if (syscall.output_targets.size() != 1) {

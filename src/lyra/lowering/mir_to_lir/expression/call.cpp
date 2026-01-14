@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"

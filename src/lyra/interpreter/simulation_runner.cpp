@@ -12,7 +12,6 @@
 #include <fmt/core.h>
 
 #include "lyra/common/diagnostic.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/interpreter/hierarchy_context.hpp"
 #include "lyra/interpreter/process_effect.hpp"

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 #include "lyra/interpreter/instruction/context.hpp"

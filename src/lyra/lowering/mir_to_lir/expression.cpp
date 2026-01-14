@@ -3,7 +3,6 @@
 #include <cassert>
 #include <utility>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/lir/context.hpp"
 #include "lyra/lir/instruction.hpp"
 #include "lyra/lir/operand.hpp"

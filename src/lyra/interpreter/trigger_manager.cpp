@@ -2,11 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <memory>
 #include <string>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 #include "lyra/common/symbol.hpp"
