@@ -40,7 +40,7 @@ jobs:
         run: bazel build //...
 
       - name: Generate compile_commands.json
-        run: bazel run @hedron_compile_commands//:refresh_all
+        run: bazel run //:refresh_compile_commands
 
       - name: Run clang-tidy
         run: |
