@@ -1,5 +1,7 @@
 # C++ Code Generation
 
+> **Note:** C++ codegen is a secondary path for debugging and exploration. The primary backend is LLVM IR.
+
 ## Mapping SystemVerilog to C++
 
 | SystemVerilog     | C++                                          |

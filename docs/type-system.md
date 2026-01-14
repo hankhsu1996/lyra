@@ -4,9 +4,9 @@ Lyra's type system follows production compiler patterns: types are interned, val
 
 ## Architecture
 
-**Layering**: slang (frontend) -> lowering (AST->MIR) -> common/ -> MIR/LIR/Codegen/Interpreter
+**Layering**: slang (frontend) -> lowering (AST->HIR) -> common/ -> HIR/MIR/Codegen/Interpreter
 
-The `common/` layer has no dependency on slang. Type conversion from `slang::ast::Type` to `common::Type` happens exactly once, at the AST->MIR boundary in the lowering layer.
+The `common/` layer has no dependency on slang. Type conversion from `slang::ast::Type` to `common::Type` happens exactly once, at the AST->HIR boundary in the lowering layer.
 
 ## Type Interning
 
