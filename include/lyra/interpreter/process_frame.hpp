@@ -21,9 +21,20 @@ namespace lyra::interpreter {
 ///
 /// When a process suspends (@(posedge clk), #delay), the frame is stored
 /// with the pending event and restored when the process resumes.
+///
+/// Lifetime contract: The process pointer must outlive the frame.
+/// Process::temps is immutable after lowering; frame captures size at
+/// construction.
 class ProcessFrame {
  public:
-  ProcessFrame() = default;
+  /// Construct a process frame for the given process.
+  /// Process must outlive this frame.
+  explicit ProcessFrame(const lir::Process* proc)
+      : process(proc), temp_table(proc->temps.size()) {
+  }
+
+  /// The process being executed (non-null, outlives frame)
+  const lir::Process* process;
 
   ProcessVariableTable variable_table;
   TempTable temp_table;

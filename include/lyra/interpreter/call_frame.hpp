@@ -15,9 +15,19 @@ namespace lyra::interpreter {
 /// Represents a function invocation on the call stack.
 /// Each frame stores local variables, temps, return address, and result
 /// destination.
+///
+/// Lifetime contract: The function pointer must outlive the frame.
+/// Function::temps is immutable after lowering; frame captures size at
+/// construction.
 struct CallFrame {
-  /// Function being executed
-  const lir::Function* function = nullptr;
+  /// Construct a call frame for the given function.
+  /// Function must outlive this frame.
+  explicit CallFrame(const lir::Function* func)
+      : function(func), temp_table(func->temps.size()) {
+  }
+
+  /// Function being executed (non-null, outlives frame)
+  const lir::Function* function;
 
   /// Return address: block index to resume after return
   size_t return_block_index = 0;

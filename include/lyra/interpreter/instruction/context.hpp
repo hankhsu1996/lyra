@@ -56,6 +56,11 @@ class InstructionContext {
   /// Read a temporary value from the temp table.
   [[nodiscard]] auto GetTemp(lir::TempRef temp) const -> RuntimeValue;
 
+  /// Get the type of a temp from per-unit metadata.
+  /// Looks up in function temps if in call, otherwise process temps.
+  [[nodiscard]] auto GetTempType(lir::TempRef temp) const
+      -> const common::Type&;
+
   /// Read a variable by symbol (checks function locals, process locals, then
   /// flat storage with port binding resolution).
   [[nodiscard]] auto ReadVariable(common::SymbolId symbol) const

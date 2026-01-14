@@ -292,21 +292,17 @@ void LirBuilder::AddInstruction(lir::Instruction instr) {
 
 auto LirBuilder::AllocateTemp(const std::string& hint, common::Type type)
     -> lir::TempRef {
-  std::string name = fmt::format("%{}_{}", hint, temp_counter_++);
-
   // Get per-unit ID for vector-based TempTable indexing
   auto unit_id = static_cast<lir::TempId>(per_unit_temp_id_++);
+  auto hint_id = HintFromString(hint);
 
-  // Also populate per-unit temps vector
+  // Populate per-unit temps vector
   if (current_temps_ != nullptr) {
     const auto* interned_type = context_->InternType(type);
-    auto hint_id = HintFromString(hint);
     current_temps_->push_back({interned_type, hint_id});
   }
 
-  // Use per-unit ID in TempRef (for vector indexing), but store metadata
-  // globally
-  return context_->AllocateTempWithId(unit_id, name, type);
+  return lir::LirContext::AllocateTempWithId(unit_id, hint_id, type);
 }
 
 auto LirBuilder::MakeLabel(const std::string& hint) -> lir::LabelRef {

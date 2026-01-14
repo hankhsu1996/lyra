@@ -52,7 +52,7 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
   switch (instr.kind) {
     case lir::InstructionKind::kConversion: {
       const auto& src = ctx.GetTemp(instr.operands[0].AsTempRef());
-      const auto& target_type = (*instr.result)->type;
+      const auto& target_type = ctx.GetTempType(*instr.result);
 
       // Handle string to string and real to real as no-op conversions.
       if ((src.type == common::Type::String() &&
@@ -225,7 +225,7 @@ auto HandleTypeOps(const lir::Instruction& instr, InstructionContext& ctx)
     }
 
     case lir::InstructionKind::kConcatenation: {
-      const auto& result_type = (*instr.result)->type;
+      const auto& result_type = ctx.GetTempType(*instr.result);
 
       // String concatenation: collect strings and join
       if (result_type.kind == common::Type::Kind::kString) {

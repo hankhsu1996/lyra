@@ -35,7 +35,7 @@ buildifier -r .                                # Format Bazel files
 Run clang-tidy for static analysis. First generate `compile_commands.json`:
 
 ```bash
-bazel run @hedron_compile_commands//:refresh_all
+bazel run //:refresh_compile_commands
 ```
 
 Then run clang-tidy on specific files:

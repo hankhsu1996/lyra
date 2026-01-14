@@ -91,7 +91,7 @@ auto LowerAssignmentExpression(
       auto element = LowerExpression(*assignment.value, builder);
 
       // Store element to target through pointer
-      const auto& target_type = element->type;
+      const auto& target_type = assignment.value->type;
       const auto* target_pointee =
           builder.GetContext()->InternType(target_type);
       auto target_ptr =
@@ -154,7 +154,8 @@ auto LowerAssignmentExpression(
     // Hierarchical assignment uses target_symbol directly (flat storage model)
     // Use the value's type for the pointer (types should match after implicit
     // conversion).
-    const auto* pointee = builder.GetContext()->InternType(value->type);
+    const auto* pointee =
+        builder.GetContext()->InternType(assignment.value->type);
     auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
     builder.AddInstruction(
         Instruction::ResolveVar(ptr, assignment.target.target_symbol));
@@ -334,7 +335,7 @@ auto LowerAssignmentExpression(
   // Use base_type if available, otherwise use the value's type.
   const auto& var_type = assignment.target.base_type.has_value()
                              ? *assignment.target.base_type
-                             : value->type;
+                             : assignment.value->type;
   const auto* pointee = builder.GetContext()->InternType(var_type);
   auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
   builder.AddInstruction(

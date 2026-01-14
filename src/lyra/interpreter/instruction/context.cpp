@@ -51,6 +51,18 @@ auto InstructionContext::GetTemp(lir::TempRef temp) const -> RuntimeValue {
   return temp_table_->Read(temp);
 }
 
+auto InstructionContext::GetTempType(lir::TempRef temp) const
+    -> const common::Type& {
+  // Look up type from per-unit metadata
+  if (!frame_->call_stack.empty()) {
+    // In function context - use function's temps
+    const auto& func = *frame_->call_stack.back().function;
+    return *func.temps[temp.id].type;
+  }
+  // In process context - use process's temps
+  return *frame_->process->temps[temp.id].type;
+}
+
 auto InstructionContext::ReadVariable(common::SymbolId symbol) const
     -> RuntimeValue {
   // Check function-local variables first (parameters and locals)

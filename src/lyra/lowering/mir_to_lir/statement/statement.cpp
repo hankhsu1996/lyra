@@ -60,7 +60,7 @@ auto LowerStatement(
         // Hierarchical assignment uses target_symbol directly (flat storage
         // model). Use the result value's type for the pointer (types should
         // match after implicit conversion).
-        const auto& value_type = result_value->type;
+        const auto& value_type = expression->type;
         const auto* pointee = builder.GetContext()->InternType(value_type);
         auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
         builder.AddInstruction(
@@ -140,7 +140,7 @@ auto LowerStatement(
       // Store the result to the target variable through pointer.
       // Use base_type if available, otherwise use the result value's type.
       const auto& var_type =
-          target.base_type.has_value() ? *target.base_type : result_value->type;
+          target.base_type.has_value() ? *target.base_type : expression->type;
       const auto* pointee = builder.GetContext()->InternType(var_type);
       auto ptr = builder.AllocateTemp("ptr", common::Type::Pointer(pointee));
       builder.AddInstruction(Instruction::ResolveVar(ptr, target.symbol));
