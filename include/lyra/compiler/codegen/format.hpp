@@ -32,6 +32,19 @@ inline auto GetDisplayVariantProps(std::string_view name)
   if (name == "$writeh" || name == "$fwriteh") {
     return {.default_format = 'x', .use_println = false};
   }
+  // String formatting ($sformatf, $sformat, $swrite*) - no newline
+  if (name == "$sformatf" || name == "$sformat" || name == "$swrite") {
+    return {.default_format = 'd', .use_println = false};
+  }
+  if (name == "$swriteb") {
+    return {.default_format = 'b', .use_println = false};
+  }
+  if (name == "$swriteo") {
+    return {.default_format = 'o', .use_println = false};
+  }
+  if (name == "$swriteh") {
+    return {.default_format = 'x', .use_println = false};
+  }
   // $display and $fdisplay (with newline)
   if (name == "$displayb" || name == "$fdisplayb") {
     return {.default_format = 'b', .use_println = true};

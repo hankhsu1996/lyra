@@ -31,6 +31,7 @@ enum class SystemFunctionReturnType : uint8_t {
   kIntegral32,  // Returns 32-bit integer
   kIntegral64,  // Returns 64-bit integer
   kSameAsArg,   // Return type matches argument ($signed, $unsigned)
+  kString,      // Returns string ($sformatf)
 };
 
 /// Metadata for a single system function
@@ -103,6 +104,15 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$fmonitorb", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$fmonitoro", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$fmonitorh", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+
+  // String Formatting (IEEE 1800-2023 Section 21.3.3)
+  {.name = "$sformatf", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kString, .cpp_function = ""},
+  {.name = "$sformat", .category = Cat::kDisplay, .min_args = 2, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$swrite", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$swriteb", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$swriteo", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+  {.name = "$swriteh", .category = Cat::kDisplay, .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .cpp_function = ""},
+
   {.name = "$timeformat", .category = Cat::kTimeFormat, .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .cpp_function = ""},
   {.name = "$printtimescale_root", .category = Cat::kPrintTimescale, .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .cpp_function = ""},

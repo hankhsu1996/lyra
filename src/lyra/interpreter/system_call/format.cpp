@@ -32,6 +32,19 @@ auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
   if (name == "$writeh" || name == "$fwriteh") {
     return {.default_format = 'h', .append_newline = false};
   }
+  // String formatting ($sformatf, $sformat, $swrite*) - no newline
+  if (name == "$sformatf" || name == "$sformat" || name == "$swrite") {
+    return {.default_format = 'd', .append_newline = false};
+  }
+  if (name == "$swriteb") {
+    return {.default_format = 'b', .append_newline = false};
+  }
+  if (name == "$swriteo") {
+    return {.default_format = 'o', .append_newline = false};
+  }
+  if (name == "$swriteh") {
+    return {.default_format = 'h', .append_newline = false};
+  }
   // Display/strobe/monitor variants with newline
   if (name == "$displayb" || name == "$strobeb" || name == "$monitorb" ||
       name == "$fdisplayb" || name == "$fstrobeb" || name == "$fmonitorb") {

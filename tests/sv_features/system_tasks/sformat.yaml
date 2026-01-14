@@ -1,0 +1,287 @@
+feature: sformat
+description: Tests for $sformatf, $sformat, and $swrite system tasks (IEEE 1800-2023 Section 21.3.3)
+
+cases:
+  - name: sformatf_basic
+    description: Basic $sformatf returns formatted string
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = $sformatf("x=%d", 42);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=42
+
+  - name: sformat_basic
+    description: Basic $sformat writes to string variable
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $sformat(s, "y=%h", 8'hAB);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        y=ab
+
+  - name: swrite_basic
+    description: Basic $swrite with default decimal format
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swrite(s, 123);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        123
+
+  - name: sformatf_percent_literal
+    description: $sformatf handles %% as literal percent
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = $sformatf("100%% complete");
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        100% complete
+
+  - name: swrite_overwrites
+    description: $swrite overwrites (not appends to) output variable
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = "old";
+              $swrite(s, "new");
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        new
+
+  - name: sformatf_no_newline
+    description: $sformatf does not add implicit newline
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string a = $sformatf("A");
+              string b = $sformatf("B");
+              $display("%s%s", a, b);
+            end
+          endmodule
+    expect:
+      stdout: |
+        AB
+
+  - name: swrite_no_spaces
+    description: $swrite does not add implicit spaces between args
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swrite(s, 10, 20, 30);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        102030
+
+  - name: swrite_empty
+    description: $swrite with just output var writes empty string
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = "initial";
+              $swrite(s);
+              $display("'%s'", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        ''
+
+  - name: swrite_prefix_no_format
+    description: String literal without format specifiers acts as prefix
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swrite(s, "hi", 123);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        hi123
+
+  - name: swriteh_radix
+    description: $swriteh uses hex radix
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swriteh(s, 8'hFF);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        ff
+
+  - name: swriteb_radix
+    description: $swriteb uses binary radix
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swriteb(s, 4'b1010);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        1010
+
+  - name: swriteo_radix
+    description: $swriteo uses octal radix
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $swriteo(s, 9'o777);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        777
+
+  - name: sformatf_width_zero_pad
+    description: $sformatf supports width and zero-padding
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = $sformatf("%08h", 8'h1);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        00000001
+
+  - name: sformat_multiple_args
+    description: $sformat with multiple format arguments
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s;
+              $sformat(s, "a=%d b=%d sum=%d", 10, 20, 30);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        a=10 b=20 sum=30
+
+  - name: sformatf_hex_format
+    description: $sformatf with hex format specifier
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = $sformatf("addr=0x%h", 16'hCAFE);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        addr=0xcafe
+
+  - name: sformatf_in_expression
+    description: $sformatf can be used in expression context
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              $display("%s", $sformatf("nested=%d", 99));
+            end
+          endmodule
+    expect:
+      stdout: |
+        nested=99
+
+  - name: sformat_string_concat
+    description: $sformatf result can be concatenated
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string prefix = "Result: ";
+              string result = {prefix, $sformatf("%d", 42)};
+              $display("%s", result);
+            end
+          endmodule
+    expect:
+      stdout: |
+        Result: 42
+
+  - name: sformat_runtime_format_string
+    description: Runtime format string works in interpreter (skip codegen)
+    skip_codegen: true
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string fmt = "x=%0d";
+              string s;
+              $sformat(s, fmt, 42);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=42

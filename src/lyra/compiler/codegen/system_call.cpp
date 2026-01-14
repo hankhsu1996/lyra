@@ -760,6 +760,102 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     return;
   }
 
+  // Handle $sformat/$swrite* - string formatting tasks
+  if (syscall.name == "$sformat" || syscall.name == "$swrite" ||
+      syscall.name == "$swriteb" || syscall.name == "$swriteo" ||
+      syscall.name == "$swriteh") {
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    if (syscall.output_targets.empty()) {
+      throw common::InternalError("codegen", syscall.name + " requires output");
+    }
+
+    // Extract format string info if present
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+      if (!fmt_info.is_string_literal) {
+        throw common::InternalError(
+            "codegen", syscall.name +
+                           " requires literal format string; "
+                           "use interpreter for runtime format strings");
+      }
+    }
+
+    // Emit: output_var = std::format(...);
+    Indent();
+    out_ << Name(syscall.output_targets[0].symbol) << " = ";
+
+    if (fmt_info.has_format_specifiers) {
+      // Format string with specifiers
+      auto cpp_fmt = common::TransformToStdFormat(fmt_info.text);
+      auto needs_cast = common::NeedsIntCast(fmt_info.text);
+      out_ << "std::format(\"" << common::EscapeForCppString(cpp_fmt) << "\"";
+      for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        if (i < needs_cast.size() && needs_cast[i]) {
+          out_ << "static_cast<int64_t>(";
+          EmitExpression(*syscall.arguments[i]);
+          out_ << ")";
+        } else {
+          EmitExpression(*syscall.arguments[i]);
+        }
+      }
+      out_ << ");\n";
+    } else if (fmt_info.is_string_literal) {
+      // String literal without format specifiers - prefix + formatted args
+      if (syscall.arguments.empty()) {
+        // Just the prefix string
+        out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\";\n";
+      } else {
+        // Prefix + default-formatted args
+        std::string fmt_str;
+        for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          if (syscall.arguments[i]->type.kind ==
+              common::Type::Kind::kIntegral) {
+            fmt_str += "{:";
+            fmt_str += props.default_format;
+            fmt_str += "}";
+          } else {
+            fmt_str += "{}";
+          }
+        }
+        out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\" + "
+             << "std::format(\"" << fmt_str << "\"";
+        for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          out_ << ", ";
+          EmitExpression(*syscall.arguments[i]);
+        }
+        out_ << ");\n";
+      }
+    } else {
+      // No format string - generate default format from arg types
+      if (syscall.arguments.empty()) {
+        // Empty string (handles $swrite(s) case)
+        out_ << "\"\";\n";
+      } else {
+        std::string fmt_str;
+        for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          if (syscall.arguments[i]->type.kind ==
+              common::Type::Kind::kIntegral) {
+            fmt_str += "{:";
+            fmt_str += props.default_format;
+            fmt_str += "}";
+          } else {
+            fmt_str += "{}";
+          }
+        }
+        out_ << "std::format(\"" << fmt_str << "\"";
+        for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          out_ << ", ";
+          EmitExpression(*syscall.arguments[i]);
+        }
+        out_ << ");\n";
+      }
+    }
+    return;
+  }
+
   if (syscall.name == "$timeformat") {
     // $timeformat(units, precision, suffix, min_width)
     // Cast Bit types to native types since Bit only has implicit bool

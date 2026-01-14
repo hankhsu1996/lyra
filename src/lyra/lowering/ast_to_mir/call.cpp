@@ -44,6 +44,17 @@ auto IsFileOutputTask(std::string_view name) -> bool {
          name == "$fmonitoro";
 }
 
+/// Check if a system call name is $sformat or $swrite task (has output target)
+auto IsSformatTask(std::string_view name) -> bool {
+  return name == "$sformat" || name == "$swrite" || name == "$swriteb" ||
+         name == "$swriteo" || name == "$swriteh";
+}
+
+/// Check if a system call name is $sformatf (returns string, no output target)
+auto IsSformatfFunction(std::string_view name) -> bool {
+  return name == "$sformatf";
+}
+
 }  // namespace
 
 auto LowerCall(
@@ -349,6 +360,98 @@ auto LowerCall(
         }
         format_idx = 1;
         args_start_idx = 1;
+      } else if (IsSformatfFunction(name)) {
+        // $sformatf: format_expr = arg[0] (required), arguments = rest
+        // Returns string (handled by slang's return type)
+        if (call.arguments().empty()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  "$sformatf requires a format string argument"));
+        }
+        const auto& format_arg = *call.arguments()[0];
+        format_expr = LowerExpression(format_arg, arena, registrar);
+        format_expr_is_literal =
+            format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+        // Add remaining arguments (skip format string)
+        for (size_t i = 1; i < call.arguments().size(); ++i) {
+          arguments.push_back(
+              LowerExpression(*call.arguments()[i], arena, registrar));
+        }
+        // Skip the generic format detection below
+        format_idx = call.arguments().size();
+        args_start_idx = call.arguments().size();
+      } else if (IsSformatTask(name)) {
+        // $sformat/$swrite*: first arg is output target (must be simple string)
+        if (call.arguments().empty()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  expression.sourceRange,
+                  fmt::format("{} requires an output string variable", name)));
+        }
+        const auto* output_arg = call.arguments()[0];
+        // Output arguments may be wrapped as Assignment with EmptyArgument
+        const slang::ast::Expression* actual_output = output_arg;
+        if (output_arg->kind == slang::ast::ExpressionKind::Assignment) {
+          const auto& assign =
+              output_arg->as<slang::ast::AssignmentExpression>();
+          if (assign.right().kind ==
+              slang::ast::ExpressionKind::EmptyArgument) {
+            actual_output = &assign.left();
+          }
+        }
+        // Validate: must be simple NamedValue of string type
+        if (actual_output->kind != slang::ast::ExpressionKind::NamedValue) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  output_arg->sourceRange,
+                  fmt::format(
+                      "{} output must be a simple string variable; "
+                      "struct fields/array elements not supported yet",
+                      name)));
+        }
+        if (!actual_output->type->isString()) {
+          throw DiagnosticException(
+              Diagnostic::Error(
+                  output_arg->sourceRange,
+                  fmt::format("{} output must be string type", name)));
+        }
+        const auto& named_value =
+            actual_output->as<slang::ast::NamedValueExpression>();
+        auto type_result = LowerType(
+            named_value.symbol.getType(), actual_output->sourceRange, arena);
+        if (!type_result) {
+          throw DiagnosticException(std::move(type_result.error()));
+        }
+        mir::AssignmentTarget target(registrar.Register(&named_value.symbol));
+        target.base_type = *type_result;
+        output_targets.push_back(std::move(target));
+
+        if (name == "$sformat") {
+          // $sformat: format_expr = arg[1] (required), arguments = rest
+          if (call.arguments().size() < 2) {
+            throw DiagnosticException(
+                Diagnostic::Error(
+                    expression.sourceRange,
+                    "$sformat requires a format string argument"));
+          }
+          const auto& format_arg = *call.arguments()[1];
+          format_expr = LowerExpression(format_arg, arena, registrar);
+          format_expr_is_literal =
+              format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+          // Add remaining arguments (skip output and format)
+          for (size_t i = 2; i < call.arguments().size(); ++i) {
+            arguments.push_back(
+                LowerExpression(*call.arguments()[i], arena, registrar));
+          }
+          // Skip the generic format detection below
+          format_idx = call.arguments().size();
+          args_start_idx = call.arguments().size();
+        } else {
+          // $swrite*: format detection on arg[1]+ (like $write)
+          format_idx = 1;
+          args_start_idx = 1;
+        }
       }
 
       // Check if format argument is a format string

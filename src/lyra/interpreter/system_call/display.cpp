@@ -1,5 +1,6 @@
 #include "lyra/interpreter/system_call/display.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -169,6 +170,76 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
     if (props.append_newline) {
       simulation_context.display_output << "\n";
     }
+    return InstructionResult::Continue();
+  }
+
+  // Handle $sformatf - pure function returning formatted string
+  if (instr.system_call_name == "$sformatf") {
+    auto props = GetDisplayVariantProps(instr.system_call_name);
+
+    // Collect argument values (format_operand is format string, operands are
+    // args)
+    std::vector<RuntimeValue> arg_values;
+    if (instr.format_operand) {
+      arg_values.push_back(ctx.GetOperandValue(*instr.format_operand));
+    }
+    for (const auto& operand : instr.operands) {
+      arg_values.push_back(ctx.GetOperandValue(operand));
+    }
+
+    // Create time format context for %t specifier
+    TimeFormatContext time_ctx{
+        .time_format = simulation_context.time_format,
+        .module_unit_power = simulation_context.timescale
+                                 ? simulation_context.timescale->unit_power
+                                 : common::TimeScale::kDefaultUnitPower,
+        .global_precision_power = simulation_context.global_precision_power};
+
+    // Format message (no newline for $sformatf)
+    std::string result = FormatMessage(
+        arg_values, instr.format_string_is_literal, props.default_format,
+        &time_ctx);
+
+    // Store result in the temp
+    assert(instr.result.has_value());
+    ctx.GetTempTable().Write(
+        instr.result.value(), RuntimeValue::String(result));
+    return InstructionResult::Continue();
+  }
+
+  // Handle $sformat/$swrite* - effectful tasks that write to output variable
+  if (instr.system_call_name == "$sformat" ||
+      instr.system_call_name == "$swrite" ||
+      instr.system_call_name == "$swriteb" ||
+      instr.system_call_name == "$swriteo" ||
+      instr.system_call_name == "$swriteh") {
+    auto props = GetDisplayVariantProps(instr.system_call_name);
+
+    // Collect argument values (format_operand + operands, NOT output_targets)
+    std::vector<RuntimeValue> arg_values;
+    if (instr.format_operand) {
+      arg_values.push_back(ctx.GetOperandValue(*instr.format_operand));
+    }
+    for (const auto& operand : instr.operands) {
+      arg_values.push_back(ctx.GetOperandValue(operand));
+    }
+
+    // Create time format context for %t specifier
+    TimeFormatContext time_ctx{
+        .time_format = simulation_context.time_format,
+        .module_unit_power = simulation_context.timescale
+                                 ? simulation_context.timescale->unit_power
+                                 : common::TimeScale::kDefaultUnitPower,
+        .global_precision_power = simulation_context.global_precision_power};
+
+    // Format message (no newline for $sformat/$swrite)
+    std::string result = FormatMessage(
+        arg_values, instr.format_string_is_literal, props.default_format,
+        &time_ctx);
+
+    // Store result in output variable (overwrite, not append)
+    ctx.StoreVariable(
+        instr.output_targets[0], RuntimeValue::String(result), false);
     return InstructionResult::Continue();
   }
 

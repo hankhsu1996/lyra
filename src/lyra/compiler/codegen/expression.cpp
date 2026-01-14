@@ -13,6 +13,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/string_utils.hpp"
+#include "lyra/common/sv_format.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
@@ -659,6 +660,37 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           EmitStringLiteralArg(*syscall.arguments[1]);
           out_ << ").ToInt32()";
         }
+      } else if (syscall.name == "$sformatf") {
+        // $sformatf returns formatted string
+        // format_expr contains the format string, arguments are format args
+        if (!syscall.format_expr) {
+          throw common::InternalError(
+              "codegen", "$sformatf requires format string");
+        }
+
+        auto fmt_info = codegen::ExtractFormatString(**syscall.format_expr);
+        if (!fmt_info.is_string_literal) {
+          throw common::InternalError(
+              "codegen",
+              "$sformatf requires literal format string; "
+              "use interpreter for runtime format strings");
+        }
+
+        auto cpp_fmt = common::TransformToStdFormat(fmt_info.text);
+        auto needs_cast = common::NeedsIntCast(fmt_info.text);
+
+        out_ << "std::format(\"" << common::EscapeForCppString(cpp_fmt) << "\"";
+        for (size_t i = 0; i < syscall.arguments.size(); ++i) {
+          out_ << ", ";
+          if (i < needs_cast.size() && needs_cast[i]) {
+            out_ << "static_cast<int64_t>(";
+            EmitExpression(*syscall.arguments[i]);
+            out_ << ")";
+          } else {
+            EmitExpression(*syscall.arguments[i]);
+          }
+        }
+        out_ << ")";
       } else {
         // System tasks like $display, $finish are handled in statement context
         throw common::InternalError(
