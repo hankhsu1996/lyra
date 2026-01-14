@@ -165,4 +165,37 @@ inline auto ToCppOperator(mir::BinaryOperator op) -> const char* {
   return "/* unknown */";
 }
 
+// Returns the C++ compound assignment operator for a binary operator.
+// Only valid for operators that have compound assignment forms (arithmetic,
+// bitwise, shift). Returns nullptr for operators without compound forms
+// (comparison, logical).
+inline auto ToCppCompoundAssignOp(mir::BinaryOperator op) -> const char* {
+  switch (op) {
+    case mir::BinaryOperator::kAddition:
+      return "+=";
+    case mir::BinaryOperator::kSubtraction:
+      return "-=";
+    case mir::BinaryOperator::kMultiplication:
+      return "*=";
+    case mir::BinaryOperator::kDivision:
+      return "/=";
+    case mir::BinaryOperator::kModulo:
+      return "%=";
+    case mir::BinaryOperator::kBitwiseAnd:
+      return "&=";
+    case mir::BinaryOperator::kBitwiseOr:
+      return "|=";
+    case mir::BinaryOperator::kBitwiseXor:
+      return "^=";
+    case mir::BinaryOperator::kLogicalShiftLeft:
+    case mir::BinaryOperator::kArithmeticShiftLeft:
+      return "<<=";
+    case mir::BinaryOperator::kLogicalShiftRight:
+    case mir::BinaryOperator::kArithmeticShiftRight:
+      return ">>=";
+    default:
+      return nullptr;  // No compound form for this operator
+  }
+}
+
 }  // namespace lyra::compiler::codegen

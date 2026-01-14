@@ -15,6 +15,7 @@
 #include "lyra/common/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/string_utils.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/compiler/codegen/codegen.hpp"
@@ -36,6 +37,7 @@ using codegen::kPrecPrimary;
 using codegen::kPrecShift;
 using codegen::kPrecTernary;
 using codegen::kPrecUnary;
+using codegen::ToCppCompoundAssignOp;
 using codegen::ToCppOperator;
 
 namespace {
@@ -245,6 +247,15 @@ void Codegen::EmitExpression(const mir::Expression& expr, int parent_prec) {
           EmitExpression(*assign.value, kPrecLowest);
           out_ << ")";
         }
+      } else if (assign.IsCompoundAssignment()) {
+        // Compound assignment: emit target op= value directly.
+        // SDK Bit<N> types have compound operators defined, so C++ handles
+        // single evaluation of lvalue correctly (including side-effecting
+        // indices).
+        const char* compound_op = ToCppCompoundAssignOp(*assign.compound_op);
+        EmitAssignmentTarget(assign.target);
+        out_ << " " << compound_op << " ";
+        EmitExpression(*assign.value, kPrecAssign);
       } else {
         EmitAssignmentTarget(assign.target);
         out_ << " = ";

@@ -128,6 +128,11 @@ sv_feature_test(
     yaml = "sv_features/operators/replicate.yaml",
 )
 
+sv_feature_test(
+    name = "operators_compound_assignment_tests",
+    yaml = "sv_features/operators/compound_assignment.yaml",
+)
+
 # Processes
 sv_feature_test(
     name = "processes_initial_tests",
