@@ -11,6 +11,7 @@
 #include "lyra/common/trigger.hpp"
 #include "lyra/common/variable.hpp"
 #include "lyra/lir/basic_block.hpp"
+#include "lyra/lir/context.hpp"
 
 namespace lyra::lir {
 
@@ -19,6 +20,7 @@ using Trigger = common::Trigger;
 
 struct Process {
   std::string name;
+  std::vector<TempMeta> temps;  // Process owns its temps
   std::vector<common::Variable> variables;
 
   // List of basic blocks

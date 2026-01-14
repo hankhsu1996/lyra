@@ -1,15 +1,20 @@
 # LIR Design
 
-LIR (Low-level IR) is a register-based IR using Static Single Assignment (SSA) form, designed for interpretation and analysis.
+LIR (Low-level IR) is a register-based IR designed for interpretation and analysis.
 
-## SSA Principles
+## Temp Model
 
-LIR follows LLVM-style SSA semantics:
+Temps are **mutable registers** in a per-unit register file, not true SSA values. This is bytecode for an interpreter, not an optimizing IR.
 
-- **SSA values** are symbolic IDs (names like `%t0`) representing exactly one definition, mapped to runtime values via a table
-- **Labels** are control-flow metadata, not SSA values - stored in dedicated instruction fields, not operands
-- **Constants** are compile-time entities - the `kConstant` instruction materializes them into SSA values
-- **Operands are SSA values only** - no variables, constants, or labels in the operand list
+- **Per-unit ownership**: Each Process and Function owns its temps via `std::vector<TempMeta>`
+- **Dense indexing**: TempIds are indices into a vector, enabling O(1) access
+- **No stable addresses**: Temps cannot be addressed. Addressable storage uses Variable/Address.
+
+Design principles:
+
+- **Labels** are control-flow metadata, not temps - stored in dedicated instruction fields
+- **Constants** are compile-time entities - the `kConstant` instruction materializes them into temps
+- **Operands are temps only** - no variables, constants, or labels in the operand list
 
 ## Reference Types
 
@@ -160,18 +165,23 @@ Two semantic encodings for the same operation creates maintenance burden - every
 
 ## Memory Management
 
-`LirContext` owns all interned entities:
+**Temp ownership**: Process and Function each own their temps:
+
+| Owner    | Storage                 | Purpose              |
+| -------- | ----------------------- | -------------------- |
+| Process  | `std::vector<TempMeta>` | Process-local temps  |
+| Function | `std::vector<TempMeta>` | Function-local temps |
+
+TempIds are indices into these per-unit vectors. At runtime, `TempTable` uses vector storage with `Init(count)` to pre-allocate.
+
+**Module-level interning** (`LirContext`):
 
 | Arena               | Storage                   | Purpose                  |
 | ------------------- | ------------------------- | ------------------------ |
-| `temp_storage_`     | `std::deque<TempSymbol>`  | SSA temp names and types |
 | `label_storage_`    | `std::deque<std::string>` | Basic block labels       |
-| `label_index_`      | `unordered_map`           | Label name → ID lookup   |
 | `constant_storage_` | `std::deque<Constant>`    | Interned constant values |
 | `type_storage_`     | `std::deque<Type>`        | Interned type objects    |
 
-**Lifetime semantics:** Leak-until-termination. All allocations persist for the entire compilation. References (`TempRef`, `LabelRef`, `ConstantRef`) remain valid for the lifetime of the `LirContext`.
+**Lifetime semantics:** Leak-until-termination. All allocations persist for the entire compilation. References (`LabelRef`, `ConstantRef`) remain valid for the lifetime of the `LirContext`.
 
-**Why deque?** `std::deque` guarantees pointer stability - existing element addresses remain valid when new elements are added. This is critical since refs cache raw pointers for fast access.
-
-**Identity:** Refs now carry explicit IDs (`TempId`, `LabelId`) for identity comparison and hashing, decoupled from pointer values. This enables future serialization and arena compaction without changing ref semantics.
+**Why deque?** `std::deque` guarantees pointer stability - existing element addresses remain valid when new elements are added.

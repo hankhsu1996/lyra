@@ -26,6 +26,49 @@ enum class ProceduralContext {
   // Future: kTask, kForkJoin
 };
 
+// Allocators for per-unit temps. Return typed IDs for compile-time safety.
+// Note: Instruction still uses TempRef for now; full typed IR is future work.
+
+class ProcessTempAllocator {
+  std::vector<lir::TempMeta>& temps_;
+
+ public:
+  explicit ProcessTempAllocator(std::vector<lir::TempMeta>& temps)
+      : temps_(temps) {
+  }
+
+  auto Allocate(const common::Type* type, lir::HintId hint)
+      -> lir::ProcessTempId {
+    auto id = static_cast<uint32_t>(temps_.size());
+    temps_.push_back({type, hint});
+    return lir::ProcessTempId{id};
+  }
+
+  [[nodiscard]] auto TempCount() const -> size_t {
+    return temps_.size();
+  }
+};
+
+class FunctionTempAllocator {
+  std::vector<lir::TempMeta>& temps_;
+
+ public:
+  explicit FunctionTempAllocator(std::vector<lir::TempMeta>& temps)
+      : temps_(temps) {
+  }
+
+  auto Allocate(const common::Type* type, lir::HintId hint)
+      -> lir::FunctionTempId {
+    auto id = static_cast<uint32_t>(temps_.size());
+    temps_.push_back({type, hint});
+    return lir::FunctionTempId{id};
+  }
+
+  [[nodiscard]] auto TempCount() const -> size_t {
+    return temps_.size();
+  }
+};
+
 class LirBuilder {
  public:
   // symbol_table is stored as reference - caller must ensure it outlives
@@ -53,7 +96,9 @@ class LirBuilder {
   void EndProcess();
 
   // Function interface (for user-defined functions)
-  void BeginFunction(const std::string& name);
+  // temps_out is populated with TempMeta during lowering
+  void BeginFunction(
+      const std::string& name, std::vector<lir::TempMeta>& temps_out);
   void EndFunction();
   auto TakeFunctionBlocks() -> std::vector<std::unique_ptr<lir::BasicBlock>>;
 
@@ -113,7 +158,8 @@ class LirBuilder {
   std::vector<std::unique_ptr<lir::BasicBlock>> current_blocks_;
 
   int label_counter_ = 0;
-  int temp_counter_ = 0;
+  int temp_counter_ = 0;      // For unique naming (%hint_N)
+  int per_unit_temp_id_ = 0;  // Per-process/function ID for vector indexing
   int synthetic_function_counter_ = 0;
 
   // Current procedural context
@@ -126,10 +172,18 @@ class LirBuilder {
     std::shared_ptr<lir::Process> process;
     std::unique_ptr<lir::BasicBlock> block;
     std::vector<std::unique_ptr<lir::BasicBlock>> blocks;
+    std::vector<lir::TempMeta>* temps;  // Saved temps vector
+    int per_unit_temp_id;               // Saved per-unit temp ID counter
   };
   std::optional<SavedProcessState> saved_process_state_;
   std::string synthetic_function_name_;
   std::string synthetic_process_name_;
+
+  // Current per-unit temps vector (points to Process::temps or Function::temps)
+  std::vector<lir::TempMeta>* current_temps_ = nullptr;
+
+  // Map string hints to HintId (for gradual migration)
+  static auto HintFromString(std::string_view hint) -> lir::HintId;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

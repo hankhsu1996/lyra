@@ -67,6 +67,8 @@ void LirBuilder::BeginProcess(const std::string& name) {
   current_process_ = std::make_shared<lir::Process>();
   current_process_->name = name;
   current_blocks_.clear();
+  current_temps_ = &current_process_->temps;
+  per_unit_temp_id_ = 0;  // Reset for per-process IDs
 }
 
 void LirBuilder::EndProcess() {
@@ -88,6 +90,7 @@ void LirBuilder::EndProcess() {
 
   processes_.push_back(std::move(current_process_));
   current_process_ = nullptr;
+  current_temps_ = nullptr;
   procedural_context_ = ProceduralContext::kModule;
 }
 
@@ -107,10 +110,13 @@ void LirBuilder::RegisterLocalVariable(const common::Variable& variable) {
   }
 }
 
-void LirBuilder::BeginFunction(const std::string& /*name*/) {
+void LirBuilder::BeginFunction(
+    const std::string& /*name*/, std::vector<lir::TempMeta>& temps_out) {
   assert(procedural_context_ == ProceduralContext::kModule);
   procedural_context_ = ProceduralContext::kFunction;
   function_blocks_.clear();
+  current_temps_ = &temps_out;
+  per_unit_temp_id_ = 0;  // Reset for per-function IDs
 }
 
 void LirBuilder::EndFunction() {
@@ -121,6 +127,7 @@ void LirBuilder::EndFunction() {
     EndBlock();
   }
 
+  current_temps_ = nullptr;
   procedural_context_ = ProceduralContext::kModule;
 }
 
@@ -140,12 +147,19 @@ void LirBuilder::BeginSyntheticFunction(const std::string& name) {
       .process = std::move(current_process_),
       .block = std::move(current_block_),
       .blocks = std::move(current_blocks_),
+      .temps = current_temps_,
+      .per_unit_temp_id = per_unit_temp_id_,
   };
 
-  // Switch to function context
+  // Switch to function context - create temp placeholder in module for now
+  // (actual Function struct created in EndSyntheticFunction)
   procedural_context_ = ProceduralContext::kFunction;
   function_blocks_.clear();
   synthetic_function_name_ = name;
+  // Synthetic functions will get their temps attached in EndSyntheticFunction
+  // For now, temps still go to context_ (global), which is Step 1 limitation
+  current_temps_ = nullptr;
+  per_unit_temp_id_ = 0;  // Reset for synthetic function
 }
 
 auto LirBuilder::EndSyntheticFunction() -> std::string {
@@ -172,6 +186,8 @@ auto LirBuilder::EndSyntheticFunction() -> std::string {
   current_process_ = std::move(saved_process_state_->process);
   current_block_ = std::move(saved_process_state_->block);
   current_blocks_ = std::move(saved_process_state_->blocks);
+  current_temps_ = saved_process_state_->temps;
+  per_unit_temp_id_ = saved_process_state_->per_unit_temp_id;
   saved_process_state_.reset();
 
   return synthetic_function_name_;
@@ -187,6 +203,8 @@ void LirBuilder::BeginSyntheticProcess(const std::string& name) {
       .process = std::move(current_process_),
       .block = std::move(current_block_),
       .blocks = std::move(current_blocks_),
+      .temps = current_temps_,
+      .per_unit_temp_id = per_unit_temp_id_,
   };
 
   // Start new process (stay in kProcess context)
@@ -195,6 +213,8 @@ void LirBuilder::BeginSyntheticProcess(const std::string& name) {
   current_process_->name = name;
   current_process_->is_callback = true;
   current_blocks_.clear();
+  current_temps_ = &current_process_->temps;
+  per_unit_temp_id_ = 0;  // Reset for per-process IDs
   synthetic_process_name_ = name;
 }
 
@@ -220,6 +240,8 @@ auto LirBuilder::EndSyntheticProcess() -> std::string {
   current_process_ = std::move(saved_process_state_->process);
   current_block_ = std::move(saved_process_state_->block);
   current_blocks_ = std::move(saved_process_state_->blocks);
+  current_temps_ = saved_process_state_->temps;
+  per_unit_temp_id_ = saved_process_state_->per_unit_temp_id;
   saved_process_state_.reset();
 
   return synthetic_process_name_;
@@ -271,7 +293,20 @@ void LirBuilder::AddInstruction(lir::Instruction instr) {
 auto LirBuilder::AllocateTemp(const std::string& hint, common::Type type)
     -> lir::TempRef {
   std::string name = fmt::format("%{}_{}", hint, temp_counter_++);
-  return context_->AllocateTemp(name, type);
+
+  // Get per-unit ID for vector-based TempTable indexing
+  auto unit_id = static_cast<lir::TempId>(per_unit_temp_id_++);
+
+  // Also populate per-unit temps vector
+  if (current_temps_ != nullptr) {
+    const auto* interned_type = context_->InternType(type);
+    auto hint_id = HintFromString(hint);
+    current_temps_->push_back({interned_type, hint_id});
+  }
+
+  // Use per-unit ID in TempRef (for vector indexing), but store metadata
+  // globally
+  return context_->AllocateTempWithId(unit_id, name, type);
 }
 
 auto LirBuilder::MakeLabel(const std::string& hint) -> lir::LabelRef {
@@ -291,6 +326,60 @@ auto LirBuilder::InternLabel(const std::string& name) -> lir::LabelRef {
 auto LirBuilder::InternConstant(const common::Constant& constant)
     -> lir::ConstantRef {
   return context_->InternConstant(constant);
+}
+
+auto LirBuilder::HintFromString(std::string_view hint) -> lir::HintId {
+  // Map common hint strings to HintId
+  if (hint == "ptr" || hint == "base_ptr" || hint == "elem_ptr" ||
+      hint == "field_ptr" || hint == "idx_ptr") {
+    return lir::HintId::kPtr;
+  }
+  if (hint == "lhs") {
+    return lir::HintId::kLhs;
+  }
+  if (hint == "rhs") {
+    return lir::HintId::kRhs;
+  }
+  if (hint == "result" || hint == "call_result") {
+    return lir::HintId::kResult;
+  }
+  if (hint == "cond" || hint == "condition") {
+    return lir::HintId::kCond;
+  }
+  if (hint == "idx" || hint == "index" || hint == "i") {
+    return lir::HintId::kIndex;
+  }
+  if (hint == "cnt" || hint == "counter" || hint == "count") {
+    return lir::HintId::kCounter;
+  }
+  if (hint == "ternary" || hint == "ternary_true" || hint == "ternary_false") {
+    return lir::HintId::kTernary;
+  }
+  if (hint == "slice" || hint == "slice_ref") {
+    return lir::HintId::kSlice;
+  }
+  if (hint == "val" || hint == "value" || hint == "loaded") {
+    return lir::HintId::kValue;
+  }
+  if (hint == "arg") {
+    return lir::HintId::kArg;
+  }
+  if (hint == "ret" || hint == "return") {
+    return lir::HintId::kRet;
+  }
+  if (hint == "bound" || hint == "high" || hint == "low") {
+    return lir::HintId::kBound;
+  }
+  if (hint == "offset") {
+    return lir::HintId::kOffset;
+  }
+  if (hint == "width") {
+    return lir::HintId::kWidth;
+  }
+  if (hint == "elem" || hint == "element") {
+    return lir::HintId::kElem;
+  }
+  return lir::HintId::kGeneric;
 }
 
 }  // namespace lyra::lowering::mir_to_lir
