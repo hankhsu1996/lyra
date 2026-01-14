@@ -30,12 +30,12 @@ namespace lyra::interpreter {
 
 InstructionContext::InstructionContext(
     SimulationContext& simulation_context, ProcessFrame& frame,
-    ProcessEffect& effect, TempTable& temp_table,
+    ProcessEffect& effect, ExecutionScope scope,
     std::shared_ptr<HierarchyContext> hierarchy_context)
     : simulation_context_(&simulation_context),
       frame_(&frame),
       effect_(&effect),
-      temp_table_(&temp_table),
+      scope_(scope),
       hierarchy_context_(std::move(hierarchy_context)) {
 }
 
@@ -48,19 +48,12 @@ auto InstructionContext::ResolveBinding(common::SymbolId symbol) const
 }
 
 auto InstructionContext::GetTemp(lir::TempRef temp) const -> RuntimeValue {
-  return temp_table_->Read(temp);
+  return scope_.temp_table->Read(temp);
 }
 
 auto InstructionContext::GetTempType(lir::TempRef temp) const
     -> const common::Type& {
-  // Look up type from per-unit metadata
-  if (!frame_->call_stack.empty()) {
-    // In function context - use function's temps
-    const auto& func = *frame_->call_stack.back().function;
-    return *func.temps[temp.id].type;
-  }
-  // In process context - use process's temps
-  return *frame_->process->temps[temp.id].type;
+  return *scope_.temps->at(temp.id).type;
 }
 
 auto InstructionContext::ReadVariable(common::SymbolId symbol) const
@@ -131,7 +124,7 @@ auto ReadAddressRoot(
     const Address& addr, const ProcessFrame& frame,
     const InstructionContext& ctx, SimulationContext& sim_ctx) -> RuntimeValue {
   if (addr.IsAlloc()) {
-    return frame.ReadAnonymous(addr.GetAllocationId()).DeepCopy();
+    return frame.ReadPermanent(addr.GetAllocationId()).DeepCopy();
   }
 
   auto symbol = addr.GetSymbol();
@@ -279,7 +272,7 @@ void InstructionContext::ResolveForWrite(
       throw common::InternalError(
           "interpreter", "non-blocking assignment to anonymous storage");
     }
-    frame_->WriteAnonymous(addr.GetAllocationId(), std::move(root_copy));
+    frame_->WritePermanent(addr.GetAllocationId(), std::move(root_copy));
     return;
   }
 
@@ -376,7 +369,7 @@ auto InstructionContext::EvalUnaryOp(
     const lir::Operand& operand, lir::TempRef result,
     const std::function<RuntimeValue(RuntimeValue)>& op) -> InstructionResult {
   const auto result_value = op(GetTemp(operand.AsTempRef()));
-  temp_table_->Write(result, result_value);
+  scope_.temp_table->Write(result, result_value);
   return InstructionResult::Continue();
 }
 
@@ -386,16 +379,16 @@ auto InstructionContext::EvalBinaryOp(
     -> InstructionResult {
   const auto result_value =
       op(GetTemp(lhs.AsTempRef()), GetTemp(rhs.AsTempRef()));
-  temp_table_->Write(result, result_value);
+  scope_.temp_table->Write(result, result_value);
   return InstructionResult::Continue();
 }
 
 void InstructionContext::WriteTemp(lir::TempRef result, RuntimeValue value) {
-  temp_table_->Write(result, std::move(value));
+  scope_.temp_table->Write(result, std::move(value));
 }
 
-auto InstructionContext::AllocateAnonymous(RuntimeValue initial) -> uint64_t {
-  return frame_->AllocateAnonymous(std::move(initial));
+auto InstructionContext::AllocatePermanent(RuntimeValue initial) -> uint64_t {
+  return frame_->AllocatePermanent(std::move(initial));
 }
 
 }  // namespace lyra::interpreter

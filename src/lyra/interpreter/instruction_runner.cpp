@@ -19,13 +19,17 @@ auto RunInstruction(
     ProcessFrame& frame, ProcessEffect& effect,
     const std::shared_ptr<HierarchyContext>& hierarchy_context)
     -> InstructionResult {
-  // Use function-local temp table when inside a function
-  auto& temp_table = frame.call_stack.empty()
-                         ? frame.temp_table
-                         : frame.call_stack.back().temp_table;
+  // Compute execution scope once at instruction start.
+  // This eliminates repeated call_stack.empty() branching in GetTempType, etc.
+  ExecutionScope scope =
+      frame.call_stack.empty()
+          ? ExecutionScope{&frame.process->temps, &frame.temp_table}
+          : ExecutionScope{
+                &frame.call_stack.back().function->temps,
+                &frame.call_stack.back().temp_table};
 
   InstructionContext ctx(
-      simulation_context, frame, effect, temp_table, hierarchy_context);
+      simulation_context, frame, effect, scope, hierarchy_context);
 
   // Dispatch to appropriate handler based on instruction category
   switch (lir::GetInstructionCategory(instr.kind)) {

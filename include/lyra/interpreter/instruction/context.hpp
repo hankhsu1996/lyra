@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/interpreter/address.hpp"
@@ -20,6 +21,21 @@ class ProcessFrame;
 class SimulationContext;
 class TempTable;
 
+/// Execution scope for temp access.
+/// Captures whether we're in process or function context.
+/// Computed once at instruction start, eliminates repeated call_stack.empty()
+/// branching.
+///
+/// Note: This is a cleanup, not a design fix. Process temps and function temps
+/// still share the same vector API when they're semantically different things.
+/// The real fix would be typed ProcessTempId/FunctionTempId that can't be
+/// mixed.
+struct ExecutionScope {
+  const std::vector<lir::TempMeta>* temps;  // Points to process or function
+                                            // temps
+  TempTable* temp_table;                    // Points to appropriate table
+};
+
 /// Context for instruction execution.
 /// Bundles all dependencies and provides operand accessor methods.
 /// Similar to SystemCallContext but includes eval operations.
@@ -27,7 +43,7 @@ class InstructionContext {
  public:
   InstructionContext(
       SimulationContext& simulation_context, ProcessFrame& frame,
-      ProcessEffect& effect, TempTable& temp_table,
+      ProcessEffect& effect, ExecutionScope scope,
       std::shared_ptr<HierarchyContext> hierarchy_context);
 
   // Accessors for simulation state
@@ -44,7 +60,7 @@ class InstructionContext {
     return *effect_;
   }
   [[nodiscard]] auto GetTempTable() -> TempTable& {
-    return *temp_table_;
+    return *scope_.temp_table;
   }
   [[nodiscard]] auto GetHierarchyContext() const
       -> const std::shared_ptr<HierarchyContext>& {
@@ -82,9 +98,10 @@ class InstructionContext {
       const Address& addr, const RuntimeValue& value, size_t bit_offset,
       size_t width, bool is_non_blocking);
 
-  /// Allocate anonymous storage and return its ID.
-  /// Used by kAllocate to create addressable temporary storage.
-  auto AllocateAnonymous(RuntimeValue initial) -> uint64_t;
+  /// Allocate permanent storage and return its ID.
+  /// Used by kAllocate to create addressable storage that persists until
+  /// ProcessFrame destruction.
+  auto AllocatePermanent(RuntimeValue initial) -> uint64_t;
 
   /// Get value from any operand type (temp, variable, or literal).
   [[nodiscard]] auto GetOperandValue(const lir::Operand& operand) const
@@ -115,7 +132,7 @@ class InstructionContext {
   SimulationContext* simulation_context_;
   ProcessFrame* frame_;
   ProcessEffect* effect_;
-  TempTable* temp_table_;
+  ExecutionScope scope_;
   std::shared_ptr<HierarchyContext> hierarchy_context_;
 };
 

@@ -43,28 +43,33 @@ class ProcessFrame {
   /// Empty when executing process code, non-empty when inside functions.
   std::vector<CallFrame> call_stack;
 
-  /// Anonymous storage arena for kAllocate results.
+  /// Permanent storage arena for kAllocate results.
   /// Maps allocation IDs to their RuntimeValue storage.
   /// Storage is allocated here when kAllocate produces Pointer<T>,
   /// and accessed through Address::AllocRoot in ResolveForRead/Write.
-  std::unordered_map<uint64_t, RuntimeValue> anonymous_storage;
+  ///
+  /// WARNING: Storage lives until ProcessFrame destruction. There is no cleanup
+  /// mechanism - all allocations persist for the lifetime of the process.
+  /// This is a known limitation; future work may add lifetime management.
+  std::unordered_map<uint64_t, RuntimeValue> permanent_storage;
   uint64_t next_alloc_id = 0;
 
-  /// Allocate anonymous storage and return its ID.
-  auto AllocateAnonymous(RuntimeValue initial) -> uint64_t {
+  /// Allocate permanent storage and return its ID.
+  /// The storage persists until ProcessFrame destruction.
+  auto AllocatePermanent(RuntimeValue initial) -> uint64_t {
     auto id = next_alloc_id++;
-    anonymous_storage[id] = std::move(initial);
+    permanent_storage[id] = std::move(initial);
     return id;
   }
 
-  /// Read from anonymous storage.
-  [[nodiscard]] auto ReadAnonymous(uint64_t id) const -> const RuntimeValue& {
-    return anonymous_storage.at(id);
+  /// Read from permanent storage.
+  [[nodiscard]] auto ReadPermanent(uint64_t id) const -> const RuntimeValue& {
+    return permanent_storage.at(id);
   }
 
-  /// Write to anonymous storage.
-  auto WriteAnonymous(uint64_t id, RuntimeValue value) -> void {
-    anonymous_storage.at(id) = std::move(value);
+  /// Write to permanent storage.
+  auto WritePermanent(uint64_t id, RuntimeValue value) -> void {
+    permanent_storage.at(id) = std::move(value);
   }
 
   /// Returns the current function being executed, or nullptr if in process
