@@ -16,28 +16,6 @@ namespace lyra::lir {
 
 using TempId = uint32_t;
 
-// Type-safe temp ID for process temps
-struct ProcessTempId {
-  uint32_t value;
-  static constexpr uint32_t kInvalid = UINT32_MAX;
-
-  auto operator==(const ProcessTempId&) const -> bool = default;
-  [[nodiscard]] auto IsValid() const -> bool {
-    return value != kInvalid;
-  }
-};
-
-// Type-safe temp ID for function temps
-struct FunctionTempId {
-  uint32_t value;
-  static constexpr uint32_t kInvalid = UINT32_MAX;
-
-  auto operator==(const FunctionTempId&) const -> bool = default;
-  [[nodiscard]] auto IsValid() const -> bool {
-    return value != kInvalid;
-  }
-};
-
 // Hint IDs for common temp purposes - for readable debug output
 enum class HintId : uint16_t {
   kGeneric = 0,  // %t_<id>

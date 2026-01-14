@@ -26,49 +26,6 @@ enum class ProceduralContext {
   // Future: kTask, kForkJoin
 };
 
-// Allocators for per-unit temps. Return typed IDs for compile-time safety.
-// Note: Instruction still uses TempRef for now; full typed IR is future work.
-
-class ProcessTempAllocator {
-  std::vector<lir::TempMeta>& temps_;
-
- public:
-  explicit ProcessTempAllocator(std::vector<lir::TempMeta>& temps)
-      : temps_(temps) {
-  }
-
-  auto Allocate(const common::Type* type, lir::HintId hint)
-      -> lir::ProcessTempId {
-    auto id = static_cast<uint32_t>(temps_.size());
-    temps_.push_back({type, hint});
-    return lir::ProcessTempId{id};
-  }
-
-  [[nodiscard]] auto TempCount() const -> size_t {
-    return temps_.size();
-  }
-};
-
-class FunctionTempAllocator {
-  std::vector<lir::TempMeta>& temps_;
-
- public:
-  explicit FunctionTempAllocator(std::vector<lir::TempMeta>& temps)
-      : temps_(temps) {
-  }
-
-  auto Allocate(const common::Type* type, lir::HintId hint)
-      -> lir::FunctionTempId {
-    auto id = static_cast<uint32_t>(temps_.size());
-    temps_.push_back({type, hint});
-    return lir::FunctionTempId{id};
-  }
-
-  [[nodiscard]] auto TempCount() const -> size_t {
-    return temps_.size();
-  }
-};
-
 class LirBuilder {
  public:
   // symbol_table is stored as reference - caller must ensure it outlives
