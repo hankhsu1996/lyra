@@ -414,4 +414,4 @@ cases:
         end
       endmodule
     expect:
-      output: "size=3, q[1]=200\n"
+      stdout: "size=3, q[1]=200\n"

@@ -16,7 +16,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_with_params
     sv: |
@@ -32,7 +32,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_qualified_call
     sv: |
@@ -47,7 +47,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_multiple
     sv: |
@@ -71,7 +71,7 @@ cases:
         end
       endmodule
     expect:
-      output: "15\n21\n42\n"
+      stdout: "15\n21\n42\n"
 
   - name: package_function_chained_calls
     sv: |
@@ -90,7 +90,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_local_vars
     sv: |
@@ -108,7 +108,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_conditional
     sv: |
@@ -128,7 +128,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n42\n"
+      stdout: "42\n42\n"
 
   - name: package_function_recursive
     sv: |
@@ -147,7 +147,7 @@ cases:
         end
       endmodule
     expect:
-      output: "120\n"
+      stdout: "120\n"
 
   - name: multiple_packages_functions
     sv: |
@@ -169,7 +169,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_calls_another
     sv: |
@@ -188,7 +188,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: module_and_package_functions
     sv: |
@@ -207,7 +207,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_function_void
     sv: |
@@ -225,4 +225,4 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"

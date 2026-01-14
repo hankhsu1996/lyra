@@ -14,7 +14,7 @@ cases:
         end
       endmodule
     expect:
-      output: "hello world\n"
+      stdout: "hello world\n"
 
   - name: string_concat_all_literals
     description: Concatenation of all string literals (bit concat wrapped in conversion)
@@ -27,7 +27,7 @@ cases:
         end
       endmodule
     expect:
-      output: "foobar\n"
+      stdout: "foobar\n"
 
   - name: string_concat_multiple
     description: Concatenation of multiple string operands
@@ -43,7 +43,7 @@ cases:
         end
       endmodule
     expect:
-      output: "one-two-three\n"
+      stdout: "one-two-three\n"
 
   - name: string_replication_constant
     description: String replication with constant count
@@ -56,7 +56,7 @@ cases:
         end
       endmodule
     expect:
-      output: "boo boo boo \n"
+      stdout: "boo boo boo \n"
 
   - name: string_replication_single
     description: String replication with count of 1
@@ -69,7 +69,7 @@ cases:
         end
       endmodule
     expect:
-      output: "hello\n"
+      stdout: "hello\n"
 
   - name: string_concat_empty
     description: Concatenation with empty string
@@ -83,4 +83,4 @@ cases:
         end
       endmodule
     expect:
-      output: "prefixsuffix\n"
+      stdout: "prefixsuffix\n"

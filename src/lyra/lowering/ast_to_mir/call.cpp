@@ -32,6 +32,20 @@
 
 namespace lyra::lowering::ast_to_mir {
 
+namespace {
+
+/// Check if a system call name is a file output task ($fdisplay, $fwrite, etc.)
+auto IsFileOutputTask(std::string_view name) -> bool {
+  return name == "$fdisplay" || name == "$fdisplayb" || name == "$fdisplayh" ||
+         name == "$fdisplayo" || name == "$fwrite" || name == "$fwriteb" ||
+         name == "$fwriteh" || name == "$fwriteo" || name == "$fstrobe" ||
+         name == "$fstrobeb" || name == "$fstrobeh" || name == "$fstrobeo" ||
+         name == "$fmonitor" || name == "$fmonitorb" || name == "$fmonitorh" ||
+         name == "$fmonitoro";
+}
+
+}  // namespace
+
 auto LowerCall(
     const slang::ast::CallExpression& call, common::TypeArena& arena,
     SymbolRegistrar& registrar) -> std::unique_ptr<mir::Expression> {
@@ -312,9 +326,18 @@ auto LowerCall(
       // Display-like tasks: separate format_expr from arguments
       size_t format_idx = 0;
       size_t args_start_idx = 0;
+      bool is_file_output = IsFileOutputTask(name);
 
-      // For $fatal, first argument is finish_number (goes to arguments[0])
-      if (name == "$fatal") {
+      // File output tasks: first argument is descriptor
+      if (is_file_output) {
+        if (!call.arguments().empty()) {
+          arguments.push_back(
+              LowerExpression(*call.arguments()[0], arena, registrar));
+        }
+        format_idx = 1;
+        args_start_idx = 1;
+      } else if (name == "$fatal") {
+        // For $fatal, first argument is finish_number (goes to arguments[0])
         if (!call.arguments().empty()) {
           arguments.push_back(
               LowerExpression(*call.arguments()[0], arena, registrar));
@@ -328,13 +351,32 @@ auto LowerCall(
         args_start_idx = 1;
       }
 
-      // Check if format argument is a string literal
+      // Check if format argument is a format string
+      // For file output tasks: detect by StringLiteral OR string type
+      // (string literals are often typed as integral, not string)
       if (format_idx < call.arguments().size()) {
         const auto& format_arg = *call.arguments()[format_idx];
-        if (format_arg.kind == slang::ast::ExpressionKind::StringLiteral) {
+        bool is_format_string = false;
+
+        if (is_file_output) {
+          // File output: detect format string by StringLiteral or string type
+          // StringLiteral check handles literal strings (may be typed as
+          // integral) isString() check handles string variables
+          is_format_string =
+              format_arg.kind == slang::ast::ExpressionKind::StringLiteral ||
+              format_arg.type->isString();
+          format_expr_is_literal =
+              format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+        } else {
+          // Regular display: only string literals are format strings
+          is_format_string =
+              format_arg.kind == slang::ast::ExpressionKind::StringLiteral;
+          format_expr_is_literal = is_format_string;
+        }
+
+        if (is_format_string) {
           // Extract format string into format_expr
           format_expr = LowerExpression(format_arg, arena, registrar);
-          format_expr_is_literal = true;
           args_start_idx = format_idx + 1;  // Skip format in arguments
         } else {
           // First arg is a value, not a format string

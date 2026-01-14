@@ -195,9 +195,10 @@ class Bit {
     return Bit<Width, false>{value_};
   }
 
-  // Implicit conversion to bool (for use in conditions like if/while)
-  // NOLINTNEXTLINE(google-explicit-constructor)
-  constexpr operator bool() const {
+  // Explicit conversion to bool (for use in conditions like if/while)
+  // Made explicit to prevent silent narrowing: FWrite(fd) where fd is Int
+  // would silently convert to bool (1) instead of int32_t if implicit.
+  explicit constexpr operator bool() const {
     return value_ != 0;
   }
 
@@ -272,6 +273,21 @@ class Bit {
 
   [[nodiscard]] constexpr auto operator!=(Bit other) const -> bool {
     return value_ != other.value_;
+  }
+
+  // Symmetric comparison with integral types (for T == Bit and T != Bit)
+  // These are needed because operator bool() is explicit, preventing
+  // implicit conversion chains like Bit -> bool -> int for comparison.
+  template <typename T>
+    requires std::is_integral_v<T>
+  [[nodiscard]] friend constexpr auto operator==(T lhs, Bit rhs) -> bool {
+    return Bit{lhs} == rhs;
+  }
+
+  template <typename T>
+    requires std::is_integral_v<T>
+  [[nodiscard]] friend constexpr auto operator!=(T lhs, Bit rhs) -> bool {
+    return Bit{lhs} != rhs;
   }
 
   [[nodiscard]] constexpr auto operator<(Bit other) const -> bool {

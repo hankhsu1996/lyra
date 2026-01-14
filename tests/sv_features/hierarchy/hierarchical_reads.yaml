@@ -58,7 +58,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains: ["value = 99"]
 
   - name: multi_level_read

@@ -19,46 +19,50 @@ struct DisplayVariantProps {
 // Get properties for a display/write variant
 inline auto GetDisplayVariantProps(std::string_view name)
     -> DisplayVariantProps {
-  if (name == "$write") {
+  // $write and $fwrite (no newline)
+  if (name == "$write" || name == "$fwrite") {
     return {.default_format = 'd', .use_println = false};
   }
-  if (name == "$writeb") {
+  if (name == "$writeb" || name == "$fwriteb") {
     return {.default_format = 'b', .use_println = false};
   }
-  if (name == "$writeo") {
+  if (name == "$writeo" || name == "$fwriteo") {
     return {.default_format = 'o', .use_println = false};
   }
-  if (name == "$writeh") {
+  if (name == "$writeh" || name == "$fwriteh") {
     return {.default_format = 'x', .use_println = false};
   }
-  if (name == "$displayb") {
+  // $display and $fdisplay (with newline)
+  if (name == "$displayb" || name == "$fdisplayb") {
     return {.default_format = 'b', .use_println = true};
   }
-  if (name == "$displayo") {
+  if (name == "$displayo" || name == "$fdisplayo") {
     return {.default_format = 'o', .use_println = true};
   }
-  if (name == "$displayh") {
+  if (name == "$displayh" || name == "$fdisplayh") {
     return {.default_format = 'x', .use_println = true};
   }
-  if (name == "$strobeb") {
+  // $strobe and $fstrobe (with newline)
+  if (name == "$strobeb" || name == "$fstrobeb") {
     return {.default_format = 'b', .use_println = true};
   }
-  if (name == "$strobeo") {
+  if (name == "$strobeo" || name == "$fstrobeo") {
     return {.default_format = 'o', .use_println = true};
   }
-  if (name == "$strobeh") {
+  if (name == "$strobeh" || name == "$fstrobeh") {
     return {.default_format = 'x', .use_println = true};
   }
-  if (name == "$monitorb") {
+  // $monitor and $fmonitor (with newline)
+  if (name == "$monitorb" || name == "$fmonitorb") {
     return {.default_format = 'b', .use_println = true};
   }
-  if (name == "$monitoro") {
+  if (name == "$monitoro" || name == "$fmonitoro") {
     return {.default_format = 'o', .use_println = true};
   }
-  if (name == "$monitorh") {
+  if (name == "$monitorh" || name == "$fmonitorh") {
     return {.default_format = 'x', .use_println = true};
   }
-  // $display, $strobe, $monitor (default)
+  // $display, $fdisplay, $strobe, $fstrobe, $monitor, $fmonitor (default)
   return {.default_format = 'd', .use_println = true};
 }
 

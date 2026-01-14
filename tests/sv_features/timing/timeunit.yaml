@@ -133,7 +133,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "timeunit=-9, timeprecision=-12"
 
@@ -205,6 +205,6 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "root unit=-9, root prec=-9"

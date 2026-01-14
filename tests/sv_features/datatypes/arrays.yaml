@@ -88,7 +88,7 @@ cases:
         end
       endmodule
     expect:
-      output: "arr[0]=1 arr[1]=2 arr[2]=3\n"
+      stdout: "arr[0]=1 arr[1]=2 arr[2]=3\n"
 
   - name: module_level_array
     sv: |

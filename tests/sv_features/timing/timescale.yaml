@@ -29,7 +29,7 @@ cases:
       endmodule
     expect:
       time: 10000
-      output:
+      stdout:
         contains:
           - "time=10"
 
@@ -141,7 +141,7 @@ cases:
       endmodule
     expect:
       time: 42000
-      output:
+      stdout:
         contains:
           - "realtime=42"
 

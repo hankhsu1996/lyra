@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <functional>
 #include <tuple>
-#include <type_traits>
 
 namespace lyra::sdk {
 
@@ -19,18 +18,29 @@ enum class EdgeKind { kAnyChange, kPosedge, kNegedge, kBothEdge };
 
 namespace detail {
 
-// Creates a stateful lambda that checks if a trigger condition is met
+// Concept: type can be read as an integral value for edge detection.
+// Uses explicit static_cast (Bit<> has explicit operator T, not implicit).
+template <typename T>
+concept IntegralReadable = requires(T v) { static_cast<uint64_t>(v); };
+
+// Creates a stateful lambda that checks if a trigger condition is met.
+// For edge triggers, requires IntegralReadable<T> (enforced by
+// Posedge/Negedge).
 template <typename T>
 auto MakeTriggerChecker(T* var, EdgeKind kind) -> std::function<bool()> {
   if (kind == EdgeKind::kAnyChange) {
+    // Any-change works for any comparable type (strings, structs, etc.)
     return [var, prev = *var]() mutable {
       bool triggered = *var != prev;
       prev = *var;
       return triggered;
     };
   }
-  // Edge triggers only make sense for types convertible to uint64_t
-  if constexpr (std::is_convertible_v<T, uint64_t>) {
+  // Edge triggers require reading the value as an integer to detect 0->1/1->0.
+  // IntegralReadable<T> is enforced by the Posedge/Negedge factory functions.
+  // Use if constexpr to prevent compilation of this branch for non-integral
+  // types.
+  if constexpr (IntegralReadable<T>) {
     return [var, kind, prev_bit = static_cast<uint64_t>(*var) & 1]() mutable {
       uint64_t new_bit = static_cast<uint64_t>(*var) & 1;
       bool triggered = false;
@@ -51,7 +61,10 @@ auto MakeTriggerChecker(T* var, EdgeKind kind) -> std::function<bool()> {
       return triggered;
     };
   } else {
-    // Non-numeric types don't support edge triggers
+    // Unreachable at runtime: Posedge/Negedge factory functions have requires
+    // clauses that prevent non-IntegralReadable types. This branch exists only
+    // for template instantiation when Change() is used with non-integral types.
+    // Return a dummy to satisfy the compiler; it will never be called.
     return []() { return false; };
   }
 }
@@ -96,17 +109,21 @@ class Trigger {
   EdgeKind kind_;
 };
 
-// Factory functions for creating triggers
+// Factory functions for creating triggers.
+// Posedge/Negedge require IntegralReadable types for edge detection.
 template <typename T>
+  requires detail::IntegralReadable<T>
 auto Posedge(T* var) -> Trigger<T> {
   return Trigger<T>(var, EdgeKind::kPosedge);
 }
 
 template <typename T>
+  requires detail::IntegralReadable<T>
 auto Negedge(T* var) -> Trigger<T> {
   return Trigger<T>(var, EdgeKind::kNegedge);
 }
 
+// Change() works with any comparable type (strings, structs, etc.)
 template <typename T>
 auto Change(T* var) -> Trigger<T> {
   return Trigger<T>(var, EdgeKind::kAnyChange);

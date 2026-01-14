@@ -10,7 +10,7 @@ cases:
         initial $display("%f", x);
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: shortreal_declaration_with_init
     sv: |
@@ -19,7 +19,7 @@ cases:
         initial $display("%f", x);
       endmodule
     expect:
-      output: "3.140000\n"
+      stdout: "3.140000\n"
 
   - name: shortreal_local_variable
     sv: |
@@ -30,7 +30,7 @@ cases:
         end
       endmodule
     expect:
-      output: "2.500000\n"
+      stdout: "2.500000\n"
 
   - name: shortreal_assignment
     sv: |
@@ -42,7 +42,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.250000\n"
+      stdout: "1.250000\n"
 
   # Arithmetic operation tests
   - name: shortreal_add
@@ -57,7 +57,7 @@ cases:
         end
       endmodule
     expect:
-      output: "4.000000\n"
+      stdout: "4.000000\n"
 
   - name: shortreal_subtract
     sv: |
@@ -71,7 +71,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.500000\n"
+      stdout: "3.500000\n"
 
   - name: shortreal_multiply
     sv: |
@@ -85,7 +85,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10.000000\n"
+      stdout: "10.000000\n"
 
   - name: shortreal_divide
     sv: |
@@ -99,7 +99,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.000000\n"
+      stdout: "3.000000\n"
 
   - name: shortreal_power
     sv: |
@@ -113,7 +113,7 @@ cases:
         end
       endmodule
     expect:
-      output: "8.000000\n"
+      stdout: "8.000000\n"
 
   - name: shortreal_unary_minus
     sv: |
@@ -126,7 +126,7 @@ cases:
         end
       endmodule
     expect:
-      output: "-3.500000\n"
+      stdout: "-3.500000\n"
 
   - name: shortreal_unary_plus
     sv: |
@@ -139,7 +139,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.500000\n"
+      stdout: "3.500000\n"
 
   # Comparison operation tests
   - name: shortreal_less_than_true
@@ -150,7 +150,7 @@ cases:
         initial $display("%d", a < b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_less_than_false
     sv: |
@@ -160,7 +160,7 @@ cases:
         initial $display("%d", a < b);
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: shortreal_greater_than_true
     sv: |
@@ -170,7 +170,7 @@ cases:
         initial $display("%d", a > b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_greater_than_false
     sv: |
@@ -180,7 +180,7 @@ cases:
         initial $display("%d", a > b);
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: shortreal_equal_true
     sv: |
@@ -190,7 +190,7 @@ cases:
         initial $display("%d", a == b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_not_equal_true
     sv: |
@@ -200,7 +200,7 @@ cases:
         initial $display("%d", a != b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   # Logical operation tests
   - name: shortreal_logical_and_true
@@ -211,7 +211,7 @@ cases:
         initial $display("%d", a && b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_logical_and_false
     sv: |
@@ -221,7 +221,7 @@ cases:
         initial $display("%d", a && b);
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   - name: shortreal_logical_or_true
     sv: |
@@ -231,7 +231,7 @@ cases:
         initial $display("%d", a || b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_logical_not_true
     sv: |
@@ -240,7 +240,7 @@ cases:
         initial $display("%d", !a);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: shortreal_logical_not_false
     sv: |
@@ -249,7 +249,7 @@ cases:
         initial $display("%d", !a);
       endmodule
     expect:
-      output: "0\n"
+      stdout: "0\n"
 
   # Type conversion tests
   - name: int_to_shortreal_conversion
@@ -263,7 +263,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42.000000\n"
+      stdout: "42.000000\n"
 
   - name: shortreal_to_int_conversion
     sv: |
@@ -276,7 +276,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3\n"
+      stdout: "3\n"
 
   - name: shortreal_to_int_negative
     sv: |
@@ -289,7 +289,7 @@ cases:
         end
       endmodule
     expect:
-      output: "-3\n"
+      stdout: "-3\n"
 
   # Mixed shortreal/real operations (should promote to real)
   - name: shortreal_real_add
@@ -304,7 +304,7 @@ cases:
         end
       endmodule
     expect:
-      output: "4.000000\n"
+      stdout: "4.000000\n"
 
   - name: real_shortreal_multiply
     sv: |
@@ -318,7 +318,7 @@ cases:
         end
       endmodule
     expect:
-      output: "10.000000\n"
+      stdout: "10.000000\n"
 
   - name: shortreal_real_comparison
     sv: |
@@ -328,7 +328,7 @@ cases:
         initial $display("%d", a < b);
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   # Shortreal as condition
   - name: shortreal_as_condition
@@ -343,7 +343,7 @@ cases:
         end
       endmodule
     expect:
-      output: "nonzero\n"
+      stdout: "nonzero\n"
 
   - name: shortreal_zero_as_condition
     sv: |
@@ -357,7 +357,7 @@ cases:
         end
       endmodule
     expect:
-      output: "zero\n"
+      stdout: "zero\n"
 
   # Real to shortreal conversion (precision loss)
   - name: real_to_shortreal_conversion
@@ -371,7 +371,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.141593\n"
+      stdout: "3.141593\n"
 
   # Shortreal to real conversion (precision gain)
   - name: shortreal_to_real_conversion
@@ -385,4 +385,4 @@ cases:
         end
       endmodule
     expect:
-      output: "3.140000\n"
+      stdout: "3.140000\n"

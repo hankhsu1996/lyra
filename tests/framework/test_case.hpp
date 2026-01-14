@@ -37,7 +37,8 @@ struct TestCase {
   std::vector<std::string> plusargs;
   std::map<std::string, ExpectedValue> expected_values;
   std::optional<uint64_t> expected_time;
-  std::optional<ExpectedOutput> expected_output;
+  std::optional<ExpectedOutput> expected_stdout;
+  std::map<std::string, ExpectedOutput> expected_files;
   bool skip_codegen = false;      // Skip codegen test (e.g., for hierarchy)
   bool skip_interpreter = false;  // Skip interpreter test
 

@@ -5,10 +5,70 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace lyra::sdk {
+
+/// Thin wrapper around file descriptor values to prevent type confusion.
+/// Prevents accidental passing of random integers as descriptors.
+/// No implicit conversions - use .IsValid(), .IsMcd(), .Raw() to inspect.
+class FileDescriptor {
+ public:
+  /// Construct from raw descriptor value (from $fopen or literal like 1).
+  /// Use FileDescriptor::Invalid() for closed/failed descriptors.
+  explicit constexpr FileDescriptor(uint32_t value) : value_(value) {
+  }
+
+  /// Invalid/closed descriptor (value 0).
+  static constexpr auto Invalid() -> FileDescriptor {
+    return FileDescriptor{0};
+  }
+
+  /// Standard output MCD (bit 0).
+  static constexpr auto Stdout() -> FileDescriptor {
+    return FileDescriptor{1};
+  }
+
+  /// Check if this is a valid (non-zero) descriptor.
+  [[nodiscard]] constexpr auto IsValid() const -> bool {
+    return value_ != 0;
+  }
+
+  /// Check if this is an MCD (multichannel descriptor, bit 31 clear).
+  [[nodiscard]] constexpr auto IsMcd() const -> bool {
+    return (value_ & 0x8000'0000U) == 0;
+  }
+
+  /// Check if this is an FD (file descriptor, bit 31 set).
+  [[nodiscard]] constexpr auto IsFd() const -> bool {
+    return (value_ & 0x8000'0000U) != 0;
+  }
+
+  /// Get raw value for internal use.
+  [[nodiscard]] constexpr auto Raw() const -> uint32_t {
+    return value_;
+  }
+
+  /// Convert to int32_t for assignment to SV int variables.
+  /// Use this for `Int fd = FOpen(...).ToInt32()`.
+  [[nodiscard]] constexpr auto ToInt32() const -> int32_t {
+    return static_cast<int32_t>(value_);
+  }
+
+  /// Equality comparison.
+  [[nodiscard]] constexpr auto operator==(FileDescriptor other) const -> bool {
+    return value_ == other.value_;
+  }
+
+  [[nodiscard]] constexpr auto operator!=(FileDescriptor other) const -> bool {
+    return value_ != other.value_;
+  }
+
+ private:
+  uint32_t value_;
+};
 
 /// File mode for file descriptors (FD model).
 /// Maps to LRM Table 21-6 file open types.
@@ -94,8 +154,9 @@ class FileManager {
   auto operator=(FileManager&&) -> FileManager& = default;
 
   /// $fopen(filename) - MCD mode (write-only).
-  /// Returns MCD descriptor (single bit set in [1:30]), or 0 on failure.
-  auto FopenMcd(std::string_view filename) -> int32_t {
+  /// Returns MCD descriptor (single bit set in [1:30]), or Invalid() on
+  /// failure.
+  auto FopenMcd(std::string_view filename) -> FileDescriptor {
     // Find free channel (bits 1-30, bit 0 is stdout)
     for (int channel = 1; channel <= 30; ++channel) {
       int32_t mask = 1 << channel;
@@ -104,34 +165,36 @@ class FileManager {
         auto stream = std::make_unique<std::fstream>(
             path, std::ios_base::out | std::ios_base::trunc);
         if (!stream->is_open()) {
-          return 0;  // Open failed
+          return FileDescriptor::Invalid();
         }
         mcd_channels_[mask] = std::move(stream);
-        return mask;
+        return FileDescriptor{static_cast<uint32_t>(mask)};
       }
     }
-    return 0;  // No free channels
+    return FileDescriptor::Invalid();
   }
 
   /// $fopen(filename, mode) - FD mode with explicit mode.
-  /// Returns FD descriptor (0x80000000 | index), or 0 on failure.
+  /// Returns FD descriptor (0x80000000 | index), or Invalid() on failure.
   auto FopenFd(std::string_view filename, std::string_view mode_str)
-      -> int32_t {
+      -> FileDescriptor {
     auto mode = ParseFileMode(mode_str);
     auto path = ResolvePath(filename);
     auto stream = std::make_unique<std::fstream>(path, ToOpenMode(mode));
     if (!stream->is_open()) {
-      return 0;  // Open failed
+      return FileDescriptor::Invalid();
     }
 
     int32_t index = next_fd_index_++;
-    int32_t descriptor = kFdBit | index;
+    uint32_t descriptor = kFdBit | static_cast<uint32_t>(index);
     fd_table_[index] = std::move(stream);
-    return descriptor;
+    return FileDescriptor{descriptor};
   }
 
   /// $fclose(descriptor) - close file and release handle.
-  void Fclose(int32_t descriptor) {
+  void Fclose(FileDescriptor fd) {
+    uint32_t descriptor = fd.Raw();
+
     // STDOUT/STDERR: no-op
     if (descriptor == kStdout || descriptor == kStderr) {
       return;
@@ -139,25 +202,68 @@ class FileManager {
 
     // FD: close single descriptor
     if ((descriptor & kFdBit) != 0) {
-      int32_t index = descriptor & ~kFdBit;
+      auto index = static_cast<int32_t>(descriptor & ~kFdBit);
       fd_table_.erase(index);
       return;
     }
 
     // MCD: must be power-of-2 (single channel)
     if (descriptor != 0 && (descriptor & (descriptor - 1)) == 0) {
-      mcd_channels_.erase(descriptor);
+      mcd_channels_.erase(static_cast<int32_t>(descriptor));
+    }
+  }
+
+  /// Write content to file(s) specified by descriptor.
+  /// Handles both MCD (multichannel, OR-able) and FD (single file) modes.
+  /// Invalid or closed descriptors are silently ignored per LRM.
+  ///
+  /// @param fd FileDescriptor (MCD or FD)
+  /// @param content The text to write
+  /// @param transcript_sink Output stream for transcript (stdout/MCD bit 0)
+  void WriteToDescriptor(
+      FileDescriptor fd, std::string_view content,
+      std::ostream& transcript_sink) {
+    uint32_t descriptor = fd.Raw();
+    if (descriptor == 0) {
+      return;  // Invalid/closed
+    }
+
+    if ((descriptor & 0x8000'0000U) != 0) {
+      // FD mode - single file
+      uint32_t index = descriptor & 0x7FFF'FFFFU;
+      if (index == 1 || index == 2) {
+        // stdout (1) or stderr (2) -> transcript
+        transcript_sink << content;
+      } else if (auto it = fd_table_.find(static_cast<int32_t>(index));
+                 it != fd_table_.end()) {
+        *it->second << content;
+      }
+      // Invalid index: silently ignored
+    } else {
+      // MCD mode - check each bit
+      if ((descriptor & 1U) != 0) {
+        transcript_sink << content;  // bit 0 = transcript
+      }
+      for (uint32_t bit = 1; bit <= 30; ++bit) {
+        if ((descriptor & (1U << bit)) != 0) {
+          auto mask = static_cast<int32_t>(1U << bit);
+          if (auto it = mcd_channels_.find(mask); it != mcd_channels_.end()) {
+            *it->second << content;
+          }
+          // Bit set but no channel: silently ignored (closed or never opened)
+        }
+      }
     }
   }
 
  private:
   // Standard streams in FD model (bit 31 set | stream index).
   // Index 0 = stdin, 1 = stdout, 2 = stderr.
-  static constexpr int32_t kStdout = static_cast<int32_t>(0x80000001);
-  static constexpr int32_t kStderr = static_cast<int32_t>(0x80000002);
+  static constexpr uint32_t kStdout = 0x8000'0001U;
+  static constexpr uint32_t kStderr = 0x8000'0002U;
 
   // Bit 31 distinguishes FD (set) from MCD (clear).
-  static constexpr int32_t kFdBit = static_cast<int32_t>(0x80000000);
+  static constexpr uint32_t kFdBit = 0x8000'0000U;
 
   // MCD channels: bit-mask -> file stream
   std::map<int32_t, std::unique_ptr<std::fstream>> mcd_channels_;

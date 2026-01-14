@@ -30,7 +30,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.140000\n"
+      stdout: "3.140000\n"
 
   - name: default_initialization
     description: Union defaults to first member's default (int 0)
@@ -58,7 +58,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0.000000\n"
+      stdout: "0.000000\n"
 
   - name: two_int_fields
     description: Union with two int fields, access each
@@ -98,7 +98,7 @@ cases:
     expect:
       variables:
         result_i: 999
-      output: "2.718000\n1.500000\n"
+      stdout: "2.718000\n1.500000\n"
 
   - name: field_overwrite
     description: Write to one member, then write to another
@@ -117,7 +117,7 @@ cases:
     expect:
       variables:
         result_i: 42
-      output: "3.140000\n"
+      stdout: "3.140000\n"
 
   - name: multiple_writes_same_field
     description: Multiple writes to same field

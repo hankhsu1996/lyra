@@ -91,7 +91,7 @@ cases:
     expect:
       variables:
         matched: 1
-      output:
+      stdout:
         contains:
           - "NAME=hello"
 

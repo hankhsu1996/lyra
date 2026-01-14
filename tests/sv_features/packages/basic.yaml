@@ -16,7 +16,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ab\n"
+      stdout: "ab\n"
 
   - name: package_typedef_signed
     sv: |
@@ -32,7 +32,7 @@ cases:
         end
       endmodule
     expect:
-      output: "-10\n"
+      stdout: "-10\n"
 
   - name: package_typedef_multiple
     sv: |
@@ -54,7 +54,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ab 1234 deadbeef\n"
+      stdout: "ab 1234 deadbeef\n"
 
   - name: package_enum_basic
     sv: |
@@ -70,7 +70,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: package_enum_all_values
     sv: |
@@ -88,7 +88,7 @@ cases:
         end
       endmodule
     expect:
-      output: "0\n1\n2\n3\n"
+      stdout: "0\n1\n2\n3\n"
 
   - name: package_enum_explicit_values
     sv: |
@@ -105,7 +105,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1\n5\n10\n"
+      stdout: "1\n5\n10\n"
 
   - name: multiple_packages
     sv: |
@@ -127,7 +127,7 @@ cases:
         end
       endmodule
     expect:
-      output: "aa bbbb\n"
+      stdout: "aa bbbb\n"
 
   - name: package_qualified_access
     sv: |
@@ -142,7 +142,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1234\n"
+      stdout: "1234\n"
 
   - name: package_qualified_enum
     sv: |
@@ -157,7 +157,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: package_variable_basic
     sv: |
@@ -171,7 +171,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ab\n"
+      stdout: "ab\n"
 
   - name: package_variable_modify
     sv: |
@@ -186,7 +186,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1\n"
+      stdout: "1\n"
 
   - name: package_variable_qualified
     sv: |
@@ -199,7 +199,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"
 
   - name: package_parameter_basic
     sv: |
@@ -213,7 +213,7 @@ cases:
         end
       endmodule
     expect:
-      output: "8\n"
+      stdout: "8\n"
 
   - name: package_localparam_basic
     sv: |
@@ -227,7 +227,7 @@ cases:
         end
       endmodule
     expect:
-      output: "16\n"
+      stdout: "16\n"
 
   - name: package_parameter_dependent
     sv: |
@@ -242,7 +242,7 @@ cases:
         end
       endmodule
     expect:
-      output: "WIDTH=8 AREA=64\n"
+      stdout: "WIDTH=8 AREA=64\n"
 
   - name: package_parameter_in_type
     sv: |
@@ -258,7 +258,7 @@ cases:
         end
       endmodule
     expect:
-      output: "ff\n"
+      stdout: "ff\n"
 
   - name: package_parameter_qualified
     sv: |
@@ -271,4 +271,4 @@ cases:
         end
       endmodule
     expect:
-      output: "42\n"
+      stdout: "42\n"

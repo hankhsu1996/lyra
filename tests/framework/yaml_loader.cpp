@@ -1,6 +1,7 @@
 #include "tests/framework/yaml_loader.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <initializer_list>
 #include <ranges>
@@ -89,7 +90,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     if (node["expect"]) {
       const auto& expect = node["expect"];
       ValidateKeys(
-          expect, {"variables", "time", "output"},
+          expect, {"variables", "time", "stdout", "files"},
           std::format("expect in case '{}'", tc.name), path);
 
       // expect.variables: {var: value, ...}
@@ -111,29 +112,81 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         tc.expected_time = expect["time"].as<uint64_t>();
       }
 
-      // expect.output: string OR {contains: [...]}
-      if (expect["output"]) {
+      // expect.stdout: string OR {contains: [...]}
+      if (expect["stdout"]) {
         ExpectedOutput output;
-        if (expect["output"].IsScalar()) {
+        if (expect["stdout"].IsScalar()) {
           // Simple string - exact match
-          output.exact = expect["output"].as<std::string>();
+          output.exact = expect["stdout"].as<std::string>();
         } else {
           // Map with contains/not_contains
           ValidateKeys(
-              expect["output"], {"contains", "not_contains"},
-              std::format("expect.output in case '{}'", tc.name), path);
-          if (expect["output"]["contains"]) {
-            for (const auto& item : expect["output"]["contains"]) {
+              expect["stdout"], {"contains", "not_contains"},
+              std::format("expect.stdout in case '{}'", tc.name), path);
+          if (expect["stdout"]["contains"]) {
+            for (const auto& item : expect["stdout"]["contains"]) {
               output.contains.push_back(item.as<std::string>());
             }
           }
-          if (expect["output"]["not_contains"]) {
-            for (const auto& item : expect["output"]["not_contains"]) {
+          if (expect["stdout"]["not_contains"]) {
+            for (const auto& item : expect["stdout"]["not_contains"]) {
               output.not_contains.push_back(item.as<std::string>());
             }
           }
         }
-        tc.expected_output = std::move(output);
+        tc.expected_stdout = std::move(output);
+      }
+
+      // expect.files: {filename: content_or_spec, ...}
+      // Filenames must normalize to paths within work_dir (no escaping via ..)
+      if (expect["files"]) {
+        for (const auto& pair : expect["files"]) {
+          auto filename = pair.first.as<std::string>();
+
+          // Normalize path and validate it stays under work_dir
+          // Replace backslashes with forward slashes for cross-platform
+          // consistency
+          std::ranges::replace(filename, '\\', '/');
+          auto normalized = std::filesystem::path(filename).lexically_normal();
+          auto normalized_str = normalized.string();
+
+          // Reject: empty, absolute, or escapes work_dir (starts with ..)
+          bool invalid = normalized_str.empty() || normalized.is_absolute() ||
+                         normalized_str.starts_with("..") ||
+                         normalized_str.find("/../") != std::string::npos;
+          if (invalid) {
+            auto mark = pair.first.Mark();
+            throw std::runtime_error(
+                std::format(
+                    "{}:{}: Invalid filename '{}' (normalized: '{}') in "
+                    "expect.files - must be relative path within work_dir",
+                    path, mark.line + 1, pair.first.as<std::string>(),
+                    normalized_str));
+          }
+
+          ExpectedOutput file_content;
+          if (pair.second.IsScalar()) {
+            // Simple string - exact match
+            file_content.exact = pair.second.as<std::string>();
+          } else {
+            // Map with contains/not_contains
+            ValidateKeys(
+                pair.second, {"contains", "not_contains"},
+                std::format("expect.files.{} in case '{}'", filename, tc.name),
+                path);
+            if (pair.second["contains"]) {
+              for (const auto& item : pair.second["contains"]) {
+                file_content.contains.push_back(item.as<std::string>());
+              }
+            }
+            if (pair.second["not_contains"]) {
+              for (const auto& item : pair.second["not_contains"]) {
+                file_content.not_contains.push_back(item.as<std::string>());
+              }
+            }
+          }
+          tc.expected_files[filename] = std::move(file_content);
+        }
       }
     }
 

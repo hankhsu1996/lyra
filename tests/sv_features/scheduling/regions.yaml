@@ -14,7 +14,7 @@ cases:
         end
       endmodule
     expect:
-      output: "x=10\n"
+      stdout: "x=10\n"
       variables:
         x: 20
       time: 1

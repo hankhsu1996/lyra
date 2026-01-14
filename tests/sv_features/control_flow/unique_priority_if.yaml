@@ -20,7 +20,7 @@ cases:
     expect:
       variables:
         result: 100
-      output:
+      stdout:
         contains:
           - "WARNING"
           - "no condition matched"
@@ -44,7 +44,7 @@ cases:
     expect:
       variables:
         result: 99
-      output:
+      stdout:
         not_contains:
           - "WARNING"
 
@@ -66,7 +66,7 @@ cases:
     expect:
       variables:
         result: 10
-      output:
+      stdout:
         contains:
           - "WARNING"
           - "multiple conditions"
@@ -89,7 +89,7 @@ cases:
     expect:
       variables:
         result: 100
-      output:
+      stdout:
         contains:
           - "WARNING"
           - "no condition matched"
@@ -111,6 +111,6 @@ cases:
     expect:
       variables:
         result: 100
-      output:
+      stdout:
         not_contains:
           - "WARNING"

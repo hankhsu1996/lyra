@@ -55,7 +55,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "time=10"
 
@@ -102,7 +102,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "t=50"
 
@@ -115,7 +115,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "realtime=25"
 
@@ -130,7 +130,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "time+5=15"
 
@@ -144,7 +144,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "stime*2=40"
 
@@ -159,7 +159,7 @@ cases:
         end
       endmodule
     expect:
-      output:
+      stdout:
         contains:
           - "t+10=25"
 
@@ -182,6 +182,6 @@ cases:
       variables:
         t1: 42
         t2: 42
-      output:
+      stdout:
         contains:
           - "t1=42 t2=42 t3=42"

@@ -150,10 +150,19 @@ Supported:
 - `$timeunit($root)`, `$timeprecision($root)` - query global precision
 - `$printtimescale`, `$printtimescale($root)` - print timescale info
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
+- `$fopen`, `$fclose` - file I/O (MCD and FD modes)
+- `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
+- `$fwrite`, `$fwriteb`, `$fwriteo`, `$fwriteh` - file output without newline
+- `$fstrobe`, `$fstrobeb`, `$fstrobeo`, `$fstrobeh` - postponed file output
+- `$fmonitor`, `$fmonitorb`, `$fmonitoro`, `$fmonitorh` - file value change monitoring
+- `$test$plusargs`, `$value$plusargs` - plusargs command-line arguments
 
 Not yet supported:
 
 - `$random`, `$urandom` - random number generation
+- `$fflush` - explicit file flush
+- `$fgets`, `$fscanf`, `$fread` - file reading
+- `$fseek`, `$ftell`, `$rewind`, `$feof` - file positioning
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
 - `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
@@ -195,3 +204,15 @@ See [scheduling.md](scheduling.md) for implemented regions.
 ## $monitor Limitations
 
 - **Same-time-slot operations**: When `$monitor` is replaced or `$monitoroff` is called in the same time slot as a value change, that change may not be detected. This is due to CheckMonitor running at the end of the time slot after all instructions have executed.
+
+## Display/File Output Limitations
+
+- **Runtime format strings (codegen only)**: Dynamic format strings stored in string variables are not supported in the codegen path:
+
+  ```systemverilog
+  string fmt = "X=%0d";
+  $display(fmt, 7);    // Works in interpreter, fails in codegen
+  $fdisplay(1, fmt, 7); // Same limitation
+  ```
+
+  Literal format strings work correctly in both paths. The interpreter has a runtime format parser; codegen generates compile-time `std::format` calls. Runtime format support will be added with `$sformatf`.

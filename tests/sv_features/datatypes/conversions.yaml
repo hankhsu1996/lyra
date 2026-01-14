@@ -72,7 +72,7 @@ cases:
         end
       endmodule
     expect:
-      output: "42.000000\n"
+      stdout: "42.000000\n"
 
   - name: itor_negative
     sv: |
@@ -86,7 +86,7 @@ cases:
         end
       endmodule
     expect:
-      output: "-123.000000\n"
+      stdout: "-123.000000\n"
 
   - name: rtoi_truncate_positive
     sv: |
@@ -128,7 +128,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3ff0000000000000\n"
+      stdout: "3ff0000000000000\n"
 
   - name: bitstoreal_basic
     sv: |
@@ -142,7 +142,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.000000\n"
+      stdout: "1.000000\n"
 
   - name: realtobits_negative
     sv: |
@@ -156,7 +156,7 @@ cases:
         end
       endmodule
     expect:
-      output: "bff0000000000000\n"
+      stdout: "bff0000000000000\n"
 
   - name: bitstoreal_roundtrip
     sv: |
@@ -171,7 +171,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.141593\n"
+      stdout: "3.141593\n"
 
   - name: shortrealtobits_basic
     sv: |
@@ -185,7 +185,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3f800000\n"
+      stdout: "3f800000\n"
 
   - name: bitstoshortreal_basic
     sv: |
@@ -199,7 +199,7 @@ cases:
         end
       endmodule
     expect:
-      output: "1.000000\n"
+      stdout: "1.000000\n"
 
   - name: shortrealtobits_negative
     sv: |
@@ -213,7 +213,7 @@ cases:
         end
       endmodule
     expect:
-      output: "bf800000\n"
+      stdout: "bf800000\n"
 
   - name: bitstoshortreal_roundtrip
     sv: |
@@ -228,4 +228,4 @@ cases:
         end
       endmodule
     expect:
-      output: "3.141590\n"
+      stdout: "3.141590\n"

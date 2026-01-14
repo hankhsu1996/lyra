@@ -42,21 +42,21 @@ auto HandleFileIoCalls(const lir::Instruction& instr, InstructionContext& ctx)
     std::string filename =
         GetFilenameString(filename_value, instr.format_string_is_literal);
 
-    int32_t descriptor = 0;
+    sdk::FileDescriptor fd = sdk::FileDescriptor::Invalid();
     if (instr.operands.size() == 1) {
       // MCD mode
-      descriptor = sim.file_manager.FopenMcd(filename);
+      fd = sim.file_manager.FopenMcd(filename);
     } else {
       // FD mode with explicit mode string
       auto mode_value = ctx.GetOperandValue(instr.operands[1]);
       std::string mode =
           GetFilenameString(mode_value, instr.format_string_is_literal);
-      descriptor = sim.file_manager.FopenFd(filename, mode);
+      fd = sim.file_manager.FopenFd(filename, mode);
     }
 
     // Write result (int32)
     ctx.GetTempTable().Write(
-        instr.result.value(), RuntimeValue::IntegralSigned(descriptor, 32));
+        instr.result.value(), RuntimeValue::IntegralSigned(fd.ToInt32(), 32));
     return InstructionResult::Continue();
   }
 
@@ -65,9 +65,17 @@ auto HandleFileIoCalls(const lir::Instruction& instr, InstructionContext& ctx)
 
     // Get descriptor
     auto desc_value = ctx.GetOperandValue(instr.operands[0]);
-    auto descriptor = static_cast<int32_t>(desc_value.AsNarrow().AsInt64());
+    auto descriptor = static_cast<uint32_t>(desc_value.AsNarrow().AsInt64());
+    sdk::FileDescriptor fd{descriptor};
 
-    sim.file_manager.Fclose(descriptor);
+    sim.file_manager.Fclose(fd);
+
+    // Cancel $fmonitor if its file descriptor matches (IEEE 1800-2023 21.3.1)
+    if (sim.active_monitor &&
+        sim.active_monitor->file_descriptor == descriptor) {
+      sim.active_monitor.reset();
+    }
+
     return InstructionResult::Continue();
   }
 

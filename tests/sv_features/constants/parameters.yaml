@@ -128,7 +128,7 @@ cases:
         end
       endmodule
     expect:
-      output: "VALUE=42\n"
+      stdout: "VALUE=42\n"
 
   - name: param_multiple_display
     description: Multiple parameters in $display
@@ -142,7 +142,7 @@ cases:
         end
       endmodule
     expect:
-      output: "X=10 Y=20 SUM=30\n"
+      stdout: "X=10 Y=20 SUM=30\n"
 
   - name: param_comparison
     description: Parameter used in comparison
@@ -175,7 +175,7 @@ cases:
         end
       endmodule
     expect:
-      output: "3.141590\n"
+      stdout: "3.141590\n"
 
   - name: param_zero_value
     description: Parameter with zero value

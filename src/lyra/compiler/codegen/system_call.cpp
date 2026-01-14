@@ -134,7 +134,7 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
     auto props = GetDisplayVariantProps(syscall.name);
 
     // Wrap print in lambda scheduled to Postponed region
-    Line("lyra::sdk::current_scheduler->SchedulePostponed([=]() {");
+    Line("lyra::sdk::current_scheduler->SchedulePostponed([=, this]() {");
     indent_++;
 
     // Empty call - just print newline
@@ -314,6 +314,396 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
   }
   if (syscall.name == "$monitoroff") {
     Line("lyra::sdk::current_scheduler->SetMonitorEnabled(false);");
+    return;
+  }
+
+  // Handle file monitor variants ($fmonitor)
+  if (syscall.name == "$fmonitor" || syscall.name == "$fmonitorb" ||
+      syscall.name == "$fmonitoro" || syscall.name == "$fmonitorh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // arguments[0] = descriptor, arguments[1..] = values to monitor
+
+    // Empty call (descriptor only) - print newline once
+    if (!syscall.format_expr && syscall.arguments.size() == 1) {
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(";
+      EmitExpression(*syscall.arguments[0]);
+      out_ << ")}, \"\\n\");\n";
+      return;
+    }
+
+    // Extract format string info from format_expr
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
+    std::string sv_fmt = fmt_info.has_format_specifiers ? fmt_info.text : "";
+    std::string prefix_str =
+        (fmt_info.is_string_literal && !fmt_info.has_format_specifiers)
+            ? fmt_info.text
+            : "";
+
+    // Generate block scope for descriptor and previous value captures
+    Line("{");
+    indent_++;
+
+    // Capture descriptor value as int32_t (explicit cast required since
+    // Bit's operator T() is explicit, avoiding accidental use of operator bool)
+    Indent();
+    out_ << "auto fd_ = static_cast<int32_t>(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ");\n";
+
+    // Capture initial values for each monitored argument (starting at index 1)
+    std::vector<std::string> prev_names;
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      auto prev_name = std::format("prev_{}", i - 1);
+      prev_names.push_back(prev_name);
+      Indent();
+      out_ << "auto " << prev_name << " = ";
+      EmitExpression(*syscall.arguments[i]);
+      out_ << ";\n";
+    }
+
+    // Generate SetMonitor call with lambda and file descriptor
+    Indent();
+    out_ << "lyra::sdk::current_scheduler->SetMonitor([this, fd_";
+    for (const auto& prev_name : prev_names) {
+      out_ << ", " << prev_name;
+    }
+    out_ << "]() mutable {\n";
+    indent_++;
+
+    // Generate comparison: if (arg1 != prev_0 || arg2 != prev_1 || ...)
+    Indent();
+    out_ << "if (";
+    if (prev_names.empty()) {
+      out_ << "false";
+    } else {
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        if (i > 1) {
+          out_ << " || ";
+        }
+        EmitExpression(*syscall.arguments[i], kPrecEquality);
+        out_ << " != " << prev_names[i - 1];
+      }
+    }
+    out_ << ") {\n";
+    indent_++;
+
+    // Generate FWrite statement inside the if block
+    if (!prefix_str.empty() && syscall.arguments.size() == 1) {
+      // String-only
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(fd_)}, \""
+           << common::EscapeForCppString(prefix_str) << "\\n\");\n";
+    } else {
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(fd_)}, ";
+      if (!prefix_str.empty()) {
+        out_ << "\"" << common::EscapeForCppString(prefix_str) << "\" + ";
+      }
+      // Build format string for remaining args
+      std::string fmt_str;
+      if (!sv_fmt.empty()) {
+        fmt_str = common::TransformToStdFormat(sv_fmt) + "\\n";
+      } else {
+        for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+          if (syscall.arguments[i]->type.kind ==
+              common::Type::Kind::kIntegral) {
+            fmt_str += "{:";
+            fmt_str += props.default_format;
+            fmt_str += "}";
+          } else {
+            fmt_str += "{}";
+          }
+        }
+        fmt_str += "\\n";
+      }
+      out_ << "std::format(\"" << fmt_str << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+    }
+
+    // Update previous values
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      Indent();
+      out_ << prev_names[i - 1] << " = ";
+      EmitExpression(*syscall.arguments[i]);
+      out_ << ";\n";
+    }
+
+    indent_--;
+    Line("}");  // End if
+    indent_--;
+    Line("}, static_cast<uint32_t>(fd_));");  // End lambda with file descriptor
+
+    // Print immediately on first call (IEEE 1800 §21.2.3)
+    if (!prefix_str.empty() && syscall.arguments.size() == 1) {
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(fd_)}, \""
+           << common::EscapeForCppString(prefix_str) << "\\n\");\n";
+    } else {
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(fd_)}, ";
+      if (!prefix_str.empty()) {
+        out_ << "\"" << common::EscapeForCppString(prefix_str) << "\" + ";
+      }
+      std::string fmt_str;
+      if (!sv_fmt.empty()) {
+        fmt_str = common::TransformToStdFormat(sv_fmt) + "\\n";
+      } else {
+        for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+          if (syscall.arguments[i]->type.kind ==
+              common::Type::Kind::kIntegral) {
+            fmt_str += "{:";
+            fmt_str += props.default_format;
+            fmt_str += "}";
+          } else {
+            fmt_str += "{}";
+          }
+        }
+        fmt_str += "\\n";
+      }
+      out_ << "std::format(\"" << fmt_str << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+    }
+
+    indent_--;
+    Line("}");  // End block scope
+    return;
+  }
+
+  // Handle file output variants ($fdisplay, $fwrite)
+  if (syscall.name == "$fdisplay" || syscall.name == "$fdisplayb" ||
+      syscall.name == "$fdisplayo" || syscall.name == "$fdisplayh" ||
+      syscall.name == "$fwrite" || syscall.name == "$fwriteb" ||
+      syscall.name == "$fwriteo" || syscall.name == "$fwriteh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // arguments[0] = descriptor, remaining = format args
+    // format_expr = optional format string
+
+    // Empty call (descriptor only) - just newline for $fdisplay
+    if (!syscall.format_expr && syscall.arguments.size() == 1) {
+      if (props.use_println) {
+        Indent();
+        out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<"
+                "uint32_t>(";
+        EmitExpression(*syscall.arguments[0]);
+        out_ << ")}, \"\\n\");\n";
+      }
+      // $fwrite with no content does nothing
+      return;
+    }
+
+    // Extract format string info
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
+
+    // Build the FWrite call with formatted content
+    Indent();
+    out_
+        << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_t>(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ")}, ";
+
+    // Format the content using std::format
+    if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      // Simple string literal (no format specifiers)
+      if (syscall.arguments.size() == 1) {
+        // String only
+        out_ << "\"" << common::EscapeForCppString(fmt_info.text);
+        if (props.use_println) {
+          out_ << "\\n";
+        }
+        out_ << "\");\n";
+        return;
+      }
+      // String prefix + values - emit prefix + std::format for values
+      std::string fmt_str;
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+          fmt_str += "{:";
+          fmt_str += props.default_format;
+          fmt_str += "}";
+        } else {
+          fmt_str += "{}";
+        }
+      }
+      if (props.use_println) {
+        fmt_str += "\\n";
+      }
+      out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\" + "
+           << "std::format(\"" << fmt_str << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      return;
+    }
+
+    if (fmt_info.has_format_specifiers) {
+      // Format string with specifiers
+      auto cpp_fmt = common::TransformToStdFormat(fmt_info.text);
+      if (props.use_println) {
+        cpp_fmt += "\\n";
+      }
+      out_ << "std::format(\"" << cpp_fmt << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      return;
+    }
+
+    // No format string - generate default format from arg types
+    std::string fmt_str;
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+        fmt_str += "{:";
+        fmt_str += props.default_format;
+        fmt_str += "}";
+      } else {
+        fmt_str += "{}";
+      }
+    }
+    if (props.use_println) {
+      fmt_str += "\\n";
+    }
+    out_ << "std::format(\"" << fmt_str << "\"";
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      out_ << ", ";
+      EmitExpression(*syscall.arguments[i]);
+    }
+    out_ << "));\n";
+    return;
+  }
+
+  // Handle file strobe variants ($fstrobe) - schedule to Postponed region
+  if (syscall.name == "$fstrobe" || syscall.name == "$fstrobeb" ||
+      syscall.name == "$fstrobeo" || syscall.name == "$fstrobeh") {
+    used_features_ |= CodegenFeature::kDisplay;
+    auto props = GetDisplayVariantProps(syscall.name);
+
+    // arguments[0] = descriptor, remaining = format args
+    // Wrap in lambda scheduled to Postponed region
+    Line("lyra::sdk::current_scheduler->SchedulePostponed([=, this]() {");
+    indent_++;
+
+    // Empty call (descriptor only) - just newline for $fstrobe
+    if (!syscall.format_expr && syscall.arguments.size() == 1) {
+      Indent();
+      out_ << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_"
+              "t>(";
+      EmitExpression(*syscall.arguments[0]);
+      out_ << ")}, \"\\n\");\n";
+      indent_--;
+      Line("});");
+      return;
+    }
+
+    // Extract format string info
+    common::FormatStringInfo fmt_info;
+    if (syscall.format_expr) {
+      fmt_info = ExtractFormatString(**syscall.format_expr);
+    }
+
+    // Build the FWrite call with formatted content
+    Indent();
+    out_
+        << "lyra::sdk::FWrite(lyra::sdk::FileDescriptor{static_cast<uint32_t>(";
+    EmitExpression(*syscall.arguments[0]);
+    out_ << ")}, ";
+
+    // Format the content using std::format
+    if (fmt_info.is_string_literal && !fmt_info.has_format_specifiers) {
+      // Simple string literal (no format specifiers)
+      if (syscall.arguments.size() == 1) {
+        // String only
+        out_ << "\"" << common::EscapeForCppString(fmt_info.text)
+             << "\\n\");\n";
+        indent_--;
+        Line("});");
+        return;
+      }
+      // String prefix + values
+      std::string fmt_str;
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+          fmt_str += "{:";
+          fmt_str += props.default_format;
+          fmt_str += "}";
+        } else {
+          fmt_str += "{}";
+        }
+      }
+      fmt_str += "\\n";
+      out_ << "\"" << common::EscapeForCppString(fmt_info.text) << "\" + "
+           << "std::format(\"" << fmt_str << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      indent_--;
+      Line("});");
+      return;
+    }
+
+    if (fmt_info.has_format_specifiers) {
+      // Format string with specifiers
+      auto cpp_fmt = common::TransformToStdFormat(fmt_info.text) + "\\n";
+      out_ << "std::format(\"" << cpp_fmt << "\"";
+      for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+        out_ << ", ";
+        EmitExpression(*syscall.arguments[i]);
+      }
+      out_ << "));\n";
+      indent_--;
+      Line("});");
+      return;
+    }
+
+    // No format string - generate default format from arg types
+    std::string fmt_str;
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      if (syscall.arguments[i]->type.kind == common::Type::Kind::kIntegral) {
+        fmt_str += "{:";
+        fmt_str += props.default_format;
+        fmt_str += "}";
+      } else {
+        fmt_str += "{}";
+      }
+    }
+    fmt_str += "\\n";
+    out_ << "std::format(\"" << fmt_str << "\"";
+    for (size_t i = 1; i < syscall.arguments.size(); ++i) {
+      out_ << ", ";
+      EmitExpression(*syscall.arguments[i]);
+    }
+    out_ << "));\n";
+    indent_--;
+    Line("});");
     return;
   }
 
@@ -525,10 +915,23 @@ void Codegen::EmitVoidSystemCall(const mir::SystemCallExpression& syscall) {
 
   // File I/O
   if (syscall.name == "$fclose") {
+    // Capture descriptor to avoid double evaluation
     Indent();
-    out_ << "lyra::sdk::FClose(";
+    out_ << "{\n";
+    indent_++;
+    Indent();
+    out_ << "auto __fd = static_cast<uint32_t>(";
     EmitExpression(*syscall.arguments[0]);
     out_ << ");\n";
+    Indent();
+    out_ << "lyra::sdk::FClose(lyra::sdk::FileDescriptor{__fd});\n";
+    // Cancel $fmonitor if its file descriptor matches (IEEE 1800 §21.3.1)
+    Indent();
+    out_ << "lyra::sdk::current_scheduler->CancelMonitorIfFileDescriptor(__fd);"
+            "\n";
+    indent_--;
+    Indent();
+    out_ << "}\n";
     return;
   }
 

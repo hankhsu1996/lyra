@@ -15,7 +15,7 @@ cases:
         end
       endmodule
     expect:
-      output: "b=6\n"
+      stdout: "b=6\n"
 
   - name: expression
     description: Complex RHS expression
@@ -30,7 +30,7 @@ cases:
         end
       endmodule
     expect:
-      output: "z=10\n"
+      stdout: "z=10\n"
 
   - name: chained
     description: Chained continuous assignments
@@ -46,7 +46,7 @@ cases:
         end
       endmodule
     expect:
-      output: "b=10 c=11\n"
+      stdout: "b=10 c=11\n"
 
   - name: sensitivity_update
     description: Multiple updates propagate correctly
@@ -62,7 +62,7 @@ cases:
         end
       endmodule
     expect:
-      output: |
+      stdout: |
         b=2
         b=10
 
@@ -78,4 +78,4 @@ cases:
         end
       endmodule
     expect:
-      output: "result=42\n"
+      stdout: "result=42\n"

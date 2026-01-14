@@ -149,7 +149,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 32  # 0xABC & 0x123 = 0x020
+        result: 32 # 0xABC & 0x123 = 0x020
 
   - name: bit_24_basic
     sv: |
@@ -163,7 +163,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 13303314  # 0xCAFE12
+        result: 13303314 # 0xCAFE12
 
   - name: bit_48_basic
     sv: |
@@ -177,7 +177,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 244837814047284  # 0xDEADBEEF1234
+        result: 244837814047284 # 0xDEADBEEF1234
 
   - name: bit_63_basic
     sv: |
@@ -191,7 +191,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 9223372036854775792  # 0x7FFFFFFFFFFFFFF0
+        result: 9223372036854775792 # 0x7FFFFFFFFFFFFFF0
 
   - name: bit_7_shift
     sv: |
@@ -206,7 +206,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 84  # (85 << 2) & 0x7F = 340 & 127 = 84
+        result: 84 # (85 << 2) & 0x7F = 340 & 127 = 84
 
   - name: byte_type
     sv: |
@@ -265,7 +265,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 15  # 255 & 0xF = 15
+        result: 15 # 255 & 0xF = 15
 
   - name: size_cast_extension
     sv: |
@@ -370,7 +370,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 10  # 0xA
+        result: 10 # 0xA
 
   - name: range_select_low
     sv: |
@@ -384,7 +384,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 11  # 0xB
+        result: 11 # 0xB
 
   - name: range_select_middle
     sv: |
@@ -398,7 +398,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 188  # 0xBC
+        result: 188 # 0xBC
 
   - name: range_select_single_bit
     sv: |
@@ -426,7 +426,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 202  # 0xCA
+        result: 202 # 0xCA
 
   # Non-zero-based range tests
   - name: nonzero_base_declaration
@@ -441,7 +441,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -559038737  # 0xDEADBEEF as signed int
+        result: -559038737 # 0xDEADBEEF as signed int
 
   - name: nonzero_base_bit_index_lsb
     sv: |
@@ -497,7 +497,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 18  # 0x12 = bits [15:8] of 0xABCD1234
+        result: 18 # 0x12 = bits [15:8] of 0xABCD1234
 
   - name: nonzero_base_variable_index
     sv: |
@@ -541,7 +541,7 @@ cases:
       endmodule
     expect:
       variables:
-        sum: 4  # 1+1+0+0+1+1
+        sum: 4 # 1+1+0+0+1+1
 
   - name: nonzero_base_negative_range
     sv: |
@@ -572,7 +572,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 2  # 0b0010
+        result: 2 # 0b0010
 
   - name: negative_range_2d_element_access
     skip_codegen: true
@@ -591,9 +591,9 @@ cases:
       endmodule
     expect:
       variables:
-        r1: 170    # 0xAA
-        r0: 187    # 0xBB
-        r_neg1: 204  # 0xCC
+        r1: 170 # 0xAA
+        r0: 187 # 0xBB
+        r_neg1: 204 # 0xCC
 
   # Element assignment tests
   - name: element_assign_set_bit
@@ -609,7 +609,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 8  # bit 3 set = 0b00001000
+        result: 8 # bit 3 set = 0b00001000
 
   - name: element_assign_clear_bit
     sv: |
@@ -624,7 +624,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 223  # 0xFF with bit 5 clear = 0b11011111
+        result: 223 # 0xFF with bit 5 clear = 0b11011111
 
   - name: element_assign_multiple_bits
     sv: |
@@ -642,7 +642,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 85  # 0b01010101
+        result: 85 # 0b01010101
 
   - name: element_assign_variable_index
     sv: |
@@ -674,7 +674,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 4  # bit 2 of storage set = 0b000100
+        result: 4 # bit 2 of storage set = 0b000100
 
   # Wide bit vector tests (>64 bits)
   # These tests use simple values that fit in the first word to avoid
@@ -803,7 +803,7 @@ cases:
       endmodule
     expect:
       variables:
-        lo: -1  # All 1s in 32 bits = -1 as signed int
+        lo: -1 # All 1s in 32 bits = -1 as signed int
 
   - name: wide_128_shift_left
     sv: |
@@ -938,7 +938,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result = 0xfffffffffffffffe0000000000000001\n"
+      stdout: "result = 0xfffffffffffffffe0000000000000001\n"
 
   # Unary minus with wide types
   - name: wide_unary_minus_one
@@ -952,7 +952,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result = 0xffffffffffffffffffffffffffffffff\n"
+      stdout: "result = 0xffffffffffffffffffffffffffffffff\n"
 
   - name: wide_unary_minus_neg_one
     sv: |
@@ -965,7 +965,7 @@ cases:
         end
       endmodule
     expect:
-      output: "result = 0x1\n"
+      stdout: "result = 0x1\n"
 
   # Wide to narrow conversion
   - name: wide_to_narrow_neg_one
@@ -980,7 +980,7 @@ cases:
         end
       endmodule
     expect:
-      output: "narrow = -1\n"
+      stdout: "narrow = -1\n"
 
   - name: wide_to_narrow_truncation
     sv: |
@@ -994,5 +994,4 @@ cases:
         end
       endmodule
     expect:
-      output: "narrow = 305419896\n"
-
+      stdout: "narrow = 305419896\n"

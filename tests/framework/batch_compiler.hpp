@@ -19,6 +19,7 @@ struct BatchTestResult {
   std::unordered_map<std::string, std::variant<int64_t, double>> variables;
   uint64_t final_time = 0;
   std::string captured_output;
+  std::filesystem::path work_dir;  // For file content verification
 };
 
 class BatchCompiler {
