@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/common/display_variant.hpp"
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/interpreter/runtime_value.hpp"
@@ -21,21 +22,12 @@ struct FormatSpec {
   std::string precision;
 };
 
-/// Properties for display/write variants.
-struct DisplayVariantProps {
-  char default_format;  // 'd', 'b', 'o', or 'h'
-  bool append_newline;  // true for $display*, false for $write*
-};
-
 /// Context for time formatting (%t specifier).
 struct TimeFormatContext {
   common::TimeFormatState time_format;
   int8_t module_unit_power = 0;  // Module's timeunit (e.g., -9 for 1ns)
   int8_t global_precision_power = 0;
 };
-
-/// Get properties for a display/write/strobe variant.
-auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps;
 
 /// Format a RuntimeValue according to a format specifier.
 /// spec: 'd' = decimal, 'x'/'h' = hex, 'b' = binary, 'o' = octal,

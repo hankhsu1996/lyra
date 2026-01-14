@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include <fmt/core.h>
@@ -17,37 +16,6 @@
 #include "lyra/interpreter/runtime_value.hpp"
 
 namespace lyra::interpreter {
-
-auto GetDisplayVariantProps(std::string_view name) -> DisplayVariantProps {
-  // $write and $fwrite (no newline)
-  if (name == "$write" || name == "$fwrite") {
-    return {.default_format = 'd', .append_newline = false};
-  }
-  if (name == "$writeb" || name == "$fwriteb") {
-    return {.default_format = 'b', .append_newline = false};
-  }
-  if (name == "$writeo" || name == "$fwriteo") {
-    return {.default_format = 'o', .append_newline = false};
-  }
-  if (name == "$writeh" || name == "$fwriteh") {
-    return {.default_format = 'h', .append_newline = false};
-  }
-  // Display/strobe/monitor variants with newline
-  if (name == "$displayb" || name == "$strobeb" || name == "$monitorb" ||
-      name == "$fdisplayb" || name == "$fstrobeb" || name == "$fmonitorb") {
-    return {.default_format = 'b', .append_newline = true};
-  }
-  if (name == "$displayo" || name == "$strobeo" || name == "$monitoro" ||
-      name == "$fdisplayo" || name == "$fstrobeo" || name == "$fmonitoro") {
-    return {.default_format = 'o', .append_newline = true};
-  }
-  if (name == "$displayh" || name == "$strobeh" || name == "$monitorh" ||
-      name == "$fdisplayh" || name == "$fstrobeh" || name == "$fmonitorh") {
-    return {.default_format = 'h', .append_newline = true};
-  }
-  // $display, $fdisplay, $strobe, $fstrobe, $monitor, $fmonitor (default)
-  return {.default_format = 'd', .append_newline = true};
-}
 
 auto FormatValue(const RuntimeValue& value, const FormatSpec& spec)
     -> std::string {

@@ -15,6 +15,7 @@
 
 #include "lyra/common/builtin_method.hpp"
 #include "lyra/common/constant.hpp"
+#include "lyra/common/display_variant.hpp"
 #include "lyra/common/hierarchical_path.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -496,6 +497,11 @@ class SystemCallExpression : public Expression {
 
   std::string name;
 
+  // Structured properties for display-like system calls.
+  // Populated at AST->MIR lowering. Consumers should use this instead of
+  // parsing the name string.
+  std::optional<common::DisplayVariantProps> display_props;
+
   // For display-like tasks ($display, $monitor, $strobe, $error, etc.):
   // Optional format string expression. nullopt means no explicit format string
   // (all arguments are values to display with auto-format).
@@ -506,11 +512,6 @@ class SystemCallExpression : public Expression {
   // For non-display tasks: general arguments.
   std::vector<std::unique_ptr<Expression>> arguments;
   std::vector<AssignmentTarget> output_targets;
-
-  // True if format_expr (or first argument for mem_io tasks) is a string
-  // literal. For display tasks: enables compile-time format parsing. For
-  // mem_io tasks ($readmemh, etc.): enables filename extraction from integral.
-  bool format_expr_is_literal = false;
 
   // Source location for severity tasks ($fatal, $error, $warning, $info).
   // Captured at AST lowering time since slang source info is only available
