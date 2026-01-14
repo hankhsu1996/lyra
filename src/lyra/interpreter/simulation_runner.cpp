@@ -249,9 +249,7 @@ void SimulationRunner::CheckMonitor() {
   }
 
   // Create temporary frame for process execution
-  ProcessFrame frame;
-  frame.process = process.get();
-  frame.temp_table.Init(process->temps.size());
+  ProcessFrame frame(process.get());
   ProcessEffect effect;
 
   // Execute check process using standard process runner
@@ -281,9 +279,7 @@ void SimulationRunner::InitializePackageVariables() {
 
   // Then execute the init process (if any) to set actual values
   if (package_init_process_) {
-    ProcessFrame frame;
-    frame.process = package_init_process_.get();
-    frame.temp_table.Init(package_init_process_->temps.size());
+    ProcessFrame frame(package_init_process_.get());
     ProcessEffect effect;
     RunProcess(
         package_init_process_, 0, 0, simulation_context_.get(), frame, effect,
@@ -318,9 +314,7 @@ void SimulationRunner::ScheduleModuleProcesses(
 
     // Create frame in centralized storage and get handle
     ProcessInstanceKey key{.process = process, .instance = instance};
-    auto [it, inserted] = process_frames_.emplace(key, ProcessFrame{});
-    it->second.process = process.get();
-    it->second.temp_table.Init(process->temps.size());
+    process_frames_.emplace(key, ProcessFrame(process.get()));
     ProcessHandle handle{key};
 
     active_queue_.push(

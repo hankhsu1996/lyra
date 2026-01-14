@@ -9,7 +9,6 @@
 #include "lyra/common/display_variant.hpp"
 #include "lyra/common/format_string.hpp"
 #include "lyra/common/timescale.hpp"
-#include "lyra/interpreter/call_frame.hpp"
 #include "lyra/interpreter/instruction/context.hpp"
 #include "lyra/interpreter/instruction_result.hpp"
 #include "lyra/interpreter/process_effect.hpp"
@@ -350,19 +349,19 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
       simulation_context.display_output << "\n";
     }
 
-    // Set up monitor state as a closure with captured prev values.
+    // Set up monitor state with captured prev values.
     // This matches codegen's mutable lambda capture semantics.
-    CallFrame closure;
+    std::unordered_map<std::string, RuntimeValue> captures;
     for (size_t i = 0; i < format_args.size(); ++i) {
       std::string capture_name = "__capture_prev_" + std::to_string(i);
-      closure.captures[capture_name] = std::move(format_args[i]);
+      captures[capture_name] = std::move(format_args[i]);
     }
 
     simulation_context.active_monitor = MonitorState{
         .enabled = true,
         .instance = ctx.GetHierarchyContext(),
         .check_process_name = instr.monitor_check_function_name,
-        .closure = std::move(closure),
+        .captures = std::move(captures),
         .file_descriptor = std::nullopt};
 
     return InstructionResult::Continue();
@@ -456,21 +455,21 @@ auto HandleDisplayCalls(const lir::Instruction& instr, InstructionContext& ctx)
         sdk::FileDescriptor{descriptor}, initial_message,
         simulation_context.display_output);
 
-    // Set up monitor state as a closure with captured prev values
-    CallFrame closure;
+    // Set up monitor state with captured prev values
+    std::unordered_map<std::string, RuntimeValue> captures;
     for (size_t i = 0; i < format_args.size(); ++i) {
       std::string capture_name = "__capture_prev_" + std::to_string(i);
-      closure.captures[capture_name] = std::move(format_args[i]);
+      captures[capture_name] = std::move(format_args[i]);
     }
     // Store file descriptor for synthesized check process (LoadCapture)
-    closure.captures["__file_descriptor"] =
+    captures["__file_descriptor"] =
         RuntimeValue::IntegralUnsigned(descriptor, 32);
 
     simulation_context.active_monitor = MonitorState{
         .enabled = true,
         .instance = ctx.GetHierarchyContext(),
         .check_process_name = instr.monitor_check_function_name,
-        .closure = std::move(closure),
+        .captures = std::move(captures),
         .file_descriptor = descriptor};
 
     return InstructionResult::Continue();

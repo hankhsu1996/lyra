@@ -5,11 +5,12 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/common/timescale.hpp"
-#include "lyra/interpreter/call_frame.hpp"
+#include "lyra/interpreter/runtime_value.hpp"
 #include "lyra/interpreter/tracer.hpp"
 #include "lyra/interpreter/variable_store.hpp"
 #include "lyra/interpreter/variable_table.hpp"
@@ -37,12 +38,12 @@ struct MonitorState {
   // Name of synthesized check process
   std::string check_process_name;
 
-  // Persistent closure frame. The frame's `captures` map holds previous values
-  // of monitored expressions for change detection. This persists across check
-  // process calls, matching codegen's mutable lambda capture semantics.
+  // Persistent captures map holding previous values of monitored expressions
+  // for change detection. This persists across check process calls, matching
+  // codegen's mutable lambda capture semantics.
   // Accessed via kLoadCapture/kStoreCapture instructions.
   // For $fmonitor, also contains "__file_descriptor" for output routing.
-  CallFrame closure;
+  std::unordered_map<std::string, RuntimeValue> captures;
 
   // File descriptor for $fmonitor output (typed field for $fclose
   // cancellation). nullopt = stdout ($monitor), has value = file output

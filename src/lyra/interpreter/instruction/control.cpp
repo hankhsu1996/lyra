@@ -54,9 +54,7 @@ auto HandleCall(const lir::Instruction& instr, TempTable& temp_table)
   }
 
   // Create call frame (return address will be set by process_runner)
-  auto frame = std::make_unique<CallFrame>();
-  frame->function = func;
-  frame->temp_table.Init(func->temps.size());
+  auto frame = std::make_unique<CallFrame>(func);
   frame->return_value_dest = instr.result;
 
   // Initialize parameters from arguments
@@ -221,7 +219,7 @@ auto HandleControlFlowOps(
         throw common::InternalError(
             "kLoadCapture", "no active monitor (closure context)");
       }
-      auto& captures = sim.active_monitor->closure.captures;
+      auto& captures = sim.active_monitor->captures;
 
       auto it = captures.find(instr.capture_name);
       if (it == captures.end()) {
@@ -241,7 +239,7 @@ auto HandleControlFlowOps(
             "kStoreCapture", "no active monitor (closure context)");
       }
 
-      auto& captures = sim.active_monitor->closure.captures;
+      auto& captures = sim.active_monitor->captures;
       auto value = ctx.GetTemp(instr.operands[0].AsTempRef());
 
       captures[instr.capture_name] = value;

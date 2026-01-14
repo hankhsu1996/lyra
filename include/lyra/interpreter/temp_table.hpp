@@ -8,13 +8,13 @@
 
 namespace lyra::interpreter {
 
-// Vector-based temp table indexed by per-unit TempId.
-// Uses Init() to pre-allocate storage, InternalError on bounds/uninit access.
+/// Vector-based temp table indexed by per-unit TempId.
+/// Size is fixed at construction. InternalError on bounds/uninit access.
 class TempTable {
  public:
-  // Initialize with count uninitialized slots
-  void Init(size_t count) {
-    values_.assign(count, RuntimeValue::Uninit());
+  /// Construct with count uninitialized slots.
+  /// Size is immutable after construction.
+  explicit TempTable(size_t count) : values_(count, RuntimeValue::Uninit()) {
   }
 
   void Write(const lir::TempRef& temp, RuntimeValue value) {
@@ -24,7 +24,8 @@ class TempTable {
     values_[temp.id] = std::move(value);
   }
 
-  auto Read(const lir::TempRef& temp) const -> const RuntimeValue& {
+  [[nodiscard]] auto Read(const lir::TempRef& temp) const
+      -> const RuntimeValue& {
     if (temp.id >= values_.size()) {
       throw common::InternalError("TempTable::Read", "TempId out of range");
     }
