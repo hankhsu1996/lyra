@@ -23,37 +23,34 @@ MIR is correct when execution behavior is no longer inferable, only executable.
 
 These are hard rules, not guidelines:
 
-| Rule                                  | Rationale                                             |
-| ------------------------------------- | ----------------------------------------------------- |
-| Place and Value are strictly separate | Computation uses Value; writes occur through Place    |
-| Every basic block has one terminator  | Control flow is explicit and complete                 |
-| Suspension operations are terminators | Delay/Wait yield control; they cannot be statements   |
-| System subroutines classified by role | Three semantic categories, not per-API instructions   |
-| TypeId shared from HIR unchanged      | MIR annotates Values with types; does not create them |
-| No frontend dependencies              | MIR owns all data; no lifetime leakage                |
-| No LLVM/ABI details                   | Platform-independent; backends handle lowering        |
-| No scheduling or execution policy     | Runtime strategy is backend responsibility            |
+| Rule                                    | Rationale                                               |
+| --------------------------------------- | ------------------------------------------------------- |
+| Place and Operand are strictly separate | Computation uses Operand; writes occur through Place    |
+| Every basic block has one terminator    | Control flow is explicit and complete                   |
+| Suspension operations are terminators   | Delay/Wait yield control; they cannot be instructions   |
+| System subroutines classified by role   | Three semantic categories, not per-API instructions     |
+| TypeId shared from HIR unchanged        | MIR annotates Operands with types; does not create them |
+| No frontend dependencies                | MIR owns all data; no lifetime leakage                  |
+| No LLVM/ABI details                     | Platform-independent; backends handle lowering          |
+| No scheduling or execution policy       | Runtime strategy is backend responsibility              |
 
 ## Structure
 
 ```
 Design
-  -> DesignElement*
-       -> Process*
+  -> DesignElement* (Module | Package)
+       -> Process* / Function*
             -> BasicBlock*
-                 -> Statement*
+                 -> Instruction*
                  -> Terminator (exactly one)
 ```
 
 ### DesignElement
 
-Uses LRM terminology. Module, program, interface, package, checker, primitive, and class are all DesignElement kinds.
+A variant over Module and Package. Currently supports:
 
-Contains:
-
-- Static declarations (net, variable, parameter, function, task, type)
-- Processes (normalized from HIR)
-- Generate constructs (if preserved)
+- `Module` — contains processes and functions
+- `Package` — placeholder for package contents
 
 ### Process
 
@@ -61,8 +58,8 @@ A coroutine unit that may suspend and resume. Composed of basic blocks with an e
 
 Two kinds (normalized in HIR, not MIR):
 
-- `ProcessKind::Once` — corresponds to `initial`
-- `ProcessKind::Looping` — corresponds to `always`
+- `Once` — corresponds to `initial`
+- Looping process kind — corresponds to `always`
 
 Looping processes are **not** expanded to `while(true)` in MIR. Repetition is expressed via process semantics and the `Repeat` terminator.
 
@@ -81,7 +78,7 @@ Functions and Processes have different termination rules:
 
 Each basic block consists of:
 
-- **Statements**: ordered list, perform actions but do not alter control flow
+- **Instructions**: ordered list, compute values and write to Places
 - **Terminator**: exactly one, always last, determines next control state
 
 ## Design Heritage
@@ -94,7 +91,7 @@ MIR borrows **structural ideas** from Rust MIR:
 
 However, MIR **rejects** Rust's operand and temporary model. SystemVerilog has no ownership semantics (no Copy/Move distinction), and MIR does not use SSA or value numbering. All computation results are materialized into Places; there is no abstract "value identity" separate from storage.
 
-## Place and Value
+## Place and Operand
 
 MIR uses exactly two operand concepts. Do not introduce a unified operand that can be either.
 
@@ -102,51 +99,32 @@ MIR uses exactly two operand concepts. Do not introduce a unified operand that c
 
 A writable location. Structure:
 
-- **PlaceRoot**: variable, parameter, or temporary
+- **PlaceRoot**: identifies the storage (Local, Temp, or Design)
 - **Projection sequence**: field access, index access, slice access, dereference
 
-Place is not a value and cannot participate in computation directly. Temporaries are compiler-generated Places used to hold intermediate computation results.
+Place is not a value and cannot participate in computation directly. Temporaries (Temp) are compiler-generated Places used to hold intermediate computation results.
 
-### Value
+### Operand
 
 A readable operand. Three kinds only:
 
-- **Const**: a constant (inline or referenced from ConstantArena)
-- **PlaceRead**: read from a Place (implicit load)
-- **Undef**: undefined value
+- **Const**: a constant value
+- **Use**: read from a Place (implicit load)
+- **Poison**: invalid / unreachable value
 
-Place-read is implicit—there is no explicit Load statement. Reading a Place produces a Value directly. This is the **implicit read model**: `Value::Read(place)` means "the current value stored at place."
+Place-read is implicit—there is no explicit Load instruction. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
 
 All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
-**Example:** `x = 1 + 2` lowers to:
+## Instruction and Rvalue
 
-```
-temp = BinaryOp(Add, Const(1), Const(2))   // result in temp
-x = PlaceRead(temp)                         // copy to x
-```
+An Instruction computes a value (Rvalue) and writes it to a Place. It does not affect control flow.
 
-Or if the backend can fold:
+Rvalue kinds: Unary, Binary, Cast, Call.
 
-```
-x = BinaryOp(Add, Const(1), Const(2))      // result directly in x
-```
+**No Load instruction.** Reading a Place is implicit in Operand (Use kind). This keeps the operand model simple: Operands are inputs, Places are outputs.
 
-## Statement Categories
-
-Statements perform actions but do not alter control flow. Every statement that produces a result assigns to a destination Place.
-
-| Category    | Statements                                           |
-| ----------- | ---------------------------------------------------- |
-| Assignment  | Assign (Value -> Place), EnqueueNBA                  |
-| Computation | Unary op, Binary op, Cast (dest Place, Value)        |
-| Call        | Function call, SystemPure, SystemEffect, SystemState |
-
-**No Load statement.** Reading a Place is implicit in Value (PlaceRead kind). This keeps the operand model simple: Values are inputs, Places are outputs.
-
-Statements must be strongly typed so that illegal combinations are rejected at construction.
-
-### System Subroutine Statements
+### System Subroutine Classification
 
 Three semantic roles only (fixed classification, does not grow with API count):
 
@@ -156,7 +134,7 @@ Three semantic roles only (fixed classification, does not grow with API count):
 | Effect | Immediate observable effect    | `$display`, `$write`  |
 | State  | Mutation of simulation runtime | `$monitor`, `$finish` |
 
-System subroutines take Value arguments only. Writable locations are never passed directly.
+System subroutines take Operand arguments only. Writable locations are never passed directly.
 
 ## Terminator Categories
 
@@ -192,8 +170,8 @@ This means suspension terminators carry a resume target as data, but do not crea
 
 Always-style repetition is represented by:
 
-- `ProcessKind::Looping` on the process
-- `Repeat` terminator to return to entry
+- Looping process kind on the process
+- Repeat terminator to return to entry
 
 Not expanded into a loop at MIR level. Backend decides the implementation strategy.
 
@@ -221,8 +199,8 @@ These must hold for well-formed MIR:
 
 **Operand Discipline:**
 
-- Place and Value are strictly separated
-- Values are inputs (Const, PlaceRead, Undef)
+- Place and Operand are strictly separated
+- Operands are inputs (Const, Use, Poison)
 - Writes occur only through Place
 - All computation results materialize into Places (no abstract value identity)
 
@@ -245,13 +223,13 @@ These must hold for well-formed MIR:
 
 ## Summary
 
-**MIR structure:** Design -> DesignElement -> Process -> BasicBlock -> Statement + Terminator
+**MIR structure:** Design -> DesignElement (Module|Package) -> Process/Function -> BasicBlock -> Instruction + Terminator
 
-**Operand model:** Place (writable location) and Value (readable operand: Const/PlaceRead/Undef)
+**Operand model:** Place (writable location) and Operand (readable: Const/Use/Poison)
 
 **Core fixed semantics:**
 
-- Assign, EnqueueNBA (no explicit Load—PlaceRead is implicit)
+- Instruction writes Rvalue to Place (no explicit Load -- Use is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition
