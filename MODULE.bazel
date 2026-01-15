@@ -39,7 +39,7 @@ bazel_dep(name = "tomlplusplus", version = "3.4.0")
 # CLI argument parsing
 bazel_dep(name = "argparse", version = "3.2.0")
 
-# Abseil C++ library (for InlinedVector, etc.)
+# Abseil C++ library
 bazel_dep(name = "abseil-cpp", version = "20260107.0")
 
 # Development tools
