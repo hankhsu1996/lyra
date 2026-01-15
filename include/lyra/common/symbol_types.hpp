@@ -27,6 +27,8 @@ struct SymbolId {
 constexpr SymbolId kInvalidSymbolId{UINT32_MAX};
 
 enum class SymbolKind {
+  kModule,
+  kPackage,
   kVariable,
   kParameter,
   kFunction,

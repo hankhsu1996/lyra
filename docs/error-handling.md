@@ -150,25 +150,30 @@ throw std::runtime_error("some error");
 
 ## assert() vs InternalError
 
-| Mechanism       | Debug Only? | Recovery? | When to Use                         |
-| --------------- | ----------- | --------- | ----------------------------------- |
-| `assert()`      | Yes         | No        | Expensive checks in hot paths       |
-| `InternalError` | No          | Yes       | Default choice - runs in all builds |
+| Mechanism       | Debug Only? | Recovery? | When to Use                                 |
+| --------------- | ----------- | --------- | ------------------------------------------- |
+| `assert()`      | Yes         | No        | Expensive checks already guarded elsewhere  |
+| `InternalError` | No          | Yes       | Default choice - any invariant that matters |
 
-**Prefer `InternalError`** for most cases. Use `assert()` only when:
+**Use `InternalError` for any invariant whose violation would corrupt IR, constants, symbols, or semantics.** These must be enforced in release builds, not just debug.
+
+Use `assert()` **only** when ALL of these are true:
 
 - The check is computationally expensive
-- You're in a very hot path
-- The invariant is well-established and failure would be caught elsewhere
+- Failure would be caught immediately in debug testing
+- The invariant is already guarded elsewhere in the code path
 
 ```cpp
-// assert - debug only, for expensive invariant checks
-assert(googol_computation_validates() && "invariant check");
+// BAD - this invariant could corrupt data silently in release
+assert(total_words % 2 == 0 && "storage assumption");
 
-// InternalError - always runs, provides diagnostics
-if (items.empty()) {
-  throw common::InternalError("process", "unexpected empty items");
+// GOOD - enforced in all builds, clear error message
+if (total_words % 2 != 0) {
+  throw common::InternalError("context", "storage assumption violated");
 }
+
+// OK - expensive check, failure would be caught by downstream validation
+assert(expensive_graph_validation() && "graph invariant");
 ```
 
 ## Summary Table

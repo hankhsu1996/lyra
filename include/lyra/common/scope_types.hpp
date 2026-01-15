@@ -23,6 +23,7 @@ struct ScopeId {
 constexpr ScopeId kInvalidScopeId{UINT32_MAX};
 
 enum class ScopeKind {
+  kRoot,
   kModule,
   kBlock,
   kPackage,
