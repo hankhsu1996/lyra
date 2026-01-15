@@ -1,6 +1,25 @@
 # Lyra SystemVerilog Simulator
-#
-# Legacy code moved to src/lyra_legacy and include/lyra_legacy.
-# New pipeline will be built in src/lyra and include/lyra.
-#
-# Test specs preserved in tests/sv_features/*.yaml
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+cc_library(
+    name = "common",
+    srcs = [
+        "src/lyra/common/constant_arena.cpp",
+        "src/lyra/common/type_arena.cpp",
+    ],
+    hdrs = glob(["include/lyra/common/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@abseil-cpp//absl/container:flat_hash_map",
+    ],
+)
+
+cc_library(
+    name = "hir",
+    hdrs = glob(["include/lyra/hir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":common"],
+)
