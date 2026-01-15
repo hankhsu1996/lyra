@@ -1,6 +1,7 @@
 # Lyra SystemVerilog Simulator
 
 load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 refresh_compile_commands(
@@ -27,6 +28,7 @@ cc_library(
 
 cc_library(
     name = "hir",
+    srcs = glob(["src/lyra/hir/*.cpp"]),
     hdrs = glob(["include/lyra/hir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
@@ -42,6 +44,20 @@ cc_library(
     deps = [
         ":common",
         ":hir",
+        "@slang",
+    ],
+)
+
+cc_binary(
+    name = "lyra",
+    srcs = glob([
+        "src/lyra/driver/*.cpp",
+        "src/lyra/driver/*.hpp",
+    ]),
+    deps = [
+        ":hir",
+        ":lowering",
+        "@fmt",
         "@slang",
     ],
 )
