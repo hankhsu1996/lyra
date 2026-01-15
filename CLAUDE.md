@@ -9,9 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                    |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns           |
 | `docs/architecture.md`             | Component relationships, data flow                   |
-| `docs/hir-design.md`               | HIR layer design                                     |
-| `docs/mir-design.md`               | MIR layer design (Rust-style)                        |
-| `docs/type-system.md`              | Type interning, type kinds                           |
+| `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness      |
+| `docs/hir-design.md`               | HIR layer design (language semantics)                |
+| `docs/mir-design.md`               | MIR layer design (execution semantics)               |
+| `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                        |
+| `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model                   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
 | `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |
@@ -21,7 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/error-handling.md`           | Error types, when to use each                        |
 | `docs/documentation-guidelines.md` | Documentation guidelines                             |
 
-**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, target 200-400 lines, integrate don't append.
+**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
 
 ## Commands
 

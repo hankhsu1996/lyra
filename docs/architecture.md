@@ -16,9 +16,9 @@ Internally: compiler logic is a library, orchestrator handles config, caching, a
 ## Compilation Pipeline
 
 ```
-AST (slang) → HIR → MIR → LLVM IR → executable
-               ↘
-                C++ (secondary exploration path)
+AST (slang) -> HIR -> MIR -> LLVM IR -> executable
+                |
+                +-> C++ (secondary exploration path)
 ```
 
 ### Slang (Frontend)
@@ -37,11 +37,11 @@ AST (slang) → HIR → MIR → LLVM IR → executable
 
 ### MIR (Executable Semantic Layer)
 
-- Rust-style Place/Operand/Rvalue model
-- Explicit memory semantics
-- Control flow graphs with basic blocks
-- Target-independent executable representation
-- Primary input for LLVM backend
+- Place/Value model (strict separation: Place for writes, Value for computation)
+- Control flow graphs with basic blocks and terminators
+- Suspension (Delay/Wait) as terminators, not statements
+- Target-independent; fixes all execution semantics
+- Primary input for LLVM backend and interpreter
 
 ### LLVM IR (Machine Layer)
 
@@ -99,9 +99,9 @@ include/lyra/
   common/       # shared types, utilities, diagnostics
   frontend/     # Slang wrapper, produces AST
   hir/          # language semantic IR (decoupled from slang)
-  mir/          # executable semantic IR (Place/Operand/Rvalue)
-  codegen/      # HIR → C++ generator (secondary path)
-  llvm/         # MIR → LLVM IR (primary path)
+  mir/          # executable semantic IR (Place/Value, basic blocks)
+  codegen/      # HIR -> C++ generator (secondary path)
+  llvm/         # MIR -> LLVM IR (primary path)
   sdk/          # runtime library (Task, Scheduler, Signal)
   cli/          # lyra subcommands (build, run, emit)
 ```
@@ -115,7 +115,7 @@ include/lyra/
 An interpreter path may be added in the future for development and debugging:
 
 ```
-MIR → Interpreter
+MIR -> Interpreter
 ```
 
 This would provide reference semantics validation without compilation overhead.

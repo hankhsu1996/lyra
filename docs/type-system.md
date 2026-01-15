@@ -38,7 +38,7 @@ Nested type references (e.g., array element type) use raw pointers to interned t
 
 ### Pointer Types
 
-Pointer types (`Pointer<T>`) represent addresses of storage locations. See `docs/lir-design.md` for how pointer types integrate with SSA and enable separation of addressing from access.
+Pointer types (`Pointer<T>`) represent addresses of storage locations. In MIR, these correspond to Place with Projection—see [mir-design.md](mir-design.md).
 
 ### Enum as First-Class Type
 
@@ -70,3 +70,17 @@ This enables methods like `.next()`, `.prev()`, `.name()` to access enum metadat
 - **Testing**: Test backend without parsing SystemVerilog
 - **Stability**: External API changes don't ripple through backend
 - **Lifetime**: Backend types outlive frontend compilation
+
+## Four-State Representation
+
+SystemVerilog has 4-state logic (0, 1, X, Z). The representation uses separate masks:
+
+| Component | Purpose                          |
+| --------- | -------------------------------- |
+| value     | The 0/1 bit pattern              |
+| x_mask    | Bits that are X (unknown)        |
+| z_mask    | Bits that are Z (high-impedance) |
+
+**Invariant:** `x_mask & z_mask == 0` - a bit cannot be both X and Z. Violation is an internal compiler error.
+
+Two-state values have no masks (or all-zero masks). Types determine whether a value is two-state or four-state; the layout follows from the type.

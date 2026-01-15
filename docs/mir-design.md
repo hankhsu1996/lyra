@@ -1,212 +1,242 @@
 # MIR Design
 
-MIR (Mid-level IR) is the executable semantic layer in Lyra's compilation pipeline.
+MIR (Mid-level IR) fixes all SystemVerilog execution semantics.
 
 ## Pipeline Position
 
 ```
-AST (slang) -> HIR -> MIR -> LLVM IR
+SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
+                                      |
+                                      +-> Interpreter
 ```
 
-MIR sits between high-level representation (HIR) and low-level code generation (LLVM IR). It answers the question: **"How does this meaning execute?"**
+HIR freezes _what the language means_.
+MIR freezes _how the language must be executed_, while remaining platform-independent.
 
-## Core Design: Rust-Style MIR
+Guiding question when designing MIR:
 
-MIR follows Rust's MIR design, not traditional three-address code.
+> If a backend still needs to "understand SystemVerilog rules" to run correctly, then MIR has failed to fully fix the semantics.
 
-### Why Not Three-Address Code?
+MIR is correct when execution behavior is no longer inferable, only executable.
 
-Three-address code flattens expressions into individual operations:
+## Core Principles
 
-```
-t0 = a + b
-t1 = t0 * c
-t2 = d
-result = t1 + t2
-```
+These are hard rules, not guidelines:
 
-Problems with this approach:
+| Rule                                  | Rationale                                             |
+| ------------------------------------- | ----------------------------------------------------- |
+| Place and Value are strictly separate | Computation uses Value; writes occur through Place    |
+| Every basic block has one terminator  | Control flow is explicit and complete                 |
+| Suspension operations are terminators | Delay/Wait yield control; they cannot be statements   |
+| System subroutines classified by role | Three semantic categories, not per-API instructions   |
+| TypeId shared from HIR unchanged      | MIR annotates Values with types; does not create them |
+| No frontend dependencies              | MIR owns all data; no lifetime leakage                |
+| No LLVM/ABI details                   | Platform-independent; backends handle lowering        |
+| No scheduling or execution policy     | Runtime strategy is backend responsibility            |
 
-- Explosion of temporaries obscures intent
-- Lost structure makes optimization analysis harder
-- SSA conversion required before meaningful analysis
-- Reconstruction needed for readable output
-
-### Place/Operand/Rvalue Model
-
-MIR uses a structured assignment model:
+## Structure
 
 ```
-Assign(Place, Rvalue)
+Design
+  -> DesignElement*
+       -> Process*
+            -> BasicBlock*
+                 -> Statement*
+                 -> Terminator (exactly one)
 ```
 
-**Place**: A writable/readable storage location. Not an address, not a value - a location that can be read from or written to.
+### DesignElement
 
-**Operand**: A value source for computation:
+Uses LRM terminology. Module, program, interface, package, checker, primitive, and class are all DesignElement kinds.
 
-- `Constant(value)` - literal value
-- `Copy(place)` - read from a place
+Contains:
 
-**Rvalue**: A computation that produces a value:
+- Static declarations (net, variable, parameter, function, task, type)
+- Processes (normalized from HIR)
+- Generate constructs (if preserved)
 
-- `Use(operand)` - simple value use
-- `BinaryOp(op, operand, operand)` - binary operation
-- `UnaryOp(op, operand)` - unary operation
-- `Aggregate(...)` - struct/array construction
+### Process
 
-### Examples
+A coroutine unit that may suspend and resume. Composed of basic blocks with an entry block.
 
-Simple assignment:
+Two kinds (normalized in HIR, not MIR):
 
-```
-a = 1
-```
+- `ProcessKind::Once` — corresponds to `initial`
+- `ProcessKind::Looping` — corresponds to `always`
 
-```
-Assign(Place(a), Use(Constant(1)))
-```
+Looping processes are **not** expanded to `while(true)` in MIR. Repetition is expressed via process semantics and the `Repeat` terminator.
 
-Expression assignment:
+### Function vs Process
 
-```
-a = b + c
-```
+Functions and Processes have different termination rules:
 
-```
-Assign(Place(a), BinaryOp(Add, Copy(b), Copy(c)))
-```
+| Construct | Allowed Terminators          | Completion       |
+| --------- | ---------------------------- | ---------------- |
+| Function  | Control, Return              | Return only      |
+| Process   | Control, Suspend, Completion | Finish or Repeat |
 
-Nested expression:
+**Functions cannot suspend.** Delay and Wait terminators are forbidden in functions. This is a language-level constraint guaranteed by HIR; violations during lowering are internal errors.
 
-```
-a = (b + c) * d
-```
+### BasicBlock
 
-```
-Assign(Place(a), BinaryOp(Mul,
-    BinaryOp(Add, Copy(b), Copy(c)),
-    Copy(d)))
-```
+Each basic block consists of:
 
-Key insight: expressions remain structured. No temporary explosion.
+- **Statements**: ordered list, perform actions but do not alter control flow
+- **Terminator**: exactly one, always last, determines next control state
 
-## Control Flow Structure
+## Place and Value
 
-### Function and BasicBlock
+MIR uses exactly two operand concepts. Do not introduce a unified operand that can be either.
 
-```
-Function
-  -> BasicBlock*
-       -> Statement*
-       -> Terminator
-```
+### Place
 
-A Function contains BasicBlocks. Each BasicBlock contains:
+A writable location. Structure:
 
-- Zero or more Statements (sequential execution)
-- Exactly one Terminator (control flow transfer)
+- **PlaceRoot**: variable, parameter, temporary, or symbol
+- **Projection sequence**: field access, index access, slice access, dereference
 
-### Terminators
+Place is not a value and cannot participate in computation directly.
 
-Terminators define how control leaves a basic block:
+### Value
 
-| Terminator                             | Description        |
-| -------------------------------------- | ------------------ |
-| `Goto(block)`                          | Unconditional jump |
-| `Branch(cond, then_block, else_block)` | Conditional branch |
-| `Return(operand?)`                     | Function return    |
-| `Switch(operand, cases, default)`      | Multi-way branch   |
+A computable and transferable result, but not writable.
 
-### Why Basic Blocks?
+Origins:
 
-Basic blocks provide:
+- Constant (via ConstRef or InlineConst)
+- Load from Place
+- Computation result
+- Function or system subroutine result
 
-- Clear control flow graph for analysis
-- Natural boundary for optimization passes
-- Direct mapping to LLVM IR blocks
-- Explicit representation of all control transfers
+**MirConst representation:** Constants in MIR are either:
 
-## Effect Classification
+- **InlineConst**: Small two-state scalars (fits in 64 bits) stored directly
+- **ConstRef**: Reference to ConstId in HIR's ConstantPool
 
-SystemVerilog has 100+ system tasks with various runtime effects. MIR does not encode each task individually. Instead, it classifies **effect types**.
+This is a representation choice, not semantic. All constants have a ConstId identity in HIR; MIR may inline small ones for efficiency.
 
-### Effect Categories
+**ValueId**: Each Value is identified by a ValueId, created during HIR -> MIR lowering when expression trees are flattened into ordered statements. ValueId identifies evaluation results, not language variables. It does not impose single-assignment or SSA semantics.
 
-| Category           | Description                      | Examples               |
-| ------------------ | -------------------------------- | ---------------------- |
-| Pure computation   | No side effects                  | Math, expressions      |
-| Immediate effects  | Execute now, visible immediately | `$display`, `$write`   |
-| Scheduled effects  | Queue for later execution        | NBA (`<=`), `$monitor` |
-| Simulation control | Control simulation flow          | `$finish`, `$stop`     |
+ValueId scope is a single Function or Process. ValueIds may be used across BasicBlocks within that scope but must not cross Function or Process boundaries.
 
-### MIR Statement Types
+## Statement Categories
 
-Based on effect classification, MIR has a small set of statement types:
+Statements perform actions but do not alter control flow.
 
-| Statement         | Effect Category                     |
-| ----------------- | ----------------------------------- |
-| `Assign`          | Pure (blocking)                     |
-| `ScheduleNBA`     | Scheduled (non-blocking assignment) |
-| `RegisterMonitor` | Scheduled                           |
-| `Display`         | Immediate                           |
-| `Finish`          | Simulation control                  |
+| Category    | Statements                                                |
+| ----------- | --------------------------------------------------------- |
+| Memory      | Load (Place -> Value), Store (Value -> Place), EnqueueNBA |
+| Computation | Unary op, Binary op, Cast (all produce Value)             |
+| Call        | Function call, SystemPure, SystemEffect, SystemState      |
 
-This approach:
+Statements must be strongly typed so that illegal combinations are rejected at construction.
 
-- Keeps MIR statement set minimal
-- Groups semantically similar tasks
-- Makes effect analysis straightforward
-- Allows backend-specific handling of each category
+### System Subroutine Statements
 
-## What MIR Contains
+Three semantic roles only (fixed classification, does not grow with API count):
 
-- Place/Operand/Rvalue expressions
-- Basic blocks with terminators
-- Effect-classified statements
-- Type information
-- Module and function structure
+| Role   | Description                    | Examples              |
+| ------ | ------------------------------ | --------------------- |
+| Pure   | No side effects                | `$clog2`, `$bits`     |
+| Effect | Immediate observable effect    | `$display`, `$write`  |
+| State  | Mutation of simulation runtime | `$monitor`, `$finish` |
+
+System subroutines take Value arguments only. Writable locations are never passed directly.
+
+## Terminator Categories
+
+Terminators end a basic block and determine the next control state.
+
+| Category   | Terminators                                           |
+| ---------- | ----------------------------------------------------- |
+| Control    | Jump, Branch (conditional), Switch (multi-way)        |
+| Suspension | Delay (with resume target), Wait (with resume target) |
+| Completion | Return, Finish, Repeat                                |
+
+### Why Delay and Wait Are Terminators
+
+Delay and Wait suspend execution and yield control to the simulation runtime. They cannot continue sequential execution.
+
+Decision rule:
+
+> If execution does not continue immediately, it must be a terminator.
+
+### Suspend and Resume
+
+A block ending with a suspension terminator (Delay or Wait) has **no CFG successors**. The runtime/scheduler re-enters execution at a **distinct resume block**. This resume block is a semantic continuation, not a CFG edge.
+
+This means suspension terminators carry a resume target as data, but do not create a CFG edge to it.
+
+## Loops and Repetition
+
+### Language Loops
+
+`while`, `for`, and `repeat` constructs are represented using control-flow graphs with branches and jumps.
+
+### Process Repetition
+
+Always-style repetition is represented by:
+
+- `ProcessKind::Looping` on the process
+- `Repeat` terminator to return to entry
+
+Not expanded into a loop at MIR level. Backend decides the implementation strategy.
 
 ## What MIR Does NOT Contain
 
-**No SSA**: MIR places can be assigned multiple times. SSA conversion happens during LLVM IR generation when beneficial.
+| Excluded             | Belongs in     |
+| -------------------- | -------------- |
+| LLVM instructions    | LLVM lowering  |
+| ABI details          | Backend        |
+| Scheduling/queues    | Runtime        |
+| Pointer arithmetic   | Backend        |
+| Frontend pointers    | Never          |
+| SSA/phi nodes        | LLVM if needed |
+| Elaborated instances | Runtime        |
 
-**No three-address temporaries**: Expressions stay structured. No explosion of `t0`, `t1`, `t2`.
+## Invariants
 
-**No function pointers**: SystemVerilog doesn't have first-class functions. Method dispatch is resolved statically.
+These must hold for well-formed MIR:
 
-**No elaborated instances**: MIR represents module templates, not the elaborated instance tree. Hierarchy is handled separately.
+**Structural:**
 
-**No low-level details**: Register allocation, instruction selection, and machine-specific concerns belong in LLVM IR.
+- Every basic block has exactly one terminator
+- All control flow is explicit; no implicit fallthrough
+- After lowering, no unsealed blocks remain
 
-## Design Rationale
+**Operand Discipline:**
 
-### Why Rust-Style?
+- Place and Value are strictly separated
+- Computation uses Value only
+- Writes occur only through Place
+- ValueId scope is Function or Process; no cross-boundary references
 
-Rust's MIR has proven effective for:
+**System Subroutines:**
 
-- Borrow checking and ownership analysis
-- Optimization passes (const propagation, dead code)
-- Multiple backend targets
-- Clear semantics for debugging
+- Classified only by semantic role (Pure/Effect/State)
+- Implemented using operation descriptors, not per-API instructions
 
-These benefits apply equally to SystemVerilog compilation.
+**Process Semantics:**
 
-### Why Effect Classification?
+- `initial` and `always` are normalized before MIR
+- Looping behavior expressed via process semantics, not control-flow expansion
+- Functions cannot suspend; only Processes may use Delay/Wait
 
-SystemVerilog's system tasks are numerous but fall into few semantic categories. Classifying by effect:
+**Error Policy:**
 
-- Reduces MIR complexity
-- Groups tasks that need similar handling
-- Makes scheduling semantics explicit
-- Enables backend-specific optimization per category
+- Lowering assumes HIR invariants are satisfied
+- Violations during lowering produce internal errors, not user diagnostics
+- MIR does not emit user-facing error messages
 
-### Why No Early SSA?
+## Summary
 
-SSA is valuable for certain optimizations but:
+**MIR structure:** Design -> DesignElement -> Process -> BasicBlock -> Statement + Terminator
 
-- Adds complexity for simple transformations
-- Not needed for C++ codegen (expressions map directly)
-- Can be introduced in LLVM IR when beneficial
-- Preserves readability of intermediate representation
+**Semantic helpers:** Place with Projection, and Value
 
-MIR's job is semantic clarity, not optimization-ready form.
+**Core fixed semantics:**
+
+- Load, Store, EnqueueNBA
+- Delay and Wait as suspension terminators
+- System subroutines as Pure, Effect, or State
+- Looping behavior as process repetition

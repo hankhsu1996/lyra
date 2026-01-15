@@ -6,11 +6,26 @@ HIR (High-level IR) is the semantic model of SystemVerilog.
 
 ```
 SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
-                               ↘
-                                C++ (secondary)
+                               |
+                               +-> C++ (secondary)
 ```
 
 The frontend (slang) is used only during lowering, then discarded. HIR freezes _what the language means_, not _how it runs_.
+
+### AST Boundary
+
+AST -> HIR lowering is the **error boundary** for user-facing diagnostics:
+
+| Responsibility                                     | Where                            |
+| -------------------------------------------------- | -------------------------------- |
+| User errors (unsupported features, invalid code)   | AST -> HIR only                  |
+| Source locations (slang ranges -> SourceSpan)      | Converted at boundary            |
+| Data ownership (slang string_view -> owned string) | Copied at boundary               |
+| Compiler bugs after HIR                            | Internal errors, not diagnostics |
+
+After HIR construction, slang resources may be released. Any error in subsequent stages (HIR -> MIR, codegen) indicates a compiler bug, not a user error.
+
+See [error-handling.md](error-handling.md) for error type details.
 
 Guiding question when designing HIR:
 
@@ -53,6 +68,17 @@ A symbol is a named language entity: variable, net, parameter, function, event. 
 
 Represents semantic visibility. Module, function, and block each introduce a new scope. ScopeId and SymbolId are independent—a symbol exists in a scope, but the ID spaces don't overlap.
 
+### ConstId / ConstantPool
+
+Constants are frontend-known, deduplicable entities—first-class citizens like TypeId. The ConstantPool interns constants for deduplication and consistent identity.
+
+Supported payload kinds:
+
+- Integral/packed bitvectors (two-state or four-state)
+- Strings
+
+Constants only provide data; types determine layout. A constant's identity (ConstId) is fixed in HIR; MIR and backends only reference or materialize it.
+
 ## Type System
 
 HIR must represent all SystemVerilog type semantics:
@@ -92,6 +118,33 @@ HIR statements preserve source structure:
 
 `if-else if-else` chains are nested if statements, not a special cascade node. Case statements are semantically distinct from if chains and remain so in HIR.
 
+## Process Model
+
+`initial` and `always` are not distinct semantic mechanisms—they differ only in execution repetition.
+
+HIR normalizes them into a single `Process` construct with a kind:
+
+| Kind                   | Corresponds to | Behavior        |
+| ---------------------- | -------------- | --------------- |
+| `ProcessKind::Once`    | `initial`      | Runs once       |
+| `ProcessKind::Looping` | `always`       | Repeats forever |
+
+HIR must **not** preserve `initial` or `always` as distinct syntax nodes. The normalization captures the semantic fact: both are processes, differing only in repetition policy.
+
+## System Subroutine Classification
+
+HIR must classify system subroutines into exactly three semantic roles:
+
+| Role   | Description                      | Examples              |
+| ------ | -------------------------------- | --------------------- |
+| Pure   | No side effects, pure evaluation | `$clog2`, `$bits`     |
+| Effect | Immediate observable effect      | `$display`, `$write`  |
+| State  | Mutation of simulation runtime   | `$monitor`, `$finish` |
+
+This classification is fixed and does not grow with the number of system APIs. MIR mirrors these roles as distinct statement categories.
+
+Rule: Classify by _what the subroutine does semantically_, not by its name or argument count.
+
 ## Time and Event Semantics
 
 All timing constructs unify as "wait for something":
@@ -126,9 +179,9 @@ HIR maintains source locations for diagnostics:
 
 ## HIR to C++ Codegen
 
-Direct HIR → C++ codegen is allowed as a semantic validation tool. It is:
+Direct HIR -> C++ codegen is allowed as a semantic validation tool. It is:
 
-- Secondary to the MIR → LLVM path
+- Secondary to the MIR -> LLVM path
 - Useful for debugging and readable output
 - Disposable if it becomes a maintenance burden
 
