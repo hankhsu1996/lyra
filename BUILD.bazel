@@ -36,6 +36,15 @@ cc_library(
 )
 
 cc_library(
+    name = "mir",
+    srcs = glob(["src/lyra/mir/*.cpp"]),
+    hdrs = glob(["include/lyra/mir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":common"],
+)
+
+cc_library(
     name = "lowering",
     srcs = glob(["src/lyra/lowering/**/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/**/*.hpp"]),
