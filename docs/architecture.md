@@ -16,7 +16,9 @@ Internally: compiler logic is a library, orchestrator handles config, caching, a
 ## Compilation Pipeline
 
 ```
-SystemVerilog -> Slang -> MIR -> C++ codegen -> compile -> run
+AST (slang) -> HIR -> MIR -> LLVM IR -> executable
+                |
+                +-> C++ (secondary exploration path)
 ```
 
 ### Slang (Frontend)
@@ -25,22 +27,35 @@ SystemVerilog -> Slang -> MIR -> C++ codegen -> compile -> run
 - Performs legality checks, name resolution, type checking
 - Does NOT emit fully elaborated netlist (see Runtime Elaboration below)
 
-### MIR (Middle IR)
+### HIR (Language Semantic Layer)
 
-- Preserves high-level structure: statements, expressions, control flow
+- Decouples from slang AST
+- Preserves SystemVerilog semantics faithfully
+- Owns all data (strings, types) - no lifetime dependency on slang
 - Represents module templates, not elaborated instances
-- Encodes parameter interfaces
-- Primary input for C++ code generation
+- Primary boundary between slang and the rest of the compiler
 
-### C++ Codegen
+### MIR (Executable Semantic Layer)
 
-MIR maps directly to C++ because:
+- Place/Value model (strict separation: Place for writes, Value for computation)
+- Control flow graphs with basic blocks and terminators
+- Suspension (Delay/Wait) as terminators, not statements
+- Target-independent; fixes all execution semantics
+- Primary input for LLVM backend and interpreter
 
-- Control flow (if/while/do-while) maps 1:1
-- Avoids reconstructing structure from linearized form
-- Produces readable output (a core requirement)
+### LLVM IR (Machine Layer)
 
-Generated code links against SDK for simulation runtime.
+- SSA form, three-address code
+- Runtime library calls for simulation primitives
+- Primary compilation path for performance
+
+### C++ Codegen (Secondary Path)
+
+C++ generation is a secondary exploration path:
+
+- Produces readable output for debugging and understanding
+- Links against SDK for simulation runtime
+- Useful for rapid prototyping before LLVM path is complete
 
 ### Embedded SDK
 
@@ -70,8 +85,8 @@ Traditional flow (Verilator-style):
 LYRA flow:
 
 - Slang validates semantics
-- MIR represents module templates
-- Generated C++ constructs hierarchy at runtime
+- HIR/MIR represent module templates
+- Generated code constructs hierarchy at runtime
 - Parameters become constructor arguments
 - `generate for/if` becomes constructor logic
 
@@ -83,8 +98,10 @@ This trades some runtime initialization cost for faster compilation and better d
 include/lyra/
   common/       # shared types, utilities, diagnostics
   frontend/     # Slang wrapper, produces AST
-  mir/          # module template IR
-  codegen/      # MIR -> C++ generator
+  hir/          # language semantic IR (decoupled from slang)
+  mir/          # executable semantic IR (Place/Value, basic blocks)
+  codegen/      # HIR -> C++ generator (secondary path)
+  llvm/         # MIR -> LLVM IR (primary path)
   sdk/          # runtime library (Task, Scheduler, Signal)
   cli/          # lyra subcommands (build, run, emit)
 ```
@@ -93,62 +110,32 @@ include/lyra/
 
 - **Diagnostic** (`common/diagnostic.hpp`): Error reporting with source locations. Uses `std::expected<T, Diagnostic>` (aliased as `Result<T>`) for error propagation. Produces colorful terminal output with file:line:col and source context.
 
-Alternative execution path (interpreter):
+### Interpreter (Future)
 
-- `lir/` - linearized IR for interpretation
-- `lowering/mir_to_lir/` - MIR to LIR transformation
-- `interpreter/` - direct execution without C++ compilation
+An interpreter path may be added in the future for development and debugging:
 
-The interpreter (`lyra run --interpret`) is useful for development and debugging.
-It supports hierarchical modules via instance contexts (see `docs/interpreter-hierarchy.md`).
+```
+MIR -> Interpreter
+```
 
-### Process vs Function
-
-In the interpreter, **Process** and **Function** are distinct execution models reflecting SystemVerilog semantics:
-
-| Aspect         | Process                                      | Function                                 |
-| -------------- | -------------------------------------------- | ---------------------------------------- |
-| **Lifetime**   | Long-lived, persists across simulation       | Ephemeral, exists during call            |
-| **Suspension** | Can suspend (`@event`, `#delay`)             | Cannot suspend, runs to completion       |
-| **Scheduling** | Scheduled independently by simulator         | Called synchronously within a process    |
-| **Variables**  | Persist across suspensions in `ProcessFrame` | Local to call frame, destroyed on return |
-
-**Implementation**: Both use the same block execution infrastructure. `RunProcess` manages a unified loop that switches between process blocks and function blocks via a call stack. When a function is called, its `CallFrame` is pushed; on return, execution resumes in the caller. This avoids duplicating block execution logic.
-
-**Why separate concepts?** SystemVerilog processes (`initial`, `always`) are concurrent execution units with their own timeline. Functions are subroutines that borrow the caller's timeline. A function cannot contain delays because that would require the calling process to suspend mid-expression evaluation, which violates the language model.
-
-**C++ analogy**: A Process is analogous to a C++ coroutine (can suspend and resume), while a Function is analogous to a regular C++ function (runs to completion). The `ProcessFrame` is the interpreter's equivalent of a coroutine frame.
-
-### LIR Design
-
-LIR is a register-based IR using Static Single Assignment (SSA) form. See `docs/lir-design.md` for SSA principles, pointer types, and instruction design.
+This would provide reference semantics validation without compilation overhead.
 
 ## Data Flow
 
 1. Source files -> `SlangFrontend` -> AST
-2. AST -> `AstToMir` -> MIR Module (template)
-3. MIR -> `Codegen` -> C++ source files
-4. C++ compiler -> executable (linked with SDK)
-5. Run executable
+2. AST -> `AstToHir` -> HIR (owns all data, slang can be released)
+3. HIR -> `HirToMir` -> MIR (executable semantics)
+4. MIR -> `MirToLlvm` -> LLVM IR -> executable (primary path)
+5. HIR -> `Codegen` -> C++ source files (secondary path)
 
-Each stage is independent and testable.
+Each stage is independent and testable. The HIR stage creates a clean boundary where slang resources can be released.
 
 ## Slang Data Ownership
 
 Slang's `SourceManager` owns the memory backing source text, and many slang types (including `symbol->name`) return `string_view` into this memory.
 
-**Current state**: We use `slang::ast::Symbol*` directly throughout MIR/LIR. This creates a hidden dependency: any code accessing symbol names requires the `SourceManager` to remain alive.
+**Solution**: HIR owns all data. At the slang -> HIR boundary (`AstToHir`), we copy all needed information into our own types with owned `std::string` names. This:
 
-**Consequence**: `InterpreterResult` stores a `shared_ptr<SourceManager>` to keep this memory valid. This is a lifetime hack, not a conceptual fit.
-
-**Future direction**: MIR/LIR should own their data. At the slang -> MIR boundary (`AstToMir`), we should copy symbol information into our own types with owned `std::string` names. This would:
-
-- Eliminate hidden lifetime dependencies on slang
-- Make the slang boundary explicit and complete
-- Allow slang resources to be released after lowering
-
-## Interpreter Value Model
-
-See `docs/type-system.md` for type interning and `docs/lir-design.md` for value representation and intrinsic operations.
-
-The interpreter uses `RuntimeValue` with a pointer to an interned type. Types are allocated through a `TypeArena` and compared by pointer equality. Intrinsic methods are resolved to function pointers at MIR→LIR lowering time.
+- Eliminates hidden lifetime dependencies on slang
+- Makes the slang boundary explicit and complete
+- Allows slang resources to be released after HIR construction

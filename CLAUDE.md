@@ -9,8 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                    |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns           |
 | `docs/architecture.md`             | Component relationships, data flow                   |
-| `docs/lir-design.md`               | SSA principles, pointer types, instruction design    |
-| `docs/type-system.md`              | Type interning, type kinds                           |
+| `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness      |
+| `docs/hir-design.md`               | HIR layer design (language semantics)                |
+| `docs/mir-design.md`               | MIR layer design (execution semantics)               |
+| `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                        |
+| `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model                   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
 | `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |
@@ -19,6 +22,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/string-types.md`             | String type handling, slang interaction              |
 | `docs/error-handling.md`           | Error types, when to use each                        |
 | `docs/documentation-guidelines.md` | Documentation guidelines                             |
+
+**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
 
 ## Commands
 
@@ -45,7 +50,7 @@ clang-tidy -p . <files>                # Single file (~20s each)
 run-clang-tidy -p . -j 20 <files>      # Multiple files in parallel
 ```
 
-Or run on all files:
+Or run on all files (update path when new code is added):
 
 ```bash
 run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
@@ -55,6 +60,8 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
 
 ## Lyra CLI
 
+**Note:** CLI commands are not functional until the new pipeline is built. Documentation kept for reference.
+
 Lyra has two modes: **project-based commands** and **standalone dump commands**.
 
 ### Project-Based Commands
@@ -62,10 +69,9 @@ Lyra has two modes: **project-based commands** and **standalone dump commands**.
 These commands require `lyra.toml` in the current directory. They take **NO positional arguments**.
 
 ```bash
-lyra run                    # Build C++ and run simulation
-lyra run --interpret        # Run with interpreter (no C++ compilation)
-lyra build                  # Generate and compile C++ (no run)
-lyra emit                   # Generate C++ project to out/
+lyra run                    # Build and run simulation
+lyra build                  # Generate and compile (no run)
+lyra emit                   # Generate output to out/
 lyra check                  # Parse and validate only
 ```
 
@@ -82,9 +88,8 @@ These commands take source files directly (no `lyra.toml` needed):
 ```bash
 lyra init <name>            # Create new project in <name>/
 lyra init                   # Create new project in current directory
-lyra dump cpp <file.sv>     # Dump generated C++ code
+lyra dump hir <file.sv>     # Dump HIR
 lyra dump mir <file.sv>     # Dump MIR
-lyra dump lir <file.sv>     # Dump LIR
 ```
 
 ### Project Configuration
@@ -106,21 +111,21 @@ Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is conf
 
 ## Architecture
 
-SystemVerilog compiler and simulator:
+SystemVerilog compiler:
 
 ```
-                    +---> LIR ---> Interpreter
-                    |
-SV ---> AST ---> MIR +
-                    |
-                    +---> C++ ---> Binary
+SV ---> AST ---> HIR ---> MIR ---> LLVM IR ---> Binary
+                  |
+                  +---> C++ (secondary)
 ```
 
 Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-YAML-based tests in `tests/sv_features/`. Each test runs both interpreter and codegen backends.
+**Note:** Tests are currently disabled (legacy code moved). Commands below will not work until new pipeline is built. Documentation kept for reference.
+
+YAML-based tests in `tests/sv_features/`.
 
 ```bash
 bazel test //tests:sv_feature_tests              # Run ALL tests (sharded)
@@ -146,12 +151,11 @@ See `docs/error-handling.md` for full details.
 
 | Error Type            | When to Use                            |
 | --------------------- | -------------------------------------- |
-| `DiagnosticException` | AST→MIR lowering only (has source loc) |
+| `DiagnosticException` | AST→HIR lowering only (has source loc) |
 | `InternalError`       | Compiler bugs (invariant violations)   |
-| `std::runtime_error`  | Interpreter and SDK runtime errors     |
+| `std::runtime_error`  | Runtime errors                         |
 
-For shared code between interpreter and SDK, return `std::expected<T, std::string>`
-and let callers convert to `std::runtime_error`.
+For shared code, return `std::expected<T, std::string>` and let callers convert to `std::runtime_error`.
 
 ## Approach to Changes
 
