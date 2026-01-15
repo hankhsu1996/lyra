@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <format>
+#include <variant>
 
 namespace lyra::mir {
 
@@ -97,9 +98,18 @@ void Dumper::Dump(BasicBlockId id) {
 
   for (const Instruction& instr : bb.instructions) {
     PrintIndent();
-    *out_ << std::format(
-        "place[{}] = rvalue(op={})\n", instr.target.root.id,
-        static_cast<int>(instr.value.kind));
+    std::visit(
+        [this](const auto& i) {
+          using T = std::decay_t<decltype(i)>;
+          if constexpr (std::is_same_v<T, Assign>) {
+            *out_ << std::format("place[{}] = operand\n", i.target.value);
+          } else if constexpr (std::is_same_v<T, Compute>) {
+            *out_ << std::format(
+                "place[{}] = rvalue(op={})\n", i.target.value,
+                static_cast<int>(i.value.kind));
+          }
+        },
+        instr);
   }
 
   PrintIndent();

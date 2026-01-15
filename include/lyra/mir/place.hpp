@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include "lyra/common/type.hpp"
+
 namespace lyra::mir {
 
 struct PlaceRoot {
@@ -12,7 +14,8 @@ struct PlaceRoot {
   };
 
   Kind kind;
-  int id;  // opaque handle to storage table
+  int id;       // opaque handle to storage table
+  TypeId type;  // type of the value stored at this root
 };
 
 struct Projection {

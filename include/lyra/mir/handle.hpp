@@ -56,4 +56,21 @@ struct BasicBlockId {
 
 constexpr BasicBlockId kInvalidBasicBlockId{UINT32_MAX};
 
+struct PlaceId {
+  uint32_t value = 0;
+
+  auto operator==(const PlaceId&) const -> bool = default;
+  auto operator<=>(const PlaceId&) const = default;
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+
+  template <typename H>
+  friend auto AbslHashValue(H h, PlaceId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
+};
+
+constexpr PlaceId kInvalidPlaceId{UINT32_MAX};
+
 }  // namespace lyra::mir

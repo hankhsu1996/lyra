@@ -4,6 +4,7 @@
 
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::mir {
@@ -18,6 +19,12 @@ class Arena final {
 
   Arena(Arena&&) = default;
   auto operator=(Arena&&) -> Arena& = default;
+
+  auto AddPlace(Place place) -> PlaceId {
+    PlaceId id{static_cast<uint32_t>(places_.size())};
+    places_.push_back(std::move(place));
+    return id;
+  }
 
   auto AddBasicBlock(BasicBlock block) -> BasicBlockId {
     BasicBlockId id{static_cast<uint32_t>(basic_blocks_.size())};
@@ -37,6 +44,10 @@ class Arena final {
     return id;
   }
 
+  [[nodiscard]] auto operator[](PlaceId id) const -> const Place& {
+    return places_[id.value];
+  }
+
   [[nodiscard]] auto operator[](BasicBlockId id) const -> const BasicBlock& {
     return basic_blocks_[id.value];
   }
@@ -50,6 +61,7 @@ class Arena final {
   }
 
  private:
+  std::vector<Place> places_;
   std::vector<BasicBlock> basic_blocks_;
   std::vector<Process> processes_;
   std::vector<Function> functions_;
