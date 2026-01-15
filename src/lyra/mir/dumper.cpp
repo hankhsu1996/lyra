@@ -4,10 +4,45 @@
 #include <format>
 #include <variant>
 
+#include "lyra/common/operator.hpp"
+
 namespace lyra::mir {
 
-Dumper::Dumper(const Arena* arena, const TypeArena* type_arena,
-               std::ostream* out)
+namespace {
+
+auto FormatTerminator(const Terminator& term) -> std::string {
+  switch (term.kind) {
+    case Terminator::Kind::kJump:
+      if (!term.targets.empty()) {
+        return std::format("jump bb{}", term.targets[0].value);
+      }
+      return "jump <?>)";
+    case Terminator::Kind::kBranch:
+      if (term.targets.size() >= 2) {
+        return std::format(
+            "branch bb{}, bb{}", term.targets[0].value, term.targets[1].value);
+      }
+      return "branch <?>";
+    case Terminator::Kind::kSwitch:
+      return "switch";
+    case Terminator::Kind::kDelay:
+      return "delay";
+    case Terminator::Kind::kWait:
+      return "wait";
+    case Terminator::Kind::kReturn:
+      return "return";
+    case Terminator::Kind::kFinish:
+      return "finish";
+    case Terminator::Kind::kRepeat:
+      return "repeat";
+  }
+  return "<?>";
+}
+
+}  // namespace
+
+Dumper::Dumper(
+    const Arena* arena, const TypeArena* type_arena, std::ostream* out)
     : arena_(arena), type_arena_(type_arena), out_(out) {
 }
 
@@ -103,11 +138,11 @@ void Dumper::Dump(BasicBlockId id) {
         [this](const auto& i) {
           using T = std::decay_t<decltype(i)>;
           if constexpr (std::is_same_v<T, Assign>) {
-            *out_ << std::format("{} = {}\n", FormatPlace(i.target),
-                                 FormatOperand(i.source));
+            *out_ << std::format(
+                "{} = {}\n", FormatPlace(i.target), FormatOperand(i.source));
           } else if constexpr (std::is_same_v<T, Compute>) {
-            *out_ << std::format("{} = {}\n", FormatPlace(i.target),
-                                 FormatRvalue(i.value));
+            *out_ << std::format(
+                "{} = {}\n", FormatPlace(i.target), FormatRvalue(i.value));
           }
         },
         instr);
@@ -169,14 +204,14 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
               if (val.value.empty()) {
                 return std::format("const(0: {})", FormatType(constant.type));
               }
-              return std::format("const({}: {})", val.value[0],
-                                 FormatType(constant.type));
+              return std::format(
+                  "const({}: {})", val.value[0], FormatType(constant.type));
             } else if constexpr (std::is_same_v<T, StringConstant>) {
-              return std::format("const(\"{}\": {})", val.value,
-                                 FormatType(constant.type));
+              return std::format(
+                  "const(\"{}\": {})", val.value, FormatType(constant.type));
             } else {
-              return std::format("const(<aggregate>: {})",
-                                 FormatType(constant.type));
+              return std::format(
+                  "const(<aggregate>: {})", FormatType(constant.type));
             }
           },
           constant.value);
@@ -205,58 +240,30 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
 }
 
 auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
-  const char* kind_str = nullptr;
+  std::string result;
+
   switch (rv.kind) {
     case RvalueKind::kUnary:
-      kind_str = "unary";
+      result = std::format("unary({})", ToString(static_cast<UnaryOp>(rv.op)));
       break;
     case RvalueKind::kBinary:
-      kind_str = "binary";
+      result =
+          std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
       break;
     case RvalueKind::kCast:
-      kind_str = "cast";
+      result = "cast";
       break;
     case RvalueKind::kCall:
-      kind_str = "call";
+      result = std::format("call(op={})", rv.op);
       break;
   }
 
-  std::string result = std::format("{}(op={}", kind_str, rv.op);
   for (const Operand& operand : rv.operands) {
     result += ", ";
     result += FormatOperand(operand);
   }
-  result += ")";
-  return result;
-}
 
-auto Dumper::FormatTerminator(const Terminator& term) const -> std::string {
-  switch (term.kind) {
-    case Terminator::Kind::kJump:
-      if (!term.targets.empty()) {
-        return std::format("jump bb{}", term.targets[0].value);
-      }
-      return "jump <?>)";
-    case Terminator::Kind::kBranch:
-      if (term.targets.size() >= 2) {
-        return std::format("branch bb{}, bb{}", term.targets[0].value,
-                           term.targets[1].value);
-      }
-      return "branch <?>";
-    case Terminator::Kind::kSwitch:
-      return "switch";
-    case Terminator::Kind::kDelay:
-      return "delay";
-    case Terminator::Kind::kWait:
-      return "wait";
-    case Terminator::Kind::kReturn:
-      return "return";
-    case Terminator::Kind::kFinish:
-      return "finish";
-    case Terminator::Kind::kRepeat:
-      return "repeat";
-  }
-  return "<?>";
+  return result;
 }
 
 auto Dumper::FormatType(TypeId id) const -> std::string {
