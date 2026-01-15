@@ -3,28 +3,10 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/system_function.hpp"
 #include "lyra/hir/fwd.hpp"
 
 namespace lyra::hir {
-
-enum class PrintRadix {
-  kDecimal,
-  kBinary,
-  kOctal,
-  kHex,
-};
-
-enum class FinishKind {
-  kFinish,
-  kStop,
-  kExit,
-};
-
-enum class TimeKind {
-  kTime,
-  kStime,
-  kRealtime,
-};
 
 struct DisplaySystemCallData {
   PrintRadix radix;
@@ -34,19 +16,6 @@ struct DisplaySystemCallData {
   auto operator==(const DisplaySystemCallData&) const -> bool = default;
 };
 
-struct FinishSystemCallData {
-  FinishKind kind;
-
-  auto operator==(const FinishSystemCallData&) const -> bool = default;
-};
-
-struct TimeSystemCallData {
-  TimeKind kind;
-
-  auto operator==(const TimeSystemCallData&) const -> bool = default;
-};
-
-using SystemCallExpressionData = std::variant<
-    DisplaySystemCallData, FinishSystemCallData, TimeSystemCallData>;
+using SystemCallExpressionData = std::variant<DisplaySystemCallData>;
 
 }  // namespace lyra::hir

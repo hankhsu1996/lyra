@@ -23,7 +23,10 @@ class SourceMapper {
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {
     slang::BufferID buffer = range.start().buffer();
     auto it = buffer_to_file_.find(buffer);
-    assert(it != buffer_to_file_.end() && "buffer must be registered");
+    if (it == buffer_to_file_.end()) {
+      // Invalid or built-in location (e.g., root symbol, built-in types)
+      return SourceSpan{};
+    }
     return SourceSpan{
         .file_id = it->second,
         .begin = static_cast<uint32_t>(range.start().offset()),

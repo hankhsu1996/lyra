@@ -3,6 +3,7 @@
 #include <format>
 #include <optional>
 
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -13,6 +14,7 @@
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -234,6 +236,18 @@ auto LowerExpression(
               .span = span,
               .data = hir::BinaryExpressionData{
                   .op = *hir_op, .lhs = lhs, .rhs = rhs}});
+    }
+
+    case ExpressionKind::Call: {
+      const auto& call = expr.as<slang::ast::CallExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      if (!call.isSystemCall()) {
+        ctx->sink->Error(span, "only system calls are supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      return LowerSystemCall(call, registrar, ctx);
     }
 
     default:
