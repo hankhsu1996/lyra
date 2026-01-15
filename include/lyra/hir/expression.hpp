@@ -46,9 +46,9 @@ enum class UnaryOp {
 enum class BinaryOp {
   // Arithmetic
   kAdd,
-  kSub,
-  kMul,
-  kDiv,
+  kSubtract,
+  kMultiply,
+  kDivide,
   kMod,
   kPower,
 

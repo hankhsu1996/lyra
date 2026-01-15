@@ -2,10 +2,12 @@
 
 #include <cstdint>
 
+#include "lyra/common/source_manager.hpp"
+
 namespace lyra {
 
 struct SourceSpan {
-  uint32_t file_id = 0;
+  FileId file_id;
   uint32_t begin = 0;
   uint32_t end = 0;
 

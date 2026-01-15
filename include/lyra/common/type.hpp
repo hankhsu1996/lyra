@@ -7,6 +7,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/range.hpp"
+
 namespace lyra {
 
 struct TypeId {
@@ -52,13 +54,13 @@ struct IntegralInfo {
 
 struct UnpackedArrayInfo {
   TypeId element_type;
-  uint32_t size;
+  ConstantRange range;
 
   auto operator==(const UnpackedArrayInfo&) const -> bool = default;
 
   template <typename H>
   friend auto AbslHashValue(H h, const UnpackedArrayInfo& info) -> H {
-    return H::combine(std::move(h), info.element_type, info.size);
+    return H::combine(std::move(h), info.element_type, info.range);
   }
 };
 
@@ -106,7 +108,7 @@ class Type {
   static auto Void() -> Type;
   static auto Integral(uint32_t bit_width, bool is_signed, bool is_four_state)
       -> Type;
-  static auto UnpackedArray(TypeId element, uint32_t size) -> Type;
+  static auto UnpackedArray(TypeId element, ConstantRange range) -> Type;
   static auto UnpackedStruct(std::string name, std::vector<StructField> fields)
       -> Type;
 
@@ -144,10 +146,10 @@ inline auto Type::Integral(
   return t;
 }
 
-inline auto Type::UnpackedArray(TypeId element, uint32_t size) -> Type {
+inline auto Type::UnpackedArray(TypeId element, ConstantRange range) -> Type {
   Type t;
   t.kind_ = TypeKind::kUnpackedArray;
-  t.payload_ = UnpackedArrayInfo{.element_type = element, .size = size};
+  t.payload_ = UnpackedArrayInfo{.element_type = element, .range = range};
   return t;
 }
 
@@ -201,7 +203,9 @@ inline auto ToString(const Type& type) -> std::string {
     }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
-      return std::format("type#{}[{}]", info.element_type.value, info.size);
+      return std::format(
+          "type#{}[{}:{}]", info.element_type.value, info.range.lower,
+          info.range.upper);
     }
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();

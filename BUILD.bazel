@@ -1,6 +1,11 @@
 # Lyra SystemVerilog Simulator
 
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+)
 
 cc_library(
     name = "common",
@@ -8,11 +13,15 @@ cc_library(
         "src/lyra/common/constant_arena.cpp",
         "src/lyra/common/type_arena.cpp",
     ],
-    hdrs = glob(["include/lyra/common/*.hpp"]),
+    hdrs = glob([
+        "include/lyra/common/*.hpp",
+        "include/lyra/common/**/*.hpp",
+    ]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
         "@abseil-cpp//absl/container:flat_hash_map",
+        "@slang",
     ],
 )
 
@@ -22,4 +31,17 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [":common"],
+)
+
+cc_library(
+    name = "lowering",
+    srcs = glob(["src/lyra/lowering/**/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/**/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        ":hir",
+        "@slang",
+    ],
 )
