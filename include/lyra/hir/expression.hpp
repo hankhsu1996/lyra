@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/operator.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
@@ -19,69 +20,9 @@ enum class ExpressionKind {
   kSystemCall,
 };
 
-enum class UnaryOp {
-  // Arithmetic
-  kPlus,
-  kMinus,
-  kPreincrement,
-  kPostincrement,
-  kPredecrement,
-  kPostdecrement,
-
-  // Logical
-  kLogicalNot,
-
-  // Bitwise
-  kBitwiseNot,
-
-  // Reduction
-  kReductionAnd,
-  kReductionNand,
-  kReductionOr,
-  kReductionNor,
-  kReductionXor,
-  kReductionXnor,
-};
-
-enum class BinaryOp {
-  // Arithmetic
-  kAdd,
-  kSubtract,
-  kMultiply,
-  kDivide,
-  kMod,
-  kPower,
-
-  // Bitwise
-  kBitwiseAnd,
-  kBitwiseOr,
-  kBitwiseXor,
-  kBitwiseXnor,
-
-  // Logical
-  kLogicalAnd,
-  kLogicalOr,
-  kLogicalImplication,
-  kLogicalEquivalence,
-
-  // Comparison
-  kEqual,
-  kNotEqual,
-  kCaseEqual,
-  kCaseNotEqual,
-  kWildcardEqual,
-  kWildcardNotEqual,
-  kLessThan,
-  kLessThanEqual,
-  kGreaterThan,
-  kGreaterThanEqual,
-
-  // Shift
-  kLogicalShiftLeft,
-  kLogicalShiftRight,
-  kArithmeticShiftLeft,
-  kArithmeticShiftRight,
-};
+// Re-export from common for backward compatibility
+using lyra::common::BinaryOp;
+using lyra::common::UnaryOp;
 
 struct ConstantExpressionData {
   ConstId constant;
