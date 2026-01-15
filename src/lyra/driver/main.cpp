@@ -8,7 +8,7 @@
 namespace {
 
 void PrintUsage() {
-  fmt::print(stderr, "Usage: lyra dump hir <file.sv>\n");
+  fmt::print(stderr, "Usage: lyra dump <hir|mir> <file.sv>\n");
 }
 
 }  // namespace
@@ -23,6 +23,10 @@ auto main(int argc, char* argv[]) -> int {
 
   if (args[0] == "dump" && args[1] == "hir") {
     return lyra::driver::DumpHir(args[2]);
+  }
+
+  if (args[0] == "dump" && args[1] == "mir") {
+    return lyra::driver::DumpMir(args[2]);
   }
 
   PrintUsage();

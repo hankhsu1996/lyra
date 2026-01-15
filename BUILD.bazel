@@ -67,6 +67,7 @@ cc_binary(
     deps = [
         ":hir",
         ":lowering",
+        ":mir",
         "@fmt",
         "@slang",
     ],
