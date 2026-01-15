@@ -84,6 +84,16 @@ Each basic block consists of:
 - **Statements**: ordered list, perform actions but do not alter control flow
 - **Terminator**: exactly one, always last, determines next control state
 
+## Design Heritage
+
+MIR borrows **structural ideas** from Rust MIR:
+
+- Place/Value separation
+- CFG with basic blocks and terminators
+- Explicit control flow
+
+However, MIR **rejects** Rust's operand and temporary model. SystemVerilog has no ownership semantics (no Copy/Move distinction), and MIR does not use SSA or value numbering. All computation results are materialized into Places; there is no abstract "value identity" separate from storage.
+
 ## Place and Value
 
 MIR uses exactly two operand concepts. Do not introduce a unified operand that can be either.
@@ -92,42 +102,47 @@ MIR uses exactly two operand concepts. Do not introduce a unified operand that c
 
 A writable location. Structure:
 
-- **PlaceRoot**: variable, parameter, temporary, or symbol
+- **PlaceRoot**: variable, parameter, or temporary
 - **Projection sequence**: field access, index access, slice access, dereference
 
-Place is not a value and cannot participate in computation directly.
+Place is not a value and cannot participate in computation directly. Temporaries are compiler-generated Places used to hold intermediate computation results.
 
 ### Value
 
-A computable and transferable result, but not writable.
+A readable operand. Three kinds only:
 
-Origins:
+- **Const**: a constant (inline or referenced from ConstantArena)
+- **PlaceRead**: read from a Place (implicit load)
+- **Undef**: undefined value
 
-- Constant (via ConstRef or InlineConst)
-- Load from Place
-- Computation result
-- Function or system subroutine result
+Place-read is implicit—there is no explicit Load statement. Reading a Place produces a Value directly. This is the **implicit read model**: `Value::Read(place)` means "the current value stored at place."
 
-**MirConst representation:** Constants in MIR are either:
+All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
-- **InlineConst**: Small two-state scalars (fits in 64 bits) stored directly
-- **ConstRef**: Reference to ConstId in HIR's ConstantPool
+**Example:** `x = 1 + 2` lowers to:
 
-This is a representation choice, not semantic. All constants have a ConstId identity in HIR; MIR may inline small ones for efficiency.
+```
+temp = BinaryOp(Add, Const(1), Const(2))   // result in temp
+x = PlaceRead(temp)                         // copy to x
+```
 
-**ValueId**: Each Value is identified by a ValueId, created during HIR -> MIR lowering when expression trees are flattened into ordered statements. ValueId identifies evaluation results, not language variables. It does not impose single-assignment or SSA semantics.
+Or if the backend can fold:
 
-ValueId scope is a single Function or Process. ValueIds may be used across BasicBlocks within that scope but must not cross Function or Process boundaries.
+```
+x = BinaryOp(Add, Const(1), Const(2))      // result directly in x
+```
 
 ## Statement Categories
 
-Statements perform actions but do not alter control flow.
+Statements perform actions but do not alter control flow. Every statement that produces a result assigns to a destination Place.
 
-| Category    | Statements                                                |
-| ----------- | --------------------------------------------------------- |
-| Memory      | Load (Place -> Value), Store (Value -> Place), EnqueueNBA |
-| Computation | Unary op, Binary op, Cast (all produce Value)             |
-| Call        | Function call, SystemPure, SystemEffect, SystemState      |
+| Category    | Statements                                           |
+| ----------- | ---------------------------------------------------- |
+| Assignment  | Assign (Value -> Place), EnqueueNBA                  |
+| Computation | Unary op, Binary op, Cast (dest Place, Value)        |
+| Call        | Function call, SystemPure, SystemEffect, SystemState |
+
+**No Load statement.** Reading a Place is implicit in Value (PlaceRead kind). This keeps the operand model simple: Values are inputs, Places are outputs.
 
 Statements must be strongly typed so that illegal combinations are rejected at construction.
 
@@ -207,9 +222,9 @@ These must hold for well-formed MIR:
 **Operand Discipline:**
 
 - Place and Value are strictly separated
-- Computation uses Value only
+- Values are inputs (Const, PlaceRead, Undef)
 - Writes occur only through Place
-- ValueId scope is Function or Process; no cross-boundary references
+- All computation results materialize into Places (no abstract value identity)
 
 **System Subroutines:**
 
@@ -232,11 +247,11 @@ These must hold for well-formed MIR:
 
 **MIR structure:** Design -> DesignElement -> Process -> BasicBlock -> Statement + Terminator
 
-**Semantic helpers:** Place with Projection, and Value
+**Operand model:** Place (writable location) and Value (readable operand: Const/PlaceRead/Undef)
 
 **Core fixed semantics:**
 
-- Load, Store, EnqueueNBA
+- Assign, EnqueueNBA (no explicit Load—PlaceRead is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition

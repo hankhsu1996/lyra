@@ -1,0 +1,35 @@
+#pragma once
+
+#include <vector>
+
+namespace lyra::mir {
+
+struct PlaceRoot {
+  enum class Kind {
+    kLocal,   // function/process local storage (vars, params)
+    kTemp,    // compiler-generated local storage
+    kDesign,  // design/runtime storage (nets, ports, hierarchy)
+  };
+
+  Kind kind;
+  int id;  // opaque handle to storage table
+};
+
+struct Projection {
+  enum class Kind {
+    kField,
+    kIndex,
+    kSlice,
+    kDeref,
+  };
+
+  Kind kind;
+  int operand;  // field index, constant index, etc.
+};
+
+struct Place {
+  PlaceRoot root;
+  std::vector<Projection> projections;
+};
+
+}  // namespace lyra::mir
