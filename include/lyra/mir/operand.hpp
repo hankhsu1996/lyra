@@ -3,12 +3,11 @@
 #include <variant>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
 
-struct Place;
-
-using OperandPayload = std::variant<Constant, Place*>;
+using OperandPayload = std::variant<Constant, PlaceId>;
 
 struct Operand {
   enum class Kind {
@@ -24,8 +23,8 @@ struct Operand {
     return {.kind = Kind::kConst, .payload = c};
   }
 
-  static auto Use(Place* p) -> Operand {
-    return {.kind = Kind::kUse, .payload = p};
+  static auto Use(PlaceId id) -> Operand {
+    return {.kind = Kind::kUse, .payload = id};
   }
 
   static auto Poison() -> Operand {
