@@ -21,8 +21,8 @@ enum class ExpressionKind {
 };
 
 // Re-export from common for backward compatibility
-using ::lyra::BinaryOp;
-using ::lyra::UnaryOp;
+using lyra::common::BinaryOp;
+using lyra::common::UnaryOp;
 
 struct ConstantExpressionData {
   ConstId constant;

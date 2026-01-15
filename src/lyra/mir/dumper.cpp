@@ -244,11 +244,12 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
 
   switch (rv.kind) {
     case RvalueKind::kUnary:
-      result = std::format("unary({})", ToString(static_cast<UnaryOp>(rv.op)));
+      result = std::format(
+          "unary({})", common::ToString(static_cast<common::UnaryOp>(rv.op)));
       break;
     case RvalueKind::kBinary:
-      result =
-          std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
+      result = std::format(
+          "binary({})", common::ToString(static_cast<common::BinaryOp>(rv.op)));
       break;
     case RvalueKind::kCast:
       result = "cast";
