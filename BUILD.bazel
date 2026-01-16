@@ -45,6 +45,18 @@ cc_library(
 )
 
 cc_library(
+    name = "interp",
+    srcs = glob(["src/lyra/mir/interp/*.cpp"]),
+    hdrs = glob(["include/lyra/mir/interp/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        ":mir",
+    ],
+)
+
+cc_library(
     name = "lowering",
     srcs = glob(["src/lyra/lowering/**/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/**/*.hpp"]),
