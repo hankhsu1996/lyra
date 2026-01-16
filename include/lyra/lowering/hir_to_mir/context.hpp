@@ -17,15 +17,20 @@ struct SymbolIdHash {
   }
 };
 
+using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
+
+// Context for lowering within a process or function activation.
+// module_places is module-scoped (read-only), local_places is process-scoped.
 struct Context {
-  mir::Arena& mir_arena;
+  mir::Arena* mir_arena;
 
-  const hir::Arena& hir_arena;
-  const TypeArena& type_arena;
-  const ConstantArena& constant_arena;
-  const SymbolTable& symbol_table;
+  const hir::Arena* hir_arena;
+  const TypeArena* type_arena;
+  const ConstantArena* constant_arena;
+  const SymbolTable* symbol_table;
 
-  std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash> symbol_places;
+  const PlaceMap* module_places;
+  PlaceMap local_places;
 
   int next_local_id = 0;
   int next_temp_id = 0;

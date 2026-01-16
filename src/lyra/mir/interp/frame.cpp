@@ -4,8 +4,6 @@
 #include <format>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/mir/interp/runtime_value.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::mir::interp {
 
@@ -51,32 +49,6 @@ auto Frame::GetTemp(int id) const -> const RuntimeValue& {
             "temp index {} out of bounds (size {})", id, temps_.size()));
   }
   return temps_[static_cast<size_t>(id)];
-}
-
-auto Frame::Resolve(const PlaceRoot& root) -> RuntimeValue& {
-  switch (root.kind) {
-    case PlaceRoot::Kind::kLocal:
-      return GetLocal(root.id);
-    case PlaceRoot::Kind::kTemp:
-      return GetTemp(root.id);
-    case PlaceRoot::Kind::kDesign:
-      throw common::InternalError(
-          "Frame::Resolve", "design storage not supported in interpreter");
-  }
-  throw common::InternalError("Frame::Resolve", "unknown PlaceRoot kind");
-}
-
-auto Frame::Resolve(const PlaceRoot& root) const -> const RuntimeValue& {
-  switch (root.kind) {
-    case PlaceRoot::Kind::kLocal:
-      return GetLocal(root.id);
-    case PlaceRoot::Kind::kTemp:
-      return GetTemp(root.id);
-    case PlaceRoot::Kind::kDesign:
-      throw common::InternalError(
-          "Frame::Resolve", "design storage not supported in interpreter");
-  }
-  throw common::InternalError("Frame::Resolve", "unknown PlaceRoot kind");
 }
 
 }  // namespace lyra::mir::interp

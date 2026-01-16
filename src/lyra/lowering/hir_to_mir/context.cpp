@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 
-#include <string>
+#include <cassert>
+#include <format>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/place.hpp"
@@ -8,6 +9,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto Context::AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId {
+  assert(
+      (module_places == nullptr || !module_places->contains(sym)) &&
+      "AllocLocal called for symbol that already has a module place");
+
   mir::Place place{
       .root =
           mir::PlaceRoot{
@@ -17,8 +22,8 @@ auto Context::AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId {
           },
       .projections = {},
   };
-  mir::PlaceId place_id = mir_arena.AddPlace(std::move(place));
-  symbol_places[sym] = place_id;
+  mir::PlaceId place_id = mir_arena->AddPlace(std::move(place));
+  local_places[sym] = place_id;
   return place_id;
 }
 
@@ -32,18 +37,25 @@ auto Context::AllocTemp(TypeId type) -> mir::PlaceId {
           },
       .projections = {},
   };
-  return mir_arena.AddPlace(std::move(place));
+  return mir_arena->AddPlace(std::move(place));
 }
 
 auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
-  auto it = symbol_places.find(sym);
-  if (it == symbol_places.end()) {
-    std::string msg = "symbol ";
-    msg += std::to_string(sym.value);
-    msg += " not found in place mapping";
-    throw common::InternalError("HIR to MIR lowering", msg);
+  if (module_places != nullptr) {
+    auto it = module_places->find(sym);
+    if (it != module_places->end()) {
+      return it->second;
+    }
   }
-  return it->second;
+
+  auto it = local_places.find(sym);
+  if (it != local_places.end()) {
+    return it->second;
+  }
+
+  throw common::InternalError(
+      "HIR to MIR lowering",
+      std::format("symbol {} not found in place mapping", sym.value));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

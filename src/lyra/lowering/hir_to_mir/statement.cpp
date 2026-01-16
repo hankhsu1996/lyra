@@ -24,7 +24,7 @@ void LowerBlock(const hir::BlockStatementData& data, MirBuilder& builder) {
 void LowerVariableDeclaration(
     const hir::VariableDeclarationStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
-  const Symbol& sym = ctx.symbol_table[data.symbol];
+  const Symbol& sym = (*ctx.symbol_table)[data.symbol];
   mir::PlaceId place_id = ctx.AllocLocal(data.symbol, sym.type);
 
   if (data.init != hir::kInvalidExpressionId) {
@@ -36,7 +36,7 @@ void LowerVariableDeclaration(
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
     -> mir::PlaceId {
   Context& ctx = builder.GetContext();
-  const hir::Expression& expr = ctx.hir_arena[expr_id];
+  const hir::Expression& expr = (*ctx.hir_arena)[expr_id];
 
   return std::visit(
       [&](const auto& data) -> mir::PlaceId {
@@ -77,7 +77,7 @@ void LowerDisplayEffect(
 void LowerExpressionStatement(
     const hir::ExpressionStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
-  const hir::Expression& expr = ctx.hir_arena[data.expression];
+  const hir::Expression& expr = (*ctx.hir_arena)[data.expression];
 
   // Check if this is a system call that should be an Effect instruction
   if (const auto* syscall =
@@ -132,7 +132,7 @@ void LowerConditional(
 }  // namespace
 
 void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
-  const hir::Statement& stmt = builder.GetContext().hir_arena[stmt_id];
+  const hir::Statement& stmt = (*builder.GetContext().hir_arena)[stmt_id];
 
   std::visit(
       [&](const auto& data) {

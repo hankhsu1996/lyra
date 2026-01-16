@@ -31,12 +31,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
-#include "lyra/mir/module.hpp"
-#include "lyra/mir/routine.hpp"
 #include "tests/framework/assertions.hpp"
 #include "tests/framework/suite.hpp"
 #include "tests/framework/test_case.hpp"
@@ -150,25 +145,6 @@ struct TestResult {
   std::filesystem::path work_directory;
 };
 
-// Find initial process in MIR design
-auto FindInitialProcess(const mir::Design& design, const mir::Arena& arena)
-    -> std::optional<mir::ProcessId> {
-  std::vector<mir::ProcessKind> found_kinds;
-
-  for (const auto& element : design.elements) {
-    if (const auto* module = std::get_if<mir::Module>(&element)) {
-      for (mir::ProcessId process_id : module->processes) {
-        const auto& process = arena[process_id];
-        found_kinds.push_back(process.kind);
-        if (process.kind == mir::ProcessKind::kOnce) {
-          return process_id;
-        }
-      }
-    }
-  }
-  return std::nullopt;
-}
-
 // Format slang diagnostics for error output
 auto FormatSlangDiagnostics(
     const slang::Diagnostics& diagnostics, slang::SourceManager& source_manager)
@@ -267,17 +243,18 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
-  // Find initial process
-  auto process_id =
-      FindInitialProcess(mir_result.design, *mir_result.mir_arena);
-  if (!process_id) {
+  // Find initial module
+  auto module_info =
+      mir::interp::FindInitialModule(mir_result.design, *mir_result.mir_arena);
+  if (!module_info) {
     result.error_message = "No initial process found (no kOnce process in MIR)";
     return result;
   }
 
-  // Create interpreter state
-  auto state =
-      mir::interp::CreateProcessState(*mir_result.mir_arena, *process_id);
+  // Create module storage and interpreter state
+  mir::interp::DesignState design_state(module_info->num_module_slots);
+  auto state = mir::interp::CreateProcessState(
+      *mir_result.mir_arena, module_info->initial_process, &design_state);
 
   // Run interpreter with output capture
   std::ostringstream output_stream;

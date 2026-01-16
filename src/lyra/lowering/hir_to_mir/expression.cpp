@@ -23,7 +23,8 @@ namespace {
 
 auto LowerConstant(const hir::ConstantExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
-  const Constant& constant = builder.GetContext().constant_arena[data.constant];
+  const Constant& constant =
+      (*builder.GetContext().constant_arena)[data.constant];
   return mir::Operand::Const(constant);
 }
 
@@ -80,7 +81,7 @@ auto LowerSystemCall(
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
     -> mir::Operand {
-  const hir::Expression& expr = builder.GetContext().hir_arena[expr_id];
+  const hir::Expression& expr = (*builder.GetContext().hir_arena)[expr_id];
 
   return std::visit(
       [&](const auto& data) -> mir::Operand {

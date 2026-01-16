@@ -27,14 +27,15 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena) -> mir::ProcessId {
+    mir::Arena& mir_arena, const PlaceMap& module_places) -> mir::ProcessId {
   Context ctx{
-      .mir_arena = mir_arena,
-      .hir_arena = input.hir_arena,
-      .type_arena = input.type_arena,
-      .constant_arena = input.constant_arena,
-      .symbol_table = input.symbol_table,
-      .symbol_places = {},
+      .mir_arena = &mir_arena,
+      .hir_arena = &input.hir_arena,
+      .type_arena = &input.type_arena,
+      .constant_arena = &input.constant_arena,
+      .symbol_table = &input.symbol_table,
+      .module_places = &module_places,
+      .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
   };

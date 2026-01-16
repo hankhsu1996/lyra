@@ -2,11 +2,13 @@
 
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -20,6 +22,17 @@ auto LowerModule(
       registrar.Register(instance, SymbolKind::kModule, kInvalidTypeId);
 
   registrar.PushScope(ScopeKind::kModule);
+
+  // Register module-level variables first (before processes that use them)
+  std::vector<SymbolId> variables;
+  for (const slang::ast::VariableSymbol& var :
+       body.membersOfType<slang::ast::VariableSymbol>()) {
+    TypeId type = LowerType(var.getType(), span, ctx);
+    if (type) {
+      SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
+      variables.push_back(sym);
+    }
+  }
 
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
@@ -53,6 +66,7 @@ auto LowerModule(
   return hir::Module{
       .symbol = symbol,
       .span = span,
+      .variables = std::move(variables),
       .processes = std::move(processes),
       .functions = std::move(functions),
       .tasks = std::move(tasks),

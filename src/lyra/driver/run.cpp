@@ -9,10 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
-#include "lyra/mir/module.hpp"
-#include "lyra/mir/routine.hpp"
 
 namespace lyra::driver {
 
@@ -48,21 +45,6 @@ void PrintDiagnostics(const DiagnosticSink& sink) {
   }
 }
 
-auto FindInitialProcess(const mir::Design& design, const mir::Arena& arena)
-    -> std::optional<mir::ProcessId> {
-  for (const auto& element : design.elements) {
-    if (const auto* module = std::get_if<mir::Module>(&element)) {
-      for (mir::ProcessId process_id : module->processes) {
-        const auto& process = arena[process_id];
-        if (process.kind == mir::ProcessKind::kOnce) {
-          return process_id;
-        }
-      }
-    }
-  }
-  return std::nullopt;
-}
-
 }  // namespace
 
 auto RunMir(const std::string& path) -> int {
@@ -89,9 +71,9 @@ auto RunMir(const std::string& path) -> int {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
-  auto process_id =
-      FindInitialProcess(mir_result.design, *mir_result.mir_arena);
-  if (!process_id) {
+  auto module_info =
+      mir::interp::FindInitialModule(mir_result.design, *mir_result.mir_arena);
+  if (!module_info) {
     fmt::print(
         stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
         fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
@@ -99,8 +81,9 @@ auto RunMir(const std::string& path) -> int {
     return 1;
   }
 
-  auto state =
-      mir::interp::CreateProcessState(*mir_result.mir_arena, *process_id);
+  mir::interp::DesignState design_state(module_info->num_module_slots);
+  auto state = mir::interp::CreateProcessState(
+      *mir_result.mir_arena, module_info->initial_process, &design_state);
 
   mir::interp::Interpreter interp(
       mir_result.mir_arena.get(), hir_result.type_arena.get());

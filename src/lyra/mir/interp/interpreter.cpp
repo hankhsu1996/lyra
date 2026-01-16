@@ -20,8 +20,10 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -29,7 +31,7 @@ namespace lyra::mir::interp {
 
 namespace {
 
-// Count the maximum storage ID needed for a given root kind across all places
+// Count the maximum storage ID needed for locals and temps across all places
 // in the blocks of a process.
 //
 // INVARIANT: This assumes all locals and temps are discoverable via instruction
@@ -145,11 +147,12 @@ auto ApplyProjections(
 
 }  // namespace
 
-auto CreateProcessState(const Arena& arena, ProcessId process_id)
+auto CreateProcessState(
+    const Arena& arena, ProcessId process_id, DesignState* design_state)
     -> ProcessState {
   const auto& process = arena[process_id];
 
-  // Scan all blocks to determine storage requirements
+  // Scan all blocks to determine local/temp storage requirements
   StorageCounter counter;
   for (BasicBlockId block_id : process.blocks) {
     const auto& block = arena[block_id];
@@ -163,6 +166,7 @@ auto CreateProcessState(const Arena& arena, ProcessId process_id)
       .current_block = process.entry,
       .instruction_index = 0,
       .frame = Frame(counter.max_local, counter.max_temp),
+      .design_state = design_state,
       .status = ProcessStatus::kRunning,
   };
 }
@@ -267,10 +271,36 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
   throw common::InternalError("EvalRvalue", "unknown rvalue kind");
 }
 
+auto Interpreter::ResolveRoot(const ProcessState& state, const PlaceRoot& root)
+    -> const RuntimeValue& {
+  switch (root.kind) {
+    case PlaceRoot::Kind::kLocal:
+      return state.frame.GetLocal(root.id);
+    case PlaceRoot::Kind::kTemp:
+      return state.frame.GetTemp(root.id);
+    case PlaceRoot::Kind::kDesign:
+      return state.design_state->Get(root.id);
+  }
+  throw common::InternalError("ResolveRoot", "unknown PlaceRoot kind");
+}
+
+auto Interpreter::ResolveRootMut(ProcessState& state, const PlaceRoot& root)
+    -> RuntimeValue& {
+  switch (root.kind) {
+    case PlaceRoot::Kind::kLocal:
+      return state.frame.GetLocal(root.id);
+    case PlaceRoot::Kind::kTemp:
+      return state.frame.GetTemp(root.id);
+    case PlaceRoot::Kind::kDesign:
+      return state.design_state->Get(root.id);
+  }
+  throw common::InternalError("ResolveRootMut", "unknown PlaceRoot kind");
+}
+
 auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     -> RuntimeValue {
   const auto& place = (*arena_)[place_id];
-  const auto& root_value = state.frame.Resolve(place.root);
+  const auto& root_value = ResolveRoot(state, place.root);
 
   if (place.projections.empty()) {
     return Clone(root_value);
@@ -283,7 +313,7 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
 auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     -> RuntimeValue& {
   const auto& place = (*arena_)[place_id];
-  auto& root_value = state.frame.Resolve(place.root);
+  auto& root_value = ResolveRootMut(state, place.root);
 
   if (place.projections.empty()) {
     return root_value;
@@ -447,6 +477,24 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
   }
 
   throw common::InternalError("ExecTerminator", "unknown terminator kind");
+}
+
+auto FindInitialModule(const Design& design, const Arena& arena)
+    -> std::optional<InitialModuleInfo> {
+  for (const auto& element : design.elements) {
+    if (const auto* module = std::get_if<Module>(&element)) {
+      for (ProcessId process_id : module->processes) {
+        const auto& process = arena[process_id];
+        if (process.kind == ProcessKind::kOnce) {
+          return InitialModuleInfo{
+              .num_module_slots = module->num_module_slots,
+              .initial_process = process_id,
+          };
+        }
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace lyra::mir::interp

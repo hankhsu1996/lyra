@@ -11,6 +11,7 @@ namespace lyra::hir {
 struct Module {
   SymbolId symbol;
   SourceSpan span;
+  std::vector<SymbolId> variables;
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
   std::vector<TaskId> tasks;
