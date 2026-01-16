@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -29,15 +31,49 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
+#include "lyra/mir/interp/runtime_value.hpp"
 #include "tests/framework/assertions.hpp"
 #include "tests/framework/suite.hpp"
 #include "tests/framework/test_case.hpp"
 
 namespace lyra::test {
 namespace {
+
+// Extract numeric value from RuntimeValue for assertion comparison.
+// Returns int64_t for integers (sign-extended for types > 1 bit) or double for
+// reals. 1-bit values are not sign-extended since they're typically unsigned
+// comparison/logical results.
+auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
+    -> std::expected<std::variant<int64_t, double>, std::string> {
+  if (mir::interp::IsIntegral(value)) {
+    const auto& integral = mir::interp::AsIntegral(value);
+    if (integral.IsX() || integral.IsZ()) {
+      return std::unexpected("X/Z values not supported in assertions");
+    }
+    if (integral.bit_width > 64 || integral.value.empty()) {
+      return std::unexpected(
+          std::format("Unsupported bit width: {}", integral.bit_width));
+    }
+    uint64_t raw = integral.value[0];
+    // Sign-extend for types > 1 bit. 1-bit values are left unsigned since
+    // they're typically comparison/logical results (e.g., a == b returns 1'b1).
+    if (integral.bit_width > 1 && integral.bit_width < 64) {
+      uint64_t sign_bit = uint64_t{1} << (integral.bit_width - 1);
+      if ((raw & sign_bit) != 0) {
+        raw |= ~((uint64_t{1} << integral.bit_width) - 1);
+      }
+    }
+    return static_cast<int64_t>(raw);
+  }
+  if (mir::interp::IsReal(value)) {
+    return mir::interp::AsReal(value).value;
+  }
+  return std::unexpected("Unsupported value type for assertion");
+}
 
 // RAII guard for temporarily changing current directory
 class ScopedCurrentPath {
@@ -243,6 +279,34 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
+  // Build variable name to slot index mapping (for variable assertions)
+  std::unordered_map<std::string, size_t> var_slots;
+  if (!test_case.expected_values.empty()) {
+    // Find the module in design elements
+    const hir::Module* hir_module = nullptr;
+    size_t module_count = 0;
+    for (const auto& element : mir_input.design.elements) {
+      if (const auto* mod = std::get_if<hir::Module>(&element)) {
+        hir_module = mod;
+        ++module_count;
+      }
+    }
+    if (module_count != 1) {
+      result.error_message = std::format(
+          "Variable assertions require exactly 1 module, got {}", module_count);
+      return result;
+    }
+    for (size_t i = 0; i < hir_module->variables.size(); ++i) {
+      const auto& sym = mir_input.symbol_table[hir_module->variables[i]];
+      if (var_slots.contains(sym.name)) {
+        result.error_message =
+            std::format("Duplicate variable name '{}' in module", sym.name);
+        return result;
+      }
+      var_slots[sym.name] = i;
+    }
+  }
+
   // Find initial module
   auto module_info =
       mir::interp::FindInitialModule(mir_result.design, *mir_result.mir_arena);
@@ -278,6 +342,25 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   result.success = true;
   result.captured_output = output_stream.str();
 
+  // Extract final variable values for assertions
+  for (const auto& [name, expected] : test_case.expected_values) {
+    auto it = var_slots.find(name);
+    if (it == var_slots.end()) {
+      result.error_message = std::format("Variable '{}' not found", name);
+      result.success = false;
+      return result;
+    }
+    const auto& value = design_state.Get(static_cast<int>(it->second));
+    auto extracted = ExtractNumericValue(value);
+    if (!extracted) {
+      result.error_message =
+          std::format("Variable '{}': {}", name, extracted.error());
+      result.success = false;
+      return result;
+    }
+    result.variables[name] = *extracted;
+  }
+
   // On success, temp_guard destructor will clean up (unless LYRA_TEST_KEEP_TMP)
   return result;
 }
@@ -291,10 +374,10 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 
-      // Check expected variables (not yet supported by MIR interpreter)
+      // Check expected variables
       if (!test_case.expected_values.empty()) {
-        GTEST_SKIP()
-            << "Variable assertions not yet supported by MIR interpreter";
+        AssertVariables(
+            result.variables, test_case.expected_values, test_case.source_yaml);
       }
 
       // Check expected time

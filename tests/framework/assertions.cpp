@@ -1,6 +1,7 @@
 #include "tests/framework/assertions.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -9,6 +10,8 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 
 #include "tests/framework/test_case.hpp"
 
@@ -101,6 +104,28 @@ void AssertFiles(
     } else {
       AssertTextMatches(actual, expected, std::string("File ") + filename);
     }
+  }
+}
+
+void AssertVariables(
+    const std::map<std::string, std::variant<int64_t, double>>& actual,
+    const std::map<std::string, ExpectedValue>& expected,
+    const std::string& test_name) {
+  for (const auto& [name, expected_val] : expected) {
+    auto it = actual.find(name);
+    ASSERT_NE(it, actual.end())
+        << "[" << test_name << "] Missing variable: " << name;
+
+    std::visit(
+        [&](auto&& exp) {
+          using T = std::decay_t<decltype(exp)>;
+          auto* actual_ptr = std::get_if<T>(&it->second);
+          ASSERT_NE(actual_ptr, nullptr)
+              << "[" << test_name << "] Type mismatch for variable " << name;
+          EXPECT_EQ(*actual_ptr, exp)
+              << "[" << test_name << "] Variable " << name;
+        },
+        expected_val);
   }
 }
 

@@ -1,9 +1,11 @@
 #ifndef TESTS_FRAMEWORK_ASSERTIONS_HPP
 #define TESTS_FRAMEWORK_ASSERTIONS_HPP
 
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <string>
+#include <variant>
 
 #include "tests/framework/test_case.hpp"
 
@@ -19,6 +21,12 @@ void AssertOutput(const std::string& actual, const ExpectedOutput& expected);
 void AssertFiles(
     const std::filesystem::path& work_directory,
     const std::map<std::string, ExpectedOutput>& expected_files);
+
+// Assert variable values match expected values
+void AssertVariables(
+    const std::map<std::string, std::variant<int64_t, double>>& actual,
+    const std::map<std::string, ExpectedValue>& expected,
+    const std::string& test_name);
 
 }  // namespace lyra::test
 
