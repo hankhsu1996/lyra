@@ -1,6 +1,6 @@
 #pragma once
 
-namespace lyra::common {
+namespace lyra::hir {
 
 enum class UnaryOp {
   // Arithmetic
@@ -162,4 +162,4 @@ inline auto ToString(BinaryOp op) -> const char* {
   return "?";
 }
 
-}  // namespace lyra::common
+}  // namespace lyra::hir

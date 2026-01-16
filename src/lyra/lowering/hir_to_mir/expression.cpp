@@ -3,8 +3,10 @@
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
+#include "lyra/mir/operator.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -34,6 +36,148 @@ auto LowerNameRef(const hir::NameRefExpressionData& data, MirBuilder& builder)
   return mir::Operand::Use(place_id);
 }
 
+auto MapUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
+  switch (op) {
+    case hir::UnaryOp::kPlus:
+      return mir::UnaryOp::kPlus;
+    case hir::UnaryOp::kMinus:
+      return mir::UnaryOp::kMinus;
+    case hir::UnaryOp::kPreincrement:
+      return mir::UnaryOp::kPreincrement;
+    case hir::UnaryOp::kPostincrement:
+      return mir::UnaryOp::kPostincrement;
+    case hir::UnaryOp::kPredecrement:
+      return mir::UnaryOp::kPredecrement;
+    case hir::UnaryOp::kPostdecrement:
+      return mir::UnaryOp::kPostdecrement;
+    case hir::UnaryOp::kLogicalNot:
+      return mir::UnaryOp::kLogicalNot;
+    case hir::UnaryOp::kBitwiseNot:
+      return mir::UnaryOp::kBitwiseNot;
+    case hir::UnaryOp::kReductionAnd:
+      return mir::UnaryOp::kReductionAnd;
+    case hir::UnaryOp::kReductionNand:
+      return mir::UnaryOp::kReductionNand;
+    case hir::UnaryOp::kReductionOr:
+      return mir::UnaryOp::kReductionOr;
+    case hir::UnaryOp::kReductionNor:
+      return mir::UnaryOp::kReductionNor;
+    case hir::UnaryOp::kReductionXor:
+      return mir::UnaryOp::kReductionXor;
+    case hir::UnaryOp::kReductionXnor:
+      return mir::UnaryOp::kReductionXnor;
+  }
+  throw common::InternalError("MapUnaryOp", "unknown unary op");
+}
+
+auto MapBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
+  switch (op) {
+    case hir::BinaryOp::kAdd:
+      return mir::BinaryOp::kAdd;
+    case hir::BinaryOp::kSubtract:
+      return mir::BinaryOp::kSubtract;
+    case hir::BinaryOp::kMultiply:
+      return mir::BinaryOp::kMultiply;
+    case hir::BinaryOp::kDivide:
+      return mir::BinaryOp::kDivide;
+    case hir::BinaryOp::kMod:
+      return mir::BinaryOp::kMod;
+    case hir::BinaryOp::kPower:
+      return mir::BinaryOp::kPower;
+    case hir::BinaryOp::kBitwiseAnd:
+      return mir::BinaryOp::kBitwiseAnd;
+    case hir::BinaryOp::kBitwiseOr:
+      return mir::BinaryOp::kBitwiseOr;
+    case hir::BinaryOp::kBitwiseXor:
+      return mir::BinaryOp::kBitwiseXor;
+    case hir::BinaryOp::kBitwiseXnor:
+      return mir::BinaryOp::kBitwiseXnor;
+    case hir::BinaryOp::kLogicalAnd:
+      return mir::BinaryOp::kLogicalAnd;
+    case hir::BinaryOp::kLogicalOr:
+      return mir::BinaryOp::kLogicalOr;
+    case hir::BinaryOp::kLogicalImplication:
+      return mir::BinaryOp::kLogicalImplication;
+    case hir::BinaryOp::kLogicalEquivalence:
+      return mir::BinaryOp::kLogicalEquivalence;
+    case hir::BinaryOp::kEqual:
+      return mir::BinaryOp::kEqual;
+    case hir::BinaryOp::kNotEqual:
+      return mir::BinaryOp::kNotEqual;
+    case hir::BinaryOp::kCaseEqual:
+      return mir::BinaryOp::kCaseEqual;
+    case hir::BinaryOp::kCaseNotEqual:
+      return mir::BinaryOp::kCaseNotEqual;
+    case hir::BinaryOp::kWildcardEqual:
+      return mir::BinaryOp::kWildcardEqual;
+    case hir::BinaryOp::kWildcardNotEqual:
+      return mir::BinaryOp::kWildcardNotEqual;
+    case hir::BinaryOp::kLessThan:
+      return mir::BinaryOp::kLessThan;
+    case hir::BinaryOp::kLessThanEqual:
+      return mir::BinaryOp::kLessThanEqual;
+    case hir::BinaryOp::kGreaterThan:
+      return mir::BinaryOp::kGreaterThan;
+    case hir::BinaryOp::kGreaterThanEqual:
+      return mir::BinaryOp::kGreaterThanEqual;
+    case hir::BinaryOp::kLogicalShiftLeft:
+      return mir::BinaryOp::kLogicalShiftLeft;
+    case hir::BinaryOp::kLogicalShiftRight:
+      return mir::BinaryOp::kLogicalShiftRight;
+    case hir::BinaryOp::kArithmeticShiftLeft:
+      return mir::BinaryOp::kArithmeticShiftLeft;
+    case hir::BinaryOp::kArithmeticShiftRight:
+      return mir::BinaryOp::kArithmeticShiftRight;
+  }
+  throw common::InternalError("MapBinaryOp", "unknown binary op");
+}
+
+auto IsRelationalOp(hir::BinaryOp op) -> bool {
+  using BO = hir::BinaryOp;
+  return op == BO::kLessThan || op == BO::kLessThanEqual ||
+         op == BO::kGreaterThan || op == BO::kGreaterThanEqual;
+}
+
+auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
+  using BO = mir::BinaryOp;
+  switch (op) {
+    case BO::kLessThan:
+      return BO::kLessThanSigned;
+    case BO::kLessThanEqual:
+      return BO::kLessThanEqualSigned;
+    case BO::kGreaterThan:
+      return BO::kGreaterThanSigned;
+    case BO::kGreaterThanEqual:
+      return BO::kGreaterThanEqualSigned;
+    default:
+      return op;
+  }
+}
+
+auto SelectComparisonOp(
+    const hir::BinaryExpressionData& data, const Context& ctx)
+    -> mir::BinaryOp {
+  const auto& lhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.lhs].type];
+  const auto& rhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.rhs].type];
+
+  if (lhs_type.Kind() != TypeKind::kIntegral ||
+      rhs_type.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError(
+        "SelectComparisonOp", "relational op requires integral operands");
+  }
+
+  const auto& lhs = lhs_type.AsIntegral();
+  const auto& rhs = rhs_type.AsIntegral();
+  if (lhs.is_signed != rhs.is_signed) {
+    throw common::InternalError(
+        "SelectComparisonOp",
+        "operand signedness mismatch - missing conversion");
+  }
+
+  auto mir_op = MapBinaryOp(data.op);
+  return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
+}
+
 auto LowerUnary(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> mir::Operand {
@@ -41,7 +185,7 @@ auto LowerUnary(
 
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kUnary,
-      .op = static_cast<int>(data.op),
+      .op = static_cast<int>(MapUnaryOp(data.op)),
       .operands = {operand},
   };
 
@@ -55,9 +199,13 @@ auto LowerBinary(
   mir::Operand lhs = LowerExpression(data.lhs, builder);
   mir::Operand rhs = LowerExpression(data.rhs, builder);
 
+  mir::BinaryOp mir_op = IsRelationalOp(data.op)
+                             ? SelectComparisonOp(data, builder.GetContext())
+                             : MapBinaryOp(data.op);
+
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kBinary,
-      .op = static_cast<int>(data.op),
+      .op = static_cast<int>(mir_op),
       .operands = {lhs, rhs},
   };
 

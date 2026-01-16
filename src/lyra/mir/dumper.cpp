@@ -4,9 +4,9 @@
 #include <format>
 #include <variant>
 
-#include "lyra/common/operator.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/operator.hpp"
 
 namespace lyra::mir {
 
@@ -248,12 +248,11 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
 
   switch (rv.kind) {
     case RvalueKind::kUnary:
-      result = std::format(
-          "unary({})", common::ToString(static_cast<common::UnaryOp>(rv.op)));
+      result = std::format("unary({})", ToString(static_cast<UnaryOp>(rv.op)));
       break;
     case RvalueKind::kBinary:
-      result = std::format(
-          "binary({})", common::ToString(static_cast<common::BinaryOp>(rv.op)));
+      result =
+          std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
       break;
     case RvalueKind::kCast:
       result = "cast";
