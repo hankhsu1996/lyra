@@ -5,6 +5,7 @@
 
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/interp/frame.hpp"
 
 namespace lyra::mir::interp {
@@ -26,14 +27,9 @@ struct ProcessState {
 
 // MIR Interpreter: executes a single process to completion.
 //
-// The interpreter is a semantic reference implementation. It supports:
-// - Single initial process (ProcessKind::kOnce)
-// - Basic control flow (Jump, Branch, Finish)
-// - Expressions (Unary, Binary operations)
-// - Local and Temp storage
-//
-// The interpreter hard-fails on suspension terminators (Delay, Wait, Repeat)
-// as these require a scheduler/runtime.
+// Supports single initial process, basic control flow, expressions, and
+// local/temp storage. Hard-fails on suspension terminators (Delay, Wait,
+// Repeat) as these require a scheduler/runtime.
 class Interpreter {
  public:
   Interpreter(const Arena* arena, const TypeArena* types)
@@ -68,15 +64,18 @@ class Interpreter {
   // Execute Compute instruction
   void ExecCompute(ProcessState& state, const Compute& compute);
 
+  // Execute Effect instruction
+  void ExecEffect(const ProcessState& state, const Effect& effect);
+
+  // Execute DisplayEffect
+  void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
+
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 
   // Execute terminator, return next block or nullopt for completion
   auto ExecTerminator(ProcessState& state, const Terminator& term)
       -> std::optional<BasicBlockId>;
-
-  // Execute system call (e.g., $display, $write)
-  auto ExecSyscall(const ProcessState& state, const Rvalue& rv) -> RuntimeValue;
 
   const Arena* arena_;
   const TypeArena* types_;

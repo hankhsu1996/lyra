@@ -13,9 +13,9 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
@@ -258,7 +258,10 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
           "EvalRvalue", "cast operations not supported");
 
     case RvalueKind::kCall:
-      return ExecSyscall(state, rv);
+      // System calls that produce values (pure functions like $clog2) would be
+      // handled here. Currently all supported system calls are effects.
+      throw common::InternalError(
+          "EvalRvalue", "pure system calls not yet supported");
   }
 
   throw common::InternalError("EvalRvalue", "unknown rvalue kind");
@@ -299,6 +302,60 @@ void Interpreter::ExecCompute(ProcessState& state, const Compute& compute) {
   WritePlace(state, compute.target) = std::move(value);
 }
 
+void Interpreter::ExecEffect(const ProcessState& state, const Effect& effect) {
+  std::visit(
+      [&](const auto& op) {
+        using T = std::decay_t<decltype(op)>;
+        if constexpr (std::is_same_v<T, DisplayEffect>) {
+          ExecDisplayEffect(state, op);
+        } else {
+          throw common::InternalError("ExecEffect", "unknown effect operation");
+        }
+      },
+      effect.op);
+}
+
+void Interpreter::ExecDisplayEffect(
+    const ProcessState& state, const DisplayEffect& disp) {
+  // Get output stream (default to cout if not set)
+  std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+  // Format and print each argument
+  for (size_t i = 0; i < disp.args.size(); ++i) {
+    if (i > 0) {
+      out << " ";
+    }
+
+    auto value = EvalOperand(state, disp.args[i]);
+
+    if (IsString(value)) {
+      out << AsString(value).value;
+    } else if (IsIntegral(value)) {
+      const auto& integral = AsIntegral(value);
+      switch (disp.radix) {
+        case PrintRadix::kDecimal:
+          out << ToDecimalString(integral, false);
+          break;
+        case PrintRadix::kHex:
+          out << ToHexString(integral);
+          break;
+        case PrintRadix::kBinary:
+          out << ToBinaryString(integral);
+          break;
+        case PrintRadix::kOctal:
+          out << ToOctalString(integral);
+          break;
+      }
+    } else {
+      out << ToString(value);
+    }
+  }
+
+  if (disp.append_newline) {
+    out << "\n";
+  }
+}
+
 void Interpreter::ExecInstruction(
     ProcessState& state, const Instruction& inst) {
   std::visit(
@@ -308,6 +365,8 @@ void Interpreter::ExecInstruction(
           ExecAssign(state, i);
         } else if constexpr (std::is_same_v<T, Compute>) {
           ExecCompute(state, i);
+        } else if constexpr (std::is_same_v<T, Effect>) {
+          ExecEffect(state, i);
         }
       },
       inst);
@@ -388,51 +447,6 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
   }
 
   throw common::InternalError("ExecTerminator", "unknown terminator kind");
-}
-
-auto Interpreter::ExecSyscall(const ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
-  auto [radix, append_newline] = DecodeDisplayOp(rv.op);
-
-  // Get output stream (default to cout if not set)
-  std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-
-  // Format and print each argument
-  for (size_t i = 0; i < rv.operands.size(); ++i) {
-    if (i > 0) {
-      out << " ";
-    }
-
-    auto value = EvalOperand(state, rv.operands[i]);
-
-    if (IsString(value)) {
-      out << AsString(value).value;
-    } else if (IsIntegral(value)) {
-      const auto& integral = AsIntegral(value);
-      switch (radix) {
-        case PrintRadix::kDecimal:
-          out << ToDecimalString(integral, false);
-          break;
-        case PrintRadix::kHex:
-          out << ToHexString(integral);
-          break;
-        case PrintRadix::kBinary:
-          out << ToBinaryString(integral);
-          break;
-        case PrintRadix::kOctal:
-          out << ToOctalString(integral);
-          break;
-      }
-    } else {
-      out << ToString(value);
-    }
-  }
-
-  if (append_newline) {
-    out << "\n";
-  }
-
-  return {};  // void
 }
 
 }  // namespace lyra::mir::interp

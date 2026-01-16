@@ -1,12 +1,15 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
 #include <variant>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
+#include "lyra/mir/effect.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -55,10 +58,45 @@ void LowerAssignment(
   builder.EmitAssign(target, std::move(value));
 }
 
+void LowerDisplayEffect(
+    const hir::DisplaySystemCallData& data, MirBuilder& builder) {
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.args.size());
+  for (hir::ExpressionId arg_id : data.args) {
+    operands.push_back(LowerExpression(arg_id, builder));
+  }
+
+  mir::DisplayEffect display{
+      .radix = data.radix,
+      .append_newline = data.append_newline,
+      .args = std::move(operands),
+  };
+  builder.EmitEffect(std::move(display));
+}
+
 void LowerExpressionStatement(
     const hir::ExpressionStatementData& data, MirBuilder& builder) {
-  // Expression statements are evaluated for side effects only.
-  // The result is discarded.
+  Context& ctx = builder.GetContext();
+  const hir::Expression& expr = ctx.hir_arena[data.expression];
+
+  // Check if this is a system call that should be an Effect instruction
+  if (const auto* syscall =
+          std::get_if<hir::SystemCallExpressionData>(&expr.data)) {
+    std::visit(
+        [&](const auto& call_data) {
+          using T = std::decay_t<decltype(call_data)>;
+          if constexpr (std::is_same_v<T, hir::DisplaySystemCallData>) {
+            LowerDisplayEffect(call_data, builder);
+          } else {
+            throw common::InternalError(
+                "LowerExpressionStatement", "unhandled system call kind");
+          }
+        },
+        *syscall);
+    return;
+  }
+
+  // Regular expression statement - evaluate for side effects, discard result
   LowerExpression(data.expression, builder);
 }
 
@@ -66,11 +104,11 @@ void LowerConditional(
     const hir::ConditionalStatementData& data, MirBuilder& builder) {
   mir::Operand cond = LowerExpression(data.condition, builder);
 
-  mir::BasicBlockId then_bb = builder.CreateBlock();
-  mir::BasicBlockId merge_bb = builder.CreateBlock();
+  BlockIndex then_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
 
   if (data.else_branch.has_value()) {
-    mir::BasicBlockId else_bb = builder.CreateBlock();
+    BlockIndex else_bb = builder.CreateBlock();
     builder.EmitBranch(cond, then_bb, else_bb);
 
     builder.SetCurrentBlock(then_bb);

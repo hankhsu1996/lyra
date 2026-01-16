@@ -116,11 +116,17 @@ Place-read is implicit—there is no explicit Load instruction. Reading a Place 
 
 All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
-## Instruction and Rvalue
+## Instructions
 
-An Instruction computes a value (Rvalue) and writes it to a Place. It does not affect control flow.
+Instructions do not affect control flow. Three variants:
 
-Rvalue kinds: Unary, Binary, Cast, Call.
+| Variant | Structure       | Purpose                           |
+| ------- | --------------- | --------------------------------- |
+| Assign  | Place = Operand | Data movement                     |
+| Compute | Place = Rvalue  | Computation with result           |
+| Effect  | EffectOp        | Side effect only, no result value |
+
+**Rvalue kinds:** Unary, Binary, Cast, Call (pure system functions only).
 
 **No Load instruction.** Reading a Place is implicit in Operand (Use kind). This keeps the operand model simple: Operands are inputs, Places are outputs.
 
@@ -128,34 +134,13 @@ Rvalue kinds: Unary, Binary, Cast, Call.
 
 Three semantic roles only (fixed classification, does not grow with API count):
 
-| Role   | Description                    | Examples              |
-| ------ | ------------------------------ | --------------------- |
-| Pure   | No side effects                | `$clog2`, `$bits`     |
-| Effect | Immediate observable effect    | `$display`, `$write`  |
-| State  | Mutation of simulation runtime | `$monitor`, `$finish` |
+| Role   | Description                    | MIR Representation   | Examples              |
+| ------ | ------------------------------ | -------------------- | --------------------- |
+| Pure   | No side effects                | Rvalue (kCall)       | `$clog2`, `$bits`     |
+| Effect | Immediate observable effect    | Effect instruction   | `$display`, `$write`  |
+| State  | Mutation of simulation runtime | Effect or Terminator | `$monitor`, `$finish` |
 
-System subroutines take Operand arguments only. Writable locations are never passed directly.
-
-### Minimal $display Semantics
-
-The interpreter and all backends must implement identical $display semantics. This contract is intentionally minimal and does not aim for full SystemVerilog compliance.
-
-**Behavior (stable contract):**
-
-- Arguments printed in evaluation order, separated by single space
-- Integral values formatted per radix (decimal/hex/binary/octal), no leading zeros, no width specifiers
-- String arguments printed verbatim
-- No format string interpretation (no `%d`, `%h`, `%b`, `%o`, etc.)
-- Newline appended iff `append_newline` is true ($display vs $write)
-
-**Out of scope (explicitly unsupported):**
-
-- Format specifiers and width modifiers
-- File output ($fdisplay, $fwrite)
-- Hierarchical path arguments
-- Array/struct pretty-printing
-
-This contract prevents silent semantic divergence between execution backends. Tests that use $display will produce identical output across the interpreter and any future LLVM-based execution.
+No system task (void-returning subroutine) is represented as a value-producing Rvalue. Effect system tasks have fixed, backend-agnostic observable behavior.
 
 ## Terminator Categories
 
@@ -228,7 +213,7 @@ These must hold for well-formed MIR:
 **System Subroutines:**
 
 - Classified only by semantic role (Pure/Effect/State)
-- Implemented using operation descriptors, not per-API instructions
+- No system task produces a value (Effect instruction only)
 
 **Process Semantics:**
 
@@ -248,9 +233,11 @@ These must hold for well-formed MIR:
 
 **Operand model:** Place (writable location) and Operand (readable: Const/Use/Poison)
 
+**Instruction model:** Assign, Compute, Effect
+
 **Core fixed semantics:**
 
-- Instruction writes Rvalue to Place (no explicit Load -- Use is implicit)
+- Instruction writes Rvalue to Place (no explicit Load — Use is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition

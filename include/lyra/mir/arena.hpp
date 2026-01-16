@@ -52,14 +52,6 @@ class Arena final {
     return basic_blocks_[id.value];
   }
 
-  // Update a basic block that was previously added via AddBasicBlock.
-  // This is ONLY for use during MIR construction (in MirBuilder).
-  // Do not call after lowering is complete - MIR should be immutable
-  // post-construction.
-  void UpdateBasicBlock(BasicBlockId id, BasicBlock block) {
-    basic_blocks_[id.value] = std::move(block);
-  }
-
   [[nodiscard]] auto operator[](ProcessId id) const -> const Process& {
     return processes_[id.value];
   }

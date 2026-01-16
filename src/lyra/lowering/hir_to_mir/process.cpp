@@ -39,10 +39,10 @@ auto LowerProcess(
       .next_temp_id = 0,
   };
 
-  MirBuilder builder(mir_arena, ctx);
+  MirBuilder builder(&mir_arena, &ctx);
 
-  mir::BasicBlockId entry = builder.CreateBlock();
-  builder.SetCurrentBlock(entry);
+  BlockIndex entry_idx = builder.CreateBlock();
+  builder.SetCurrentBlock(entry_idx);
 
   LowerStatement(process.body, builder);
 
@@ -53,10 +53,14 @@ auto LowerProcess(
     builder.EmitRepeat();
   }
 
+  // Materialize all blocks into the Arena
+  std::vector<mir::BasicBlockId> blocks = builder.Finish();
+  mir::BasicBlockId entry = MirBuilder::ToArenaId(entry_idx);
+
   mir::Process mir_process{
       .kind = mir_kind,
       .entry = entry,
-      .blocks = builder.GetBlocks(),
+      .blocks = std::move(blocks),
   };
 
   return mir_arena.AddProcess(std::move(mir_process));

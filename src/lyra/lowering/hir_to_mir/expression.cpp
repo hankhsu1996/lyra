@@ -3,7 +3,6 @@
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/system_function.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -65,39 +64,16 @@ auto LowerBinary(
   return mir::Operand::Use(temp_id);
 }
 
-auto LowerDisplayCall(
-    const hir::DisplaySystemCallData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
-  std::vector<mir::Operand> operands;
-  operands.reserve(data.args.size());
-  for (hir::ExpressionId arg_id : data.args) {
-    operands.push_back(LowerExpression(arg_id, builder));
-  }
-
-  mir::Rvalue rvalue{
-      .kind = mir::RvalueKind::kCall,
-      .op = EncodeDisplayOp(data.radix, data.append_newline),
-      .operands = std::move(operands),
-  };
-
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
-}
-
 auto LowerSystemCall(
-    const hir::SystemCallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
-  return std::visit(
-      [&](const auto& call_data) -> mir::Operand {
-        using T = std::decay_t<decltype(call_data)>;
-        if constexpr (std::is_same_v<T, hir::DisplaySystemCallData>) {
-          return LowerDisplayCall(call_data, expr, builder);
-        } else {
-          throw common::InternalError(
-              "LowerSystemCall", "unhandled system call kind");
-        }
-      },
-      data);
+    const hir::SystemCallExpressionData& /*data*/,
+    const hir::Expression& /*expr*/, MirBuilder& /*builder*/) -> mir::Operand {
+  // Effect system calls ($display, etc.) are handled in statement.cpp
+  // as Effect instructions. If we get here, it's because a system call
+  // was used in an expression context where a value is expected.
+  // Currently all supported system calls are effects, so this is an error.
+  throw common::InternalError(
+      "LowerSystemCall",
+      "system call used in value context (only effect calls supported)");
 }
 
 }  // namespace

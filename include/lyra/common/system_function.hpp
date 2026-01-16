@@ -66,22 +66,4 @@ constexpr auto IsSystemFunctionSupported(std::string_view name) -> bool {
   return FindSystemFunction(name) != nullptr;
 }
 
-// Encoding/decoding for $display-family syscalls in MIR.
-// The op field encodes both radix and append_newline in a single int:
-//   op = radix * 2 + (append_newline ? 1 : 0)
-//
-// This is a temporary encoding until MIR has structured call metadata.
-// Keep encode/decode together so the hack is centralized and grep-able.
-
-constexpr auto EncodeDisplayOp(PrintRadix radix, bool append_newline) -> int {
-  return (static_cast<int>(radix) * 2) + (append_newline ? 1 : 0);
-}
-
-constexpr auto DecodeDisplayOp(int op) -> DisplayFunctionInfo {
-  return {
-      .radix = static_cast<PrintRadix>(op / 2),
-      .append_newline = (op % 2) != 0,
-  };
-}
-
 }  // namespace lyra
