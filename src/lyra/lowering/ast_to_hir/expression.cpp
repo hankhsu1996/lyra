@@ -152,6 +152,26 @@ auto LowerExpression(
               .data = hir::ConstantExpressionData{.constant = constant}});
     }
 
+    case ExpressionKind::StringLiteral: {
+      const auto& literal = expr.as<slang::ast::StringLiteral>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+      ConstId constant = ctx->constant_arena->Intern(
+          type, StringConstant{.value = std::string(literal.getValue())});
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConstant,
+              .type = type,
+              .span = span,
+              .data = hir::ConstantExpressionData{.constant = constant}});
+    }
+
     case ExpressionKind::NamedValue: {
       const auto& named = expr.as<slang::ast::NamedValueExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
