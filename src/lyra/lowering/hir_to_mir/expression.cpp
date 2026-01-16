@@ -3,11 +3,22 @@
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// Lowering Policy: Temp Materialization
+//
+// Leaf expressions (constants, name refs) produce Operands directly.
+// Non-leaf expressions (unary, binary, calls) always materialize their
+// result into a temp via EmitTemp, then return Use(temp).
+//
+// This avoids value identity issues (MIR has no SSA) and keeps the lowering
+// uniform. Future expression kinds (casts, selects, bit-slices) should
+// follow the same pattern.
 
 namespace {
 
@@ -17,8 +28,7 @@ auto LowerConstant(const hir::ConstantExpressionData& data, MirBuilder& builder)
   return mir::Operand::Const(constant);
 }
 
-auto LowerSymbolRef(
-    const hir::SymbolRefExpressionData& data, MirBuilder& builder)
+auto LowerNameRef(const hir::NameRefExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
   mir::PlaceId place_id = builder.GetContext().LookupPlace(data.symbol);
   return mir::Operand::Use(place_id);
@@ -66,7 +76,7 @@ auto LowerDisplayCall(
 
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kCall,
-      .op = static_cast<int>(data.radix),
+      .op = EncodeDisplayOp(data.radix, data.append_newline),
       .operands = std::move(operands),
   };
 
@@ -101,8 +111,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         using T = std::decay_t<decltype(data)>;
         if constexpr (std::is_same_v<T, hir::ConstantExpressionData>) {
           return LowerConstant(data, builder);
-        } else if constexpr (std::is_same_v<T, hir::SymbolRefExpressionData>) {
-          return LowerSymbolRef(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::NameRefExpressionData>) {
+          return LowerNameRef(data, builder);
         } else if constexpr (std::is_same_v<T, hir::UnaryExpressionData>) {
           return LowerUnary(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::BinaryExpressionData>) {

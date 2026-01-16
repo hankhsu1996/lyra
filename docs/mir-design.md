@@ -136,6 +136,27 @@ Three semantic roles only (fixed classification, does not grow with API count):
 
 System subroutines take Operand arguments only. Writable locations are never passed directly.
 
+### Minimal $display Semantics
+
+The interpreter and all backends must implement identical $display semantics. This contract is intentionally minimal and does not aim for full SystemVerilog compliance.
+
+**Behavior (stable contract):**
+
+- Arguments printed in evaluation order, separated by single space
+- Integral values formatted per radix (decimal/hex/binary/octal), no leading zeros, no width specifiers
+- String arguments printed verbatim
+- No format string interpretation (no `%d`, `%h`, `%b`, `%o`, etc.)
+- Newline appended iff `append_newline` is true ($display vs $write)
+
+**Out of scope (explicitly unsupported):**
+
+- Format specifiers and width modifiers
+- File output ($fdisplay, $fwrite)
+- Hierarchical path arguments
+- Array/struct pretty-printing
+
+This contract prevents silent semantic divergence between execution backends. Tests that use $display will produce identical output across the interpreter and any future LLVM-based execution.
+
 ## Terminator Categories
 
 Terminators end a basic block and determine the next control state.

@@ -9,6 +9,11 @@
 
 namespace lyra::driver {
 
+namespace {
+constexpr auto kToolColor = fmt::terminal_color::white;
+constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
+}  // namespace
+
 auto LoadFile(const std::string& path) -> std::optional<ParseResult> {
   auto source_manager = std::make_shared<slang::SourceManager>();
 
@@ -19,9 +24,10 @@ auto LoadFile(const std::string& path) -> std::optional<ParseResult> {
   auto result = slang::syntax::SyntaxTree::fromFile(path, *source_manager);
   if (!result) {
     fmt::print(
-        stderr, "{}: {}: cannot read '{}'\n",
-        fmt::styled("lyra", fmt::emphasis::bold),
-        fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)), path);
+        stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
+        fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
+        fmt::styled(
+            fmt::format("cannot read '{}'", path), fmt::emphasis::bold));
     return std::nullopt;
   }
 

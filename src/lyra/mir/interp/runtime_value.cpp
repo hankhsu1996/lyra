@@ -281,4 +281,69 @@ auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string {
   return result;
 }
 
+auto ToHexString(const RuntimeIntegral& v) -> std::string {
+  if (v.IsX()) {
+    return "x";
+  }
+  if (v.IsZ()) {
+    return "z";
+  }
+
+  if (v.bit_width <= 64) {
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
+    return std::format("{:x}", val);
+  }
+
+  std::string result;
+  for (uint64_t word : std::ranges::reverse_view(v.value)) {
+    if (result.empty()) {
+      result = std::format("{:x}", word);
+    } else {
+      result += std::format("{:016x}", word);
+    }
+  }
+  return result;
+}
+
+auto ToBinaryString(const RuntimeIntegral& v) -> std::string {
+  if (v.IsX()) {
+    return "x";
+  }
+  if (v.IsZ()) {
+    return "z";
+  }
+
+  if (v.bit_width <= 64) {
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
+    return std::format("{:b}", val);
+  }
+
+  std::string result;
+  for (uint64_t word : std::ranges::reverse_view(v.value)) {
+    if (result.empty()) {
+      result = std::format("{:b}", word);
+    } else {
+      result += std::format("{:064b}", word);
+    }
+  }
+  return result;
+}
+
+auto ToOctalString(const RuntimeIntegral& v) -> std::string {
+  if (v.IsX()) {
+    return "x";
+  }
+  if (v.IsZ()) {
+    return "z";
+  }
+
+  if (v.bit_width <= 64) {
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
+    return std::format("{:o}", val);
+  }
+
+  // Multi-word: convert to decimal for simplicity
+  return ToDecimalString(v, false);
+}
+
 }  // namespace lyra::mir::interp

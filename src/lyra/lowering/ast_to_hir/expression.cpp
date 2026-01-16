@@ -167,10 +167,10 @@ auto LowerExpression(
       }
       return ctx->hir_arena->AddExpression(
           hir::Expression{
-              .kind = hir::ExpressionKind::kSymbolRef,
+              .kind = hir::ExpressionKind::kNameRef,
               .type = type,
               .span = span,
-              .data = hir::SymbolRefExpressionData{.symbol = sym}});
+              .data = hir::NameRefExpressionData{.symbol = sym}});
     }
 
     case ExpressionKind::UnaryOp: {

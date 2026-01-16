@@ -14,7 +14,7 @@ namespace lyra::hir {
 
 enum class ExpressionKind {
   kConstant,
-  kSymbolRef,
+  kNameRef,
   kUnaryOp,
   kBinaryOp,
   kSystemCall,
@@ -30,10 +30,10 @@ struct ConstantExpressionData {
   auto operator==(const ConstantExpressionData&) const -> bool = default;
 };
 
-struct SymbolRefExpressionData {
+struct NameRefExpressionData {
   SymbolId symbol;
 
-  auto operator==(const SymbolRefExpressionData&) const -> bool = default;
+  auto operator==(const NameRefExpressionData&) const -> bool = default;
 };
 
 struct UnaryExpressionData {
@@ -52,7 +52,7 @@ struct BinaryExpressionData {
 };
 
 using ExpressionData = std::variant<
-    ConstantExpressionData, SymbolRefExpressionData, UnaryExpressionData,
+    ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, SystemCallExpressionData>;
 
 struct Expression {

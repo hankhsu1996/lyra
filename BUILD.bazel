@@ -78,6 +78,7 @@ cc_binary(
     ]),
     deps = [
         ":hir",
+        ":interp",
         ":lowering",
         ":mir",
         "@fmt",

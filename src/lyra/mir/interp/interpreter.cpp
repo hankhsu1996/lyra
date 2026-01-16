@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
@@ -12,6 +13,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -167,7 +169,7 @@ auto CreateProcessState(const Arena& arena, ProcessId process_id)
 
 auto Interpreter::Run(ProcessState& state) -> ProcessStatus {
   while (state.status == ProcessStatus::kRunning) {
-    const auto& block = arena_[state.current_block];
+    const auto& block = (*arena_)[state.current_block];
 
     // Execute all instructions in block
     while (state.instruction_index < block.instructions.size()) {
@@ -198,7 +200,7 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
           [&](const auto& val) -> RuntimeValue {
             using T = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<T, IntegralConstant>) {
-              const auto& type = types_[c.type];
+              const auto& type = (*types_)[c.type];
               if (type.Kind() != TypeKind::kIntegral) {
                 throw common::InternalError(
                     "EvalOperand", "type mismatch: expected integral");
@@ -256,8 +258,7 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
           "EvalRvalue", "cast operations not supported");
 
     case RvalueKind::kCall:
-      throw common::InternalError(
-          "EvalRvalue", "call operations not supported");
+      return ExecSyscall(state, rv);
   }
 
   throw common::InternalError("EvalRvalue", "unknown rvalue kind");
@@ -265,7 +266,7 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
 
 auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     -> RuntimeValue {
-  const auto& place = arena_[place_id];
+  const auto& place = (*arena_)[place_id];
   const auto& root_value = state.frame.Resolve(place.root);
 
   if (place.projections.empty()) {
@@ -278,7 +279,7 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
 
 auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     -> RuntimeValue& {
-  const auto& place = arena_[place_id];
+  const auto& place = (*arena_)[place_id];
   auto& root_value = state.frame.Resolve(place.root);
 
   if (place.projections.empty()) {
@@ -387,6 +388,51 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
   }
 
   throw common::InternalError("ExecTerminator", "unknown terminator kind");
+}
+
+auto Interpreter::ExecSyscall(const ProcessState& state, const Rvalue& rv)
+    -> RuntimeValue {
+  auto [radix, append_newline] = DecodeDisplayOp(rv.op);
+
+  // Get output stream (default to cout if not set)
+  std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+  // Format and print each argument
+  for (size_t i = 0; i < rv.operands.size(); ++i) {
+    if (i > 0) {
+      out << " ";
+    }
+
+    auto value = EvalOperand(state, rv.operands[i]);
+
+    if (IsString(value)) {
+      out << AsString(value).value;
+    } else if (IsIntegral(value)) {
+      const auto& integral = AsIntegral(value);
+      switch (radix) {
+        case PrintRadix::kDecimal:
+          out << ToDecimalString(integral, false);
+          break;
+        case PrintRadix::kHex:
+          out << ToHexString(integral);
+          break;
+        case PrintRadix::kBinary:
+          out << ToBinaryString(integral);
+          break;
+        case PrintRadix::kOctal:
+          out << ToOctalString(integral);
+          break;
+      }
+    } else {
+      out << ToString(value);
+    }
+  }
+
+  if (append_newline) {
+    out << "\n";
+  }
+
+  return {};  // void
 }
 
 }  // namespace lyra::mir::interp

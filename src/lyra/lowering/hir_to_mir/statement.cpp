@@ -38,7 +38,7 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
   return std::visit(
       [&](const auto& data) -> mir::PlaceId {
         using T = std::decay_t<decltype(data)>;
-        if constexpr (std::is_same_v<T, hir::SymbolRefExpressionData>) {
+        if constexpr (std::is_same_v<T, hir::NameRefExpressionData>) {
           return ctx.LookupPlace(data.symbol);
         } else {
           throw common::InternalError(

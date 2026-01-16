@@ -214,8 +214,8 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
-    case ExpressionKind::kSymbolRef: {
-      const auto& data = std::get<SymbolRefExpressionData>(expr.data);
+    case ExpressionKind::kNameRef: {
+      const auto& data = std::get<NameRefExpressionData>(expr.data);
       *out_ << SymbolName(data.symbol);
       break;
     }

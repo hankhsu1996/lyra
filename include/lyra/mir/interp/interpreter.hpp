@@ -36,7 +36,7 @@ struct ProcessState {
 // as these require a scheduler/runtime.
 class Interpreter {
  public:
-  Interpreter(const Arena& arena, const TypeArena& types)
+  Interpreter(const Arena* arena, const TypeArena* types)
       : arena_(arena), types_(types) {
   }
 
@@ -75,8 +75,11 @@ class Interpreter {
   auto ExecTerminator(ProcessState& state, const Terminator& term)
       -> std::optional<BasicBlockId>;
 
-  const Arena& arena_;
-  const TypeArena& types_;
+  // Execute system call (e.g., $display, $write)
+  auto ExecSyscall(const ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+
+  const Arena* arena_;
+  const TypeArena* types_;
   std::ostream* output_ = nullptr;
 };
 

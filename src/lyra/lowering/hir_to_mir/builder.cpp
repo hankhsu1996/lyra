@@ -13,7 +13,19 @@ MirBuilder::MirBuilder(mir::Arena& arena, Context& ctx)
 }
 
 auto MirBuilder::CreateBlock() -> mir::BasicBlockId {
-  mir::BasicBlockId id{static_cast<uint32_t>(blocks_.size())};
+  // Allocate block in arena immediately with placeholder terminator.
+  // The block will be populated when we emit a terminator.
+  mir::BasicBlock placeholder{
+      .id = mir::kInvalidBasicBlockId,  // Will be set when populated
+      .instructions = {},
+      .terminator =
+          mir::Terminator{
+              .kind = mir::Terminator::Kind::kFinish,  // Placeholder
+              .targets = {},
+              .condition_operand = 0,
+          },
+  };
+  mir::BasicBlockId id = arena_.AddBasicBlock(std::move(placeholder));
   blocks_.push_back(id);
   return id;
 }
@@ -59,13 +71,18 @@ void MirBuilder::EmitJump(mir::BasicBlockId target) {
               .condition_operand = 0,
           },
   };
-  arena_.AddBasicBlock(std::move(block));
+  arena_.UpdateBasicBlock(current_block_, std::move(block));
   current_instructions_.clear();
 }
 
 void MirBuilder::EmitBranch(
     mir::Operand cond, mir::BasicBlockId then_bb, mir::BasicBlockId else_bb) {
-  (void)cond;  // TODO(hankhsu): Store condition operand properly
+  if (cond.kind != mir::Operand::Kind::kUse) {
+    throw common::InternalError(
+        "EmitBranch", "branch condition must be a Use operand");
+  }
+  auto cond_place = std::get<mir::PlaceId>(cond.payload);
+
   mir::BasicBlock block{
       .id = current_block_,
       .instructions = std::move(current_instructions_),
@@ -73,10 +90,10 @@ void MirBuilder::EmitBranch(
           mir::Terminator{
               .kind = mir::Terminator::Kind::kBranch,
               .targets = {then_bb, else_bb},
-              .condition_operand = 0,
+              .condition_operand = static_cast<int>(cond_place.value),
           },
   };
-  arena_.AddBasicBlock(std::move(block));
+  arena_.UpdateBasicBlock(current_block_, std::move(block));
   current_instructions_.clear();
 }
 
@@ -92,7 +109,7 @@ void MirBuilder::EmitReturn(std::optional<mir::Operand> value) {
               .condition_operand = 0,
           },
   };
-  arena_.AddBasicBlock(std::move(block));
+  arena_.UpdateBasicBlock(current_block_, std::move(block));
   current_instructions_.clear();
 }
 
@@ -107,7 +124,7 @@ void MirBuilder::EmitRepeat() {
               .condition_operand = 0,
           },
   };
-  arena_.AddBasicBlock(std::move(block));
+  arena_.UpdateBasicBlock(current_block_, std::move(block));
   current_instructions_.clear();
 }
 
@@ -122,7 +139,7 @@ void MirBuilder::EmitFinish() {
               .condition_operand = 0,
           },
   };
-  arena_.AddBasicBlock(std::move(block));
+  arena_.UpdateBasicBlock(current_block_, std::move(block));
   current_instructions_.clear();
 }
 

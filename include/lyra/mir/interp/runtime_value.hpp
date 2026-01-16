@@ -73,5 +73,8 @@ auto AsArray(const RuntimeValue& v) -> const RuntimeArray&;
 // Conversion to printable string (for $display)
 auto ToString(const RuntimeValue& v) -> std::string;
 auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string;
+auto ToHexString(const RuntimeIntegral& v) -> std::string;
+auto ToBinaryString(const RuntimeIntegral& v) -> std::string;
+auto ToOctalString(const RuntimeIntegral& v) -> std::string;
 
 }  // namespace lyra::mir::interp
