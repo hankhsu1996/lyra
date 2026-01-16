@@ -6,6 +6,11 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 refresh_compile_commands(
     name = "refresh_compile_commands",
+    exclude_external_sources = True,
+    targets = {
+        "//:lyra": "",
+        "//tests/...": "",
+    },
 )
 
 cc_library(

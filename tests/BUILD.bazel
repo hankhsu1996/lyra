@@ -1,6 +1,62 @@
 # Test infrastructure for Lyra
 #
-# Test specs preserved in sv_features/*.yaml
-# Framework code in framework/ for reference
-#
-# Will be rebuilt when new pipeline is ready.
+# Suite-based test framework using YAML test specs in sv_features/
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "test_framework",
+    srcs = [
+        "framework/arg_parse.cpp",
+        "framework/assertions.cpp",
+        "framework/runner.cpp",
+        "framework/suite_loader.cpp",
+        "framework/test_case_loader.cpp",
+        "framework/test_discovery.cpp",
+    ],
+    hdrs = [
+        "framework/arg_parse.hpp",
+        "framework/assertions.hpp",
+        "framework/runner.hpp",
+        "framework/suite.hpp",
+        "framework/suite_loader.hpp",
+        "framework/test_case.hpp",
+        "framework/test_case_loader.hpp",
+        "framework/test_discovery.hpp",
+    ],
+    deps = [
+        "//:interp",
+        "//:lowering",
+        "@googletest//:gtest",
+        "@slang",
+        "@yaml-cpp",
+    ],
+)
+
+# MIR development suite - core tests for incremental MIR development
+cc_test(
+    name = "mir_dev_tests",
+    srcs = ["framework/sv_feature_tests.cpp"],
+    args = ["--suite=mir_dev"],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# MIR full suite - all tests except timing/scheduling
+cc_test(
+    name = "mir_full_tests",
+    srcs = ["framework/sv_feature_tests.cpp"],
+    args = ["--suite=mir_full"],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)

@@ -32,6 +32,7 @@ using ExpectedValue = std::variant<int64_t, double>;
 struct TestCase {
   std::string name;
   std::string feature;
+  std::string source_yaml;  // Path to YAML file for error reporting
   std::string sv_code;
   std::vector<SourceFile> files;
   std::vector<std::string> plusargs;

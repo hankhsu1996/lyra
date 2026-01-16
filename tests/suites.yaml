@@ -1,0 +1,20 @@
+# Test suite definitions
+#
+# Suites define backend + test selection (closed contracts for CI).
+# Patterns are regex substrings matched against relative paths.
+# Empty include_regex = all YAML files. Exclude wins over include.
+
+suites:
+  mir_dev:
+    backend: mir
+    include_regex:
+      - operators/binary.yaml
+      - operators/unary.yaml
+      - system_tasks/display.yaml
+
+  mir_full:
+    backend: mir
+    exclude_regex:
+      - timing/
+      - processes/
+      - scheduling/
