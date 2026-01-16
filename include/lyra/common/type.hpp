@@ -35,6 +35,7 @@ enum class TypeKind {
   kVoid,
   kIntegral,
   kString,
+  kReal,
   kUnpackedArray,
   kUnpackedStruct,
 };
@@ -186,6 +187,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "integral";
     case TypeKind::kString:
       return "string";
+    case TypeKind::kReal:
+      return "real";
     case TypeKind::kUnpackedArray:
       return "unpacked_array";
     case TypeKind::kUnpackedStruct:
@@ -206,6 +209,8 @@ inline auto ToString(const Type& type) -> std::string {
     }
     case TypeKind::kString:
       return "string";
+    case TypeKind::kReal:
+      return "real";
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
       return std::format(

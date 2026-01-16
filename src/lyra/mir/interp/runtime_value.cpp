@@ -122,6 +122,10 @@ auto MakeString(std::string val) -> RuntimeValue {
   return RuntimeString{.value = std::move(val)};
 }
 
+auto MakeReal(double val) -> RuntimeValue {
+  return RuntimeReal{.value = val};
+}
+
 auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue {
   auto s = std::make_unique<RuntimeStruct>();
   s->fields = std::move(fields);
@@ -144,6 +148,8 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue {
           return val;
         } else if constexpr (std::is_same_v<T, RuntimeString>) {
           return val;
+        } else if constexpr (std::is_same_v<T, RuntimeReal>) {
+          return val;  // Trivial copy
         } else if constexpr (std::is_same_v<
                                  T, std::unique_ptr<RuntimeStruct>>) {
           auto copy = std::make_unique<RuntimeStruct>();
@@ -172,6 +178,10 @@ auto IsString(const RuntimeValue& v) -> bool {
   return std::holds_alternative<RuntimeString>(v);
 }
 
+auto IsReal(const RuntimeValue& v) -> bool {
+  return std::holds_alternative<RuntimeReal>(v);
+}
+
 auto IsStruct(const RuntimeValue& v) -> bool {
   return std::holds_alternative<std::unique_ptr<RuntimeStruct>>(v);
 }
@@ -194,6 +204,14 @@ auto AsString(RuntimeValue& v) -> RuntimeString& {
 
 auto AsString(const RuntimeValue& v) -> const RuntimeString& {
   return std::get<RuntimeString>(v);
+}
+
+auto AsReal(RuntimeValue& v) -> RuntimeReal& {
+  return std::get<RuntimeReal>(v);
+}
+
+auto AsReal(const RuntimeValue& v) -> const RuntimeReal& {
+  return std::get<RuntimeReal>(v);
 }
 
 auto AsStruct(RuntimeValue& v) -> RuntimeStruct& {
@@ -222,6 +240,8 @@ auto ToString(const RuntimeValue& v) -> std::string {
           return ToDecimalString(val, false);
         } else if constexpr (std::is_same_v<T, RuntimeString>) {
           return val.value;
+        } else if constexpr (std::is_same_v<T, RuntimeReal>) {
+          return std::format("{:g}", val.value);
         } else if constexpr (std::is_same_v<
                                  T, std::unique_ptr<RuntimeStruct>>) {
           std::string result = "'{";

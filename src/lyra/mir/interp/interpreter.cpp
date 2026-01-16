@@ -212,6 +212,8 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
               return MakeIntegralFromConstant(val, type.AsIntegral().bit_width);
             } else if constexpr (std::is_same_v<T, StringConstant>) {
               return MakeString(val.value);
+            } else if constexpr (std::is_same_v<T, RealConstant>) {
+              return MakeReal(val.value);
             } else if constexpr (std::is_same_v<T, StructConstant>) {
               throw common::InternalError(
                   "EvalOperand", "struct constants not supported");

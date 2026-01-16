@@ -27,12 +27,16 @@ struct RuntimeString {
   std::string value;
 };
 
+struct RuntimeReal {
+  double value;
+};
+
 // Forward declarations for recursive types
 struct RuntimeStruct;
 struct RuntimeArray;
 
 using RuntimeValue = std::variant<
-    std::monostate, RuntimeIntegral, RuntimeString,
+    std::monostate, RuntimeIntegral, RuntimeString, RuntimeReal,
     std::unique_ptr<RuntimeStruct>, std::unique_ptr<RuntimeArray>>;
 
 struct RuntimeStruct {
@@ -48,6 +52,7 @@ auto MakeIntegral(uint64_t value, uint32_t bit_width) -> RuntimeValue;
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;
+auto MakeReal(double value) -> RuntimeValue;
 auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue;
 auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue;
 
@@ -57,6 +62,7 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue;
 // Type checks
 auto IsIntegral(const RuntimeValue& v) -> bool;
 auto IsString(const RuntimeValue& v) -> bool;
+auto IsReal(const RuntimeValue& v) -> bool;
 auto IsStruct(const RuntimeValue& v) -> bool;
 auto IsArray(const RuntimeValue& v) -> bool;
 
@@ -65,6 +71,8 @@ auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral&;
 auto AsIntegral(const RuntimeValue& v) -> const RuntimeIntegral&;
 auto AsString(RuntimeValue& v) -> RuntimeString&;
 auto AsString(const RuntimeValue& v) -> const RuntimeString&;
+auto AsReal(RuntimeValue& v) -> RuntimeReal&;
+auto AsReal(const RuntimeValue& v) -> const RuntimeReal&;
 auto AsStruct(RuntimeValue& v) -> RuntimeStruct&;
 auto AsStruct(const RuntimeValue& v) -> const RuntimeStruct&;
 auto AsArray(RuntimeValue& v) -> RuntimeArray&;
