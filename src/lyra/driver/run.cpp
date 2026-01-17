@@ -85,9 +85,11 @@ auto RunMir(const std::string& path) -> int {
     return 1;
   }
 
-  mir::interp::DesignState design_state(module_info->num_module_slots);
+  auto design_state = mir::interp::CreateDesignState(
+      *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
   auto state = mir::interp::CreateProcessState(
-      *mir_result.mir_arena, module_info->initial_process, &design_state);
+      *mir_result.mir_arena, *hir_result.type_arena,
+      module_info->initial_process, &design_state);
 
   mir::interp::Interpreter interp(
       mir_result.mir_arena.get(), hir_result.type_arena.get());

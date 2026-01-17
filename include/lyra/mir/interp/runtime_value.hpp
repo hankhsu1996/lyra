@@ -49,6 +49,7 @@ struct RuntimeArray {
 
 // Factory functions
 auto MakeIntegral(uint64_t value, uint32_t bit_width) -> RuntimeValue;
+auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue;  // All bits unknown (X)
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;

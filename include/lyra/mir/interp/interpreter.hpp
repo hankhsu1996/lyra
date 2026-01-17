@@ -110,16 +110,23 @@ class Interpreter {
   std::ostream* output_ = nullptr;
 };
 
-// Helper: Create ProcessState for a given process
+// Helper: Create ProcessState for a given process.
+// Initializes locals and temps with default values based on their types.
 auto CreateProcessState(
-    const Arena& arena, ProcessId process_id, DesignState* design_state)
-    -> ProcessState;
+    const Arena& arena, const TypeArena& types, ProcessId process_id,
+    DesignState* design_state) -> ProcessState;
 
 // Info about the initial module to run
 struct InitialModuleInfo {
-  size_t num_module_slots = 0;
+  const Module* module = nullptr;
   ProcessId initial_process;
 };
+
+// Helper: Create DesignState with properly initialized storage.
+// Scans all processes in the module to collect type information for slots.
+auto CreateDesignState(
+    const Arena& arena, const TypeArena& types, const Module& module)
+    -> DesignState;
 
 // Find the first module with a kOnce process (initial block).
 // Returns nullopt if no initial process found.

@@ -11,7 +11,8 @@ namespace lyra::mir::interp {
 // Storage is indexed by PlaceRoot (Local/Temp only - design storage is shared).
 class Frame {
  public:
-  Frame(size_t num_locals, size_t num_temps);
+  // Construct with pre-initialized storage vectors.
+  Frame(std::vector<RuntimeValue> locals, std::vector<RuntimeValue> temps);
 
   [[nodiscard]] auto GetLocal(int id) -> RuntimeValue&;
   [[nodiscard]] auto GetLocal(int id) const -> const RuntimeValue&;
