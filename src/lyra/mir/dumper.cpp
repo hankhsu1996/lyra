@@ -4,7 +4,9 @@
 #include <format>
 #include <variant>
 
-#include "lyra/common/operator.hpp"
+#include "lyra/common/system_function.hpp"
+#include "lyra/mir/effect.hpp"
+#include "lyra/mir/operator.hpp"
 
 namespace lyra::mir {
 
@@ -143,6 +145,8 @@ void Dumper::Dump(BasicBlockId id) {
           } else if constexpr (std::is_same_v<T, Compute>) {
             *out_ << std::format(
                 "{} = {}\n", FormatPlace(i.target), FormatRvalue(i.value));
+          } else if constexpr (std::is_same_v<T, Effect>) {
+            *out_ << FormatEffect(i.op) << "\n";
           }
         },
         instr);
@@ -244,16 +248,23 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
 
   switch (rv.kind) {
     case RvalueKind::kUnary:
-      result = std::format(
-          "unary({})", common::ToString(static_cast<common::UnaryOp>(rv.op)));
+      result = std::format("unary({})", ToString(static_cast<UnaryOp>(rv.op)));
       break;
     case RvalueKind::kBinary:
-      result = std::format(
-          "binary({})", common::ToString(static_cast<common::BinaryOp>(rv.op)));
+      result =
+          std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
       break;
-    case RvalueKind::kCast:
-      result = "cast";
+    case RvalueKind::kCast: {
+      const auto* cast_info = std::get_if<CastInfo>(&rv.info);
+      if (cast_info != nullptr) {
+        result = std::format(
+            "cast({} -> {})", FormatType(cast_info->source_type),
+            FormatType(cast_info->target_type));
+      } else {
+        result = "cast";
+      }
       break;
+    }
     case RvalueKind::kCall:
       result = std::format("call(op={})", rv.op);
       break;
@@ -265,6 +276,38 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
   }
 
   return result;
+}
+
+auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
+  return std::visit(
+      [this](const auto& effect_op) -> std::string {
+        using T = std::decay_t<decltype(effect_op)>;
+        if constexpr (std::is_same_v<T, DisplayEffect>) {
+          std::string result;
+          switch (effect_op.radix) {
+            case PrintRadix::kDecimal:
+              result = effect_op.append_newline ? "$display" : "$write";
+              break;
+            case PrintRadix::kBinary:
+              result = effect_op.append_newline ? "$displayb" : "$writeb";
+              break;
+            case PrintRadix::kOctal:
+              result = effect_op.append_newline ? "$displayo" : "$writeo";
+              break;
+            case PrintRadix::kHex:
+              result = effect_op.append_newline ? "$displayh" : "$writeh";
+              break;
+          }
+          for (const Operand& arg : effect_op.args) {
+            result += ", ";
+            result += FormatOperand(arg);
+          }
+          return result;
+        } else {
+          return "unknown_effect";
+        }
+      },
+      op);
 }
 
 auto Dumper::FormatType(TypeId id) const -> std::string {

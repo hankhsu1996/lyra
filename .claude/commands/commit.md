@@ -51,11 +51,13 @@ Before committing, format ALL files in the codebase (format is fast, so we run i
 ```
 <Summary starting with verb, 50 chars or less>
 
-- Bullet point explaining what changed
-- Another bullet point if needed (2-5 total)
+- Bullet under 60 chars
+- Another bullet if needed (2-5 total)
 ```
 
-Bullet points should describe **what changed**, not background context or why the old state was bad.
+Bullet points should be **concise** (under 60 chars each) and describe **what changed**, not background context.
+
+**ASCII only.** No special Unicode characters.
 
 **CRITICAL: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By", no author credits. These duplicate badly when squash-merging. The commit message should ONLY contain the summary line and bullet points.
 

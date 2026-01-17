@@ -1,14 +1,17 @@
 #pragma once
 
 #include "lyra/hir/routine.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
+// Lower a process with module places for module-level variables.
+// module_places is read-only; the process creates its own local_places.
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena) -> mir::ProcessId;
+    mir::Arena& mir_arena, const PlaceMap& module_places) -> mir::ProcessId;
 
 }  // namespace lyra::lowering::hir_to_mir

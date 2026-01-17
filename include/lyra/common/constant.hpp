@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <variant>
 #include <vector>
@@ -50,6 +51,20 @@ struct StringConstant {
   }
 };
 
+struct RealConstant {
+  double value;
+
+  auto operator==(const RealConstant&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const RealConstant& c) -> H {
+    // Hash the bit representation to avoid NaN/signed-zero issues
+    uint64_t bits = 0;
+    std::memcpy(&bits, &c.value, sizeof(bits));
+    return H::combine(std::move(h), bits);
+  }
+};
+
 struct StructConstant {
   std::vector<ConstId> fields;
 
@@ -73,7 +88,8 @@ struct ArrayConstant {
 };
 
 using ConstantValue = std::variant<
-    IntegralConstant, StringConstant, StructConstant, ArrayConstant>;
+    IntegralConstant, StringConstant, RealConstant, StructConstant,
+    ArrayConstant>;
 
 struct Constant {
   TypeId type;

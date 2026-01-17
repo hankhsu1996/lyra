@@ -28,6 +28,22 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                                  .is_four_state = type.isFourState()});
   }
 
+  if (type.isString()) {
+    return ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+  }
+
+  if (type.isFloating()) {
+    const auto& ft = type.as<slang::ast::FloatingType>();
+    if (ft.floatKind != slang::ast::FloatingType::Real) {
+      ctx->sink->Error(
+          source, std::format(
+                      "unsupported floating type '{}' (only 'real' supported)",
+                      type.toString()));
+      return kInvalidTypeId;
+    }
+    return ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
+  }
+
   if (type.isUnpackedArray()) {
     if (type.kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
       ctx->sink->Error(source, "only fixed-size unpacked arrays supported");

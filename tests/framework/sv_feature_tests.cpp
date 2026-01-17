@@ -1,342 +1,84 @@
-#include <algorithm>
-#include <cstdint>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
+#include <exception>
 #include <gtest/gtest.h>
-#include <iterator>
-#include <ranges>
-#include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <variant>
+#include <iostream>
+#include <span>
+#include <utility>
 #include <vector>
 
-#include "lyra/interpreter/interpreter.hpp"
-#include "lyra/interpreter/interpreter_options.hpp"
-#include "lyra/interpreter/interpreter_result.hpp"
-#include "tests/framework/batch_compiler.hpp"
+#include "tests/framework/arg_parse.hpp"
+#include "tests/framework/runner.hpp"
+#include "tests/framework/suite.hpp"
 #include "tests/framework/test_case.hpp"
-#include "tests/framework/yaml_loader.hpp"
+#include "tests/framework/test_discovery.hpp"
 
 namespace lyra::test {
 namespace {
 
-// Extract category from YAML path for test name prefixing.
-// e.g., "tests/sv_features/operators/binary.yaml" -> "operators_binary"
-auto ExtractCategory(const std::filesystem::path& yaml_path) -> std::string {
-  auto stem = yaml_path.stem().string();
-  auto parent = yaml_path.parent_path().filename().string();
-  return parent + "_" + stem;
-}
+// Global storage for test cases - avoids copies in lambda captures
+std::vector<TestCase>
+    g_test_cases;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+BackendKind
+    g_backend;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-// Get YAML file paths to load test cases from.
-// Priority:
-// 1. SV_TEST_YAML env var (single file, for backward compatibility)
-// 2. Discover all YAML files in runfiles sv_features directory
-auto GetYamlPaths() -> std::vector<std::filesystem::path> {
-  // Check for single YAML file (backward compatibility)
-  if (const char* yaml_path = std::getenv("SV_TEST_YAML")) {
-    return {yaml_path};
-  }
-
-  // Discover all YAML files from runfiles
-  // Bazel sets TEST_SRCDIR to runfiles root
-  const char* test_srcdir = std::getenv("TEST_SRCDIR");
-  const char* test_workspace = std::getenv("TEST_WORKSPACE");
-
-  if (test_srcdir == nullptr || test_workspace == nullptr) {
-    throw std::runtime_error(
-        "Neither SV_TEST_YAML nor TEST_SRCDIR/TEST_WORKSPACE set");
-  }
-
-  std::filesystem::path runfiles_dir =
-      std::filesystem::path(test_srcdir) / test_workspace;
-  std::filesystem::path yaml_dir = runfiles_dir / "tests" / "sv_features";
-
-  std::vector<std::filesystem::path> yaml_paths;
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(yaml_dir)) {
-    if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
-      yaml_paths.push_back(entry.path());
-    }
-  }
-
-  // Sort for deterministic test order
-  std::ranges::sort(yaml_paths);
-  return yaml_paths;
-}
-
-class ScopedCurrentPath {
+// Test fixture that references globally stored test case
+class SvFeatureTest : public testing::Test {
  public:
-  ScopedCurrentPath(const ScopedCurrentPath&) = default;
-  ScopedCurrentPath(ScopedCurrentPath&&) = delete;
-  auto operator=(const ScopedCurrentPath&) -> ScopedCurrentPath& = default;
-  auto operator=(ScopedCurrentPath&&) -> ScopedCurrentPath& = delete;
-  explicit ScopedCurrentPath(const std::filesystem::path& path)
-      : previous_(std::filesystem::current_path()) {
-    std::filesystem::current_path(path);
+  SvFeatureTest(const TestCase* test_case, BackendKind backend)
+      : test_case_(test_case), backend_(backend) {
   }
 
-  ~ScopedCurrentPath() {
-    std::filesystem::current_path(previous_);
+  void TestBody() override {
+    RunTestCase(*test_case_, backend_);
   }
 
  private:
-  std::filesystem::path previous_;
+  const TestCase* test_case_;
+  BackendKind backend_;
 };
 
-auto WriteTempFiles(
-    const std::vector<SourceFile>& files, const std::string& test_name)
-    -> std::vector<std::string> {
-  // Use unique directory per test to avoid race conditions when tests run in
-  // parallel (sharded). Without this, different shards can overwrite each
-  // other's files (e.g., mem.hex for $readmemh tests).
-  auto tmp_dir =
-      std::filesystem::temp_directory_path() / "lyra_test" / test_name;
-  std::filesystem::create_directories(tmp_dir);
-
-  std::vector<std::string> paths;
-  for (const auto& file : files) {
-    auto path = tmp_dir / file.name;
-    std::ofstream out(path);
-    out << file.content;
-    paths.push_back(path.string());
-  }
-  return paths;
-}
-
-auto FilterSvFiles(const std::vector<std::string>& paths)
-    -> std::vector<std::string> {
-  auto filtered =
-      paths | std::views::filter([](const auto& path) {
-        auto ext = std::filesystem::path(path).extension();
-        return ext == ".sv" || ext == ".svh" || ext == ".v" || ext == ".vh";
-      });
-  std::vector<std::string> sv_paths;
-  std::ranges::copy(filtered, std::back_inserter(sv_paths));
-  return sv_paths;
-}
-
-void AssertOutput(const std::string& actual, const ExpectedOutput& expected) {
-  if (expected.IsExact()) {
-    EXPECT_EQ(actual, expected.exact.value());
-  } else {
-    for (const auto& substring : expected.contains) {
-      EXPECT_TRUE(actual.find(substring) != std::string::npos)
-          << "Expected output to contain: \"" << substring << "\"\n"
-          << "Actual output: \"" << actual << "\"";
-    }
-  }
-  for (const auto& substring : expected.not_contains) {
-    EXPECT_TRUE(actual.find(substring) == std::string::npos)
-        << "Expected output to NOT contain: \"" << substring << "\"\n"
-        << "Actual output: \"" << actual << "\"";
+// Register tests dynamically using indices into global storage
+void RegisterTests() {
+  for (size_t i = 0; i < g_test_cases.size(); ++i) {
+    const auto& test_case = g_test_cases[i];
+    testing::RegisterTest(
+        "SvFeatures", test_case.name.c_str(), nullptr, nullptr,
+        test_case.source_yaml.c_str(), static_cast<int>(i),
+        [i]() -> testing::Test* {
+          // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) - gtest owns ptr
+          return new SvFeatureTest(&g_test_cases[i], g_backend);
+        });
   }
 }
-
-// Normalize line endings to Unix style (\n)
-auto NormalizeNewlines(std::string str) -> std::string {
-  std::erase(str, '\r');
-  return str;
-}
-
-void AssertFiles(
-    const std::filesystem::path& work_dir,
-    const std::map<std::string, ExpectedOutput>& expected_files) {
-  for (const auto& [filename, expected] : expected_files) {
-    auto file_path = work_dir / filename;
-    ASSERT_TRUE(std::filesystem::exists(file_path))
-        << "Expected file not found: " << filename << "\n"
-        << "Work directory: " << work_dir << "\n"
-        << "Available files: " << [&] {
-             std::string files;
-             for (const auto& entry :
-                  std::filesystem::directory_iterator(work_dir)) {
-               if (!files.empty()) {
-                 files += ", ";
-               }
-               files += entry.path().filename().string();
-             }
-             return files.empty() ? "(none)" : files;
-           }();
-
-    std::ifstream in(file_path);
-    std::string actual(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    actual = NormalizeNewlines(actual);
-
-    if (expected.IsExact()) {
-      auto expected_normalized = NormalizeNewlines(expected.exact.value());
-      EXPECT_EQ(actual, expected_normalized) << "File: " << filename;
-    } else {
-      for (const auto& substring : expected.contains) {
-        EXPECT_TRUE(actual.find(substring) != std::string::npos)
-            << "File " << filename << " should contain: \"" << substring
-            << "\"\n"
-            << "Actual content: \"" << actual << "\"";
-      }
-    }
-    for (const auto& substring : expected.not_contains) {
-      EXPECT_TRUE(actual.find(substring) == std::string::npos)
-          << "File " << filename << " should NOT contain: \"" << substring
-          << "\"\n"
-          << "Actual content: \"" << actual << "\"";
-    }
-  }
-}
-
-class SvFeatureTest : public testing::TestWithParam<TestCase> {};
-
-TEST_P(SvFeatureTest, Interpreter) {
-  const auto& test_case = GetParam();
-
-  // Skip interpreter test if flag is set
-  if (test_case.skip_interpreter) {
-    GTEST_SKIP() << "Interpreter skipped";
-  }
-
-  interpreter::InterpreterOptions options;
-  options.plusargs = test_case.plusargs;
-
-  interpreter::InterpreterResult result;
-  std::filesystem::path work_dir;
-
-  if (test_case.IsMultiFile()) {
-    auto paths = WriteTempFiles(test_case.files, test_case.name);
-    auto sv_paths = FilterSvFiles(paths);
-    work_dir = std::filesystem::path(paths.front()).parent_path();
-    ScopedCurrentPath current_dir(work_dir);
-    result = interpreter::Interpreter::RunFromFiles(sv_paths, "", options);
-  } else if (!test_case.expected_files.empty()) {
-    // Single-file tests need a work_dir if they have file expectations
-    work_dir =
-        std::filesystem::temp_directory_path() / "lyra_test" / test_case.name;
-    std::filesystem::create_directories(work_dir);
-    ScopedCurrentPath current_dir(work_dir);
-    result =
-        interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
-  } else {
-    result =
-        interpreter::Interpreter::RunFromSource(test_case.sv_code, "", options);
-  }
-
-  for (const auto& [var, expected] : test_case.expected_values) {
-    auto actual = result.ReadVariable(var);
-    std::visit(
-        [&](auto&& exp_val) {
-          using T = std::decay_t<decltype(exp_val)>;
-          if constexpr (std::is_same_v<T, int64_t>) {
-            EXPECT_EQ(actual.AsNarrow().AsInt64(), exp_val)
-                << "Variable: " << var;
-          } else if constexpr (std::is_same_v<T, double>) {
-            // Handle both real (double) and shortreal (float)
-            if (actual.IsShortReal()) {
-              EXPECT_EQ(static_cast<double>(actual.AsFloat()), exp_val)
-                  << "Variable: " << var;
-            } else {
-              EXPECT_EQ(actual.AsDouble(), exp_val) << "Variable: " << var;
-            }
-          }
-        },
-        expected);
-  }
-
-  if (test_case.expected_time.has_value()) {
-    EXPECT_EQ(result.FinalTime(), test_case.expected_time.value());
-  }
-
-  if (test_case.expected_stdout.has_value()) {
-    AssertOutput(result.CapturedOutput(), test_case.expected_stdout.value());
-  }
-
-  if (!test_case.expected_files.empty()) {
-    AssertFiles(work_dir, test_case.expected_files);
-  }
-}
-
-TEST_P(SvFeatureTest, CppCodegen) {
-  const auto& test_case = GetParam();
-
-  // Skip codegen test if flag is set (e.g., for hierarchy tests)
-  if (test_case.skip_codegen) {
-    GTEST_SKIP() << "Codegen skipped (use CLI for hierarchical modules)";
-  }
-
-  std::vector<std::string> vars;
-  vars.reserve(test_case.expected_values.size());
-  for (const auto& [var, _] : test_case.expected_values) {
-    vars.push_back(var);
-  }
-
-  auto result = BatchCompiler::Instance().RunTest(test_case, vars);
-  ASSERT_TRUE(result.success) << result.error_message;
-
-  for (const auto& [var, expected] : test_case.expected_values) {
-    auto it = result.variables.find(var);
-    ASSERT_TRUE(it != result.variables.end()) << "Variable not found: " << var;
-    auto actual = it->second;
-    std::visit(
-        [&](auto&& exp_val) {
-          using T = std::decay_t<decltype(exp_val)>;
-          if constexpr (std::is_same_v<T, int64_t>) {
-            EXPECT_TRUE(std::holds_alternative<int64_t>(actual))
-                << "Variable " << var << " expected integer";
-            EXPECT_EQ(std::get<int64_t>(actual), exp_val)
-                << "Variable: " << var;
-          } else if constexpr (std::is_same_v<T, double>) {
-            EXPECT_TRUE(std::holds_alternative<double>(actual))
-                << "Variable " << var << " expected double";
-            EXPECT_EQ(std::get<double>(actual), exp_val) << "Variable: " << var;
-          }
-        },
-        expected);
-  }
-
-  if (test_case.expected_time.has_value()) {
-    EXPECT_EQ(result.final_time, test_case.expected_time.value());
-  }
-
-  if (test_case.expected_stdout.has_value()) {
-    AssertOutput(result.captured_output, test_case.expected_stdout.value());
-  }
-
-  if (!test_case.expected_files.empty()) {
-    AssertFiles(result.work_dir, test_case.expected_files);
-  }
-}
-
-auto LoadTestCases() -> std::vector<TestCase> {
-  std::vector<TestCase> all_cases;
-  auto yaml_paths = GetYamlPaths();
-
-  for (const auto& yaml_path : yaml_paths) {
-    auto cases = LoadTestCasesFromYaml(yaml_path.string());
-    auto category = ExtractCategory(yaml_path);
-
-    // Prefix test names with category for uniqueness across YAML files
-    for (auto& test_case : cases) {
-      test_case.name = category + "_" + test_case.name;
-    }
-
-    all_cases.insert(
-        all_cases.end(), std::make_move_iterator(cases.begin()),
-        std::make_move_iterator(cases.end()));
-  }
-
-  return all_cases;
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    SvFeatures, SvFeatureTest, testing::ValuesIn(LoadTestCases()),
-    [](const testing::TestParamInfo<TestCase>& info) {
-      return info.param.name;
-    });
 
 }  // namespace
 }  // namespace lyra::test
 
 auto main(int argc, char** argv) -> int {
-  testing::InitGoogleTest(&argc, argv);
+  // Parse our flags, forward the rest to gtest
+  auto [args, remaining] =
+      lyra::test::ParseArgs(std::span<char*>(argv, static_cast<size_t>(argc)));
+
+  // Null-terminate for gtest (expects argv-style array)
+  remaining.push_back(nullptr);
+  int remaining_argc = static_cast<int>(remaining.size() - 1);
+
+  // Initialize gtest before registration
+  testing::InitGoogleTest(&remaining_argc, remaining.data());
+
+  // Load test configuration and cases
+  try {
+    auto configuration = lyra::test::GetTestConfiguration(args);
+    lyra::test::g_test_cases = lyra::test::LoadTestCases(
+        configuration.yaml_paths, configuration.yaml_directory);
+    lyra::test::g_backend = configuration.backend;
+
+    // Register tests dynamically with the configured backend
+    lyra::test::RegisterTests();
+  } catch (const std::exception& e) {
+    std::cerr << "Error loading test cases: " << e.what() << "\n";
+    return 1;
+  }
+
   return RUN_ALL_TESTS();
 }

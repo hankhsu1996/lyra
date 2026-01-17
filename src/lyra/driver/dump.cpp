@@ -16,6 +16,9 @@ namespace lyra::driver {
 
 namespace {
 
+constexpr auto kToolColor = fmt::terminal_color::white;
+constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
+
 void PrintDiagnostics(const DiagnosticSink& sink) {
   for (const auto& diag : sink.GetDiagnostics()) {
     const char* severity_str = nullptr;
@@ -37,8 +40,9 @@ void PrintDiagnostics(const DiagnosticSink& sink) {
     }
 
     fmt::print(
-        stderr, "{}: {}: {}\n", fmt::styled("lyra", fmt::emphasis::bold),
-        fmt::styled(severity_str, severity_style), diag.message);
+        stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
+        fmt::styled(severity_str, severity_style),
+        fmt::styled(diag.message, fmt::emphasis::bold));
   }
 }
 

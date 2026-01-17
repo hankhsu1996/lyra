@@ -6,6 +6,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -31,6 +32,7 @@ class Dumper {
   [[nodiscard]] auto FormatPlace(PlaceId id) const -> std::string;
   [[nodiscard]] auto FormatOperand(const Operand& op) const -> std::string;
   [[nodiscard]] auto FormatRvalue(const Rvalue& rv) const -> std::string;
+  [[nodiscard]] auto FormatEffect(const EffectOp& op) const -> std::string;
   [[nodiscard]] auto FormatType(TypeId id) const -> std::string;
 
   const Arena* arena_;
