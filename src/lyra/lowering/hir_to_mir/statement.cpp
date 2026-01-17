@@ -1,13 +1,16 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
@@ -347,6 +350,72 @@ void LowerDoWhileLoop(
   builder.SetCurrentBlock(exit_bb);
 }
 
+auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
+  IntegralConstant ic;
+  ic.value.push_back(value);
+  return Constant{.type = type, .value = std::move(ic)};
+}
+
+void LowerRepeatLoop(
+    const hir::RepeatLoopStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  // 1. Evaluate count once and store in a temp
+  mir::Operand count_val = LowerExpression(data.count, builder);
+  const hir::Expression& count_expr = (*ctx.hir_arena)[data.count];
+  mir::PlaceId counter = ctx.AllocTemp(count_expr.type);
+  builder.EmitAssign(counter, std::move(count_val));
+
+  // 2. Create blocks
+  BlockIndex cond_bb = builder.CreateBlock();
+  BlockIndex body_bb = builder.CreateBlock();
+  BlockIndex exit_bb = builder.CreateBlock();
+
+  builder.EmitJump(cond_bb);
+
+  // 3. Condition block: counter > 0
+  builder.SetCurrentBlock(cond_bb);
+  TypeId cond_type = ctx.GetBitType();
+  Constant zero = MakeIntConstant(0, count_expr.type);
+
+  // Choose signed or unsigned comparison based on count expression type
+  const Type& count_type = (*ctx.type_arena)[count_expr.type];
+  mir::BinaryOp cmp_op = mir::BinaryOp::kGreaterThan;
+  if (count_type.Kind() == TypeKind::kIntegral &&
+      count_type.AsIntegral().is_signed) {
+    cmp_op = mir::BinaryOp::kGreaterThanSigned;
+  }
+
+  mir::Rvalue cmp_rvalue{
+      .kind = mir::RvalueKind::kBinary,
+      .op = static_cast<int>(cmp_op),
+      .operands = {mir::Operand::Use(counter), mir::Operand::Const(zero)},
+      .info = {},
+  };
+  mir::PlaceId cmp_result = builder.EmitTemp(cond_type, std::move(cmp_rvalue));
+  builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, exit_bb);
+
+  // 4. Body block
+  builder.SetCurrentBlock(body_bb);
+  LowerStatement(data.body, builder);
+
+  // Decrement counter: counter = counter - 1
+  Constant one = MakeIntConstant(1, count_expr.type);
+  mir::Rvalue dec_rvalue{
+      .kind = mir::RvalueKind::kBinary,
+      .op = static_cast<int>(mir::BinaryOp::kSubtract),
+      .operands = {mir::Operand::Use(counter), mir::Operand::Const(one)},
+      .info = {},
+  };
+  mir::PlaceId new_count =
+      builder.EmitTemp(count_expr.type, std::move(dec_rvalue));
+  builder.EmitAssign(counter, mir::Operand::Use(new_count));
+  builder.EmitJump(cond_bb);
+
+  // 5. Exit
+  builder.SetCurrentBlock(exit_bb);
+}
+
 }  // namespace
 
 void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
@@ -374,6 +443,8 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           LowerWhileLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::DoWhileLoopStatementData>) {
           LowerDoWhileLoop(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::RepeatLoopStatementData>) {
+          LowerRepeatLoop(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");
