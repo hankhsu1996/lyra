@@ -18,6 +18,8 @@ enum class StatementKind {
   kConditional,
   kCase,
   kForLoop,
+  kWhileLoop,
+  kDoWhileLoop,
 };
 
 struct BlockStatementData {
@@ -81,10 +83,25 @@ struct ForLoopStatementData {
   auto operator==(const ForLoopStatementData&) const -> bool = default;
 };
 
+struct WhileLoopStatementData {
+  ExpressionId condition;
+  StatementId body;
+
+  auto operator==(const WhileLoopStatementData&) const -> bool = default;
+};
+
+struct DoWhileLoopStatementData {
+  ExpressionId condition;
+  StatementId body;
+
+  auto operator==(const DoWhileLoopStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
-    CaseStatementData, ForLoopStatementData>;
+    CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
+    DoWhileLoopStatementData>;
 
 struct Statement {
   StatementKind kind;

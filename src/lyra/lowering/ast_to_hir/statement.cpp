@@ -314,6 +314,64 @@ auto LowerStatement(
           });
     }
 
+    case StatementKind::WhileLoop: {
+      const auto& while_stmt = stmt.as<slang::ast::WhileLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      hir::ExpressionId condition =
+          LowerExpression(while_stmt.cond, registrar, ctx);
+      if (!condition) {
+        return hir::kInvalidStatementId;
+      }
+
+      auto body_result = LowerStatement(while_stmt.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "while loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kWhileLoop,
+              .span = span,
+              .data =
+                  hir::WhileLoopStatementData{
+                      .condition = condition, .body = *body_result},
+          });
+    }
+
+    case StatementKind::DoWhileLoop: {
+      const auto& dowhile_stmt = stmt.as<slang::ast::DoWhileLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      hir::ExpressionId condition =
+          LowerExpression(dowhile_stmt.cond, registrar, ctx);
+      if (!condition) {
+        return hir::kInvalidStatementId;
+      }
+
+      auto body_result = LowerStatement(dowhile_stmt.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "do-while loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kDoWhileLoop,
+              .span = span,
+              .data =
+                  hir::DoWhileLoopStatementData{
+                      .condition = condition, .body = *body_result},
+          });
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),

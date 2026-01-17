@@ -289,6 +289,64 @@ void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
   builder.SetCurrentBlock(exit_bb);
 }
 
+void LowerWhileLoop(
+    const hir::WhileLoopStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  BlockIndex cond_bb = builder.CreateBlock();
+  BlockIndex body_bb = builder.CreateBlock();
+  BlockIndex exit_bb = builder.CreateBlock();
+
+  builder.EmitJump(cond_bb);
+
+  // Condition block
+  builder.SetCurrentBlock(cond_bb);
+  mir::Operand cond = LowerExpression(data.condition, builder);
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
+    mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+  builder.EmitBranch(cond, body_bb, exit_bb);
+
+  // Body block
+  builder.SetCurrentBlock(body_bb);
+  LowerStatement(data.body, builder);
+  builder.EmitJump(cond_bb);
+
+  builder.SetCurrentBlock(exit_bb);
+}
+
+void LowerDoWhileLoop(
+    const hir::DoWhileLoopStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  BlockIndex body_bb = builder.CreateBlock();
+  BlockIndex cond_bb = builder.CreateBlock();
+  BlockIndex exit_bb = builder.CreateBlock();
+
+  builder.EmitJump(body_bb);
+
+  // Body block (executes first)
+  builder.SetCurrentBlock(body_bb);
+  LowerStatement(data.body, builder);
+  builder.EmitJump(cond_bb);
+
+  // Condition block
+  builder.SetCurrentBlock(cond_bb);
+  mir::Operand cond = LowerExpression(data.condition, builder);
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
+    mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+  builder.EmitBranch(cond, body_bb, exit_bb);
+
+  builder.SetCurrentBlock(exit_bb);
+}
+
 }  // namespace
 
 void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
@@ -312,6 +370,10 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           LowerCase(data, builder);
         } else if constexpr (std::is_same_v<T, hir::ForLoopStatementData>) {
           LowerForLoop(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::WhileLoopStatementData>) {
+          LowerWhileLoop(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::DoWhileLoopStatementData>) {
+          LowerDoWhileLoop(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

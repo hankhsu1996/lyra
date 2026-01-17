@@ -282,6 +282,26 @@ void Dumper::Dump(StatementId id) {
       Dump(data.body);
       break;
     }
+
+    case StatementKind::kWhileLoop: {
+      const auto& data = std::get<WhileLoopStatementData>(stmt.data);
+      *out_ << "while (";
+      Dump(data.condition);
+      *out_ << ") ";
+      Dump(data.body);
+      break;
+    }
+
+    case StatementKind::kDoWhileLoop: {
+      const auto& data = std::get<DoWhileLoopStatementData>(stmt.data);
+      *out_ << "do ";
+      Dump(data.body);
+      PrintIndent();
+      *out_ << "while (";
+      Dump(data.condition);
+      *out_ << ");\n";
+      break;
+    }
   }
 }
 
