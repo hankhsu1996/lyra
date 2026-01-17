@@ -97,12 +97,17 @@ auto ApplyProjectionsImpl(
               "ApplyProjections", "field projection on non-struct");
         }
         auto& s = AsStruct(*current);
-        if (proj.operand < 0 ||
-            static_cast<size_t>(proj.operand) >= s.fields.size()) {
+        const auto* field_idx = std::get_if<int>(&proj.operand);
+        if (field_idx == nullptr) {
+          throw common::InternalError(
+              "ApplyProjections", "field projection requires constant index");
+        }
+        if (*field_idx < 0 ||
+            static_cast<size_t>(*field_idx) >= s.fields.size()) {
           throw common::InternalError(
               "ApplyProjections", "field index out of range");
         }
-        current = &s.fields[static_cast<size_t>(proj.operand)];
+        current = &s.fields[static_cast<size_t>(*field_idx)];
         break;
       }
 
@@ -112,12 +117,18 @@ auto ApplyProjectionsImpl(
               "ApplyProjections", "index projection on non-array");
         }
         auto& a = AsArray(*current);
-        if (proj.operand < 0 ||
-            static_cast<size_t>(proj.operand) >= a.elements.size()) {
+        const auto* const_idx = std::get_if<int>(&proj.operand);
+        if (const_idx == nullptr) {
+          throw common::InternalError(
+              "ApplyProjections",
+              "dynamic array index not yet supported in interpreter");
+        }
+        if (*const_idx < 0 ||
+            static_cast<size_t>(*const_idx) >= a.elements.size()) {
           throw common::InternalError(
               "ApplyProjections", "array index out of range");
         }
-        current = &a.elements[static_cast<size_t>(proj.operand)];
+        current = &a.elements[static_cast<size_t>(*const_idx)];
         break;
       }
 

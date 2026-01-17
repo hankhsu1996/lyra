@@ -503,6 +503,15 @@ void Dumper::Dump(ExpressionId id) {
       Dump(data.value);
       break;
     }
+
+    case ExpressionKind::kElementAccess: {
+      const auto& data = std::get<ElementAccessExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << "[";
+      Dump(data.index);
+      *out_ << "]";
+      break;
+    }
   }
 }
 

@@ -477,6 +477,10 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerConditional(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::AssignmentExpressionData>) {
           return LowerAssignment(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ElementAccessExpressionData>) {
+          mir::PlaceId place = LowerLvalue(expr_id, builder);
+          return mir::Operand::Use(place);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

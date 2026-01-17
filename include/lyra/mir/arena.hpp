@@ -26,6 +26,18 @@ class Arena final {
     return id;
   }
 
+  // Creates a derived place by appending a projection to an existing place.
+  // Pure structural operation - does not compute or store types.
+  auto DerivePlace(PlaceId base, Projection proj) -> PlaceId {
+    const Place& base_place = places_[base.value];
+    Place new_place{
+        .root = base_place.root,
+        .projections = base_place.projections,
+    };
+    new_place.projections.push_back(std::move(proj));
+    return AddPlace(std::move(new_place));
+  }
+
   auto AddBasicBlock(BasicBlock block) -> BasicBlockId {
     BasicBlockId id{static_cast<uint32_t>(basic_blocks_.size())};
     basic_blocks_.push_back(std::move(block));
