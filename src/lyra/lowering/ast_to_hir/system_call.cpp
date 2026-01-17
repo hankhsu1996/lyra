@@ -57,6 +57,18 @@ struct LowerVisitor {
                 .append_newline = info.append_newline,
                 .args = std::move(*args)}});
   }
+
+  auto operator()(const TerminationFunctionInfo& /*info*/) const
+      -> hir::ExpressionId {
+    // Termination calls should be handled in statement.cpp, not here.
+    // If we reach here, something is wrong.
+    SourceSpan span = ctx->SpanOf(call->sourceRange);
+    ctx->sink->Error(
+        span,
+        "termination calls ($finish/$stop/$exit) should not be used as "
+        "expressions");
+    return hir::kInvalidExpressionId;
+  }
 };
 
 }  // namespace

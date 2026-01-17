@@ -50,7 +50,7 @@ class MirBuilder {
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitReturn();
   void EmitRepeat();
-  void EmitFinish();
+  void EmitTerminate(std::optional<mir::TerminationInfo> info = std::nullopt);
 
   // Materialize all blocks into the Arena. Returns the arena IDs in the same
   // order as blocks were created. Call this once at the end of lowering.

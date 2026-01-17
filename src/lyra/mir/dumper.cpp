@@ -35,6 +35,25 @@ auto FormatTerminator(const Terminator& term) -> std::string {
     case Terminator::Kind::kReturn:
       return "return";
     case Terminator::Kind::kFinish:
+      if (term.termination_info) {
+        const auto& info = *term.termination_info;
+        const char* kind_str = nullptr;
+        switch (info.kind) {
+          case TerminationKind::kFinish:
+            kind_str = "finish";
+            break;
+          case TerminationKind::kStop:
+            kind_str = "stop";
+            break;
+          case TerminationKind::kFatal:
+            kind_str = "fatal";
+            break;
+          case TerminationKind::kExit:
+            kind_str = "exit";
+            break;
+        }
+        return std::format("terminate({}, {})", kind_str, info.level);
+      }
       return "finish";
     case Terminator::Kind::kRepeat:
       return "repeat";

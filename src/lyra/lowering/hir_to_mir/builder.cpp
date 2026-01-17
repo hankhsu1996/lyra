@@ -103,6 +103,7 @@ void MirBuilder::EmitJump(BlockIndex target) {
           .kind = mir::Terminator::Kind::kJump,
           .targets = {mir::BasicBlockId{target.value}},
           .condition_operand = 0,
+          .termination_info = std::nullopt,
       });
 }
 
@@ -121,6 +122,7 @@ void MirBuilder::EmitBranch(
               {mir::BasicBlockId{then_bb.value},
                mir::BasicBlockId{else_bb.value}},
           .condition_operand = static_cast<int>(cond_place.value),
+          .termination_info = std::nullopt,
       });
 }
 
@@ -130,6 +132,7 @@ void MirBuilder::EmitReturn() {
           .kind = mir::Terminator::Kind::kReturn,
           .targets = {},
           .condition_operand = 0,
+          .termination_info = std::nullopt,
       });
 }
 
@@ -139,15 +142,17 @@ void MirBuilder::EmitRepeat() {
           .kind = mir::Terminator::Kind::kRepeat,
           .targets = {},
           .condition_operand = 0,
+          .termination_info = std::nullopt,
       });
 }
 
-void MirBuilder::EmitFinish() {
+void MirBuilder::EmitTerminate(std::optional<mir::TerminationInfo> info) {
   SealCurrentBlock(
       mir::Terminator{
           .kind = mir::Terminator::Kind::kFinish,
           .targets = {},
           .condition_operand = 0,
+          .termination_info = info,
       });
 }
 
