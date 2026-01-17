@@ -93,10 +93,16 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       return IntegralMul(lhs_int, rhs_int, arith_width);
 
     case BinaryOp::kDivide:
-      return IntegralDiv(lhs_int, rhs_int, arith_width);
+      return IntegralDiv(lhs_int, rhs_int, arith_width, false);
 
     case BinaryOp::kMod:
-      return IntegralMod(lhs_int, rhs_int, arith_width);
+      return IntegralMod(lhs_int, rhs_int, arith_width, false);
+
+    case BinaryOp::kDivideSigned:
+      return IntegralDiv(lhs_int, rhs_int, arith_width, true);
+
+    case BinaryOp::kModSigned:
+      return IntegralMod(lhs_int, rhs_int, arith_width, true);
 
     case BinaryOp::kPower:
       throw common::InternalError(

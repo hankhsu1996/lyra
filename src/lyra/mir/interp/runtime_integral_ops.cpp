@@ -1,40 +1,151 @@
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
+#include "lyra/mir/interp/runtime_integral_words.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 
 namespace lyra::mir::interp {
 
 namespace {
 
-constexpr uint32_t kBitsPerWord = 64;
+// Returns: -1 if lhs < rhs, 0 if equal, 1 if lhs > rhs
+// Requires: both operands normalized to bit_width
+auto CompareMultiWordUnsigned(
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t bit_width)
+    -> int {
+  AssertNormalized(lhs, bit_width);
+  AssertNormalized(rhs, bit_width);
 
-auto WordsNeeded(uint32_t bit_width) -> size_t {
-  return (bit_width + kBitsPerWord - 1) / kBitsPerWord;
+  size_t num_words = WordsNeeded(bit_width);
+  for (size_t i = num_words; i > 0; --i) {
+    uint64_t a = lhs.value[i - 1];
+    uint64_t b = rhs.value[i - 1];
+    if (a < b) {
+      return -1;
+    }
+    if (a > b) {
+      return 1;
+    }
+  }
+  return 0;
 }
 
-auto GetMask(uint32_t bit_width) -> uint64_t {
-  if (bit_width == 0 || bit_width >= kBitsPerWord) {
-    return ~uint64_t{0};
+auto CompareMultiWordSigned(
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t bit_width)
+    -> int {
+  AssertNormalized(lhs, bit_width);
+  AssertNormalized(rhs, bit_width);
+
+  bool lhs_neg = GetSignBit(lhs, bit_width);
+  bool rhs_neg = GetSignBit(rhs, bit_width);
+
+  if (lhs_neg != rhs_neg) {
+    return lhs_neg ? -1 : 1;  // negative < positive
   }
-  return (uint64_t{1} << bit_width) - 1;
+
+  // Same sign: unsigned comparison gives correct signed result.
+  // For two's complement with the normalization invariant (bits above width =
+  // 0):
+  //   - Both positive: a < b (signed) iff a < b (unsigned)
+  //   - Both negative: a = 2^n + a_s, b = 2^n + b_s where a_s, b_s < 0
+  //     a_s < b_s iff (2^n + a_s) < (2^n + b_s) iff a < b (unsigned)
+  return CompareMultiWordUnsigned(lhs, rhs, bit_width);
 }
 
-void MaskTopWord(std::vector<uint64_t>& words, uint32_t bit_width) {
-  if (words.empty() || bit_width == 0) {
-    return;
+struct DivModResult {
+  RuntimeIntegral quotient;
+  RuntimeIntegral remainder;
+};
+
+auto DivModMultiWord(
+    const RuntimeIntegral& dividend, const RuntimeIntegral& divisor,
+    uint32_t bit_width) -> DivModResult {
+  assert(bit_width > 0 && "DivModMultiWord: bit_width must be positive");
+
+  auto quotient = MakeKnownIntegral(bit_width);
+  auto remainder = MakeKnownIntegral(bit_width);
+
+  // Normalize both inputs (self-contained, no caller assumptions)
+  auto dividend_n = NormalizeToWidth(dividend, bit_width);
+  auto divisor_n = NormalizeToWidth(divisor, bit_width);
+  assert(!divisor_n.IsZero() && "DivModMultiWord: division by zero");
+
+  // Shift amount for left shift by 1
+  auto one = MakeKnownIntegral(bit_width);
+  one.value[0] = 1;
+
+  for (int32_t bit_pos = static_cast<int32_t>(bit_width) - 1; bit_pos >= 0;
+       --bit_pos) {
+    // remainder = (remainder << 1) | bit(dividend, bit_pos)
+    remainder = IntegralShl(remainder, one, bit_width);
+    if (GetBit(dividend_n, bit_pos, bit_width)) {
+      remainder.value[0] |= 1;
+    }
+    MaskTopWord(remainder.value, bit_width);
+
+    if (CompareMultiWordUnsigned(remainder, divisor_n, bit_width) >= 0) {
+      remainder = IntegralSub(remainder, divisor_n, bit_width);
+      SetBit(quotient, bit_pos);
+    }
   }
-  uint32_t top_bits = bit_width % kBitsPerWord;
-  if (top_bits != 0) {
-    words.back() &= GetMask(top_bits);
-  }
+
+  return {.quotient = quotient, .remainder = remainder};
 }
 
-// Create a known zero-initialized integral result.
+// Returns the unsigned magnitude of a signed value.
+// Note: For INT_MIN (-2^(n-1)), the result has the same bit pattern (2^(n-1)),
+// which still has the sign bit set. This is correct because the caller
+// (DivModMultiWord) interprets the result as unsigned, where 2^(n-1) is the
+// correct magnitude. Do NOT check GetSignBit on the result.
+auto AbsoluteValue(const RuntimeIntegral& val, uint32_t bit_width)
+    -> RuntimeIntegral {
+  assert(val.IsKnown() && "AbsoluteValue requires 2-state input");
+  AssertNormalized(val, bit_width);
+
+  if (!GetSignBit(val, bit_width)) {
+    return val;  // Already non-negative
+  }
+  // Two's complement negate: ~val + 1
+  // For INT_MIN, this returns INT_MIN (same bit pattern = unsigned 2^(n-1))
+  return IntegralNeg(val, bit_width);
+}
+
+auto DivModMultiWordSigned(
+    const RuntimeIntegral& dividend, const RuntimeIntegral& divisor,
+    uint32_t bit_width) -> DivModResult {
+  assert(bit_width > 0 && "DivModMultiWordSigned: bit_width must be positive");
+  AssertNormalized(dividend, bit_width);
+  AssertNormalized(divisor, bit_width);
+
+  bool dividend_neg = GetSignBit(dividend, bit_width);
+  bool divisor_neg = GetSignBit(divisor, bit_width);
+
+  auto abs_dividend = AbsoluteValue(dividend, bit_width);
+  auto abs_divisor = AbsoluteValue(divisor, bit_width);
+
+  auto [quotient, remainder] =
+      DivModMultiWord(abs_dividend, abs_divisor, bit_width);
+
+  // quotient sign = dividend_sign XOR divisor_sign
+  if (dividend_neg != divisor_neg) {
+    quotient = IntegralNeg(quotient, bit_width);
+  }
+
+  // remainder sign = dividend_sign (SV truncates toward zero)
+  if (dividend_neg) {
+    remainder = IntegralNeg(remainder, bit_width);
+  }
+
+  return {.quotient = quotient, .remainder = remainder};
+}
+
+}  // namespace
+
 auto MakeKnownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   RuntimeIntegral result;
   result.bit_width = bit_width;
@@ -44,8 +155,6 @@ auto MakeKnownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   result.z_mask.resize(num_words, 0);
   return result;
 }
-
-}  // namespace
 
 auto MakeUnknownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   RuntimeIntegral result;
@@ -136,13 +245,15 @@ auto IntegralMul(
 }
 
 auto IntegralDiv(
-    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
-    -> RuntimeIntegral {
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
+    bool is_signed) -> RuntimeIntegral {
+  assert(width > 0 && "IntegralDiv: width must be positive");
+
   if (!lhs.IsKnown() || !rhs.IsKnown() || rhs.IsZero()) {
     return MakeUnknownIntegral(width);
   }
 
-  // Single-word division is fully supported
+  // Single-word division
   if (width <= 64) {
     uint64_t a = lhs.value.empty() ? 0 : lhs.value[0];
     uint64_t b = rhs.value.empty() ? 0 : rhs.value[0];
@@ -150,24 +261,51 @@ auto IntegralDiv(
     // This explicit check makes the invariant visible to static analyzers.
     if (b == 0) {
       return MakeUnknownIntegral(width);
+    }
+    if (is_signed) {
+      // Sign-extend each operand based on its own bit width
+      auto sa = static_cast<int64_t>(a);
+      auto sb = static_cast<int64_t>(b);
+      if (lhs.bit_width < 64) {
+        uint64_t sign_bit = uint64_t{1} << (lhs.bit_width - 1);
+        if ((a & sign_bit) != 0) {
+          sa = static_cast<int64_t>(a | ~GetMask(lhs.bit_width));
+        }
+      }
+      if (rhs.bit_width < 64) {
+        uint64_t sign_bit = uint64_t{1} << (rhs.bit_width - 1);
+        if ((b & sign_bit) != 0) {
+          sb = static_cast<int64_t>(b | ~GetMask(rhs.bit_width));
+        }
+      }
+      return std::get<RuntimeIntegral>(
+          MakeIntegral(static_cast<uint64_t>(sa / sb), width));
     }
     return std::get<RuntimeIntegral>(MakeIntegral(a / b, width));
   }
 
-  // Multi-word division: return unknown (all-X).
-  // This is semantically "unimplemented" rather than "propagated X/Z".
-  // TODO(hankhsu): Implement multi-word division algorithm.
-  return MakeUnknownIntegral(width);
+  // Multi-word division
+  auto lhs_norm = NormalizeToWidth(lhs, width);
+  auto rhs_norm = NormalizeToWidth(rhs, width);
+  DivModResult result;
+  if (is_signed) {
+    result = DivModMultiWordSigned(lhs_norm, rhs_norm, width);
+  } else {
+    result = DivModMultiWord(lhs_norm, rhs_norm, width);
+  }
+  return result.quotient;
 }
 
 auto IntegralMod(
-    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
-    -> RuntimeIntegral {
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
+    bool is_signed) -> RuntimeIntegral {
+  assert(width > 0 && "IntegralMod: width must be positive");
+
   if (!lhs.IsKnown() || !rhs.IsKnown() || rhs.IsZero()) {
     return MakeUnknownIntegral(width);
   }
 
-  // Single-word modulo is fully supported
+  // Single-word modulo
   if (width <= 64) {
     uint64_t a = lhs.value.empty() ? 0 : lhs.value[0];
     uint64_t b = rhs.value.empty() ? 0 : rhs.value[0];
@@ -176,13 +314,38 @@ auto IntegralMod(
     if (b == 0) {
       return MakeUnknownIntegral(width);
     }
+    if (is_signed) {
+      // Sign-extend each operand based on its own bit width
+      auto sa = static_cast<int64_t>(a);
+      auto sb = static_cast<int64_t>(b);
+      if (lhs.bit_width < 64) {
+        uint64_t sign_bit = uint64_t{1} << (lhs.bit_width - 1);
+        if ((a & sign_bit) != 0) {
+          sa = static_cast<int64_t>(a | ~GetMask(lhs.bit_width));
+        }
+      }
+      if (rhs.bit_width < 64) {
+        uint64_t sign_bit = uint64_t{1} << (rhs.bit_width - 1);
+        if ((b & sign_bit) != 0) {
+          sb = static_cast<int64_t>(b | ~GetMask(rhs.bit_width));
+        }
+      }
+      return std::get<RuntimeIntegral>(
+          MakeIntegral(static_cast<uint64_t>(sa % sb), width));
+    }
     return std::get<RuntimeIntegral>(MakeIntegral(a % b, width));
   }
 
-  // Multi-word modulo: return unknown (all-X).
-  // This is semantically "unimplemented" rather than "propagated X/Z".
-  // TODO(hankhsu): Implement multi-word modulo algorithm.
-  return MakeUnknownIntegral(width);
+  // Multi-word modulo
+  auto lhs_norm = NormalizeToWidth(lhs, width);
+  auto rhs_norm = NormalizeToWidth(rhs, width);
+  DivModResult result;
+  if (is_signed) {
+    result = DivModMultiWordSigned(lhs_norm, rhs_norm, width);
+  } else {
+    result = DivModMultiWord(lhs_norm, rhs_norm, width);
+  }
+  return result.remainder;
 }
 
 auto IntegralAnd(
@@ -347,6 +510,10 @@ auto IntegralNe(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral {
+  assert(
+      lhs.bit_width > 0 && rhs.bit_width > 0 &&
+      "IntegralLt: bit_width must be positive");
+
   if (!lhs.IsKnown() || !rhs.IsKnown()) {
     return MakeUnknown1Bit();
   }
@@ -380,10 +547,17 @@ auto IntegralLt(
     return std::get<RuntimeIntegral>(MakeIntegral(cmp_result ? 1 : 0, 1));
   }
 
-  // Multi-word comparison: return unknown (all-X).
-  // This is semantically "unimplemented" rather than "propagated X/Z".
-  // TODO(hankhsu): Implement multi-word signed comparison.
-  return MakeUnknown1Bit();
+  // Multi-word comparison: normalize both operands to the same width
+  auto lhs_norm = NormalizeToWidth(lhs, width);
+  auto rhs_norm = NormalizeToWidth(rhs, width);
+
+  int cmp = 0;
+  if (is_signed) {
+    cmp = CompareMultiWordSigned(lhs_norm, rhs_norm, width);
+  } else {
+    cmp = CompareMultiWordUnsigned(lhs_norm, rhs_norm, width);
+  }
+  return std::get<RuntimeIntegral>(MakeIntegral(cmp < 0 ? 1 : 0, 1));
 }
 
 auto IntegralLe(
@@ -500,6 +674,9 @@ auto IntegralShl(
 auto IntegralShr(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
     bool is_signed) -> RuntimeIntegral {
+  assert(
+      width > 0 && lhs.bit_width > 0 && "IntegralShr: width must be positive");
+
   if (!lhs.IsKnown() || !rhs.IsKnown()) {
     return MakeUnknownIntegral(width);
   }
@@ -563,6 +740,10 @@ auto IntegralShr(
 auto IntegralResize2State(
     const RuntimeIntegral& src, bool src_is_signed, uint32_t target_width)
     -> RuntimeIntegral {
+  assert(
+      src.bit_width > 0 &&
+      "IntegralResize2State: src.bit_width must be positive");
+
   if (!src.IsKnown()) {
     return MakeUnknownIntegral(target_width);
   }

@@ -27,13 +27,17 @@ enum class UnaryOp {
 };
 
 enum class BinaryOp {
-  // Arithmetic
+  // Arithmetic (unsigned)
   kAdd,
   kSubtract,
   kMultiply,
   kDivide,
   kMod,
   kPower,
+
+  // Arithmetic (signed)
+  kDivideSigned,
+  kModSigned,
 
   // Bitwise
   kBitwiseAnd,
@@ -122,6 +126,10 @@ inline auto ToString(BinaryOp op) -> const char* {
       return "%";
     case BinaryOp::kPower:
       return "**";
+    case BinaryOp::kDivideSigned:
+      return "/s";
+    case BinaryOp::kModSigned:
+      return "%s";
     case BinaryOp::kBitwiseAnd:
       return "&";
     case BinaryOp::kBitwiseOr:
