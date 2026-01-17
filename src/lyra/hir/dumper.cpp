@@ -201,6 +201,36 @@ void Dumper::Dump(StatementId id) {
       }
       break;
     }
+
+    case StatementKind::kCase: {
+      const auto& data = std::get<CaseStatementData>(stmt.data);
+      *out_ << "case (";
+      Dump(data.selector);
+      *out_ << ") {\n";
+      Indent();
+      for (const auto& item : data.items) {
+        PrintIndent();
+        bool first = true;
+        for (ExpressionId e : item.expressions) {
+          if (!first) {
+            *out_ << ", ";
+          }
+          first = false;
+          Dump(e);
+        }
+        *out_ << ": ";
+        Dump(item.statement);
+      }
+      if (data.default_statement.has_value()) {
+        PrintIndent();
+        *out_ << "default: ";
+        Dump(*data.default_statement);
+      }
+      Dedent();
+      PrintIndent();
+      *out_ << "}\n";
+      break;
+    }
   }
 }
 

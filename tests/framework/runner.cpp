@@ -270,12 +270,16 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   }
 
   // Lower HIR to MIR
+  TypeId bit_type = hir_result.type_arena->Intern(
+      TypeKind::kIntegral, IntegralInfo{.bit_width = 1, .is_signed = false,
+                                        .is_four_state = true});
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = hir_result.design,
       .hir_arena = *hir_result.hir_arena,
       .type_arena = *hir_result.type_arena,
       .constant_arena = *hir_result.constant_arena,
       .symbol_table = *hir_result.symbol_table,
+      .bit_type = bit_type,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 

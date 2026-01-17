@@ -60,49 +60,12 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
 
 ## Lyra CLI
 
-**Note:** CLI commands are not functional until the new pipeline is built. Documentation kept for reference.
-
-Lyra has two modes: **project-based commands** and **standalone dump commands**.
-
-### Project-Based Commands
-
-These commands require `lyra.toml` in the current directory. They take **NO positional arguments**.
+Current CLI commands (standalone, no project config needed):
 
 ```bash
-lyra run                    # Build and run simulation
-lyra build                  # Generate and compile (no run)
-lyra emit                   # Generate output to out/
-lyra check                  # Parse and validate only
-```
-
-**Important:** Must run from directory containing `lyra.toml`. To run from elsewhere:
-
-```bash
-bash -c 'cd /path/to/project && lyra run'
-```
-
-### Standalone Commands
-
-These commands take source files directly (no `lyra.toml` needed):
-
-```bash
-lyra init <name>            # Create new project in <name>/
-lyra init                   # Create new project in current directory
-lyra dump hir <file.sv>     # Dump HIR
-lyra dump mir <file.sv>     # Dump MIR
-```
-
-### Project Configuration
-
-The `lyra.toml` format:
-
-```toml
-[package]
-name = "project_name"
-top = "TopModule"
-
-[sources]
-files = ["file1.sv", "file2.sv"]
+lyra dump hir <file.sv>     # Dump HIR representation
+lyra dump mir <file.sv>     # Dump MIR representation
+lyra run mir <file.sv>      # Interpret MIR
 ```
 
 ## SystemVerilog Version
