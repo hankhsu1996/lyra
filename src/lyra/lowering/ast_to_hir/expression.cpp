@@ -9,6 +9,7 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/hir/arena.hpp"
@@ -468,6 +469,50 @@ auto LowerExpression(
               .data =
                   hir::AssignmentExpressionData{
                       .target = target, .value = value},
+          });
+    }
+
+    case ExpressionKind::ElementSelect: {
+      const auto& select = expr.as<slang::ast::ElementSelectExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Gate: only handle unpacked arrays. Packed bit-select is not supported.
+      const slang::ast::Type& value_type =
+          select.value().type->getCanonicalType();
+      if (!value_type.isUnpackedArray()) {
+        ctx->sink->Error(
+            span, std::format(
+                      "packed array bit-select not yet supported (type: {})",
+                      value_type.toString()));
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+      if (!base) {
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId index =
+          LowerExpression(select.selector(), registrar, ctx);
+      if (!index) {
+        return hir::kInvalidExpressionId;
+      }
+
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kElementAccess,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::ElementAccessExpressionData{
+                      .base = base, .index = index},
           });
     }
 

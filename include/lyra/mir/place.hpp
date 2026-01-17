@@ -1,8 +1,10 @@
 #pragma once
 
+#include <variant>
 #include <vector>
 
 #include "lyra/common/type.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
 
@@ -27,7 +29,7 @@ struct Projection {
   };
 
   Kind kind;
-  int operand;  // field index, constant index, etc.
+  std::variant<int, Operand> operand;
 };
 
 struct Place {

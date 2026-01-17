@@ -7,6 +7,7 @@
 #include "lyra/common/system_function.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::mir {
 
@@ -160,6 +161,45 @@ void Dumper::Dump(BasicBlockId id) {
   *out_ << "}\n";
 }
 
+auto Dumper::FormatProjectionOperand(
+    const std::variant<int, Operand>& operand) const -> std::string {
+  if (const auto* constant_index = std::get_if<int>(&operand)) {
+    return std::format("{}", *constant_index);
+  }
+  const auto& op = std::get<Operand>(operand);
+  switch (op.kind) {
+    case Operand::Kind::kConst: {
+      const auto& constant = std::get<Constant>(op.payload);
+      if (const auto* integral =
+              std::get_if<IntegralConstant>(&constant.value)) {
+        auto value = integral->value.empty() ? 0UL : integral->value[0];
+        return std::format("idx=const:{}", value);
+      }
+      return "idx=const:?";
+    }
+    case Operand::Kind::kUse: {
+      PlaceId place_id = std::get<PlaceId>(op.payload);
+      const Place& place = (*arena_)[place_id];
+      const char* prefix = nullptr;
+      switch (place.root.kind) {
+        case PlaceRoot::Kind::kLocal:
+          prefix = "_";
+          break;
+        case PlaceRoot::Kind::kTemp:
+          prefix = "%";
+          break;
+        case PlaceRoot::Kind::kDesign:
+          prefix = "@";
+          break;
+      }
+      return std::format("idx=use:{}{}", prefix, place.root.id);
+    }
+    case Operand::Kind::kPoison:
+      return "idx=poison";
+  }
+  return "idx=?";
+}
+
 auto Dumper::FormatPlace(PlaceId id) const -> std::string {
   const Place& place = (*arena_)[id];
   const char* prefix = nullptr;
@@ -179,13 +219,14 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
   for (const Projection& proj : place.projections) {
     switch (proj.kind) {
       case Projection::Kind::kField:
-        result += std::format(".{}", proj.operand);
+        result += std::format(".{}", FormatProjectionOperand(proj.operand));
         break;
       case Projection::Kind::kIndex:
-        result += std::format("[{}]", proj.operand);
+        result += std::format("[{}]", FormatProjectionOperand(proj.operand));
         break;
       case Projection::Kind::kSlice:
-        result += std::format("[slice:{}]", proj.operand);
+        result +=
+            std::format("[slice:{}]", FormatProjectionOperand(proj.operand));
         break;
       case Projection::Kind::kDeref:
         result += ".*";
@@ -193,7 +234,9 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
     }
   }
 
-  result += std::format(": {}", FormatType(place.root.type));
+  TypeId place_type =
+      type_arena_ != nullptr ? TypeOfPlace(*type_arena_, place) : TypeId{0};
+  result += std::format(": {}", FormatType(place_type));
   return result;
 }
 
@@ -235,7 +278,26 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
           prefix = "@";
           break;
       }
-      return std::format("use({}{})", prefix, place.root.id);
+      std::string result = std::format("{}{}", prefix, place.root.id);
+      for (const Projection& proj : place.projections) {
+        switch (proj.kind) {
+          case Projection::Kind::kField:
+            result += std::format(".{}", FormatProjectionOperand(proj.operand));
+            break;
+          case Projection::Kind::kIndex:
+            result +=
+                std::format("[{}]", FormatProjectionOperand(proj.operand));
+            break;
+          case Projection::Kind::kSlice:
+            result += std::format(
+                "[slice:{}]", FormatProjectionOperand(proj.operand));
+            break;
+          case Projection::Kind::kDeref:
+            result += ".*";
+            break;
+        }
+      }
+      return std::format("use({})", result);
     }
     case Operand::Kind::kPoison:
       return "poison";
