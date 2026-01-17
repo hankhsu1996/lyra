@@ -381,6 +381,22 @@ auto LowerSystemCall(
       "system call used in value context (only effect calls supported)");
 }
 
+auto LowerAssignment(
+    const hir::AssignmentExpressionData& data, const hir::Expression& /*expr*/,
+    MirBuilder& builder) -> mir::Operand {
+  // 1. Lower target as lvalue
+  mir::PlaceId target = LowerLvalue(data.target, builder);
+
+  // 2. Lower value as rvalue
+  mir::Operand value = LowerExpression(data.value, builder);
+
+  // 3. Emit assignment
+  builder.EmitAssign(target, value);
+
+  // 4. Return the value (assignment expression yields the assigned value)
+  return value;
+}
+
 // Lower ternary operator (a ? b : c) to control flow.
 // MIR has no "select" instruction, so we lower to branches:
 //   result = _
@@ -459,6 +475,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::ConditionalExpressionData>) {
           return LowerConditional(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::AssignmentExpressionData>) {
+          return LowerAssignment(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

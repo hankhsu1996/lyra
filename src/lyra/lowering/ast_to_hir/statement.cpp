@@ -4,6 +4,7 @@
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
+#include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -31,23 +32,20 @@ auto LowerStatement(
       const auto& list = stmt.as<slang::ast::StatementList>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      registrar.PushScope(ScopeKind::kBlock);
+      ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
 
       std::vector<hir::StatementId> children;
       children.reserve(list.list.size());
       for (const slang::ast::Statement* child : list.list) {
         auto result = LowerStatement(*child, registrar, ctx);
         if (!result.has_value()) {
-          continue;
+          continue;  // Empty statement, skip
         }
         if (!*result) {
-          registrar.PopScope();
           return hir::kInvalidStatementId;
         }
         children.push_back(*result);
       }
-
-      registrar.PopScope();
 
       return ctx->hir_arena->AddStatement(
           hir::Statement{
@@ -93,37 +91,16 @@ auto LowerStatement(
     case StatementKind::ExpressionStatement: {
       const auto& expr_stmt = stmt.as<slang::ast::ExpressionStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
-      const slang::ast::Expression& expr = expr_stmt.expr;
-
-      if (expr.kind == slang::ast::ExpressionKind::Assignment) {
-        const auto& assign = expr.as<slang::ast::AssignmentExpression>();
-        hir::ExpressionId target =
-            LowerExpression(assign.left(), registrar, ctx);
-        if (!target) {
-          return hir::kInvalidStatementId;
-        }
-        hir::ExpressionId value =
-            LowerExpression(assign.right(), registrar, ctx);
-        if (!value) {
-          return hir::kInvalidStatementId;
-        }
-        return ctx->hir_arena->AddStatement(
-            hir::Statement{
-                .kind = hir::StatementKind::kAssignment,
-                .span = span,
-                .data = hir::AssignmentStatementData{
-                    .target = target, .value = value}});
-      }
-
-      hir::ExpressionId expression = LowerExpression(expr, registrar, ctx);
-      if (!expression) {
+      hir::ExpressionId expr = LowerExpression(expr_stmt.expr, registrar, ctx);
+      if (!expr) {
         return hir::kInvalidStatementId;
       }
       return ctx->hir_arena->AddStatement(
           hir::Statement{
               .kind = hir::StatementKind::kExpression,
               .span = span,
-              .data = hir::ExpressionStatementData{.expression = expression}});
+              .data = hir::ExpressionStatementData{.expression = expr},
+          });
     }
 
     case StatementKind::Conditional: {
@@ -241,6 +218,100 @@ auto LowerStatement(
                   .selector = selector,
                   .items = std::move(items),
                   .default_statement = default_statement}});
+    }
+
+    case StatementKind::ForLoop: {
+      const auto& for_stmt = stmt.as<slang::ast::ForLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      // RAII guard ensures PopScope on all exit paths
+      ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
+
+      std::vector<hir::StatementId> var_decls;
+      std::vector<hir::ExpressionId> init_exprs;
+
+      if (!for_stmt.loopVars.empty()) {
+        // Loop-declared variables: for (int i = 0; ...)
+        for (const slang::ast::VariableSymbol* var_sym : for_stmt.loopVars) {
+          TypeId type = LowerType(var_sym->getType(), span, ctx);
+          if (!type) {
+            return hir::kInvalidStatementId;
+          }
+
+          SymbolId sym =
+              registrar.Register(*var_sym, SymbolKind::kVariable, type);
+
+          hir::ExpressionId init = hir::kInvalidExpressionId;
+          if (const slang::ast::Expression* init_expr =
+                  var_sym->getInitializer()) {
+            init = LowerExpression(*init_expr, registrar, ctx);
+            if (!init) {
+              return hir::kInvalidStatementId;
+            }
+          }
+
+          hir::StatementId var_decl = ctx->hir_arena->AddStatement(
+              hir::Statement{
+                  .kind = hir::StatementKind::kVariableDeclaration,
+                  .span = span,
+                  .data =
+                      hir::VariableDeclarationStatementData{
+                          .symbol = sym, .init = init},
+              });
+          var_decls.push_back(var_decl);
+        }
+      } else {
+        // Expression initializers: for (i = 0, j = 3; ...)
+        for (const slang::ast::Expression* init_expr : for_stmt.initializers) {
+          hir::ExpressionId expr = LowerExpression(*init_expr, registrar, ctx);
+          if (!expr) {
+            return hir::kInvalidStatementId;
+          }
+          init_exprs.push_back(expr);
+        }
+      }
+
+      std::optional<hir::ExpressionId> condition;
+      if (for_stmt.stopExpr != nullptr) {
+        hir::ExpressionId cond =
+            LowerExpression(*for_stmt.stopExpr, registrar, ctx);
+        if (!cond) {
+          return hir::kInvalidStatementId;
+        }
+        condition = cond;
+      }
+
+      std::vector<hir::ExpressionId> steps;
+      for (const slang::ast::Expression* step_expr : for_stmt.steps) {
+        hir::ExpressionId expr = LowerExpression(*step_expr, registrar, ctx);
+        if (!expr) {
+          return hir::kInvalidStatementId;
+        }
+        steps.push_back(expr);
+      }
+
+      auto body_result = LowerStatement(for_stmt.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "for loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kForLoop,
+              .span = span,
+              .data =
+                  hir::ForLoopStatementData{
+                      .var_decls = std::move(var_decls),
+                      .init_exprs = std::move(init_exprs),
+                      .condition = condition,
+                      .steps = std::move(steps),
+                      .body = *body_result,
+                  },
+          });
     }
 
     default:

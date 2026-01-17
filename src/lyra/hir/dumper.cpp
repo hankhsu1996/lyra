@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <format>
+#include <string_view>
 
 namespace lyra::hir {
 
@@ -100,27 +101,22 @@ void Dumper::Dump(ProcessId id) {
   const Process& proc = (*arena_)[id];
   PrintIndent();
 
-  const char* kind_str = "initial";
-  switch (proc.kind) {
-    case ProcessKind::kInitial:
-      kind_str = "initial";
-      break;
-    case ProcessKind::kAlways:
-      kind_str = "always";
-      break;
-    case ProcessKind::kAlwaysComb:
-      kind_str = "always_comb";
-      break;
-    case ProcessKind::kAlwaysFf:
-      kind_str = "always_ff";
-      break;
-    case ProcessKind::kAlwaysLatch:
-      kind_str = "always_latch";
-      break;
-    case ProcessKind::kFinal:
-      kind_str = "final";
-      break;
-  }
+  std::string_view kind_str = [&] {
+    switch (proc.kind) {
+      case ProcessKind::kInitial:
+        return "initial";
+      case ProcessKind::kAlways:
+        return "always";
+      case ProcessKind::kAlwaysComb:
+        return "always_comb";
+      case ProcessKind::kAlwaysFf:
+        return "always_ff";
+      case ProcessKind::kAlwaysLatch:
+        return "always_latch";
+      case ProcessKind::kFinal:
+        return "final";
+    }
+  }();
 
   *out_ << kind_str << " ";
   Dump(proc.body);
@@ -231,6 +227,61 @@ void Dumper::Dump(StatementId id) {
       *out_ << "}\n";
       break;
     }
+
+    case StatementKind::kForLoop: {
+      const auto& data = std::get<ForLoopStatementData>(stmt.data);
+      *out_ << "for (";
+
+      bool first = true;
+
+      // Dump variable declarations
+      for (StatementId var_decl : data.var_decls) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        const Statement& var_stmt = (*arena_)[var_decl];
+        const auto& var_data =
+            std::get<VariableDeclarationStatementData>(var_stmt.data);
+        const Symbol& sym = (*symbols_)[var_data.symbol];
+        *out_ << std::format("var {} : {}", sym.name, TypeString(sym.type));
+        if (var_data.init) {
+          *out_ << " = ";
+          Dump(var_data.init);
+        }
+      }
+
+      // Dump init expressions
+      for (ExpressionId init_expr : data.init_exprs) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(init_expr);
+      }
+
+      *out_ << "; ";
+
+      if (data.condition) {
+        Dump(*data.condition);
+      }
+
+      *out_ << "; ";
+
+      // Dump step expressions
+      first = true;
+      for (ExpressionId step_expr : data.steps) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(step_expr);
+      }
+
+      *out_ << ") ";
+      Dump(data.body);
+      break;
+    }
   }
 }
 
@@ -252,60 +303,48 @@ void Dumper::Dump(ExpressionId id) {
 
     case ExpressionKind::kUnaryOp: {
       const auto& data = std::get<UnaryExpressionData>(expr.data);
-      const char* op_str = "";
-      bool is_prefix = true;
-      switch (data.op) {
-        case UnaryOp::kPlus:
-          op_str = "+";
-          break;
-        case UnaryOp::kMinus:
-          op_str = "-";
-          break;
-        case UnaryOp::kPreincrement:
-          op_str = "++";
-          break;
-        case UnaryOp::kPostincrement:
-          op_str = "++";
-          is_prefix = false;
-          break;
-        case UnaryOp::kPredecrement:
-          op_str = "--";
-          break;
-        case UnaryOp::kPostdecrement:
-          op_str = "--";
-          is_prefix = false;
-          break;
-        case UnaryOp::kLogicalNot:
-          op_str = "!";
-          break;
-        case UnaryOp::kBitwiseNot:
-          op_str = "~";
-          break;
-        case UnaryOp::kReductionAnd:
-          op_str = "&";
-          break;
-        case UnaryOp::kReductionNand:
-          op_str = "~&";
-          break;
-        case UnaryOp::kReductionOr:
-          op_str = "|";
-          break;
-        case UnaryOp::kReductionNor:
-          op_str = "~|";
-          break;
-        case UnaryOp::kReductionXor:
-          op_str = "^";
-          break;
-        case UnaryOp::kReductionXnor:
-          op_str = "~^";
-          break;
-      }
-      if (is_prefix) {
-        *out_ << op_str;
+      struct UnaryInfo {
+        std::string_view str;
+        bool is_prefix;
+      };
+      auto info = [&]() -> UnaryInfo {
+        switch (data.op) {
+          case UnaryOp::kPlus:
+            return {.str = "+", .is_prefix = true};
+          case UnaryOp::kMinus:
+            return {.str = "-", .is_prefix = true};
+          case UnaryOp::kPreincrement:
+            return {.str = "++", .is_prefix = true};
+          case UnaryOp::kPostincrement:
+            return {.str = "++", .is_prefix = false};
+          case UnaryOp::kPredecrement:
+            return {.str = "--", .is_prefix = true};
+          case UnaryOp::kPostdecrement:
+            return {.str = "--", .is_prefix = false};
+          case UnaryOp::kLogicalNot:
+            return {.str = "!", .is_prefix = true};
+          case UnaryOp::kBitwiseNot:
+            return {.str = "~", .is_prefix = true};
+          case UnaryOp::kReductionAnd:
+            return {.str = "&", .is_prefix = true};
+          case UnaryOp::kReductionNand:
+            return {.str = "~&", .is_prefix = true};
+          case UnaryOp::kReductionOr:
+            return {.str = "|", .is_prefix = true};
+          case UnaryOp::kReductionNor:
+            return {.str = "~|", .is_prefix = true};
+          case UnaryOp::kReductionXor:
+            return {.str = "^", .is_prefix = true};
+          case UnaryOp::kReductionXnor:
+            return {.str = "~^", .is_prefix = true};
+        }
+      }();
+      if (info.is_prefix) {
+        *out_ << info.str;
         Dump(data.operand);
       } else {
         Dump(data.operand);
-        *out_ << op_str;
+        *out_ << info.str;
       }
       break;
     }
@@ -314,93 +353,66 @@ void Dumper::Dump(ExpressionId id) {
       const auto& data = std::get<BinaryExpressionData>(expr.data);
       *out_ << "(";
       Dump(data.lhs);
-      const char* op_str = "";
-      switch (data.op) {
-        case BinaryOp::kAdd:
-          op_str = " + ";
-          break;
-        case BinaryOp::kSubtract:
-          op_str = " - ";
-          break;
-        case BinaryOp::kMultiply:
-          op_str = " * ";
-          break;
-        case BinaryOp::kDivide:
-          op_str = " / ";
-          break;
-        case BinaryOp::kMod:
-          op_str = " % ";
-          break;
-        case BinaryOp::kPower:
-          op_str = " ** ";
-          break;
-        case BinaryOp::kBitwiseAnd:
-          op_str = " & ";
-          break;
-        case BinaryOp::kBitwiseOr:
-          op_str = " | ";
-          break;
-        case BinaryOp::kBitwiseXor:
-          op_str = " ^ ";
-          break;
-        case BinaryOp::kBitwiseXnor:
-          op_str = " ~^ ";
-          break;
-        case BinaryOp::kLogicalAnd:
-          op_str = " && ";
-          break;
-        case BinaryOp::kLogicalOr:
-          op_str = " || ";
-          break;
-        case BinaryOp::kLogicalImplication:
-          op_str = " -> ";
-          break;
-        case BinaryOp::kLogicalEquivalence:
-          op_str = " <-> ";
-          break;
-        case BinaryOp::kEqual:
-          op_str = " == ";
-          break;
-        case BinaryOp::kNotEqual:
-          op_str = " != ";
-          break;
-        case BinaryOp::kCaseEqual:
-          op_str = " === ";
-          break;
-        case BinaryOp::kCaseNotEqual:
-          op_str = " !== ";
-          break;
-        case BinaryOp::kWildcardEqual:
-          op_str = " ==? ";
-          break;
-        case BinaryOp::kWildcardNotEqual:
-          op_str = " !=? ";
-          break;
-        case BinaryOp::kLessThan:
-          op_str = " < ";
-          break;
-        case BinaryOp::kLessThanEqual:
-          op_str = " <= ";
-          break;
-        case BinaryOp::kGreaterThan:
-          op_str = " > ";
-          break;
-        case BinaryOp::kGreaterThanEqual:
-          op_str = " >= ";
-          break;
-        case BinaryOp::kLogicalShiftLeft:
-          op_str = " << ";
-          break;
-        case BinaryOp::kLogicalShiftRight:
-          op_str = " >> ";
-          break;
-        case BinaryOp::kArithmeticShiftLeft:
-          op_str = " <<< ";
-          break;
-        case BinaryOp::kArithmeticShiftRight:
-          op_str = " >>> ";
-          break;
-      }
+      std::string_view op_str = [&] {
+        switch (data.op) {
+          case BinaryOp::kAdd:
+            return " + ";
+          case BinaryOp::kSubtract:
+            return " - ";
+          case BinaryOp::kMultiply:
+            return " * ";
+          case BinaryOp::kDivide:
+            return " / ";
+          case BinaryOp::kMod:
+            return " % ";
+          case BinaryOp::kPower:
+            return " ** ";
+          case BinaryOp::kBitwiseAnd:
+            return " & ";
+          case BinaryOp::kBitwiseOr:
+            return " | ";
+          case BinaryOp::kBitwiseXor:
+            return " ^ ";
+          case BinaryOp::kBitwiseXnor:
+            return " ~^ ";
+          case BinaryOp::kLogicalAnd:
+            return " && ";
+          case BinaryOp::kLogicalOr:
+            return " || ";
+          case BinaryOp::kLogicalImplication:
+            return " -> ";
+          case BinaryOp::kLogicalEquivalence:
+            return " <-> ";
+          case BinaryOp::kEqual:
+            return " == ";
+          case BinaryOp::kNotEqual:
+            return " != ";
+          case BinaryOp::kCaseEqual:
+            return " === ";
+          case BinaryOp::kCaseNotEqual:
+            return " !== ";
+          case BinaryOp::kWildcardEqual:
+            return " ==? ";
+          case BinaryOp::kWildcardNotEqual:
+            return " !=? ";
+          case BinaryOp::kLessThan:
+            return " < ";
+          case BinaryOp::kLessThanEqual:
+            return " <= ";
+          case BinaryOp::kGreaterThan:
+            return " > ";
+          case BinaryOp::kGreaterThanEqual:
+            return " >= ";
+          case BinaryOp::kLogicalShiftLeft:
+            return " << ";
+          case BinaryOp::kLogicalShiftRight:
+            return " >> ";
+          case BinaryOp::kArithmeticShiftLeft:
+            return " <<< ";
+          case BinaryOp::kArithmeticShiftRight:
+            return " >>> ";
+        }
+      }();
       *out_ << op_str;
       Dump(data.rhs);
       *out_ << ")";
@@ -418,21 +430,18 @@ void Dumper::Dump(ExpressionId id) {
     case ExpressionKind::kSystemCall: {
       const auto& data = std::get<SystemCallExpressionData>(expr.data);
       const auto& display = std::get<DisplaySystemCallData>(data);
-      const char* name = "$display";
-      switch (display.radix) {
-        case PrintRadix::kDecimal:
-          name = display.append_newline ? "$display" : "$write";
-          break;
-        case PrintRadix::kBinary:
-          name = display.append_newline ? "$displayb" : "$writeb";
-          break;
-        case PrintRadix::kOctal:
-          name = display.append_newline ? "$displayo" : "$writeo";
-          break;
-        case PrintRadix::kHex:
-          name = display.append_newline ? "$displayh" : "$writeh";
-          break;
-      }
+      std::string_view name = [&] {
+        switch (display.radix) {
+          case PrintRadix::kDecimal:
+            return display.append_newline ? "$display" : "$write";
+          case PrintRadix::kBinary:
+            return display.append_newline ? "$displayb" : "$writeb";
+          case PrintRadix::kOctal:
+            return display.append_newline ? "$displayo" : "$writeo";
+          case PrintRadix::kHex:
+            return display.append_newline ? "$displayh" : "$writeh";
+        }
+      }();
       *out_ << name << "(";
       bool first = true;
       for (ExpressionId arg : display.args) {
@@ -455,6 +464,14 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << " : ";
       Dump(data.else_expr);
       *out_ << ")";
+      break;
+    }
+
+    case ExpressionKind::kAssignment: {
+      const auto& data = std::get<AssignmentExpressionData>(expr.data);
+      Dump(data.target);
+      *out_ << " = ";
+      Dump(data.value);
       break;
     }
   }

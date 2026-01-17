@@ -48,11 +48,11 @@ auto LowerProcess(
   SourceSpan span = ctx->SpanOf(GetSourceRange(proc));
   hir::ProcessKind kind = ConvertProcessKind(proc.procedureKind);
 
-  registrar.PushScope(ScopeKind::kBlock);
-
-  auto body_result = LowerStatement(proc.getBody(), registrar, ctx);
-
-  registrar.PopScope();
+  std::optional<hir::StatementId> body_result;
+  {
+    ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
+    body_result = LowerStatement(proc.getBody(), registrar, ctx);
+  }
 
   hir::StatementId body;
   if (!body_result.has_value()) {
@@ -90,23 +90,23 @@ auto LowerFunction(
   SymbolId symbol =
       registrar.Register(func, SymbolKind::kFunction, return_type);
 
-  registrar.PushScope(ScopeKind::kFunction);
-
   std::vector<SymbolId> parameters;
-  for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
-    TypeId arg_type = LowerType(arg->getType(), span, ctx);
-    if (!arg_type) {
-      registrar.PopScope();
-      return hir::kInvalidFunctionId;
+  std::optional<hir::StatementId> body_result;
+  {
+    ScopeGuard scope_guard(registrar, ScopeKind::kFunction);
+
+    for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
+      TypeId arg_type = LowerType(arg->getType(), span, ctx);
+      if (!arg_type) {
+        return hir::kInvalidFunctionId;
+      }
+      SymbolId arg_sym =
+          registrar.Register(*arg, SymbolKind::kParameter, arg_type);
+      parameters.push_back(arg_sym);
     }
-    SymbolId arg_sym =
-        registrar.Register(*arg, SymbolKind::kParameter, arg_type);
-    parameters.push_back(arg_sym);
+
+    body_result = LowerStatement(func.getBody(), registrar, ctx);
   }
-
-  auto body_result = LowerStatement(func.getBody(), registrar, ctx);
-
-  registrar.PopScope();
 
   hir::StatementId body;
   if (!body_result.has_value()) {
@@ -140,23 +140,23 @@ auto LowerTask(
 
   SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
 
-  registrar.PushScope(ScopeKind::kTask);
-
   std::vector<SymbolId> parameters;
-  for (const slang::ast::FormalArgumentSymbol* arg : task.getArguments()) {
-    TypeId arg_type = LowerType(arg->getType(), span, ctx);
-    if (!arg_type) {
-      registrar.PopScope();
-      return hir::kInvalidTaskId;
+  std::optional<hir::StatementId> body_result;
+  {
+    ScopeGuard scope_guard(registrar, ScopeKind::kTask);
+
+    for (const slang::ast::FormalArgumentSymbol* arg : task.getArguments()) {
+      TypeId arg_type = LowerType(arg->getType(), span, ctx);
+      if (!arg_type) {
+        return hir::kInvalidTaskId;
+      }
+      SymbolId arg_sym =
+          registrar.Register(*arg, SymbolKind::kParameter, arg_type);
+      parameters.push_back(arg_sym);
     }
-    SymbolId arg_sym =
-        registrar.Register(*arg, SymbolKind::kParameter, arg_type);
-    parameters.push_back(arg_sym);
+
+    body_result = LowerStatement(task.getBody(), registrar, ctx);
   }
-
-  auto body_result = LowerStatement(task.getBody(), registrar, ctx);
-
-  registrar.PopScope();
 
   hir::StatementId body;
   if (!body_result.has_value()) {

@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
+#include <cstddef>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -231,6 +232,63 @@ void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
   builder.SetCurrentBlock(merge_bb);
 }
 
+void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  // 1. Execute variable declarations in current block
+  for (hir::StatementId var_decl : data.var_decls) {
+    LowerStatement(var_decl, builder);
+  }
+
+  // 2. Evaluate init expressions (for side effects, result discarded)
+  for (hir::ExpressionId init_expr : data.init_exprs) {
+    LowerExpression(init_expr, builder);
+  }
+
+  // 3. Create blocks
+  BlockIndex cond_bb = builder.CreateBlock();
+  BlockIndex body_bb = builder.CreateBlock();
+  BlockIndex step_bb = builder.CreateBlock();
+  BlockIndex exit_bb = builder.CreateBlock();
+
+  // 4. Jump to condition block
+  builder.EmitJump(cond_bb);
+
+  // 5. Condition block
+  builder.SetCurrentBlock(cond_bb);
+  if (data.condition.has_value()) {
+    mir::Operand cond = LowerExpression(*data.condition, builder);
+
+    // Materialize constant to temp if needed (EmitBranch requires Use operand)
+    if (cond.kind == mir::Operand::Kind::kConst) {
+      const hir::Expression& cond_expr = (*ctx.hir_arena)[*data.condition];
+      mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
+      builder.EmitAssign(temp, std::move(cond));
+      cond = mir::Operand::Use(temp);
+    }
+
+    builder.EmitBranch(cond, body_bb, exit_bb);
+  } else {
+    // No condition = infinite loop
+    builder.EmitJump(body_bb);
+  }
+
+  // 6. Body block
+  builder.SetCurrentBlock(body_bb);
+  LowerStatement(data.body, builder);
+  builder.EmitJump(step_bb);
+
+  // 7. Step block - evaluate step expressions (for side effects)
+  builder.SetCurrentBlock(step_bb);
+  for (hir::ExpressionId step_expr : data.steps) {
+    LowerExpression(step_expr, builder);
+  }
+  builder.EmitJump(cond_bb);
+
+  // 8. Continue in exit block
+  builder.SetCurrentBlock(exit_bb);
+}
+
 }  // namespace
 
 void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
@@ -252,6 +310,8 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           LowerConditional(data, builder);
         } else if constexpr (std::is_same_v<T, hir::CaseStatementData>) {
           LowerCase(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::ForLoopStatementData>) {
+          LowerForLoop(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

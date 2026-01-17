@@ -33,4 +33,24 @@ class SymbolRegistrar {
   ScopeId current_scope_ = kInvalidScopeId;
 };
 
+// RAII scope guard for SymbolRegistrar - ensures PopScope on all exit paths.
+class ScopeGuard {
+ public:
+  ScopeGuard(SymbolRegistrar& registrar, ScopeKind kind)
+      : registrar_(registrar) {
+    registrar_.PushScope(kind);
+  }
+  ~ScopeGuard() {
+    registrar_.PopScope();
+  }
+
+  ScopeGuard(const ScopeGuard&) = delete;
+  ScopeGuard(ScopeGuard&&) = delete;
+  auto operator=(const ScopeGuard&) -> ScopeGuard& = delete;
+  auto operator=(ScopeGuard&&) -> ScopeGuard& = delete;
+
+ private:
+  SymbolRegistrar& registrar_;
+};
+
 }  // namespace lyra::lowering::ast_to_hir
