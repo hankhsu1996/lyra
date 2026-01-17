@@ -123,14 +123,11 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-**Note:** Tests are currently disabled (legacy code moved). Commands below will not work until new pipeline is built. Documentation kept for reference.
-
-YAML-based tests in `tests/sv_features/`.
+YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite definitions.
 
 ```bash
-bazel test //tests:sv_feature_tests              # Run ALL tests (sharded)
-bazel test //tests:control_flow_loops_tests      # Run single category
-bazel test //tests:datatypes_arrays_tests        # Run single category
+bazel test //tests:mir_dev_tests --test_output=errors   # Core tests
+bazel test //tests:mir_full_tests --test_output=errors  # All tests
 ```
 
 ## Code Style

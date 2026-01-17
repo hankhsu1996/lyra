@@ -1,54 +1,59 @@
 # Test Framework
 
-Architecture for Lyra's YAML-based test framework and batch compilation.
+YAML-based test framework for SystemVerilog feature validation.
 
-## Overview
+## Architecture
 
-Lyra uses YAML-based tests in `tests/sv_features/`. Each test case runs against both backends:
+```
+suites.yaml        ->  Suite (backend + patterns)
+                            |
+sv_features/**/*.yaml  ->  TestCase[]
+                            |
+                       Runner (compile + execute)
+                            |
+                       Assertions (verify output)
+```
 
-- **Interpreter**: Fast, good for rapid iteration
-- **CppCodegen**: Validates full compilation pipeline via batch compilation
+**Suite**: Defines a test contract - which backend to use and which test files to include/exclude via regex patterns. Suites are defined in `tests/suites.yaml`.
 
-## Architecture Layers
+**TestCase**: A single test loaded from YAML. Contains SystemVerilog source code and expectations (variable values, stdout, files).
 
-The test framework has three layers with clear separation of concerns:
+**Runner**: Compiles SV through the pipeline (AST -> HIR -> MIR) and executes against the configured backend.
 
-1. **SDK Runtime**: `RuntimeConfig` centralizes mutable simulation state (precision, plusargs, termination flags). `RuntimeScope` provides RAII-based TLS installation so each test runs in isolation.
+**Assertions**: Verifies test results against expectations.
 
-2. **Codegen**: Each test is generated into a unique namespace with a `Run(TestInvocation)` entry point. The entry point creates its own `RuntimeScope` with test-specific configuration and returns `TestResult`.
+## Test Case Format
 
-3. **Batch Runner**: Parses command-line arguments, constructs `TestInvocation`, and dispatches to the appropriate namespace. The runner knows nothing about SDK internals.
+Test cases are YAML files in `tests/sv_features/`. Each file has:
 
-This separation ensures test infrastructure remains ignorant of SDK implementation details. New runtime state (e.g., random seeds, assertion control) can be added to `RuntimeConfig` without touching the batch runner.
+- `feature`: Category name
+- `cases`: List of test cases with `name`, `sv` (source), and `expect`
 
-## Batch Compilation
+Expectations can verify:
 
-Individual test compilation is slow. Batch compilation combines all tests into a single binary, achieving orders of magnitude speedup.
+- `variables`: Final values of module variables
+- `stdout`: Output from `$display` (exact match or contains/not_contains)
+- `files`: Generated file contents
+- `time`: Simulation time at completion
 
-### Design Decisions
+## Execution
 
-**Namespace wrapping**: Each test's generated C++ is wrapped in a unique namespace. This avoids ODR violations when combining tests, without modifying the MIR or codegen.
+Tests are Bazel `cc_test` targets. Each target specifies a suite via `--suite=<name>`.
 
-**Single binary dispatch**: The generated `main()` parses test index from argv and switches to the appropriate namespace. Each test handles its own `RuntimeScope` setup.
+```bash
+bazel test //tests:<target> --test_output=errors
+```
 
-**No sharding**: With batch compilation, each shard would redundantly compile the full batch. A single shard compiling once is more efficient.
+Filter specific tests with gtest:
 
-## Test Interface
-
-`TestInvocation` and `TestResult` provide a clean boundary between runner and generated code. The runner constructs `TestInvocation` from `argv`; generated `Run()` returns `TestResult`. Neither side knows implementation details of the other.
-
-## Test Execution
-
-| Mode             | Command                                     | Use Case            |
-| ---------------- | ------------------------------------------- | ------------------- |
-| Interpreter only | `--gtest_filter='*Interpreter/*'`           | Quick sanity check  |
-| Single category  | `bazel test //tests:operators_binary_tests` | Feature development |
-| Full suite       | `bazel test //tests:sv_feature_tests`       | CI                  |
+```bash
+bazel test //tests:<target> --test_arg=--gtest_filter='*pattern*'
+```
 
 ## Files
 
-| File                                       | Purpose                                                 |
-| ------------------------------------------ | ------------------------------------------------------- |
-| `tests/sv_features/**/*.yaml`              | Test case definitions                                   |
-| `tests/framework/batch_compiler.{hpp,cpp}` | Batch compilation                                       |
-| `include/lyra/sdk/runtime_config.hpp`      | RuntimeConfig, RuntimeScope, TestInvocation, TestResult |
+| Path                 | Purpose                                |
+| -------------------- | -------------------------------------- |
+| `tests/suites.yaml`  | Suite definitions (backend + patterns) |
+| `tests/sv_features/` | Test case YAML files                   |
+| `tests/framework/`   | Framework implementation               |
