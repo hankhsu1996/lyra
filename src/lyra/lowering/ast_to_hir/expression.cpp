@@ -311,10 +311,32 @@ auto LowerExpression(
           return hir::kInvalidExpressionId;
       }
 
-      // Validate source and target types for supported conversions
+      // Handle StringLiteral → string conversion specially.
+      // Slang represents string literals as bit[N:0] internally, then wraps
+      // with Conversion to string. We extract the byte content directly.
+      const slang::ast::Type& tgt_type = expr.type->getCanonicalType();
+      if (conv.operand().kind == ExpressionKind::StringLiteral &&
+          tgt_type.isString()) {
+        const auto& literal = conv.operand().as<slang::ast::StringLiteral>();
+        TypeId type = LowerType(tgt_type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+        // getValue() returns std::string_view with explicit length,
+        // preserving embedded NUL bytes.
+        ConstId constant = ctx->constant_arena->Intern(
+            type, StringConstant{.value = std::string(literal.getValue())});
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kConstant,
+                .type = type,
+                .span = span,
+                .data = hir::ConstantExpressionData{.constant = constant}});
+      }
+
+      // Validate source and target types for integral conversions
       const slang::ast::Type& src_type =
           conv.operand().type->getCanonicalType();
-      const slang::ast::Type& tgt_type = expr.type->getCanonicalType();
 
       if (!src_type.isIntegral()) {
         ctx->sink->Error(

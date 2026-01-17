@@ -12,8 +12,64 @@
 
 namespace lyra::mir::interp {
 
+namespace {
+
+// Evaluate string comparison operations.
+// Strings support ==, !=, <, <=, >, >= with lexicographic ordering.
+// Returns 1-bit RuntimeIntegral (matches integral comparison result type).
+auto EvalStringBinary(
+    BinaryOp op, const RuntimeString& lhs, const RuntimeString& rhs)
+    -> RuntimeValue {
+  bool result = false;
+
+  switch (op) {
+    case BinaryOp::kEqual:
+      result = (lhs.value == rhs.value);
+      break;
+    case BinaryOp::kNotEqual:
+      result = (lhs.value != rhs.value);
+      break;
+    case BinaryOp::kLessThan:
+      result = (lhs.value < rhs.value);  // Byte-wise lexicographic
+      break;
+    case BinaryOp::kLessThanEqual:
+      result = (lhs.value <= rhs.value);
+      break;
+    case BinaryOp::kGreaterThan:
+      result = (lhs.value > rhs.value);
+      break;
+    case BinaryOp::kGreaterThanEqual:
+      result = (lhs.value >= rhs.value);
+      break;
+    default:
+      throw common::InternalError(
+          "EvalStringBinary",
+          std::format("operator {} not supported for strings", ToString(op)));
+  }
+
+  return MakeIntegral(result ? 1 : 0, 1);
+}
+
+}  // namespace
+
 auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
+  // String comparison
+  if (IsString(lhs) && IsString(rhs)) {
+    return EvalStringBinary(
+        static_cast<BinaryOp>(op), AsString(lhs), AsString(rhs));
+  }
+
+  // Mixed string/non-string - should never happen (Slang type-checks)
+  if (IsString(lhs) || IsString(rhs)) {
+    throw common::InternalError(
+        "EvalBinary",
+        std::format(
+            "cannot mix string and non-string operands "
+            "(op={}, lhs={}, rhs={})",
+            ToString(static_cast<BinaryOp>(op)), lhs.index(), rhs.index()));
+  }
+
   if (!IsIntegral(lhs) || !IsIntegral(rhs)) {
     throw common::InternalError(
         "EvalBinary", "binary operation requires integral operands");

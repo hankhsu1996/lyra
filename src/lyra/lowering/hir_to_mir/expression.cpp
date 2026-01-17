@@ -154,16 +154,23 @@ auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
   }
 }
 
+// Select the MIR comparison operator for relational ops (<, <=, >, >=).
+// Signed/unsigned variants only apply to integral types. Non-integral types
+// (strings, enums, etc.) use the base operator - the interpreter dispatches
+// on runtime type. Type checking is based on resolved Lyra TypeId, so
+// typedefs are handled correctly.
 auto SelectComparisonOp(
     const hir::BinaryExpressionData& data, const Context& ctx)
     -> mir::BinaryOp {
   const auto& lhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.lhs].type];
   const auto& rhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.rhs].type];
 
+  auto mir_op = MapBinaryOp(data.op);
+
+  // Only integral types have signed/unsigned variants
   if (lhs_type.Kind() != TypeKind::kIntegral ||
       rhs_type.Kind() != TypeKind::kIntegral) {
-    throw common::InternalError(
-        "SelectComparisonOp", "relational op requires integral operands");
+    return mir_op;
   }
 
   const auto& lhs = lhs_type.AsIntegral();
@@ -174,7 +181,6 @@ auto SelectComparisonOp(
         "operand signedness mismatch - missing conversion");
   }
 
-  auto mir_op = MapBinaryOp(data.op);
   return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
 }
 
