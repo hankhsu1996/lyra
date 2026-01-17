@@ -81,10 +81,9 @@ jobs:
         run: |
           bazel build //...
 
-      # Disabled until new pipeline has tests
-      # - name: Test
-      #   run: |
-      #     bazel test //... --test_output=errors --verbose_failures
+      - name: Test
+        run: |
+          bazel test //... --test_output=errors --verbose_failures
 
   # This job always runs and reports success when build is skipped
   # Required for branch protection rules that require this check
