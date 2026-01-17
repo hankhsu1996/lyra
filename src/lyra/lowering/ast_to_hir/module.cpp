@@ -21,47 +21,47 @@ auto LowerModule(
   SymbolId symbol =
       registrar.Register(instance, SymbolKind::kModule, kInvalidTypeId);
 
-  registrar.PushScope(ScopeKind::kModule);
-
-  // Register module-level variables first (before processes that use them)
   std::vector<SymbolId> variables;
-  for (const slang::ast::VariableSymbol& var :
-       body.membersOfType<slang::ast::VariableSymbol>()) {
-    TypeId type = LowerType(var.getType(), span, ctx);
-    if (type) {
-      SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
-      variables.push_back(sym);
-    }
-  }
-
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
   std::vector<hir::TaskId> tasks;
 
-  for (const slang::ast::ProceduralBlockSymbol& proc :
-       body.membersOfType<slang::ast::ProceduralBlockSymbol>()) {
-    hir::ProcessId id = LowerProcess(proc, registrar, ctx);
-    if (id) {
-      processes.push_back(id);
-    }
-  }
+  {
+    ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 
-  for (const slang::ast::SubroutineSymbol& sub :
-       body.membersOfType<slang::ast::SubroutineSymbol>()) {
-    if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
-      hir::FunctionId id = LowerFunction(sub, registrar, ctx);
-      if (id) {
-        functions.push_back(id);
-      }
-    } else {
-      hir::TaskId id = LowerTask(sub, registrar, ctx);
-      if (id) {
-        tasks.push_back(id);
+    // Register module-level variables first (before processes that use them)
+    for (const slang::ast::VariableSymbol& var :
+         body.membersOfType<slang::ast::VariableSymbol>()) {
+      TypeId type = LowerType(var.getType(), span, ctx);
+      if (type) {
+        SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
+        variables.push_back(sym);
       }
     }
-  }
 
-  registrar.PopScope();
+    for (const slang::ast::ProceduralBlockSymbol& proc :
+         body.membersOfType<slang::ast::ProceduralBlockSymbol>()) {
+      hir::ProcessId id = LowerProcess(proc, registrar, ctx);
+      if (id) {
+        processes.push_back(id);
+      }
+    }
+
+    for (const slang::ast::SubroutineSymbol& sub :
+         body.membersOfType<slang::ast::SubroutineSymbol>()) {
+      if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
+        hir::FunctionId id = LowerFunction(sub, registrar, ctx);
+        if (id) {
+          functions.push_back(id);
+        }
+      } else {
+        hir::TaskId id = LowerTask(sub, registrar, ctx);
+        if (id) {
+          tasks.push_back(id);
+        }
+      }
+    }
+  }
 
   return hir::Module{
       .symbol = symbol,

@@ -38,12 +38,11 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
 
   SymbolRegistrar registrar(&ctx);
 
-  // Establish root scope before lowering
-  registrar.PushScope(ScopeKind::kRoot);
-
-  hir::Design design = LowerDesign(compilation, registrar, &ctx);
-
-  registrar.PopScope();
+  hir::Design design;
+  {
+    ScopeGuard scope_guard(registrar, ScopeKind::kRoot);
+    design = LowerDesign(compilation, registrar, &ctx);
+  }
 
   return LoweringResult{
       .design = std::move(design),

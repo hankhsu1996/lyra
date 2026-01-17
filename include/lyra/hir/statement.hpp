@@ -17,6 +17,7 @@ enum class StatementKind {
   kExpression,
   kConditional,
   kCase,
+  kForLoop,
 };
 
 struct BlockStatementData {
@@ -69,10 +70,21 @@ struct CaseStatementData {
   auto operator==(const CaseStatementData&) const -> bool = default;
 };
 
+struct ForLoopStatementData {
+  std::vector<StatementId> var_decls;  // Variable declarations only
+  std::vector<ExpressionId>
+      init_exprs;  // Expression initializers (assignments)
+  std::optional<ExpressionId> condition;
+  std::vector<ExpressionId> steps;  // Steps as expressions
+  StatementId body;
+
+  auto operator==(const ForLoopStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
-    CaseStatementData>;
+    CaseStatementData, ForLoopStatementData>;
 
 struct Statement {
   StatementKind kind;

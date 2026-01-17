@@ -3,6 +3,7 @@
 #include <format>
 #include <optional>
 
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
@@ -436,6 +437,38 @@ auto LowerExpression(
                   .condition = cond_expr,
                   .then_expr = then_expr,
                   .else_expr = else_expr}});
+    }
+
+    case ExpressionKind::Assignment: {
+      const auto& assign = expr.as<slang::ast::AssignmentExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      hir::ExpressionId target = LowerExpression(assign.left(), registrar, ctx);
+      if (!target) {
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId value = LowerExpression(assign.right(), registrar, ctx);
+      if (!value) {
+        return hir::kInvalidExpressionId;
+      }
+
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kAssignment,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::AssignmentExpressionData{
+                      .target = target, .value = value},
+          });
     }
 
     default:
