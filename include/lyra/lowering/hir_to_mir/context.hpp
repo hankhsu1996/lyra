@@ -35,9 +35,14 @@ struct Context {
   int next_local_id = 0;
   int next_temp_id = 0;
 
+  TypeId bit_type;  // Cached 1-bit 4-state type for comparison results
+
   auto AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
+  [[nodiscard]] auto GetBitType() const -> TypeId {
+    return bit_type;
+  }
 };
 
 }  // namespace lyra::lowering::hir_to_mir

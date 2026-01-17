@@ -38,6 +38,7 @@ auto LowerProcess(
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
+      .bit_type = input.bit_type,
   };
 
   MirBuilder builder(&mir_arena, &ctx);

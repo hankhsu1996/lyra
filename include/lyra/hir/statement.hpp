@@ -16,6 +16,7 @@ enum class StatementKind {
   kAssignment,
   kExpression,
   kConditional,
+  kCase,
 };
 
 struct BlockStatementData {
@@ -53,9 +54,25 @@ struct ConditionalStatementData {
   auto operator==(const ConditionalStatementData&) const -> bool = default;
 };
 
+struct CaseItem {
+  std::vector<ExpressionId> expressions;
+  StatementId statement;
+
+  auto operator==(const CaseItem&) const -> bool = default;
+};
+
+struct CaseStatementData {
+  ExpressionId selector;
+  std::vector<CaseItem> items;
+  std::optional<StatementId> default_statement;
+
+  auto operator==(const CaseStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
-    AssignmentStatementData, ExpressionStatementData, ConditionalStatementData>;
+    AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
+    CaseStatementData>;
 
 struct Statement {
   StatementKind kind;

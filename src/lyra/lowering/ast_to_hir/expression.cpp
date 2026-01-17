@@ -385,6 +385,59 @@ auto LowerExpression(
               .data = hir::CastExpressionData{.operand = operand}});
     }
 
+    case ExpressionKind::ConditionalOp: {
+      const auto& cond = expr.as<slang::ast::ConditionalExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Reject multiple conditions (SV pattern matching not yet supported)
+      if (cond.conditions.size() != 1) {
+        ctx->sink->Error(span, "chained ternary conditions not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Reject pattern matching (SV 2023 feature)
+      const auto& condition = cond.conditions[0];
+      if (condition.pattern != nullptr) {
+        ctx->sink->Error(span, "pattern matching in ternary not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower all three sub-expressions
+      hir::ExpressionId cond_expr =
+          LowerExpression(*condition.expr, registrar, ctx);
+      if (!cond_expr) {
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId then_expr =
+          LowerExpression(cond.left(), registrar, ctx);
+      if (!then_expr) {
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId else_expr =
+          LowerExpression(cond.right(), registrar, ctx);
+      if (!else_expr) {
+        return hir::kInvalidExpressionId;
+      }
+
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConditional,
+              .type = type,
+              .span = span,
+              .data = hir::ConditionalExpressionData{
+                  .condition = cond_expr,
+                  .then_expr = then_expr,
+                  .else_expr = else_expr}});
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(expr.sourceRange),

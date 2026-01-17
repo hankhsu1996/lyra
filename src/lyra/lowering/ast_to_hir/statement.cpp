@@ -175,6 +175,74 @@ auto LowerStatement(
                   .else_branch = else_branch}});
     }
 
+    case StatementKind::Case: {
+      const auto& case_stmt = stmt.as<slang::ast::CaseStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      if (case_stmt.condition != slang::ast::CaseStatementCondition::Normal) {
+        ctx->sink->Error(
+            span,
+            "only basic case statements are supported (casex/casez/case "
+            "inside not yet)");
+        return hir::kInvalidStatementId;
+      }
+      if (case_stmt.check != slang::ast::UniquePriorityCheck::None) {
+        ctx->sink->Error(span, "unique/priority case not yet supported");
+        return hir::kInvalidStatementId;
+      }
+
+      hir::ExpressionId selector =
+          LowerExpression(case_stmt.expr, registrar, ctx);
+      if (!selector) {
+        return hir::kInvalidStatementId;
+      }
+
+      std::vector<hir::CaseItem> items;
+      for (const auto& group : case_stmt.items) {
+        std::vector<hir::ExpressionId> expressions;
+        for (const slang::ast::Expression* expr : group.expressions) {
+          hir::ExpressionId e = LowerExpression(*expr, registrar, ctx);
+          if (!e) {
+            return hir::kInvalidStatementId;
+          }
+          expressions.push_back(e);
+        }
+        auto body_result = LowerStatement(*group.stmt, registrar, ctx);
+        if (!body_result.has_value()) {
+          ctx->sink->Error(span, "case item body cannot be empty");
+          return hir::kInvalidStatementId;
+        }
+        if (!*body_result) {
+          return hir::kInvalidStatementId;
+        }
+        items.push_back(
+            {.expressions = std::move(expressions), .statement = *body_result});
+      }
+
+      std::optional<hir::StatementId> default_statement;
+      if (case_stmt.defaultCase != nullptr) {
+        auto default_result =
+            LowerStatement(*case_stmt.defaultCase, registrar, ctx);
+        if (!default_result.has_value()) {
+          ctx->sink->Error(span, "default case body cannot be empty");
+          return hir::kInvalidStatementId;
+        }
+        if (!*default_result) {
+          return hir::kInvalidStatementId;
+        }
+        default_statement = *default_result;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kCase,
+              .span = span,
+              .data = hir::CaseStatementData{
+                  .selector = selector,
+                  .items = std::move(items),
+                  .default_statement = default_statement}});
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),
