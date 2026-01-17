@@ -381,6 +381,60 @@ auto LowerSystemCall(
       "system call used in value context (only effect calls supported)");
 }
 
+// Lower ternary operator (a ? b : c) to control flow.
+// MIR has no "select" instruction, so we lower to branches:
+//   result = _
+//   branch cond -> then_bb, else_bb
+//   then_bb: result = then_val; jump merge_bb
+//   else_bb: result = else_val; jump merge_bb
+//   merge_bb: (continue here)
+//
+// Short-circuit: arms are lowered INSIDE their branch blocks, ensuring
+// only the taken arm is evaluated.
+auto LowerConditional(
+    const hir::ConditionalExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // 1. Allocate result temp BEFORE branching (dominates both arms and merge)
+  mir::PlaceId result = ctx.AllocTemp(expr.type);
+
+  // 2. Lower condition (must not emit terminator - currently safe since
+  //    logical ops use binary instructions, not control flow)
+  mir::Operand cond = LowerExpression(data.condition, builder);
+
+  // 3. EmitBranch requires Use operand; materialize if needed
+  //    Use condition's type (not expr.type) for the temp
+  if (cond.kind != mir::Operand::Kind::kUse) {
+    const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
+    mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+
+  // 4. Create blocks and emit branch (terminates current block)
+  BlockIndex then_bb = builder.CreateBlock();
+  BlockIndex else_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
+  builder.EmitBranch(cond, then_bb, else_bb);
+
+  // 5. Then block: lower then_expr HERE (short-circuit), assign, terminate
+  builder.SetCurrentBlock(then_bb);
+  mir::Operand then_val = LowerExpression(data.then_expr, builder);
+  builder.EmitAssign(result, std::move(then_val));
+  builder.EmitJump(merge_bb);
+
+  // 6. Else block: lower else_expr HERE (short-circuit), assign, terminate
+  builder.SetCurrentBlock(else_bb);
+  mir::Operand else_val = LowerExpression(data.else_expr, builder);
+  builder.EmitAssign(result, std::move(else_val));
+  builder.EmitJump(merge_bb);
+
+  // 7. Continue in merge block
+  builder.SetCurrentBlock(merge_bb);
+  return mir::Operand::Use(result);
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -402,6 +456,9 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerCast(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::SystemCallExpressionData>) {
           return LowerSystemCall(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ConditionalExpressionData>) {
+          return LowerConditional(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

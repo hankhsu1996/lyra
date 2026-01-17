@@ -53,3 +53,52 @@ cases:
     expect:
       variables:
         a: 42
+
+  - name: short_circuit_then
+    description: Only then arm evaluated when condition is true (++m1 runs, ++m2 not)
+    sv: |
+      module Test;
+        int a, b, m1, m2;
+        initial begin
+          m1 = 0;
+          m2 = 0;
+          b = 1;
+          a = b ? ++m1 : ++m2;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 1
+        m1: 1
+        m2: 0
+
+  - name: short_circuit_else
+    description: Only else arm evaluated when condition is false (++m2 runs, ++m1 not)
+    sv: |
+      module Test;
+        int a, b, m1, m2;
+        initial begin
+          m1 = 0;
+          m2 = 0;
+          b = 0;
+          a = b ? ++m1 : ++m2;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 1
+        m1: 0
+        m2: 1
+
+  - name: false_condition
+    description: Ternary with false literal condition
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          a = 0 ? 42 : 99;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 99

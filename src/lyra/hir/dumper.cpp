@@ -415,6 +415,18 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << ")";
       break;
     }
+
+    case ExpressionKind::kConditional: {
+      const auto& data = std::get<ConditionalExpressionData>(expr.data);
+      *out_ << "(";
+      Dump(data.condition);
+      *out_ << " ? ";
+      Dump(data.then_expr);
+      *out_ << " : ";
+      Dump(data.else_expr);
+      *out_ << ")";
+      break;
+    }
   }
 }
 
