@@ -1,0 +1,124 @@
+feature: while loops
+description: Tests for while loop construct
+
+cases:
+  - name: basic_counter
+    description: Basic while loop with counter and accumulator
+    sv: |
+      module Test;
+        int counter;
+        int sum;
+        initial begin
+          counter = 0;
+          sum = 0;
+          while (counter < 5) begin
+            sum = sum + counter;
+            counter = counter + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 5
+        sum: 10
+
+  - name: false_condition
+    description: While loop with initially false condition (body never executes)
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 10;
+          while (0) begin
+            x = 20;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: variable_condition
+    description: While loop with variable-based termination condition
+    sv: |
+      module Test;
+        int i;
+        int result;
+        initial begin
+          i = 3;
+          result = 0;
+          while (i > 0) begin
+            result = result + i;
+            i = i - 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        i: 0
+        result: 6
+
+  - name: nested
+    description: Nested while loops
+    sv: |
+      module Test;
+        int i;
+        int j;
+        int sum;
+        initial begin
+          i = 0;
+          sum = 0;
+          while (i < 3) begin
+            j = 0;
+            while (j < 2) begin
+              sum = sum + 1;
+              j = j + 1;
+            end
+            i = i + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        i: 3
+        j: 2
+        sum: 6
+
+  - name: break
+    description: Break exits while loop early
+    sv: |
+      module Test;
+        int i;
+        initial begin
+          i = 0;
+          while (1) begin
+            if (i == 3) break;
+            i = i + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        i: 3
+
+  - name: continue
+    description: Continue skips remaining statements in iteration
+    sv: |
+      module Test;
+        int i, sum;
+        initial begin
+          i = 0;
+          sum = 0;
+          while (i < 5) begin
+            i = i + 1;
+            if (i == 2)
+              continue;
+            if (i == 4)
+              continue;
+            sum = sum + i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 9

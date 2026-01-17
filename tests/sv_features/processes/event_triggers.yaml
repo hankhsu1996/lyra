@@ -1,0 +1,79 @@
+feature: compound event triggers
+description: Tests for compound event triggers (@(a or b)) and frame preservation
+
+cases:
+  - name: second_fires_first
+    description: Frame preserved when second trigger in @(a or b) fires first
+    sv: |
+      module Test;
+        bit clk = 0, rst = 1;
+        int result = 0;
+        initial begin
+          int temp = 42;
+          @(posedge clk or negedge rst);
+          result = temp;
+          $finish;
+        end
+        initial #5 rst = 0;  // negedge rst fires first
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: first_fires
+    description: Frame preserved when first trigger in @(a or b) fires
+    sv: |
+      module Test;
+        bit clk = 0, rst = 1;
+        int result = 0;
+        initial begin
+          int temp = 100;
+          @(posedge clk or negedge rst);
+          result = temp;
+          $finish;
+        end
+        initial #5 clk = 1;  // posedge clk fires first
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: three_triggers
+    description: Frame preserved with three triggers @(a or b or c)
+    sv: |
+      module Test;
+        bit a = 0, b = 0, c = 0;
+        int result = 0;
+        initial begin
+          int temp = 77;
+          @(posedge a or posedge b or posedge c);
+          result = temp;
+          $finish;
+        end
+        initial #5 b = 1;  // middle trigger fires
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: same_time_slot
+    description: Multiple signals changing in same time slot (deduplication)
+    sv: |
+      module Test;
+        bit clk = 0, rst = 0;
+        int count = 0;
+        initial begin
+          int temp = 55;
+          @(posedge clk or posedge rst);
+          count = temp;
+          $finish;
+        end
+        initial begin
+          #5;
+          clk = 1;  // Both change at time 5
+          rst = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 55

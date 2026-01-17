@@ -8,8 +8,12 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
@@ -369,6 +373,76 @@ auto LowerStatement(
               .data =
                   hir::DoWhileLoopStatementData{
                       .condition = condition, .body = *body_result},
+          });
+    }
+
+    case StatementKind::ForeverLoop: {
+      const auto& forever_stmt = stmt.as<slang::ast::ForeverLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      // Create constant "1" expression for while(1)
+      // Use 1-bit logic type (standard for boolean conditions)
+      TypeId bit_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 1, .is_signed = false, .is_four_state = true});
+      IntegralConstant one_const;
+      one_const.value.push_back(1);
+      ConstId const_id =
+          ctx->constant_arena->Intern(bit_type, std::move(one_const));
+      hir::ExpressionId true_expr = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConstant,
+              .type = bit_type,
+              .span = span,
+              .data = hir::ConstantExpressionData{.constant = const_id},
+          });
+
+      auto body_result = LowerStatement(forever_stmt.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "forever loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kWhileLoop,
+              .span = span,
+              .data =
+                  hir::WhileLoopStatementData{
+                      .condition = true_expr, .body = *body_result},
+          });
+    }
+
+    case StatementKind::RepeatLoop: {
+      const auto& repeat_stmt = stmt.as<slang::ast::RepeatLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      hir::ExpressionId count =
+          LowerExpression(repeat_stmt.count, registrar, ctx);
+      if (!count) {
+        return hir::kInvalidStatementId;
+      }
+
+      auto body_result = LowerStatement(repeat_stmt.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "repeat loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kRepeatLoop,
+              .span = span,
+              .data =
+                  hir::RepeatLoopStatementData{
+                      .count = count, .body = *body_result},
           });
     }
 

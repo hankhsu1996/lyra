@@ -302,6 +302,15 @@ void Dumper::Dump(StatementId id) {
       *out_ << ");\n";
       break;
     }
+
+    case StatementKind::kRepeatLoop: {
+      const auto& data = std::get<RepeatLoopStatementData>(stmt.data);
+      *out_ << "repeat (";
+      Dump(data.count);
+      *out_ << ") ";
+      Dump(data.body);
+      break;
+    }
   }
 }
 

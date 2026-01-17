@@ -11,6 +11,11 @@ suites:
       - operators/binary.yaml
       - operators/unary.yaml
       - control_flow/conditional.yaml
+      # Loop files commented out until break/continue is implemented:
+      # - control_flow/while.yaml
+      # - control_flow/do_while.yaml
+      # - control_flow/for.yaml
+      # - control_flow/repeat.yaml
 
   mir_full:
     backend: mir
