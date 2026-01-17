@@ -1,23 +1,8 @@
-feature: conditionals
-description: Tests for if/else and ternary operators
+feature: ternary
+description: Tests for ternary conditional operator
 
 cases:
-  - name: if_else_literal
-    sv: |
-      module Test;
-        int a;
-        initial begin
-          if (1)
-            a = 42;
-          else
-            a = 0;
-        end
-      endmodule
-    expect:
-      variables:
-        a: 42
-
-  - name: ternary_literal
+  - name: literal
     sv: |
       module Test;
         int a;
@@ -29,7 +14,7 @@ cases:
       variables:
         a: 42
 
-  - name: ternary_variable
+  - name: variable
     sv: |
       module Test;
         int a, b;
@@ -42,7 +27,7 @@ cases:
       variables:
         a: 42
 
-  - name: ternary_nested
+  - name: nested
     sv: |
       module Test;
         int a, b;
@@ -55,7 +40,7 @@ cases:
       variables:
         a: 2
 
-  - name: ternary_complex
+  - name: complex
     sv: |
       module Test;
         int a, b, c;

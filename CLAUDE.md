@@ -130,6 +130,19 @@ bazel test //tests:mir_dev_tests --test_output=errors   # Core tests
 bazel test //tests:mir_full_tests --test_output=errors  # All tests
 ```
 
+### Ad-Hoc Testing
+
+Run a specific test file without modifying suite definitions:
+
+```bash
+bazel test //tests:mir_dev_tests \
+  --test_arg=--test_file=control_flow/conditionals.yaml \
+  --test_arg=--backend=mir \
+  --test_output=errors
+```
+
+Path is relative to `tests/sv_features/`. `--backend` is required with `--test_file`.
+
 ## Code Style
 
 - C++23, Google style, clang-tidy warning-free

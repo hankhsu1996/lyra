@@ -1,0 +1,18 @@
+feature: if_else
+description: Tests for if/else statements
+
+cases:
+  - name: literal_condition
+    sv: |
+      module Test;
+        int a;
+        initial begin
+          if (1)
+            a = 42;
+          else
+            a = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 42

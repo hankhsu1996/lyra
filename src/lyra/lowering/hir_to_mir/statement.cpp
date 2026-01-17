@@ -92,7 +92,17 @@ void LowerExpressionStatement(
 
 void LowerConditional(
     const hir::ConditionalStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
   mir::Operand cond = LowerExpression(data.condition, builder);
+
+  // EmitBranch requires a Use operand (PlaceId reference). If condition is
+  // a constant, materialize it to a temp first.
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
+    mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
 
   BlockIndex then_bb = builder.CreateBlock();
   BlockIndex merge_bb = builder.CreateBlock();
