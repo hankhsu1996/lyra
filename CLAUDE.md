@@ -90,7 +90,6 @@ YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite defi
 
 ```bash
 bazel test //tests:mir_dev_tests --test_output=errors   # Core tests
-bazel test //tests:mir_full_tests --test_output=errors  # All tests
 ```
 
 ### Ad-Hoc Testing

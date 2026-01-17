@@ -146,6 +146,11 @@ auto IsRelationalOp(hir::BinaryOp op) -> bool {
          op == BO::kGreaterThan || op == BO::kGreaterThanEqual;
 }
 
+auto IsDivisionOrModuloOp(hir::BinaryOp op) -> bool {
+  using BO = hir::BinaryOp;
+  return op == BO::kDivide || op == BO::kMod;
+}
+
 auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
   using BO = mir::BinaryOp;
   switch (op) {
@@ -157,6 +162,10 @@ auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
       return BO::kGreaterThanSigned;
     case BO::kGreaterThanEqual:
       return BO::kGreaterThanEqualSigned;
+    case BO::kDivide:
+      return BO::kDivideSigned;
+    case BO::kMod:
+      return BO::kModSigned;
     default:
       return op;
   }
@@ -187,6 +196,31 @@ auto SelectComparisonOp(
     throw common::InternalError(
         "SelectComparisonOp",
         "operand signedness mismatch - missing conversion");
+  }
+
+  return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
+}
+
+// Select the MIR operator for division/modulo ops.
+// Signed/unsigned variants only apply to integral types.
+auto SelectDivModOp(const hir::BinaryExpressionData& data, const Context& ctx)
+    -> mir::BinaryOp {
+  const auto& lhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.lhs].type];
+  const auto& rhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.rhs].type];
+
+  auto mir_op = MapBinaryOp(data.op);
+
+  // Only integral types have signed/unsigned variants
+  if (lhs_type.Kind() != TypeKind::kIntegral ||
+      rhs_type.Kind() != TypeKind::kIntegral) {
+    return mir_op;
+  }
+
+  const auto& lhs = lhs_type.AsIntegral();
+  const auto& rhs = rhs_type.AsIntegral();
+  if (lhs.is_signed != rhs.is_signed) {
+    throw common::InternalError(
+        "SelectDivModOp", "operand signedness mismatch - missing conversion");
   }
 
   return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
@@ -286,9 +320,16 @@ auto LowerBinary(
   mir::Operand lhs = LowerExpression(data.lhs, builder);
   mir::Operand rhs = LowerExpression(data.rhs, builder);
 
-  mir::BinaryOp mir_op = IsRelationalOp(data.op)
-                             ? SelectComparisonOp(data, builder.GetContext())
-                             : MapBinaryOp(data.op);
+  auto select_mir_op = [&]() -> mir::BinaryOp {
+    if (IsRelationalOp(data.op)) {
+      return SelectComparisonOp(data, builder.GetContext());
+    }
+    if (IsDivisionOrModuloOp(data.op)) {
+      return SelectDivModOp(data, builder.GetContext());
+    }
+    return MapBinaryOp(data.op);
+  };
+  mir::BinaryOp mir_op = select_mir_op();
 
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kBinary,

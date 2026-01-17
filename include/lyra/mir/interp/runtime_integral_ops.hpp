@@ -6,8 +6,11 @@
 
 namespace lyra::mir::interp {
 
-// Helper: Create an unknown (all-X) integral result.
-// Use this for operations with X/Z operands or unimplemented multi-word cases.
+// Create a known zero-initialized integral result.
+auto MakeKnownIntegral(uint32_t bit_width) -> RuntimeIntegral;
+
+// Create an unknown (all-X) integral result.
+// Use this for operations with X/Z operands.
 auto MakeUnknownIntegral(uint32_t bit_width) -> RuntimeIntegral;
 
 // Arithmetic operations
@@ -21,11 +24,11 @@ auto IntegralMul(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
     -> RuntimeIntegral;
 auto IntegralDiv(
-    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
-    -> RuntimeIntegral;
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
+    bool is_signed) -> RuntimeIntegral;
 auto IntegralMod(
-    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
-    -> RuntimeIntegral;
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
+    bool is_signed) -> RuntimeIntegral;
 
 // Bitwise operations
 auto IntegralAnd(
