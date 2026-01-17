@@ -1,8 +1,8 @@
 #include "lyra/mir/interp/interpreter.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -13,8 +13,12 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -31,33 +35,114 @@ namespace lyra::mir::interp {
 
 namespace {
 
-// Count the maximum storage ID needed for locals and temps across all places
-// in the blocks of a process.
-//
-// INVARIANT: This assumes all locals and temps are discoverable via instruction
-// operands. Any MIR feature that introduces implicit storage (e.g., call
-// frames, hidden temporaries) will require revisiting this logic.
-struct StorageCounter {
-  size_t max_local = 0;
-  size_t max_temp = 0;
+// Creates a default-initialized RuntimeValue for a given type following SV
+// semantics:
+// - 2-state integrals (bit, int, etc.): default to 0
+// - 4-state integrals (logic, reg, etc.): default to X (unknown)
+// - Strings: default to empty
+// - Reals: default to 0.0
+// - Arrays/structs: recursively default-initialize each element/field
+auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
+    -> RuntimeValue {
+  const auto& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kVoid:
+      return std::monostate{};
+    case TypeKind::kIntegral: {
+      const auto& info = type.AsIntegral();
+      if (info.is_four_state) {
+        return MakeIntegralX(info.bit_width);  // 4-state defaults to X
+      }
+      return MakeIntegral(0, info.bit_width);  // 2-state defaults to 0
+    }
+    case TypeKind::kString:
+      return MakeString("");
+    case TypeKind::kReal:
+      return MakeReal(0.0);
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      auto size = static_cast<size_t>(info.range.Size());
+      std::vector<RuntimeValue> elements;
+      elements.reserve(size);
+      for (size_t i = 0; i < size; ++i) {
+        elements.push_back(CreateDefaultValue(types, info.element_type));
+      }
+      return MakeArray(std::move(elements));
+    }
+    case TypeKind::kUnpackedStruct: {
+      const auto& info = type.AsUnpackedStruct();
+      std::vector<RuntimeValue> fields;
+      fields.reserve(info.fields.size());
+      for (const auto& field : info.fields) {
+        fields.push_back(CreateDefaultValue(types, field.type));
+      }
+      return MakeStruct(std::move(fields));
+    }
+  }
+  throw common::InternalError("CreateDefaultValue", "unknown type kind");
+}
 
-  void Visit(const Place& place) {
-    switch (place.root.kind) {
-      case PlaceRoot::Kind::kLocal:
-        max_local = std::max(max_local, static_cast<size_t>(place.root.id + 1));
+// Collects storage requirements and type information for locals, temps, and
+// design slots.
+//
+// INVARIANT: This assumes all storage is discoverable via instruction operands.
+// Any MIR feature that introduces implicit storage (e.g., call frames, hidden
+// temporaries) will require revisiting this logic.
+struct StorageCollector {
+  std::vector<TypeId> local_types;
+  std::vector<TypeId> temp_types;
+  std::vector<TypeId> design_types;
+
+  void VisitRoot(const PlaceRoot& root) {
+    switch (root.kind) {
+      case PlaceRoot::Kind::kLocal: {
+        auto idx = static_cast<size_t>(root.id);
+        if (idx >= local_types.size()) {
+          local_types.resize(idx + 1, kInvalidTypeId);
+        }
+        if (!local_types[idx]) {
+          local_types[idx] = root.type;
+        }
         break;
-      case PlaceRoot::Kind::kTemp:
-        max_temp = std::max(max_temp, static_cast<size_t>(place.root.id + 1));
+      }
+      case PlaceRoot::Kind::kTemp: {
+        auto idx = static_cast<size_t>(root.id);
+        if (idx >= temp_types.size()) {
+          temp_types.resize(idx + 1, kInvalidTypeId);
+        }
+        if (!temp_types[idx]) {
+          temp_types[idx] = root.type;
+        }
         break;
-      case PlaceRoot::Kind::kDesign:
+      }
+      case PlaceRoot::Kind::kDesign: {
+        auto idx = static_cast<size_t>(root.id);
+        if (idx >= design_types.size()) {
+          design_types.resize(idx + 1, kInvalidTypeId);
+        }
+        if (!design_types[idx]) {
+          design_types[idx] = root.type;
+        }
         break;
+      }
+    }
+  }
+
+  void Visit(const Place& place, const Arena& arena) {
+    VisitRoot(place.root);
+    // Also visit operands inside projections (dynamic indices may reference
+    // temps/locals that aren't in the instruction operand list)
+    for (const auto& proj : place.projections) {
+      if (const auto* op = std::get_if<Operand>(&proj.operand)) {
+        Visit(*op, arena);
+      }
     }
   }
 
   void Visit(const Operand& op, const Arena& arena) {
     if (op.kind == Operand::Kind::kUse) {
       PlaceId place_id = std::get<PlaceId>(op.payload);
-      Visit(arena[place_id]);
+      Visit(arena[place_id], arena);
     }
   }
 
@@ -67,28 +152,47 @@ struct StorageCounter {
     }
   }
 
-  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  // Uses exhaustive Overloaded pattern - adding a new Instruction or EffectOp
+  // type will cause a compile error until handled here.
   void Visit(const Instruction& inst, const Arena& arena) {
     std::visit(
-        [&](const auto& i) {
-          using T = std::decay_t<decltype(i)>;
-          if constexpr (std::is_same_v<T, Assign>) {
-            Visit(arena[i.target]);
-            Visit(i.source, arena);
-          } else if constexpr (std::is_same_v<T, Compute>) {
-            Visit(arena[i.target]);
-            Visit(i.value, arena);
-          }
+        Overloaded{
+            [&](const Assign& i) {
+              Visit(arena[i.target], arena);
+              Visit(i.source, arena);
+            },
+            [&](const Compute& i) {
+              Visit(arena[i.target], arena);
+              Visit(i.value, arena);
+            },
+            [&](const Effect& i) {
+              std::visit(
+                  Overloaded{
+                      [&](const DisplayEffect& op) {
+                        for (const auto& arg : op.args) {
+                          Visit(arg, arena);
+                        }
+                      },
+                  },
+                  i.op);
+            },
         },
         inst);
   }
 };
 
 // Helper template to apply projections uniformly for const and non-const paths.
-template <typename ValueRef>
+// IndexEval is a callable that evaluates a dynamic Operand to an int64_t index.
+// TypeArena and root_type are used to normalize array indices for
+// non-zero-based ranges.
+template <typename ValueRef, typename IndexEval>
 auto ApplyProjectionsImpl(
-    ValueRef root, const std::vector<Projection>& projections) -> ValueRef {
+    ValueRef root, const std::vector<Projection>& projections,
+    const TypeArena& types, TypeId root_type, IndexEval eval_index)
+    -> ValueRef {
   auto* current = &root;
+  TypeId current_type = root_type;
+
   for (const auto& proj : projections) {
     switch (proj.kind) {
       case Projection::Kind::kField: {
@@ -107,6 +211,12 @@ auto ApplyProjectionsImpl(
           throw common::InternalError(
               "ApplyProjections", "field index out of range");
         }
+        // Update current type to the field's type
+        if (current_type) {
+          const auto& struct_info = types[current_type].AsUnpackedStruct();
+          current_type =
+              struct_info.fields[static_cast<size_t>(*field_idx)].type;
+        }
         current = &s.fields[static_cast<size_t>(*field_idx)];
         break;
       }
@@ -117,18 +227,31 @@ auto ApplyProjectionsImpl(
               "ApplyProjections", "index projection on non-array");
         }
         auto& a = AsArray(*current);
-        const auto* const_idx = std::get_if<int>(&proj.operand);
-        if (const_idx == nullptr) {
-          throw common::InternalError(
-              "ApplyProjections",
-              "dynamic array index not yet supported in interpreter");
+
+        // Evaluate index (constant or dynamic)
+        int64_t index = 0;
+        if (const auto* const_idx = std::get_if<int>(&proj.operand)) {
+          index = *const_idx;
+        } else {
+          const auto& operand = std::get<Operand>(proj.operand);
+          index = eval_index(operand);
         }
-        if (*const_idx < 0 ||
-            static_cast<size_t>(*const_idx) >= a.elements.size()) {
-          throw common::InternalError(
-              "ApplyProjections", "array index out of range");
+
+        // Get array bounds from type and normalize index to 0-based offset
+        int64_t offset = index;
+        auto size = static_cast<int64_t>(a.elements.size());
+        if (current_type) {
+          const auto& array_info = types[current_type].AsUnpackedArray();
+          offset = index - array_info.range.lower;
+          current_type = array_info.element_type;
         }
-        current = &a.elements[static_cast<size_t>(*const_idx)];
+
+        // Bounds check (runtime error - user program error)
+        if (offset < 0 || offset >= size) {
+          throw std::runtime_error(
+              std::format("array index {} out of bounds", index));
+        }
+        current = &a.elements[static_cast<size_t>(offset)];
         break;
       }
 
@@ -144,39 +267,61 @@ auto ApplyProjectionsImpl(
   return *current;
 }
 
+template <typename IndexEval>
 auto ApplyProjections(
-    RuntimeValue& root, const std::vector<Projection>& projections)
+    RuntimeValue& root, const std::vector<Projection>& projections,
+    const TypeArena& types, TypeId root_type, IndexEval eval_index)
     -> RuntimeValue& {
-  return ApplyProjectionsImpl<RuntimeValue&>(root, projections);
+  return ApplyProjectionsImpl<RuntimeValue&>(
+      root, projections, types, root_type, eval_index);
 }
 
+template <typename IndexEval>
 auto ApplyProjections(
-    const RuntimeValue& root, const std::vector<Projection>& projections)
+    const RuntimeValue& root, const std::vector<Projection>& projections,
+    const TypeArena& types, TypeId root_type, IndexEval eval_index)
     -> const RuntimeValue& {
-  return ApplyProjectionsImpl<const RuntimeValue&>(root, projections);
+  return ApplyProjectionsImpl<const RuntimeValue&>(
+      root, projections, types, root_type, eval_index);
 }
 
 }  // namespace
 
 auto CreateProcessState(
-    const Arena& arena, ProcessId process_id, DesignState* design_state)
-    -> ProcessState {
+    const Arena& arena, const TypeArena& types, ProcessId process_id,
+    DesignState* design_state) -> ProcessState {
   const auto& process = arena[process_id];
 
-  // Scan all blocks to determine local/temp storage requirements
-  StorageCounter counter;
+  // Scan all blocks to collect local/temp storage requirements and types
+  StorageCollector collector;
   for (BasicBlockId block_id : process.blocks) {
     const auto& block = arena[block_id];
     for (const auto& inst : block.instructions) {
-      counter.Visit(inst, arena);
+      collector.Visit(inst, arena);
     }
+  }
+
+  // Initialize locals with default values based on their types
+  std::vector<RuntimeValue> locals;
+  locals.reserve(collector.local_types.size());
+  for (TypeId type_id : collector.local_types) {
+    locals.push_back(
+        type_id ? CreateDefaultValue(types, type_id) : RuntimeValue{});
+  }
+
+  // Initialize temps with default values based on their types
+  std::vector<RuntimeValue> temps;
+  temps.reserve(collector.temp_types.size());
+  for (TypeId type_id : collector.temp_types) {
+    temps.push_back(
+        type_id ? CreateDefaultValue(types, type_id) : RuntimeValue{});
   }
 
   return ProcessState{
       .process = process_id,
       .current_block = process.entry,
       .instruction_index = 0,
-      .frame = Frame(counter.max_local, counter.max_temp),
+      .frame = Frame(std::move(locals), std::move(temps)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
   };
@@ -331,7 +476,20 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     return Clone(root_value);
   }
 
-  const auto& nested = ApplyProjections(root_value, place.projections);
+  auto eval_index = [&](const Operand& op) -> int64_t {
+    auto val = EvalOperand(state, op);
+    if (!IsIntegral(val)) {
+      throw common::InternalError("ReadPlace", "array index must be integral");
+    }
+    const auto& integral = AsIntegral(val);
+    if (!integral.IsKnown()) {
+      throw std::runtime_error("array index is X/Z");
+    }
+    return static_cast<int64_t>(integral.value.empty() ? 0 : integral.value[0]);
+  };
+
+  const auto& nested = ApplyProjections(
+      root_value, place.projections, *types_, place.root.type, eval_index);
   return Clone(nested);
 }
 
@@ -344,7 +502,20 @@ auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     return root_value;
   }
 
-  return ApplyProjections(root_value, place.projections);
+  auto eval_index = [&](const Operand& op) -> int64_t {
+    auto val = EvalOperand(state, op);
+    if (!IsIntegral(val)) {
+      throw common::InternalError("WritePlace", "array index must be integral");
+    }
+    const auto& integral = AsIntegral(val);
+    if (!integral.IsKnown()) {
+      throw std::runtime_error("array index is X/Z");
+    }
+    return static_cast<int64_t>(integral.value.empty() ? 0 : integral.value[0]);
+  };
+
+  return ApplyProjections(
+      root_value, place.projections, *types_, place.root.type, eval_index);
 }
 
 void Interpreter::ExecAssign(ProcessState& state, const Assign& assign) {
@@ -504,6 +675,35 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
   throw common::InternalError("ExecTerminator", "unknown terminator kind");
 }
 
+auto CreateDesignState(
+    const Arena& arena, const TypeArena& types, const Module& module)
+    -> DesignState {
+  // Collect design slot types by scanning all processes
+  StorageCollector collector;
+  for (ProcessId process_id : module.processes) {
+    const auto& process = arena[process_id];
+    for (BasicBlockId block_id : process.blocks) {
+      const auto& block = arena[block_id];
+      for (const auto& inst : block.instructions) {
+        collector.Visit(inst, arena);
+      }
+    }
+  }
+
+  // Initialize design storage with default values based on types
+  std::vector<RuntimeValue> storage;
+  storage.resize(module.num_module_slots);
+  for (size_t i = 0; i < collector.design_types.size(); ++i) {
+    if (i < storage.size() && collector.design_types[i]) {
+      storage[i] = CreateDefaultValue(types, collector.design_types[i]);
+    }
+  }
+
+  DesignState state(0);  // Create with 0 slots, then move storage in
+  state.storage = std::move(storage);
+  return state;
+}
+
 auto FindInitialModule(const Design& design, const Arena& arena)
     -> std::optional<InitialModuleInfo> {
   for (const auto& element : design.elements) {
@@ -512,7 +712,7 @@ auto FindInitialModule(const Design& design, const Arena& arena)
         const auto& process = arena[process_id];
         if (process.kind == ProcessKind::kOnce) {
           return InitialModuleInfo{
-              .num_module_slots = module->num_module_slots,
+              .module = module,
               .initial_process = process_id,
           };
         }

@@ -7,8 +7,8 @@
 
 namespace lyra::mir::interp {
 
-Frame::Frame(size_t num_locals, size_t num_temps)
-    : locals_(num_locals), temps_(num_temps) {
+Frame::Frame(std::vector<RuntimeValue> locals, std::vector<RuntimeValue> temps)
+    : locals_(std::move(locals)), temps_(std::move(temps)) {
 }
 
 auto Frame::GetLocal(int id) -> RuntimeValue& {

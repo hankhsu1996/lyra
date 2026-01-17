@@ -320,9 +320,11 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   }
 
   // Create module storage and interpreter state
-  mir::interp::DesignState design_state(module_info->num_module_slots);
+  auto design_state = mir::interp::CreateDesignState(
+      *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
   auto state = mir::interp::CreateProcessState(
-      *mir_result.mir_arena, module_info->initial_process, &design_state);
+      *mir_result.mir_arena, *hir_result.type_arena, module_info->initial_process,
+      &design_state);
 
   // Run interpreter with output capture
   std::ostringstream output_stream;

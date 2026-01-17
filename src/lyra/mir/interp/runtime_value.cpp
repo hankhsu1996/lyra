@@ -98,6 +98,17 @@ auto MakeIntegral(uint64_t val, uint32_t bit_width) -> RuntimeValue {
   return result;
 }
 
+auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue {
+  size_t num_words = WordsNeeded(bit_width);
+  RuntimeIntegral result;
+  result.bit_width = bit_width;
+  result.value.resize(num_words, 0);
+  result.x_mask.resize(num_words, ~uint64_t{0});  // All bits X
+  result.z_mask.resize(num_words, 0);
+  MaskTopWord(result.x_mask, bit_width);
+  return result;
+}
+
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue {
   RuntimeIntegral result;
