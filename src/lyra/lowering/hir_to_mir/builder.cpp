@@ -200,4 +200,16 @@ auto MirBuilder::ToArenaId(BlockIndex idx) -> mir::BasicBlockId {
   return mir::BasicBlockId{idx.value};
 }
 
+void MirBuilder::PushLoop(LoopContext ctx) {
+  loop_stack_.push_back(ctx);
+}
+
+void MirBuilder::PopLoop() {
+  loop_stack_.pop_back();
+}
+
+auto MirBuilder::CurrentLoop() const -> const LoopContext* {
+  return loop_stack_.empty() ? nullptr : &loop_stack_.back();
+}
+
 }  // namespace lyra::lowering::hir_to_mir

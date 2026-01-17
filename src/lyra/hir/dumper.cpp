@@ -311,6 +311,14 @@ void Dumper::Dump(StatementId id) {
       Dump(data.body);
       break;
     }
+
+    case StatementKind::kBreak:
+      *out_ << "break;\n";
+      break;
+
+    case StatementKind::kContinue:
+      *out_ << "continue;\n";
+      break;
   }
 }
 

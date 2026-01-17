@@ -446,6 +446,24 @@ auto LowerStatement(
           });
     }
 
+    case StatementKind::Break: {
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kBreak,
+              .span = ctx->SpanOf(stmt.sourceRange),
+              .data = hir::BreakStatementData{},
+          });
+    }
+
+    case StatementKind::Continue: {
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kContinue,
+              .span = ctx->SpanOf(stmt.sourceRange),
+              .data = hir::ContinueStatementData{},
+          });
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),

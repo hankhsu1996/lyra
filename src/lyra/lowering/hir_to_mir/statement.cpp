@@ -29,6 +29,23 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+class LoopGuard {
+ public:
+  LoopGuard(MirBuilder& builder, LoopContext ctx) : builder_(builder) {
+    builder_.PushLoop(ctx);
+  }
+  ~LoopGuard() {
+    builder_.PopLoop();
+  }
+  LoopGuard(const LoopGuard&) = delete;
+  LoopGuard(LoopGuard&&) = delete;
+  auto operator=(const LoopGuard&) -> LoopGuard& = delete;
+  auto operator=(LoopGuard&&) -> LoopGuard& = delete;
+
+ private:
+  MirBuilder& builder_;
+};
+
 void LowerBlock(const hir::BlockStatementData& data, MirBuilder& builder) {
   for (hir::StatementId stmt_id : data.statements) {
     LowerStatement(stmt_id, builder);
@@ -278,7 +295,11 @@ void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
 
   // 6. Body block
   builder.SetCurrentBlock(body_bb);
-  LowerStatement(data.body, builder);
+  {
+    LoopGuard guard(
+        builder, {.exit_block = exit_bb, .continue_block = step_bb});
+    LowerStatement(data.body, builder);
+  }
   builder.EmitJump(step_bb);
 
   // 7. Step block - evaluate step expressions (for side effects)
@@ -315,7 +336,11 @@ void LowerWhileLoop(
 
   // Body block
   builder.SetCurrentBlock(body_bb);
-  LowerStatement(data.body, builder);
+  {
+    LoopGuard guard(
+        builder, {.exit_block = exit_bb, .continue_block = cond_bb});
+    LowerStatement(data.body, builder);
+  }
   builder.EmitJump(cond_bb);
 
   builder.SetCurrentBlock(exit_bb);
@@ -333,7 +358,11 @@ void LowerDoWhileLoop(
 
   // Body block (executes first)
   builder.SetCurrentBlock(body_bb);
-  LowerStatement(data.body, builder);
+  {
+    LoopGuard guard(
+        builder, {.exit_block = exit_bb, .continue_block = cond_bb});
+    LowerStatement(data.body, builder);
+  }
   builder.EmitJump(cond_bb);
 
   // Condition block
@@ -369,6 +398,7 @@ void LowerRepeatLoop(
   // 2. Create blocks
   BlockIndex cond_bb = builder.CreateBlock();
   BlockIndex body_bb = builder.CreateBlock();
+  BlockIndex step_bb = builder.CreateBlock();
   BlockIndex exit_bb = builder.CreateBlock();
 
   builder.EmitJump(cond_bb);
@@ -397,9 +427,15 @@ void LowerRepeatLoop(
 
   // 4. Body block
   builder.SetCurrentBlock(body_bb);
-  LowerStatement(data.body, builder);
+  {
+    LoopGuard guard(
+        builder, {.exit_block = exit_bb, .continue_block = step_bb});
+    LowerStatement(data.body, builder);
+  }
+  builder.EmitJump(step_bb);
 
-  // Decrement counter: counter = counter - 1
+  // 5. Step block: decrement counter
+  builder.SetCurrentBlock(step_bb);
   Constant one = MakeIntConstant(1, count_expr.type);
   mir::Rvalue dec_rvalue{
       .kind = mir::RvalueKind::kBinary,
@@ -412,7 +448,7 @@ void LowerRepeatLoop(
   builder.EmitAssign(counter, mir::Operand::Use(new_count));
   builder.EmitJump(cond_bb);
 
-  // 5. Exit
+  // 6. Exit
   builder.SetCurrentBlock(exit_bb);
 }
 
@@ -445,6 +481,26 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           LowerDoWhileLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::RepeatLoopStatementData>) {
           LowerRepeatLoop(data, builder);
+        } else if constexpr (std::is_same_v<T, hir::BreakStatementData>) {
+          const auto* loop = builder.CurrentLoop();
+          if (loop == nullptr) {
+            throw common::InternalError(
+                "LowerStatement", "break statement outside loop");
+          }
+          builder.EmitJump(loop->exit_block);
+          // Create unreachable block for any code after break
+          BlockIndex dead_bb = builder.CreateBlock();
+          builder.SetCurrentBlock(dead_bb);
+        } else if constexpr (std::is_same_v<T, hir::ContinueStatementData>) {
+          const auto* loop = builder.CurrentLoop();
+          if (loop == nullptr) {
+            throw common::InternalError(
+                "LowerStatement", "continue statement outside loop");
+          }
+          builder.EmitJump(loop->continue_block);
+          // Create unreachable block for any code after continue
+          BlockIndex dead_bb = builder.CreateBlock();
+          builder.SetCurrentBlock(dead_bb);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");
