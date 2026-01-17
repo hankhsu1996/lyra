@@ -1,0 +1,35 @@
+feature: forever loops
+description: Tests for forever loop and infinite loop constructs
+
+cases:
+  - name: with_finish
+    description: Forever loop with $finish exit
+    sv: |
+      module Test;
+        int counter;
+        initial begin
+          counter = 0;
+          forever begin
+            counter = counter + 1;
+            if (counter >= 5) $finish;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 5
+
+  - name: for_without_condition
+    description: For loop with empty condition (infinite loop)
+    sv: |
+      module Test;
+        int i;
+        initial begin
+          for (i = 0; ; i = i + 1) begin
+            if (i == 3) $finish;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        i: 3
