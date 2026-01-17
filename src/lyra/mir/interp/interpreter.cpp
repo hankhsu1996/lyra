@@ -259,9 +259,21 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       return EvalBinary(rv.op, lhs, rhs);
     }
 
-    case RvalueKind::kCast:
-      throw common::InternalError(
-          "EvalRvalue", "cast operations not supported");
+    case RvalueKind::kCast: {
+      if (rv.operands.size() != 1) {
+        throw common::InternalError(
+            "EvalRvalue", "cast operation requires exactly 1 operand");
+      }
+      const auto* cast_info = std::get_if<CastInfo>(&rv.info);
+      if (cast_info == nullptr) {
+        throw common::InternalError(
+            "EvalRvalue", "cast operation missing CastInfo");
+      }
+      auto operand = EvalOperand(state, rv.operands[0]);
+      const auto& src_type = (*types_)[cast_info->source_type];
+      const auto& tgt_type = (*types_)[cast_info->target_type];
+      return EvalCast(operand, src_type, tgt_type);
+    }
 
     case RvalueKind::kCall:
       // System calls that produce values (pure functions like $clog2) would be

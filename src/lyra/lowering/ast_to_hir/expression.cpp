@@ -4,6 +4,7 @@
 #include <optional>
 
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -288,6 +289,78 @@ auto LowerExpression(
       }
 
       return LowerSystemCall(call, registrar, ctx);
+    }
+
+    case ExpressionKind::Conversion: {
+      const auto& conv = expr.as<slang::ast::ConversionExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      using CK = slang::ast::ConversionKind;
+      switch (conv.conversionKind) {
+        case CK::Implicit:
+        case CK::Propagated:
+          break;
+        case CK::Explicit:
+          ctx->sink->Error(span, "explicit casts not yet supported");
+          return hir::kInvalidExpressionId;
+        case CK::StreamingConcat:
+          ctx->sink->Error(span, "streaming concatenation not supported");
+          return hir::kInvalidExpressionId;
+        case CK::BitstreamCast:
+          ctx->sink->Error(span, "bitstream casts not supported");
+          return hir::kInvalidExpressionId;
+      }
+
+      // Validate source and target types for supported conversions
+      const slang::ast::Type& src_type =
+          conv.operand().type->getCanonicalType();
+      const slang::ast::Type& tgt_type = expr.type->getCanonicalType();
+
+      if (!src_type.isIntegral()) {
+        ctx->sink->Error(
+            span, "conversion from non-integral type not supported");
+        return hir::kInvalidExpressionId;
+      }
+      if (!tgt_type.isIntegral()) {
+        ctx->sink->Error(span, "conversion to non-integral type not supported");
+        return hir::kInvalidExpressionId;
+      }
+      if (src_type.isFourState()) {
+        ctx->sink->Error(
+            span, "conversion from 4-state type not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+      if (tgt_type.isFourState()) {
+        ctx->sink->Error(span, "conversion to 4-state type not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+      if (src_type.getBitWidth() > 64) {
+        ctx->sink->Error(
+            span, "conversion from >64-bit type not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+      if (tgt_type.getBitWidth() > 64) {
+        ctx->sink->Error(span, "conversion to >64-bit type not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId operand =
+          LowerExpression(conv.operand(), registrar, ctx);
+      if (!operand) {
+        return hir::kInvalidExpressionId;
+      }
+
+      TypeId type = LowerType(tgt_type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCast,
+              .type = type,
+              .span = span,
+              .data = hir::CastExpressionData{.operand = operand}});
     }
 
     default:

@@ -560,4 +560,48 @@ auto IntegralShr(
   return result;
 }
 
+auto IntegralResize2State(
+    const RuntimeIntegral& src, bool src_is_signed, uint32_t target_width)
+    -> RuntimeIntegral {
+  if (!src.IsKnown()) {
+    return MakeUnknownIntegral(target_width);
+  }
+
+  auto result = MakeKnownIntegral(target_width);
+  size_t source_words = src.value.size();
+  size_t result_words = WordsNeeded(target_width);
+
+  // Copy source words (up to target size)
+  for (size_t i = 0; i < std::min(source_words, result_words); ++i) {
+    result.value[i] = src.value[i];
+  }
+
+  // Sign extension: fill upper bits with sign bit using word-level ops
+  if (target_width > src.bit_width && src_is_signed && src.bit_width > 0) {
+    uint32_t sign_bit_pos = (src.bit_width - 1) % kBitsPerWord;
+    size_t sign_word_idx = (src.bit_width - 1) / kBitsPerWord;
+    bool sign_bit = false;
+    if (sign_word_idx < src.value.size()) {
+      sign_bit = ((src.value[sign_word_idx] >> sign_bit_pos) & 1) != 0;
+    }
+
+    if (sign_bit) {
+      // Fill whole words above sign_word_idx with all 1s
+      for (size_t i = sign_word_idx + 1; i < result_words; ++i) {
+        result.value[i] = ~uint64_t{0};
+      }
+      // Set bits above sign_bit_pos in the sign word.
+      // Special case: if sign_bit_pos == 63, there are no bits above it in
+      // this word (shifting by 64 is UB), so upper_mask is 0.
+      if (sign_word_idx < result_words && sign_bit_pos < 63) {
+        uint64_t upper_mask = ~((uint64_t{1} << (sign_bit_pos + 1)) - 1);
+        result.value[sign_word_idx] |= upper_mask;
+      }
+    }
+  }
+
+  MaskTopWord(result.value, target_width);
+  return result;
+}
+
 }  // namespace lyra::mir::interp

@@ -75,4 +75,10 @@ auto IntegralShr(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
     bool is_signed) -> RuntimeIntegral;
 
+// Resize operation for 2-state integrals (truncation or extension).
+// Extension uses src_is_signed to determine sign-extend vs zero-extend.
+auto IntegralResize2State(
+    const RuntimeIntegral& src, bool src_is_signed, uint32_t target_width)
+    -> RuntimeIntegral;
+
 }  // namespace lyra::mir::interp

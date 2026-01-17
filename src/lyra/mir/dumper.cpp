@@ -254,9 +254,17 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
       result =
           std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
       break;
-    case RvalueKind::kCast:
-      result = "cast";
+    case RvalueKind::kCast: {
+      const auto* cast_info = std::get_if<CastInfo>(&rv.info);
+      if (cast_info != nullptr) {
+        result = std::format(
+            "cast({} -> {})", FormatType(cast_info->source_type),
+            FormatType(cast_info->target_type));
+      } else {
+        result = "cast";
+      }
       break;
+    }
     case RvalueKind::kCall:
       result = std::format("call(op={})", rv.op);
       break;

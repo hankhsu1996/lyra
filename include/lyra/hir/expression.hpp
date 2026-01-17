@@ -17,6 +17,7 @@ enum class ExpressionKind {
   kNameRef,
   kUnaryOp,
   kBinaryOp,
+  kCast,
   kSystemCall,
 };
 
@@ -47,9 +48,15 @@ struct BinaryExpressionData {
   auto operator==(const BinaryExpressionData&) const -> bool = default;
 };
 
+struct CastExpressionData {
+  ExpressionId operand;
+
+  auto operator==(const CastExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
-    BinaryExpressionData, SystemCallExpressionData>;
+    BinaryExpressionData, CastExpressionData, SystemCallExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

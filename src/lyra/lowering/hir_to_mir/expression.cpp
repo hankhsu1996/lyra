@@ -187,6 +187,7 @@ auto LowerUnary(
       .kind = mir::RvalueKind::kUnary,
       .op = static_cast<int>(MapUnaryOp(data.op)),
       .operands = {operand},
+      .info = {},
   };
 
   mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -207,6 +208,75 @@ auto LowerBinary(
       .kind = mir::RvalueKind::kBinary,
       .op = static_cast<int>(mir_op),
       .operands = {lhs, rhs},
+      .info = {},
+  };
+
+  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
+  return mir::Operand::Use(temp_id);
+}
+
+// Sentinel value for Rvalue::op when opcode is not applicable (e.g., kCast).
+constexpr int kUnusedOp = 0;
+
+auto LowerCast(
+    const hir::CastExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  // Invariant: caller dispatched based on CastExpressionData
+  if (expr.kind != hir::ExpressionKind::kCast) {
+    throw common::InternalError("LowerCast", "expected kCast expression kind");
+  }
+
+  // Lower operand first. Note: current lowering is structure-preserving (no
+  // rewriting), so we can safely read source type from HIR after lowering.
+  mir::Operand operand = LowerExpression(data.operand, builder);
+
+  const Context& ctx = builder.GetContext();
+  const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
+  TypeId source_type = operand_expr.type;
+  TypeId target_type = expr.type;
+
+  const auto& src = (*ctx.type_arena)[source_type];
+  const auto& tgt = (*ctx.type_arena)[target_type];
+
+  // These checks are invariants - unsupported types should have been rejected
+  // in AST->HIR lowering. If we reach here, it's a compiler bug.
+  if (src.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError(
+        "LowerCast",
+        "non-integral source should have been rejected in AST->HIR");
+  }
+  if (tgt.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError(
+        "LowerCast",
+        "non-integral target should have been rejected in AST->HIR");
+  }
+
+  const auto& src_int = src.AsIntegral();
+  const auto& tgt_int = tgt.AsIntegral();
+
+  if (src_int.is_four_state) {
+    throw common::InternalError(
+        "LowerCast", "4-state source should have been rejected in AST->HIR");
+  }
+  if (tgt_int.is_four_state) {
+    throw common::InternalError(
+        "LowerCast", "4-state target should have been rejected in AST->HIR");
+  }
+  if (src_int.bit_width > 64) {
+    throw common::InternalError(
+        "LowerCast", ">64-bit source should have been rejected in AST->HIR");
+  }
+  if (tgt_int.bit_width > 64) {
+    throw common::InternalError(
+        "LowerCast", ">64-bit target should have been rejected in AST->HIR");
+  }
+
+  mir::Rvalue rvalue{
+      .kind = mir::RvalueKind::kCast,
+      .op = kUnusedOp,
+      .operands = {operand},
+      .info =
+          mir::CastInfo{.source_type = source_type, .target_type = target_type},
   };
 
   mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -242,6 +312,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerUnary(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::BinaryExpressionData>) {
           return LowerBinary(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::CastExpressionData>) {
+          return LowerCast(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::SystemCallExpressionData>) {
           return LowerSystemCall(data, expr, builder);
         } else {

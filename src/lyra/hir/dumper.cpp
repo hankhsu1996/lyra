@@ -377,6 +377,14 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kCast: {
+      const auto& data = std::get<CastExpressionData>(expr.data);
+      *out_ << "cast<" << TypeString(expr.type) << ">(";
+      Dump(data.operand);
+      *out_ << ")";
+      break;
+    }
+
     case ExpressionKind::kSystemCall: {
       const auto& data = std::get<SystemCallExpressionData>(expr.data);
       const auto& display = std::get<DisplaySystemCallData>(data);

@@ -235,4 +235,39 @@ auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
       "EvalUnary", std::format("unknown unary operation: {}", op));
 }
 
+auto EvalCast(
+    const RuntimeValue& operand, const Type& source_type,
+    const Type& target_type) -> RuntimeValue {
+  // Precondition checks - these should have been validated at lowering time.
+  // If they fail here, it indicates a bug in the lowering pipeline.
+  if (!IsIntegral(operand)) {
+    throw common::InternalError(
+        "EvalCast", "cast operation requires integral operand");
+  }
+  if (source_type.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError("EvalCast", "source type must be integral");
+  }
+  if (target_type.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError("EvalCast", "target type must be integral");
+  }
+
+  const auto& op_int = AsIntegral(operand);
+  const auto& src_int = source_type.AsIntegral();
+  const auto& target_int = target_type.AsIntegral();
+
+  if (src_int.is_four_state || target_int.is_four_state) {
+    throw common::InternalError(
+        "EvalCast", "4-state types should have been rejected at lowering");
+  }
+  if (src_int.bit_width > 64 || target_int.bit_width > 64) {
+    throw common::InternalError(
+        "EvalCast", ">64-bit types should have been rejected at lowering");
+  }
+
+  // Cast = resize bits using source signedness and target width.
+  // Target signedness does not affect the bit pattern; it only affects how
+  // downstream operations interpret the result.
+  return IntegralResize2State(op_int, src_int.is_signed, target_int.bit_width);
+}
+
 }  // namespace lyra::mir::interp
