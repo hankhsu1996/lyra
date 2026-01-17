@@ -1,11 +1,19 @@
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 
+#include <type_traits>
+#include <utility>
 #include <variant>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/operator.hpp"
+#include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -184,9 +192,81 @@ auto SelectComparisonOp(
   return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
 }
 
+auto IsIncrementOrDecrement(hir::UnaryOp op) -> bool {
+  using UO = hir::UnaryOp;
+  return op == UO::kPreincrement || op == UO::kPostincrement ||
+         op == UO::kPredecrement || op == UO::kPostdecrement;
+}
+
+// Creates typed constant 1 for increment/decrement desugaring.
+// The constant carries the type so the interpreter can determine bit width.
+auto MakeOne(TypeId type) -> Constant {
+  IntegralConstant ic;
+  ic.value.push_back(1);
+  return Constant{.type = type, .value = std::move(ic)};
+}
+
+// Desugar increment/decrement operators into explicit read-modify-write.
+// These operators have side effects (modify the operand) and return a value
+// (pre returns new value, post returns old value). MIR's Place/Operand
+// separation doesn't allow side-effecting Rvalues, so we desugar here.
+auto LowerIncrementDecrement(
+    const hir::UnaryExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // 1. Lower operand as lvalue - guaranteed PlaceId
+  //    Currently only supports NameRef; projections are future work.
+  mir::PlaceId target_place = LowerLvalue(data.operand, builder);
+
+  // 2. Type validation (defensive - Slang already checked)
+  const Type& type = (*ctx.type_arena)[expr.type];
+  if (type.Kind() != TypeKind::kIntegral) {
+    throw common::InternalError(
+        "LowerIncrementDecrement", "operand must be integral type");
+  }
+
+  // 3. Save old value
+  mir::PlaceId old_value = ctx.AllocTemp(expr.type);
+  builder.EmitAssign(old_value, mir::Operand::Use(target_place));
+
+  // 4. Compute new value using existing binary op machinery
+  bool is_increment =
+      (data.op == hir::UnaryOp::kPreincrement ||
+       data.op == hir::UnaryOp::kPostincrement);
+  mir::BinaryOp bin_op =
+      is_increment ? mir::BinaryOp::kAdd : mir::BinaryOp::kSubtract;
+
+  // Create typed constant 1 - type is needed for interpreter to determine width
+  Constant one = MakeOne(expr.type);
+
+  mir::Rvalue compute_rvalue{
+      .kind = mir::RvalueKind::kBinary,
+      .op = static_cast<int>(bin_op),
+      .operands = {mir::Operand::Use(old_value), mir::Operand::Const(one)},
+      .info = {},
+  };
+  mir::PlaceId new_value =
+      builder.EmitTemp(expr.type, std::move(compute_rvalue));
+
+  // 5. Write back to target
+  builder.EmitAssign(target_place, mir::Operand::Use(new_value));
+
+  // 6. Return appropriate value
+  bool is_pre =
+      (data.op == hir::UnaryOp::kPreincrement ||
+       data.op == hir::UnaryOp::kPredecrement);
+  return mir::Operand::Use(is_pre ? new_value : old_value);
+}
+
 auto LowerUnary(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> mir::Operand {
+  // Desugar increment/decrement operators into read-modify-write sequence
+  if (IsIncrementOrDecrement(data.op)) {
+    return LowerIncrementDecrement(data, expr, builder);
+  }
+
   mir::Operand operand = LowerExpression(data.operand, builder);
 
   mir::Rvalue rvalue{

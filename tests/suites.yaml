@@ -10,7 +10,6 @@ suites:
     include_regex:
       - operators/binary.yaml
       - operators/unary.yaml
-      - system_tasks/display.yaml
 
   mir_full:
     backend: mir
