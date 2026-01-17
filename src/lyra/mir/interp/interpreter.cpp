@@ -482,8 +482,37 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
       return term.targets[static_cast<size_t>(val)];
     }
 
-    case Terminator::Kind::kFinish:
+    case Terminator::Kind::kFinish: {
+      if (term.termination_info) {
+        const auto& info = *term.termination_info;
+        if (info.level >= 1) {
+          // Get output stream (default to cout if not set)
+          std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+          // Determine termination name for message
+          const char* name = nullptr;
+          switch (info.kind) {
+            case TerminationKind::kFinish:
+              name = "$finish";
+              break;
+            case TerminationKind::kStop:
+              name = "$stop";
+              break;
+            case TerminationKind::kFatal:
+              name = "$fatal";
+              break;
+            case TerminationKind::kExit:
+              name = "$exit";
+              break;
+          }
+
+          // Print time message (time is always 0 for now, until scheduler)
+          out << name << " called at time 0\n";
+        }
+        // Level 2 would print statistics, but we don't track those yet
+      }
       return std::nullopt;
+    }
 
     case Terminator::Kind::kReturn:
       return std::nullopt;

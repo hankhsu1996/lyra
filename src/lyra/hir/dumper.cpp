@@ -319,6 +319,24 @@ void Dumper::Dump(StatementId id) {
     case StatementKind::kContinue:
       *out_ << "continue;\n";
       break;
+
+    case StatementKind::kTerminate: {
+      const auto& data = std::get<TerminateStatementData>(stmt.data);
+      const char* name = nullptr;
+      switch (data.kind) {
+        case TerminationKind::kFinish:
+          name = "$finish";
+          break;
+        case TerminationKind::kStop:
+          name = "$stop";
+          break;
+        case TerminationKind::kExit:
+          name = "$exit";
+          break;
+      }
+      *out_ << name << "(" << data.level << ");\n";
+      break;
+    }
   }
 }
 

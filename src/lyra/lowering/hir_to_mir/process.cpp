@@ -50,7 +50,7 @@ auto LowerProcess(
 
   mir::ProcessKind mir_kind = ConvertProcessKind(process.kind);
   if (mir_kind == mir::ProcessKind::kOnce) {
-    builder.EmitFinish();
+    builder.EmitTerminate();
   } else {
     builder.EmitRepeat();
   }

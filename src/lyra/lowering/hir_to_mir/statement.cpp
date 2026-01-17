@@ -501,6 +501,25 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           // Create unreachable block for any code after continue
           BlockIndex dead_bb = builder.CreateBlock();
           builder.SetCurrentBlock(dead_bb);
+        } else if constexpr (std::is_same_v<T, hir::TerminateStatementData>) {
+          // Map HIR TerminationKind to MIR TerminationKind
+          mir::TerminationKind mir_kind = mir::TerminationKind::kFinish;
+          switch (data.kind) {
+            case hir::TerminationKind::kFinish:
+              mir_kind = mir::TerminationKind::kFinish;
+              break;
+            case hir::TerminationKind::kStop:
+              mir_kind = mir::TerminationKind::kStop;
+              break;
+            case hir::TerminationKind::kExit:
+              mir_kind = mir::TerminationKind::kExit;
+              break;
+          }
+          builder.EmitTerminate(
+              mir::TerminationInfo{.kind = mir_kind, .level = data.level});
+          // Create unreachable block for any code after terminate
+          BlockIndex dead_bb = builder.CreateBlock();
+          builder.SetCurrentBlock(dead_bb);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

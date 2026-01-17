@@ -24,7 +24,19 @@ struct DisplayFunctionInfo {
   bool append_newline;
 };
 
-using CategoryPayload = std::variant<DisplayFunctionInfo>;
+enum class TerminationType : uint8_t {
+  kFinish,  // $finish - normal termination
+  kStop,    // $stop - pause for debugger
+  kExit,    // $exit - synonym for $finish
+};
+
+struct TerminationFunctionInfo {
+  TerminationType type;
+  int default_level;  // Default level if not specified (usually 1)
+};
+
+using CategoryPayload =
+    std::variant<DisplayFunctionInfo, TerminationFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -49,6 +61,11 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$writeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
   {.name = "$writeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
   {.name = "$writeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
+
+  // Simulation control tasks
+  {.name = "$finish", .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},
+  {.name = "$stop",   .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kStop,   .default_level = 1}},
+  {.name = "$exit",   .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kExit,   .default_level = 1}},
 });
 // clang-format on
 

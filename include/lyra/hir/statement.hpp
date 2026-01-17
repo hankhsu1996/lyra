@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -23,6 +24,7 @@ enum class StatementKind {
   kRepeatLoop,
   kBreak,
   kContinue,
+  kTerminate,
 };
 
 struct BlockStatementData {
@@ -115,12 +117,25 @@ struct ContinueStatementData {
   auto operator==(const ContinueStatementData&) const -> bool = default;
 };
 
+enum class TerminationKind : uint8_t {
+  kFinish,  // $finish - normal termination
+  kStop,    // $stop - pause for debugger
+  kExit,    // $exit - normal termination (synonym)
+};
+
+struct TerminateStatementData {
+  TerminationKind kind;
+  int level;  // 0 = silent, 1 = print time (default), 2 = print time+stats
+
+  auto operator==(const TerminateStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
-    ContinueStatementData>;
+    ContinueStatementData, TerminateStatementData>;
 
 struct Statement {
   StatementKind kind;

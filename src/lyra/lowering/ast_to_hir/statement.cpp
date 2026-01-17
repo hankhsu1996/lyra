@@ -3,6 +3,8 @@
 #include <format>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
@@ -11,6 +13,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -95,6 +98,64 @@ auto LowerStatement(
     case StatementKind::ExpressionStatement: {
       const auto& expr_stmt = stmt.as<slang::ast::ExpressionStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      // Check if this is a termination system call ($finish, $stop, $exit)
+      if (expr_stmt.expr.kind == slang::ast::ExpressionKind::Call) {
+        const auto& call = expr_stmt.expr.as<slang::ast::CallExpression>();
+        if (call.isSystemCall()) {
+          std::string_view name = call.getSubroutineName();
+          const SystemFunctionInfo* info = FindSystemFunction(name);
+          if (info != nullptr) {
+            if (const auto* term_info =
+                    std::get_if<TerminationFunctionInfo>(&info->payload)) {
+              // Parse the level argument (default if not provided)
+              int level = term_info->default_level;
+              if (!call.arguments().empty()) {
+                const slang::ast::Expression& arg = *call.arguments()[0];
+                if (arg.kind == slang::ast::ExpressionKind::IntegerLiteral) {
+                  const auto& literal = arg.as<slang::ast::IntegerLiteral>();
+                  auto val = literal.getValue();
+                  if (val.hasUnknown()) {
+                    ctx->sink->Error(
+                        span, "termination level cannot contain X or Z");
+                    return hir::kInvalidStatementId;
+                  }
+                  level = static_cast<int>(val.as<int>().value());
+                } else {
+                  ctx->sink->Error(
+                      span, "termination level must be a constant integer");
+                  return hir::kInvalidStatementId;
+                }
+              }
+
+              // Map TerminationType to HIR TerminationKind
+              hir::TerminationKind kind = hir::TerminationKind::kFinish;
+              switch (term_info->type) {
+                case TerminationType::kFinish:
+                  kind = hir::TerminationKind::kFinish;
+                  break;
+                case TerminationType::kStop:
+                  kind = hir::TerminationKind::kStop;
+                  break;
+                case TerminationType::kExit:
+                  kind = hir::TerminationKind::kExit;
+                  break;
+              }
+
+              return ctx->hir_arena->AddStatement(
+                  hir::Statement{
+                      .kind = hir::StatementKind::kTerminate,
+                      .span = span,
+                      .data =
+                          hir::TerminateStatementData{
+                              .kind = kind, .level = level},
+                  });
+            }
+          }
+        }
+      }
+
+      // Not a termination call - lower as regular expression statement
       hir::ExpressionId expr = LowerExpression(expr_stmt.expr, registrar, ctx);
       if (!expr) {
         return hir::kInvalidStatementId;
