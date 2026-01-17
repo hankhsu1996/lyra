@@ -27,6 +27,12 @@ struct BlockIndex {
 inline constexpr BlockIndex kInvalidBlockIndex{
     std::numeric_limits<uint32_t>::max()};
 
+// Loop context for break/continue lowering.
+struct LoopContext {
+  BlockIndex exit_block;
+  BlockIndex continue_block;
+};
+
 class MirBuilder {
  public:
   MirBuilder(mir::Arena* arena, Context* ctx);
@@ -60,6 +66,10 @@ class MirBuilder {
     return *ctx_;
   }
 
+  void PushLoop(LoopContext ctx);
+  void PopLoop();
+  [[nodiscard]] auto CurrentLoop() const -> const LoopContext*;
+
  private:
   struct BlockBuilder {
     std::vector<mir::Instruction> instructions;
@@ -72,6 +82,7 @@ class MirBuilder {
   Context* ctx_;
   BlockIndex current_block_;
   std::vector<BlockBuilder> blocks_;
+  std::vector<LoopContext> loop_stack_;
   bool finished_ = false;
 };
 
