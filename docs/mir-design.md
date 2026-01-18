@@ -19,6 +19,19 @@ Guiding question when designing MIR:
 
 MIR is correct when execution behavior is no longer inferable, only executable.
 
+## MIR Interpreter Scope
+
+The MIR interpreter is a **process-local reference executor**. It validates expression and statement semantics within a single process only.
+
+| Handled by Interpreter  | Handled by LLVM Backend  |
+| ----------------------- | ------------------------ |
+| Expression evaluation   | Multi-process scheduling |
+| Statement execution     | Process coordination     |
+| Control flow in process | Timing/delay semantics   |
+| Module variable access  | Inter-module hierarchy   |
+
+Interpreter tests require single-process designs (one `initial` block). Module-level variables are supported since they're accessed within the process.
+
 ## Core Principles
 
 These are hard rules, not guidelines:
