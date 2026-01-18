@@ -15,3 +15,6 @@ suites:
       - control_flow/do_while.yaml
       - control_flow/for.yaml
       - control_flow/repeat.yaml
+      - control_flow/forever.yaml
+      - control_flow/ternary.yaml
+      - datatypes/arrays.yaml

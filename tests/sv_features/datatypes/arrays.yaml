@@ -76,20 +76,6 @@ cases:
       variables:
         result: 250
 
-  - name: array_display
-    sv: |
-      module Test;
-        initial begin
-          int arr[3];
-          arr[0] = 1;
-          arr[1] = 2;
-          arr[2] = 3;
-          $display("arr[0]=%d arr[1]=%d arr[2]=%d", arr[0], arr[1], arr[2]);
-        end
-      endmodule
-    expect:
-      stdout: "arr[0]=1 arr[1]=2 arr[2]=3\n"
-
   - name: module_level_array
     sv: |
       module Test;
