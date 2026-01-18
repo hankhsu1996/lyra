@@ -76,7 +76,7 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       for (const auto& field : info.fields) {
         fields.push_back(CreateDefaultValue(types, field.type));
       }
-      return MakeStruct(type_id, std::move(fields));
+      return MakeStruct(std::move(fields));
     }
   }
   throw common::InternalError("CreateDefaultValue", "unknown type kind");
@@ -461,7 +461,7 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       for (const auto& operand : rv.operands) {
         fields.push_back(EvalOperand(state, operand));
       }
-      return MakeStruct(info->result_type, std::move(fields));
+      return MakeStruct(std::move(fields));
     }
   }
 
