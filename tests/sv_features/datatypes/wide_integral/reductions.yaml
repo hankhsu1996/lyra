@@ -1,0 +1,45 @@
+feature: wide_integral_reductions
+description: Reduction operations on integrals wider than 64 bits
+
+cases:
+  - name: reduction_xor_wide
+    sv: |
+      module Test;
+        bit [127:0] a;
+        int result;
+        initial begin
+          a = 128'h1;  // Single bit set in low word
+          result = ^a; // XOR reduction = 1 (odd popcount)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_wide
+    sv: |
+      module Test;
+        bit [127:0] a;
+        int result;
+        initial begin
+          a = 128'd1 << 64;  // Bit 64 set (in second word)
+          result = |a;  // OR reduction = 1 (any bit set)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_and_wide
+    sv: |
+      module Test;
+        bit [127:0] a;
+        int result;
+        initial begin
+          a = ~128'd0;  // All bits 1
+          result = &a;  // AND reduction = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

@@ -327,10 +327,6 @@ auto EvalCast(
     throw common::InternalError(
         "EvalCast", "4-state types should have been rejected at lowering");
   }
-  if (src_int.bit_width > 64 || target_int.bit_width > 64) {
-    throw common::InternalError(
-        "EvalCast", ">64-bit types should have been rejected at lowering");
-  }
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how

@@ -25,9 +25,15 @@ struct ExpectedOutput {
   }
 };
 
-// Expected value type: integers or floating-point
+// Hex string for wide values (>64 bits), stored as lowercase without 0x prefix
+// e.g., "ffffffffffffffffffffffffffffffff" for 128-bit all-ones
+struct HexValue {
+  std::string hex;
+};
+
+// Expected value type: integers, floating-point, or hex strings for wide values
 // shortreal (float) is stored as double since YAML parsing produces double
-using ExpectedValue = std::variant<int64_t, double>;
+using ExpectedValue = std::variant<int64_t, double, HexValue>;
 
 struct TestCase {
   std::string name;

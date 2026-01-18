@@ -9,7 +9,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
@@ -103,10 +102,31 @@ auto ValidateAndNormalizeFilename(
   return normalized.generic_string();
 }
 
-// Parse numeric value: integer if no decimal point, double otherwise
-auto ParseNumericValue(const YAML::Node& node)
-    -> std::variant<int64_t, double> {
+// Parse numeric value: hex string for wide values, integer, or double
+auto ParseNumericValue(const YAML::Node& node) -> ExpectedValue {
   auto str = node.as<std::string>();
+
+  // Check for hex prefix (0x or 0X)
+  if (str.starts_with("0x") || str.starts_with("0X")) {
+    std::string hex = str.substr(2);
+    std::ranges::transform(hex, hex.begin(), ::tolower);
+
+    // Remove leading zeros for canonical form
+    auto first_nonzero = hex.find_first_not_of('0');
+    if (first_nonzero != std::string::npos) {
+      hex = hex.substr(first_nonzero);
+    } else {
+      hex = "0";
+    }
+
+    // If fits in 64 bits (16 hex digits or less), parse as int64_t
+    if (hex.size() <= 16) {
+      return static_cast<int64_t>(std::stoull(hex, nullptr, 16));
+    }
+    // Wide value: store as HexValue
+    return HexValue{hex};
+  }
+
   bool has_decimal = str.find('.') != std::string::npos;
   bool has_exponent =
       str.find('e') != std::string::npos || str.find('E') != std::string::npos;

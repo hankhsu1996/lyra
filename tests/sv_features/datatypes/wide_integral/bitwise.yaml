@@ -1,0 +1,72 @@
+feature: wide_integral_bitwise
+description: Bitwise operations on integrals wider than 64 bits
+
+cases:
+  - name: wide_128_bitwise_and
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        initial begin
+          a = 128'd255;
+          b = 128'd15;
+          c = a & b;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xf
+
+  - name: wide_128_bitwise_or
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        initial begin
+          a = 128'd240;
+          b = 128'd15;
+          c = a | b;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xff
+
+  - name: wide_128_bitwise_xor
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        initial begin
+          a = 128'd255;
+          b = 128'd15;
+          c = a ^ b;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xf0
+
+  - name: wide_128_bitwise_not
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'd0;
+          b = ~a;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0xffffffffffffffffffffffffffffffff
+
+  - name: wide_128_bitwise_and_high_bits
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        initial begin
+          a = 128'hFFFFFFFF_00000000_00000000_00000000;
+          b = 128'h0F0F0F0F_0F0F0F0F_0F0F0F0F_0F0F0F0F;
+          c = a & b;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0xf0f0f0f000000000000000000000000

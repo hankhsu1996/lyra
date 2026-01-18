@@ -43,20 +43,45 @@
 namespace lyra::test {
 namespace {
 
+// Convert multi-word integral to lowercase hex string (no prefix)
+auto IntegralToHex(const mir::interp::RuntimeIntegral& integral)
+    -> std::string {
+  std::string result;
+  // Process words from most significant to least significant
+  bool leading = true;
+  for (auto it = integral.value.rbegin(); it != integral.value.rend(); ++it) {
+    if (leading && *it == 0 && std::next(it) != integral.value.rend()) {
+      // Skip leading zero words (but keep at least one word)
+      continue;
+    }
+    if (leading) {
+      // First non-zero word: no padding
+      result += std::format("{:x}", *it);
+      leading = false;
+    } else {
+      // Subsequent words: pad to 16 hex digits
+      result += std::format("{:016x}", *it);
+    }
+  }
+  return result.empty() ? "0" : result;
+}
+
 // Extract numeric value from RuntimeValue for assertion comparison.
-// Returns int64_t for integers (sign-extended for types > 1 bit) or double for
-// reals. 1-bit values are not sign-extended since they're typically unsigned
-// comparison/logical results.
+// Returns int64_t for integers <= 64 bits (sign-extended for types > 1 bit),
+// HexValue for integers > 64 bits, or double for reals.
 auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
-    -> std::expected<std::variant<int64_t, double>, std::string> {
+    -> std::expected<std::variant<int64_t, double, HexValue>, std::string> {
   if (mir::interp::IsIntegral(value)) {
     const auto& integral = mir::interp::AsIntegral(value);
     if (integral.IsX() || integral.IsZ()) {
       return std::unexpected("X/Z values not supported in assertions");
     }
-    if (integral.bit_width > 64 || integral.value.empty()) {
-      return std::unexpected(
-          std::format("Unsupported bit width: {}", integral.bit_width));
+    if (integral.value.empty()) {
+      return std::unexpected("Empty integral value");
+    }
+    // Wide values (>64 bits): return as hex string
+    if (integral.bit_width > 64) {
+      return HexValue{IntegralToHex(integral)};
     }
     uint64_t raw = integral.value[0];
     // Sign-extend for types > 1 bit. 1-bit values are left unsigned since
@@ -176,7 +201,7 @@ struct TestResult {
   bool success = false;
   std::string error_message;
   std::string captured_output;
-  std::map<std::string, std::variant<int64_t, double>> variables;
+  std::map<std::string, ExtractedValue> variables;
   uint64_t final_time = 0;
   std::filesystem::path work_directory;
 };
@@ -271,8 +296,8 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
 
   // Lower HIR to MIR
   TypeId bit_type = hir_result.type_arena->Intern(
-      TypeKind::kIntegral, IntegralInfo{.bit_width = 1, .is_signed = false,
-                                        .is_four_state = true});
+      TypeKind::kIntegral,
+      IntegralInfo{.bit_width = 1, .is_signed = false, .is_four_state = true});
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = hir_result.design,
       .hir_arena = *hir_result.hir_arena,
@@ -323,8 +348,8 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   auto design_state = mir::interp::CreateDesignState(
       *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
   auto state = mir::interp::CreateProcessState(
-      *mir_result.mir_arena, *hir_result.type_arena, module_info->initial_process,
-      &design_state);
+      *mir_result.mir_arena, *hir_result.type_arena,
+      module_info->initial_process, &design_state);
 
   // Run interpreter with output capture
   std::ostringstream output_stream;

@@ -389,14 +389,6 @@ auto LowerCast(
     throw common::InternalError(
         "LowerCast", "4-state target should have been rejected in AST->HIR");
   }
-  if (src_int.bit_width > 64) {
-    throw common::InternalError(
-        "LowerCast", ">64-bit source should have been rejected in AST->HIR");
-  }
-  if (tgt_int.bit_width > 64) {
-    throw common::InternalError(
-        "LowerCast", ">64-bit target should have been rejected in AST->HIR");
-  }
 
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kCast,
