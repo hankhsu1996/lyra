@@ -35,16 +35,16 @@ Guiding question when designing HIR:
 
 These are hard rules, not guidelines:
 
-| Rule                                | Rationale                                           |
-| ----------------------------------- | --------------------------------------------------- |
-| No frontend pointers                | HIR owns all data; slang lifetime must not leak     |
-| No temporaries                      | Temporaries are execution artifacts                 |
-| No SSA or basic blocks              | These model execution, not meaning                  |
-| No flags for semantic differences   | Distinct semantics require distinct representations |
-| Syntactic differences may disappear | `begin/end` vs `{}` are the same in HIR             |
-| Semantic differences must not       | Blocking vs non-blocking must remain distinct       |
+| Rule                                | Rationale                                          |
+| ----------------------------------- | -------------------------------------------------- |
+| No frontend pointers                | HIR owns all data; slang lifetime must not leak    |
+| No temporaries                      | Temporaries are execution artifacts                |
+| No SSA or basic blocks              | These model execution, not meaning                 |
+| No mode flags for semantic variants | Use distinct node types, not flags on shared nodes |
+| Syntactic differences may disappear | `begin/end` vs `{}` are the same in HIR            |
+| Semantic differences must not       | Blocking vs non-blocking must remain distinct      |
 
-HIR correctness is structural. If the HIR is well-formed, it correctly represents the program's meaning.
+HIR correctness is defined by invariants (typing, binding, scoping). If those invariants hold, HIR correctly represents the program's meaning.
 
 ## Core IDs and Arenas
 
@@ -74,8 +74,11 @@ Constants are frontend-known, deduplicable entities—first-class citizens like 
 
 Supported payload kinds:
 
-- Integral/packed bitvectors (two-state or four-state)
-- Strings
+- Integral (two-state or four-state bitvectors)
+- String
+- Real (double-precision float)
+- Struct (vector of ConstIds)
+- Array (vector of ConstIds)
 
 Constants only provide data; types determine layout. A constant's identity (ConstId) is fixed in HIR; MIR and backends only reference or materialize it.
 
@@ -90,7 +93,7 @@ HIR must represent all SystemVerilog type semantics:
 | Aggregate | struct, union (with packed qualifier)               |
 | Other     | string, event, real, time                           |
 
-**Qualifiers** (signed, unsigned, packed, const, lifetime) modify types; they are not standalone types. Avoid type explosion by treating qualifiers as attributes.
+**Qualifiers** (signed, unsigned, packed, const) are canonical type attributes, part of the TypeArena interning key. This is distinct from "mode flags"—qualifiers don't represent semantic variants; they define distinct types.
 
 ## Constant vs Expression
 
@@ -120,28 +123,32 @@ HIR statements preserve source structure:
 
 ## Process Model
 
-`initial` and `always` are not distinct semantic mechanisms—they differ only in execution repetition.
+HIR represents all process forms with a single `Process` construct and a `ProcessKind`:
 
-HIR normalizes them into a single `Process` construct with a kind:
+| Kind                        | Corresponds to | Behavior                            |
+| --------------------------- | -------------- | ----------------------------------- |
+| `ProcessKind::kInitial`     | `initial`      | Runs once                           |
+| `ProcessKind::kAlways`      | `always`       | Repeats forever                     |
+| `ProcessKind::kAlwaysComb`  | `always_comb`  | Combinational, implicit sensitivity |
+| `ProcessKind::kAlwaysFf`    | `always_ff`    | Sequential, clock-edge triggered    |
+| `ProcessKind::kAlwaysLatch` | `always_latch` | Latch inference                     |
+| `ProcessKind::kFinal`       | `final`        | Runs once at simulation end         |
 
-| Kind                   | Corresponds to | Behavior        |
-| ---------------------- | -------------- | --------------- |
-| `ProcessKind::Once`    | `initial`      | Runs once       |
-| `ProcessKind::Looping` | `always`       | Repeats forever |
-
-HIR must **not** preserve `initial` or `always` as distinct syntax nodes. The normalization captures the semantic fact: both are processes, differing only in repetition policy.
+HIR preserves distinct kinds because `always_comb/ff/latch` have semantic constraints beyond repetition (sensitivity rules, synthesis semantics). The distinction matters for validation and backend lowering.
 
 ## System Subroutine Classification
 
 HIR must classify system subroutines into exactly three semantic roles:
 
-| Role   | Description                      | Examples              |
-| ------ | -------------------------------- | --------------------- |
-| Pure   | No side effects, pure evaluation | `$clog2`, `$bits`     |
-| Effect | Immediate observable effect      | `$display`, `$write`  |
-| State  | Mutation of simulation runtime   | `$monitor`, `$finish` |
+| Role   | Description                      | Examples                         |
+| ------ | -------------------------------- | -------------------------------- |
+| Pure   | No side effects, pure evaluation | `$clog2`, `$bits`                |
+| Effect | Immediate observable effect      | `$display`, `$write`, `$monitor` |
+| State  | Terminates or suspends process   | `$finish`, `$stop`, `$fatal`     |
 
 This classification is fixed and does not grow with the number of system APIs. MIR mirrors these roles as distinct statement categories.
+
+**Unknown syscalls**: Unrecognized system subroutines are rejected at AST->HIR with a user-facing diagnostic. This is not a runtime error—it's a compile-time "unsupported" error.
 
 Rule: Classify by _what the subroutine does semantically_, not by its name or argument count.
 
@@ -149,8 +156,10 @@ Rule: Classify by _what the subroutine does semantically_, not by its name or ar
 
 All timing constructs unify as "wait for something":
 
-- Delay (`#10`)
-- Event wait (posedge, negedge, level, named event, OR-list)
+- **Delay**: `wait(duration_expr)` — pause for a time value
+- **Event wait**: `wait(trigger_spec)` — pause until condition occurs
+
+Trigger specifications include: posedge, negedge, level, named event, OR-list.
 
 HIR expresses: _"Execution pauses here until this semantic condition occurs."_
 
