@@ -315,3 +315,87 @@ cases:
     expect:
       variables:
         result: 10
+
+  # Tests for casez/casex with known values (no wildcards in literals)
+  # These verify the statement infrastructure works correctly
+  - name: casez_known_values_match
+    description: casez with all-known values behaves like regular case
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 42;
+          result = 0;
+          casez (x)
+            32'd10: result = 1;
+            32'd42: result = 2;
+            32'd100: result = 3;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: casex_known_values_match
+    description: casex with all-known values behaves like regular case
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 7;
+          result = 0;
+          casex (x)
+            32'd5: result = 1;
+            32'd6: result = 2;
+            32'd7: result = 3;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3
+
+  - name: casez_known_values_default
+    description: casez falls through to default when no match
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 999;
+          result = 0;
+          casez (x)
+            32'd1: result = 1;
+            32'd2: result = 2;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99
+
+  - name: casex_known_values_default
+    description: casex falls through to default when no match
+    sv: |
+      module Test;
+        int x;
+        int result;
+        initial begin
+          x = 888;
+          result = 0;
+          casex (x)
+            32'd1: result = 1;
+            32'd2: result = 2;
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99

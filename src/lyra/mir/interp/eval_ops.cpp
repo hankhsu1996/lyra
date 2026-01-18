@@ -163,6 +163,12 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       throw common::InternalError(
           "EvalBinary", "wildcard inequality not supported");
 
+    case BinaryOp::kCaseZMatch:
+      return IntegralCaseZMatch(lhs_int, rhs_int);
+
+    case BinaryOp::kCaseXMatch:
+      return IntegralCaseXMatch(lhs_int, rhs_int);
+
     case BinaryOp::kLessThan:
       return IntegralLt(lhs_int, rhs_int, false);
 

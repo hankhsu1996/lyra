@@ -221,12 +221,21 @@ auto LowerStatement(
       const auto& case_stmt = stmt.as<slang::ast::CaseStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      if (case_stmt.condition != slang::ast::CaseStatementCondition::Normal) {
-        ctx->sink->Error(
-            span,
-            "only basic case statements are supported (casex/casez/case "
-            "inside not yet)");
-        return hir::kInvalidStatementId;
+      hir::CaseCondition hir_condition = hir::CaseCondition::kNormal;
+      switch (case_stmt.condition) {
+        case slang::ast::CaseStatementCondition::Normal:
+          hir_condition = hir::CaseCondition::kNormal;
+          break;
+        case slang::ast::CaseStatementCondition::WildcardJustZ:
+          hir_condition = hir::CaseCondition::kCaseZ;
+          break;
+        case slang::ast::CaseStatementCondition::WildcardXOrZ:
+          hir_condition = hir::CaseCondition::kCaseX;
+          break;
+        case slang::ast::CaseStatementCondition::Inside:
+          ctx->sink->Error(
+              span, "case inside not yet supported (range matching)");
+          return hir::kInvalidStatementId;
       }
       if (case_stmt.check != slang::ast::UniquePriorityCheck::None) {
         ctx->sink->Error(span, "unique/priority case not yet supported");
@@ -282,7 +291,8 @@ auto LowerStatement(
               .data = hir::CaseStatementData{
                   .selector = selector,
                   .items = std::move(items),
-                  .default_statement = default_statement}});
+                  .default_statement = default_statement,
+                  .condition = hir_condition}});
     }
 
     case StatementKind::ForLoop: {
