@@ -1,6 +1,6 @@
 # MIR Design
 
-MIR (Mid-level IR) fixes all SystemVerilog execution semantics.
+MIR (Mid-level IR) fixes all process-local SystemVerilog execution semantics.
 
 ## Pipeline Position
 
@@ -21,14 +21,14 @@ MIR is correct when execution behavior is no longer inferable, only executable.
 
 ## MIR Interpreter Scope
 
-The MIR interpreter is a **process-local reference executor**. It validates expression and statement semantics within a single process only.
+The MIR interpreter is a **process-local reference executor**. It executes a single process on an already-constructed MIR Design (no elaboration, no scheduling).
 
-| Handled by Interpreter  | Handled by LLVM Backend  |
-| ----------------------- | ------------------------ |
-| Expression evaluation   | Multi-process scheduling |
-| Statement execution     | Process coordination     |
-| Control flow in process | Timing/delay semantics   |
-| Module variable access  | Inter-module hierarchy   |
+| Handled by Interpreter  | Handled by LLVM Backend          |
+| ----------------------- | -------------------------------- |
+| Expression evaluation   | Elaboration / instance hierarchy |
+| Statement execution     | Multi-process scheduling         |
+| Control flow in process | Process coordination             |
+| Module variable access  | Timing/delay semantics           |
 
 Interpreter tests require single-process designs (one `initial` block). Module-level variables are supported since they're accessed within the process.
 
@@ -42,8 +42,8 @@ These are hard rules, not guidelines:
 | Every basic block has one terminator    | Control flow is explicit and complete                   |
 | Suspension operations are terminators   | Delay/Wait yield control; they cannot be instructions   |
 | System subroutines classified by role   | Three semantic categories, not per-API instructions     |
-| TypeId shared from HIR unchanged        | MIR annotates Operands with types; does not create them |
-| No frontend dependencies                | MIR owns all data; no lifetime leakage                  |
+| TypeId shared with type arena           | MIR annotates Operands with types; does not create them |
+| No frontend object dependencies         | No AST pointers; no slang lifetime leakage              |
 | No LLVM/ABI details                     | Platform-independent; backends handle lowering          |
 | No scheduling or execution policy       | Runtime strategy is backend responsibility              |
 
@@ -69,10 +69,10 @@ A variant over Module and Package. Currently supports:
 
 A coroutine unit that may suspend and resume. Composed of basic blocks with an entry block.
 
-Two kinds (normalized in HIR, not MIR):
+Two kinds (HIR's 6 process kinds normalize to these 2 during lowering):
 
-- `Once` — corresponds to `initial`
-- Looping process kind — corresponds to `always`
+- `kOnce` — `initial`, `final`
+- `kLooping` — `always`, `always_comb`, `always_ff`, `always_latch`
 
 Looping processes are **not** expanded to `while(true)` in MIR. Repetition is expressed via process semantics and the `Repeat` terminator.
 
@@ -113,7 +113,7 @@ MIR uses exactly two operand concepts. Do not introduce a unified operand that c
 A writable location. Structure:
 
 - **PlaceRoot**: identifies the storage (Local, Temp, or Design)
-- **Projection sequence**: field access, index access, slice access, dereference
+- **Projection sequence**: field access, index access, slice access
 
 Place is not a value and cannot participate in computation directly. Temporaries (Temp) are compiler-generated Places used to hold intermediate computation results.
 
@@ -123,7 +123,7 @@ A readable operand. Three kinds only:
 
 - **Const**: a constant value
 - **Use**: read from a Place (implicit load)
-- **Poison**: invalid / unreachable value
+- **Poison**: invalid / unreachable value (trap policy: any use is an internal error)
 
 Place-read is implicit—there is no explicit Load instruction. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
 
@@ -147,13 +147,13 @@ Instructions do not affect control flow. Three variants:
 
 Three semantic roles only (fixed classification, does not grow with API count):
 
-| Role   | Description                    | MIR Representation   | Examples              |
-| ------ | ------------------------------ | -------------------- | --------------------- |
-| Pure   | No side effects                | Rvalue (kCall)       | `$clog2`, `$bits`     |
-| Effect | Immediate observable effect    | Effect instruction   | `$display`, `$write`  |
-| State  | Mutation of simulation runtime | Effect or Terminator | `$monitor`, `$finish` |
+| Role   | Description                    | MIR Representation | Examples                         |
+| ------ | ------------------------------ | ------------------ | -------------------------------- |
+| Pure   | No side effects                | Rvalue (kCall)     | `$clog2`, `$bits`                |
+| Effect | Immediate observable effect    | Effect instruction | `$display`, `$write`, `$monitor` |
+| State  | Terminates or suspends process | Terminator         | `$finish`, `$stop`, `$fatal`     |
 
-No system task (void-returning subroutine) is represented as a value-producing Rvalue. Effect system tasks have fixed, backend-agnostic observable behavior.
+Hard rule: if a syscall changes control state (terminate/suspend), it must be a Terminator. Otherwise it must be an Effect. No system task is represented as a value-producing Rvalue.
 
 ## Terminator Categories
 
@@ -179,6 +179,8 @@ A block ending with a suspension terminator (Delay or Wait) has **no CFG success
 
 This means suspension terminators carry a resume target as data, but do not create a CFG edge to it.
 
+**State across suspension**: Because all values are materialized into Places, suspension only needs a resume target. State is carried by storage (locals/temps frame + design slots), not SSA liveness.
+
 ## Loops and Repetition
 
 ### Language Loops
@@ -190,9 +192,11 @@ This means suspension terminators carry a resume target as data, but do not crea
 Always-style repetition is represented by:
 
 - Looping process kind on the process
-- Repeat terminator to return to entry
+- `Repeat` terminator to return to entry
 
 Not expanded into a loop at MIR level. Backend decides the implementation strategy.
+
+**Terminology**: The `Repeat` terminator (process-level) is distinct from the `repeat` statement (language-level loop). The former restarts a process; the latter lowers to Branch/Jump like other loops.
 
 ## What MIR Does NOT Contain
 
