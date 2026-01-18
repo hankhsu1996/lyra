@@ -137,8 +137,9 @@ auto MakeReal(double val) -> RuntimeValue {
   return RuntimeReal{.value = val};
 }
 
-auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue {
+auto MakeStruct(TypeId type, std::vector<RuntimeValue> fields) -> RuntimeValue {
   auto s = std::make_unique<RuntimeStruct>();
+  s->type = type;
   s->fields = std::move(fields);
   return s;
 }
@@ -164,6 +165,7 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue {
         } else if constexpr (std::is_same_v<
                                  T, std::unique_ptr<RuntimeStruct>>) {
           auto copy = std::make_unique<RuntimeStruct>();
+          copy->type = val->type;
           copy->fields.reserve(val->fields.size());
           for (const auto& f : val->fields) {
             copy->fields.push_back(Clone(f));

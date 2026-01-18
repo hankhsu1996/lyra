@@ -1,6 +1,7 @@
 #pragma once
 
 #include <variant>
+#include <vector>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/source_span.hpp"
@@ -23,6 +24,7 @@ enum class ExpressionKind {
   kAssignment,
   kElementAccess,
   kMemberAccess,
+  kStructLiteral,
 };
 
 struct ConstantExpressionData {
@@ -87,11 +89,18 @@ struct MemberAccessExpressionData {
   auto operator==(const MemberAccessExpressionData&) const -> bool = default;
 };
 
+struct StructLiteralExpressionData {
+  std::vector<ExpressionId> field_values;  // Declaration order
+
+  auto operator==(const StructLiteralExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
-    ElementAccessExpressionData, MemberAccessExpressionData>;
+    ElementAccessExpressionData, MemberAccessExpressionData,
+    StructLiteralExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

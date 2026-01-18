@@ -40,6 +40,7 @@ using RuntimeValue = std::variant<
     std::unique_ptr<RuntimeStruct>, std::unique_ptr<RuntimeArray>>;
 
 struct RuntimeStruct {
+  TypeId type;  // Declared struct type (for validation/printing)
   std::vector<RuntimeValue> fields;
 };
 
@@ -54,7 +55,7 @@ auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;
 auto MakeReal(double value) -> RuntimeValue;
-auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue;
+auto MakeStruct(TypeId type, std::vector<RuntimeValue> fields) -> RuntimeValue;
 auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue;
 
 // Deep copy
