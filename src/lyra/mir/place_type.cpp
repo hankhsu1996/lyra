@@ -1,6 +1,7 @@
 #include "lyra/mir/place_type.hpp"
 
 #include <format>
+#include <variant>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
@@ -24,7 +25,26 @@ auto TypeAfterProjection(
       }
       return type.AsUnpackedArray().element_type;
     }
-    case Projection::Kind::kField:
+    case Projection::Kind::kField: {
+      if (type.Kind() != TypeKind::kUnpackedStruct) {
+        throw common::InternalError(
+            "TypeAfterProjection",
+            std::format(
+                "kField projection on non-struct type: {}", ToString(type)));
+      }
+      const auto* field_idx = std::get_if<int>(&proj.operand);
+      if (field_idx == nullptr) {
+        throw common::InternalError(
+            "TypeAfterProjection", "kField projection requires constant index");
+      }
+      const auto& struct_info = type.AsUnpackedStruct();
+      if (*field_idx < 0 ||
+          static_cast<size_t>(*field_idx) >= struct_info.fields.size()) {
+        throw common::InternalError(
+            "TypeAfterProjection", "field index out of range");
+      }
+      return struct_info.fields[static_cast<size_t>(*field_idx)].type;
+    }
     case Projection::Kind::kSlice:
     case Projection::Kind::kDeref:
       throw common::InternalError(

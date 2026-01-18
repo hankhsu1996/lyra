@@ -2,6 +2,7 @@
 
 #include <format>
 
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -57,6 +58,31 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
             .element_type = element,
             .range = ConstantRange{
                 .lower = array.range.lower(), .upper = array.range.upper()}});
+  }
+
+  if (type.isUnpackedStruct()) {
+    const auto& ust =
+        type.getCanonicalType().as<slang::ast::UnpackedStructType>();
+    std::string name = std::string(ust.name);
+    std::vector<StructField> fields;
+
+    for (const auto* field : ust.fields) {
+      TypeId field_type = LowerType(field->getType(), source, ctx);
+      if (!field_type) {
+        return kInvalidTypeId;
+      }
+      fields.push_back({.name = std::string(field->name), .type = field_type});
+    }
+
+    return ctx->type_arena->Intern(
+        TypeKind::kUnpackedStruct,
+        UnpackedStructInfo{
+            .name = std::move(name), .fields = std::move(fields)});
+  }
+
+  if (type.isStruct()) {
+    ctx->sink->Error(source, "only unpacked structs supported");
+    return kInvalidTypeId;
   }
 
   ctx->sink->Error(

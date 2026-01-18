@@ -10,6 +10,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/hir/arena.hpp"
@@ -504,6 +505,55 @@ auto LowerExpression(
               .data =
                   hir::ElementAccessExpressionData{
                       .base = base, .index = index},
+          });
+    }
+
+    case ExpressionKind::MemberAccess: {
+      const auto& access = expr.as<slang::ast::MemberAccessExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      const slang::ast::Type& value_type =
+          access.value().type->getCanonicalType();
+      if (!value_type.isUnpackedStruct()) {
+        if (value_type.isStruct()) {
+          ctx->sink->Error(span, "only unpacked structs supported");
+        } else {
+          ctx->sink->Error(
+              span, "member access only supported on struct types");
+        }
+        return hir::kInvalidExpressionId;
+      }
+
+      const auto* field = access.member.as_if<slang::ast::FieldSymbol>();
+      if (field == nullptr) {
+        ctx->sink->Error(span, "only struct field access is supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId base = LowerExpression(access.value(), registrar, ctx);
+      if (!base) {
+        return hir::kInvalidExpressionId;
+      }
+
+      int field_index = static_cast<int>(field->fieldIndex);
+
+      if (expr.type == nullptr) {
+        ctx->sink->Error(span, "internal: member access has no resolved type");
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kMemberAccess,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::MemberAccessExpressionData{
+                      .base = base, .field_index = field_index},
           });
     }
 

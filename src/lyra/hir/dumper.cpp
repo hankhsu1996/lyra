@@ -538,6 +538,13 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << "]";
       break;
     }
+
+    case ExpressionKind::kMemberAccess: {
+      const auto& data = std::get<MemberAccessExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << ".<" << data.field_index << ">";
+      break;
+    }
   }
 }
 

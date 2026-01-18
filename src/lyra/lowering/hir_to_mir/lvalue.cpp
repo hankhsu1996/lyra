@@ -50,6 +50,23 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
               .operand = index_operand,
           };
           return ctx.mir_arena->DerivePlace(base_place, std::move(proj));
+        } else if constexpr (std::is_same_v<
+                                 T, hir::MemberAccessExpressionData>) {
+          mir::PlaceId base_place = LowerLvalue(data.base, builder);
+
+          const mir::Place& base = (*ctx.mir_arena)[base_place];
+          TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base);
+          const Type& base_type = (*ctx.type_arena)[base_type_id];
+          if (base_type.Kind() != TypeKind::kUnpackedStruct) {
+            throw common::InternalError(
+                "LowerLvalue", "MemberAccess base is not an unpacked struct");
+          }
+
+          mir::Projection proj{
+              .kind = mir::Projection::Kind::kField,
+              .operand = data.field_index,
+          };
+          return ctx.mir_arena->DerivePlace(base_place, std::move(proj));
         } else {
           throw common::InternalError(
               "LowerLvalue", "unsupported lvalue expression");
