@@ -436,6 +436,33 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       // handled here. Currently all supported system calls are effects.
       throw common::InternalError(
           "EvalRvalue", "pure system calls not yet supported");
+
+    case RvalueKind::kAggregate: {
+      const auto* info = std::get_if<AggregateInfo>(&rv.info);
+      if (info == nullptr) {
+        throw common::InternalError(
+            "EvalRvalue", "kAggregate missing AggregateInfo");
+      }
+
+      const Type& type = (*types_)[info->result_type];
+      if (type.Kind() != TypeKind::kUnpackedStruct) {
+        throw common::InternalError(
+            "EvalRvalue", "kAggregate only supports unpacked structs");
+      }
+
+      const auto& struct_info = type.AsUnpackedStruct();
+      if (rv.operands.size() != struct_info.fields.size()) {
+        throw common::InternalError(
+            "EvalRvalue", "kAggregate operand count mismatch");
+      }
+
+      std::vector<RuntimeValue> fields;
+      fields.reserve(rv.operands.size());
+      for (const auto& operand : rv.operands) {
+        fields.push_back(EvalOperand(state, operand));
+      }
+      return MakeStruct(std::move(fields));
+    }
   }
 
   throw common::InternalError("EvalRvalue", "unknown rvalue kind");

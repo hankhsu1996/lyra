@@ -349,6 +349,22 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
     case RvalueKind::kCall:
       result = std::format("call(op={})", rv.op);
       break;
+    case RvalueKind::kAggregate: {
+      const auto* info = std::get_if<AggregateInfo>(&rv.info);
+      std::string type_str =
+          info != nullptr ? FormatType(info->result_type) : "?";
+      result = "aggregate<" + type_str + ">(";
+      bool first = true;
+      for (const auto& op : rv.operands) {
+        if (!first) {
+          result += ", ";
+        }
+        first = false;
+        result += FormatOperand(op);
+      }
+      result += ")";
+      return result;
+    }
   }
 
   for (const Operand& operand : rv.operands) {

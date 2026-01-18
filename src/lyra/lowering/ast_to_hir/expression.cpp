@@ -2,6 +2,7 @@
 
 #include <format>
 #include <optional>
+#include <span>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -10,6 +11,8 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/hir/arena.hpp"
@@ -505,6 +508,142 @@ auto LowerExpression(
                   hir::ElementAccessExpressionData{
                       .base = base, .index = index},
           });
+    }
+
+    case ExpressionKind::MemberAccess: {
+      const auto& access = expr.as<slang::ast::MemberAccessExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      const slang::ast::Type& value_type =
+          access.value().type->getCanonicalType();
+      if (!value_type.isUnpackedStruct()) {
+        if (value_type.isStruct()) {
+          ctx->sink->Error(span, "only unpacked structs supported");
+        } else {
+          ctx->sink->Error(
+              span, "member access only supported on struct types");
+        }
+        return hir::kInvalidExpressionId;
+      }
+
+      const auto* field = access.member.as_if<slang::ast::FieldSymbol>();
+      if (field == nullptr) {
+        ctx->sink->Error(span, "only struct field access is supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId base = LowerExpression(access.value(), registrar, ctx);
+      if (!base) {
+        return hir::kInvalidExpressionId;
+      }
+
+      int field_index = static_cast<int>(field->fieldIndex);
+
+      if (expr.type == nullptr) {
+        ctx->sink->Error(span, "internal: member access has no resolved type");
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kMemberAccess,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::MemberAccessExpressionData{
+                      .base = base, .field_index = field_index},
+          });
+    }
+
+    case ExpressionKind::ReplicatedAssignmentPattern:
+    case ExpressionKind::SimpleAssignmentPattern:
+    case ExpressionKind::StructuredAssignmentPattern: {
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Validate type exists
+      if (expr.type == nullptr) {
+        ctx->sink->Error(span, "assignment pattern has no resolved type");
+        return hir::kInvalidExpressionId;
+      }
+      const slang::ast::Type& ct = expr.type->getCanonicalType();
+
+      // Gate: only unpacked structs
+      if (!ct.isUnpackedStruct()) {
+        if (ct.isArray()) {
+          ctx->sink->Error(span, "array literals not yet supported");
+        } else if (ct.isStruct()) {
+          ctx->sink->Error(span, "only unpacked struct literals supported");
+        } else {
+          ctx->sink->Error(span, "assignment pattern requires struct type");
+        }
+        return hir::kInvalidExpressionId;
+      }
+
+      // Gate: reject replication patterns
+      if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
+        ctx->sink->Error(span, "replication not supported in struct literals");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Gate: reject default/type setters (check before size to give clearer
+      // error)
+      if (expr.kind == ExpressionKind::StructuredAssignmentPattern) {
+        const auto& structured =
+            expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+        if (structured.defaultSetter != nullptr ||
+            !structured.typeSetters.empty()) {
+          ctx->sink->Error(
+              span, "default/type setters not supported in struct literals");
+          return hir::kInvalidExpressionId;
+        }
+      }
+
+      // Get elements - both pattern types use elements() with declaration order
+      auto get_elements = [&]() {
+        if (expr.kind == ExpressionKind::SimpleAssignmentPattern) {
+          return expr.as<slang::ast::SimpleAssignmentPatternExpression>()
+              .elements();
+        }
+        return expr.as<slang::ast::StructuredAssignmentPatternExpression>()
+            .elements();
+      };
+      auto elements = get_elements();
+
+      // Gate: full literal only (all fields must be specified)
+      const auto& struct_type = ct.as<slang::ast::UnpackedStructType>();
+      if (elements.size() != struct_type.fields.size()) {
+        ctx->sink->Error(
+            span, "all struct fields must be explicitly specified");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower field values
+      std::vector<hir::ExpressionId> field_values;
+      field_values.reserve(elements.size());
+      for (const auto* elem : elements) {
+        hir::ExpressionId field_id = LowerExpression(*elem, registrar, ctx);
+        if (!field_id) {
+          return hir::kInvalidExpressionId;
+        }
+        field_values.push_back(field_id);
+      }
+
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kStructLiteral,
+              .type = type,
+              .span = span,
+              .data = hir::StructLiteralExpressionData{
+                  .field_values = std::move(field_values)}});
     }
 
     default:

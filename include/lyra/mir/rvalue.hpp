@@ -13,6 +13,7 @@ enum class RvalueKind {
   kBinary,
   kCast,
   kCall,
+  kAggregate,
 };
 
 struct CastInfo {
@@ -20,7 +21,11 @@ struct CastInfo {
   TypeId target_type;
 };
 
-using RvalueInfo = std::variant<std::monostate, CastInfo>;
+struct AggregateInfo {
+  TypeId result_type;  // The aggregate type being constructed (struct or array)
+};
+
+using RvalueInfo = std::variant<std::monostate, CastInfo, AggregateInfo>;
 
 struct Rvalue {
   RvalueKind kind;

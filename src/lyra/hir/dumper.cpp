@@ -538,6 +538,28 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << "]";
       break;
     }
+
+    case ExpressionKind::kMemberAccess: {
+      const auto& data = std::get<MemberAccessExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << ".<" << data.field_index << ">";
+      break;
+    }
+
+    case ExpressionKind::kStructLiteral: {
+      const auto& data = std::get<StructLiteralExpressionData>(expr.data);
+      *out_ << "'{";
+      bool first = true;
+      for (ExpressionId field_expr : data.field_values) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(field_expr);
+      }
+      *out_ << "}";
+      break;
+    }
   }
 }
 

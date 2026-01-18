@@ -484,6 +484,24 @@ auto LowerConditional(
   return mir::Operand::Use(result);
 }
 
+auto LowerStructLiteral(
+    const hir::StructLiteralExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.field_values.size());
+  for (hir::ExpressionId field_id : data.field_values) {
+    operands.push_back(LowerExpression(field_id, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .kind = mir::RvalueKind::kAggregate,
+      .op = kUnusedOp,
+      .operands = std::move(operands),
+      .info = mir::AggregateInfo{.result_type = expr.type},
+  };
+  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -514,6 +532,13 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
                                  T, hir::ElementAccessExpressionData>) {
           mir::PlaceId place = LowerLvalue(expr_id, builder);
           return mir::Operand::Use(place);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::MemberAccessExpressionData>) {
+          mir::PlaceId place = LowerLvalue(expr_id, builder);
+          return mir::Operand::Use(place);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::StructLiteralExpressionData>) {
+          return LowerStructLiteral(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");
