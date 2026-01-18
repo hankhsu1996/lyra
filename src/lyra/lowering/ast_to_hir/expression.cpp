@@ -358,15 +358,6 @@ auto LowerExpression(
         ctx->sink->Error(span, "conversion to 4-state type not yet supported");
         return hir::kInvalidExpressionId;
       }
-      if (src_type.getBitWidth() > 64) {
-        ctx->sink->Error(
-            span, "conversion from >64-bit type not yet supported");
-        return hir::kInvalidExpressionId;
-      }
-      if (tgt_type.getBitWidth() > 64) {
-        ctx->sink->Error(span, "conversion to >64-bit type not yet supported");
-        return hir::kInvalidExpressionId;
-      }
 
       hir::ExpressionId operand =
           LowerExpression(conv.operand(), registrar, ctx);

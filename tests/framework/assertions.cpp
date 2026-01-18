@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <ios>
@@ -108,7 +109,7 @@ void AssertFiles(
 }
 
 void AssertVariables(
-    const std::map<std::string, std::variant<int64_t, double>>& actual,
+    const std::map<std::string, ExtractedValue>& actual,
     const std::map<std::string, ExpectedValue>& expected,
     const std::string& test_name) {
   for (const auto& [name, expected_val] : expected) {
@@ -116,16 +117,40 @@ void AssertVariables(
     ASSERT_NE(it, actual.end())
         << "[" << test_name << "] Missing variable: " << name;
 
-    std::visit(
-        [&](auto&& exp) {
-          using T = std::decay_t<decltype(exp)>;
-          auto* actual_ptr = std::get_if<T>(&it->second);
-          ASSERT_NE(actual_ptr, nullptr)
-              << "[" << test_name << "] Type mismatch for variable " << name;
-          EXPECT_EQ(*actual_ptr, exp)
-              << "[" << test_name << "] Variable " << name;
-        },
-        expected_val);
+    // Convert both to hex strings for comparison to handle mixed types
+    // (e.g., expected int64_t vs actual HexValue for wide variables)
+    auto to_hex = [](const ExtractedValue& val) -> std::string {
+      return std::visit(
+          [](auto&& v) -> std::string {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, HexValue>) {
+              return v.hex;
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+              // Format as hex, strip leading zeros
+              return std::format("{:x}", static_cast<uint64_t>(v));
+            } else {
+              // double - format as decimal string
+              return std::format("{}", v);
+            }
+          },
+          val);
+    };
+
+    // For double comparisons, keep the original type-safe comparison
+    if (std::holds_alternative<double>(expected_val)) {
+      const auto* actual_ptr = std::get_if<double>(&it->second);
+      ASSERT_NE(actual_ptr, nullptr)
+          << "[" << test_name << "] Type mismatch for variable " << name
+          << " (expected double)";
+      EXPECT_EQ(*actual_ptr, std::get<double>(expected_val))
+          << "[" << test_name << "] Variable " << name;
+    } else {
+      // int64_t and HexValue can be compared via hex string conversion
+      std::string expected_hex = to_hex(expected_val);
+      std::string actual_hex = to_hex(it->second);
+      EXPECT_EQ(actual_hex, expected_hex)
+          << "[" << test_name << "] Variable " << name;
+    }
   }
 }
 

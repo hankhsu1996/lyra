@@ -1,0 +1,76 @@
+feature: wide_integral_conversions
+description: Type conversions on integrals wider than 64 bits
+
+cases:
+  - name: narrow_to_wide_zero_extend
+    sv: |
+      module Test;
+        int narrow;
+        bit [127:0] wide;
+        initial begin
+          narrow = 32'h12345678;
+          wide = narrow;
+        end
+      endmodule
+    expect:
+      variables:
+        wide: 0x12345678
+
+  - name: narrow_to_wide_sign_extend
+    sv: |
+      module Test;
+        int narrow;
+        bit signed [127:0] wide;
+        initial begin
+          narrow = -1;
+          wide = narrow;
+        end
+      endmodule
+    expect:
+      variables:
+        wide: 0xffffffffffffffffffffffffffffffff
+
+  - name: wide_to_narrow_truncation
+    sv: |
+      module Test;
+        bit [127:0] wide;
+        int narrow;
+        initial begin
+          wide = 128'hDEADBEEF_12345678;
+          narrow = wide;
+        end
+      endmodule
+    expect:
+      variables:
+        narrow: 0x12345678
+
+  - name: wide_to_narrow_signed
+    sv: |
+      module Test;
+        bit signed [127:0] wide;
+        int narrow;
+        initial begin
+          wide = -1;
+          narrow = wide;
+        end
+      endmodule
+    expect:
+      variables:
+        narrow: -1
+
+  - name: longint_to_wide_roundtrip
+    sv: |
+      module Test;
+        longint narrow;
+        bit [127:0] wide;
+        longint result;
+        initial begin
+          narrow = 64'h123456789ABCDEF0;
+          wide = narrow;
+          result = wide;
+        end
+      endmodule
+    expect:
+      variables:
+        wide: 0x123456789abcdef0
+        result: 0x123456789abcdef0

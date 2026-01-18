@@ -1,0 +1,82 @@
+feature: wide_integral_shifts
+description: Shift operations on integrals wider than 64 bits
+
+cases:
+  - name: wide_128_shift_left_small
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'd1;
+          b = a << 4;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0x10
+
+  - name: wide_128_shift_left_cross_word
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'd1;
+          b = a << 64;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0x10000000000000000
+
+  - name: wide_128_shift_left_large
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'd1;
+          b = a << 100;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0x10000000000000000000000000
+
+  - name: wide_128_shift_right_small
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'd256;
+          b = a >> 4;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0x10
+
+  - name: wide_128_shift_right_cross_word
+    sv: |
+      module Test;
+        bit [127:0] a, b;
+        initial begin
+          a = 128'h1_00000000_00000000;
+          b = a >> 64;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 0x1
+
+  - name: wide_128_shift_chain
+    sv: |
+      module Test;
+        bit [127:0] a, b, c;
+        initial begin
+          a = 128'd1;
+          b = a << 64;
+          c = b >> 32;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0x100000000

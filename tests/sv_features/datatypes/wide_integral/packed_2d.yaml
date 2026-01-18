@@ -1,0 +1,137 @@
+feature: wide_packed_arrays_2d
+description: 2D packed arrays where total width exceeds 64 bits
+
+# NOTE: These tests require packed array bit-select support (data[0]),
+# which is not yet implemented. Skip interpreter for now.
+
+cases:
+  - name: wide_2d_element_write_and_read
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        initial begin
+          data[0] = 128'd100;
+          data[1] = 128'd200;
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xc80000000000000000000000000000006400000000000000000000000000000000
+
+  - name: wide_2d_element_arithmetic
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] a, b, c;
+        initial begin
+          a[0] = 128'd1000;
+          a[1] = 128'd2000;
+          b[0] = 128'd300;
+          b[1] = 128'd400;
+          c[0] = a[0] + b[0];
+          c[1] = a[1] + b[1];
+        end
+      endmodule
+    expect:
+      variables:
+        c: 0x96000000000000000000000000000000514
+
+  - name: wide_2d_element_overwrite
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        initial begin
+          data[0] = 128'd100;
+          data[1] = 128'd200;
+          data[0] = 128'd999;
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xc8000000000000000000000000000003e7
+
+  - name: wide_2d_variable_index_read
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        bit [127:0] elem;
+        int idx;
+        initial begin
+          data[0] = 128'd42;
+          data[1] = 128'd84;
+          idx = 1;
+          elem = data[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        elem: 0x54
+
+  - name: wide_2d_variable_index_write
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] data;
+        int idx;
+        initial begin
+          idx = 0;
+          data[idx] = 128'd111;
+          idx = 1;
+          data[idx] = 128'd222;
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xde0000000000000000000000000000006f
+
+  - name: wide_2d_65bit_boundary
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][64:0] data;
+        initial begin
+          data[0] = 65'd12345678901234;
+          data[1] = 65'd98765432109876;
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0x59d6390ce3b4000b3a73ce2ff2
+
+  - name: wide_2d_65bit_variable_index
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][64:0] data;
+        bit [64:0] elem;
+        int idx;
+        initial begin
+          data[0] = 65'd42;
+          data[1] = 65'd84;
+          idx = 0;
+          elem = data[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        elem: 0x2a
+
+  - name: wide_2d_whole_array_assignment
+    skip_interpreter: true
+    sv: |
+      module Test;
+        bit [1:0][127:0] a, b;
+        int match;
+        initial begin
+          a[0] = 128'd1234567890;
+          a[1] = 128'd9876543210;
+          b = a;
+          match = (b == a) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        match: 1

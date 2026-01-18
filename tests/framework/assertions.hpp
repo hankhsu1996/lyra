@@ -22,9 +22,13 @@ void AssertFiles(
     const std::filesystem::path& work_directory,
     const std::map<std::string, ExpectedOutput>& expected_files);
 
+// Extracted variable value - matches ExpectedValue but for actual runtime
+// values
+using ExtractedValue = std::variant<int64_t, double, HexValue>;
+
 // Assert variable values match expected values
 void AssertVariables(
-    const std::map<std::string, std::variant<int64_t, double>>& actual,
+    const std::map<std::string, ExtractedValue>& actual,
     const std::map<std::string, ExpectedValue>& expected,
     const std::string& test_name);
 
