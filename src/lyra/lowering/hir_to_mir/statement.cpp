@@ -164,6 +164,20 @@ void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
     }
   }
 
+  // Select comparison operator based on case condition
+  mir::BinaryOp cmp_op = mir::BinaryOp::kEqual;
+  switch (data.condition) {
+    case hir::CaseCondition::kNormal:
+      cmp_op = mir::BinaryOp::kEqual;
+      break;
+    case hir::CaseCondition::kCaseZ:
+      cmp_op = mir::BinaryOp::kCaseZMatch;
+      break;
+    case hir::CaseCondition::kCaseX:
+      cmp_op = mir::BinaryOp::kCaseXMatch;
+      break;
+  }
+
   // 1. Lower and materialize selector to a place (evaluated once)
   mir::Operand sel = LowerExpression(data.selector, builder);
   mir::PlaceId sel_place;
@@ -211,11 +225,11 @@ void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
     for (size_t j = 0; j < item.expressions.size(); ++j) {
       mir::Operand val = LowerExpression(item.expressions[j], builder);
 
-      // Compare: sel_place == val (result is 1-bit 4-state, may be X)
+      // Compare selector with case item (result is 1-bit 4-state, may be X)
       TypeId cmp_type = ctx.GetBitType();
       mir::Rvalue cmp_rvalue{
           .kind = mir::RvalueKind::kBinary,
-          .op = static_cast<int>(mir::BinaryOp::kEqual),
+          .op = static_cast<int>(cmp_op),
           .operands = {mir::Operand::Use(sel_place), std::move(val)},
           .info = {},
       };

@@ -507,6 +507,86 @@ auto IntegralNe(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
   return std::get<RuntimeIntegral>(MakeIntegral(eq.IsZero() ? 1 : 0, 1));
 }
 
+auto IntegralCaseXMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral {
+  // casex: X and Z bits from BOTH operands are wildcards (don't-care).
+  // Compare only the known bits that are not X or Z in either operand.
+
+  // If both are fully known, use exact equality
+  if (lhs.IsKnown() && rhs.IsKnown()) {
+    auto eq = IntegralEq(lhs, rhs);
+    // IntegralEq returns 0 or 1 for known operands, never X
+    return eq;
+  }
+
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.x_mask.size(), rhs.x_mask.size(),
+       lhs.z_mask.size(), rhs.z_mask.size()});
+
+  for (size_t i = 0; i < max_words; ++i) {
+    uint64_t lhs_val = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t rhs_val = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t lhs_x = (i < lhs.x_mask.size()) ? lhs.x_mask[i] : 0;
+    uint64_t rhs_x = (i < rhs.x_mask.size()) ? rhs.x_mask[i] : 0;
+    uint64_t lhs_z = (i < lhs.z_mask.size()) ? lhs.z_mask[i] : 0;
+    uint64_t rhs_z = (i < rhs.z_mask.size()) ? rhs.z_mask[i] : 0;
+
+    // Wildcard mask: bits that are X or Z in either operand
+    uint64_t wildcard = lhs_x | lhs_z | rhs_x | rhs_z;
+    // Compare mask: bits we actually need to compare
+    uint64_t compare_mask = ~wildcard;
+
+    if ((lhs_val & compare_mask) != (rhs_val & compare_mask)) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
+    }
+  }
+
+  return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
+}
+
+auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral {
+  // casez: Z bits from BOTH operands are wildcards (don't-care).
+  // X bits are NOT wildcards: they are compared normally (X==X is true,
+  // X==0 or X==1 is false). This differs from casex where X is also a wildcard.
+
+  // If both are fully known, use exact equality
+  if (lhs.IsKnown() && rhs.IsKnown()) {
+    auto eq = IntegralEq(lhs, rhs);
+    return eq;
+  }
+
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.x_mask.size(), rhs.x_mask.size(),
+       lhs.z_mask.size(), rhs.z_mask.size()});
+
+  for (size_t i = 0; i < max_words; ++i) {
+    uint64_t lhs_val = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t rhs_val = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t lhs_x = (i < lhs.x_mask.size()) ? lhs.x_mask[i] : 0;
+    uint64_t rhs_x = (i < rhs.x_mask.size()) ? rhs.x_mask[i] : 0;
+    uint64_t lhs_z = (i < lhs.z_mask.size()) ? lhs.z_mask[i] : 0;
+    uint64_t rhs_z = (i < rhs.z_mask.size()) ? rhs.z_mask[i] : 0;
+
+    // Z wildcard mask: bits that are Z in either operand (wildcards)
+    uint64_t z_wildcard = lhs_z | rhs_z;
+    // Compare mask: bits we need to compare (not Z in either operand)
+    uint64_t compare_mask = ~z_wildcard;
+
+    // Value bits must match (for non-wildcard positions)
+    if ((lhs_val & compare_mask) != (rhs_val & compare_mask)) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
+    }
+
+    // X bits must match exactly (for non-wildcard positions)
+    if ((lhs_x & compare_mask) != (rhs_x & compare_mask)) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
+    }
+  }
+
+  return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
+}
+
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral {

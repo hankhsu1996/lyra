@@ -69,10 +69,17 @@ struct CaseItem {
   auto operator==(const CaseItem&) const -> bool = default;
 };
 
+enum class CaseCondition : uint8_t {
+  kNormal,  // case: equality comparison
+  kCaseZ,   // casez: Z bits from both sides are wildcards
+  kCaseX,   // casex: X and Z bits from both sides are wildcards
+};
+
 struct CaseStatementData {
   ExpressionId selector;
   std::vector<CaseItem> items;
   std::optional<StatementId> default_statement;
+  CaseCondition condition = CaseCondition::kNormal;
 
   auto operator==(const CaseStatementData&) const -> bool = default;
 };

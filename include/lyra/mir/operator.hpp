@@ -59,6 +59,10 @@ enum class BinaryOp {
   kWildcardEqual,
   kWildcardNotEqual,
 
+  // Case statement matching (wildcards on both sides)
+  kCaseZMatch,  // casez: Z bits from both sides are wildcards
+  kCaseXMatch,  // casex: X and Z bits from both sides are wildcards
+
   // Comparison (relational, unsigned)
   kLessThan,
   kLessThanEqual,
@@ -158,6 +162,10 @@ inline auto ToString(BinaryOp op) -> const char* {
       return "==?";
     case BinaryOp::kWildcardNotEqual:
       return "!=?";
+    case BinaryOp::kCaseZMatch:
+      return "casez_match";
+    case BinaryOp::kCaseXMatch:
+      return "casex_match";
     case BinaryOp::kLessThan:
       return "<";
     case BinaryOp::kLessThanEqual:

@@ -50,6 +50,14 @@ auto IntegralEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral;
 auto IntegralNe(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral;
+
+// Case statement matching (return 1-bit result, always 0 or 1)
+// casez: Z bits from both operands are wildcards (ignored); X bits must match
+auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral;
+// casex: X and Z bits from both operands are wildcards (ignored)
+auto IntegralCaseXMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral;
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral;
