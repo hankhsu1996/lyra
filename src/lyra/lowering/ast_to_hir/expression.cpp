@@ -17,8 +17,10 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/builtin_method.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -385,123 +387,68 @@ auto LowerExpression(
       const auto& call = expr.as<slang::ast::CallExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      // Check if this is a builtin method call on a dynamic array.
+      // Check if this is a builtin method call on a dynamic array or queue.
       // IMPORTANT: Must check BEFORE isSystemCall() - slang's isSystemCall()
       // returns true for built-in array methods like size().
-      // Also must verify it's NOT a user function (SubroutineSymbol) to avoid
-      // confusing user-defined size(arr) with the builtin arr.size().
-      // NOTE: System calls have names starting with '$' (e.g., $size), so the
-      // exact name match "size"/"delete" won't capture future system calls.
-      const auto* user_sub =
-          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-      std::string_view name = call.getSubroutineName();
-      if (user_sub == nullptr && !call.arguments().empty()) {
-        const auto* first_arg = call.arguments()[0];
-        bool is_dynamic_array =
-            first_arg->type != nullptr &&
-            first_arg->type->kind == slang::ast::SymbolKind::DynamicArrayType;
-        bool is_queue =
-            first_arg->type != nullptr &&
-            first_arg->type->kind == slang::ast::SymbolKind::QueueType;
-
-        // Dynamic array builtin methods
-        if (is_dynamic_array) {
-          if (name == "size") {
-            hir::ExpressionId receiver =
-                LowerExpression(*first_arg, registrar, ctx);
-            if (!receiver) {
-              return hir::kInvalidExpressionId;
-            }
-
-            // size() returns int (32-bit signed)
-            TypeId int_type = ctx->type_arena->Intern(
-                TypeKind::kIntegral, IntegralInfo{
-                                         .bit_width = 32,
-                                         .is_signed = true,
-                                         .is_four_state = false});
-
-            return ctx->hir_arena->AddExpression(
-                hir::Expression{
-                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
-                    .type = int_type,
-                    .span = span,
-                    .data = hir::BuiltinMethodCallExpressionData{
-                        .receiver = receiver,
-                        .method = hir::BuiltinMethod::kSize,
-                        .args = {}}});
-          }
-          if (name == "delete") {
-            ctx->sink->Error(
-                span, "delete() cannot be used in expression context");
-            return hir::kInvalidExpressionId;
-          }
+      if (auto info = ClassifyBuiltinMethod(call)) {
+        // Effect-only methods cannot appear in expression context.
+        // Slang should reject this, so treat as ICE if we see it.
+        if (!info->ReturnsValue()) {
+          throw common::InternalError(
+              "LowerExpression",
+              std::format(
+                  "effect-only builtin method in expression context: {}",
+                  call.getSubroutineName()));
         }
 
-        // Queue builtin methods
-        if (is_queue) {
-          // size() returns int
-          if (name == "size") {
-            hir::ExpressionId receiver =
-                LowerExpression(*first_arg, registrar, ctx);
-            if (!receiver) {
-              return hir::kInvalidExpressionId;
-            }
+        // Lower the receiver (first argument).
+        const auto* first_arg = call.arguments()[0];
+        hir::ExpressionId receiver =
+            LowerExpression(*first_arg, registrar, ctx);
+        if (!receiver) {
+          return hir::kInvalidExpressionId;
+        }
 
-            TypeId int_type = ctx->type_arena->Intern(
+        // Determine HIR method and result type based on classification.
+        hir::BuiltinMethod hir_method{};
+        TypeId result_type{};
+
+        switch (info->method) {
+          case BuiltinMethodKind::kSize: {
+            hir_method = hir::BuiltinMethod::kSize;
+            result_type = ctx->type_arena->Intern(
                 TypeKind::kIntegral, IntegralInfo{
                                          .bit_width = 32,
                                          .is_signed = true,
                                          .is_four_state = false});
-
-            return ctx->hir_arena->AddExpression(
-                hir::Expression{
-                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
-                    .type = int_type,
-                    .span = span,
-                    .data = hir::BuiltinMethodCallExpressionData{
-                        .receiver = receiver,
-                        .method = hir::BuiltinMethod::kSize,
-                        .args = {}}});
+            break;
           }
-
-          // pop_back()/pop_front() return element type
-          if (name == "pop_back" || name == "pop_front") {
-            hir::ExpressionId receiver =
-                LowerExpression(*first_arg, registrar, ctx);
-            if (!receiver) {
-              return hir::kInvalidExpressionId;
-            }
-
-            // Get element type from queue
+          case BuiltinMethodKind::kPopBack:
+          case BuiltinMethodKind::kPopFront: {
+            hir_method = (info->method == BuiltinMethodKind::kPopBack)
+                             ? hir::BuiltinMethod::kPopBack
+                             : hir::BuiltinMethod::kPopFront;
+            // Get element type from queue.
             const auto& queue_type =
                 first_arg->type->getCanonicalType().as<slang::ast::QueueType>();
-            TypeId element_type = LowerType(queue_type.elementType, span, ctx);
-            if (!element_type) {
+            result_type = LowerType(queue_type.elementType, span, ctx);
+            if (!result_type) {
               return hir::kInvalidExpressionId;
             }
-
-            hir::BuiltinMethod method = (name == "pop_back")
-                                            ? hir::BuiltinMethod::kPopBack
-                                            : hir::BuiltinMethod::kPopFront;
-
-            return ctx->hir_arena->AddExpression(
-                hir::Expression{
-                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
-                    .type = element_type,
-                    .span = span,
-                    .data = hir::BuiltinMethodCallExpressionData{
-                        .receiver = receiver, .method = method, .args = {}}});
+            break;
           }
-
-          // Statement-only methods: reject in expression context
-          if (name == "push_back" || name == "push_front" || name == "insert" ||
-              name == "delete") {
-            ctx->sink->Error(
-                span,
-                std::format("{}() cannot be used in expression context", name));
-            return hir::kInvalidExpressionId;
-          }
+          default:
+            throw common::InternalError(
+                "LowerExpression", "unhandled value-returning builtin method");
         }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::BuiltinMethodCallExpressionData{
+                    .receiver = receiver, .method = hir_method, .args = {}}});
       }
 
       // Handle system calls ($display, etc.)
@@ -509,7 +456,9 @@ auto LowerExpression(
         return LowerSystemCall(call, registrar, ctx);
       }
 
-      // User function call (user_sub was computed above for builtin detection)
+      // User function call
+      const auto* user_sub =
+          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
       if (user_sub == nullptr) {
         ctx->sink->Error(span, "indirect function calls not supported");
         return hir::kInvalidExpressionId;
