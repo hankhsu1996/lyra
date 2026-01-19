@@ -47,8 +47,7 @@ auto LowerElementAccessLvalue(
   }
 
   mir::Projection proj{
-      .kind = mir::Projection::Kind::kIndex,
-      .operand = index_operand,
+      .info = mir::IndexProjection{.index = index_operand},
   };
   return ctx.mir_arena->DerivePlace(base_place, std::move(proj));
 }
@@ -69,8 +68,29 @@ auto LowerMemberAccessLvalue(
   }
 
   mir::Projection proj{
-      .kind = mir::Projection::Kind::kField,
-      .operand = data.field_index,
+      .info = mir::FieldProjection{.field_index = data.field_index},
+  };
+  return ctx.mir_arena->DerivePlace(base_place, std::move(proj));
+}
+
+auto LowerPackedElementSelectLvalue(
+    const hir::PackedElementSelectExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> mir::PlaceId {
+  Context& ctx = builder.GetContext();
+
+  mir::PlaceId base_place = LowerLvalue(data.base, builder);
+  mir::Operand index_operand = LowerExpression(data.index, builder);
+
+  mir::Projection proj{
+      .info =
+          mir::BitSliceProjection{
+              .index = index_operand,
+              .element_width = data.element_width,
+              .lower_bound = data.array_lower_bound,
+              .upper_bound = data.array_upper_bound,
+              .is_descending = data.is_descending,
+              .element_type = expr.type,
+          },
   };
   return ctx.mir_arena->DerivePlace(base_place, std::move(proj));
 }
@@ -93,6 +113,9 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
           return LowerMemberAccessLvalue(data, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::PackedElementSelectExpressionData>) {
+          return LowerPackedElementSelectLvalue(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerLvalue", "unsupported lvalue expression");

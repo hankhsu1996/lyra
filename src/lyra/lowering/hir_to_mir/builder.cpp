@@ -80,6 +80,13 @@ auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   return temp;
 }
 
+auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
+    -> mir::PlaceId {
+  mir::PlaceId temp = ctx_->AllocTemp(type);
+  EmitAssign(temp, source);
+  return temp;
+}
+
 void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
   if (finished_) {
     throw common::InternalError(

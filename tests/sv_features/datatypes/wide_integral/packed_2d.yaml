@@ -1,12 +1,8 @@
 feature: wide_packed_arrays_2d
 description: 2D packed arrays where total width exceeds 64 bits
 
-# NOTE: These tests require packed array bit-select support (data[0]),
-# which is not yet implemented. Skip interpreter for now.
-
 cases:
   - name: wide_2d_element_write_and_read
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] data;
@@ -17,10 +13,9 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xc80000000000000000000000000000006400000000000000000000000000000000
+        data: 0xc800000000000000000000000000000064
 
   - name: wide_2d_element_arithmetic
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] a, b, c;
@@ -38,7 +33,6 @@ cases:
         c: 0x96000000000000000000000000000000514
 
   - name: wide_2d_element_overwrite
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] data;
@@ -53,7 +47,6 @@ cases:
         data: 0xc8000000000000000000000000000003e7
 
   - name: wide_2d_variable_index_read
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] data;
@@ -71,7 +64,6 @@ cases:
         elem: 0x54
 
   - name: wide_2d_variable_index_write
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] data;
@@ -88,7 +80,6 @@ cases:
         data: 0xde0000000000000000000000000000006f
 
   - name: wide_2d_65bit_boundary
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][64:0] data;
@@ -99,10 +90,9 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0x59d6390ce3b4000b3a73ce2ff2
+        data: 0xb3a73cfe766800000b3a73ce2ff2
 
   - name: wide_2d_65bit_variable_index
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][64:0] data;
@@ -120,7 +110,6 @@ cases:
         elem: 0x2a
 
   - name: wide_2d_whole_array_assignment
-    skip_interpreter: true
     sv: |
       module Test;
         bit [1:0][127:0] a, b;
@@ -135,3 +124,127 @@ cases:
     expect:
       variables:
         match: 1
+
+  - name: descending_dimension_read
+    description: Descending [1:0] has element 0 at LSB
+    sv: |
+      module Test;
+        bit [1:0][7:0] data;
+        bit [15:0] e0, e1;
+        initial begin
+          data = 16'hABCD;
+          e0 = data[0];
+          e1 = data[1];
+        end
+      endmodule
+    expect:
+      variables:
+        e0: 0xCD
+        e1: 0xAB
+
+  - name: ascending_dimension_read
+    description: Ascending [0:1] has element 0 at MSB
+    sv: |
+      module Test;
+        bit [0:1][7:0] data;
+        bit [15:0] e0, e1;
+        initial begin
+          data = 16'hABCD;
+          e0 = data[0];
+          e1 = data[1];
+        end
+      endmodule
+    expect:
+      variables:
+        e0: 0xAB
+        e1: 0xCD
+
+  - name: ascending_nonzero_lower_bound
+    description: Ascending [1:2] with nonzero lower bound
+    sv: |
+      module Test;
+        bit [1:2][7:0] data;
+        bit [15:0] e1, e2;
+        initial begin
+          data = 16'hABCD;
+          e1 = data[1];
+          e2 = data[2];
+        end
+      endmodule
+    expect:
+      variables:
+        e1: 0xAB
+        e2: 0xCD
+
+  - name: descending_lvalue_preserves_other
+    description: Lvalue write preserves other elements (descending)
+    sv: |
+      module Test;
+        bit [1:0][7:0] data;
+        bit [15:0] e1_after;
+        bit [31:0] data_after;
+        initial begin
+          data = 16'hABCD;
+          data[0] = 8'h00;
+          e1_after = data[1];
+          data_after = data;
+        end
+      endmodule
+    expect:
+      variables:
+        e1_after: 0xAB
+        data_after: 0xAB00
+
+  - name: ascending_lvalue_preserves_other
+    description: Lvalue write preserves other elements (ascending)
+    sv: |
+      module Test;
+        bit [0:1][7:0] data;
+        bit [15:0] e1_after;
+        bit [15:0] data_after;
+        initial begin
+          data = 16'hABCD;
+          data[0] = 8'h00;
+          e1_after = data[1];
+          data_after = data;
+        end
+      endmodule
+    expect:
+      variables:
+        e1_after: 0xCD
+        data_after: 0x00CD
+
+  - name: ascending_negative_lower_bound
+    description: Ascending [-1:0] with negative lower bound
+    sv: |
+      module Test;
+        bit [-1:0][7:0] data;
+        bit [15:0] e_neg1, e_0;
+        initial begin
+          data = 16'hABCD;
+          e_neg1 = data[-1];
+          e_0 = data[0];
+        end
+      endmodule
+    expect:
+      variables:
+        e_neg1: 0xAB
+        e_0: 0xCD
+
+  - name: ascending_wide_element_boundary
+    description: Ascending with 65-bit elements crossing word boundary
+    sv: |
+      module Test;
+        bit [0:1][64:0] data;
+        bit [64:0] e0, e1;
+        initial begin
+          data[0] = 65'd12345678901234;
+          data[1] = 65'd98765432109876;
+          e0 = data[0];
+          e1 = data[1];
+        end
+      endmodule
+    expect:
+      variables:
+        e0: 0xb3a73ce2ff2
+        e1: 0x59d39e7f3b34

@@ -45,6 +45,7 @@ class MirBuilder {
   void EmitCompute(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
+  auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
 
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);

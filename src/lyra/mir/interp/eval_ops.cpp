@@ -52,22 +52,20 @@ auto EvalStringBinary(
 
 }  // namespace
 
-auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
+auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   // String comparison
   if (IsString(lhs) && IsString(rhs)) {
-    return EvalStringBinary(
-        static_cast<BinaryOp>(op), AsString(lhs), AsString(rhs));
+    return EvalStringBinary(op, AsString(lhs), AsString(rhs));
   }
 
   // Mixed string/non-string - should never happen (Slang type-checks)
   if (IsString(lhs) || IsString(rhs)) {
     throw common::InternalError(
-        "EvalBinary",
-        std::format(
-            "cannot mix string and non-string operands "
-            "(op={}, lhs={}, rhs={})",
-            ToString(static_cast<BinaryOp>(op)), lhs.index(), rhs.index()));
+        "EvalBinary", std::format(
+                          "cannot mix string and non-string operands "
+                          "(op={}, lhs={}, rhs={})",
+                          ToString(op), lhs.index(), rhs.index()));
   }
 
   if (!IsIntegral(lhs) || !IsIntegral(rhs)) {
@@ -81,8 +79,7 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
   // Arithmetic/bitwise ops use max width; shifts use lhs width (per SV rules)
   uint32_t arith_width = std::max(lhs_int.bit_width, rhs_int.bit_width);
 
-  auto bin_op = static_cast<BinaryOp>(op);
-  switch (bin_op) {
+  switch (op) {
     case BinaryOp::kAdd:
       return IntegralAdd(lhs_int, rhs_int, arith_width);
 
@@ -207,10 +204,10 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   throw common::InternalError(
-      "EvalBinary", std::format("unknown binary operation: {}", op));
+      "EvalBinary", std::format("unknown binary operation: {}", ToString(op)));
 }
 
-auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
+auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalUnary", "unary operation requires integral operand");
@@ -219,8 +216,7 @@ auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
   const auto& op_int = AsIntegral(operand);
   uint32_t width = op_int.bit_width;
 
-  auto unary_op = static_cast<UnaryOp>(op);
-  switch (unary_op) {
+  switch (op) {
     case UnaryOp::kPlus:
       return Clone(operand);
 
@@ -300,7 +296,7 @@ auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
   }
 
   throw common::InternalError(
-      "EvalUnary", std::format("unknown unary operation: {}", op));
+      "EvalUnary", std::format("unknown unary operation: {}", ToString(op)));
 }
 
 auto EvalCast(

@@ -4,12 +4,14 @@
 #include <format>
 #include <variant>
 
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::mir {
 
@@ -191,21 +193,16 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
   *out_ << "}\n";
 }
 
-auto Dumper::FormatProjectionOperand(
-    const std::variant<int, Operand>& operand) const -> std::string {
-  if (const auto* constant_index = std::get_if<int>(&operand)) {
-    return std::format("{}", *constant_index);
-  }
-  const auto& op = std::get<Operand>(operand);
+auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
   switch (op.kind) {
     case Operand::Kind::kConst: {
       const auto& constant = std::get<Constant>(op.payload);
       if (const auto* integral =
               std::get_if<IntegralConstant>(&constant.value)) {
         auto value = integral->value.empty() ? 0UL : integral->value[0];
-        return std::format("idx=const:{}", value);
+        return std::format("{}", value);
       }
-      return "idx=const:?";
+      return "?";
     }
     case Operand::Kind::kUse: {
       PlaceId place_id = std::get<PlaceId>(op.payload);
@@ -222,12 +219,35 @@ auto Dumper::FormatProjectionOperand(
           prefix = "@";
           break;
       }
-      return std::format("idx=use:{}{}", prefix, place.root.id);
+      return std::format("{}{}", prefix, place.root.id);
     }
     case Operand::Kind::kPoison:
-      return "idx=poison";
+      return "poison";
   }
-  return "idx=?";
+  return "?";
+}
+
+auto Dumper::FormatProjection(const Projection& proj) const -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const FieldProjection& f) {
+            return std::format(".{}", f.field_index);
+          },
+          [this](const IndexProjection& i) {
+            return std::format("[{}]", FormatIndexOperand(i.index));
+          },
+          [this](const SliceProjection& s) {
+            return std::format(
+                "[{}+:{}]", FormatIndexOperand(s.start), s.width);
+          },
+          [](const DerefProjection& /*d*/) { return std::string(".*"); },
+          [this](const BitSliceProjection& b) {
+            return std::format(
+                "[bitslice:{}:w{}]", FormatIndexOperand(b.index),
+                b.element_width);
+          },
+      },
+      proj.info);
 }
 
 auto Dumper::FormatPlace(PlaceId id) const -> std::string {
@@ -247,21 +267,7 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
   std::string result = std::format("{}{}", prefix, place.root.id);
 
   for (const Projection& proj : place.projections) {
-    switch (proj.kind) {
-      case Projection::Kind::kField:
-        result += std::format(".{}", FormatProjectionOperand(proj.operand));
-        break;
-      case Projection::Kind::kIndex:
-        result += std::format("[{}]", FormatProjectionOperand(proj.operand));
-        break;
-      case Projection::Kind::kSlice:
-        result +=
-            std::format("[slice:{}]", FormatProjectionOperand(proj.operand));
-        break;
-      case Projection::Kind::kDeref:
-        result += ".*";
-        break;
-    }
+    result += FormatProjection(proj);
   }
 
   TypeId place_type =
@@ -310,22 +316,7 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
       }
       std::string result = std::format("{}{}", prefix, place.root.id);
       for (const Projection& proj : place.projections) {
-        switch (proj.kind) {
-          case Projection::Kind::kField:
-            result += std::format(".{}", FormatProjectionOperand(proj.operand));
-            break;
-          case Projection::Kind::kIndex:
-            result +=
-                std::format("[{}]", FormatProjectionOperand(proj.operand));
-            break;
-          case Projection::Kind::kSlice:
-            result += std::format(
-                "[slice:{}]", FormatProjectionOperand(proj.operand));
-            break;
-          case Projection::Kind::kDeref:
-            result += ".*";
-            break;
-        }
+        result += FormatProjection(proj);
       }
       return std::format("use({})", result);
     }
@@ -336,96 +327,69 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
 }
 
 auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
-  std::string result;
-
-  switch (rv.kind) {
-    case RvalueKind::kUnary:
-      result = std::format("unary({})", ToString(static_cast<UnaryOp>(rv.op)));
-      break;
-    case RvalueKind::kBinary:
-      result =
-          std::format("binary({})", ToString(static_cast<BinaryOp>(rv.op)));
-      break;
-    case RvalueKind::kCast: {
-      const auto* cast_info = std::get_if<CastInfo>(&rv.info);
-      if (cast_info != nullptr) {
-        result = std::format(
-            "cast({} -> {})", FormatType(cast_info->source_type),
-            FormatType(cast_info->target_type));
-      } else {
-        result = "cast";
-      }
-      break;
-    }
-    case RvalueKind::kCall:
-      if (const auto* user = std::get_if<UserCallInfo>(&rv.info)) {
-        result = std::format("call(func[{}])", user->callee.value);
-      } else if (const auto* sys = std::get_if<SystemCallInfo>(&rv.info)) {
-        result = std::format("syscall({})", sys->opcode);
-      } else {
-        result = std::format("call(op={})", rv.op);
-      }
-      break;
-    case RvalueKind::kAggregate: {
-      const auto* info = std::get_if<AggregateInfo>(&rv.info);
-      std::string type_str =
-          info != nullptr ? FormatType(info->result_type) : "?";
-      result = "aggregate<" + type_str + ">(";
-      bool first = true;
-      for (const auto& op : rv.operands) {
-        if (!first) {
-          result += ", ";
-        }
-        first = false;
-        result += FormatOperand(op);
-      }
-      result += ")";
-      return result;
-    }
-    case RvalueKind::kBuiltinCall: {
-      const auto* info = std::get_if<BuiltinCallInfo>(&rv.info);
-      const char* method_name = "unknown";
-      if (info != nullptr) {
-        switch (info->method) {
-          case BuiltinMethod::kNewArray:
-            method_name = "new[]";
-            break;
-          case BuiltinMethod::kArraySize:
-            method_name = "size";
-            break;
-          case BuiltinMethod::kArrayDelete:
-            method_name = "delete";
-            break;
-          case BuiltinMethod::kQueueSize:
-            method_name = "queue_size";
-            break;
-          case BuiltinMethod::kQueueDelete:
-            method_name = "queue_delete";
-            break;
-          case BuiltinMethod::kQueueDeleteAt:
-            method_name = "queue_delete_at";
-            break;
-          case BuiltinMethod::kQueuePushBack:
-            method_name = "queue_push_back";
-            break;
-          case BuiltinMethod::kQueuePushFront:
-            method_name = "queue_push_front";
-            break;
-          case BuiltinMethod::kQueuePopBack:
-            method_name = "queue_pop_back";
-            break;
-          case BuiltinMethod::kQueuePopFront:
-            method_name = "queue_pop_front";
-            break;
-          case BuiltinMethod::kQueueInsert:
-            method_name = "queue_insert";
-            break;
-        }
-      }
-      result = std::format("builtin({})", method_name);
-      break;
-    }
-  }
+  std::string result = std::visit(
+      Overloaded{
+          [](const UnaryRvalueInfo& info) {
+            return std::format("unary({})", ToString(info.op));
+          },
+          [](const BinaryRvalueInfo& info) {
+            return std::format("binary({})", ToString(info.op));
+          },
+          [this](const CastRvalueInfo& info) {
+            return std::format(
+                "cast({} -> {})", FormatType(info.source_type),
+                FormatType(info.target_type));
+          },
+          [](const SystemCallRvalueInfo& info) {
+            return std::format("syscall({})", info.opcode);
+          },
+          [](const UserCallRvalueInfo& info) {
+            return std::format("call(func[{}])", info.callee.value);
+          },
+          [this](const AggregateRvalueInfo& info) {
+            return std::format("aggregate<{}>", FormatType(info.result_type));
+          },
+          [](const BuiltinCallRvalueInfo& info) {
+            const char* method_name = "unknown";
+            switch (info.method) {
+              case BuiltinMethod::kNewArray:
+                method_name = "new[]";
+                break;
+              case BuiltinMethod::kArraySize:
+                method_name = "size";
+                break;
+              case BuiltinMethod::kArrayDelete:
+                method_name = "delete";
+                break;
+              case BuiltinMethod::kQueueSize:
+                method_name = "queue_size";
+                break;
+              case BuiltinMethod::kQueueDelete:
+                method_name = "queue_delete";
+                break;
+              case BuiltinMethod::kQueueDeleteAt:
+                method_name = "queue_delete_at";
+                break;
+              case BuiltinMethod::kQueuePushBack:
+                method_name = "queue_push_back";
+                break;
+              case BuiltinMethod::kQueuePushFront:
+                method_name = "queue_push_front";
+                break;
+              case BuiltinMethod::kQueuePopBack:
+                method_name = "queue_pop_back";
+                break;
+              case BuiltinMethod::kQueuePopFront:
+                method_name = "queue_pop_front";
+                break;
+              case BuiltinMethod::kQueueInsert:
+                method_name = "queue_insert";
+                break;
+            }
+            return std::format("builtin({})", method_name);
+          },
+      },
+      rv.info);
 
   for (const Operand& operand : rv.operands) {
     result += ", ";

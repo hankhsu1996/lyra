@@ -225,8 +225,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
 
     ValidateKeys(
         node,
-        {"name", "description", "sv", "files", "plusargs", "expect",
-         "skip_codegen", "skip_interpreter"},
+        {"name", "description", "sv", "files", "plusargs", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -299,14 +298,6 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
               ParseExpectedOutput(pair.second, file_context, path);
         }
       }
-    }
-
-    // Parse skip flags
-    if (node["skip_codegen"]) {
-      test_case.skip_codegen = node["skip_codegen"].as<bool>();
-    }
-    if (node["skip_interpreter"]) {
-      test_case.skip_interpreter = node["skip_interpreter"].as<bool>();
     }
 
     cases.push_back(std::move(test_case));

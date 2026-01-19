@@ -263,10 +263,8 @@ void BatchCompiler::CollectTestsForShard() {
   }
 
   for (const auto& test : all_cases) {
-    if (!test.skip_codegen) {
-      name_to_index_[test.name] = test_cases_.size();
-      test_cases_.push_back(test);
-    }
+    name_to_index_[test.name] = test_cases_.size();
+    test_cases_.push_back(test);
   }
 }
 

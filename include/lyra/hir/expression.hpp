@@ -30,6 +30,7 @@ enum class ExpressionKind {
   kCall,
   kNewArray,
   kBuiltinMethodCall,
+  kPackedElementSelect,
 };
 
 struct ConstantExpressionData {
@@ -139,13 +140,29 @@ struct BuiltinMethodCallExpressionData {
       -> bool = default;
 };
 
+struct PackedElementSelectExpressionData {
+  ExpressionId base;          // The packed array value
+  ExpressionId index;         // Element index
+  uint32_t element_width;     // Bits per element
+  int64_t array_lower_bound;  // For index normalization and bounds checking
+  int64_t array_upper_bound;  // For bounds checking
+  bool is_descending;         // true for [H:L], false for [L:H]
+  // Bit offset formula depends on direction:
+  // - Descending [H:L]: lsb_offset = (index - lower) * width
+  // - Ascending [L:H]:  lsb_offset = (upper - index) * width
+
+  auto operator==(const PackedElementSelectExpressionData&) const
+      -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
     ElementAccessExpressionData, MemberAccessExpressionData,
     StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
-    NewArrayExpressionData, BuiltinMethodCallExpressionData>;
+    NewArrayExpressionData, BuiltinMethodCallExpressionData,
+    PackedElementSelectExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

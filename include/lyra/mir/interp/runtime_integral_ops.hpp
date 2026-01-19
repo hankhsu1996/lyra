@@ -92,4 +92,29 @@ auto IntegralResize2State(
     const RuntimeIntegral& src, bool src_is_signed, uint32_t target_width)
     -> RuntimeIntegral;
 
+// Extract a slice of bits from an integral value.
+// Returns bits [bit_offset + width - 1 : bit_offset].
+//
+// Contract:
+// - If bit_offset >= src.bit_width: returns zero (width bits of zero)
+// - If bit_offset + width > src.bit_width: zero-extends missing high bits
+// - If width == 0: returns zero-width integral (bit_width=0, empty value)
+// - Result is always unsigned with bit_width = width
+auto IntegralExtractSlice(
+    const RuntimeIntegral& src, uint32_t bit_offset, uint32_t width)
+    -> RuntimeIntegral;
+
+// Insert a value into a slice of bits in an integral.
+// Modifies bits [bit_offset + width - 1 : bit_offset], preserves others.
+//
+// Contract:
+// - If bit_offset >= dst.bit_width: returns dst unchanged
+// - If bit_offset + width > dst.bit_width: only modifies valid bits
+// - If width == 0: returns dst unchanged
+// - src is truncated/zero-extended to width bits before insertion
+// - Result has same bit_width as dst
+auto IntegralInsertSlice(
+    const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width) -> RuntimeIntegral;
+
 }  // namespace lyra::mir::interp
