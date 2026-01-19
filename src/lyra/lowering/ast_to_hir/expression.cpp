@@ -1,8 +1,8 @@
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 
-#include <format>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -203,13 +203,11 @@ auto LowerExpression(
     case ExpressionKind::NamedValue: {
       const auto& named = expr.as<slang::ast::NamedValueExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
+      std::string_view name = named.symbol.name;
 
       // Handle type parameters - explicit unsupported error
       if (named.symbol.kind == slang::ast::SymbolKind::TypeParameter) {
-        ctx->sink->Error(
-            span,
-            std::format(
-                "type parameters not supported ('{}')", named.symbol.name));
+        ctx->ErrorFmt(span, "type parameters not supported ('{}')", name);
         return hir::kInvalidExpressionId;
       }
 
@@ -221,16 +219,11 @@ auto LowerExpression(
 
         // Check for bad/invalid/unbounded values
         if (cv.bad()) {
-          ctx->sink->Error(
-              span, std::format(
-                        "parameter '{}' has invalid value", named.symbol.name));
+          ctx->ErrorFmt(span, "parameter '{}' has invalid value", name);
           return hir::kInvalidExpressionId;
         }
         if (cv.isUnbounded()) {
-          ctx->sink->Error(
-              span,
-              std::format(
-                  "unbounded parameter '{}' not supported", named.symbol.name));
+          ctx->ErrorFmt(span, "unbounded parameter '{}' not supported", name);
           return hir::kInvalidExpressionId;
         }
 
@@ -241,11 +234,11 @@ auto LowerExpression(
             return hir::kInvalidExpressionId;
           }
           if (!expr.type->isIntegral()) {
-            ctx->sink->Error(
-                span, std::format(
-                          "unsupported parameter type for '{}' (only integral "
-                          "parameters supported)",
-                          named.symbol.name));
+            ctx->ErrorFmt(
+                span,
+                "unsupported parameter type for '{}' "
+                "(only integral parameters supported)",
+                name);
             return hir::kInvalidExpressionId;
           }
           TypeId type = LowerType(*expr.type, span, ctx);
@@ -262,19 +255,18 @@ auto LowerExpression(
         }
 
         // Unsupported parameter value type - clear error
-        ctx->sink->Error(
-            span, std::format(
-                      "unsupported parameter type for '{}' (only integral "
-                      "parameters supported)",
-                      named.symbol.name));
+        ctx->ErrorFmt(
+            span,
+            "unsupported parameter type for '{}' "
+            "(only integral parameters supported)",
+            name);
         return hir::kInvalidExpressionId;
       }
 
       // Existing code for variables/other symbols
       SymbolId sym = registrar.Lookup(named.symbol);
       if (!sym) {
-        ctx->sink->Error(
-            span, std::format("undefined symbol '{}'", named.symbol.name));
+        ctx->ErrorFmt(span, "undefined symbol '{}'", name);
         return hir::kInvalidExpressionId;
       }
       TypeId type = LowerType(named.symbol.getType(), span, ctx);
@@ -294,9 +286,8 @@ auto LowerExpression(
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
       auto hir_op = ConvertUnaryOp(unary.op);
       if (!hir_op) {
-        ctx->sink->Error(
-            span,
-            std::format("unsupported unary operator '{}'", toString(unary.op)));
+        ctx->ErrorFmt(
+            span, "unsupported unary operator '{}'", toString(unary.op));
         return hir::kInvalidExpressionId;
       }
       hir::ExpressionId operand =
@@ -325,9 +316,8 @@ auto LowerExpression(
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
       auto hir_op = ConvertBinaryOp(binary.op);
       if (!hir_op) {
-        ctx->sink->Error(
-            span, std::format(
-                      "unsupported binary operator '{}'", toString(binary.op)));
+        ctx->ErrorFmt(
+            span, "unsupported binary operator '{}'", toString(binary.op));
         return hir::kInvalidExpressionId;
       }
       hir::ExpressionId lhs = LowerExpression(binary.left(), registrar, ctx);
@@ -459,8 +449,7 @@ auto LowerExpression(
 
       SymbolId callee = registrar.Lookup(**user_sub);
       if (!callee) {
-        ctx->sink->Error(
-            span, std::format("undefined function '{}'", (*user_sub)->name));
+        ctx->ErrorFmt(span, "undefined function '{}'", (*user_sub)->name);
         return hir::kInvalidExpressionId;
       }
 
@@ -667,10 +656,9 @@ auto LowerExpression(
       const slang::ast::Type& value_type =
           select.value().type->getCanonicalType();
       if (!value_type.isUnpackedArray()) {
-        ctx->sink->Error(
-            span, std::format(
-                      "packed array bit-select not yet supported (type: {})",
-                      value_type.toString()));
+        ctx->ErrorFmt(
+            span, "packed array bit-select not yet supported (type: {})",
+            value_type.toString());
         return hir::kInvalidExpressionId;
       }
 
@@ -840,9 +828,9 @@ auto LowerExpression(
     }
 
     default:
-      ctx->sink->Error(
-          ctx->SpanOf(expr.sourceRange),
-          std::format("unsupported expression kind '{}'", toString(expr.kind)));
+      ctx->ErrorFmt(
+          ctx->SpanOf(expr.sourceRange), "unsupported expression kind '{}'",
+          toString(expr.kind));
       return hir::kInvalidExpressionId;
   }
 }

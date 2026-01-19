@@ -1,5 +1,7 @@
 #pragma once
 
+#include <format>
+
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/constant_arena.hpp"
@@ -23,6 +25,12 @@ struct Context {
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {
     return source_mapper->SpanOf(range);
+  }
+
+  template <typename... Args>
+  void ErrorFmt(
+      SourceSpan span, std::format_string<Args...> fmt, Args&&... args) {
+    sink->Error(span, std::format(fmt, std::forward<Args>(args)...));
   }
 };
 
