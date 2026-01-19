@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/system_call.hpp"
 
-#include <format>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -81,17 +80,16 @@ auto LowerSystemCall(
 
   const SystemFunctionInfo* info = FindSystemFunction(name);
   if (info == nullptr) {
-    ctx->sink->Error(span, std::format("unsupported system call '{}'", name));
+    ctx->ErrorFmt(span, "unsupported system call '{}'", name);
     return hir::kInvalidExpressionId;
   }
 
   // Validate argument count
   size_t arg_count = call.arguments().size();
   if (arg_count < info->min_args || arg_count > info->max_args) {
-    ctx->sink->Error(
-        span, std::format(
-                  "'{}' expects {}-{} arguments, got {}", name, info->min_args,
-                  info->max_args, arg_count));
+    ctx->ErrorFmt(
+        span, "'{}' expects {}-{} arguments, got {}", name, info->min_args,
+        info->max_args, arg_count);
     return hir::kInvalidExpressionId;
   }
 
