@@ -8,8 +8,6 @@
 namespace lyra::mir {
 
 struct BasicBlock {
-  BasicBlockId id;
-
   // Ordered, side-effecting computations
   std::vector<Instruction> instructions;
 

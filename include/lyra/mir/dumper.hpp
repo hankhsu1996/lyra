@@ -22,7 +22,7 @@ class Dumper {
   void Dump(const Package& package);
   void Dump(ProcessId id);
   void Dump(FunctionId id);
-  void Dump(BasicBlockId id);
+  void DumpBlock(const BasicBlock& bb, uint32_t index);
 
  private:
   void PrintIndent();
