@@ -11,6 +11,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -202,6 +203,74 @@ auto LowerExpression(
     case ExpressionKind::NamedValue: {
       const auto& named = expr.as<slang::ast::NamedValueExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Handle type parameters - explicit unsupported error
+      if (named.symbol.kind == slang::ast::SymbolKind::TypeParameter) {
+        ctx->sink->Error(
+            span,
+            std::format(
+                "type parameters not supported ('{}')", named.symbol.name));
+        return hir::kInvalidExpressionId;
+      }
+
+      // Handle value parameters - inline as constants
+      if (named.symbol.kind == slang::ast::SymbolKind::Parameter) {
+        const auto& param = named.symbol.as<slang::ast::ParameterSymbol>();
+        // Pass sourceRange for better slang diagnostics on evaluation errors
+        const slang::ConstantValue& cv = param.getValue(expr.sourceRange);
+
+        // Check for bad/invalid/unbounded values
+        if (cv.bad()) {
+          ctx->sink->Error(
+              span, std::format(
+                        "parameter '{}' has invalid value", named.symbol.name));
+          return hir::kInvalidExpressionId;
+        }
+        if (cv.isUnbounded()) {
+          ctx->sink->Error(
+              span,
+              std::format(
+                  "unbounded parameter '{}' not supported", named.symbol.name));
+          return hir::kInvalidExpressionId;
+        }
+
+        if (cv.isInteger()) {
+          // Verify the expression type is actually integral (not a packed
+          // struct that happens to have integer representation)
+          if (expr.type == nullptr) {
+            return hir::kInvalidExpressionId;
+          }
+          if (!expr.type->isIntegral()) {
+            ctx->sink->Error(
+                span, std::format(
+                          "unsupported parameter type for '{}' (only integral "
+                          "parameters supported)",
+                          named.symbol.name));
+            return hir::kInvalidExpressionId;
+          }
+          TypeId type = LowerType(*expr.type, span, ctx);
+          if (!type) {
+            return hir::kInvalidExpressionId;
+          }
+          ConstId constant = LowerIntegralConstant(cv.integer(), type, ctx);
+          return ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kConstant,
+                  .type = type,
+                  .span = span,
+                  .data = hir::ConstantExpressionData{.constant = constant}});
+        }
+
+        // Unsupported parameter value type - clear error
+        ctx->sink->Error(
+            span, std::format(
+                      "unsupported parameter type for '{}' (only integral "
+                      "parameters supported)",
+                      named.symbol.name));
+        return hir::kInvalidExpressionId;
+      }
+
+      // Existing code for variables/other symbols
       SymbolId sym = registrar.Lookup(named.symbol);
       if (!sym) {
         ctx->sink->Error(
