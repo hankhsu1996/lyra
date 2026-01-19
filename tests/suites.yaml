@@ -20,3 +20,7 @@ suites:
       - control_flow/case.yaml
       - datatypes/arrays.yaml
       - system_tasks/display.yaml
+      - functions/basic.yaml
+      - functions/nested_calls.yaml
+      - functions/recursion.yaml
+      - functions/reserved_keywords.yaml
