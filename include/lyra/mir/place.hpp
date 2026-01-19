@@ -41,16 +41,11 @@ struct DerefProjection {};
 
 // BitSlice: packed array element access (bit-range within an integral)
 // Must be the final projection in a place.
-// Bit offset depends on direction:
-// - Descending [H:L]: (index - lower) * width
-// - Ascending [L:H]:  (upper - index) * width
+// Bounds/direction are obtained from array_type at runtime.
 struct BitSliceProjection {
-  Operand index;           // Element index (may be dynamic)
-  uint32_t element_width;  // Bits per element
-  int64_t lower_bound;     // Array dimension lower bound
-  int64_t upper_bound;     // Array dimension upper bound
-  bool is_descending;      // true for [H:L], false for [L:H]
-  TypeId element_type;     // Type of the extracted element
+  Operand index;        // Element index (may be dynamic)
+  TypeId array_type;    // Packed array type (has bounds/direction)
+  TypeId element_type;  // Type of the extracted element
 };
 
 using ProjectionInfo = std::variant<

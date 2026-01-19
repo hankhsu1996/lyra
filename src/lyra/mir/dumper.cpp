@@ -243,8 +243,8 @@ auto Dumper::FormatProjection(const Projection& proj) const -> std::string {
           [](const DerefProjection& /*d*/) { return std::string(".*"); },
           [this](const BitSliceProjection& b) {
             return std::format(
-                "[bitslice:{}:w{}]", FormatIndexOperand(b.index),
-                b.element_width);
+                "[bitslice:{}:arr={}:elem={}]", FormatIndexOperand(b.index),
+                FormatType(b.array_type), FormatType(b.element_type));
           },
       },
       proj.info);

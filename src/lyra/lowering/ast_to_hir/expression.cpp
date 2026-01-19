@@ -900,8 +900,6 @@ auto LowerExpression(
 
       // Check if this is a packed array select
       if (value_type.isPackedArray()) {
-        const auto& packed = value_type.as<slang::ast::PackedArrayType>();
-
         // Guard: reject if result type is a multi-dimensional packed array.
         // We support selecting to get a simple integral (e.g., `bit[7:0]`),
         // but not another multi-dimensional packed array (e.g.,
@@ -938,13 +936,7 @@ auto LowerExpression(
           return hir::kInvalidExpressionId;
         }
 
-        // Extract element width and bounds from packed array type
-        uint32_t element_width = packed.elementType.getBitWidth();
-        int64_t array_lower_bound = packed.range.lower();
-        int64_t array_upper_bound = packed.range.upper();
-        // slang's isLittleEndian() returns true when left >= right (descending)
-        bool is_descending = packed.range.isLittleEndian();
-
+        // Bounds/direction are now in the base expression's type (kPackedArray)
         return ctx->hir_arena->AddExpression(
             hir::Expression{
                 .kind = hir::ExpressionKind::kPackedElementSelect,
@@ -952,12 +944,7 @@ auto LowerExpression(
                 .span = span,
                 .data =
                     hir::PackedElementSelectExpressionData{
-                        .base = base,
-                        .index = index,
-                        .element_width = element_width,
-                        .array_lower_bound = array_lower_bound,
-                        .array_upper_bound = array_upper_bound,
-                        .is_descending = is_descending},
+                        .base = base, .index = index},
             });
       }
 

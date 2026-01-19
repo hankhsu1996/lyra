@@ -359,25 +359,24 @@ auto LowerCast(
 
   // These checks are invariants - unsupported types should have been rejected
   // in AST->HIR lowering. If we reach here, it's a compiler bug.
-  if (src.Kind() != TypeKind::kIntegral) {
+  // Both kIntegral and kPackedArray are valid for casts (both are packed).
+  if (!IsPacked(src)) {
     throw common::InternalError(
-        "LowerCast",
-        "non-integral source should have been rejected in AST->HIR");
+        "LowerCast", "non-packed source should have been rejected in AST->HIR");
   }
-  if (tgt.Kind() != TypeKind::kIntegral) {
+  if (!IsPacked(tgt)) {
     throw common::InternalError(
-        "LowerCast",
-        "non-integral target should have been rejected in AST->HIR");
+        "LowerCast", "non-packed target should have been rejected in AST->HIR");
   }
 
-  const auto& src_int = src.AsIntegral();
-
-  if (src_int.is_four_state) {
+  if (IsPackedFourState(src, *ctx.type_arena)) {
     throw common::InternalError(
         "LowerCast", "4-state source should have been rejected in AST->HIR");
   }
-  // Note: 4-state target is allowed when source is 2-state (lossless
-  // conversion)
+  if (IsPackedFourState(tgt, *ctx.type_arena)) {
+    throw common::InternalError(
+        "LowerCast", "4-state target should have been rejected in AST->HIR");
+  }
 
   mir::Rvalue rvalue{
       .operands = {operand},
@@ -693,28 +692,27 @@ auto LowerPackedElementSelect(
   // Lower index expression
   mir::Operand index_operand = LowerExpression(data.index, builder);
 
+  // Get the base expression's type (which is now kPackedArray)
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+
   // Get base as a Place
   mir::PlaceId base_place;
   if (base_operand.kind == mir::Operand::Kind::kUse) {
     base_place = std::get<mir::PlaceId>(base_operand.payload);
   } else if (base_operand.kind == mir::Operand::Kind::kConst) {
     // Base is a constant - store to temp first
-    const auto& base_expr = (*ctx.hir_arena)[data.base];
     base_place = builder.EmitTempAssign(base_expr.type, base_operand);
   } else {
     throw common::InternalError(
         "LowerPackedElementSelect", "unexpected base operand kind");
   }
 
-  // Create BitSlice projection
+  // Create BitSlice projection - bounds/direction come from array_type
   mir::Projection proj{
       .info =
           mir::BitSliceProjection{
               .index = index_operand,
-              .element_width = data.element_width,
-              .lower_bound = data.array_lower_bound,
-              .upper_bound = data.array_upper_bound,
-              .is_descending = data.is_descending,
+              .array_type = base_expr.type,
               .element_type = expr.type,
           },
   };

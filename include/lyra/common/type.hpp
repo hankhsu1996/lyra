@@ -36,6 +36,7 @@ enum class TypeKind {
   kIntegral,
   kString,
   kReal,
+  kPackedArray,
   kUnpackedArray,
   kUnpackedStruct,
   kDynamicArray,
@@ -53,6 +54,18 @@ struct IntegralInfo {
   friend auto AbslHashValue(H h, const IntegralInfo& info) -> H {
     return H::combine(
         std::move(h), info.bit_width, info.is_signed, info.is_four_state);
+  }
+};
+
+struct PackedArrayInfo {
+  TypeId element_type;
+  ConstantRange range;
+
+  auto operator==(const PackedArrayInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const PackedArrayInfo& info) -> H {
+    return H::combine(std::move(h), info.element_type, info.range);
   }
 };
 
@@ -116,8 +129,8 @@ struct UnpackedStructInfo {
 };
 
 using TypePayload = std::variant<
-    std::monostate, IntegralInfo, UnpackedArrayInfo, UnpackedStructInfo,
-    DynamicArrayInfo, QueueInfo>;
+    std::monostate, IntegralInfo, PackedArrayInfo, UnpackedArrayInfo,
+    UnpackedStructInfo, DynamicArrayInfo, QueueInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -136,6 +149,7 @@ class Type {
   static auto Void() -> Type;
   static auto Integral(uint32_t bit_width, bool is_signed, bool is_four_state)
       -> Type;
+  static auto PackedArray(TypeId element, ConstantRange range) -> Type;
   static auto UnpackedArray(TypeId element, ConstantRange range) -> Type;
   static auto UnpackedStruct(std::string name, std::vector<StructField> fields)
       -> Type;
@@ -148,6 +162,7 @@ class Type {
 
   // Kind-specific accessors (assert if wrong kind)
   [[nodiscard]] auto AsIntegral() const -> const IntegralInfo&;
+  [[nodiscard]] auto AsPackedArray() const -> const PackedArrayInfo&;
   [[nodiscard]] auto AsUnpackedArray() const -> const UnpackedArrayInfo&;
   [[nodiscard]] auto AsUnpackedStruct() const -> const UnpackedStructInfo&;
   [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
@@ -175,6 +190,13 @@ inline auto Type::Integral(
       .bit_width = bit_width,
       .is_signed = is_signed,
       .is_four_state = is_four_state};
+  return t;
+}
+
+inline auto Type::PackedArray(TypeId element, ConstantRange range) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kPackedArray;
+  t.payload_ = PackedArrayInfo{.element_type = element, .range = range};
   return t;
 }
 
@@ -213,6 +235,11 @@ inline auto Type::AsIntegral() const -> const IntegralInfo& {
   return std::get<IntegralInfo>(payload_);
 }
 
+inline auto Type::AsPackedArray() const -> const PackedArrayInfo& {
+  assert(kind_ == TypeKind::kPackedArray);
+  return std::get<PackedArrayInfo>(payload_);
+}
+
 inline auto Type::AsUnpackedArray() const -> const UnpackedArrayInfo& {
   assert(kind_ == TypeKind::kUnpackedArray);
   return std::get<UnpackedArrayInfo>(payload_);
@@ -233,6 +260,11 @@ inline auto Type::AsQueue() const -> const QueueInfo& {
   return std::get<QueueInfo>(payload_);
 }
 
+inline auto IsPacked(const Type& type) -> bool {
+  return type.Kind() == TypeKind::kIntegral ||
+         type.Kind() == TypeKind::kPackedArray;
+}
+
 inline auto ToString(TypeKind kind) -> std::string {
   switch (kind) {
     case TypeKind::kVoid:
@@ -243,6 +275,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "string";
     case TypeKind::kReal:
       return "real";
+    case TypeKind::kPackedArray:
+      return "packed_array";
     case TypeKind::kUnpackedArray:
       return "unpacked_array";
     case TypeKind::kUnpackedStruct:
@@ -269,11 +303,17 @@ inline auto ToString(const Type& type) -> std::string {
       return "string";
     case TypeKind::kReal:
       return "real";
+    case TypeKind::kPackedArray: {
+      const auto& info = type.AsPackedArray();
+      return std::format(
+          "packed[{}:{}]<type#{}>", info.range.left, info.range.right,
+          info.element_type.value);
+    }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
       return std::format(
-          "type#{}[{}:{}]", info.element_type.value, info.range.lower,
-          info.range.upper);
+          "type#{}[{}:{}]", info.element_type.value, info.range.left,
+          info.range.right);
     }
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();

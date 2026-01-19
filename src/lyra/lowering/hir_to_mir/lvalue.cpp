@@ -81,14 +81,14 @@ auto LowerPackedElementSelectLvalue(
   mir::PlaceId base_place = LowerLvalue(data.base, builder);
   mir::Operand index_operand = LowerExpression(data.index, builder);
 
+  // Get the base expression's type (which is now kPackedArray)
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+
   mir::Projection proj{
       .info =
           mir::BitSliceProjection{
               .index = index_operand,
-              .element_width = data.element_width,
-              .lower_bound = data.array_lower_bound,
-              .upper_bound = data.array_upper_bound,
-              .is_descending = data.is_descending,
+              .array_type = base_expr.type,
               .element_type = expr.type,
           },
   };

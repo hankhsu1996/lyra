@@ -130,6 +130,38 @@ struct IndexValue {
   }
 };
 
+// Resolved info for packed array element access (BitSlice).
+// Extracts bounds/direction/element_width from the array type.
+struct PackedSliceInfo {
+  int64_t lower;
+  int64_t upper;
+  bool is_descending;
+  uint32_t element_width;
+
+  // Compute bit offset for a given index.
+  // Descending [H:L]: element 0 at LSB, offset = (index - lower) * width
+  // Ascending [L:H]: element 0 at MSB, offset = (upper - index) * width
+  [[nodiscard]] auto BitOffset(int64_t index) const -> uint32_t {
+    uint32_t normalized = is_descending ? static_cast<uint32_t>(index - lower)
+                                        : static_cast<uint32_t>(upper - index);
+    return normalized * element_width;
+  }
+};
+
+// Extract PackedSliceInfo from a packed array type.
+auto ResolvePackedSliceInfo(const Type& array_type, const TypeArena& types)
+    -> PackedSliceInfo {
+  assert(array_type.Kind() == TypeKind::kPackedArray);
+  const auto& packed_info = array_type.AsPackedArray();
+  const auto& range = packed_info.range;
+  return PackedSliceInfo{
+      .lower = range.Lower(),
+      .upper = range.Upper(),
+      .is_descending = range.IsDescending(),
+      .element_width = PackedArrayElementWidth(array_type, types),
+  };
+}
+
 // Creates a default-initialized RuntimeValue for a given type following SV
 // semantics:
 // - 2-state integrals (bit, int, etc.): default to 0
@@ -149,6 +181,15 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
         return MakeIntegralX(info.bit_width);  // 4-state defaults to X
       }
       return MakeIntegral(0, info.bit_width);  // 2-state defaults to 0
+    }
+    case TypeKind::kPackedArray: {
+      // Packed arrays are stored as a flat integral with total bit width.
+      // Use IsPackedFourState to recursively check base element type.
+      uint32_t total_width = PackedBitWidth(type, types);
+      if (IsPackedFourState(type, types)) {
+        return MakeIntegralX(total_width);
+      }
+      return MakeIntegral(0, total_width);
     }
     case TypeKind::kString:
       return MakeString("");
@@ -350,7 +391,7 @@ auto ApplySingleProjection(
               const auto& type_info = types[current_type];
               if (type_info.Kind() == TypeKind::kUnpackedArray) {
                 const auto& array_info = type_info.AsUnpackedArray();
-                offset = index - array_info.range.lower;
+                offset = index - array_info.range.Lower();
                 current_type = array_info.element_type;
               } else if (type_info.Kind() == TypeKind::kDynamicArray) {
                 // Dynamic arrays are 0-based, no range normalization needed
@@ -623,11 +664,12 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
             using T = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<T, IntegralConstant>) {
               const auto& type = (*types_)[c.type];
-              if (type.Kind() != TypeKind::kIntegral) {
+              if (!IsPacked(type)) {
                 throw common::InternalError(
-                    "EvalOperand", "type mismatch: expected integral");
+                    "EvalOperand", "type mismatch: expected packed type");
               }
-              return MakeIntegralFromConstant(val, type.AsIntegral().bit_width);
+              return MakeIntegralFromConstant(
+                  val, PackedBitWidth(type, *types_));
             } else if constexpr (std::is_same_v<T, StringConstant>) {
               return MakeString(val.value);
             } else if constexpr (std::is_same_v<T, RealConstant>) {
@@ -684,7 +726,7 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             auto operand = EvalOperand(state, rv.operands[0]);
             const auto& src_type = (*types_)[info.source_type];
             const auto& tgt_type = (*types_)[info.target_type];
-            return EvalCast(operand, src_type, tgt_type);
+            return EvalCast(operand, src_type, tgt_type, *types_);
           },
           [&](const SystemCallRvalueInfo& /*info*/) -> RuntimeValue {
             // System calls that produce values (pure functions like $clog2)
@@ -1043,24 +1085,22 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     }
     const auto& base_int = AsIntegral(*base_ptr);
 
+    // Extract bounds/direction from the array_type
+    const auto& array_type = (*types_)[bs->array_type];
+    auto slice_info = ResolvePackedSliceInfo(array_type, *types_);
+
     // Evaluate index with signedness-aware bounds check
     IndexValue idx = eval_index_value(bs->index);
-    if (!idx.InBounds(bs->lower_bound, bs->upper_bound)) {
+    if (!idx.InBounds(slice_info.lower, slice_info.upper)) {
       throw std::runtime_error(
           std::format(
               "packed element select: index {} out of bounds [{}:{}]",
-              idx.AsInt64(), bs->lower_bound, bs->upper_bound));
+              idx.AsInt64(), slice_info.lower, slice_info.upper));
     }
 
     // Compute bit offset and extract
-    // Descending [H:L]: element 0 at LSB, offset = (index - lower) * width
-    // Ascending [L:H]: element 0 at MSB, offset = (upper - index) * width
-    int64_t signed_idx = idx.AsInt64();
-    uint32_t normalized =
-        bs->is_descending ? static_cast<uint32_t>(signed_idx - bs->lower_bound)
-                          : static_cast<uint32_t>(bs->upper_bound - signed_idx);
-    uint32_t bit_offset = normalized * bs->element_width;
-    return IntegralExtractSlice(base_int, bit_offset, bs->element_width);
+    uint32_t bit_offset = slice_info.BitOffset(idx.AsInt64());
+    return IntegralExtractSlice(base_int, bit_offset, slice_info.element_width);
   }
 
   // No BitSlice - apply all projections normally
@@ -1158,25 +1198,23 @@ void Interpreter::WriteBitSlice(
   }
   const auto& value_int = AsIntegral(value);
 
+  // Extract bounds/direction from the array_type
+  const auto& array_type = (*types_)[bs.array_type];
+  auto slice_info = ResolvePackedSliceInfo(array_type, *types_);
+
   // Evaluate index with signedness-aware bounds check
   IndexValue idx = eval_index_value(bs.index);
-  if (!idx.InBounds(bs.lower_bound, bs.upper_bound)) {
+  if (!idx.InBounds(slice_info.lower, slice_info.upper)) {
     throw std::runtime_error(
         std::format(
             "packed element insert: index {} out of bounds [{}:{}]",
-            idx.AsInt64(), bs.lower_bound, bs.upper_bound));
+            idx.AsInt64(), slice_info.lower, slice_info.upper));
   }
 
-  // Compute bit offset and insert
-  // Descending [H:L]: element 0 at LSB, offset = (index - lower) * width
-  // Ascending [L:H]: element 0 at MSB, offset = (upper - index) * width
-  int64_t signed_idx = idx.AsInt64();
-  uint32_t normalized =
-      bs.is_descending ? static_cast<uint32_t>(signed_idx - bs.lower_bound)
-                       : static_cast<uint32_t>(bs.upper_bound - signed_idx);
-  uint32_t bit_offset = normalized * bs.element_width;
-  *base_ptr =
-      IntegralInsertSlice(base_int, value_int, bit_offset, bs.element_width);
+  // Compute bit offset using helper
+  uint32_t bit_offset = slice_info.BitOffset(idx.AsInt64());
+  *base_ptr = IntegralInsertSlice(
+      base_int, value_int, bit_offset, slice_info.element_width);
 }
 
 void Interpreter::StoreToPlace(

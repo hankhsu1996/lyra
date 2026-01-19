@@ -301,36 +301,36 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
 
 auto EvalCast(
     const RuntimeValue& operand, const Type& source_type,
-    const Type& target_type) -> RuntimeValue {
+    const Type& target_type, const TypeArena& arena) -> RuntimeValue {
   // Precondition checks - these should have been validated at lowering time.
   // If they fail here, it indicates a bug in the lowering pipeline.
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalCast", "cast operation requires integral operand");
   }
-  if (source_type.Kind() != TypeKind::kIntegral) {
-    throw common::InternalError("EvalCast", "source type must be integral");
+  // Both kIntegral and kPackedArray are valid for casts (both are packed).
+  if (!IsPacked(source_type)) {
+    throw common::InternalError("EvalCast", "source type must be packed");
   }
-  if (target_type.Kind() != TypeKind::kIntegral) {
-    throw common::InternalError("EvalCast", "target type must be integral");
+  if (!IsPacked(target_type)) {
+    throw common::InternalError("EvalCast", "target type must be packed");
   }
 
   const auto& op_int = AsIntegral(operand);
-  const auto& src_int = source_type.AsIntegral();
-  const auto& target_int = target_type.AsIntegral();
+  bool src_is_signed = IsPackedSigned(source_type, arena);
+  uint32_t target_width = PackedBitWidth(target_type, arena);
 
-  if (src_int.is_four_state) {
+  if (IsPackedFourState(source_type, arena) ||
+      IsPackedFourState(target_type, arena)) {
     throw common::InternalError(
         "EvalCast",
-        "4-state source types should have been rejected at lowering");
+        "4-state types should have been rejected at lowering");
   }
-  // Note: 4-state target is allowed when source is 2-state (lossless
-  // conversion)
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how
   // downstream operations interpret the result.
-  return IntegralResize2State(op_int, src_int.is_signed, target_int.bit_width);
+  return IntegralResize2State(op_int, src_is_signed, target_width);
 }
 
 }  // namespace lyra::mir::interp
