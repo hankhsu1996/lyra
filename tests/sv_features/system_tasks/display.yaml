@@ -43,6 +43,8 @@ cases:
     expect:
       stdout: "a=10 b=20\n"
 
+  # LRM 21.2.1.2: For %h/%b/%o, leading zeros are always displayed based on bit width.
+  # int is 32 bits = 8 hex digits.
   - name: display_hex_format
     sv: |
       module Test;
@@ -53,8 +55,9 @@ cases:
         end
       endmodule
     expect:
-      stdout: "ff\n"
+      stdout: "000000ff\n"
 
+  # LRM 21.2.1.2: int is 32 bits = 32 binary digits.
   - name: display_binary_format
     sv: |
       module Test;
@@ -65,7 +68,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: "101\n"
+      stdout: "00000000000000000000000000000101\n"
 
   - name: display_multiple_calls
     sv: |
@@ -202,6 +205,75 @@ cases:
     expect:
       stdout: "[hi   ]\n"
 
+  # LRM 21.2.1.2: %0h displays with minimum width, no leading zeros
+  - name: display_hex_minimal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $display("%0h", x);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"
+
+  # LRM 21.2.1.2: %0b displays with minimum width, no leading zeros
+  - name: display_binary_minimal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          $display("%0b", x);
+        end
+      endmodule
+    expect:
+      stdout: "101\n"
+
+  # LRM 21.2.1.2: %0o displays with minimum width, no leading zeros
+  - name: display_octal_minimal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 8;
+          $display("%0o", x);
+        end
+      endmodule
+    expect:
+      stdout: "10\n"
+
+  # LRM 21.2.1.2: %0d displays with minimum width, no leading spaces
+  - name: display_decimal_minimal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      stdout: "42\n"
+
+  # LRM 21.2.1.2: Different bit widths show different auto-sizing
+  - name: display_hex_different_widths
+    sv: |
+      module Test;
+        byte byte_val;
+        shortint short_val;
+        int int_val;
+        initial begin
+          byte_val = 8'hAB;
+          short_val = 16'h00FF;
+          int_val = 255;
+          $display("%h %h %h", byte_val, short_val, int_val);
+        end
+      endmodule
+    expect:
+      stdout: "ab 00ff 000000ff\n"
+
   # $write variants (no newline)
   - name: write_no_newline
     sv: |
@@ -225,6 +297,7 @@ cases:
     expect:
       stdout: "done"
 
+  # LRM 21.2.1.2: $writeh uses hex format with full bit width (32-bit int = 8 hex digits)
   - name: writeh_default_hex
     sv: |
       module Test;
@@ -235,8 +308,9 @@ cases:
         end
       endmodule
     expect:
-      stdout: "ff"
+      stdout: "000000ff"
 
+  # LRM 21.2.1.2: $writeb uses binary format with full bit width (32-bit int = 32 binary digits)
   - name: writeb_default_binary
     sv: |
       module Test;
@@ -247,8 +321,9 @@ cases:
         end
       endmodule
     expect:
-      stdout: "101"
+      stdout: "00000000000000000000000000000101"
 
+  # LRM 21.2.1.2: $writeo uses octal format with full bit width (32-bit int = 11 octal digits)
   - name: writeo_default_octal
     sv: |
       module Test;
@@ -259,9 +334,10 @@ cases:
         end
       endmodule
     expect:
-      stdout: "10"
+      stdout: "00000000010"
 
   # $display variants (with newline, different default format)
+  # LRM 21.2.1.2: $displayh uses hex format with full bit width
   - name: displayh_default_hex
     sv: |
       module Test;
@@ -272,8 +348,9 @@ cases:
         end
       endmodule
     expect:
-      stdout: "ff\n"
+      stdout: "000000ff\n"
 
+  # LRM 21.2.1.2: $displayb uses binary format with full bit width
   - name: displayb_default_binary
     sv: |
       module Test;
@@ -284,8 +361,9 @@ cases:
         end
       endmodule
     expect:
-      stdout: "101\n"
+      stdout: "00000000000000000000000000000101\n"
 
+  # LRM 21.2.1.2: $displayo uses octal format with full bit width
   - name: displayo_default_octal
     sv: |
       module Test;
@@ -296,7 +374,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: "10\n"
+      stdout: "00000000010\n"
 
   # Format string overrides default
   - name: displayh_with_format_uses_format
@@ -311,6 +389,7 @@ cases:
     expect:
       stdout: "255\n"
 
+  # LRM 21.2.1.2: Format string %h shows full bit width (8 hex digits for 32-bit int)
   - name: writeb_with_format_uses_format
     sv: |
       module Test;
@@ -321,9 +400,10 @@ cases:
         end
       endmodule
     expect:
-      stdout: "ff"
+      stdout: "000000ff"
 
   # Multiple values with variant default
+  # LRM 21.2.1.2: $displayh auto-formats all integers with full hex width
   - name: displayh_multiple_values
     sv: |
       module Test;
@@ -335,9 +415,10 @@ cases:
         end
       endmodule
     expect:
-      stdout: "aff\n"
+      stdout: "0000000a000000ff\n"
 
-  # Mixed types - integers use variant format, others use default
+  # Mixed types - integers use variant format with full width, strings as-is
+  # LRM 21.2.1.2: $displayh auto-formats integers with full hex width
   - name: displayh_mixed_types
     sv: |
       module Test;
@@ -350,16 +431,15 @@ cases:
         end
       endmodule
     expect:
-      stdout: "fftest\n"
+      stdout: "000000fftest\n"
 
   # Wide bit vectors (>64 bits) with decimal format
-  # Note: Codegen has a limitation with very large literal values (>64 bits),
-  # so we test with values that fit in 64 bits but are stored in wide types.
-
+  # Note: Using 2-state 'bit' type since conversion to 4-state is not yet supported.
+  # These tests focus on wide decimal formatting, not 4-state X/Z display semantics.
   - name: wide_decimal_128bit
     sv: |
       module Test;
-        logic [127:0] val;
+        bit [127:0] val;
         initial begin
           val = 128'd12345678901234567890;
           $display("%d", val);
@@ -371,7 +451,7 @@ cases:
   - name: wide_decimal_zero
     sv: |
       module Test;
-        logic [127:0] val;
+        bit [127:0] val;
         initial begin
           val = 128'd0;
           $display("%d", val);
@@ -383,7 +463,7 @@ cases:
   - name: wide_decimal_no_format_string
     sv: |
       module Test;
-        logic [127:0] val;
+        bit [127:0] val;
         initial begin
           val = 128'd999999999999999999;
           $display(val);
@@ -395,8 +475,8 @@ cases:
   - name: wide_decimal_computed
     sv: |
       module Test;
-        logic [127:0] val;
-        logic [127:0] a, b;
+        bit [127:0] val;
+        bit [127:0] a, b;
         initial begin
           a = 128'd9000000000000000000;
           b = 128'd1234567890123456789;
@@ -406,3 +486,27 @@ cases:
       endmodule
     expect:
       stdout: "10234567890123456789\n"
+
+  - name: wide_signed_negative
+    sv: |
+      module Test;
+        bit signed [127:0] val;
+        initial begin
+          val = -1;
+          $display("%d", val);
+        end
+      endmodule
+    expect:
+      stdout: "-1\n"
+
+  - name: wide_signed_large_negative
+    sv: |
+      module Test;
+        bit signed [127:0] val;
+        initial begin
+          val = -128'd12345678901234567890;
+          $display("%d", val);
+        end
+      endmodule
+    expect:
+      stdout: "-12345678901234567890\n"

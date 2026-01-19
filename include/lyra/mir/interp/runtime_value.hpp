@@ -17,8 +17,10 @@ struct RuntimeIntegral {
   uint32_t bit_width;
 
   [[nodiscard]] auto IsZero() const -> bool;
-  [[nodiscard]] auto IsX() const -> bool;
-  [[nodiscard]] auto IsZ() const -> bool;
+  [[nodiscard]] auto IsX() const -> bool;     // Any bit is X
+  [[nodiscard]] auto IsZ() const -> bool;     // Any bit is Z
+  [[nodiscard]] auto IsAllX() const -> bool;  // All bits are X
+  [[nodiscard]] auto IsAllZ() const -> bool;  // All bits are Z
   [[nodiscard]] auto IsKnown() const -> bool;
   [[nodiscard]] auto IsAllOnes() const -> bool;
 };
