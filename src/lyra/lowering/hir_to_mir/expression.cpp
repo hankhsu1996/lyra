@@ -12,6 +12,7 @@
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -499,6 +500,85 @@ auto LowerStructLiteral(
   return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
 }
 
+auto LowerCall(
+    const hir::CallExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // Look up mir::FunctionId from symbol
+  mir::FunctionId callee = ctx.LookupFunction(data.callee);
+  if (!callee) {
+    throw common::InternalError("LowerCall", "function not found in map");
+  }
+
+  // Lower arguments
+  std::vector<mir::Operand> args;
+  args.reserve(data.arguments.size());
+  for (hir::ExpressionId arg_id : data.arguments) {
+    args.push_back(LowerExpression(arg_id, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .kind = mir::RvalueKind::kCall,
+      .op = kUnusedOp,
+      .operands = std::move(args),
+      .info = mir::UserCallInfo{.callee = callee},
+  };
+
+  mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+  return mir::Operand::Use(temp);
+}
+
+auto LowerNewArray(
+    const hir::NewArrayExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  std::vector<mir::Operand> operands;
+  operands.push_back(LowerExpression(data.size_expr, builder));
+  if (data.init_expr) {
+    operands.push_back(LowerExpression(*data.init_expr, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .kind = mir::RvalueKind::kBuiltinCall,
+      .op = kUnusedOp,
+      .operands = std::move(operands),
+      .info =
+          mir::BuiltinCallInfo{
+              .method = mir::BuiltinMethod::kNewArray,
+              .result_type = expr.type},
+  };
+
+  mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+  return mir::Operand::Use(temp);
+}
+
+auto LowerBuiltinMethodCall(
+    const hir::BuiltinMethodCallExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+  switch (data.method) {
+    case hir::BuiltinMethod::kSize: {
+      mir::Operand receiver = LowerExpression(data.receiver, builder);
+      mir::Rvalue rvalue{
+          .kind = mir::RvalueKind::kBuiltinCall,
+          .op = kUnusedOp,
+          .operands = {receiver},
+          .info =
+              mir::BuiltinCallInfo{
+                  .method = mir::BuiltinMethod::kArraySize,
+                  .result_type = expr.type},
+      };
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+    case hir::BuiltinMethod::kDelete:
+      throw common::InternalError(
+          "LowerBuiltinMethodCall",
+          "delete() in expression context should have been rejected");
+  }
+  throw common::InternalError(
+      "LowerBuiltinMethodCall", "unknown builtin method");
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -537,31 +617,12 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::CallExpressionData>) {
-          Context& ctx = builder.GetContext();
-
-          // Look up mir::FunctionId from symbol
-          mir::FunctionId callee = ctx.LookupFunction(data.callee);
-          if (!callee) {
-            throw common::InternalError(
-                "LowerCall", "function not found in map");
-          }
-
-          // Lower arguments
-          std::vector<mir::Operand> args;
-          args.reserve(data.arguments.size());
-          for (hir::ExpressionId arg_id : data.arguments) {
-            args.push_back(LowerExpression(arg_id, builder));
-          }
-
-          mir::Rvalue rvalue{
-              .kind = mir::RvalueKind::kCall,
-              .op = kUnusedOp,
-              .operands = std::move(args),
-              .info = mir::UserCallInfo{.callee = callee},
-          };
-
-          mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-          return mir::Operand::Use(temp);
+          return LowerCall(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::NewArrayExpressionData>) {
+          return LowerNewArray(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::BuiltinMethodCallExpressionData>) {
+          return LowerBuiltinMethodCall(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

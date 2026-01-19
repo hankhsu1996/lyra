@@ -99,10 +99,14 @@ class Interpreter {
   void ExecCompute(ProcessState& state, const Compute& compute);
 
   // Execute Effect instruction
-  void ExecEffect(const ProcessState& state, const Effect& effect);
+  void ExecEffect(ProcessState& state, const Effect& effect);
 
   // Execute DisplayEffect
   void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
+
+  // Execute BuiltinCallEffect
+  void ExecBuiltinCallEffect(
+      ProcessState& state, const BuiltinCallEffect& effect);
 
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);

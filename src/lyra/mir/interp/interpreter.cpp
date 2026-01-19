@@ -18,6 +18,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -79,6 +80,9 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       }
       return MakeStruct(std::move(fields));
     }
+    case TypeKind::kDynamicArray:
+      // Dynamic arrays default to empty (size 0)
+      return MakeArray({});
   }
   throw common::InternalError("CreateDefaultValue", "unknown type kind");
 }
@@ -169,10 +173,13 @@ struct StorageCollector {
             [&](const Effect& i) {
               std::visit(
                   Overloaded{
-                      [&](const DisplayEffect& op) {
+                      [&](const DisplayEffect& op) -> void {
                         for (const auto& arg : op.args) {
                           Visit(arg, arena);
                         }
+                      },
+                      [&](const BuiltinCallEffect& op) -> void {
+                        Visit(arena[op.receiver], arena);
                       },
                   },
                   i.op);
@@ -242,9 +249,16 @@ auto ApplyProjectionsImpl(
         int64_t offset = index;
         auto size = static_cast<int64_t>(a.elements.size());
         if (current_type) {
-          const auto& array_info = types[current_type].AsUnpackedArray();
-          offset = index - array_info.range.lower;
-          current_type = array_info.element_type;
+          const auto& type_info = types[current_type];
+          if (type_info.Kind() == TypeKind::kUnpackedArray) {
+            const auto& array_info = type_info.AsUnpackedArray();
+            offset = index - array_info.range.lower;
+            current_type = array_info.element_type;
+          } else if (type_info.Kind() == TypeKind::kDynamicArray) {
+            // Dynamic arrays are 0-based, no range normalization needed
+            offset = index;
+            current_type = type_info.AsDynamicArray().element_type;
+          }
         }
 
         // Bounds check (runtime error - user program error)
@@ -321,8 +335,12 @@ auto TypeOfPlace(const Place& place, const TypeArena& types) -> TypeId {
         break;
       }
       case Projection::Kind::kIndex: {
-        const auto& array_info = types[current_type].AsUnpackedArray();
-        current_type = array_info.element_type;
+        const auto& type_info = types[current_type];
+        if (type_info.Kind() == TypeKind::kUnpackedArray) {
+          current_type = type_info.AsUnpackedArray().element_type;
+        } else if (type_info.Kind() == TypeKind::kDynamicArray) {
+          current_type = type_info.AsDynamicArray().element_type;
+        }
         break;
       }
       case Projection::Kind::kSlice:
@@ -627,6 +645,107 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       }
       return MakeStruct(std::move(fields));
     }
+
+    case RvalueKind::kBuiltinCall: {
+      const auto* info = std::get_if<BuiltinCallInfo>(&rv.info);
+      if (info == nullptr) {
+        throw common::InternalError(
+            "EvalRvalue", "kBuiltinCall missing BuiltinCallInfo");
+      }
+
+      switch (info->method) {
+        case BuiltinMethod::kNewArray: {
+          // new[size] or new[size](init)
+          if (rv.operands.empty()) {
+            throw common::InternalError("EvalRvalue", "new[] requires size");
+          }
+          auto size_val = EvalOperand(state, rv.operands[0]);
+          if (!IsIntegral(size_val)) {
+            throw common::InternalError(
+                "EvalRvalue", "new[] size must be integral");
+          }
+          const auto& size_int = AsIntegral(size_val);
+          if (!size_int.IsKnown()) {
+            throw std::runtime_error("new[] size is X/Z");
+          }
+          // Get raw value and check for negative (size is int, which is signed)
+          // Must sign-extend based on operand type to properly detect negatives
+          uint64_t raw_bits = size_int.value.empty() ? 0 : size_int.value[0];
+          TypeId size_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+          const auto& type_info = (*types_)[size_type];
+          if (type_info.Kind() == TypeKind::kIntegral) {
+            const auto& integral = type_info.AsIntegral();
+            if (integral.is_signed && integral.bit_width < 64) {
+              // Sign-extend: if the sign bit is set, fill upper bits with 1s
+              uint64_t sign_bit = 1ULL << (integral.bit_width - 1);
+              if ((raw_bits & sign_bit) != 0) {
+                uint64_t mask = ~((1ULL << integral.bit_width) - 1);
+                raw_bits |= mask;
+              }
+            }
+          }
+          auto signed_size = static_cast<int64_t>(raw_bits);
+          if (signed_size < 0) {
+            throw std::runtime_error("new[] size cannot be negative");
+          }
+          auto new_size = static_cast<size_t>(signed_size);
+
+          // Get element type from result type (which is the dynamic array type)
+          const auto& array_type = (*types_)[info->result_type];
+          if (array_type.Kind() != TypeKind::kDynamicArray) {
+            throw common::InternalError(
+                "EvalRvalue", "new[] result must be dynamic array");
+          }
+          TypeId element_type = array_type.AsDynamicArray().element_type;
+
+          std::vector<RuntimeValue> elements;
+          elements.reserve(new_size);
+
+          if (rv.operands.size() > 1) {
+            // new[size](init) - copy from initializer
+            auto init_val = EvalOperand(state, rv.operands[1]);
+            if (!IsArray(init_val)) {
+              throw common::InternalError(
+                  "EvalRvalue", "new[] init must be array");
+            }
+            const auto& init_arr = AsArray(init_val);
+            size_t copy_count = std::min(new_size, init_arr.elements.size());
+            for (size_t i = 0; i < copy_count; ++i) {
+              elements.push_back(Clone(init_arr.elements[i]));
+            }
+            // Fill remaining with defaults
+            for (size_t i = copy_count; i < new_size; ++i) {
+              elements.push_back(CreateDefaultValue(*types_, element_type));
+            }
+          } else {
+            // new[size] - all default values
+            for (size_t i = 0; i < new_size; ++i) {
+              elements.push_back(CreateDefaultValue(*types_, element_type));
+            }
+          }
+          return MakeArray(std::move(elements));
+        }
+
+        case BuiltinMethod::kArraySize: {
+          // arr.size() - returns int
+          if (rv.operands.empty()) {
+            throw common::InternalError("EvalRvalue", "size() requires array");
+          }
+          auto arr_val = EvalOperand(state, rv.operands[0]);
+          if (!IsArray(arr_val)) {
+            throw common::InternalError(
+                "EvalRvalue", "size() operand must be array");
+          }
+          auto size = static_cast<int64_t>(AsArray(arr_val).elements.size());
+          return MakeIntegral(size, 32);  // int is 32-bit
+        }
+
+        case BuiltinMethod::kArrayDelete:
+          throw common::InternalError(
+              "EvalRvalue", "delete() should be handled as Effect, not Rvalue");
+      }
+      throw common::InternalError("EvalRvalue", "unknown builtin method");
+    }
   }
 
   throw common::InternalError("EvalRvalue", "unknown rvalue kind");
@@ -719,17 +838,36 @@ void Interpreter::ExecCompute(ProcessState& state, const Compute& compute) {
   WritePlace(state, compute.target) = std::move(value);
 }
 
-void Interpreter::ExecEffect(const ProcessState& state, const Effect& effect) {
+void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
   std::visit(
-      [&](const auto& op) {
-        using T = std::decay_t<decltype(op)>;
-        if constexpr (std::is_same_v<T, DisplayEffect>) {
-          ExecDisplayEffect(state, op);
-        } else {
-          throw common::InternalError("ExecEffect", "unknown effect operation");
-        }
+      Overloaded{
+          [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
+          [&](const BuiltinCallEffect& op) {
+            ExecBuiltinCallEffect(state, op);
+          },
       },
       effect.op);
+}
+
+void Interpreter::ExecBuiltinCallEffect(
+    ProcessState& state, const BuiltinCallEffect& effect) {
+  switch (effect.method) {
+    case BuiltinMethod::kArrayDelete: {
+      // arr.delete() - clear array to size 0
+      RuntimeValue& arr = WritePlace(state, effect.receiver);
+      if (!IsArray(arr)) {
+        throw common::InternalError(
+            "ExecBuiltinCallEffect", "delete() receiver must be array");
+      }
+      AsArray(arr).elements.clear();
+      break;
+    }
+    case BuiltinMethod::kNewArray:
+    case BuiltinMethod::kArraySize:
+      throw common::InternalError(
+          "ExecBuiltinCallEffect",
+          "kNewArray/kArraySize should be Rvalue, not Effect");
+  }
 }
 
 void Interpreter::ExecDisplayEffect(

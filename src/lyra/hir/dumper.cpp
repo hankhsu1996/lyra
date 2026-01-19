@@ -586,6 +586,33 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << ")";
       break;
     }
+
+    case ExpressionKind::kNewArray: {
+      const auto& data = std::get<NewArrayExpressionData>(expr.data);
+      *out_ << "new[";
+      Dump(data.size_expr);
+      *out_ << "]";
+      if (data.init_expr) {
+        *out_ << "(";
+        Dump(*data.init_expr);
+        *out_ << ")";
+      }
+      break;
+    }
+
+    case ExpressionKind::kBuiltinMethodCall: {
+      const auto& data = std::get<BuiltinMethodCallExpressionData>(expr.data);
+      Dump(data.receiver);
+      switch (data.method) {
+        case BuiltinMethod::kSize:
+          *out_ << ".size()";
+          break;
+        case BuiltinMethod::kDelete:
+          *out_ << ".delete()";
+          break;
+      }
+      break;
+    }
   }
 }
 

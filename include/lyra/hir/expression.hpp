@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -26,6 +27,8 @@ enum class ExpressionKind {
   kMemberAccess,
   kStructLiteral,
   kCall,
+  kNewArray,
+  kBuiltinMethodCall,
 };
 
 struct ConstantExpressionData {
@@ -103,12 +106,33 @@ struct CallExpressionData {
   auto operator==(const CallExpressionData&) const -> bool = default;
 };
 
+enum class BuiltinMethod {
+  kSize,
+  kDelete,
+};
+
+struct NewArrayExpressionData {
+  ExpressionId size_expr;
+  std::optional<ExpressionId> init_expr;
+
+  auto operator==(const NewArrayExpressionData&) const -> bool = default;
+};
+
+struct BuiltinMethodCallExpressionData {
+  ExpressionId receiver;
+  BuiltinMethod method;
+
+  auto operator==(const BuiltinMethodCallExpressionData&) const
+      -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
     ElementAccessExpressionData, MemberAccessExpressionData,
-    StructLiteralExpressionData, CallExpressionData>;
+    StructLiteralExpressionData, CallExpressionData, NewArrayExpressionData,
+    BuiltinMethodCallExpressionData>;
 
 struct Expression {
   ExpressionKind kind;
