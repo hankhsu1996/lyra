@@ -623,14 +623,87 @@ auto LowerBuiltinMethodCall(
       return mir::Operand::Use(temp);
     }
 
-    case hir::BuiltinMethod::kDelete:
     case hir::BuiltinMethod::kPushBack:
-    case hir::BuiltinMethod::kPushFront:
-    case hir::BuiltinMethod::kInsert:
-      throw common::InternalError(
-          "LowerBuiltinMethodCall",
-          "statement-only method in expression context should have been "
-          "rejected");
+    case hir::BuiltinMethod::kPushFront: {
+      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      std::vector<mir::Operand> operands;
+      for (hir::ExpressionId arg_id : data.args) {
+        operands.push_back(LowerExpression(arg_id, builder));
+      }
+
+      mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPushBack)
+                                      ? mir::BuiltinMethod::kQueuePushBack
+                                      : mir::BuiltinMethod::kQueuePushFront;
+
+      mir::Rvalue rvalue{
+          .kind = mir::RvalueKind::kBuiltinCall,
+          .op = kUnusedOp,
+          .operands = std::move(operands),
+          .info =
+              mir::BuiltinCallInfo{
+                  .method = method,
+                  .result_type = expr.type,
+                  .receiver = receiver_place},
+      };
+
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+
+    case hir::BuiltinMethod::kInsert: {
+      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      std::vector<mir::Operand> operands;
+      for (hir::ExpressionId arg_id : data.args) {
+        operands.push_back(LowerExpression(arg_id, builder));
+      }
+
+      mir::Rvalue rvalue{
+          .kind = mir::RvalueKind::kBuiltinCall,
+          .op = kUnusedOp,
+          .operands = std::move(operands),
+          .info =
+              mir::BuiltinCallInfo{
+                  .method = mir::BuiltinMethod::kQueueInsert,
+                  .result_type = expr.type,
+                  .receiver = receiver_place},
+      };
+
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+
+    case hir::BuiltinMethod::kDelete: {
+      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      std::vector<mir::Operand> operands;
+      for (hir::ExpressionId arg_id : data.args) {
+        operands.push_back(LowerExpression(arg_id, builder));
+      }
+
+      // Determine method: kArrayDelete, kQueueDelete, or kQueueDeleteAt
+      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
+      mir::BuiltinMethod method = mir::BuiltinMethod::kArrayDelete;
+      if (receiver_type.Kind() == TypeKind::kDynamicArray) {
+        method = mir::BuiltinMethod::kArrayDelete;
+      } else if (operands.empty()) {
+        method = mir::BuiltinMethod::kQueueDelete;
+      } else {
+        method = mir::BuiltinMethod::kQueueDeleteAt;
+      }
+
+      mir::Rvalue rvalue{
+          .kind = mir::RvalueKind::kBuiltinCall,
+          .op = kUnusedOp,
+          .operands = std::move(operands),
+          .info =
+              mir::BuiltinCallInfo{
+                  .method = method,
+                  .result_type = expr.type,
+                  .receiver = receiver_place},
+      };
+
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
   }
   throw common::InternalError(
       "LowerBuiltinMethodCall", "unknown builtin method");

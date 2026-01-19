@@ -195,12 +195,6 @@ struct StorageCollector {
                           Visit(arg, arena);
                         }
                       },
-                      [&](const BuiltinCallEffect& op) -> void {
-                        Visit(arena[op.receiver], arena);
-                        for (const auto& arg : op.args) {
-                          Visit(arg, arena);
-                        }
-                      },
                   },
                   i.op);
             },
@@ -398,6 +392,38 @@ auto TypeOfOperand(
       return kInvalidTypeId;
   }
   return kInvalidTypeId;
+}
+
+// Helper: safely extract index from operand, return nullopt if X/Z
+// Per IEEE 1800-2023, invalid index means no-op (not an error)
+auto TryGetIndex(
+    const RuntimeValue& val, const TypeArena& types, TypeId type_id)
+    -> std::optional<int64_t> {
+  if (!IsIntegral(val)) {
+    return std::nullopt;
+  }
+  const auto& integral = AsIntegral(val);
+  if (!integral.IsKnown()) {
+    return std::nullopt;  // X/Z -> invalid
+  }
+
+  // Extract raw bits
+  uint64_t raw_bits = integral.value.empty() ? 0 : integral.value[0];
+
+  // Sign-extend if operand type is signed
+  const auto& type_info = types[type_id];
+  if (type_info.Kind() == TypeKind::kIntegral) {
+    const auto& info = type_info.AsIntegral();
+    if (info.is_signed && info.bit_width < 64) {
+      uint64_t sign_bit = 1ULL << (info.bit_width - 1);
+      if ((raw_bits & sign_bit) != 0) {
+        uint64_t mask = ~((1ULL << info.bit_width) - 1);
+        raw_bits |= mask;
+      }
+    }
+  }
+
+  return static_cast<int64_t>(raw_bits);
 }
 
 }  // namespace
@@ -816,15 +842,93 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
           return result;
         }
 
+        case BuiltinMethod::kQueuePushBack: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "push_back() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          elements.push_back(EvalOperand(state, rv.operands[0]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueuePushFront: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "push_front() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          elements.insert(elements.begin(), EvalOperand(state, rv.operands[0]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueueInsert: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "insert() requires receiver");
+          }
+          TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+          auto idx_opt = TryGetIndex(
+              EvalOperand(state, rv.operands[0]), *types_, idx_type);
+          if (!idx_opt) {
+            return std::monostate{};  // X/Z -> no-op
+          }
+          auto idx = *idx_opt;
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (idx < 0 || idx > static_cast<int64_t>(elements.size())) {
+            return std::monostate{};  // Invalid index -> no-op
+          }
+          elements.insert(
+              elements.begin() + idx, EvalOperand(state, rv.operands[1]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
         case BuiltinMethod::kArrayDelete:
-        case BuiltinMethod::kQueueDelete:
-        case BuiltinMethod::kQueueDeleteAt:
-        case BuiltinMethod::kQueuePushBack:
-        case BuiltinMethod::kQueuePushFront:
-        case BuiltinMethod::kQueueInsert:
-          throw common::InternalError(
-              "EvalRvalue",
-              "effect-only method should be handled as Effect, not Rvalue");
+        case BuiltinMethod::kQueueDelete: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "delete() requires receiver");
+          }
+          AsArray(WritePlace(state, *info->receiver)).elements.clear();
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueueDeleteAt: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "delete(idx) requires receiver");
+          }
+          TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+          auto idx_opt = TryGetIndex(
+              EvalOperand(state, rv.operands[0]), *types_, idx_type);
+          if (!idx_opt) {
+            return std::monostate{};  // X/Z -> no-op
+          }
+          auto idx = *idx_opt;
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (idx >= 0 && idx < static_cast<int64_t>(elements.size())) {
+            elements.erase(elements.begin() + idx);
+          }
+          return std::monostate{};
+        }
       }
       throw common::InternalError("EvalRvalue", "unknown builtin method");
     }
@@ -924,160 +1028,8 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
   std::visit(
       Overloaded{
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
-          [&](const BuiltinCallEffect& op) {
-            ExecBuiltinCallEffect(state, op);
-          },
       },
       effect.op);
-}
-
-// Helper: safely extract index from operand, return nullopt if X/Z
-// Per IEEE 1800-2023, invalid index means no-op (not an error)
-auto TryGetIndex(
-    const RuntimeValue& val, const TypeArena& types, TypeId type_id)
-    -> std::optional<int64_t> {
-  if (!IsIntegral(val)) {
-    return std::nullopt;
-  }
-  const auto& integral = AsIntegral(val);
-  if (!integral.IsKnown()) {
-    return std::nullopt;  // X/Z -> invalid
-  }
-
-  // Extract raw bits
-  uint64_t raw_bits = integral.value.empty() ? 0 : integral.value[0];
-
-  // Sign-extend if operand type is signed
-  const auto& type_info = types[type_id];
-  if (type_info.Kind() == TypeKind::kIntegral) {
-    const auto& info = type_info.AsIntegral();
-    if (info.is_signed && info.bit_width < 64) {
-      uint64_t sign_bit = 1ULL << (info.bit_width - 1);
-      if ((raw_bits & sign_bit) != 0) {
-        uint64_t mask = ~((1ULL << info.bit_width) - 1);
-        raw_bits |= mask;
-      }
-    }
-  }
-
-  return static_cast<int64_t>(raw_bits);
-}
-
-void Interpreter::ExecBuiltinCallEffect(
-    ProcessState& state, const BuiltinCallEffect& effect) {
-  switch (effect.method) {
-    case BuiltinMethod::kArrayDelete: {
-      // arr.delete() - clear array to size 0
-      RuntimeValue& arr = WritePlace(state, effect.receiver);
-      if (!IsArray(arr)) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "delete() receiver must be array");
-      }
-      AsArray(arr).elements.clear();
-      break;
-    }
-
-    case BuiltinMethod::kQueueDelete: {
-      // q.delete() - clear queue
-      auto& elements = AsArray(WritePlace(state, effect.receiver)).elements;
-      elements.clear();
-      break;
-    }
-
-    case BuiltinMethod::kQueueDeleteAt: {
-      // q.delete(idx) - remove at index
-      if (effect.args.empty()) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "delete(idx) requires index argument");
-      }
-      TypeId idx_type = TypeOfOperand(effect.args[0], *arena_, *types_);
-      auto idx_opt =
-          TryGetIndex(EvalOperand(state, effect.args[0]), *types_, idx_type);
-      if (!idx_opt) {
-        break;  // X/Z index -> no-op
-      }
-      auto idx = *idx_opt;
-      auto& elements = AsArray(WritePlace(state, effect.receiver)).elements;
-      // Invalid index (negative or >= size): no effect
-      if (idx >= 0 && idx < static_cast<int64_t>(elements.size())) {
-        elements.erase(elements.begin() + idx);
-      }
-      break;
-    }
-
-    case BuiltinMethod::kQueuePushBack: {
-      // q.push_back(val)
-      if (effect.args.empty()) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "push_back() requires value argument");
-      }
-      RuntimeValue val = EvalOperand(state, effect.args[0]);
-      auto& elements = AsArray(WritePlace(state, effect.receiver)).elements;
-      elements.push_back(std::move(val));
-      // Bounded queue: truncate if needed (use TypeOfPlace for nested queues)
-      TypeId receiver_type = TypeOfPlace((*arena_)[effect.receiver], *types_);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      break;
-    }
-
-    case BuiltinMethod::kQueuePushFront: {
-      // q.push_front(val)
-      if (effect.args.empty()) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "push_front() requires value argument");
-      }
-      RuntimeValue val = EvalOperand(state, effect.args[0]);
-      auto& elements = AsArray(WritePlace(state, effect.receiver)).elements;
-      elements.insert(elements.begin(), std::move(val));
-      // Bounded queue: truncate from back (use TypeOfPlace for nested queues)
-      TypeId receiver_type = TypeOfPlace((*arena_)[effect.receiver], *types_);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      break;
-    }
-
-    case BuiltinMethod::kQueueInsert: {
-      // q.insert(idx, val)
-      if (effect.args.size() < 2) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "insert() requires index and value");
-      }
-      TypeId idx_type = TypeOfOperand(effect.args[0], *arena_, *types_);
-      auto idx_opt =
-          TryGetIndex(EvalOperand(state, effect.args[0]), *types_, idx_type);
-      if (!idx_opt) {
-        break;  // X/Z index -> no-op
-      }
-      auto idx = *idx_opt;
-      auto& elements = AsArray(WritePlace(state, effect.receiver)).elements;
-      // Invalid index (negative or > size): no effect
-      if (idx < 0 || idx > static_cast<int64_t>(elements.size())) {
-        break;
-      }
-      RuntimeValue val = EvalOperand(state, effect.args[1]);
-      elements.insert(elements.begin() + idx, std::move(val));
-      // Bounded queue: truncate from back (use TypeOfPlace for nested queues)
-      TypeId receiver_type = TypeOfPlace((*arena_)[effect.receiver], *types_);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      break;
-    }
-
-    case BuiltinMethod::kNewArray:
-    case BuiltinMethod::kArraySize:
-    case BuiltinMethod::kQueueSize:
-    case BuiltinMethod::kQueuePopBack:
-    case BuiltinMethod::kQueuePopFront:
-      throw common::InternalError(
-          "ExecBuiltinCallEffect", "rvalue-only method should not be Effect");
-  }
 }
 
 void Interpreter::ExecDisplayEffect(

@@ -104,10 +104,6 @@ class Interpreter {
   // Execute DisplayEffect
   void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
 
-  // Execute BuiltinCallEffect
-  void ExecBuiltinCallEffect(
-      ProcessState& state, const BuiltinCallEffect& effect);
-
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 

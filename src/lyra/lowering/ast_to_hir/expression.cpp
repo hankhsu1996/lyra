@@ -17,7 +17,6 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/builtin_method.hpp"
@@ -391,16 +390,6 @@ auto LowerExpression(
       // IMPORTANT: Must check BEFORE isSystemCall() - slang's isSystemCall()
       // returns true for built-in array methods like size().
       if (auto info = ClassifyBuiltinMethod(call)) {
-        // Effect-only methods cannot appear in expression context.
-        // Slang should reject this, so treat as ICE if we see it.
-        if (!info->ReturnsValue()) {
-          throw common::InternalError(
-              "LowerExpression",
-              std::format(
-                  "effect-only builtin method in expression context: {}",
-                  call.getSubroutineName()));
-        }
-
         // Lower the receiver (first argument).
         const auto* first_arg = call.arguments()[0];
         hir::ExpressionId receiver =
@@ -412,6 +401,7 @@ auto LowerExpression(
         // Determine HIR method and result type based on classification.
         hir::BuiltinMethod hir_method{};
         TypeId result_type{};
+        std::vector<hir::ExpressionId> args;
 
         switch (info->method) {
           case BuiltinMethodKind::kSize: {
@@ -437,9 +427,73 @@ auto LowerExpression(
             }
             break;
           }
-          default:
-            throw common::InternalError(
-                "LowerExpression", "unhandled value-returning builtin method");
+          case BuiltinMethodKind::kDelete: {
+            hir_method = hir::BuiltinMethod::kDelete;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // delete() or delete(idx): 0 or 1 arg after receiver
+            if (call.arguments().size() > 2) {
+              ctx->sink->Error(span, "delete() takes at most one argument");
+              return hir::kInvalidExpressionId;
+            }
+            if (call.arguments().size() == 2) {
+              hir::ExpressionId idx =
+                  LowerExpression(*call.arguments()[1], registrar, ctx);
+              if (!idx) {
+                return hir::kInvalidExpressionId;
+              }
+              args.push_back(idx);
+            }
+            break;
+          }
+          case BuiltinMethodKind::kPushBack:
+          case BuiltinMethodKind::kPushFront: {
+            hir_method = (info->method == BuiltinMethodKind::kPushBack)
+                             ? hir::BuiltinMethod::kPushBack
+                             : hir::BuiltinMethod::kPushFront;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // push_back(val) / push_front(val): exactly 1 arg after receiver
+            if (call.arguments().size() != 2) {
+              ctx->sink->Error(
+                  span, std::format(
+                            "{}() requires exactly one argument",
+                            call.getSubroutineName()));
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId value =
+                LowerExpression(*call.arguments()[1], registrar, ctx);
+            if (!value) {
+              return hir::kInvalidExpressionId;
+            }
+            args.push_back(value);
+            break;
+          }
+          case BuiltinMethodKind::kInsert: {
+            hir_method = hir::BuiltinMethod::kInsert;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // insert(idx, val): exactly 2 args after receiver
+            if (call.arguments().size() != 3) {
+              ctx->sink->Error(
+                  span,
+                  "insert() requires exactly two arguments (index and value)");
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId idx =
+                LowerExpression(*call.arguments()[1], registrar, ctx);
+            if (!idx) {
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId value =
+                LowerExpression(*call.arguments()[2], registrar, ctx);
+            if (!value) {
+              return hir::kInvalidExpressionId;
+            }
+            args.push_back(idx);
+            args.push_back(value);
+            break;
+          }
         }
 
         return ctx->hir_arena->AddExpression(
@@ -448,7 +502,9 @@ auto LowerExpression(
                 .type = result_type,
                 .span = span,
                 .data = hir::BuiltinMethodCallExpressionData{
-                    .receiver = receiver, .method = hir_method, .args = {}}});
+                    .receiver = receiver,
+                    .method = hir_method,
+                    .args = std::move(args)}});
       }
 
       // Handle system calls ($display, etc.)
