@@ -17,5 +17,6 @@ suites:
       - control_flow/repeat.yaml
       - control_flow/forever.yaml
       - control_flow/ternary.yaml
+      - control_flow/case.yaml
       - datatypes/arrays.yaml
       - system_tasks/display.yaml

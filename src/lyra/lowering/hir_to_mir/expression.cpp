@@ -379,16 +379,13 @@ auto LowerCast(
   }
 
   const auto& src_int = src.AsIntegral();
-  const auto& tgt_int = tgt.AsIntegral();
 
   if (src_int.is_four_state) {
     throw common::InternalError(
         "LowerCast", "4-state source should have been rejected in AST->HIR");
   }
-  if (tgt_int.is_four_state) {
-    throw common::InternalError(
-        "LowerCast", "4-state target should have been rejected in AST->HIR");
-  }
+  // Note: 4-state target is allowed when source is 2-state (lossless
+  // conversion)
 
   mir::Rvalue rvalue{
       .kind = mir::RvalueKind::kCast,
