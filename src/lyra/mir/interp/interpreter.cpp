@@ -130,38 +130,6 @@ struct IndexValue {
   }
 };
 
-// Resolved info for packed array element access (BitSlice).
-// Extracts bounds/direction/element_width from the array type.
-struct PackedSliceInfo {
-  int64_t lower;
-  int64_t upper;
-  bool is_descending;
-  uint32_t element_width;
-
-  // Compute bit offset for a given index.
-  // Descending [H:L]: element 0 at LSB, offset = (index - lower) * width
-  // Ascending [L:H]: element 0 at MSB, offset = (upper - index) * width
-  [[nodiscard]] auto BitOffset(int64_t index) const -> uint32_t {
-    uint32_t normalized = is_descending ? static_cast<uint32_t>(index - lower)
-                                        : static_cast<uint32_t>(upper - index);
-    return normalized * element_width;
-  }
-};
-
-// Extract PackedSliceInfo from a packed array type.
-auto ResolvePackedSliceInfo(const Type& array_type, const TypeArena& types)
-    -> PackedSliceInfo {
-  assert(array_type.Kind() == TypeKind::kPackedArray);
-  const auto& packed_info = array_type.AsPackedArray();
-  const auto& range = packed_info.range;
-  return PackedSliceInfo{
-      .lower = range.Lower(),
-      .upper = range.Upper(),
-      .is_descending = range.IsDescending(),
-      .element_width = PackedArrayElementWidth(array_type, types),
-  };
-}
-
 // Creates a default-initialized RuntimeValue for a given type following SV
 // semantics:
 // - 2-state integrals (bit, int, etc.): default to 0
@@ -279,7 +247,7 @@ struct StorageCollector {
               [&](const IndexProjection& p) { Visit(p.index, arena); },
               [&](const SliceProjection& p) { Visit(p.start, arena); },
               [](const DerefProjection&) {},
-              [&](const BitSliceProjection& p) { Visit(p.index, arena); },
+              [&](const BitRangeProjection& p) { Visit(p.bit_offset, arena); },
           },
           proj.info);
     }
@@ -418,10 +386,10 @@ auto ApplySingleProjection(
             throw common::InternalError(
                 "ApplyProjection", "deref projection not supported");
           },
-          [](const BitSliceProjection& /*bp*/) -> ValuePtr {
-            // BitSlice should be handled specially, not here
+          [](const BitRangeProjection& /*bp*/) -> ValuePtr {
+            // BitRange should be handled specially, not here
             throw common::InternalError(
-                "ApplyProjection", "BitSlice must be handled separately");
+                "ApplyProjection", "BitRange must be handled separately");
           },
       },
       proj.info);
@@ -1004,6 +972,25 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             }
             throw common::InternalError("EvalRvalue", "unknown builtin method");
           },
+          [&](const SelectRvalueInfo& /*info*/) -> RuntimeValue {
+            if (rv.operands.size() != 3) {
+              throw common::InternalError(
+                  "EvalRvalue", "select requires exactly 3 operands");
+            }
+            auto cond = EvalOperand(state, rv.operands[0]);
+            if (!IsIntegral(cond)) {
+              throw common::InternalError(
+                  "EvalRvalue", "select condition must be integral");
+            }
+            const auto& cond_int = AsIntegral(cond);
+            // Condition is 2-state 1-bit bool from lowering
+            // Short-circuit: only evaluate the selected branch to avoid
+            // reading potentially invalid places (OOB bit extractions)
+            if (!cond_int.IsZero()) {
+              return Clone(EvalOperand(state, rv.operands[1]));
+            }
+            return Clone(EvalOperand(state, rv.operands[2]));
+          },
       },
       rv.info);
 }
@@ -1043,8 +1030,18 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     return Clone(root_value);
   }
 
-  // Evaluate an index operand with signedness information.
-  auto eval_index_value = [&](const Operand& op) -> IndexValue {
+  // Helper to evaluate integral operand and return raw value as int64
+  auto eval_integral_operand = [&](const Operand& op) -> int64_t {
+    auto val = EvalOperand(state, op);
+    if (!IsIntegral(val)) {
+      throw common::InternalError("ReadPlace", "operand must be integral");
+    }
+    const auto& integral = AsIntegral(val);
+    return integral.value.empty() ? 0 : static_cast<int64_t>(integral.value[0]);
+  };
+
+  // Wrapper for ApplyProjections that returns int64_t.
+  auto eval_index = [&](const Operand& op) -> int64_t {
     auto val = EvalOperand(state, op);
     if (!IsIntegral(val)) {
       throw common::InternalError("ReadPlace", "index must be integral");
@@ -1053,22 +1050,17 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     if (!integral.IsKnown()) {
       throw std::runtime_error("index is X/Z");
     }
+    uint64_t raw = integral.value.empty() ? 0 : integral.value[0];
     TypeId type_id = TypeOfOperand(op, *arena_, *types_);
-    return IndexValue{
-        .raw = integral.value.empty() ? 0 : integral.value[0],
-        .bit_width = integral.bit_width,
-        .is_signed = IsSignedIntegral(*types_, type_id),
-    };
+    if (IsSignedIntegral(*types_, type_id)) {
+      return SignExtendToInt64(raw, integral.bit_width);
+    }
+    return static_cast<int64_t>(raw);
   };
 
-  // Wrapper for ApplyProjections that returns int64_t.
-  auto eval_index = [&](const Operand& op) -> int64_t {
-    return eval_index_value(op).AsInt64();
-  };
-
-  // Check if last projection is BitSlice
+  // Check if last projection is BitRange
   const auto& last_proj = place.projections.back();
-  if (const auto* bs = std::get_if<BitSliceProjection>(&last_proj.info)) {
+  if (const auto* br = std::get_if<BitRangeProjection>(&last_proj.info)) {
     // Apply all projections except the last to get the base integral
     size_t base_count = place.projections.size() - 1;
     const RuntimeValue* base_ptr = &root_value;
@@ -1081,29 +1073,19 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     // Base must be integral
     if (!IsIntegral(*base_ptr)) {
       throw common::InternalError(
-          "ReadPlace", "BitSlice base must be integral");
+          "ReadPlace", "BitRange base must be integral");
     }
     const auto& base_int = AsIntegral(*base_ptr);
 
-    // Extract bounds/direction from the array_type
-    const auto& array_type = (*types_)[bs->array_type];
-    auto slice_info = ResolvePackedSliceInfo(array_type, *types_);
+    // Evaluate the pre-computed bit offset
+    auto bit_offset =
+        static_cast<uint32_t>(eval_integral_operand(br->bit_offset));
 
-    // Evaluate index with signedness-aware bounds check
-    IndexValue idx = eval_index_value(bs->index);
-    if (!idx.InBounds(slice_info.lower, slice_info.upper)) {
-      throw std::runtime_error(
-          std::format(
-              "packed element select: index {} out of bounds [{}:{}]",
-              idx.AsInt64(), slice_info.lower, slice_info.upper));
-    }
-
-    // Compute bit offset and extract
-    uint32_t bit_offset = slice_info.BitOffset(idx.AsInt64());
-    return IntegralExtractSlice(base_int, bit_offset, slice_info.element_width);
+    // Extract the slice
+    return IntegralExtractSlice(base_int, bit_offset, br->width);
   }
 
-  // No BitSlice - apply all projections normally
+  // No BitRange - apply all projections normally
   const auto& nested = ApplyProjections(
       root_value, place.projections, *types_, place.root.type, eval_index);
   return Clone(nested);
@@ -1118,10 +1100,10 @@ auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     return root_value;
   }
 
-  // BitSlice cannot return a reference - caller must use WriteBitSlice instead
-  if (IsBitSlice(place.projections.back())) {
+  // BitRange cannot return a reference - caller must use WriteBitRange instead
+  if (IsBitRange(place.projections.back())) {
     throw common::InternalError(
-        "WritePlace", "BitSlice requires WriteBitSlice path");
+        "WritePlace", "BitRange requires WriteBitRange path");
   }
 
   // For unpacked array access, sign-extend indices (negative would fail anyway)
@@ -1146,36 +1128,41 @@ auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
       root_value, place.projections, *types_, place.root.type, eval_index);
 }
 
-void Interpreter::WriteBitSlice(
+void Interpreter::WriteBitRange(
     ProcessState& state, PlaceId place_id, RuntimeValue value) {
   const auto& place = (*arena_)[place_id];
   auto& root_value = ResolveRootMut(state, place.root);
 
-  // Evaluate an index operand with signedness information.
-  auto eval_index_value = [&](const Operand& op) -> IndexValue {
+  // Helper to evaluate integral operand and return raw value as int64
+  auto eval_integral_operand = [&](const Operand& op) -> int64_t {
     auto val = EvalOperand(state, op);
     if (!IsIntegral(val)) {
-      throw common::InternalError("WriteBitSlice", "index must be integral");
+      throw common::InternalError("WriteBitRange", "operand must be integral");
+    }
+    const auto& integral = AsIntegral(val);
+    return integral.value.empty() ? 0 : static_cast<int64_t>(integral.value[0]);
+  };
+
+  // Wrapper for ApplyProjections that returns int64_t.
+  auto eval_index = [&](const Operand& op) -> int64_t {
+    auto val = EvalOperand(state, op);
+    if (!IsIntegral(val)) {
+      throw common::InternalError("WriteBitRange", "index must be integral");
     }
     const auto& integral = AsIntegral(val);
     if (!integral.IsKnown()) {
       throw std::runtime_error("index is X/Z");
     }
+    uint64_t raw = integral.value.empty() ? 0 : integral.value[0];
     TypeId type_id = TypeOfOperand(op, *arena_, *types_);
-    return IndexValue{
-        .raw = integral.value.empty() ? 0 : integral.value[0],
-        .bit_width = integral.bit_width,
-        .is_signed = IsSignedIntegral(*types_, type_id),
-    };
-  };
-
-  // Wrapper for ApplyProjections that returns int64_t.
-  auto eval_index = [&](const Operand& op) -> int64_t {
-    return eval_index_value(op).AsInt64();
+    if (IsSignedIntegral(*types_, type_id)) {
+      return SignExtendToInt64(raw, integral.bit_width);
+    }
+    return static_cast<int64_t>(raw);
   };
 
   const auto& last_proj = place.projections.back();
-  const auto& bs = std::get<BitSliceProjection>(last_proj.info);
+  const auto& br = std::get<BitRangeProjection>(last_proj.info);
 
   // Apply all projections except the last to get the base location
   size_t base_count = place.projections.size() - 1;
@@ -1188,42 +1175,30 @@ void Interpreter::WriteBitSlice(
 
   // Base must be integral
   if (!IsIntegral(*base_ptr)) {
-    throw common::InternalError("WriteBitSlice", "base must be integral");
+    throw common::InternalError("WriteBitRange", "base must be integral");
   }
   const auto& base_int = AsIntegral(*base_ptr);
 
   // Value must be integral
   if (!IsIntegral(value)) {
-    throw common::InternalError("WriteBitSlice", "value must be integral");
+    throw common::InternalError("WriteBitRange", "value must be integral");
   }
   const auto& value_int = AsIntegral(value);
 
-  // Extract bounds/direction from the array_type
-  const auto& array_type = (*types_)[bs.array_type];
-  auto slice_info = ResolvePackedSliceInfo(array_type, *types_);
+  // Evaluate the pre-computed bit offset
+  auto bit_offset = static_cast<uint32_t>(eval_integral_operand(br.bit_offset));
 
-  // Evaluate index with signedness-aware bounds check
-  IndexValue idx = eval_index_value(bs.index);
-  if (!idx.InBounds(slice_info.lower, slice_info.upper)) {
-    throw std::runtime_error(
-        std::format(
-            "packed element insert: index {} out of bounds [{}:{}]",
-            idx.AsInt64(), slice_info.lower, slice_info.upper));
-  }
-
-  // Compute bit offset using helper
-  uint32_t bit_offset = slice_info.BitOffset(idx.AsInt64());
-  *base_ptr = IntegralInsertSlice(
-      base_int, value_int, bit_offset, slice_info.element_width);
+  // Insert the slice
+  *base_ptr = IntegralInsertSlice(base_int, value_int, bit_offset, br.width);
 }
 
 void Interpreter::StoreToPlace(
     ProcessState& state, PlaceId place_id, RuntimeValue value) {
   const auto& place = (*arena_)[place_id];
 
-  // Check if target has BitSlice as final projection
-  if (!place.projections.empty() && IsBitSlice(place.projections.back())) {
-    WriteBitSlice(state, place_id, std::move(value));
+  // Check if target has BitRange as final projection
+  if (!place.projections.empty() && IsBitRange(place.projections.back())) {
+    WriteBitRange(state, place_id, std::move(value));
   } else {
     WritePlace(state, place_id) = std::move(value);
   }

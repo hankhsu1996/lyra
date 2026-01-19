@@ -41,6 +41,7 @@ auto LowerProcess(
       .next_local_id = 0,
       .next_temp_id = 0,
       .bit_type = input.bit_type,
+      .offset_type = input.offset_type,
       .symbol_to_mir_function = &symbol_to_mir_function,
       .return_place = mir::kInvalidPlaceId,
   };

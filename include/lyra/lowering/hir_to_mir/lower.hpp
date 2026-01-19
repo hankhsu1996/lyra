@@ -18,7 +18,8 @@ struct LoweringInput {
   const TypeArena& type_arena;
   const ConstantArena& constant_arena;
   const SymbolTable& symbol_table;
-  TypeId bit_type;  // Cached 1-bit 4-state type for comparison results
+  TypeId bit_type;     // 1-bit 2-state for bool results
+  TypeId offset_type;  // 32-bit 2-state unsigned for offset arithmetic
 };
 
 struct LoweringResult {

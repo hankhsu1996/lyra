@@ -66,9 +66,34 @@ void LowerVariableDeclaration(
 
 void LowerAssignment(
     const hir::AssignmentStatementData& data, MirBuilder& builder) {
-  mir::PlaceId target = LowerLvalue(data.target, builder);
+  LvalueResult target = LowerLvalue(data.target, builder);
   mir::Operand value = LowerExpression(data.value, builder);
-  builder.EmitAssign(target, std::move(value));
+
+  if (IsAlwaysValid(target.validity)) {
+    builder.EmitAssign(target.place, std::move(value));
+    return;
+  }
+
+  // Guarded store: only write if validity is true (OOB/X/Z = no-op)
+  Context& ctx = builder.GetContext();
+  mir::Operand cond = target.validity;
+
+  // EmitBranch requires Use operand - materialize constant if needed
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+
+  BlockIndex store_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
+  builder.EmitBranch(cond, store_bb, merge_bb);
+
+  builder.SetCurrentBlock(store_bb);
+  builder.EmitAssign(target.place, std::move(value));
+  builder.EmitJump(merge_bb);
+
+  builder.SetCurrentBlock(merge_bb);
 }
 
 void LowerDisplayEffect(

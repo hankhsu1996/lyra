@@ -39,18 +39,18 @@ struct SliceProjection {
 
 struct DerefProjection {};
 
-// BitSlice: packed array element access (bit-range within an integral)
-// Must be the final projection in a place.
-// Bounds/direction are obtained from array_type at runtime.
-struct BitSliceProjection {
-  Operand index;        // Element index (may be dynamic)
-  TypeId array_type;    // Packed array type (has bounds/direction)
+// BitRange: bit-range access within a packed value.
+// Address-only projection: carries only the addressing info.
+// All validity checking and OOB handling is done in lowering.
+struct BitRangeProjection {
+  Operand bit_offset;   // Bit offset from base (dynamic expression)
+  uint32_t width = 0;   // Number of bits to extract (static)
   TypeId element_type;  // Type of the extracted element
 };
 
 using ProjectionInfo = std::variant<
     FieldProjection, IndexProjection, SliceProjection, DerefProjection,
-    BitSliceProjection>;
+    BitRangeProjection>;
 
 struct Projection {
   ProjectionInfo info;
@@ -61,9 +61,9 @@ struct Place {
   std::vector<Projection> projections;
 };
 
-// Helper to check if a projection is a BitSlice
-inline auto IsBitSlice(const Projection& proj) -> bool {
-  return std::holds_alternative<BitSliceProjection>(proj.info);
+// Helper to check if a projection is a BitRange
+inline auto IsBitRange(const Projection& proj) -> bool {
+  return std::holds_alternative<BitRangeProjection>(proj.info);
 }
 
 }  // namespace lyra::mir

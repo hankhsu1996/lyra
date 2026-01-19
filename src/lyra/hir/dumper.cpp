@@ -705,6 +705,22 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << "]";  // Same as element access for dump purposes
       break;
     }
+
+    case ExpressionKind::kBitSelect: {
+      const auto& data = std::get<BitSelectExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << "[";
+      Dump(data.index);
+      *out_ << "]";  // Same as element access for dump purposes
+      break;
+    }
+
+    case ExpressionKind::kRangeSelect: {
+      const auto& data = std::get<RangeSelectExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << "[" << data.left << ":" << data.right << "]";
+      break;
+    }
   }
 }
 

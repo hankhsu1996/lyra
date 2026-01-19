@@ -47,6 +47,21 @@ class MirBuilder {
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
   auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
 
+  // Emit a Select rvalue and materialize to temp. Always returns Use(temp).
+  // This enforces the invariant that Select results are never raw projections.
+  auto EmitSelect(
+      mir::Operand cond, mir::Operand true_val, mir::Operand false_val,
+      TypeId result_type) -> mir::Operand;
+
+  // Emit a unary operation and materialize to temp.
+  auto EmitUnary(mir::UnaryOp op, mir::Operand operand, TypeId result_type)
+      -> mir::Operand;
+
+  // Emit a binary operation and materialize to temp.
+  auto EmitBinary(
+      mir::BinaryOp op, mir::Operand lhs, mir::Operand rhs, TypeId result_type)
+      -> mir::Operand;
+
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitReturn();

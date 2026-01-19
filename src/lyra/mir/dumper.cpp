@@ -241,10 +241,11 @@ auto Dumper::FormatProjection(const Projection& proj) const -> std::string {
                 "[{}+:{}]", FormatIndexOperand(s.start), s.width);
           },
           [](const DerefProjection& /*d*/) { return std::string(".*"); },
-          [this](const BitSliceProjection& b) {
+          [this](const BitRangeProjection& b) {
             return std::format(
-                "[bitslice:{}:arr={}:elem={}]", FormatIndexOperand(b.index),
-                FormatType(b.array_type), FormatType(b.element_type));
+                "[bitrange:offset={}:width={}:elem={}]",
+                FormatIndexOperand(b.bit_offset), b.width,
+                FormatType(b.element_type));
           },
       },
       proj.info);
@@ -387,6 +388,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 break;
             }
             return std::format("builtin({})", method_name);
+          },
+          [](const SelectRvalueInfo& /*info*/) {
+            return std::string("select");
           },
       },
       rv.info);

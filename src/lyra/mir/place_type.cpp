@@ -49,8 +49,8 @@ auto TypeAfterProjection(
             }
             return struct_info.fields[static_cast<size_t>(p.field_index)].type;
           },
-          [&](const BitSliceProjection& p) -> TypeId {
-            // BitSlice yields the element type stored in the projection
+          [&](const BitRangeProjection& p) -> TypeId {
+            // BitRange yields the element type stored in the projection
             return p.element_type;
           },
           [](const SliceProjection& /*p*/) -> TypeId {

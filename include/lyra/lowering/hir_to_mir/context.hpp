@@ -8,7 +8,6 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -41,7 +40,8 @@ struct Context {
   int next_local_id = 0;
   int next_temp_id = 0;
 
-  TypeId bit_type;
+  TypeId bit_type;     // 1-bit 2-state (for bool results)
+  TypeId offset_type;  // 32-bit 2-state unsigned (for offset arithmetic)
 
   // Function-specific: map symbols to MIR function IDs (for call lowering)
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
@@ -61,6 +61,10 @@ struct Context {
 
   [[nodiscard]] auto GetBitType() const -> TypeId {
     return bit_type;
+  }
+
+  [[nodiscard]] auto GetOffsetType() const -> TypeId {
+    return offset_type;
   }
 };
 

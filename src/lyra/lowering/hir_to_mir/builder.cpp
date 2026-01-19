@@ -87,6 +87,36 @@ auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
   return temp;
 }
 
+auto MirBuilder::EmitSelect(
+    mir::Operand cond, mir::Operand true_val, mir::Operand false_val,
+    TypeId result_type) -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(cond), std::move(true_val), std::move(false_val)},
+      .info = mir::SelectRvalueInfo{},
+  };
+  // Always materialize to temp - this is the key invariant
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
+auto MirBuilder::EmitUnary(
+    mir::UnaryOp op, mir::Operand operand, TypeId result_type) -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(operand)},
+      .info = mir::UnaryRvalueInfo{.op = op},
+  };
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
+auto MirBuilder::EmitBinary(
+    mir::BinaryOp op, mir::Operand lhs, mir::Operand rhs, TypeId result_type)
+    -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(lhs), std::move(rhs)},
+      .info = mir::BinaryRvalueInfo{.op = op},
+  };
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
 void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
   if (finished_) {
     throw common::InternalError(

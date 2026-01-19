@@ -89,13 +89,13 @@ class Interpreter {
   // Resolve Place for reading (returns copy)
   auto ReadPlace(const ProcessState& state, PlaceId place_id) -> RuntimeValue;
 
-  // Resolve Place for writing (fails if place ends with BitSlice)
+  // Resolve Place for writing (fails if place ends with BitRange)
   auto WritePlace(ProcessState& state, PlaceId place_id) -> RuntimeValue&;
 
-  // Write to a place that ends with BitSlice projection (read-modify-write)
-  void WriteBitSlice(ProcessState& state, PlaceId place_id, RuntimeValue value);
+  // Write to a place that ends with BitRange projection (read-modify-write)
+  void WriteBitRange(ProcessState& state, PlaceId place_id, RuntimeValue value);
 
-  // Store a value to a place (dispatches to WritePlace or WriteBitSlice)
+  // Store a value to a place (dispatches to WritePlace or WriteBitRange)
   void StoreToPlace(ProcessState& state, PlaceId place_id, RuntimeValue value);
 
   // Execute Assign instruction

@@ -293,6 +293,10 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
       return std::get<RuntimeIntegral>(
           MakeIntegral((count % 2) == 0 ? 1 : 0, 1));
     }
+
+    case UnaryOp::kIsKnown:
+      // Returns 1 if no X/Z bits, 0 otherwise (always 2-state 1-bit result)
+      return MakeIntegral(op_int.IsKnown() ? 1 : 0, 1);
   }
 
   throw common::InternalError(

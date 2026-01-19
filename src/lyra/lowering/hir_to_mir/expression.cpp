@@ -241,6 +241,10 @@ auto MakeOne(TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
+// Forward declaration for OOB default helper used by increment/decrement.
+auto MakeOobDefault(TypeId element_type, uint32_t width, const TypeArena& types)
+    -> mir::Operand;
+
 // Desugar increment/decrement operators into explicit read-modify-write.
 // These operators have side effects (modify the operand) and return a value
 // (pre returns new value, post returns old value). MIR's Place/Operand
@@ -250,9 +254,8 @@ auto LowerIncrementDecrement(
     MirBuilder& builder) -> mir::Operand {
   Context& ctx = builder.GetContext();
 
-  // 1. Lower operand as lvalue - guaranteed PlaceId
-  //    Currently only supports NameRef; projections are future work.
-  mir::PlaceId target_place = LowerLvalue(data.operand, builder);
+  // 1. Lower operand as lvalue
+  LvalueResult target = LowerLvalue(data.operand, builder);
 
   // 2. Type validation (defensive - Slang already checked)
   const Type& type = (*ctx.type_arena)[expr.type];
@@ -261,9 +264,20 @@ auto LowerIncrementDecrement(
         "LowerIncrementDecrement", "operand must be integral type");
   }
 
-  // 3. Save old value
+  // 3. Read old value with OOB handling
+  mir::Operand read_val;
+  if (IsAlwaysValid(target.validity)) {
+    read_val = mir::Operand::Use(target.place);
+  } else {
+    // OOB/X/Z index: use Select to return X (4-state) or 0 (2-state)
+    mir::Operand oob_default =
+        MakeOobDefault(expr.type, type.AsIntegral().bit_width, *ctx.type_arena);
+    read_val = builder.EmitSelect(
+        target.validity, mir::Operand::Use(target.place), oob_default,
+        expr.type);
+  }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
-  builder.EmitAssign(old_value, mir::Operand::Use(target_place));
+  builder.EmitAssign(old_value, read_val);
 
   // 4. Compute new value using existing binary op machinery
   bool is_increment =
@@ -282,8 +296,29 @@ auto LowerIncrementDecrement(
   mir::PlaceId new_value =
       builder.EmitTemp(expr.type, std::move(compute_rvalue));
 
-  // 5. Write back to target
-  builder.EmitAssign(target_place, mir::Operand::Use(new_value));
+  // 5. Write back to target with guarded store for OOB safety
+  if (IsAlwaysValid(target.validity)) {
+    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
+  } else {
+    mir::Operand cond = target.validity;
+
+    // EmitBranch requires Use operand - materialize constant if needed
+    if (cond.kind == mir::Operand::Kind::kConst) {
+      mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
+      builder.EmitAssign(temp, std::move(cond));
+      cond = mir::Operand::Use(temp);
+    }
+
+    BlockIndex store_bb = builder.CreateBlock();
+    BlockIndex merge_bb = builder.CreateBlock();
+    builder.EmitBranch(cond, store_bb, merge_bb);
+
+    builder.SetCurrentBlock(store_bb);
+    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
+    builder.EmitJump(merge_bb);
+
+    builder.SetCurrentBlock(merge_bb);
+  }
 
   // 6. Return appropriate value
   bool is_pre =
@@ -404,15 +439,37 @@ auto LowerSystemCall(
 auto LowerAssignment(
     const hir::AssignmentExpressionData& data, const hir::Expression& /*expr*/,
     MirBuilder& builder) -> mir::Operand {
-  // Lower target as lvalue (handles packed element select via BitSlice
-  // projection)
-  mir::PlaceId target = LowerLvalue(data.target, builder);
+  // Lower target as lvalue
+  LvalueResult target = LowerLvalue(data.target, builder);
 
   // Lower value as rvalue
   mir::Operand value = LowerExpression(data.value, builder);
 
-  // Emit assignment (interpreter handles BitSlice via read-modify-write)
-  builder.EmitAssign(target, value);
+  if (IsAlwaysValid(target.validity)) {
+    builder.EmitAssign(target.place, value);
+    return value;
+  }
+
+  // Guarded store: only write if validity is true (OOB/X/Z = no-op)
+  Context& ctx = builder.GetContext();
+  mir::Operand cond = target.validity;
+
+  // EmitBranch requires Use operand - materialize constant if needed
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+
+  BlockIndex store_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
+  builder.EmitBranch(cond, store_bb, merge_bb);
+
+  builder.SetCurrentBlock(store_bb);
+  builder.EmitAssign(target.place, value);
+  builder.EmitJump(merge_bb);
+
+  builder.SetCurrentBlock(merge_bb);
 
   // Return the value (assignment expression yields the assigned value)
   return value;
@@ -583,7 +640,7 @@ auto LowerBuiltinMethodCall(
     case hir::BuiltinMethod::kPopFront: {
       // Pop methods mutate the receiver AND return a value
       // Need receiver as PlaceId for mutation
-      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      LvalueResult lv = LowerLvalue(data.receiver, builder);
 
       mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPopBack)
                                       ? mir::BuiltinMethod::kQueuePopBack
@@ -595,7 +652,7 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = receiver_place},
+                  .receiver = lv.place},
       };
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
@@ -603,7 +660,7 @@ auto LowerBuiltinMethodCall(
 
     case hir::BuiltinMethod::kPushBack:
     case hir::BuiltinMethod::kPushFront: {
-      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      LvalueResult lv = LowerLvalue(data.receiver, builder);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         operands.push_back(LowerExpression(arg_id, builder));
@@ -619,7 +676,7 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = receiver_place},
+                  .receiver = lv.place},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -627,7 +684,7 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kInsert: {
-      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      LvalueResult lv = LowerLvalue(data.receiver, builder);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         operands.push_back(LowerExpression(arg_id, builder));
@@ -639,7 +696,7 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = mir::BuiltinMethod::kQueueInsert,
                   .result_type = expr.type,
-                  .receiver = receiver_place},
+                  .receiver = lv.place},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -647,7 +704,7 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kDelete: {
-      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+      LvalueResult lv = LowerLvalue(data.receiver, builder);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         operands.push_back(LowerExpression(arg_id, builder));
@@ -670,7 +727,7 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = receiver_place},
+                  .receiver = lv.place},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -681,45 +738,305 @@ auto LowerBuiltinMethodCall(
       "LowerBuiltinMethodCall", "unknown builtin method");
 }
 
+// Get the base place from an operand, materializing to temp if needed.
+auto GetOrMaterializePlace(
+    mir::Operand& operand, TypeId type, MirBuilder& builder) -> mir::PlaceId {
+  if (operand.kind == mir::Operand::Kind::kUse) {
+    return std::get<mir::PlaceId>(operand.payload);
+  }
+  if (operand.kind == mir::Operand::Kind::kConst) {
+    return builder.EmitTempAssign(type, operand);
+  }
+  throw common::InternalError(
+      "GetOrMaterializePlace", "unexpected operand kind");
+}
+
+// Get a 1-bit 2-state type for boolean results.
+auto GetBoolType(const Context& ctx) -> TypeId {
+  return ctx.GetBitType();
+}
+
+// Make an integral constant with specified value and type.
+auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
+  IntegralConstant ic;
+  ic.value.push_back(static_cast<uint64_t>(value));
+  return Constant{.type = type, .value = std::move(ic)};
+}
+
+// Check if an index has any X/Z bits. Returns 2-state 1-bit bool.
+// For 2-state types, returns constant 1 (always known).
+auto EmitIndexIsKnown(
+    mir::Operand index, TypeId index_type, MirBuilder& builder)
+    -> mir::Operand {
+  Context& ctx = builder.GetContext();
+  const Type& type = (*ctx.type_arena)[index_type];
+  TypeId bool_type = GetBoolType(ctx);
+
+  if (type.Kind() == TypeKind::kIntegral && !type.AsIntegral().is_four_state) {
+    // 2-state type: always known
+    return mir::Operand::Const(MakeIntegralConst(1, bool_type));
+  }
+  // 4-state type: emit IsKnown check
+  return builder.EmitUnary(mir::UnaryOp::kIsKnown, index, bool_type);
+}
+
+// Compute validity predicate: in_bounds AND index_is_known.
+// Uses signed comparisons for signed index types (kIntegral or kPackedArray).
+auto EmitValidityCheck(
+    mir::Operand index, TypeId index_type, int64_t lower, int64_t upper,
+    MirBuilder& builder) -> mir::Operand {
+  const Context& ctx = builder.GetContext();
+  const Type& idx_type = (*ctx.type_arena)[index_type];
+  bool is_signed =
+      IsPacked(idx_type) && IsPackedSigned(idx_type, *ctx.type_arena);
+  TypeId bool_type = GetBoolType(ctx);
+
+  // Emit constants at index type
+  auto lower_const = mir::Operand::Const(MakeIntegralConst(lower, index_type));
+  auto upper_const = mir::Operand::Const(MakeIntegralConst(upper, index_type));
+
+  // Bounds check - use signed ops for signed indices
+  mir::Operand ge_lower;
+  mir::Operand le_upper;
+  if (is_signed) {
+    ge_lower = builder.EmitBinary(
+        mir::BinaryOp::kGreaterThanEqualSigned, index, lower_const, bool_type);
+    le_upper = builder.EmitBinary(
+        mir::BinaryOp::kLessThanEqualSigned, index, upper_const, bool_type);
+  } else {
+    ge_lower = builder.EmitBinary(
+        mir::BinaryOp::kGreaterThanEqual, index, lower_const, bool_type);
+    le_upper = builder.EmitBinary(
+        mir::BinaryOp::kLessThanEqual, index, upper_const, bool_type);
+  }
+  auto in_bounds = builder.EmitBinary(
+      mir::BinaryOp::kLogicalAnd, ge_lower, le_upper, bool_type);
+
+  // X/Z check (returns 2-state bool)
+  auto is_known = EmitIndexIsKnown(index, index_type, builder);
+
+  // valid = in_bounds && is_known
+  return builder.EmitBinary(
+      mir::BinaryOp::kLogicalAnd, in_bounds, is_known, bool_type);
+}
+
+// Compute bit offset for packed array element select.
+// Returns {offset, valid} pair.
+// Uses 32-bit offset type for intermediate calculations to avoid truncation
+// when index type is narrower than element_width.
+auto EmitPackedElementOffset(
+    mir::Operand index, TypeId index_type, const Type& array_type,
+    MirBuilder& builder) -> std::pair<mir::Operand, mir::Operand> {
+  const Context& ctx = builder.GetContext();
+  const auto& packed_info = array_type.AsPackedArray();
+  const auto& range = packed_info.range;
+  uint32_t element_width = PackedArrayElementWidth(array_type, *ctx.type_arena);
+  TypeId offset_type = ctx.GetOffsetType();
+
+  // Compute validity (uses index_type for bounds comparison)
+  auto valid = EmitValidityCheck(
+      index, index_type, range.Lower(), range.Upper(), builder);
+
+  // Compute offset based on direction
+  // Descending [H:L]: offset = (index - lower) * width
+  // Ascending [L:H]:  offset = (upper - index) * width
+  // Use 32-bit offset_type for all arithmetic to avoid truncation
+  mir::Operand offset;
+  if (range.IsDescending()) {
+    auto lower_const =
+        mir::Operand::Const(MakeIntegralConst(range.Lower(), offset_type));
+    auto diff = builder.EmitBinary(
+        mir::BinaryOp::kSubtract, index, lower_const, offset_type);
+    auto width_const =
+        mir::Operand::Const(MakeIntegralConst(element_width, offset_type));
+    offset = builder.EmitBinary(
+        mir::BinaryOp::kMultiply, diff, width_const, offset_type);
+  } else {
+    auto upper_const =
+        mir::Operand::Const(MakeIntegralConst(range.Upper(), offset_type));
+    auto diff = builder.EmitBinary(
+        mir::BinaryOp::kSubtract, upper_const, index, offset_type);
+    auto width_const =
+        mir::Operand::Const(MakeIntegralConst(element_width, offset_type));
+    offset = builder.EmitBinary(
+        mir::BinaryOp::kMultiply, diff, width_const, offset_type);
+  }
+  return {offset, valid};
+}
+
+// Compute bit offset for bit select on kIntegral.
+// Returns {offset, valid} pair.
+auto EmitBitSelectOffset(
+    mir::Operand index, TypeId index_type, const Type& base_type,
+    MirBuilder& builder) -> std::pair<mir::Operand, mir::Operand> {
+  const auto& info = base_type.AsIntegral();
+
+  // Implicit range: [bit_width-1:0] (descending, 0-based)
+  int32_t upper = static_cast<int32_t>(info.bit_width) - 1;
+  int32_t lower = 0;
+
+  // Compute validity
+  auto valid = EmitValidityCheck(index, index_type, lower, upper, builder);
+
+  // Offset = index (0-based descending)
+  return {index, valid};
+}
+
+// Compute OOB default value based on element type.
+auto MakeOobDefault(TypeId element_type, uint32_t width, const TypeArena& types)
+    -> mir::Operand {
+  const Type& type = types[element_type];
+  bool is_four_state = IsPacked(type) ? IsPackedFourState(type, types)
+                                      : type.AsIntegral().is_four_state;
+  if (is_four_state) {
+    // Return all-X value
+    IntegralConstant ic;
+    uint32_t num_words = (width + 63) / 64;
+    ic.value.resize(num_words, 0);
+    ic.x_mask.resize(num_words, ~0ULL);  // All bits unknown (X)
+    return mir::Operand::Const(
+        Constant{.type = element_type, .value = std::move(ic)});
+  }
+  // Return 0
+  return mir::Operand::Const(MakeIntegralConst(0, element_type));
+}
+
 auto LowerPackedElementSelect(
     const hir::PackedElementSelectExpressionData& data,
     const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
   Context& ctx = builder.GetContext();
 
-  // Lower base expression to get the packed array value
+  // Lower base and index expressions
   mir::Operand base_operand = LowerExpression(data.base, builder);
-
-  // Lower index expression
   mir::Operand index_operand = LowerExpression(data.index, builder);
 
-  // Get the base expression's type (which is now kPackedArray)
+  // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+  uint32_t element_width = PackedArrayElementWidth(base_type, *ctx.type_arena);
 
-  // Get base as a Place
-  mir::PlaceId base_place;
-  if (base_operand.kind == mir::Operand::Kind::kUse) {
-    base_place = std::get<mir::PlaceId>(base_operand.payload);
-  } else if (base_operand.kind == mir::Operand::Kind::kConst) {
-    // Base is a constant - store to temp first
-    base_place = builder.EmitTempAssign(base_expr.type, base_operand);
+  // Compute offset and validity
+  auto [offset, valid] = EmitPackedElementOffset(
+      index_operand, index_expr.type, base_type, builder);
+
+  // Get base as Place
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  // Create BitRangeProjection (address-only)
+  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+      base_place, mir::Projection{
+                      .info = mir::BitRangeProjection{
+                          .bit_offset = offset,
+                          .width = element_width,
+                          .element_type = expr.type}});
+
+  // Read the value (may read garbage if invalid - Select handles it)
+  mir::Operand extracted = mir::Operand::Use(slice_place);
+
+  // Compute OOB default
+  mir::Operand invalid_default =
+      MakeOobDefault(expr.type, element_width, *ctx.type_arena);
+
+  // Select: valid ? extracted : invalid_default
+  return builder.EmitSelect(valid, extracted, invalid_default, expr.type);
+}
+
+auto LowerBitSelect(
+    const hir::BitSelectExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // Lower base and index expressions
+  mir::Operand base_operand = LowerExpression(data.base, builder);
+  mir::Operand index_operand = LowerExpression(data.index, builder);
+
+  // Get type info
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+  // Compute offset and validity
+  auto [offset, valid] =
+      EmitBitSelectOffset(index_operand, index_expr.type, base_type, builder);
+
+  // Get base as Place
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  // Create BitRangeProjection (width=1)
+  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+      base_place,
+      mir::Projection{
+          .info = mir::BitRangeProjection{
+              .bit_offset = offset, .width = 1, .element_type = expr.type}});
+
+  mir::Operand extracted = mir::Operand::Use(slice_place);
+
+  // Compute OOB default (1-bit)
+  mir::Operand invalid_default = MakeOobDefault(expr.type, 1, *ctx.type_arena);
+
+  return builder.EmitSelect(valid, extracted, invalid_default, expr.type);
+}
+
+auto LowerRangeSelect(
+    const hir::RangeSelectExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // Lower base expression
+  mir::Operand base_operand = LowerExpression(data.base, builder);
+
+  // Get type info
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+  // Compute width from select bounds
+  int32_t select_lower = std::min(data.left, data.right);
+  int32_t select_upper = std::max(data.left, data.right);
+  auto width = static_cast<uint32_t>(select_upper - select_lower + 1);
+
+  // Compute bit offset based on base type and direction
+  // Physical bit layout: bit at Lower() is at physical position 0
+  // Descending [H:L]: offset = select_lower - L
+  // Ascending [L:H]: offset = H - select_upper (higher indices at lower
+  // positions)
+  int32_t bit_offset = 0;
+  if (base_type.Kind() == TypeKind::kIntegral) {
+    // kIntegral has implicit descending [bit_width-1:0]
+    bit_offset = select_lower;
+  } else if (base_type.Kind() == TypeKind::kPackedArray) {
+    const auto& packed = base_type.AsPackedArray();
+    if (packed.range.IsDescending()) {
+      bit_offset = select_lower - packed.range.Lower();
+    } else {
+      // Ascending: higher logical index = lower physical position
+      bit_offset = packed.range.Upper() - select_upper;
+    }
   } else {
     throw common::InternalError(
-        "LowerPackedElementSelect", "unexpected base operand kind");
+        "LowerRangeSelect", "base must be kIntegral or kPackedArray");
   }
 
-  // Create BitSlice projection - bounds/direction come from array_type
-  mir::Projection proj{
-      .info =
-          mir::BitSliceProjection{
-              .index = index_operand,
-              .array_type = base_expr.type,
-              .element_type = expr.type,
-          },
-  };
+  // Use 32-bit offset_type for consistency with packed element select
+  mir::Operand offset =
+      mir::Operand::Const(MakeIntegralConst(bit_offset, ctx.GetOffsetType()));
 
-  // Derive a new place with the BitSlice projection
-  mir::PlaceId slice_place =
-      ctx.mir_arena->DerivePlace(base_place, std::move(proj));
+  // Get base as Place
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  // Create BitRangeProjection (address-only)
+  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+      base_place, mir::Projection{
+                      .info = mir::BitRangeProjection{
+                          .bit_offset = offset,
+                          .width = width,
+                          .element_type = expr.type}});
+
+  // Range select with constant bounds is always valid - no Select wrapper
+  // needed
   return mir::Operand::Use(slice_place);
 }
 
@@ -751,12 +1068,12 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerAssignment(data, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
-          mir::PlaceId place = LowerLvalue(expr_id, builder);
-          return mir::Operand::Use(place);
+          LvalueResult lv = LowerLvalue(expr_id, builder);
+          return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
-          mir::PlaceId place = LowerLvalue(expr_id, builder);
-          return mir::Operand::Use(place);
+          LvalueResult lv = LowerLvalue(expr_id, builder);
+          return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder);
@@ -773,6 +1090,11 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {
           return LowerPackedElementSelect(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::BitSelectExpressionData>) {
+          return LowerBitSelect(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::RangeSelectExpressionData>) {
+          return LowerRangeSelect(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");
