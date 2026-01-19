@@ -58,12 +58,11 @@ auto LowerProcess(
     builder.EmitRepeat();
   }
 
-  // Materialize all blocks into the Arena
-  std::vector<mir::BasicBlockId> blocks = builder.Finish();
+  std::vector<mir::BasicBlock> blocks = builder.Finish();
 
   mir::Process mir_process{
       .kind = mir_kind,
-      .entry = blocks[entry_idx.value],
+      .entry = mir::BasicBlockId{entry_idx.value},  // Local index
       .blocks = std::move(blocks),
   };
 

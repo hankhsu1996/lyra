@@ -39,6 +39,8 @@ struct FunctionId {
 
 constexpr FunctionId kInvalidFunctionId{UINT32_MAX};
 
+// BasicBlockId is a function-local index into Function::blocks or
+// Process::blocks, NOT a global arena index.
 struct BasicBlockId {
   uint32_t value = 0;
 

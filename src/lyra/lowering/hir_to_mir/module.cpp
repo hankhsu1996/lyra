@@ -55,7 +55,7 @@ auto LowerFunctionBody(
   // Implicit return at end
   builder.EmitReturn();
 
-  std::vector<mir::BasicBlockId> blocks = builder.Finish();
+  std::vector<mir::BasicBlock> blocks = builder.Finish();
 
   // Collect storage types for interpreter
   std::vector<TypeId> local_types(static_cast<size_t>(ctx.next_local_id));
@@ -72,10 +72,8 @@ auto LowerFunctionBody(
     }
   }
 
-  // Fill in temps from arena (temps don't have symbols)
-  // Note: We scan the function's blocks to find temp types
-  for (mir::BasicBlockId block_id : blocks) {
-    const auto& block = mir_arena[block_id];
+  // Fill in temps from blocks (temps don't have symbols)
+  for (const mir::BasicBlock& block : blocks) {
     for (const auto& inst : block.instructions) {
       std::visit(
           [&](const auto& i) {
@@ -103,7 +101,7 @@ auto LowerFunctionBody(
   }
 
   return mir::Function{
-      .entry = blocks[entry_idx.value],
+      .entry = mir::BasicBlockId{entry_idx.value},  // Local index
       .blocks = std::move(blocks),
       .local_types = std::move(local_types),
       .temp_types = std::move(temp_types),

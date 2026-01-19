@@ -365,8 +365,7 @@ auto CreateProcessState(
 
   // Scan all blocks to collect local/temp storage requirements and types
   StorageCollector collector;
-  for (BasicBlockId block_id : process.blocks) {
-    const auto& block = arena[block_id];
+  for (const BasicBlock& block : process.blocks) {
     for (const auto& inst : block.instructions) {
       collector.Visit(inst, arena);
     }
@@ -400,7 +399,8 @@ auto CreateProcessState(
 
 auto Interpreter::Run(ProcessState& state) -> ProcessStatus {
   while (state.status == ProcessStatus::kRunning) {
-    const auto& block = (*arena_)[state.current_block];
+    const auto& process = (*arena_)[state.process];
+    const auto& block = process.blocks[state.current_block.value];
 
     // Execute all instructions in block
     while (state.instruction_index < block.instructions.size()) {
@@ -463,7 +463,7 @@ auto Interpreter::RunFunction(
     }
   }
 
-  // Create function state (reuse ProcessState structure)
+  // Create function state (reuse ProcessState structure for convenience)
   ProcessState func_state{
       .process = ProcessId{0},  // Unused for function execution
       .current_block = func.entry,
@@ -473,9 +473,9 @@ auto Interpreter::RunFunction(
       .status = ProcessStatus::kRunning,
   };
 
-  // Execute function
+  // Execute function (look up blocks from func directly)
   while (func_state.status == ProcessStatus::kRunning) {
-    const auto& block = (*arena_)[func_state.current_block];
+    const auto& block = func.blocks[func_state.current_block.value];
 
     while (func_state.instruction_index < block.instructions.size()) {
       ExecInstruction(
@@ -884,8 +884,7 @@ auto CreateDesignState(
   StorageCollector collector;
   for (ProcessId process_id : module.processes) {
     const auto& process = arena[process_id];
-    for (BasicBlockId block_id : process.blocks) {
-      const auto& block = arena[block_id];
+    for (const BasicBlock& block : process.blocks) {
       for (const auto& inst : block.instructions) {
         collector.Visit(inst, arena);
       }

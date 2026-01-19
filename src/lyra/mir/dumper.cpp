@@ -124,8 +124,8 @@ void Dumper::Dump(ProcessId id) {
   *out_ << kind_str << " {\n";
   Indent();
 
-  for (BasicBlockId bb_id : proc.blocks) {
-    Dump(bb_id);
+  for (uint32_t i = 0; i < proc.blocks.size(); ++i) {
+    DumpBlock(proc.blocks[i], i);
   }
 
   Dedent();
@@ -139,8 +139,8 @@ void Dumper::Dump(FunctionId id) {
   *out_ << "function {\n";
   Indent();
 
-  for (BasicBlockId bb_id : func.blocks) {
-    Dump(bb_id);
+  for (uint32_t i = 0; i < func.blocks.size(); ++i) {
+    DumpBlock(func.blocks[i], i);
   }
 
   Dedent();
@@ -148,10 +148,9 @@ void Dumper::Dump(FunctionId id) {
   *out_ << "}\n";
 }
 
-void Dumper::Dump(BasicBlockId id) {
-  const BasicBlock& bb = (*arena_)[id];
+void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
   PrintIndent();
-  *out_ << std::format("bb{}: {{\n", bb.id.value);
+  *out_ << std::format("bb{}: {{\n", index);
   Indent();
 
   for (const Instruction& instr : bb.instructions) {

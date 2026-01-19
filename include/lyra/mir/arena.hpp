@@ -2,7 +2,6 @@
 
 #include <vector>
 
-#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
@@ -38,12 +37,6 @@ class Arena final {
     return AddPlace(std::move(new_place));
   }
 
-  auto AddBasicBlock(BasicBlock block) -> BasicBlockId {
-    BasicBlockId id{static_cast<uint32_t>(basic_blocks_.size())};
-    basic_blocks_.push_back(std::move(block));
-    return id;
-  }
-
   auto AddProcess(Process proc) -> ProcessId {
     ProcessId id{static_cast<uint32_t>(processes_.size())};
     processes_.push_back(std::move(proc));
@@ -72,15 +65,6 @@ class Arena final {
     return places_[id.value];
   }
 
-  [[nodiscard]] auto operator[](BasicBlockId id) const -> const BasicBlock& {
-    return basic_blocks_[id.value];
-  }
-
-  // Mutable access for fixup operations (e.g., terminator target rewriting)
-  auto GetBasicBlock(BasicBlockId id) -> BasicBlock& {
-    return basic_blocks_[id.value];
-  }
-
   [[nodiscard]] auto operator[](ProcessId id) const -> const Process& {
     return processes_[id.value];
   }
@@ -91,7 +75,6 @@ class Arena final {
 
  private:
   std::vector<Place> places_;
-  std::vector<BasicBlock> basic_blocks_;
   std::vector<Process> processes_;
   std::vector<Function> functions_;
 };
