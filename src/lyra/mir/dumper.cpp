@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/common/system_function.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -370,6 +371,25 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
       result += ")";
       return result;
     }
+    case RvalueKind::kBuiltinCall: {
+      const auto* info = std::get_if<BuiltinCallInfo>(&rv.info);
+      const char* method_name = "unknown";
+      if (info != nullptr) {
+        switch (info->method) {
+          case BuiltinMethod::kNewArray:
+            method_name = "new[]";
+            break;
+          case BuiltinMethod::kArraySize:
+            method_name = "size";
+            break;
+          case BuiltinMethod::kArrayDelete:
+            method_name = "delete";
+            break;
+        }
+      }
+      result = std::format("builtin({})", method_name);
+      break;
+    }
   }
 
   for (const Operand& operand : rv.operands) {
@@ -405,6 +425,22 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result += FormatOperand(arg);
           }
           return result;
+        } else if constexpr (std::is_same_v<T, BuiltinCallEffect>) {
+          const char* method_name = "unknown";
+          switch (effect_op.method) {
+            case BuiltinMethod::kArrayDelete:
+              method_name = "delete";
+              break;
+            case BuiltinMethod::kNewArray:
+              method_name = "new[]";
+              break;
+            case BuiltinMethod::kArraySize:
+              method_name = "size";
+              break;
+          }
+          return std::format(
+              "builtin_effect({}, {})", method_name,
+              FormatPlace(effect_op.receiver));
         } else {
           return "unknown_effect";
         }

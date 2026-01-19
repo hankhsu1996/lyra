@@ -38,6 +38,7 @@ enum class TypeKind {
   kReal,
   kUnpackedArray,
   kUnpackedStruct,
+  kDynamicArray,
 };
 
 struct IntegralInfo {
@@ -66,6 +67,17 @@ struct UnpackedArrayInfo {
   }
 };
 
+struct DynamicArrayInfo {
+  TypeId element_type;
+
+  auto operator==(const DynamicArrayInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const DynamicArrayInfo& info) -> H {
+    return H::combine(std::move(h), info.element_type);
+  }
+};
+
 struct StructField {
   std::string name;
   TypeId type;
@@ -91,7 +103,8 @@ struct UnpackedStructInfo {
 };
 
 using TypePayload = std::variant<
-    std::monostate, IntegralInfo, UnpackedArrayInfo, UnpackedStructInfo>;
+    std::monostate, IntegralInfo, UnpackedArrayInfo, UnpackedStructInfo,
+    DynamicArrayInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -113,6 +126,7 @@ class Type {
   static auto UnpackedArray(TypeId element, ConstantRange range) -> Type;
   static auto UnpackedStruct(std::string name, std::vector<StructField> fields)
       -> Type;
+  static auto DynamicArray(TypeId element) -> Type;
 
   [[nodiscard]] auto Kind() const -> TypeKind {
     return kind_;
@@ -122,6 +136,7 @@ class Type {
   [[nodiscard]] auto AsIntegral() const -> const IntegralInfo&;
   [[nodiscard]] auto AsUnpackedArray() const -> const UnpackedArrayInfo&;
   [[nodiscard]] auto AsUnpackedStruct() const -> const UnpackedStructInfo&;
+  [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
 
   auto operator==(const Type& other) const -> bool = default;
 
@@ -164,6 +179,13 @@ inline auto Type::UnpackedStruct(
   return t;
 }
 
+inline auto Type::DynamicArray(TypeId element) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kDynamicArray;
+  t.payload_ = DynamicArrayInfo{.element_type = element};
+  return t;
+}
+
 inline auto Type::AsIntegral() const -> const IntegralInfo& {
   assert(kind_ == TypeKind::kIntegral);
   return std::get<IntegralInfo>(payload_);
@@ -177,6 +199,11 @@ inline auto Type::AsUnpackedArray() const -> const UnpackedArrayInfo& {
 inline auto Type::AsUnpackedStruct() const -> const UnpackedStructInfo& {
   assert(kind_ == TypeKind::kUnpackedStruct);
   return std::get<UnpackedStructInfo>(payload_);
+}
+
+inline auto Type::AsDynamicArray() const -> const DynamicArrayInfo& {
+  assert(kind_ == TypeKind::kDynamicArray);
+  return std::get<DynamicArrayInfo>(payload_);
 }
 
 inline auto ToString(TypeKind kind) -> std::string {
@@ -193,6 +220,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "unpacked_array";
     case TypeKind::kUnpackedStruct:
       return "unpacked_struct";
+    case TypeKind::kDynamicArray:
+      return "dynamic_array";
   }
   return "unknown";
 }
@@ -220,6 +249,10 @@ inline auto ToString(const Type& type) -> std::string {
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();
       return std::format("struct {}", info.name);
+    }
+    case TypeKind::kDynamicArray: {
+      const auto& info = type.AsDynamicArray();
+      return std::format("type#{}[]", info.element_type.value);
     }
   }
   return "unknown";

@@ -9,6 +9,7 @@
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
@@ -151,6 +152,51 @@ auto LowerStatement(
                               .kind = kind, .level = level},
                   });
             }
+          }
+        }
+
+        // Check for dynamic array delete() method call.
+        // Array methods like delete() are BuiltInMemberMethod, not system
+        // calls. Also must verify it's NOT a user function (SubroutineSymbol)
+        // to avoid confusing user-defined delete(arr) with the builtin
+        // arr.delete().
+        // NOTE: System calls have names starting with '$', so the exact name
+        // match "delete" won't capture future system calls.
+        const auto* user_sub =
+            std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+        std::string_view name = call.getSubroutineName();
+        if (user_sub == nullptr && !call.arguments().empty()) {
+          const auto* first_arg = call.arguments()[0];
+          if (first_arg->type != nullptr &&
+              first_arg->type->kind ==
+                  slang::ast::SymbolKind::DynamicArrayType &&
+              name == "delete") {
+            hir::ExpressionId receiver =
+                LowerExpression(*first_arg, registrar, ctx);
+            if (!receiver) {
+              return hir::kInvalidStatementId;
+            }
+
+            // delete() returns void
+            TypeId void_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+
+            hir::ExpressionId delete_expr = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                    .type = void_type,
+                    .span = span,
+                    .data = hir::BuiltinMethodCallExpressionData{
+                        .receiver = receiver,
+                        .method = hir::BuiltinMethod::kDelete}});
+
+            return ctx->hir_arena->AddStatement(
+                hir::Statement{
+                    .kind = hir::StatementKind::kExpression,
+                    .span = span,
+                    .data =
+                        hir::ExpressionStatementData{.expression = delete_expr},
+                });
           }
         }
       }

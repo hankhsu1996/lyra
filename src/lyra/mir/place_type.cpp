@@ -17,13 +17,16 @@ auto TypeAfterProjection(
 
   switch (proj.kind) {
     case Projection::Kind::kIndex: {
-      if (type.Kind() != TypeKind::kUnpackedArray) {
-        throw common::InternalError(
-            "TypeAfterProjection",
-            std::format(
-                "kIndex projection on non-array type: {}", ToString(type)));
+      if (type.Kind() == TypeKind::kUnpackedArray) {
+        return type.AsUnpackedArray().element_type;
       }
-      return type.AsUnpackedArray().element_type;
+      if (type.Kind() == TypeKind::kDynamicArray) {
+        return type.AsDynamicArray().element_type;
+      }
+      throw common::InternalError(
+          "TypeAfterProjection",
+          std::format(
+              "kIndex projection on non-array type: {}", ToString(type)));
     }
     case Projection::Kind::kField: {
       if (type.Kind() != TypeKind::kUnpackedStruct) {

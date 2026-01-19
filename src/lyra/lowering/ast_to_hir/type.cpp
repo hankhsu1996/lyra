@@ -45,6 +45,17 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     return ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
   }
 
+  // Must check before isUnpackedArray() - dynamic arrays are a subset
+  if (type.kind == slang::ast::SymbolKind::DynamicArrayType) {
+    const auto& dynamic = type.as<slang::ast::DynamicArrayType>();
+    TypeId element = LowerType(dynamic.elementType, source, ctx);
+    if (!element) {
+      return kInvalidTypeId;
+    }
+    return ctx->type_arena->Intern(
+        TypeKind::kDynamicArray, DynamicArrayInfo{.element_type = element});
+  }
+
   if (type.isUnpackedArray()) {
     if (type.kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
       ctx->sink->Error(source, "only fixed-size unpacked arrays supported");

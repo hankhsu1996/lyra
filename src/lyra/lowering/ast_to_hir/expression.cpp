@@ -285,32 +285,113 @@ auto LowerExpression(
                   .op = *hir_op, .lhs = lhs, .rhs = rhs}});
     }
 
+    case ExpressionKind::NewArray: {
+      const auto& new_arr = expr.as<slang::ast::NewArrayExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      hir::ExpressionId size_expr =
+          LowerExpression(new_arr.sizeExpr(), registrar, ctx);
+      if (!size_expr) {
+        return hir::kInvalidExpressionId;
+      }
+
+      std::optional<hir::ExpressionId> init_expr;
+      if (new_arr.initExpr() != nullptr) {
+        hir::ExpressionId init_id =
+            LowerExpression(*new_arr.initExpr(), registrar, ctx);
+        if (!init_id) {
+          return hir::kInvalidExpressionId;
+        }
+        init_expr = init_id;
+      }
+
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNewArray,
+              .type = type,
+              .span = span,
+              .data = hir::NewArrayExpressionData{
+                  .size_expr = size_expr, .init_expr = init_expr}});
+    }
+
     case ExpressionKind::Call: {
       const auto& call = expr.as<slang::ast::CallExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
+      // Check if this is a builtin method call on a dynamic array.
+      // IMPORTANT: Must check BEFORE isSystemCall() - slang's isSystemCall()
+      // returns true for built-in array methods like size().
+      // Also must verify it's NOT a user function (SubroutineSymbol) to avoid
+      // confusing user-defined size(arr) with the builtin arr.size().
+      // NOTE: System calls have names starting with '$' (e.g., $size), so the
+      // exact name match "size"/"delete" won't capture future system calls.
+      const auto* user_sub =
+          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+      std::string_view name = call.getSubroutineName();
+      if (user_sub == nullptr && !call.arguments().empty()) {
+        const auto* first_arg = call.arguments()[0];
+        if (first_arg->type != nullptr &&
+            first_arg->type->kind == slang::ast::SymbolKind::DynamicArrayType) {
+          if (name == "size") {
+            hir::ExpressionId receiver =
+                LowerExpression(*first_arg, registrar, ctx);
+            if (!receiver) {
+              return hir::kInvalidExpressionId;
+            }
+
+            // size() returns int (32-bit signed)
+            TypeId int_type = ctx->type_arena->Intern(
+                TypeKind::kIntegral, IntegralInfo{
+                                         .bit_width = 32,
+                                         .is_signed = true,
+                                         .is_four_state = false});
+
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                    .type = int_type,
+                    .span = span,
+                    .data = hir::BuiltinMethodCallExpressionData{
+                        .receiver = receiver,
+                        .method = hir::BuiltinMethod::kSize}});
+          }
+          if (name == "delete") {
+            ctx->sink->Error(
+                span, "delete() cannot be used in expression context");
+            return hir::kInvalidExpressionId;
+          }
+        }
+      }
+
+      // Handle system calls ($display, etc.)
       if (call.isSystemCall()) {
         return LowerSystemCall(call, registrar, ctx);
       }
 
-      // User function call
-      const auto* sub =
-          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-      if (sub == nullptr) {
+      // User function call (user_sub was computed above for builtin detection)
+      if (user_sub == nullptr) {
         ctx->sink->Error(span, "indirect function calls not supported");
         return hir::kInvalidExpressionId;
       }
 
       // Reject task calls from functions
-      if ((*sub)->subroutineKind == slang::ast::SubroutineKind::Task) {
+      if ((*user_sub)->subroutineKind == slang::ast::SubroutineKind::Task) {
         ctx->sink->Error(span, "task calls not supported");
         return hir::kInvalidExpressionId;
       }
 
-      SymbolId callee = registrar.Lookup(**sub);
+      SymbolId callee = registrar.Lookup(**user_sub);
       if (!callee) {
         ctx->sink->Error(
-            span, std::format("undefined function '{}'", (*sub)->name));
+            span, std::format("undefined function '{}'", (*user_sub)->name));
         return hir::kInvalidExpressionId;
       }
 
