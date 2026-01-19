@@ -323,10 +323,13 @@ auto EvalCast(
   const auto& src_int = source_type.AsIntegral();
   const auto& target_int = target_type.AsIntegral();
 
-  if (src_int.is_four_state || target_int.is_four_state) {
+  if (src_int.is_four_state) {
     throw common::InternalError(
-        "EvalCast", "4-state types should have been rejected at lowering");
+        "EvalCast",
+        "4-state source types should have been rejected at lowering");
   }
+  // Note: 4-state target is allowed when source is 2-state (lossless
+  // conversion)
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how

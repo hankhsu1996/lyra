@@ -357,10 +357,7 @@ auto LowerExpression(
             span, "conversion from 4-state type not yet supported");
         return hir::kInvalidExpressionId;
       }
-      if (tgt_type.isFourState()) {
-        ctx->sink->Error(span, "conversion to 4-state type not yet supported");
-        return hir::kInvalidExpressionId;
-      }
+      // Note: 2-state → 4-state is allowed (lossless, no X/Z bits introduced)
 
       hir::ExpressionId operand =
           LowerExpression(conv.operand(), registrar, ctx);

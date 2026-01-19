@@ -399,3 +399,64 @@ cases:
     expect:
       variables:
         result: 99
+
+  # Tests for 2-state to 4-state implicit conversion
+  # When casez/casex selector is 2-state (int) but patterns are 4-state (logic),
+  # slang inserts an implicit conversion. This tests that the conversion works
+  # correctly and wildcard matching still functions.
+  - name: casez_2state_selector_4state_pattern
+    description: 2-state int selector implicitly converts to 4-state for wildcard match
+    sv: |
+      module Test;
+        int x;  // 2-state type
+        int result;
+        initial begin
+          x = 11;  // binary: 1011, ends with 1
+          result = 0;
+          casez (x)
+            32'b???1: result = 1;  // 4-state pattern with wildcards
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: casez_2state_selector_no_match
+    description: 2-state int selector with 4-state pattern, no wildcard match
+    sv: |
+      module Test;
+        int x;  // 2-state type
+        int result;
+        initial begin
+          x = 10;  // binary: 1010, ends with 0
+          result = 0;
+          casez (x)
+            32'b???1: result = 1;  // doesn't match - LSB is 0
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99
+
+  - name: casex_2state_selector_4state_pattern
+    description: 2-state int selector implicitly converts to 4-state for casex wildcard
+    sv: |
+      module Test;
+        int x;  // 2-state type
+        int result;
+        initial begin
+          x = 15;  // binary: 1111
+          result = 0;
+          casex (x)
+            32'bxxxx: result = 1;  // x wildcards match any value
+            default: result = 99;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
