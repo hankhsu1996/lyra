@@ -18,3 +18,4 @@ suites:
       - control_flow/forever.yaml
       - control_flow/ternary.yaml
       - datatypes/arrays.yaml
+      - system_tasks/display.yaml
