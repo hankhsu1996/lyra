@@ -66,6 +66,12 @@ class Interpreter {
   // Execute process to completion. Returns final status.
   auto Run(ProcessState& state) -> ProcessStatus;
 
+  // Execute a function call. Returns the return value (void for void
+  // functions).
+  auto RunFunction(
+      FunctionId func_id, const std::vector<RuntimeValue>& args,
+      DesignState* design_state) -> RuntimeValue;
+
  private:
   // Evaluate Operand to RuntimeValue (always deep copy)
   auto EvalOperand(const ProcessState& state, const Operand& op)

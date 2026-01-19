@@ -27,7 +27,8 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& module_places) -> mir::ProcessId {
+    mir::Arena& mir_arena, const PlaceMap& module_places,
+    const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = &input.hir_arena,
@@ -39,6 +40,8 @@ auto LowerProcess(
       .next_local_id = 0,
       .next_temp_id = 0,
       .bit_type = input.bit_type,
+      .symbol_to_mir_function = &symbol_to_mir_function,
+      .return_place = mir::kInvalidPlaceId,
   };
 
   MirBuilder builder(&mir_arena, &ctx);
@@ -57,11 +60,10 @@ auto LowerProcess(
 
   // Materialize all blocks into the Arena
   std::vector<mir::BasicBlockId> blocks = builder.Finish();
-  mir::BasicBlockId entry = MirBuilder::ToArenaId(entry_idx);
 
   mir::Process mir_process{
       .kind = mir_kind,
-      .entry = entry,
+      .entry = blocks[entry_idx.value],
       .blocks = std::move(blocks),
   };
 

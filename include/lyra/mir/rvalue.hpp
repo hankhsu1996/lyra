@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/common/type.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
@@ -25,7 +26,16 @@ struct AggregateInfo {
   TypeId result_type;  // The aggregate type being constructed (struct or array)
 };
 
-using RvalueInfo = std::variant<std::monostate, CastInfo, AggregateInfo>;
+struct SystemCallInfo {
+  int opcode;  // System call opcode
+};
+
+struct UserCallInfo {
+  FunctionId callee;  // mir::FunctionId - MIR is self-contained
+};
+
+using RvalueInfo = std::variant<
+    std::monostate, CastInfo, AggregateInfo, SystemCallInfo, UserCallInfo>;
 
 struct Rvalue {
   RvalueKind kind;

@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
@@ -25,6 +26,10 @@ struct Process {
 struct Function {
   BasicBlockId entry;
   std::vector<BasicBlockId> blocks;
+
+  // Storage metadata (for interpreter frame allocation)
+  std::vector<TypeId> local_types;  // Types for each local slot
+  std::vector<TypeId> temp_types;   // Types for each temp slot
 };
 
 }  // namespace lyra::mir

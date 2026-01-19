@@ -535,6 +535,26 @@ auto LowerStatement(
           });
     }
 
+    case StatementKind::Return: {
+      const auto& ret = stmt.as<slang::ast::ReturnStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      hir::ExpressionId value = hir::kInvalidExpressionId;
+      if (ret.expr != nullptr) {
+        value = LowerExpression(*ret.expr, registrar, ctx);
+        if (!value) {
+          return hir::kInvalidStatementId;
+        }
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kReturn,
+              .span = span,
+              .data = hir::ReturnStatementData{.value = value},
+          });
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),

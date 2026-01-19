@@ -422,6 +422,85 @@ auto Interpreter::Run(ProcessState& state) -> ProcessStatus {
   return state.status;
 }
 
+auto Interpreter::RunFunction(
+    FunctionId func_id, const std::vector<RuntimeValue>& args,
+    DesignState* design_state) -> RuntimeValue {
+  const auto& func = (*arena_)[func_id];
+
+  // Use function's metadata for storage allocation
+  const auto& local_types = func.local_types;
+  const auto& temp_types = func.temp_types;
+
+  // Initialize locals with default values
+  std::vector<RuntimeValue> locals;
+  locals.reserve(local_types.size());
+  for (TypeId type_id : local_types) {
+    locals.push_back(
+        type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
+  }
+
+  // Initialize temps with default values
+  std::vector<RuntimeValue> temps;
+  temps.reserve(temp_types.size());
+  for (TypeId type_id : temp_types) {
+    temps.push_back(
+        type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
+  }
+
+  // Copy arguments to parameter locals
+  // For non-void functions: local 0 = return value, parameters start at local 1
+  // For void functions: parameters start at local 0
+  // We detect this by checking if there are more locals than args
+  size_t param_start = 0;
+  if (local_types.size() > args.size()) {
+    param_start = 1;  // local 0 is return place
+  }
+
+  for (size_t i = 0; i < args.size(); ++i) {
+    size_t local_idx = param_start + i;
+    if (local_idx < locals.size()) {
+      locals[local_idx] = Clone(args[i]);
+    }
+  }
+
+  // Create function state (reuse ProcessState structure)
+  ProcessState func_state{
+      .process = ProcessId{0},  // Unused for function execution
+      .current_block = func.entry,
+      .instruction_index = 0,
+      .frame = Frame(std::move(locals), std::move(temps)),
+      .design_state = design_state,
+      .status = ProcessStatus::kRunning,
+  };
+
+  // Execute function
+  while (func_state.status == ProcessStatus::kRunning) {
+    const auto& block = (*arena_)[func_state.current_block];
+
+    while (func_state.instruction_index < block.instructions.size()) {
+      ExecInstruction(
+          func_state, block.instructions[func_state.instruction_index]);
+      func_state.instruction_index++;
+    }
+
+    auto next = ExecTerminator(func_state, block.terminator);
+    if (!next) {
+      break;  // Return reached
+    }
+
+    func_state.current_block = *next;
+    func_state.instruction_index = 0;
+  }
+
+  // Return value is in local 0 (for non-void functions)
+  if (param_start == 1 && func_state.frame.NumLocals() > 0) {
+    return Clone(func_state.frame.GetLocal(0));
+  }
+
+  // Void function - return monostate
+  return std::monostate{};
+}
+
 auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
     -> RuntimeValue {
   switch (op.kind) {
@@ -502,11 +581,25 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       return EvalCast(operand, src_type, tgt_type);
     }
 
-    case RvalueKind::kCall:
+    case RvalueKind::kCall: {
+      // User function call
+      if (const auto* user_call = std::get_if<UserCallInfo>(&rv.info)) {
+        // Evaluate arguments
+        std::vector<RuntimeValue> args;
+        args.reserve(rv.operands.size());
+        for (const auto& operand : rv.operands) {
+          args.push_back(EvalOperand(state, operand));
+        }
+
+        // Execute function and return result
+        return RunFunction(user_call->callee, args, state.design_state);
+      }
+
       // System calls that produce values (pure functions like $clog2) would be
       // handled here. Currently all supported system calls are effects.
       throw common::InternalError(
           "EvalRvalue", "pure system calls not yet supported");
+    }
 
     case RvalueKind::kAggregate: {
       const auto* info = std::get_if<AggregateInfo>(&rv.info);

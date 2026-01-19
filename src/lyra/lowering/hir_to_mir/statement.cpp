@@ -534,6 +534,22 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           // Create unreachable block for any code after terminate
           BlockIndex dead_bb = builder.CreateBlock();
           builder.SetCurrentBlock(dead_bb);
+        } else if constexpr (std::is_same_v<T, hir::ReturnStatementData>) {
+          Context& ctx = builder.GetContext();
+
+          // If there's a return value, assign to local 0 (return place)
+          if (data.value != hir::kInvalidExpressionId) {
+            mir::Operand value = LowerExpression(data.value, builder);
+            if (ctx.return_place != mir::kInvalidPlaceId) {
+              builder.EmitAssign(ctx.return_place, std::move(value));
+            }
+          }
+
+          builder.EmitReturn();
+
+          // Create dead block for unreachable code after return
+          BlockIndex dead_bb = builder.CreateBlock();
+          builder.SetCurrentBlock(dead_bb);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

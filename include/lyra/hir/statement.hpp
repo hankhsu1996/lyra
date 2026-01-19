@@ -25,6 +25,7 @@ enum class StatementKind {
   kBreak,
   kContinue,
   kTerminate,
+  kReturn,
 };
 
 struct BlockStatementData {
@@ -137,12 +138,18 @@ struct TerminateStatementData {
   auto operator==(const TerminateStatementData&) const -> bool = default;
 };
 
+struct ReturnStatementData {
+  ExpressionId value;  // kInvalidExpressionId for void/implicit return
+
+  auto operator==(const ReturnStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
-    ContinueStatementData, TerminateStatementData>;
+    ContinueStatementData, TerminateStatementData, ReturnStatementData>;
 
 struct Statement {
   StatementKind kind;
