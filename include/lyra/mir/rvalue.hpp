@@ -38,10 +38,13 @@ struct UserCallInfo {
   FunctionId callee;  // mir::FunctionId - MIR is self-contained
 };
 
+// BuiltinCallInfo for builtin method calls (e.g., arr.size(), q.pop_back()).
+// - result_type: Required for kNewArray (element type can't be inferred)
+// - receiver: For pop methods that both return a value and mutate the queue
 struct BuiltinCallInfo {
   BuiltinMethod method;
-  TypeId result_type;  // Required: kNewArray needs element type, can't infer
-  std::optional<PlaceId> receiver;  // For pop methods that mutate the receiver
+  TypeId result_type;
+  std::optional<PlaceId> receiver;
 };
 
 using RvalueInfo = std::variant<

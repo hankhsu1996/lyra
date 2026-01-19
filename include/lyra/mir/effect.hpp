@@ -18,11 +18,12 @@ struct DisplayEffect {
 };
 
 // BuiltinCallEffect represents effectful builtin calls (e.g., arr.delete()).
+// - receiver: The array/queue being mutated
+// - args: Arguments (value for push, idx for delete(idx), etc.)
 struct BuiltinCallEffect {
   BuiltinMethod method{};
-  PlaceId receiver{};  // The array/queue being mutated
-  std::vector<Operand>
-      args{};  // Arguments: value for push, idx for delete(idx), etc.
+  PlaceId receiver{};
+  std::vector<Operand> args{};
 };
 
 // EffectOp is the variant of all effect operations.
