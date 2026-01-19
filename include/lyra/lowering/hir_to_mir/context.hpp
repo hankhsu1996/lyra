@@ -20,7 +20,7 @@ struct SymbolIdHash {
 
 using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
 
-// Map SymbolId → mir::FunctionId (pre-allocated for recursion support)
+// Map SymbolId -> mir::FunctionId (pre-allocated for recursion support)
 using SymbolToMirFunctionMap =
     std::unordered_map<SymbolId, mir::FunctionId, SymbolIdHash>;
 
