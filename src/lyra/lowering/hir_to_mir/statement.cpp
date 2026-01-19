@@ -19,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
-#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -110,23 +109,9 @@ void LowerExpressionStatement(
     return;
   }
 
-  // Check if this is a builtin method call (e.g., arr.delete())
-  if (const auto* builtin =
-          std::get_if<hir::BuiltinMethodCallExpressionData>(&expr.data)) {
-    if (builtin->method == hir::BuiltinMethod::kDelete) {
-      // Lower receiver as lvalue to get the PlaceId
-      mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
-      mir::BuiltinCallEffect effect{
-          .method = mir::BuiltinMethod::kArrayDelete,
-          .receiver = receiver_place,
-      };
-      builder.EmitEffect(std::move(effect));
-      return;
-    }
-    // Other builtin methods (size) are value-returning, not effects
-  }
-
   // Regular expression statement - evaluate for side effects, discard result
+  // All builtin methods (including void methods like push_back, delete)
+  // are handled uniformly through LowerExpression.
   LowerExpression(data.expression, builder);
 }
 

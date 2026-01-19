@@ -77,8 +77,8 @@ class Interpreter {
   auto EvalOperand(const ProcessState& state, const Operand& op)
       -> RuntimeValue;
 
-  // Evaluate Rvalue to RuntimeValue
-  auto EvalRvalue(const ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  // Evaluate Rvalue to RuntimeValue (may mutate for pop methods)
+  auto EvalRvalue(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
 
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)
   static auto ResolveRoot(const ProcessState& state, const PlaceRoot& root)
@@ -103,10 +103,6 @@ class Interpreter {
 
   // Execute DisplayEffect
   void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
-
-  // Execute BuiltinCallEffect
-  void ExecBuiltinCallEffect(
-      ProcessState& state, const BuiltinCallEffect& effect);
 
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);

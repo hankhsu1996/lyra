@@ -39,7 +39,7 @@ cases:
         int b;
         int c;
         initial begin
-          int q[$] = {10, 20, 30};
+          int q[$] = '{10, 20, 30};
           size = q.size();
           a = q[0];
           b = q[1];
@@ -59,7 +59,7 @@ cases:
       module Test;
         int size;
         initial begin
-          int q[$] = {};
+          int q[$] = '{};
           size = q.size();
         end
       endmodule
@@ -74,7 +74,7 @@ cases:
         int a;
         int b;
         initial begin
-          int q[$] = {1, 2, 3};
+          int q[$] = '{1, 2, 3};
           a = q[0];
           q[1] = 99;
           b = q[1];
@@ -168,7 +168,7 @@ cases:
         int v2;
         int size;
         initial begin
-          int q[$] = {10, 20, 30};
+          int q[$] = '{10, 20, 30};
           v1 = q.pop_back();
           v2 = q.pop_back();
           size = q.size();
@@ -188,7 +188,7 @@ cases:
         int v2;
         int size;
         initial begin
-          int q[$] = {10, 20, 30};
+          int q[$] = '{10, 20, 30};
           v1 = q.pop_front();
           v2 = q.pop_front();
           size = q.size();
@@ -210,7 +210,7 @@ cases:
         int d;
         int size;
         initial begin
-          int q[$] = {10, 30};
+          int q[$] = '{10, 30};
           q.insert(1, 20);
           size = q.size();
           a = q[0];
@@ -232,7 +232,7 @@ cases:
         int a;
         int b;
         initial begin
-          int q[$] = {20};
+          int q[$] = '{20};
           q.insert(0, 10);
           a = q[0];
           b = q[1];
@@ -250,7 +250,7 @@ cases:
         int a;
         int b;
         initial begin
-          int q[$] = {10};
+          int q[$] = '{10};
           q.insert(1, 20);
           a = q[0];
           b = q[1];
@@ -268,7 +268,7 @@ cases:
         int sz_before;
         int sz_after;
         initial begin
-          int q[$] = {1, 2, 3, 4, 5};
+          int q[$] = '{1, 2, 3, 4, 5};
           sz_before = q.size();
           q.delete();
           sz_after = q.size();
@@ -287,7 +287,7 @@ cases:
         int b;
         int size;
         initial begin
-          int q[$] = {10, 20, 30};
+          int q[$] = '{10, 20, 30};
           q.delete(1);
           size = q.size();
           a = q[0];
@@ -393,7 +393,7 @@ cases:
       module Test;
         int sum;
         initial begin
-          int q[$] = {1, 2, 3, 4, 5};
+          int q[$] = '{1, 2, 3, 4, 5};
           sum = 0;
           for (int i = 0; i < q.size(); i++) begin
             sum = sum + q[i];
@@ -409,7 +409,7 @@ cases:
     sv: |
       module Test;
         initial begin
-          int q[$] = {100, 200, 300};
+          int q[$] = '{100, 200, 300};
           $display("size=%0d, q[1]=%0d", q.size(), q[1]);
         end
       endmodule

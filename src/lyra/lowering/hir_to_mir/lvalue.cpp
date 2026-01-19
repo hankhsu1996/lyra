@@ -35,9 +35,10 @@ auto LowerElementAccessLvalue(
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base);
   const Type& base_type = (*ctx.type_arena)[base_type_id];
   if (base_type.Kind() != TypeKind::kUnpackedArray &&
-      base_type.Kind() != TypeKind::kDynamicArray) {
+      base_type.Kind() != TypeKind::kDynamicArray &&
+      base_type.Kind() != TypeKind::kQueue) {
     throw common::InternalError(
-        "LowerElementAccessLvalue", "base is not an array");
+        "LowerElementAccessLvalue", "base is not an array or queue");
   }
   if (index_operand.kind != mir::Operand::Kind::kConst &&
       index_operand.kind != mir::Operand::Kind::kUse) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -7,6 +8,7 @@
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::mir {
 
@@ -36,9 +38,13 @@ struct UserCallInfo {
   FunctionId callee;  // mir::FunctionId - MIR is self-contained
 };
 
+// BuiltinCallInfo for builtin method calls (e.g., arr.size(), q.pop_back()).
+// - result_type: Required for kNewArray (element type can't be inferred)
+// - receiver: For pop methods that both return a value and mutate the queue
 struct BuiltinCallInfo {
   BuiltinMethod method;
-  TypeId result_type;  // Required: kNewArray needs element type, can't infer
+  TypeId result_type;
+  std::optional<PlaceId> receiver;
 };
 
 using RvalueInfo = std::variant<

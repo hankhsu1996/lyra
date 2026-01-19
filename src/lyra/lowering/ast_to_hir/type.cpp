@@ -56,6 +56,18 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
         TypeKind::kDynamicArray, DynamicArrayInfo{.element_type = element});
   }
 
+  // Must check before isUnpackedArray() - queues are a subset
+  if (type.isQueue()) {
+    const auto& queue = type.as<slang::ast::QueueType>();
+    TypeId element = LowerType(queue.elementType, source, ctx);
+    if (!element) {
+      return kInvalidTypeId;
+    }
+    return ctx->type_arena->Intern(
+        TypeKind::kQueue,
+        QueueInfo{.element_type = element, .max_bound = queue.maxBound});
+  }
+
   if (type.isUnpackedArray()) {
     if (type.kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
       ctx->sink->Error(source, "only fixed-size unpacked arrays supported");

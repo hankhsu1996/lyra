@@ -23,6 +23,9 @@ auto TypeAfterProjection(
       if (type.Kind() == TypeKind::kDynamicArray) {
         return type.AsDynamicArray().element_type;
       }
+      if (type.Kind() == TypeKind::kQueue) {
+        return type.AsQueue().element_type;
+      }
       throw common::InternalError(
           "TypeAfterProjection",
           std::format(

@@ -572,6 +572,21 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kArrayLiteral: {
+      const auto& data = std::get<ArrayLiteralExpressionData>(expr.data);
+      *out_ << "'{";
+      bool first = true;
+      for (ExpressionId elem : data.elements) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(elem);
+      }
+      *out_ << "}";
+      break;
+    }
+
     case ExpressionKind::kCall: {
       const auto& data = std::get<CallExpressionData>(expr.data);
       *out_ << SymbolName(data.callee) << "(";
@@ -608,8 +623,36 @@ void Dumper::Dump(ExpressionId id) {
           *out_ << ".size()";
           break;
         case BuiltinMethod::kDelete:
-          *out_ << ".delete()";
+          *out_ << ".delete(";
           break;
+        case BuiltinMethod::kPushBack:
+          *out_ << ".push_back(";
+          break;
+        case BuiltinMethod::kPushFront:
+          *out_ << ".push_front(";
+          break;
+        case BuiltinMethod::kPopBack:
+          *out_ << ".pop_back()";
+          break;
+        case BuiltinMethod::kPopFront:
+          *out_ << ".pop_front()";
+          break;
+        case BuiltinMethod::kInsert:
+          *out_ << ".insert(";
+          break;
+      }
+      if (data.method != BuiltinMethod::kSize &&
+          data.method != BuiltinMethod::kPopBack &&
+          data.method != BuiltinMethod::kPopFront) {
+        bool first = true;
+        for (ExpressionId arg : data.args) {
+          if (!first) {
+            *out_ << ", ";
+          }
+          first = false;
+          Dump(arg);
+        }
+        *out_ << ")";
       }
       break;
     }

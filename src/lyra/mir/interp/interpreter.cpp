@@ -37,6 +37,16 @@ namespace lyra::mir::interp {
 
 namespace {
 
+// Helper to enforce bounded queue constraint.
+// If max_bound > 0, truncates elements to at most (max_bound + 1) elements.
+void TruncateToBound(std::vector<RuntimeValue>& elements, uint32_t max_bound) {
+  if (max_bound > 0) {
+    while (elements.size() > max_bound + 1) {
+      elements.pop_back();  // Discard from back
+    }
+  }
+}
+
 // Creates a default-initialized RuntimeValue for a given type following SV
 // semantics:
 // - 2-state integrals (bit, int, etc.): default to 0
@@ -81,7 +91,8 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       return MakeStruct(std::move(fields));
     }
     case TypeKind::kDynamicArray:
-      // Dynamic arrays default to empty (size 0)
+    case TypeKind::kQueue:
+      // Dynamic arrays and queues default to empty (size 0)
       return MakeArray({});
   }
   throw common::InternalError("CreateDefaultValue", "unknown type kind");
@@ -155,6 +166,12 @@ struct StorageCollector {
     for (const auto& op : rv.operands) {
       Visit(op, arena);
     }
+    // Visit receiver for pop methods that mutate
+    if (const auto* info = std::get_if<BuiltinCallInfo>(&rv.info)) {
+      if (info->receiver) {
+        Visit(arena[*info->receiver], arena);
+      }
+    }
   }
 
   // Uses exhaustive Overloaded pattern - adding a new Instruction or EffectOp
@@ -177,9 +194,6 @@ struct StorageCollector {
                         for (const auto& arg : op.args) {
                           Visit(arg, arena);
                         }
-                      },
-                      [&](const BuiltinCallEffect& op) -> void {
-                        Visit(arena[op.receiver], arena);
                       },
                   },
                   i.op);
@@ -258,6 +272,10 @@ auto ApplyProjectionsImpl(
             // Dynamic arrays are 0-based, no range normalization needed
             offset = index;
             current_type = type_info.AsDynamicArray().element_type;
+          } else if (type_info.Kind() == TypeKind::kQueue) {
+            // Queues are 0-based, no range normalization needed
+            offset = index;
+            current_type = type_info.AsQueue().element_type;
           }
         }
 
@@ -340,6 +358,8 @@ auto TypeOfPlace(const Place& place, const TypeArena& types) -> TypeId {
           current_type = type_info.AsUnpackedArray().element_type;
         } else if (type_info.Kind() == TypeKind::kDynamicArray) {
           current_type = type_info.AsDynamicArray().element_type;
+        } else if (type_info.Kind() == TypeKind::kQueue) {
+          current_type = type_info.AsQueue().element_type;
         }
         break;
       }
@@ -372,6 +392,38 @@ auto TypeOfOperand(
       return kInvalidTypeId;
   }
   return kInvalidTypeId;
+}
+
+// Helper: safely extract index from operand, return nullopt if X/Z
+// Per IEEE 1800-2023, invalid index means no-op (not an error)
+auto TryGetIndex(
+    const RuntimeValue& val, const TypeArena& types, TypeId type_id)
+    -> std::optional<int64_t> {
+  if (!IsIntegral(val)) {
+    return std::nullopt;
+  }
+  const auto& integral = AsIntegral(val);
+  if (!integral.IsKnown()) {
+    return std::nullopt;  // X/Z -> invalid
+  }
+
+  // Extract raw bits
+  uint64_t raw_bits = integral.value.empty() ? 0 : integral.value[0];
+
+  // Sign-extend if operand type is signed
+  const auto& type_info = types[type_id];
+  if (type_info.Kind() == TypeKind::kIntegral) {
+    const auto& info = type_info.AsIntegral();
+    if (info.is_signed && info.bit_width < 64) {
+      uint64_t sign_bit = 1ULL << (info.bit_width - 1);
+      if ((raw_bits & sign_bit) != 0) {
+        uint64_t mask = ~((1ULL << info.bit_width) - 1);
+        raw_bits |= mask;
+      }
+    }
+  }
+
+  return static_cast<int64_t>(raw_bits);
 }
 
 }  // namespace
@@ -561,7 +613,7 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
   throw common::InternalError("EvalOperand", "unknown operand kind");
 }
 
-auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
+auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
     -> RuntimeValue {
   switch (rv.kind) {
     case RvalueKind::kUnary: {
@@ -627,23 +679,40 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
       }
 
       const Type& type = (*types_)[info->result_type];
-      if (type.Kind() != TypeKind::kUnpackedStruct) {
-        throw common::InternalError(
-            "EvalRvalue", "kAggregate only supports unpacked structs");
+
+      // Handle struct aggregates
+      if (type.Kind() == TypeKind::kUnpackedStruct) {
+        const auto& struct_info = type.AsUnpackedStruct();
+        if (rv.operands.size() != struct_info.fields.size()) {
+          throw common::InternalError(
+              "EvalRvalue", "kAggregate operand count mismatch");
+        }
+
+        std::vector<RuntimeValue> fields;
+        fields.reserve(rv.operands.size());
+        for (const auto& operand : rv.operands) {
+          fields.push_back(EvalOperand(state, operand));
+        }
+        return MakeStruct(std::move(fields));
       }
 
-      const auto& struct_info = type.AsUnpackedStruct();
-      if (rv.operands.size() != struct_info.fields.size()) {
-        throw common::InternalError(
-            "EvalRvalue", "kAggregate operand count mismatch");
+      // Handle array/queue aggregates (unpacked array, dynamic array, queue)
+      if (type.Kind() == TypeKind::kUnpackedArray ||
+          type.Kind() == TypeKind::kDynamicArray ||
+          type.Kind() == TypeKind::kQueue) {
+        std::vector<RuntimeValue> elements;
+        elements.reserve(rv.operands.size());
+        for (const auto& operand : rv.operands) {
+          elements.push_back(EvalOperand(state, operand));
+        }
+        // For bounded queues, truncate to max_bound + 1 elements
+        if (type.Kind() == TypeKind::kQueue) {
+          TruncateToBound(elements, type.AsQueue().max_bound);
+        }
+        return MakeArray(std::move(elements));
       }
 
-      std::vector<RuntimeValue> fields;
-      fields.reserve(rv.operands.size());
-      for (const auto& operand : rv.operands) {
-        fields.push_back(EvalOperand(state, operand));
-      }
-      return MakeStruct(std::move(fields));
+      throw common::InternalError("EvalRvalue", "kAggregate: unsupported type");
     }
 
     case RvalueKind::kBuiltinCall: {
@@ -726,8 +795,9 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
           return MakeArray(std::move(elements));
         }
 
-        case BuiltinMethod::kArraySize: {
-          // arr.size() - returns int
+        case BuiltinMethod::kArraySize:
+        case BuiltinMethod::kQueueSize: {
+          // arr.size() / q.size() - returns int
           if (rv.operands.empty()) {
             throw common::InternalError("EvalRvalue", "size() requires array");
           }
@@ -740,9 +810,125 @@ auto Interpreter::EvalRvalue(const ProcessState& state, const Rvalue& rv)
           return MakeIntegral(size, 32);  // int is 32-bit
         }
 
+        case BuiltinMethod::kQueuePopBack: {
+          // q.pop_back() - returns element, mutates queue
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "pop_back() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (elements.empty()) {
+            // IEEE: return default value if queue is empty
+            return CreateDefaultValue(*types_, info->result_type);
+          }
+          RuntimeValue result = std::move(elements.back());
+          elements.pop_back();
+          return result;
+        }
+
+        case BuiltinMethod::kQueuePopFront: {
+          // q.pop_front() - returns element, mutates queue
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "pop_front() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (elements.empty()) {
+            // IEEE: return default value if queue is empty
+            return CreateDefaultValue(*types_, info->result_type);
+          }
+          RuntimeValue result = std::move(elements.front());
+          elements.erase(elements.begin());
+          return result;
+        }
+
+        case BuiltinMethod::kQueuePushBack: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "push_back() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          elements.push_back(EvalOperand(state, rv.operands[0]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueuePushFront: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "push_front() requires receiver");
+          }
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          elements.insert(elements.begin(), EvalOperand(state, rv.operands[0]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueueInsert: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "insert() requires receiver");
+          }
+          TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+          auto idx_opt = TryGetIndex(
+              EvalOperand(state, rv.operands[0]), *types_, idx_type);
+          if (!idx_opt) {
+            return std::monostate{};  // X/Z -> no-op
+          }
+          auto idx = *idx_opt;
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (idx < 0 || idx > static_cast<int64_t>(elements.size())) {
+            return std::monostate{};  // Invalid index -> no-op
+          }
+          elements.insert(
+              elements.begin() + idx, EvalOperand(state, rv.operands[1]));
+          TypeId receiver_type =
+              TypeOfPlace((*arena_)[*info->receiver], *types_);
+          const auto& type = (*types_)[receiver_type];
+          if (type.Kind() == TypeKind::kQueue) {
+            TruncateToBound(elements, type.AsQueue().max_bound);
+          }
+          return std::monostate{};
+        }
+
         case BuiltinMethod::kArrayDelete:
-          throw common::InternalError(
-              "EvalRvalue", "delete() should be handled as Effect, not Rvalue");
+        case BuiltinMethod::kQueueDelete: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "delete() requires receiver");
+          }
+          AsArray(WritePlace(state, *info->receiver)).elements.clear();
+          return std::monostate{};
+        }
+
+        case BuiltinMethod::kQueueDeleteAt: {
+          if (!info->receiver) {
+            throw common::InternalError(
+                "EvalRvalue", "delete(idx) requires receiver");
+          }
+          TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+          auto idx_opt = TryGetIndex(
+              EvalOperand(state, rv.operands[0]), *types_, idx_type);
+          if (!idx_opt) {
+            return std::monostate{};  // X/Z -> no-op
+          }
+          auto idx = *idx_opt;
+          auto& elements = AsArray(WritePlace(state, *info->receiver)).elements;
+          if (idx >= 0 && idx < static_cast<int64_t>(elements.size())) {
+            elements.erase(elements.begin() + idx);
+          }
+          return std::monostate{};
+        }
       }
       throw common::InternalError("EvalRvalue", "unknown builtin method");
     }
@@ -842,32 +1028,8 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
   std::visit(
       Overloaded{
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
-          [&](const BuiltinCallEffect& op) {
-            ExecBuiltinCallEffect(state, op);
-          },
       },
       effect.op);
-}
-
-void Interpreter::ExecBuiltinCallEffect(
-    ProcessState& state, const BuiltinCallEffect& effect) {
-  switch (effect.method) {
-    case BuiltinMethod::kArrayDelete: {
-      // arr.delete() - clear array to size 0
-      RuntimeValue& arr = WritePlace(state, effect.receiver);
-      if (!IsArray(arr)) {
-        throw common::InternalError(
-            "ExecBuiltinCallEffect", "delete() receiver must be array");
-      }
-      AsArray(arr).elements.clear();
-      break;
-    }
-    case BuiltinMethod::kNewArray:
-    case BuiltinMethod::kArraySize:
-      throw common::InternalError(
-          "ExecBuiltinCallEffect",
-          "kNewArray/kArraySize should be Rvalue, not Effect");
-  }
 }
 
 void Interpreter::ExecDisplayEffect(

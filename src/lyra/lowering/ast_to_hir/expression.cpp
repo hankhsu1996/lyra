@@ -19,6 +19,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/builtin_method.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -385,49 +386,125 @@ auto LowerExpression(
       const auto& call = expr.as<slang::ast::CallExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      // Check if this is a builtin method call on a dynamic array.
+      // Check if this is a builtin method call on a dynamic array or queue.
       // IMPORTANT: Must check BEFORE isSystemCall() - slang's isSystemCall()
       // returns true for built-in array methods like size().
-      // Also must verify it's NOT a user function (SubroutineSymbol) to avoid
-      // confusing user-defined size(arr) with the builtin arr.size().
-      // NOTE: System calls have names starting with '$' (e.g., $size), so the
-      // exact name match "size"/"delete" won't capture future system calls.
-      const auto* user_sub =
-          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-      std::string_view name = call.getSubroutineName();
-      if (user_sub == nullptr && !call.arguments().empty()) {
+      if (auto info = ClassifyBuiltinMethod(call)) {
+        // Lower the receiver (first argument).
         const auto* first_arg = call.arguments()[0];
-        if (first_arg->type != nullptr &&
-            first_arg->type->kind == slang::ast::SymbolKind::DynamicArrayType) {
-          if (name == "size") {
-            hir::ExpressionId receiver =
-                LowerExpression(*first_arg, registrar, ctx);
-            if (!receiver) {
-              return hir::kInvalidExpressionId;
-            }
+        hir::ExpressionId receiver =
+            LowerExpression(*first_arg, registrar, ctx);
+        if (!receiver) {
+          return hir::kInvalidExpressionId;
+        }
 
-            // size() returns int (32-bit signed)
-            TypeId int_type = ctx->type_arena->Intern(
+        // Determine HIR method and result type based on classification.
+        hir::BuiltinMethod hir_method{};
+        TypeId result_type{};
+        std::vector<hir::ExpressionId> args;
+
+        switch (info->method) {
+          case BuiltinMethodKind::kSize: {
+            hir_method = hir::BuiltinMethod::kSize;
+            result_type = ctx->type_arena->Intern(
                 TypeKind::kIntegral, IntegralInfo{
                                          .bit_width = 32,
                                          .is_signed = true,
                                          .is_four_state = false});
-
-            return ctx->hir_arena->AddExpression(
-                hir::Expression{
-                    .kind = hir::ExpressionKind::kBuiltinMethodCall,
-                    .type = int_type,
-                    .span = span,
-                    .data = hir::BuiltinMethodCallExpressionData{
-                        .receiver = receiver,
-                        .method = hir::BuiltinMethod::kSize}});
+            break;
           }
-          if (name == "delete") {
-            ctx->sink->Error(
-                span, "delete() cannot be used in expression context");
-            return hir::kInvalidExpressionId;
+          case BuiltinMethodKind::kPopBack:
+          case BuiltinMethodKind::kPopFront: {
+            hir_method = (info->method == BuiltinMethodKind::kPopBack)
+                             ? hir::BuiltinMethod::kPopBack
+                             : hir::BuiltinMethod::kPopFront;
+            // Get element type from queue.
+            const auto& queue_type =
+                first_arg->type->getCanonicalType().as<slang::ast::QueueType>();
+            result_type = LowerType(queue_type.elementType, span, ctx);
+            if (!result_type) {
+              return hir::kInvalidExpressionId;
+            }
+            break;
+          }
+          case BuiltinMethodKind::kDelete: {
+            hir_method = hir::BuiltinMethod::kDelete;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // delete() or delete(idx): 0 or 1 arg after receiver
+            if (call.arguments().size() > 2) {
+              ctx->sink->Error(span, "delete() takes at most one argument");
+              return hir::kInvalidExpressionId;
+            }
+            if (call.arguments().size() == 2) {
+              hir::ExpressionId idx =
+                  LowerExpression(*call.arguments()[1], registrar, ctx);
+              if (!idx) {
+                return hir::kInvalidExpressionId;
+              }
+              args.push_back(idx);
+            }
+            break;
+          }
+          case BuiltinMethodKind::kPushBack:
+          case BuiltinMethodKind::kPushFront: {
+            hir_method = (info->method == BuiltinMethodKind::kPushBack)
+                             ? hir::BuiltinMethod::kPushBack
+                             : hir::BuiltinMethod::kPushFront;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // push_back(val) / push_front(val): exactly 1 arg after receiver
+            if (call.arguments().size() != 2) {
+              ctx->sink->Error(
+                  span, std::format(
+                            "{}() requires exactly one argument",
+                            call.getSubroutineName()));
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId value =
+                LowerExpression(*call.arguments()[1], registrar, ctx);
+            if (!value) {
+              return hir::kInvalidExpressionId;
+            }
+            args.push_back(value);
+            break;
+          }
+          case BuiltinMethodKind::kInsert: {
+            hir_method = hir::BuiltinMethod::kInsert;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+            // insert(idx, val): exactly 2 args after receiver
+            if (call.arguments().size() != 3) {
+              ctx->sink->Error(
+                  span,
+                  "insert() requires exactly two arguments (index and value)");
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId idx =
+                LowerExpression(*call.arguments()[1], registrar, ctx);
+            if (!idx) {
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId value =
+                LowerExpression(*call.arguments()[2], registrar, ctx);
+            if (!value) {
+              return hir::kInvalidExpressionId;
+            }
+            args.push_back(idx);
+            args.push_back(value);
+            break;
           }
         }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::BuiltinMethodCallExpressionData{
+                    .receiver = receiver,
+                    .method = hir_method,
+                    .args = std::move(args)}});
       }
 
       // Handle system calls ($display, etc.)
@@ -435,7 +512,9 @@ auto LowerExpression(
         return LowerSystemCall(call, registrar, ctx);
       }
 
-      // User function call (user_sub was computed above for builtin detection)
+      // User function call
+      const auto* user_sub =
+          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
       if (user_sub == nullptr) {
         ctx->sink->Error(span, "indirect function calls not supported");
         return hir::kInvalidExpressionId;
@@ -752,21 +831,70 @@ auto LowerExpression(
       }
       const slang::ast::Type& ct = expr.type->getCanonicalType();
 
-      // Gate: only unpacked structs
+      // Gate: reject replication patterns for both structs and arrays
+      if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
+        ctx->sink->Error(span, "replication not supported in literals");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Helper to get elements from both pattern types
+      auto get_elements = [&]() {
+        if (expr.kind == ExpressionKind::SimpleAssignmentPattern) {
+          return expr.as<slang::ast::SimpleAssignmentPatternExpression>()
+              .elements();
+        }
+        return expr.as<slang::ast::StructuredAssignmentPatternExpression>()
+            .elements();
+      };
+
+      // Handle array/queue literals
+      bool is_dynamic = ct.kind == slang::ast::SymbolKind::DynamicArrayType;
+      bool is_queue = ct.isQueue();
+      if (ct.isUnpackedArray() || is_dynamic || is_queue) {
+        auto elements = get_elements();
+
+        // For fixed unpacked arrays: validate size matches
+        if (ct.isUnpackedArray() && !is_dynamic && !is_queue) {
+          const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
+          auto expected_size = arr.range.width();
+          if (elements.size() != expected_size) {
+            ctx->sink->Error(span, "array literal size mismatch");
+            return hir::kInvalidExpressionId;
+          }
+        }
+
+        // Lower elements
+        std::vector<hir::ExpressionId> element_ids;
+        element_ids.reserve(elements.size());
+        for (const auto* elem : elements) {
+          hir::ExpressionId id = LowerExpression(*elem, registrar, ctx);
+          if (!id) {
+            return hir::kInvalidExpressionId;
+          }
+          element_ids.push_back(id);
+        }
+
+        TypeId type = LowerType(*expr.type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kArrayLiteral,
+                .type = type,
+                .span = span,
+                .data = hir::ArrayLiteralExpressionData{
+                    .elements = std::move(element_ids)}});
+      }
+
+      // Handle struct literals (existing logic)
       if (!ct.isUnpackedStruct()) {
-        if (ct.isArray()) {
-          ctx->sink->Error(span, "array literals not yet supported");
-        } else if (ct.isStruct()) {
+        if (ct.isStruct()) {
           ctx->sink->Error(span, "only unpacked struct literals supported");
         } else {
           ctx->sink->Error(span, "assignment pattern requires struct type");
         }
-        return hir::kInvalidExpressionId;
-      }
-
-      // Gate: reject replication patterns
-      if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
-        ctx->sink->Error(span, "replication not supported in struct literals");
         return hir::kInvalidExpressionId;
       }
 
@@ -783,15 +911,6 @@ auto LowerExpression(
         }
       }
 
-      // Get elements - both pattern types use elements() with declaration order
-      auto get_elements = [&]() {
-        if (expr.kind == ExpressionKind::SimpleAssignmentPattern) {
-          return expr.as<slang::ast::SimpleAssignmentPatternExpression>()
-              .elements();
-        }
-        return expr.as<slang::ast::StructuredAssignmentPatternExpression>()
-            .elements();
-      };
       auto elements = get_elements();
 
       // Gate: full literal only (all fields must be specified)

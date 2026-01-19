@@ -385,6 +385,30 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           case BuiltinMethod::kArrayDelete:
             method_name = "delete";
             break;
+          case BuiltinMethod::kQueueSize:
+            method_name = "queue_size";
+            break;
+          case BuiltinMethod::kQueueDelete:
+            method_name = "queue_delete";
+            break;
+          case BuiltinMethod::kQueueDeleteAt:
+            method_name = "queue_delete_at";
+            break;
+          case BuiltinMethod::kQueuePushBack:
+            method_name = "queue_push_back";
+            break;
+          case BuiltinMethod::kQueuePushFront:
+            method_name = "queue_push_front";
+            break;
+          case BuiltinMethod::kQueuePopBack:
+            method_name = "queue_pop_back";
+            break;
+          case BuiltinMethod::kQueuePopFront:
+            method_name = "queue_pop_front";
+            break;
+          case BuiltinMethod::kQueueInsert:
+            method_name = "queue_insert";
+            break;
         }
       }
       result = std::format("builtin({})", method_name);
@@ -425,22 +449,6 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result += FormatOperand(arg);
           }
           return result;
-        } else if constexpr (std::is_same_v<T, BuiltinCallEffect>) {
-          const char* method_name = "unknown";
-          switch (effect_op.method) {
-            case BuiltinMethod::kArrayDelete:
-              method_name = "delete";
-              break;
-            case BuiltinMethod::kNewArray:
-              method_name = "new[]";
-              break;
-            case BuiltinMethod::kArraySize:
-              method_name = "size";
-              break;
-          }
-          return std::format(
-              "builtin_effect({}, {})", method_name,
-              FormatPlace(effect_op.receiver));
         } else {
           return "unknown_effect";
         }
