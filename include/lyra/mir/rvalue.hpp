@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -7,6 +8,7 @@
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::mir {
 
@@ -39,6 +41,7 @@ struct UserCallInfo {
 struct BuiltinCallInfo {
   BuiltinMethod method;
   TypeId result_type;  // Required: kNewArray needs element type, can't infer
+  std::optional<PlaceId> receiver;  // For pop methods that mutate the receiver
 };
 
 using RvalueInfo = std::variant<

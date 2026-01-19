@@ -110,20 +110,88 @@ void LowerExpressionStatement(
     return;
   }
 
-  // Check if this is a builtin method call (e.g., arr.delete())
+  // Check if this is a builtin method call (e.g., arr.delete(), q.push_back())
   if (const auto* builtin =
           std::get_if<hir::BuiltinMethodCallExpressionData>(&expr.data)) {
-    if (builtin->method == hir::BuiltinMethod::kDelete) {
-      // Lower receiver as lvalue to get the PlaceId
-      mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
-      mir::BuiltinCallEffect effect{
-          .method = mir::BuiltinMethod::kArrayDelete,
-          .receiver = receiver_place,
-      };
-      builder.EmitEffect(std::move(effect));
-      return;
+    Context& ctx = builder.GetContext();
+    const hir::Expression& receiver_expr = (*ctx.hir_arena)[builtin->receiver];
+    const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
+    bool is_queue = receiver_type.Kind() == TypeKind::kQueue;
+
+    // Helper to lower args to operands
+    auto lower_args = [&]() -> std::vector<mir::Operand> {
+      std::vector<mir::Operand> args;
+      for (hir::ExpressionId arg_id : builtin->args) {
+        args.push_back(LowerExpression(arg_id, builder));
+      }
+      return args;
+    };
+
+    switch (builtin->method) {
+      case hir::BuiltinMethod::kDelete: {
+        mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
+        if (is_queue) {
+          // Queue delete: no args = clear all, one arg = delete at index
+          mir::BuiltinMethod method = builtin->args.empty()
+                                          ? mir::BuiltinMethod::kQueueDelete
+                                          : mir::BuiltinMethod::kQueueDeleteAt;
+          mir::BuiltinCallEffect effect{
+              .method = method,
+              .receiver = receiver_place,
+              .args = lower_args(),
+          };
+          builder.EmitEffect(std::move(effect));
+        } else {
+          // Dynamic array delete
+          mir::BuiltinCallEffect effect{
+              .method = mir::BuiltinMethod::kArrayDelete,
+              .receiver = receiver_place,
+              .args = {},
+          };
+          builder.EmitEffect(std::move(effect));
+        }
+        return;
+      }
+
+      case hir::BuiltinMethod::kPushBack: {
+        mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
+        mir::BuiltinCallEffect effect{
+            .method = mir::BuiltinMethod::kQueuePushBack,
+            .receiver = receiver_place,
+            .args = lower_args(),
+        };
+        builder.EmitEffect(std::move(effect));
+        return;
+      }
+
+      case hir::BuiltinMethod::kPushFront: {
+        mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
+        mir::BuiltinCallEffect effect{
+            .method = mir::BuiltinMethod::kQueuePushFront,
+            .receiver = receiver_place,
+            .args = lower_args(),
+        };
+        builder.EmitEffect(std::move(effect));
+        return;
+      }
+
+      case hir::BuiltinMethod::kInsert: {
+        mir::PlaceId receiver_place = LowerLvalue(builtin->receiver, builder);
+        mir::BuiltinCallEffect effect{
+            .method = mir::BuiltinMethod::kQueueInsert,
+            .receiver = receiver_place,
+            .args = lower_args(),
+        };
+        builder.EmitEffect(std::move(effect));
+        return;
+      }
+
+      case hir::BuiltinMethod::kSize:
+      case hir::BuiltinMethod::kPopBack:
+      case hir::BuiltinMethod::kPopFront:
+        // Value-returning methods - fall through to regular expression lowering
+        break;
     }
-    // Other builtin methods (size) are value-returning, not effects
   }
 
   // Regular expression statement - evaluate for side effects, discard result

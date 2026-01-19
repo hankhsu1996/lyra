@@ -385,6 +385,30 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           case BuiltinMethod::kArrayDelete:
             method_name = "delete";
             break;
+          case BuiltinMethod::kQueueSize:
+            method_name = "queue_size";
+            break;
+          case BuiltinMethod::kQueueDelete:
+            method_name = "queue_delete";
+            break;
+          case BuiltinMethod::kQueueDeleteAt:
+            method_name = "queue_delete_at";
+            break;
+          case BuiltinMethod::kQueuePushBack:
+            method_name = "queue_push_back";
+            break;
+          case BuiltinMethod::kQueuePushFront:
+            method_name = "queue_push_front";
+            break;
+          case BuiltinMethod::kQueuePopBack:
+            method_name = "queue_pop_back";
+            break;
+          case BuiltinMethod::kQueuePopFront:
+            method_name = "queue_pop_front";
+            break;
+          case BuiltinMethod::kQueueInsert:
+            method_name = "queue_insert";
+            break;
         }
       }
       result = std::format("builtin({})", method_name);
@@ -437,10 +461,40 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             case BuiltinMethod::kArraySize:
               method_name = "size";
               break;
+            case BuiltinMethod::kQueueSize:
+              method_name = "queue_size";
+              break;
+            case BuiltinMethod::kQueueDelete:
+              method_name = "queue_delete";
+              break;
+            case BuiltinMethod::kQueueDeleteAt:
+              method_name = "queue_delete_at";
+              break;
+            case BuiltinMethod::kQueuePushBack:
+              method_name = "queue_push_back";
+              break;
+            case BuiltinMethod::kQueuePushFront:
+              method_name = "queue_push_front";
+              break;
+            case BuiltinMethod::kQueuePopBack:
+              method_name = "queue_pop_back";
+              break;
+            case BuiltinMethod::kQueuePopFront:
+              method_name = "queue_pop_front";
+              break;
+            case BuiltinMethod::kQueueInsert:
+              method_name = "queue_insert";
+              break;
           }
-          return std::format(
-              "builtin_effect({}, {})", method_name,
+          std::string result = std::format(
+              "builtin_effect({}, {}", method_name,
               FormatPlace(effect_op.receiver));
+          for (const Operand& arg : effect_op.args) {
+            result += ", ";
+            result += FormatOperand(arg);
+          }
+          result += ")";
+          return result;
         } else {
           return "unknown_effect";
         }

@@ -39,6 +39,7 @@ enum class TypeKind {
   kUnpackedArray,
   kUnpackedStruct,
   kDynamicArray,
+  kQueue,
 };
 
 struct IntegralInfo {
@@ -78,6 +79,18 @@ struct DynamicArrayInfo {
   }
 };
 
+struct QueueInfo {
+  TypeId element_type;
+  uint32_t max_bound;  // 0 = unbounded
+
+  auto operator==(const QueueInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const QueueInfo& info) -> H {
+    return H::combine(std::move(h), info.element_type, info.max_bound);
+  }
+};
+
 struct StructField {
   std::string name;
   TypeId type;
@@ -104,7 +117,7 @@ struct UnpackedStructInfo {
 
 using TypePayload = std::variant<
     std::monostate, IntegralInfo, UnpackedArrayInfo, UnpackedStructInfo,
-    DynamicArrayInfo>;
+    DynamicArrayInfo, QueueInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -127,6 +140,7 @@ class Type {
   static auto UnpackedStruct(std::string name, std::vector<StructField> fields)
       -> Type;
   static auto DynamicArray(TypeId element) -> Type;
+  static auto Queue(TypeId element, uint32_t max_bound) -> Type;
 
   [[nodiscard]] auto Kind() const -> TypeKind {
     return kind_;
@@ -137,6 +151,7 @@ class Type {
   [[nodiscard]] auto AsUnpackedArray() const -> const UnpackedArrayInfo&;
   [[nodiscard]] auto AsUnpackedStruct() const -> const UnpackedStructInfo&;
   [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
+  [[nodiscard]] auto AsQueue() const -> const QueueInfo&;
 
   auto operator==(const Type& other) const -> bool = default;
 
@@ -186,6 +201,13 @@ inline auto Type::DynamicArray(TypeId element) -> Type {
   return t;
 }
 
+inline auto Type::Queue(TypeId element, uint32_t max_bound) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kQueue;
+  t.payload_ = QueueInfo{.element_type = element, .max_bound = max_bound};
+  return t;
+}
+
 inline auto Type::AsIntegral() const -> const IntegralInfo& {
   assert(kind_ == TypeKind::kIntegral);
   return std::get<IntegralInfo>(payload_);
@@ -206,6 +228,11 @@ inline auto Type::AsDynamicArray() const -> const DynamicArrayInfo& {
   return std::get<DynamicArrayInfo>(payload_);
 }
 
+inline auto Type::AsQueue() const -> const QueueInfo& {
+  assert(kind_ == TypeKind::kQueue);
+  return std::get<QueueInfo>(payload_);
+}
+
 inline auto ToString(TypeKind kind) -> std::string {
   switch (kind) {
     case TypeKind::kVoid:
@@ -222,6 +249,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "unpacked_struct";
     case TypeKind::kDynamicArray:
       return "dynamic_array";
+    case TypeKind::kQueue:
+      return "queue";
   }
   return "unknown";
 }
@@ -253,6 +282,14 @@ inline auto ToString(const Type& type) -> std::string {
     case TypeKind::kDynamicArray: {
       const auto& info = type.AsDynamicArray();
       return std::format("type#{}[]", info.element_type.value);
+    }
+    case TypeKind::kQueue: {
+      const auto& info = type.AsQueue();
+      if (info.max_bound == 0) {
+        return std::format("type#{}[$]", info.element_type.value);
+      }
+      return std::format(
+          "type#{}[$:{}]", info.element_type.value, info.max_bound);
     }
   }
   return "unknown";

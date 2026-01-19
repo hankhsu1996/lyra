@@ -26,6 +26,7 @@ enum class ExpressionKind {
   kElementAccess,
   kMemberAccess,
   kStructLiteral,
+  kArrayLiteral,
   kCall,
   kNewArray,
   kBuiltinMethodCall,
@@ -99,6 +100,12 @@ struct StructLiteralExpressionData {
   auto operator==(const StructLiteralExpressionData&) const -> bool = default;
 };
 
+struct ArrayLiteralExpressionData {
+  std::vector<ExpressionId> elements;
+
+  auto operator==(const ArrayLiteralExpressionData&) const -> bool = default;
+};
+
 struct CallExpressionData {
   SymbolId callee;
   std::vector<ExpressionId> arguments;
@@ -109,6 +116,11 @@ struct CallExpressionData {
 enum class BuiltinMethod {
   kSize,
   kDelete,
+  kPushBack,
+  kPushFront,
+  kPopBack,
+  kPopFront,
+  kInsert,
 };
 
 struct NewArrayExpressionData {
@@ -121,6 +133,7 @@ struct NewArrayExpressionData {
 struct BuiltinMethodCallExpressionData {
   ExpressionId receiver;
   BuiltinMethod method;
+  std::vector<ExpressionId> args;
 
   auto operator==(const BuiltinMethodCallExpressionData&) const
       -> bool = default;
@@ -131,8 +144,8 @@ using ExpressionData = std::variant<
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
     ElementAccessExpressionData, MemberAccessExpressionData,
-    StructLiteralExpressionData, CallExpressionData, NewArrayExpressionData,
-    BuiltinMethodCallExpressionData>;
+    StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
+    NewArrayExpressionData, BuiltinMethodCallExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

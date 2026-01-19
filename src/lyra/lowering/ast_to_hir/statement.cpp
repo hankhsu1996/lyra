@@ -155,7 +155,7 @@ auto LowerStatement(
           }
         }
 
-        // Check for dynamic array delete() method call.
+        // Check for dynamic array/queue method calls.
         // Array methods like delete() are BuiltInMemberMethod, not system
         // calls. Also must verify it's NOT a user function (SubroutineSymbol)
         // to avoid confusing user-defined delete(arr) with the builtin
@@ -167,10 +167,15 @@ auto LowerStatement(
         std::string_view name = call.getSubroutineName();
         if (user_sub == nullptr && !call.arguments().empty()) {
           const auto* first_arg = call.arguments()[0];
-          if (first_arg->type != nullptr &&
-              first_arg->type->kind ==
-                  slang::ast::SymbolKind::DynamicArrayType &&
-              name == "delete") {
+          bool is_dynamic_array =
+              first_arg->type != nullptr &&
+              first_arg->type->kind == slang::ast::SymbolKind::DynamicArrayType;
+          bool is_queue =
+              first_arg->type != nullptr &&
+              first_arg->type->kind == slang::ast::SymbolKind::QueueType;
+
+          // Dynamic array delete()
+          if (is_dynamic_array && name == "delete") {
             hir::ExpressionId receiver =
                 LowerExpression(*first_arg, registrar, ctx);
             if (!receiver) {
@@ -188,7 +193,8 @@ auto LowerStatement(
                     .span = span,
                     .data = hir::BuiltinMethodCallExpressionData{
                         .receiver = receiver,
-                        .method = hir::BuiltinMethod::kDelete}});
+                        .method = hir::BuiltinMethod::kDelete,
+                        .args = {}}});
 
             return ctx->hir_arena->AddStatement(
                 hir::Statement{
@@ -197,6 +203,115 @@ auto LowerStatement(
                     .data =
                         hir::ExpressionStatementData{.expression = delete_expr},
                 });
+          }
+
+          // Queue methods
+          if (is_queue) {
+            TypeId void_type =
+                ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+
+            // Helper to lower receiver
+            auto lower_receiver = [&]() -> hir::ExpressionId {
+              return LowerExpression(*first_arg, registrar, ctx);
+            };
+
+            // Helper to create method call statement
+            auto make_method_stmt =
+                [&](hir::ExpressionId receiver, hir::BuiltinMethod method,
+                    std::vector<hir::ExpressionId> args) -> hir::StatementId {
+              hir::ExpressionId expr = ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                      .type = void_type,
+                      .span = span,
+                      .data = hir::BuiltinMethodCallExpressionData{
+                          .receiver = receiver,
+                          .method = method,
+                          .args = std::move(args)}});
+              return ctx->hir_arena->AddStatement(
+                  hir::Statement{
+                      .kind = hir::StatementKind::kExpression,
+                      .span = span,
+                      .data = hir::ExpressionStatementData{.expression = expr},
+                  });
+            };
+
+            // push_back(val), push_front(val)
+            if (name == "push_back" || name == "push_front") {
+              hir::ExpressionId receiver = lower_receiver();
+              if (!receiver) {
+                return hir::kInvalidStatementId;
+              }
+              // Exactly 2 arguments: receiver + value
+              if (call.arguments().size() != 2) {
+                ctx->sink->Error(
+                    span,
+                    std::format("{}() requires exactly one argument", name));
+                return hir::kInvalidStatementId;
+              }
+              hir::ExpressionId value =
+                  LowerExpression(*call.arguments()[1], registrar, ctx);
+              if (!value) {
+                return hir::kInvalidStatementId;
+              }
+              hir::BuiltinMethod method = (name == "push_back")
+                                              ? hir::BuiltinMethod::kPushBack
+                                              : hir::BuiltinMethod::kPushFront;
+              return make_method_stmt(receiver, method, {value});
+            }
+
+            // delete() or delete(idx)
+            if (name == "delete") {
+              hir::ExpressionId receiver = lower_receiver();
+              if (!receiver) {
+                return hir::kInvalidStatementId;
+              }
+              // 1 argument (receiver) or 2 arguments (receiver + idx)
+              if (call.arguments().size() > 2) {
+                ctx->sink->Error(span, "delete() takes at most one argument");
+                return hir::kInvalidStatementId;
+              }
+              std::vector<hir::ExpressionId> args;
+              if (call.arguments().size() == 2) {
+                // delete(idx) - remove at index
+                hir::ExpressionId idx =
+                    LowerExpression(*call.arguments()[1], registrar, ctx);
+                if (!idx) {
+                  return hir::kInvalidStatementId;
+                }
+                args.push_back(idx);
+              }
+              return make_method_stmt(
+                  receiver, hir::BuiltinMethod::kDelete, std::move(args));
+            }
+
+            // insert(idx, val)
+            if (name == "insert") {
+              hir::ExpressionId receiver = lower_receiver();
+              if (!receiver) {
+                return hir::kInvalidStatementId;
+              }
+              // Exactly 3 arguments: receiver + idx + value
+              if (call.arguments().size() != 3) {
+                ctx->sink->Error(
+                    span,
+                    "insert() requires exactly two arguments (index and "
+                    "value)");
+                return hir::kInvalidStatementId;
+              }
+              hir::ExpressionId idx =
+                  LowerExpression(*call.arguments()[1], registrar, ctx);
+              if (!idx) {
+                return hir::kInvalidStatementId;
+              }
+              hir::ExpressionId value =
+                  LowerExpression(*call.arguments()[2], registrar, ctx);
+              if (!value) {
+                return hir::kInvalidStatementId;
+              }
+              return make_method_stmt(
+                  receiver, hir::BuiltinMethod::kInsert, {idx, value});
+            }
           }
         }
       }

@@ -545,35 +545,92 @@ auto LowerNewArray(
       .info =
           mir::BuiltinCallInfo{
               .method = mir::BuiltinMethod::kNewArray,
-              .result_type = expr.type},
+              .result_type = expr.type,
+              .receiver = std::nullopt},
   };
 
   mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
   return mir::Operand::Use(temp);
 }
 
+auto LowerArrayLiteral(
+    const hir::ArrayLiteralExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.elements.size());
+  for (hir::ExpressionId elem_id : data.elements) {
+    operands.push_back(LowerExpression(elem_id, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .kind = mir::RvalueKind::kAggregate,
+      .op = kUnusedOp,
+      .operands = std::move(operands),
+      .info = mir::AggregateInfo{.result_type = expr.type},
+  };
+  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+}
+
 auto LowerBuiltinMethodCall(
     const hir::BuiltinMethodCallExpressionData& data,
     const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+  const hir::Expression& receiver_expr = (*ctx.hir_arena)[data.receiver];
+
   switch (data.method) {
     case hir::BuiltinMethod::kSize: {
       mir::Operand receiver = LowerExpression(data.receiver, builder);
+      // Determine which size method based on receiver type
+      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
+      mir::BuiltinMethod method = (receiver_type.Kind() == TypeKind::kQueue)
+                                      ? mir::BuiltinMethod::kQueueSize
+                                      : mir::BuiltinMethod::kArraySize;
       mir::Rvalue rvalue{
           .kind = mir::RvalueKind::kBuiltinCall,
           .op = kUnusedOp,
           .operands = {receiver},
           .info =
               mir::BuiltinCallInfo{
-                  .method = mir::BuiltinMethod::kArraySize,
-                  .result_type = expr.type},
+                  .method = method,
+                  .result_type = expr.type,
+                  .receiver = std::nullopt},
       };
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
     }
+
+    case hir::BuiltinMethod::kPopBack:
+    case hir::BuiltinMethod::kPopFront: {
+      // Pop methods mutate the receiver AND return a value
+      // Need receiver as PlaceId for mutation
+      mir::PlaceId receiver_place = LowerLvalue(data.receiver, builder);
+
+      mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPopBack)
+                                      ? mir::BuiltinMethod::kQueuePopBack
+                                      : mir::BuiltinMethod::kQueuePopFront;
+
+      mir::Rvalue rvalue{
+          .kind = mir::RvalueKind::kBuiltinCall,
+          .op = kUnusedOp,
+          .operands = {},
+          .info =
+              mir::BuiltinCallInfo{
+                  .method = method,
+                  .result_type = expr.type,
+                  .receiver = receiver_place},
+      };
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+
     case hir::BuiltinMethod::kDelete:
+    case hir::BuiltinMethod::kPushBack:
+    case hir::BuiltinMethod::kPushFront:
+    case hir::BuiltinMethod::kInsert:
       throw common::InternalError(
           "LowerBuiltinMethodCall",
-          "delete() in expression context should have been rejected");
+          "statement-only method in expression context should have been "
+          "rejected");
   }
   throw common::InternalError(
       "LowerBuiltinMethodCall", "unknown builtin method");
@@ -616,6 +673,9 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ArrayLiteralExpressionData>) {
+          return LowerArrayLiteral(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::CallExpressionData>) {
           return LowerCall(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::NewArrayExpressionData>) {
