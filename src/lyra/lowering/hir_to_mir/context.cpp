@@ -58,4 +58,15 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
       std::format("symbol {} not found in place mapping", sym.value));
 }
 
+auto Context::LookupFunction(SymbolId sym) const -> mir::FunctionId {
+  if (symbol_to_mir_function == nullptr) {
+    return mir::kInvalidFunctionId;
+  }
+  auto it = symbol_to_mir_function->find(sym);
+  if (it != symbol_to_mir_function->end()) {
+    return it->second;
+  }
+  return mir::kInvalidFunctionId;
+}
+
 }  // namespace lyra::lowering::hir_to_mir

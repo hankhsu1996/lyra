@@ -536,6 +536,32 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::CallExpressionData>) {
+          Context& ctx = builder.GetContext();
+
+          // Look up mir::FunctionId from symbol
+          mir::FunctionId callee = ctx.LookupFunction(data.callee);
+          if (!callee) {
+            throw common::InternalError(
+                "LowerCall", "function not found in map");
+          }
+
+          // Lower arguments
+          std::vector<mir::Operand> args;
+          args.reserve(data.arguments.size());
+          for (hir::ExpressionId arg_id : data.arguments) {
+            args.push_back(LowerExpression(arg_id, builder));
+          }
+
+          mir::Rvalue rvalue{
+              .kind = mir::RvalueKind::kCall,
+              .op = kUnusedOp,
+              .operands = std::move(args),
+              .info = mir::UserCallInfo{.callee = callee},
+          };
+
+          mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+          return mir::Operand::Use(temp);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

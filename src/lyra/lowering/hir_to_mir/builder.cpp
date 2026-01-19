@@ -172,6 +172,8 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlockId> {
 
   finished_ = true;
 
+  // Phase 1: Add all blocks to arena and collect the mapping from
+  // builder-local indices to arena IDs
   std::vector<mir::BasicBlockId> arena_ids;
   arena_ids.reserve(blocks_.size());
 
@@ -182,20 +184,30 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlockId> {
           "MirBuilder", "Finish: block has no terminator");
     }
 
-    // Convert builder-local indices in terminator targets to arena IDs
-    mir::Terminator term = std::move(*bb.terminator);
-    for (auto& target : term.targets) {
-      target = ToArenaId(BlockIndex{target.value});
-    }
-
+    // Add block with placeholder terminator targets (will fix in phase 2)
     mir::BasicBlock block{
         .id = mir::BasicBlockId{i},
         .instructions = std::move(bb.instructions),
-        .terminator = std::move(term),
+        .terminator = std::move(*bb.terminator),
     };
 
     mir::BasicBlockId arena_id = arena_->AddBasicBlock(std::move(block));
     arena_ids.push_back(arena_id);
+  }
+
+  // Phase 2: Fix up terminator targets using the builder-local to arena-id
+  // mapping
+  for (mir::BasicBlockId arena_id : arena_ids) {
+    mir::BasicBlock& block = arena_->GetBasicBlock(arena_id);
+    for (auto& target : block.terminator.targets) {
+      // target.value is a builder-local index, convert to arena ID
+      uint32_t local_idx = target.value;
+      if (local_idx >= arena_ids.size()) {
+        throw common::InternalError(
+            "MirBuilder", "Finish: terminator target out of bounds");
+      }
+      target = arena_ids[local_idx];
+    }
   }
 
   return arena_ids;

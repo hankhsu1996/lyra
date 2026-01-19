@@ -20,6 +20,10 @@ struct SymbolIdHash {
 
 using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
 
+// Map SymbolId → mir::FunctionId (pre-allocated for recursion support)
+using SymbolToMirFunctionMap =
+    std::unordered_map<SymbolId, mir::FunctionId, SymbolIdHash>;
+
 // Context for lowering within a process or function activation.
 struct Context {
   mir::Arena* mir_arena;
@@ -39,11 +43,21 @@ struct Context {
 
   TypeId bit_type;
 
+  // Function-specific: map symbols to MIR function IDs (for call lowering)
+  const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
+
+  // Function-specific: local 0 for non-void return value
+  mir::PlaceId return_place = mir::kInvalidPlaceId;
+
   auto AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
 
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
+
+  // Look up mir::FunctionId for a function symbol. Returns invalid if not
+  // found.
+  [[nodiscard]] auto LookupFunction(SymbolId sym) const -> mir::FunctionId;
 
   [[nodiscard]] auto GetBitType() const -> TypeId {
     return bit_type;

@@ -11,6 +11,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
@@ -288,12 +289,57 @@ auto LowerExpression(
       const auto& call = expr.as<slang::ast::CallExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      if (!call.isSystemCall()) {
-        ctx->sink->Error(span, "only system calls are supported");
+      if (call.isSystemCall()) {
+        return LowerSystemCall(call, registrar, ctx);
+      }
+
+      // User function call
+      const auto* sub =
+          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+      if (sub == nullptr) {
+        ctx->sink->Error(span, "indirect function calls not supported");
         return hir::kInvalidExpressionId;
       }
 
-      return LowerSystemCall(call, registrar, ctx);
+      // Reject task calls from functions
+      if ((*sub)->subroutineKind == slang::ast::SubroutineKind::Task) {
+        ctx->sink->Error(span, "task calls not supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      SymbolId callee = registrar.Lookup(**sub);
+      if (!callee) {
+        ctx->sink->Error(
+            span, std::format("undefined function '{}'", (*sub)->name));
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower arguments
+      std::vector<hir::ExpressionId> args;
+      args.reserve(call.arguments().size());
+      for (const auto* arg_expr : call.arguments()) {
+        hir::ExpressionId arg = LowerExpression(*arg_expr, registrar, ctx);
+        if (!arg) {
+          return hir::kInvalidExpressionId;
+        }
+        args.push_back(arg);
+      }
+
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCall,
+              .type = type,
+              .span = span,
+              .data = hir::CallExpressionData{
+                  .callee = callee, .arguments = std::move(args)}});
     }
 
     case ExpressionKind::Conversion: {

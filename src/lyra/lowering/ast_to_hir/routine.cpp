@@ -82,13 +82,31 @@ auto LowerFunction(
     Context* ctx) -> hir::FunctionId {
   SourceSpan span = ctx->SpanOf(GetSourceRange(func));
 
-  TypeId return_type = LowerType(func.getReturnType(), span, ctx);
+  // Reject non-integral/void return types
+  const auto& ret_type = func.getReturnType();
+  if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+    ctx->sink->Error(span, "only integral or void return types supported");
+    return hir::kInvalidFunctionId;
+  }
+
+  TypeId return_type = LowerType(ret_type, span, ctx);
   if (!return_type) {
     return hir::kInvalidFunctionId;
   }
 
-  SymbolId symbol =
-      registrar.Register(func, SymbolKind::kFunction, return_type);
+  // Check parameter directions before registering function symbol
+  for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
+    if (arg->direction != slang::ast::ArgumentDirection::In) {
+      ctx->sink->Error(span, "only input parameters supported");
+      return hir::kInvalidFunctionId;
+    }
+  }
+
+  // Check if symbol was pre-registered (two-phase lowering)
+  SymbolId symbol = registrar.Lookup(func);
+  if (!symbol) {
+    symbol = registrar.Register(func, SymbolKind::kFunction, return_type);
+  }
 
   std::vector<SymbolId> parameters;
   std::optional<hir::StatementId> body_result;

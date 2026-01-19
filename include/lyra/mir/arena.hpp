@@ -56,11 +56,28 @@ class Arena final {
     return id;
   }
 
+  // Reserve a FunctionId for later filling (pre-allocation for recursion)
+  auto ReserveFunction() -> FunctionId {
+    FunctionId id{static_cast<uint32_t>(functions_.size())};
+    functions_.emplace_back();  // Placeholder
+    return id;
+  }
+
+  // Fill in a previously reserved function
+  void SetFunction(FunctionId id, Function func) {
+    functions_[id.value] = std::move(func);
+  }
+
   [[nodiscard]] auto operator[](PlaceId id) const -> const Place& {
     return places_[id.value];
   }
 
   [[nodiscard]] auto operator[](BasicBlockId id) const -> const BasicBlock& {
+    return basic_blocks_[id.value];
+  }
+
+  // Mutable access for fixup operations (e.g., terminator target rewriting)
+  auto GetBasicBlock(BasicBlockId id) -> BasicBlock& {
     return basic_blocks_[id.value];
   }
 

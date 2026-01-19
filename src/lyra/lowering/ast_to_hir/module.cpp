@@ -29,7 +29,7 @@ auto LowerModule(
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 
-    // Register module-level variables first (before processes that use them)
+    // Phase 1: Register module-level variables (before processes that use them)
     for (const slang::ast::VariableSymbol& var :
          body.membersOfType<slang::ast::VariableSymbol>()) {
       TypeId type = LowerType(var.getType(), span, ctx);
@@ -39,6 +39,32 @@ auto LowerModule(
       }
     }
 
+    // Phase 2: Register function symbols (before processes that call them)
+    // Store references to lower their bodies later
+    std::vector<const slang::ast::SubroutineSymbol*> function_refs;
+    std::vector<const slang::ast::SubroutineSymbol*> task_refs;
+    for (const slang::ast::SubroutineSymbol& sub :
+         body.membersOfType<slang::ast::SubroutineSymbol>()) {
+      if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
+        // Register function symbol only (return type, not body yet)
+        const auto& ret_type = sub.getReturnType();
+        if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+          ctx->sink->Error(
+              span, "only integral or void return types supported");
+          continue;
+        }
+        TypeId return_type = LowerType(ret_type, span, ctx);
+        if (!return_type) {
+          continue;
+        }
+        registrar.Register(sub, SymbolKind::kFunction, return_type);
+        function_refs.push_back(&sub);
+      } else {
+        task_refs.push_back(&sub);
+      }
+    }
+
+    // Phase 3: Lower processes (can now reference function symbols)
     for (const slang::ast::ProceduralBlockSymbol& proc :
          body.membersOfType<slang::ast::ProceduralBlockSymbol>()) {
       hir::ProcessId id = LowerProcess(proc, registrar, ctx);
@@ -47,18 +73,19 @@ auto LowerModule(
       }
     }
 
-    for (const slang::ast::SubroutineSymbol& sub :
-         body.membersOfType<slang::ast::SubroutineSymbol>()) {
-      if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
-        hir::FunctionId id = LowerFunction(sub, registrar, ctx);
-        if (id) {
-          functions.push_back(id);
-        }
-      } else {
-        hir::TaskId id = LowerTask(sub, registrar, ctx);
-        if (id) {
-          tasks.push_back(id);
-        }
+    // Phase 4: Lower function bodies
+    for (const slang::ast::SubroutineSymbol* sub : function_refs) {
+      hir::FunctionId id = LowerFunction(*sub, registrar, ctx);
+      if (id) {
+        functions.push_back(id);
+      }
+    }
+
+    // Phase 5: Lower tasks
+    for (const slang::ast::SubroutineSymbol* sub : task_refs) {
+      hir::TaskId id = LowerTask(*sub, registrar, ctx);
+      if (id) {
+        tasks.push_back(id);
       }
     }
   }

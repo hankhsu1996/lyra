@@ -337,6 +337,17 @@ void Dumper::Dump(StatementId id) {
       *out_ << name << "(" << data.level << ");\n";
       break;
     }
+
+    case StatementKind::kReturn: {
+      const auto& data = std::get<ReturnStatementData>(stmt.data);
+      *out_ << "return";
+      if (data.value) {
+        *out_ << " ";
+        Dump(data.value);
+      }
+      *out_ << ";\n";
+      break;
+    }
   }
 }
 
@@ -558,6 +569,21 @@ void Dumper::Dump(ExpressionId id) {
         Dump(field_expr);
       }
       *out_ << "}";
+      break;
+    }
+
+    case ExpressionKind::kCall: {
+      const auto& data = std::get<CallExpressionData>(expr.data);
+      *out_ << SymbolName(data.callee) << "(";
+      bool first = true;
+      for (ExpressionId arg : data.arguments) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(arg);
+      }
+      *out_ << ")";
       break;
     }
   }

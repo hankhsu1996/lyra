@@ -347,7 +347,13 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
       break;
     }
     case RvalueKind::kCall:
-      result = std::format("call(op={})", rv.op);
+      if (const auto* user = std::get_if<UserCallInfo>(&rv.info)) {
+        result = std::format("call(func[{}])", user->callee.value);
+      } else if (const auto* sys = std::get_if<SystemCallInfo>(&rv.info)) {
+        result = std::format("syscall({})", sys->opcode);
+      } else {
+        result = std::format("call(op={})", rv.op);
+      }
       break;
     case RvalueKind::kAggregate: {
       const auto* info = std::get_if<AggregateInfo>(&rv.info);
