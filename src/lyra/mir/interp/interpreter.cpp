@@ -23,6 +23,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
+#include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -283,6 +284,76 @@ auto ApplyProjections(
     -> const RuntimeValue& {
   return ApplyProjectionsImpl<const RuntimeValue&>(
       root, projections, types, root_type, eval_index);
+}
+
+auto RadixToFormatChar(PrintRadix radix) -> char {
+  switch (radix) {
+    case PrintRadix::kDecimal:
+      return 'd';
+    case PrintRadix::kHex:
+      return 'h';
+    case PrintRadix::kBinary:
+      return 'b';
+    case PrintRadix::kOctal:
+      return 'o';
+  }
+  return 'd';
+}
+
+// Compute the resulting TypeId after applying projections to a place.
+// This traverses the type structure to get the final element/field type.
+auto TypeOfPlace(const Place& place, const TypeArena& types) -> TypeId {
+  TypeId current_type = place.root.type;
+
+  for (const auto& proj : place.projections) {
+    if (!current_type) {
+      break;
+    }
+
+    switch (proj.kind) {
+      case Projection::Kind::kField: {
+        const auto* field_idx = std::get_if<int>(&proj.operand);
+        if (field_idx != nullptr) {
+          const auto& struct_info = types[current_type].AsUnpackedStruct();
+          current_type =
+              struct_info.fields[static_cast<size_t>(*field_idx)].type;
+        }
+        break;
+      }
+      case Projection::Kind::kIndex: {
+        const auto& array_info = types[current_type].AsUnpackedArray();
+        current_type = array_info.element_type;
+        break;
+      }
+      case Projection::Kind::kSlice:
+        throw common::InternalError(
+            "TypeOfPlace", "slice projections not supported");
+      case Projection::Kind::kDeref:
+        throw common::InternalError(
+            "TypeOfPlace", "deref projections not supported");
+    }
+  }
+
+  return current_type;
+}
+
+// Recover the TypeId for an Operand without evaluation.
+auto TypeOfOperand(
+    const Operand& op, const Arena& arena, const TypeArena& types) -> TypeId {
+  switch (op.kind) {
+    case Operand::Kind::kConst: {
+      const auto& c = std::get<Constant>(op.payload);
+      return c.type;
+    }
+    case Operand::Kind::kUse: {
+      PlaceId place_id = std::get<PlaceId>(op.payload);
+      const auto& place = arena[place_id];
+      return TypeOfPlace(place, types);
+    }
+    case Operand::Kind::kPoison:
+      return kInvalidTypeId;
+  }
+  return kInvalidTypeId;
 }
 
 }  // namespace
@@ -570,40 +641,22 @@ void Interpreter::ExecEffect(const ProcessState& state, const Effect& effect) {
 
 void Interpreter::ExecDisplayEffect(
     const ProcessState& state, const DisplayEffect& disp) {
-  // Get output stream (default to cout if not set)
   std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-  // Format and print each argument
-  for (size_t i = 0; i < disp.args.size(); ++i) {
-    if (i > 0) {
-      out << " ";
-    }
-
-    auto value = EvalOperand(state, disp.args[i]);
-
-    if (IsString(value)) {
-      out << AsString(value).value;
-    } else if (IsIntegral(value)) {
-      const auto& integral = AsIntegral(value);
-      switch (disp.radix) {
-        case PrintRadix::kDecimal:
-          out << ToDecimalString(integral, false);
-          break;
-        case PrintRadix::kHex:
-          out << ToHexString(integral);
-          break;
-        case PrintRadix::kBinary:
-          out << ToBinaryString(integral);
-          break;
-        case PrintRadix::kOctal:
-          out << ToOctalString(integral);
-          break;
-      }
-    } else {
-      out << ToString(value);
-    }
+  // Evaluate each argument with type provenance for semantic decisions
+  std::vector<TypedValue> typed_args;
+  typed_args.reserve(disp.args.size());
+  for (const auto& arg : disp.args) {
+    TypeId type = TypeOfOperand(arg, *arena_, *types_);
+    RuntimeValue value = EvalOperand(state, arg);
+    typed_args.push_back(TypedValue{.value = std::move(value), .type = type});
   }
 
+  char default_format = RadixToFormatChar(disp.radix);
+  FormatContext ctx{};
+  std::string output = FormatMessage(typed_args, default_format, *types_, ctx);
+
+  out << output;
   if (disp.append_newline) {
     out << "\n";
   }
