@@ -45,6 +45,33 @@ class MirBuilder {
   void EmitCompute(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
+  auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
+
+  // Emit a unary operation and materialize to temp.
+  auto EmitUnary(mir::UnaryOp op, mir::Operand operand, TypeId result_type)
+      -> mir::Operand;
+
+  // Emit a binary operation and materialize to temp.
+  auto EmitBinary(
+      mir::BinaryOp op, mir::Operand lhs, mir::Operand rhs, TypeId result_type)
+      -> mir::Operand;
+
+  // Emit IndexValidity rvalue: computes "index is valid access" predicate.
+  // Returns 1-bit 2-state bool: (lower <= index <= upper) && is_known(index).
+  auto EmitIndexValidity(
+      mir::Operand index, int64_t lower, int64_t upper, bool check_known)
+      -> mir::Operand;
+
+  // Emit GuardedUse rvalue: conditionally read from place with OOB safety.
+  // Returns: validity ? Use(place) : oob_default
+  auto EmitGuardedUse(
+      mir::Operand validity, mir::PlaceId place, TypeId result_type)
+      -> mir::Operand;
+
+  // Emit GuardedAssign instruction: conditionally write to place.
+  // Semantics: if (validity) Assign(target, source); else no-op
+  void EmitGuardedAssign(
+      mir::PlaceId target, mir::Operand source, mir::Operand validity);
 
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);

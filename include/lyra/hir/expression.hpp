@@ -30,6 +30,9 @@ enum class ExpressionKind {
   kCall,
   kNewArray,
   kBuiltinMethodCall,
+  kPackedElementSelect,
+  kBitSelect,    // x[i] on integral (single bit extraction)
+  kRangeSelect,  // x[a:b] constant range
 };
 
 struct ConstantExpressionData {
@@ -139,13 +142,38 @@ struct BuiltinMethodCallExpressionData {
       -> bool = default;
 };
 
+struct PackedElementSelectExpressionData {
+  ExpressionId base;   // The packed array value (type carries bounds/direction)
+  ExpressionId index;  // Element index
+
+  auto operator==(const PackedElementSelectExpressionData&) const
+      -> bool = default;
+};
+
+struct BitSelectExpressionData {
+  ExpressionId base;   // The integral value
+  ExpressionId index;  // Bit index
+
+  auto operator==(const BitSelectExpressionData&) const -> bool = default;
+};
+
+struct RangeSelectExpressionData {
+  ExpressionId base;  // The integral value
+  int32_t left = 0;   // Left bound (source order)
+  int32_t right = 0;  // Right bound (source order)
+
+  auto operator==(const RangeSelectExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
     ElementAccessExpressionData, MemberAccessExpressionData,
     StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
-    NewArrayExpressionData, BuiltinMethodCallExpressionData>;
+    NewArrayExpressionData, BuiltinMethodCallExpressionData,
+    PackedElementSelectExpressionData, BitSelectExpressionData,
+    RangeSelectExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

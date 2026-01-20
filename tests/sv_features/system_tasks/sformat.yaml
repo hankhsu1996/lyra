@@ -269,8 +269,7 @@ cases:
         Result: 42
 
   - name: sformat_runtime_format_string
-    description: Runtime format string works in interpreter (skip codegen)
-    skip_codegen: true
+    description: Runtime format string works in interpreter
     files:
       - name: test.sv
         content: |

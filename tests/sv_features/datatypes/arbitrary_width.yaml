@@ -560,7 +560,6 @@ cases:
         msb: 1
 
   - name: negative_range_slice_across_zero
-    skip_codegen: true
     sv: |
       module Test;
         bit [3:-4] c;  // 8 bits: indices 3,2,1,0,-1,-2,-3,-4
@@ -575,7 +574,6 @@ cases:
         result: 2 # 0b0010
 
   - name: negative_range_2d_element_access
-    skip_codegen: true
     sv: |
       module Test;
         bit [1:-1][7:0] b;  // 3 elements with indices 1, 0, -1

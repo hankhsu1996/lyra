@@ -115,16 +115,19 @@ auto ApplyWidth(std::string value, const FormatSpec& spec) -> std::string {
   return ApplyWidthWithChar(std::move(value), spec, pad_char);
 }
 
-// Check if a type is signed integral
+// Check if a type is signed (handles kIntegral and packed array types).
 auto IsSignedIntegral(TypeId type, const TypeArena& types) -> bool {
   if (!type) {
     return false;
   }
   const auto& ty = types[type];
-  if (ty.Kind() != TypeKind::kIntegral) {
-    return false;
+  if (ty.Kind() == TypeKind::kIntegral) {
+    return ty.AsIntegral().is_signed;
   }
-  return ty.AsIntegral().is_signed;
+  if (IsPacked(ty)) {
+    return IsPackedSigned(ty, types);
+  }
+  return false;
 }
 
 // Calculate auto-sizing width for hex/binary/octal based on bit width.

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/mir/interp/runtime_integral_words.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 
@@ -862,6 +863,149 @@ auto IntegralResize2State(
   }
 
   MaskTopWord(result.value, target_width);
+  return result;
+}
+
+auto IntegralExtractSlice(
+    const RuntimeIntegral& src, uint32_t bit_offset, uint32_t width)
+    -> RuntimeIntegral {
+  // Handle edge cases
+  if (width == 0) {
+    RuntimeIntegral result;
+    result.bit_width = 0;
+    return result;
+  }
+
+  auto result = MakeKnownIntegral(width);
+
+  // Out-of-range semantics: if offset is entirely beyond source, return zero.
+  // This is intentional - out-of-range reads return zero, not unknown.
+  // Partial out-of-range reads zero-extend the missing high bits.
+  if (bit_offset >= src.bit_width) {
+    return result;
+  }
+
+  // 2-state only - unknown source should not exist
+  if (!src.IsKnown()) {
+    throw common::InternalError(
+        "IntegralExtractSlice", "unknown source in 2-state operation");
+  }
+
+  size_t result_words = WordsNeeded(width);
+  size_t word_offset = bit_offset / kBitsPerWord;
+  size_t bit_shift = bit_offset % kBitsPerWord;
+
+  for (size_t i = 0; i < result_words; ++i) {
+    size_t src_word_idx = word_offset + i;
+    if (src_word_idx >= src.value.size()) {
+      // Beyond source - leave as zero
+      break;
+    }
+
+    uint64_t low_part = src.value[src_word_idx] >> bit_shift;
+    uint64_t high_part = 0;
+
+    // Get bits from next word if shift is non-zero and next word exists
+    if (bit_shift != 0 && src_word_idx + 1 < src.value.size()) {
+      high_part = src.value[src_word_idx + 1] << (kBitsPerWord - bit_shift);
+    }
+
+    result.value[i] = low_part | high_part;
+  }
+
+  MaskTopWord(result.value, width);
+  return result;
+}
+
+auto IntegralInsertSlice(
+    const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width) -> RuntimeIntegral {
+  // Handle edge cases
+  if (width == 0 || bit_offset >= dst.bit_width) {
+    return dst;  // Nothing to modify
+  }
+
+  // 2-state only - unknown source should not exist
+  if (!src.IsKnown()) {
+    throw common::InternalError(
+        "IntegralInsertSlice", "unknown source in 2-state operation");
+  }
+
+  // Copy destination
+  auto result = dst;
+
+  // Ensure result vectors are properly sized
+  size_t result_words = WordsNeeded(dst.bit_width);
+  result.value.resize(result_words, 0);
+  result.x_mask.resize(result_words, 0);
+  result.z_mask.resize(result_words, 0);
+
+  // Calculate effective width (don't write beyond dst bounds)
+  uint32_t effective_width = width;
+  if (bit_offset + width > dst.bit_width) {
+    effective_width = dst.bit_width - bit_offset;
+  }
+
+  // Create a properly sized source value (truncate or zero-extend to width)
+  auto src_normalized = IntegralResize2State(src, false, width);
+
+  // Strategy: iterate over destination words that are affected by the slice.
+  // The slice occupies dst bits [bit_offset, bit_offset + effective_width).
+  // For each dst word, compute which source bits map there.
+  //
+  // This mirrors IntegralExtractSlice but in reverse: instead of assembling
+  // result words from source words, we're writing source bits into dst words.
+
+  size_t first_dst_word = bit_offset / kBitsPerWord;
+  size_t last_dst_word = (bit_offset + effective_width - 1) / kBitsPerWord;
+
+  for (size_t dst_idx = first_dst_word;
+       dst_idx <= last_dst_word && dst_idx < result_words; ++dst_idx) {
+    // Global bit range for this destination word
+    uint32_t word_start_bit = static_cast<uint32_t>(dst_idx * kBitsPerWord);
+    uint32_t word_end_bit = word_start_bit + kBitsPerWord;
+
+    // Intersection with the slice range [bit_offset, bit_offset +
+    // effective_width)
+    uint32_t slice_start = std::max(word_start_bit, bit_offset);
+    uint32_t slice_end = std::min(word_end_bit, bit_offset + effective_width);
+
+    if (slice_start >= slice_end) {
+      continue;  // No intersection
+    }
+
+    uint32_t bits_to_write = slice_end - slice_start;
+    uint32_t dst_bit_pos =
+        slice_start - word_start_bit;  // Position within dst word
+    uint32_t src_bit_pos =
+        slice_start - bit_offset;  // Position within source stream
+
+    // Extract 'bits_to_write' bits from source starting at src_bit_pos
+    size_t src_word_idx = src_bit_pos / kBitsPerWord;
+    size_t src_bit_in_word = src_bit_pos % kBitsPerWord;
+
+    uint64_t src_bits = 0;
+    if (src_word_idx < src_normalized.value.size()) {
+      src_bits = src_normalized.value[src_word_idx] >> src_bit_in_word;
+    }
+    // If shift is non-zero and we need bits from the next source word
+    if (src_bit_in_word != 0 &&
+        src_word_idx + 1 < src_normalized.value.size()) {
+      src_bits |= src_normalized.value[src_word_idx + 1]
+                  << (kBitsPerWord - src_bit_in_word);
+    }
+
+    // Mask to only the bits we want
+    uint64_t value_mask = GetMask(bits_to_write);
+    src_bits &= value_mask;
+
+    // Write to destination at dst_bit_pos
+    uint64_t dst_mask = value_mask << dst_bit_pos;
+    result.value[dst_idx] &= ~dst_mask;
+    result.value[dst_idx] |= src_bits << dst_bit_pos;
+  }
+
+  MaskTopWord(result.value, dst.bit_width);
   return result;
 }
 

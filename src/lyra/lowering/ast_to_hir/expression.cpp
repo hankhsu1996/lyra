@@ -895,12 +895,91 @@ auto LowerExpression(
       const auto& select = expr.as<slang::ast::ElementSelectExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      // Gate: only handle unpacked arrays. Packed bit-select is not supported.
       const slang::ast::Type& value_type =
           select.value().type->getCanonicalType();
+
+      // Check if this is a packed array select
+      if (value_type.isPackedArray()) {
+        // Guard: reject if result type is a multi-dimensional packed array.
+        // We support selecting to get a simple integral (e.g., `bit[7:0]`),
+        // but not another multi-dimensional packed array (e.g.,
+        // `bit[3:0][7:0]`). For 3D+ packed arrays like `bit[1:0][3:0][7:0]`,
+        // selecting gives `bit[3:0][7:0]` which has element type `bit[7:0]`
+        // (also packed).
+        const slang::ast::Type& result_type = expr.type->getCanonicalType();
+        if (result_type.isPackedArray()) {
+          const auto& result_packed =
+              result_type.as<slang::ast::PackedArrayType>();
+          // Check if the element type is also a packed array (3D+ case)
+          if (result_packed.elementType.isPackedArray()) {
+            ctx->sink->Error(
+                span,
+                "multi-dimensional packed element select not yet supported "
+                "(selecting from 3D+ packed array gives a 2D+ packed result)");
+            return hir::kInvalidExpressionId;
+          }
+        }
+
+        hir::ExpressionId base =
+            LowerExpression(select.value(), registrar, ctx);
+        if (!base) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId index =
+            LowerExpression(select.selector(), registrar, ctx);
+        if (!index) {
+          return hir::kInvalidExpressionId;
+        }
+
+        TypeId type = LowerType(*expr.type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        // Bounds/direction are now in the base expression's type (kPackedArray)
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kPackedElementSelect,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::PackedElementSelectExpressionData{
+                        .base = base, .index = index},
+            });
+      }
+
+      // Integral (bit select)
+      if (value_type.isIntegral()) {
+        hir::ExpressionId base =
+            LowerExpression(select.value(), registrar, ctx);
+        if (!base) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId index =
+            LowerExpression(select.selector(), registrar, ctx);
+        if (!index) {
+          return hir::kInvalidExpressionId;
+        }
+
+        TypeId type = LowerType(*expr.type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBitSelect,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::BitSelectExpressionData{.base = base, .index = index},
+            });
+      }
+
+      // Unpacked array case
       if (!value_type.isUnpackedArray()) {
         ctx->ErrorFmt(
-            span, "packed array bit-select not yet supported (type: {})",
+            span, "element select not supported on type: {}",
             value_type.toString());
         return hir::kInvalidExpressionId;
       }
@@ -931,6 +1010,51 @@ auto LowerExpression(
               .data =
                   hir::ElementAccessExpressionData{
                       .base = base, .index = index},
+          });
+    }
+
+    case ExpressionKind::RangeSelect: {
+      const auto& select = expr.as<slang::ast::RangeSelectExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Only support simple constant range select for now
+      if (select.getSelectionKind() != slang::ast::RangeSelectionKind::Simple) {
+        ctx->sink->Error(span, "indexed part-select not yet supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Get constant bounds from slang
+      const auto* left_const = select.left().getConstant();
+      const auto* right_const = select.right().getConstant();
+      if (left_const == nullptr || right_const == nullptr) {
+        ctx->sink->Error(span, "range select bounds must be constant");
+        return hir::kInvalidExpressionId;
+      }
+      auto left = left_const->integer().as<int32_t>();
+      auto right = right_const->integer().as<int32_t>();
+      if (!left || !right) {
+        ctx->sink->Error(span, "range select bounds must fit in int32");
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+      if (!base) {
+        return hir::kInvalidExpressionId;
+      }
+
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kRangeSelect,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::RangeSelectExpressionData{
+                      .base = base, .left = *left, .right = *right},
           });
     }
 

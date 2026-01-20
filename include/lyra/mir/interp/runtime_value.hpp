@@ -51,6 +51,8 @@ struct RuntimeArray {
 
 // Factory functions
 auto MakeIntegral(uint64_t value, uint32_t bit_width) -> RuntimeValue;
+auto MakeIntegralSigned(int64_t value, uint32_t bit_width)
+    -> RuntimeValue;  // Sign-extends for wide values
 auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue;  // All bits unknown (X)
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;

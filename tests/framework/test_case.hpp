@@ -46,9 +46,6 @@ struct TestCase {
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_stdout;
   std::map<std::string, ExpectedOutput> expected_files;
-  bool skip_codegen = false;      // Skip codegen test (e.g., for hierarchy)
-  bool skip_interpreter = false;  // Skip interpreter test
-
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }

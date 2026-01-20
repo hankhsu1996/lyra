@@ -89,14 +89,23 @@ class Interpreter {
   // Resolve Place for reading (returns copy)
   auto ReadPlace(const ProcessState& state, PlaceId place_id) -> RuntimeValue;
 
-  // Resolve Place for writing
+  // Resolve Place for writing (fails if place ends with BitRange)
   auto WritePlace(ProcessState& state, PlaceId place_id) -> RuntimeValue&;
+
+  // Write to a place that ends with BitRange projection (read-modify-write)
+  void WriteBitRange(ProcessState& state, PlaceId place_id, RuntimeValue value);
+
+  // Store a value to a place (dispatches to WritePlace or WriteBitRange)
+  void StoreToPlace(ProcessState& state, PlaceId place_id, RuntimeValue value);
 
   // Execute Assign instruction
   void ExecAssign(ProcessState& state, const Assign& assign);
 
   // Execute Compute instruction
   void ExecCompute(ProcessState& state, const Compute& compute);
+
+  // Execute GuardedAssign instruction
+  void ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded);
 
   // Execute Effect instruction
   void ExecEffect(ProcessState& state, const Effect& effect);

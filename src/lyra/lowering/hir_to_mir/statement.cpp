@@ -66,9 +66,34 @@ void LowerVariableDeclaration(
 
 void LowerAssignment(
     const hir::AssignmentStatementData& data, MirBuilder& builder) {
-  mir::PlaceId target = LowerLvalue(data.target, builder);
+  LvalueResult target = LowerLvalue(data.target, builder);
   mir::Operand value = LowerExpression(data.value, builder);
-  builder.EmitAssign(target, std::move(value));
+
+  if (target.IsAlwaysValid()) {
+    builder.EmitAssign(target.place, std::move(value));
+    return;
+  }
+
+  // Guarded store: only write if validity is true (OOB/X/Z = no-op)
+  Context& ctx = builder.GetContext();
+  mir::Operand cond = target.validity;
+
+  // EmitBranch requires Use operand - materialize constant if needed
+  if (cond.kind == mir::Operand::Kind::kConst) {
+    mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
+    builder.EmitAssign(temp, std::move(cond));
+    cond = mir::Operand::Use(temp);
+  }
+
+  BlockIndex store_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
+  builder.EmitBranch(cond, store_bb, merge_bb);
+
+  builder.SetCurrentBlock(store_bb);
+  builder.EmitAssign(target.place, std::move(value));
+  builder.EmitJump(merge_bb);
+
+  builder.SetCurrentBlock(merge_bb);
 }
 
 void LowerDisplayEffect(
@@ -247,10 +272,8 @@ void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
       // Compare selector with case item (result is 1-bit 4-state, may be X)
       TypeId cmp_type = ctx.GetBitType();
       mir::Rvalue cmp_rvalue{
-          .kind = mir::RvalueKind::kBinary,
-          .op = static_cast<int>(cmp_op),
           .operands = {mir::Operand::Use(sel_place), std::move(val)},
-          .info = {},
+          .info = mir::BinaryRvalueInfo{.op = cmp_op},
       };
       mir::PlaceId cmp_result =
           builder.EmitTemp(cmp_type, std::move(cmp_rvalue));
@@ -450,10 +473,8 @@ void LowerRepeatLoop(
   }
 
   mir::Rvalue cmp_rvalue{
-      .kind = mir::RvalueKind::kBinary,
-      .op = static_cast<int>(cmp_op),
       .operands = {mir::Operand::Use(counter), mir::Operand::Const(zero)},
-      .info = {},
+      .info = mir::BinaryRvalueInfo{.op = cmp_op},
   };
   mir::PlaceId cmp_result = builder.EmitTemp(cond_type, std::move(cmp_rvalue));
   builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, exit_bb);
@@ -471,10 +492,8 @@ void LowerRepeatLoop(
   builder.SetCurrentBlock(step_bb);
   Constant one = MakeIntConstant(1, count_expr.type);
   mir::Rvalue dec_rvalue{
-      .kind = mir::RvalueKind::kBinary,
-      .op = static_cast<int>(mir::BinaryOp::kSubtract),
       .operands = {mir::Operand::Use(counter), mir::Operand::Const(one)},
-      .info = {},
+      .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kSubtract},
   };
   mir::PlaceId new_count =
       builder.EmitTemp(count_expr.type, std::move(dec_rvalue));

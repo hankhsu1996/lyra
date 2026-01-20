@@ -52,22 +52,20 @@ auto EvalStringBinary(
 
 }  // namespace
 
-auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
+auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue {
   // String comparison
   if (IsString(lhs) && IsString(rhs)) {
-    return EvalStringBinary(
-        static_cast<BinaryOp>(op), AsString(lhs), AsString(rhs));
+    return EvalStringBinary(op, AsString(lhs), AsString(rhs));
   }
 
   // Mixed string/non-string - should never happen (Slang type-checks)
   if (IsString(lhs) || IsString(rhs)) {
     throw common::InternalError(
-        "EvalBinary",
-        std::format(
-            "cannot mix string and non-string operands "
-            "(op={}, lhs={}, rhs={})",
-            ToString(static_cast<BinaryOp>(op)), lhs.index(), rhs.index()));
+        "EvalBinary", std::format(
+                          "cannot mix string and non-string operands "
+                          "(op={}, lhs={}, rhs={})",
+                          ToString(op), lhs.index(), rhs.index()));
   }
 
   if (!IsIntegral(lhs) || !IsIntegral(rhs)) {
@@ -81,8 +79,7 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
   // Arithmetic/bitwise ops use max width; shifts use lhs width (per SV rules)
   uint32_t arith_width = std::max(lhs_int.bit_width, rhs_int.bit_width);
 
-  auto bin_op = static_cast<BinaryOp>(op);
-  switch (bin_op) {
+  switch (op) {
     case BinaryOp::kAdd:
       return IntegralAdd(lhs_int, rhs_int, arith_width);
 
@@ -207,10 +204,10 @@ auto EvalBinary(int op, const RuntimeValue& lhs, const RuntimeValue& rhs)
   }
 
   throw common::InternalError(
-      "EvalBinary", std::format("unknown binary operation: {}", op));
+      "EvalBinary", std::format("unknown binary operation: {}", ToString(op)));
 }
 
-auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
+auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalUnary", "unary operation requires integral operand");
@@ -219,8 +216,7 @@ auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
   const auto& op_int = AsIntegral(operand);
   uint32_t width = op_int.bit_width;
 
-  auto unary_op = static_cast<UnaryOp>(op);
-  switch (unary_op) {
+  switch (op) {
     case UnaryOp::kPlus:
       return Clone(operand);
 
@@ -297,44 +293,48 @@ auto EvalUnary(int op, const RuntimeValue& operand) -> RuntimeValue {
       return std::get<RuntimeIntegral>(
           MakeIntegral((count % 2) == 0 ? 1 : 0, 1));
     }
+
+    case UnaryOp::kIsKnown:
+      // Returns 1 if no X/Z bits, 0 otherwise (always 2-state 1-bit result)
+      return MakeIntegral(op_int.IsKnown() ? 1 : 0, 1);
   }
 
   throw common::InternalError(
-      "EvalUnary", std::format("unknown unary operation: {}", op));
+      "EvalUnary", std::format("unknown unary operation: {}", ToString(op)));
 }
 
 auto EvalCast(
     const RuntimeValue& operand, const Type& source_type,
-    const Type& target_type) -> RuntimeValue {
+    const Type& target_type, const TypeArena& arena) -> RuntimeValue {
   // Precondition checks - these should have been validated at lowering time.
   // If they fail here, it indicates a bug in the lowering pipeline.
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalCast", "cast operation requires integral operand");
   }
-  if (source_type.Kind() != TypeKind::kIntegral) {
-    throw common::InternalError("EvalCast", "source type must be integral");
+  // Both kIntegral and kPackedArray are valid for casts (both are packed).
+  if (!IsPacked(source_type)) {
+    throw common::InternalError("EvalCast", "source type must be packed");
   }
-  if (target_type.Kind() != TypeKind::kIntegral) {
-    throw common::InternalError("EvalCast", "target type must be integral");
+  if (!IsPacked(target_type)) {
+    throw common::InternalError("EvalCast", "target type must be packed");
   }
 
   const auto& op_int = AsIntegral(operand);
-  const auto& src_int = source_type.AsIntegral();
-  const auto& target_int = target_type.AsIntegral();
+  bool src_is_signed = IsPackedSigned(source_type, arena);
+  uint32_t target_width = PackedBitWidth(target_type, arena);
 
-  if (src_int.is_four_state) {
+  if (IsPackedFourState(source_type, arena)) {
     throw common::InternalError(
-        "EvalCast",
-        "4-state source types should have been rejected at lowering");
+        "EvalCast", "4-state source should have been rejected at lowering");
   }
   // Note: 4-state target is allowed when source is 2-state (lossless
-  // conversion)
+  // conversion). The result is still 2-state representation.
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how
   // downstream operations interpret the result.
-  return IntegralResize2State(op_int, src_int.is_signed, target_int.bit_width);
+  return IntegralResize2State(op_int, src_is_signed, target_width);
 }
 
 }  // namespace lyra::mir::interp

@@ -24,6 +24,9 @@ enum class UnaryOp {
   kReductionNor,
   kReductionXor,
   kReductionXnor,
+
+  // Value predicates
+  kIsKnown,  // Returns 1 if no X/Z bits, 0 otherwise (always 2-state 1-bit)
 };
 
 enum class BinaryOp {
@@ -112,6 +115,8 @@ inline auto ToString(UnaryOp op) -> const char* {
       return "^";
     case UnaryOp::kReductionXnor:
       return "~^";
+    case UnaryOp::kIsKnown:
+      return "$isknown";
   }
   return "?";
 }

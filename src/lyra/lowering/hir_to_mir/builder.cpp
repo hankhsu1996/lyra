@@ -80,6 +80,74 @@ auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   return temp;
 }
 
+auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
+    -> mir::PlaceId {
+  mir::PlaceId temp = ctx_->AllocTemp(type);
+  EmitAssign(temp, source);
+  return temp;
+}
+
+auto MirBuilder::EmitUnary(
+    mir::UnaryOp op, mir::Operand operand, TypeId result_type) -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(operand)},
+      .info = mir::UnaryRvalueInfo{.op = op},
+  };
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
+auto MirBuilder::EmitBinary(
+    mir::BinaryOp op, mir::Operand lhs, mir::Operand rhs, TypeId result_type)
+    -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(lhs), std::move(rhs)},
+      .info = mir::BinaryRvalueInfo{.op = op},
+  };
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
+auto MirBuilder::EmitIndexValidity(
+    mir::Operand index, int64_t lower, int64_t upper, bool check_known)
+    -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(index)},
+      .info =
+          mir::IndexValidityRvalueInfo{
+              .lower_bound = lower,
+              .upper_bound = upper,
+              .check_known = check_known},
+  };
+  return mir::Operand::Use(EmitTemp(ctx_->GetBitType(), std::move(rvalue)));
+}
+
+auto MirBuilder::EmitGuardedUse(
+    mir::Operand validity, mir::PlaceId place, TypeId result_type)
+    -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(validity)},
+      .info =
+          mir::GuardedUseRvalueInfo{.place = place, .result_type = result_type},
+  };
+  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+}
+
+void MirBuilder::EmitGuardedAssign(
+    mir::PlaceId target, mir::Operand source, mir::Operand validity) {
+  if (finished_) {
+    throw common::InternalError(
+        "MirBuilder", "EmitGuardedAssign called after Finish()");
+  }
+  if (current_block_ == kInvalidBlockIndex) {
+    throw common::InternalError(
+        "MirBuilder", "EmitGuardedAssign: no current block");
+  }
+  blocks_[current_block_.value].instructions.emplace_back(
+      mir::GuardedAssign{
+          .target = target,
+          .source = std::move(source),
+          .validity = std::move(validity)});
+}
+
 void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
   if (finished_) {
     throw common::InternalError(

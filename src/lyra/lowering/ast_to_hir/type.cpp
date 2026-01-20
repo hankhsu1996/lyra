@@ -21,6 +21,19 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     return ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
   }
 
+  // Check isPackedArray BEFORE isIntegral - packed arrays are integral in slang
+  // but we want them as a distinct type kind with their own range/direction.
+  if (type.isPackedArray()) {
+    const auto& packed = type.as<slang::ast::PackedArrayType>();
+    TypeId element = LowerType(packed.elementType, source, ctx);
+    return ctx->type_arena->Intern(
+        TypeKind::kPackedArray,
+        PackedArrayInfo{
+            .element_type = element,
+            .range = ConstantRange{
+                .left = packed.range.left, .right = packed.range.right}});
+  }
+
   if (type.isIntegral()) {
     return ctx->type_arena->Intern(
         TypeKind::kIntegral, IntegralInfo{
@@ -80,7 +93,7 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
         UnpackedArrayInfo{
             .element_type = element,
             .range = ConstantRange{
-                .lower = array.range.lower(), .upper = array.range.upper()}});
+                .left = array.range.left, .right = array.range.right}});
   }
 
   if (type.isUnpackedStruct()) {

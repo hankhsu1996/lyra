@@ -130,6 +130,26 @@ auto MakeIntegral(uint64_t val, uint32_t bit_width) -> RuntimeValue {
   return result;
 }
 
+auto MakeIntegralSigned(int64_t val, uint32_t bit_width) -> RuntimeValue {
+  size_t num_words = WordsNeeded(bit_width);
+  RuntimeIntegral result;
+  result.bit_width = bit_width;
+  result.x_mask.resize(num_words, 0);
+  result.z_mask.resize(num_words, 0);
+
+  // Sign-extend: if negative and bit_width > 64, fill high words with 1s
+  if (val < 0 && num_words > 1) {
+    result.value.resize(num_words, ~uint64_t{0});  // All 1s for sign extension
+  } else {
+    result.value.resize(num_words, 0);
+  }
+  if (!result.value.empty()) {
+    result.value[0] = static_cast<uint64_t>(val);
+    MaskTopWord(result.value, bit_width);
+  }
+  return result;
+}
+
 auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue {
   size_t num_words = WordsNeeded(bit_width);
   RuntimeIntegral result;
