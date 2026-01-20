@@ -467,8 +467,7 @@ void LowerRepeatLoop(
   // Choose signed or unsigned comparison based on count expression type
   const Type& count_type = (*ctx.type_arena)[count_expr.type];
   mir::BinaryOp cmp_op = mir::BinaryOp::kGreaterThan;
-  if (count_type.Kind() == TypeKind::kIntegral &&
-      count_type.AsIntegral().is_signed) {
+  if (IsPacked(count_type) && IsPackedSigned(count_type, *ctx.type_arena)) {
     cmp_op = mir::BinaryOp::kGreaterThanSigned;
   }
 

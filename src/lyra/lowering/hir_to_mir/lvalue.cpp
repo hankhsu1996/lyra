@@ -65,9 +65,6 @@ auto ComposeValidity(
 // Check if index type is 4-state (has X/Z bits).
 auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
   const Type& type = types[index_type];
-  if (type.Kind() == TypeKind::kIntegral) {
-    return type.AsIntegral().is_four_state;
-  }
   if (IsPacked(type)) {
     return IsPackedFourState(type, types);
   }
