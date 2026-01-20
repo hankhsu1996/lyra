@@ -75,9 +75,14 @@ class MirBuilder {
 
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
+  void EmitQualifiedDispatch(
+      mir::DispatchQualifier qualifier,
+      mir::DispatchStatementKind statement_kind,
+      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<BlockIndex>& targets, bool has_else);
   void EmitReturn();
   void EmitRepeat();
-  void EmitTerminate(std::optional<mir::TerminationInfo> info = std::nullopt);
+  void EmitTerminate(std::optional<mir::Finish> info = std::nullopt);
 
   // Materialize all blocks. Returns blocks in the same order as they were
   // created. BasicBlockId targets in terminators are local indices.

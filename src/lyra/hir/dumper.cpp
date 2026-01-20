@@ -188,6 +188,19 @@ void Dumper::Dump(StatementId id) {
 
     case StatementKind::kConditional: {
       const auto& data = std::get<ConditionalStatementData>(stmt.data);
+      switch (data.check) {
+        case UniquePriorityCheck::kNone:
+          break;
+        case UniquePriorityCheck::kUnique:
+          *out_ << "unique ";
+          break;
+        case UniquePriorityCheck::kUnique0:
+          *out_ << "unique0 ";
+          break;
+        case UniquePriorityCheck::kPriority:
+          *out_ << "priority ";
+          break;
+      }
       *out_ << "if (";
       Dump(data.condition);
       *out_ << ") ";
@@ -202,6 +215,19 @@ void Dumper::Dump(StatementId id) {
 
     case StatementKind::kCase: {
       const auto& data = std::get<CaseStatementData>(stmt.data);
+      switch (data.check) {
+        case UniquePriorityCheck::kNone:
+          break;
+        case UniquePriorityCheck::kUnique:
+          *out_ << "unique ";
+          break;
+        case UniquePriorityCheck::kUnique0:
+          *out_ << "unique0 ";
+          break;
+        case UniquePriorityCheck::kPriority:
+          *out_ << "priority ";
+          break;
+      }
       *out_ << "case (";
       Dump(data.selector);
       *out_ << ") {\n";

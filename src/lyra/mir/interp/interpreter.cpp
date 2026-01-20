@@ -1389,133 +1389,177 @@ void Interpreter::ExecInstruction(
 
 auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
     -> std::optional<BasicBlockId> {
-  switch (term.kind) {
-    case Terminator::Kind::kJump:
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminator", "jump terminator has no target");
-      }
-      return term.targets[0];
+  return std::visit(
+      Overloaded{
+          [](const Jump& t) -> std::optional<BasicBlockId> { return t.target; },
 
-    case Terminator::Kind::kBranch: {
-      if (term.targets.size() != 2) {
-        throw common::InternalError(
-            "ExecTerminator", "branch terminator requires 2 targets");
-      }
-      // Get the condition from the place indicated by condition_operand
-      PlaceId cond_place{static_cast<uint32_t>(term.condition_operand)};
-      auto cond = ReadPlace(state, cond_place);
-      if (!IsIntegral(cond)) {
-        throw common::InternalError(
-            "ExecTerminator", "branch condition must be integral");
-      }
-      const auto& cond_int = AsIntegral(cond);
-      if (!cond_int.IsKnown()) {
-        // Runtime error: program has X/Z in control flow
-        throw std::runtime_error("branch condition is X/Z");
-      }
-      // targets[0] = true branch, targets[1] = false branch
-      return cond_int.IsZero() ? term.targets[1] : term.targets[0];
-    }
-
-    case Terminator::Kind::kSwitch: {
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminator", "switch terminator has no targets");
-      }
-      PlaceId selector_place{static_cast<uint32_t>(term.condition_operand)};
-      auto selector = ReadPlace(state, selector_place);
-      if (!IsIntegral(selector)) {
-        throw common::InternalError(
-            "ExecTerminator", "switch selector must be integral");
-      }
-      const auto& sel_int = AsIntegral(selector);
-      if (!sel_int.IsKnown()) {
-        // Default to last target (default case)
-        return term.targets.back();
-      }
-      uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
-      if (val >= term.targets.size() - 1) {
-        // Out of range, use default
-        return term.targets.back();
-      }
-      return term.targets[static_cast<size_t>(val)];
-    }
-
-    case Terminator::Kind::kFinish: {
-      if (term.termination_info) {
-        const auto& info = *term.termination_info;
-
-        // Get output stream (default to cout if not set)
-        std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-
-        // For $fatal, print severity message (no time line - already has
-        // prefix)
-        if (info.kind == TerminationKind::kFatal) {
-          if (info.level >= 1) {
-            out << "fatal: ";
-
-            // Evaluate and format message arguments
-            if (!info.message_args.empty()) {
-              std::vector<TypedValue> typed_args;
-              typed_args.reserve(info.message_args.size());
-              for (const auto& arg : info.message_args) {
-                TypeId type = TypeOfOperand(arg, *arena_, *types_);
-                RuntimeValue value = EvalOperand(state, arg);
-                typed_args.push_back(
-                    TypedValue{.value = std::move(value), .type = type});
-              }
-
-              FormatContext ctx{};
-              std::string message =
-                  FormatMessage(typed_args, 'd', *types_, ctx);
-              out << message;
+          [&](const Branch& t) -> std::optional<BasicBlockId> {
+            auto cond = ReadPlace(state, t.condition);
+            if (!IsIntegral(cond)) {
+              throw common::InternalError(
+                  "ExecTerminator", "branch condition must be integral");
             }
-            out << "\n";
-          }
-        } else if (info.level >= 1) {
-          // Print time message for non-fatal terminations
-          const char* name = nullptr;
-          switch (info.kind) {
-            case TerminationKind::kFinish:
-              name = "$finish";
-              break;
-            case TerminationKind::kStop:
-              name = "$stop";
-              break;
-            case TerminationKind::kFatal:
-              name = "$fatal";  // Won't reach here
-              break;
-            case TerminationKind::kExit:
-              name = "$exit";
-              break;
-          }
+            const auto& cond_int = AsIntegral(cond);
+            if (!cond_int.IsKnown()) {
+              throw std::runtime_error("branch condition is X/Z");
+            }
+            return cond_int.IsZero() ? t.else_target : t.then_target;
+          },
 
-          // Print time message (time is always 0 for now, until scheduler)
-          out << name << " called at time 0\n";
-        }
-        // Level 2 would print statistics, but we don't track those yet
-      }
-      return std::nullopt;
-    }
+          [&](const Switch& t) -> std::optional<BasicBlockId> {
+            if (t.targets.empty()) {
+              throw common::InternalError(
+                  "ExecTerminator", "switch terminator has no targets");
+            }
+            auto selector = ReadPlace(state, t.selector);
+            if (!IsIntegral(selector)) {
+              throw common::InternalError(
+                  "ExecTerminator", "switch selector must be integral");
+            }
+            const auto& sel_int = AsIntegral(selector);
+            if (!sel_int.IsKnown()) {
+              return t.targets.back();
+            }
+            uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
+            if (val >= t.targets.size() - 1) {
+              return t.targets.back();
+            }
+            return t.targets[static_cast<size_t>(val)];
+          },
 
-    case Terminator::Kind::kReturn:
-      return std::nullopt;
+          [&](const QualifiedDispatch& t) -> std::optional<BasicBlockId> {
+            // Validate invariant: targets = one per condition + else
+            if (t.targets.size() != t.conditions.size() + 1) {
+              throw common::InternalError(
+                  "ExecTerminator",
+                  "QualifiedDispatch: targets.size() != conditions.size() + 1");
+            }
 
-    case Terminator::Kind::kDelay:
-      throw common::InternalError(
-          "ExecTerminator", "delay terminator requires runtime/scheduler");
+            std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-    case Terminator::Kind::kWait:
-      throw common::InternalError(
-          "ExecTerminator", "wait terminator requires runtime/scheduler");
+            // Read all condition values and count how many are true
+            size_t first_true_index = t.conditions.size();  // sentinel
+            size_t true_count = 0;
+            for (size_t i = 0; i < t.conditions.size(); ++i) {
+              auto cond = ReadPlace(state, t.conditions[i]);
+              if (!IsIntegral(cond)) {
+                throw common::InternalError(
+                    "ExecTerminator",
+                    "QualifiedDispatch condition must be integral");
+              }
+              const auto& cond_int = AsIntegral(cond);
+              // Throw on X/Z conditions (same as Branch)
+              if (!cond_int.IsKnown()) {
+                throw std::runtime_error("QualifiedDispatch condition is X/Z");
+              }
+              if (!cond_int.IsZero()) {
+                ++true_count;
+                if (first_true_index == t.conditions.size()) {
+                  first_true_index = i;
+                }
+              }
+            }
 
-    case Terminator::Kind::kRepeat:
-      throw common::InternalError(
-          "ExecTerminator", "repeat terminator requires runtime/scheduler");
-  }
+            const char* qualifier_name =
+                (t.qualifier == DispatchQualifier::kUnique) ? "unique"
+                                                            : "unique0";
+            const char* stmt_name =
+                (t.statement_kind == DispatchStatementKind::kIf) ? "if"
+                                                                 : "case";
 
-  throw common::InternalError("ExecTerminator", "unknown terminator kind");
+            // Check for overlap (multiple conditions true)
+            if (true_count > 1) {
+              const char* what =
+                  (t.statement_kind == DispatchStatementKind::kIf)
+                      ? "multiple conditions true"
+                      : "multiple case items match";
+              out << "warning: " << what << " in " << qualifier_name << " "
+                  << stmt_name << "\n";
+            }
+
+            // Check for no-match (only for kUnique, and only if no else)
+            if (true_count == 0 && !t.has_else &&
+                t.qualifier == DispatchQualifier::kUnique) {
+              const char* what =
+                  (t.statement_kind == DispatchStatementKind::kIf)
+                      ? "no condition matched"
+                      : "no matching case item";
+              out << "warning: " << what << " in " << qualifier_name << " "
+                  << stmt_name << "\n";
+            }
+
+            // Dispatch to first true target or else target (last one)
+            if (first_true_index < t.conditions.size()) {
+              return t.targets[first_true_index];
+            }
+            return t.targets.back();
+          },
+
+          [](const Delay& /*t*/) -> std::optional<BasicBlockId> {
+            throw common::InternalError(
+                "ExecTerminator",
+                "delay terminator requires runtime/scheduler");
+          },
+
+          [](const Wait& /*t*/) -> std::optional<BasicBlockId> {
+            throw common::InternalError(
+                "ExecTerminator", "wait terminator requires runtime/scheduler");
+          },
+
+          [](const Return& /*t*/) -> std::optional<BasicBlockId> {
+            return std::nullopt;
+          },
+
+          [&](const Finish& t) -> std::optional<BasicBlockId> {
+            std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+            if (t.kind == TerminationKind::kFatal) {
+              if (t.level >= 1) {
+                out << "fatal: ";
+                if (!t.message_args.empty()) {
+                  std::vector<TypedValue> typed_args;
+                  typed_args.reserve(t.message_args.size());
+                  for (const auto& arg : t.message_args) {
+                    TypeId type = TypeOfOperand(arg, *arena_, *types_);
+                    RuntimeValue value = EvalOperand(state, arg);
+                    typed_args.push_back(
+                        TypedValue{.value = std::move(value), .type = type});
+                  }
+                  FormatContext ctx{};
+                  std::string message =
+                      FormatMessage(typed_args, 'd', *types_, ctx);
+                  out << message;
+                }
+                out << "\n";
+              }
+            } else if (t.level >= 1) {
+              const char* name = nullptr;
+              switch (t.kind) {
+                case TerminationKind::kFinish:
+                  name = "$finish";
+                  break;
+                case TerminationKind::kStop:
+                  name = "$stop";
+                  break;
+                case TerminationKind::kFatal:
+                  name = "$fatal";
+                  break;
+                case TerminationKind::kExit:
+                  name = "$exit";
+                  break;
+              }
+              out << name << " called at time 0\n";
+            }
+            return std::nullopt;
+          },
+
+          [](const Repeat& /*t*/) -> std::optional<BasicBlockId> {
+            throw common::InternalError(
+                "ExecTerminator",
+                "repeat terminator requires runtime/scheduler");
+          },
+      },
+      term);
 }
 
 auto CreateDesignState(

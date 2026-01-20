@@ -22,7 +22,7 @@ cases:
         result: 100
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "no condition matched"
 
   - name: priority_else_suppresses_warning
@@ -46,7 +46,7 @@ cases:
         result: 99
       stdout:
         not_contains:
-          - "WARNING"
+          - "warning"
 
   - name: unique_overlap_warning
     description: unique if warns when multiple conditions are true
@@ -68,7 +68,7 @@ cases:
         result: 10
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "multiple conditions"
 
   - name: unique_no_match_warning
@@ -91,7 +91,7 @@ cases:
         result: 100
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "no condition matched"
 
   - name: unique0_no_match_no_warning
@@ -113,4 +113,34 @@ cases:
         result: 100
       stdout:
         not_contains:
-          - "WARNING"
+          - "warning"
+
+  # Note: SystemVerilog doesn't allow "else unique if" or "else priority if" -
+  # qualifiers can only appear at the start of the if statement. Mixed qualifiers
+  # require nested blocks: unique if (...) ... else begin priority if (...) end
+  # The FlattenIfElseChain logic handles this defensively but can't be tested
+  # directly since slang rejects the invalid syntax.
+
+  - name: unique0_overlap_warning
+    description: unique0 if warns on overlap (same as unique)
+    sv: |
+      module Test;
+        int a, b, result;
+        initial begin
+          a = 1; b = 1;
+          result = 0;
+          unique0 if (a)
+            result = 10;
+          else if (b)
+            result = 20;
+          $display("done");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+      stdout:
+        contains:
+          - "warning"
+          - "multiple conditions"
+          - "unique0"

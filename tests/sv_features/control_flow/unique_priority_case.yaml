@@ -22,7 +22,7 @@ cases:
         result: 100
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "no matching case item"
 
   - name: priority_default_suppresses_warning
@@ -45,7 +45,7 @@ cases:
         result: 99
       stdout:
         not_contains:
-          - "WARNING"
+          - "warning"
 
   - name: unique_overlap_warning
     description: unique case warns when multiple items match
@@ -67,7 +67,7 @@ cases:
         result: 10
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "multiple case items match"
 
   - name: unique_no_match_warning
@@ -90,7 +90,7 @@ cases:
         result: 100
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "no matching case item"
 
   - name: unique0_no_match_no_warning
@@ -112,7 +112,7 @@ cases:
         result: 100
       stdout:
         not_contains:
-          - "WARNING"
+          - "warning"
 
   - name: priority_casez_wildcard
     description: priority casez with wildcard pattern matching

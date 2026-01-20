@@ -301,14 +301,17 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   TypeId offset_type = hir_result.type_arena->Intern(
       TypeKind::kIntegral,
       IntegralInfo{.bit_width = 32, .is_signed = false, .is_four_state = false});
+  TypeId string_type =
+      hir_result.type_arena->Intern(TypeKind::kString, std::monostate{});
   lowering::hir_to_mir::LoweringInput mir_input{
-      .design = hir_result.design,
-      .hir_arena = *hir_result.hir_arena,
-      .type_arena = *hir_result.type_arena,
-      .constant_arena = *hir_result.constant_arena,
-      .symbol_table = *hir_result.symbol_table,
+      .design = &hir_result.design,
+      .hir_arena = hir_result.hir_arena.get(),
+      .type_arena = hir_result.type_arena.get(),
+      .constant_arena = hir_result.constant_arena.get(),
+      .symbol_table = hir_result.symbol_table.get(),
       .bit_type = bit_type,
       .offset_type = offset_type,
+      .string_type = string_type,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
@@ -318,7 +321,7 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     // Find the module in design elements
     const hir::Module* hir_module = nullptr;
     size_t module_count = 0;
-    for (const auto& element : mir_input.design.elements) {
+    for (const auto& element : mir_input.design->elements) {
       if (const auto* mod = std::get_if<hir::Module>(&element)) {
         hir_module = mod;
         ++module_count;
@@ -330,7 +333,7 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
       return result;
     }
     for (size_t i = 0; i < hir_module->variables.size(); ++i) {
-      const auto& sym = mir_input.symbol_table[hir_module->variables[i]];
+      const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
       if (var_slots.contains(sym.name)) {
         result.error_message =
             std::format("Duplicate variable name '{}' in module", sym.name);

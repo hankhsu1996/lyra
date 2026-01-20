@@ -32,16 +32,17 @@ auto LowerProcess(
     const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
-      .hir_arena = &input.hir_arena,
-      .type_arena = &input.type_arena,
-      .constant_arena = &input.constant_arena,
-      .symbol_table = &input.symbol_table,
+      .hir_arena = input.hir_arena,
+      .type_arena = input.type_arena,
+      .constant_arena = input.constant_arena,
+      .symbol_table = input.symbol_table,
       .module_places = &module_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .bit_type = input.bit_type,
       .offset_type = input.offset_type,
+      .string_type = input.string_type,
       .symbol_to_mir_function = &symbol_to_mir_function,
       .return_place = mir::kInvalidPlaceId,
   };

@@ -7,7 +7,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerHirToMir(const LoweringInput& input) -> LoweringResult {
   auto mir_arena = std::make_unique<mir::Arena>();
 
-  mir::Design design = LowerDesign(input.design, input, *mir_arena);
+  mir::Design design = LowerDesign(*input.design, input, *mir_arena);
 
   return LoweringResult{
       .design = std::move(design),
