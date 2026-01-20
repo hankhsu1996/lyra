@@ -69,7 +69,7 @@ void LowerAssignment(
   LvalueResult target = LowerLvalue(data.target, builder);
   mir::Operand value = LowerExpression(data.value, builder);
 
-  if (IsAlwaysValid(target.validity)) {
+  if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, std::move(value));
     return;
   }

@@ -327,8 +327,7 @@ auto EvalCast(
   if (IsPackedFourState(source_type, arena) ||
       IsPackedFourState(target_type, arena)) {
     throw common::InternalError(
-        "EvalCast",
-        "4-state types should have been rejected at lowering");
+        "EvalCast", "4-state types should have been rejected at lowering");
   }
 
   // Cast = resize bits using source signedness and target width.

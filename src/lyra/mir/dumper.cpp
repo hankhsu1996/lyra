@@ -393,9 +393,6 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::format("builtin({})", method_name);
           },
-          [](const SelectRvalueInfo& /*info*/) {
-            return std::string("select");
-          },
           [](const IndexValidityRvalueInfo& info) {
             return std::format(
                 "index_validity(bounds=[{}, {}], check_known={})",

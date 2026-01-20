@@ -386,7 +386,10 @@ auto ApplySingleProjection(
             }
 
             if (offset < 0 || offset >= size) {
-              throw std::runtime_error(
+              // OOB should never reach here - lowering should emit GuardedUse/
+              // GuardedAssign for OOB-safe access per IEEE 1800-2023.
+              throw common::InternalError(
+                  "ApplyProjection",
                   std::format("array index {} out of bounds", index));
             }
             return &a.elements[static_cast<size_t>(offset)];
@@ -456,7 +459,6 @@ auto RadixToFormatChar(PrintRadix radix) -> char {
   }
   return 'd';
 }
-
 
 // Helper: safely extract index from operand, return nullopt if X/Z
 // Per IEEE 1800-2023, invalid index means no-op (not an error)
@@ -941,8 +943,7 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
                   return std::monostate{};  // Invalid index -> no-op
                 }
                 elements.insert(
-                    elements.begin() + idx,
-                    EvalOperand(state, rv.operands[1]));
+                    elements.begin() + idx, EvalOperand(state, rv.operands[1]));
                 TypeId receiver_type =
                     TypeOfPlace(*types_, (*arena_)[*info.receiver]);
                 const auto& type = (*types_)[receiver_type];
@@ -984,25 +985,6 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
               }
             }
             throw common::InternalError("EvalRvalue", "unknown builtin method");
-          },
-          [&](const SelectRvalueInfo& /*info*/) -> RuntimeValue {
-            if (rv.operands.size() != 3) {
-              throw common::InternalError(
-                  "EvalRvalue", "select requires exactly 3 operands");
-            }
-            auto cond = EvalOperand(state, rv.operands[0]);
-            if (!IsIntegral(cond)) {
-              throw common::InternalError(
-                  "EvalRvalue", "select condition must be integral");
-            }
-            const auto& cond_int = AsIntegral(cond);
-            // Condition is 2-state 1-bit bool from lowering
-            // Short-circuit: only evaluate the selected branch to avoid
-            // reading potentially invalid places (OOB bit extractions)
-            if (!cond_int.IsZero()) {
-              return Clone(EvalOperand(state, rv.operands[1]));
-            }
-            return Clone(EvalOperand(state, rv.operands[2]));
           },
           [&](const IndexValidityRvalueInfo& info) -> RuntimeValue {
             if (rv.operands.size() != 1) {

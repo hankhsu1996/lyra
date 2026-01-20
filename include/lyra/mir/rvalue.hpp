@@ -42,19 +42,14 @@ struct AggregateRvalueInfo {
   TypeId result_type;  // The aggregate type being constructed (struct or array)
 };
 
-// BuiltinCallRvalueInfo for builtin method calls (e.g., arr.size(), q.pop_back()).
+// BuiltinCallRvalueInfo for builtin method calls (e.g., arr.size(),
+// q.pop_back()).
 // - result_type: Required for kNewArray (element type can't be inferred)
 // - receiver: For pop methods that both return a value and mutate the queue
 struct BuiltinCallRvalueInfo {
   BuiltinMethod method;
   TypeId result_type;
   std::optional<PlaceId> receiver;
-};
-
-struct SelectRvalueInfo {
-  // operands[0] = condition (1-bit 2-state bool)
-  // operands[1] = true_value
-  // operands[2] = false_value
 };
 
 // IndexValidity: computes "this index is a valid access" predicate.
@@ -83,7 +78,7 @@ struct GuardedUseRvalueInfo {
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, SystemCallRvalueInfo,
     UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
-    SelectRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo>;
+    IndexValidityRvalueInfo, GuardedUseRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -109,8 +104,6 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "aggregate";
         } else if constexpr (std::is_same_v<T, BuiltinCallRvalueInfo>) {
           return "builtin";
-        } else if constexpr (std::is_same_v<T, SelectRvalueInfo>) {
-          return "select";
         } else if constexpr (std::is_same_v<T, IndexValidityRvalueInfo>) {
           return "index_validity";
         } else if constexpr (std::is_same_v<T, GuardedUseRvalueInfo>) {

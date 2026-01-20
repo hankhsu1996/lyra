@@ -11,18 +11,7 @@ namespace lyra::lowering::hir_to_mir {
 
 class MirBuilder;
 
-// Result of lvalue lowering: place to write and validity predicate.
-// For packed element select with dynamic index, validity may be false if:
-// - Index is out of bounds
-// - Index contains X/Z bits
-// For simple lvalues (name refs, constant indices), validity is always true.
-struct LvalueResult {
-  mir::PlaceId place;
-  mir::Operand validity;  // 1-bit 2-state bool, or constant 1 if always valid
-};
-
-// Check if validity is constant 1 (always valid).
-// Used by assignment lowering to skip guarded store when unnecessary.
+// Check if validity operand is constant 1 (always valid).
 inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
   if (validity.kind != mir::Operand::Kind::kConst) {
     return false;
@@ -34,6 +23,30 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
   }
   return ic->value[0] == 1;
 }
+
+// Result of lvalue lowering: place to write and validity predicate.
+//
+// Per IEEE 1800-2023, OOB array access semantics:
+// - OOB read → returns unknown value (X for 4-state, 0 for 2-state)
+// - OOB write → no-op
+//
+// For packed element select with dynamic index, validity may be false if:
+// - Index is out of bounds
+// - Index contains X/Z bits
+// Callers use GuardedUse/GuardedAssign to implement OOB-safe operations.
+//
+// TODO(hankhsu): Extend validity tracking to unpacked/dynamic arrays and
+// queues. Currently only packed arrays track validity; other array types need
+// OOB handling added in lowering (emit GuardedUse/GuardedAssign).
+struct LvalueResult {
+  mir::PlaceId place;
+  mir::Operand validity;  // 1-bit 2-state bool, or constant 1 if always valid
+
+  // Check if this lvalue is always valid (no runtime guarding needed).
+  [[nodiscard]] auto IsAlwaysValid() const -> bool {
+    return hir_to_mir::IsAlwaysValid(validity);
+  }
+};
 
 // Lower an HIR expression as an lvalue, returning the writable place and
 // validity predicate. This is the single source of truth for lvalue lowering -

@@ -233,11 +233,10 @@ auto IsIncrementOrDecrement(hir::UnaryOp op) -> bool {
          op == UO::kPredecrement || op == UO::kPostdecrement;
 }
 
-// Creates typed constant 1 for increment/decrement desugaring.
-// The constant carries the type so the interpreter can determine bit width.
-auto MakeOne(TypeId type) -> Constant {
+// Make an integral constant with specified value and type.
+auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
   IntegralConstant ic;
-  ic.value.push_back(1);
+  ic.value.push_back(static_cast<uint64_t>(value));
   return Constant{.type = type, .value = std::move(ic)};
 }
 
@@ -262,7 +261,7 @@ auto LowerIncrementDecrement(
 
   // 3. Read old value with OOB handling using GuardedUse
   mir::Operand read_val;
-  if (IsAlwaysValid(target.validity)) {
+  if (target.IsAlwaysValid()) {
     read_val = mir::Operand::Use(target.place);
   } else {
     // OOB/X/Z index: GuardedUse returns X (4-state) or 0 (2-state)
@@ -279,7 +278,7 @@ auto LowerIncrementDecrement(
       is_increment ? mir::BinaryOp::kAdd : mir::BinaryOp::kSubtract;
 
   // Create typed constant 1 - type is needed for interpreter to determine width
-  Constant one = MakeOne(expr.type);
+  Constant one = MakeIntegralConst(1, expr.type);
 
   mir::Rvalue compute_rvalue{
       .operands = {mir::Operand::Use(old_value), mir::Operand::Const(one)},
@@ -289,7 +288,7 @@ auto LowerIncrementDecrement(
       builder.EmitTemp(expr.type, std::move(compute_rvalue));
 
   // 5. Write back to target with guarded store for OOB safety
-  if (IsAlwaysValid(target.validity)) {
+  if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
     builder.EmitGuardedAssign(
@@ -421,7 +420,7 @@ auto LowerAssignment(
   // Lower value as rvalue
   mir::Operand value = LowerExpression(data.value, builder);
 
-  if (IsAlwaysValid(target.validity)) {
+  if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, value);
   } else {
     // Guarded store: only write if validity is true (OOB/X/Z = no-op)
@@ -433,15 +432,16 @@ auto LowerAssignment(
 }
 
 // Lower ternary operator (a ? b : c) to control flow.
-// MIR has no "select" instruction, so we lower to branches:
+// We use branches instead of a select instruction to ensure short-circuit
+// evaluation - only the taken arm is evaluated. This matters when arms have
+// side effects or access potentially invalid places.
+//
+// Lowering:
 //   result = _
 //   branch cond -> then_bb, else_bb
 //   then_bb: result = then_val; jump merge_bb
 //   else_bb: result = else_val; jump merge_bb
 //   merge_bb: (continue here)
-//
-// Short-circuit: arms are lowered INSIDE their branch blocks, ensuring
-// only the taken arm is evaluated.
 auto LowerConditional(
     const hir::ConditionalExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> mir::Operand {
@@ -708,13 +708,6 @@ auto GetOrMaterializePlace(
       "GetOrMaterializePlace", "unexpected operand kind");
 }
 
-// Make an integral constant with specified value and type.
-auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
-  IntegralConstant ic;
-  ic.value.push_back(static_cast<uint64_t>(value));
-  return Constant{.type = type, .value = std::move(ic)};
-}
-
 // Check if index type is 4-state (has X/Z bits).
 auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
   const Type& type = types[index_type];
@@ -948,10 +941,12 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerAssignment(data, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
+          // TODO(hankhsu): Use GuardedUse for OOB-safe reads
           LvalueResult lv = LowerLvalue(expr_id, builder);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
+          // Struct member access - always valid (field index is compile-time)
           LvalueResult lv = LowerLvalue(expr_id, builder);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<

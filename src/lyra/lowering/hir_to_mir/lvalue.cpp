@@ -160,8 +160,9 @@ auto LowerElementAccessLvalue(
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
 
-  // Unpacked array access - validity inherited from base
-  // (unpacked array bounds are checked at runtime separately)
+  // Unpacked/dynamic array and queue access - validity inherited from base.
+  // TODO(hankhsu): Add OOB validity tracking for these array types.
+  // Per IEEE 1800-2023, OOB read → X/0, OOB write → no-op (same as packed).
   return LvalueResult{
       .place = result_place,
       .validity = base.validity,
