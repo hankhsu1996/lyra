@@ -1562,6 +1562,34 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
       term);
 }
 
+auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
+  while (state.status == ProcessStatus::kRunning) {
+    const auto& process = (*arena_)[state.process];
+    const auto& block = process.blocks[state.current_block.value];
+
+    // Execute all instructions in block
+    while (state.instruction_index < block.instructions.size()) {
+      ExecInstruction(state, block.instructions[state.instruction_index]);
+      state.instruction_index++;
+    }
+
+    // Execute terminator
+    auto next_block = ExecTerminator(state, block.terminator);
+
+    if (next_block) {
+      // Continue to next block
+      state.current_block = *next_block;
+      state.instruction_index = 0;
+    } else {
+      // Process finished (Return or Finish terminator)
+      state.status = ProcessStatus::kFinished;
+      return SuspendFinished{};
+    }
+  }
+
+  return SuspendFinished{};
+}
+
 auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Module& module)
     -> DesignState {

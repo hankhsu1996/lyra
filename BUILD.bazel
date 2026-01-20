@@ -50,6 +50,14 @@ cc_library(
 )
 
 cc_library(
+    name = "runtime",
+    srcs = glob(["src/lyra/runtime/*.cpp"]),
+    hdrs = glob(["include/lyra/runtime/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "interp",
     srcs = glob(["src/lyra/mir/interp/*.cpp"]),
     hdrs = glob(["include/lyra/mir/interp/*.hpp"]),
@@ -86,7 +94,9 @@ cc_binary(
         ":interp",
         ":lowering",
         ":mir",
+        ":runtime",
         "@fmt",
         "@slang",
+        "@tomlplusplus",
     ],
 )

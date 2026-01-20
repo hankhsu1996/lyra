@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <ostream>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/type_arena.hpp"
@@ -20,6 +22,34 @@ enum class ProcessStatus {
   kRunning,
   kFinished,
 };
+
+// Suspension reasons returned by interpreter when process cannot continue.
+// These are used by the simulation engine to reschedule the process.
+
+// Process completed normally (reached kFinish or kReturn terminator).
+struct SuspendFinished {};
+
+// Process suspended on delay (#N or @(posedge clk) with implicit delay).
+struct SuspendDelay {
+  uint64_t ticks = 0;         // Number of simulation ticks to wait
+  BasicBlockId resume_block;  // Block to resume at after delay
+};
+
+// Process suspended waiting for signal edge (@posedge, @negedge, @*).
+struct SuspendWait {
+  // TODO(hankhsu): Add signal ID and edge type when Wait terminator is fleshed
+  // out
+  BasicBlockId resume_block;
+};
+
+// Process completed one iteration and should repeat (always blocks).
+struct SuspendRepeat {
+  BasicBlockId resume_block;  // Usually entry block
+};
+
+// Result of running a process: either continues running or suspends.
+using SuspendReason =
+    std::variant<SuspendFinished, SuspendDelay, SuspendWait, SuspendRepeat>;
 
 // Shared storage for module-level variables (simulation lifetime).
 // One DesignState per module instance; all processes in that instance share it.
@@ -64,7 +94,12 @@ class Interpreter {
   }
 
   // Execute process to completion. Returns final status.
+  // Throws on suspension terminators (Delay, Wait, Repeat).
   auto Run(ProcessState& state) -> ProcessStatus;
+
+  // Execute process until it suspends or finishes.
+  // Returns the suspension reason for the engine to handle scheduling.
+  auto RunUntilSuspend(ProcessState& state) -> SuspendReason;
 
   // Execute a function call. Returns the return value (void for void
   // functions).
@@ -120,7 +155,8 @@ class Interpreter {
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 
-  // Execute terminator, return next block or nullopt for completion
+  // Execute terminator, return next block or nullopt for completion.
+  // Throws on suspension terminators (Delay, Wait, Repeat).
   auto ExecTerminator(ProcessState& state, const Terminator& term)
       -> std::optional<BasicBlockId>;
 

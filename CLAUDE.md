@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/hir-design.md`               | HIR layer design (language semantics)                |
 | `docs/mir-design.md`               | MIR layer design (execution semantics)               |
 | `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                        |
+| `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API  |
 | `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
 | `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model                   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
