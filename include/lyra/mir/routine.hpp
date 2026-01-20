@@ -9,7 +9,8 @@
 namespace lyra::mir {
 
 enum class ProcessKind {
-  kOnce,     // initial block - runs once
+  kOnce,     // initial block - runs once at time 0
+  kFinal,    // final block - runs once at end of simulation
   kLooping,  // always block - repeats
 };
 

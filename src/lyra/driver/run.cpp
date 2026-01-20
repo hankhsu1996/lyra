@@ -87,16 +87,20 @@ auto RunMir(const std::string& path) -> int {
 
   auto design_state = mir::interp::CreateDesignState(
       *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
-  auto state = mir::interp::CreateProcessState(
-      *mir_result.mir_arena, *hir_result.type_arena,
-      module_info->initial_process, &design_state);
 
   mir::interp::Interpreter interp(
       mir_result.mir_arena.get(), hir_result.type_arena.get());
   interp.SetOutput(&std::cout);
 
+  // Run all initial processes in order (synthetic init first, then
+  // user-defined)
   try {
-    interp.Run(state);
+    for (mir::ProcessId proc_id : module_info->initial_processes) {
+      auto state = mir::interp::CreateProcessState(
+          *mir_result.mir_arena, *hir_result.type_arena, proc_id,
+          &design_state);
+      interp.Run(state);
+    }
   } catch (const std::exception& e) {
     fmt::print(
         stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),

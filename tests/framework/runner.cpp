@@ -344,12 +344,9 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     return result;
   }
 
-  // Create module storage and interpreter state
+  // Create module storage
   auto design_state = mir::interp::CreateDesignState(
       *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
-  auto state = mir::interp::CreateProcessState(
-      *mir_result.mir_arena, *hir_result.type_arena,
-      module_info->initial_process, &design_state);
 
   // Run interpreter with output capture
   std::ostringstream output_stream;
@@ -363,8 +360,14 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     scoped_path.emplace(result.work_directory);
   }
 
+  // Run all initial processes in order
   try {
-    interpreter.Run(state);
+    for (mir::ProcessId proc_id : module_info->initial_processes) {
+      auto state = mir::interp::CreateProcessState(
+          *mir_result.mir_arena, *hir_result.type_arena, proc_id,
+          &design_state);
+      interpreter.Run(state);
+    }
   } catch (const std::exception& e) {
     result.error_message = std::string("Runtime error: ") + e.what();
     return result;
