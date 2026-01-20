@@ -5,6 +5,8 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/common/severity.hpp"
+
 namespace lyra {
 
 enum class SystemFunctionReturnType : uint8_t {
@@ -35,8 +37,17 @@ struct TerminationFunctionInfo {
   int default_level;  // Default level if not specified (usually 1)
 };
 
-using CategoryPayload =
-    std::variant<DisplayFunctionInfo, TerminationFunctionInfo>;
+// $info, $warning, $error - non-terminating severity messages
+struct SeverityFunctionInfo {
+  Severity level;
+};
+
+// $fatal - terminating severity message (handled specially in statement.cpp)
+struct FatalFunctionInfo {};
+
+using CategoryPayload = std::variant<
+    DisplayFunctionInfo, TerminationFunctionInfo, SeverityFunctionInfo,
+    FatalFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -66,6 +77,14 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$finish", .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},
   {.name = "$stop",   .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kStop,   .default_level = 1}},
   {.name = "$exit",   .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kExit,   .default_level = 1}},
+
+  // Severity system tasks (non-terminating)
+  {.name = "$info",    .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kInfo}},
+  {.name = "$warning", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kWarning}},
+  {.name = "$error",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kError}},
+
+  // Fatal severity task (terminating)
+  {.name = "$fatal",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = FatalFunctionInfo{}},
 });
 // clang-format on
 

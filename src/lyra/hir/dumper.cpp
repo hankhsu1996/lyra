@@ -4,6 +4,8 @@
 #include <format>
 #include <string_view>
 
+#include "lyra/common/severity.hpp"
+
 namespace lyra::hir {
 
 Dumper::Dumper(
@@ -333,8 +335,16 @@ void Dumper::Dump(StatementId id) {
         case TerminationKind::kExit:
           name = "$exit";
           break;
+        case TerminationKind::kFatal:
+          name = "$fatal";
+          break;
       }
-      *out_ << name << "(" << data.level << ");\n";
+      *out_ << name << "(" << data.level;
+      for (ExpressionId arg : data.message_args) {
+        *out_ << ", ";
+        Dump(arg);
+      }
+      *out_ << ");\n";
       break;
     }
 
@@ -495,29 +505,59 @@ void Dumper::Dump(ExpressionId id) {
 
     case ExpressionKind::kSystemCall: {
       const auto& data = std::get<SystemCallExpressionData>(expr.data);
-      const auto& display = std::get<DisplaySystemCallData>(data);
-      std::string_view name = [&] {
-        switch (display.radix) {
-          case PrintRadix::kDecimal:
-            return display.append_newline ? "$display" : "$write";
-          case PrintRadix::kBinary:
-            return display.append_newline ? "$displayb" : "$writeb";
-          case PrintRadix::kOctal:
-            return display.append_newline ? "$displayo" : "$writeo";
-          case PrintRadix::kHex:
-            return display.append_newline ? "$displayh" : "$writeh";
-        }
-      }();
-      *out_ << name << "(";
-      bool first = true;
-      for (ExpressionId arg : display.args) {
-        if (!first) {
-          *out_ << ", ";
-        }
-        first = false;
-        Dump(arg);
-      }
-      *out_ << ")";
+      std::visit(
+          [&](const auto& syscall_data) {
+            using T = std::decay_t<decltype(syscall_data)>;
+            if constexpr (std::is_same_v<T, DisplaySystemCallData>) {
+              std::string_view name = [&] {
+                switch (syscall_data.radix) {
+                  case PrintRadix::kDecimal:
+                    return syscall_data.append_newline ? "$display" : "$write";
+                  case PrintRadix::kBinary:
+                    return syscall_data.append_newline ? "$displayb"
+                                                       : "$writeb";
+                  case PrintRadix::kOctal:
+                    return syscall_data.append_newline ? "$displayo"
+                                                       : "$writeo";
+                  case PrintRadix::kHex:
+                    return syscall_data.append_newline ? "$displayh"
+                                                       : "$writeh";
+                }
+              }();
+              *out_ << name << "(";
+              bool first = true;
+              for (ExpressionId arg : syscall_data.args) {
+                if (!first) {
+                  *out_ << ", ";
+                }
+                first = false;
+                Dump(arg);
+              }
+              *out_ << ")";
+            } else if constexpr (std::is_same_v<T, SeveritySystemCallData>) {
+              std::string_view name = [&] {
+                switch (syscall_data.level) {
+                  case Severity::kInfo:
+                    return "$info";
+                  case Severity::kWarning:
+                    return "$warning";
+                  case Severity::kError:
+                    return "$error";
+                }
+              }();
+              *out_ << name << "(";
+              bool first = true;
+              for (ExpressionId arg : syscall_data.args) {
+                if (!first) {
+                  *out_ << ", ";
+                }
+                first = false;
+                Dump(arg);
+              }
+              *out_ << ")";
+            }
+          },
+          data);
       break;
     }
 

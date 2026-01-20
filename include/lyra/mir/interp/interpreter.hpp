@@ -104,6 +104,10 @@ class Interpreter {
   // Execute DisplayEffect
   void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
 
+  // Execute SeverityEffect
+  void ExecSeverityEffect(
+      const ProcessState& state, const SeverityEffect& severity);
+
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 

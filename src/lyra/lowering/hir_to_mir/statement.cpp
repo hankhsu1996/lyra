@@ -87,6 +87,21 @@ void LowerDisplayEffect(
   builder.EmitEffect(std::move(display));
 }
 
+void LowerSeverityEffect(
+    const hir::SeveritySystemCallData& data, MirBuilder& builder) {
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.args.size());
+  for (hir::ExpressionId arg_id : data.args) {
+    operands.push_back(LowerExpression(arg_id, builder));
+  }
+
+  mir::SeverityEffect severity{
+      .level = data.level,
+      .args = std::move(operands),
+  };
+  builder.EmitEffect(std::move(severity));
+}
+
 void LowerExpressionStatement(
     const hir::ExpressionStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
@@ -100,6 +115,8 @@ void LowerExpressionStatement(
           using T = std::decay_t<decltype(call_data)>;
           if constexpr (std::is_same_v<T, hir::DisplaySystemCallData>) {
             LowerDisplayEffect(call_data, builder);
+          } else if constexpr (std::is_same_v<T, hir::SeveritySystemCallData>) {
+            LowerSeverityEffect(call_data, builder);
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");
@@ -530,9 +547,23 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
             case hir::TerminationKind::kExit:
               mir_kind = mir::TerminationKind::kExit;
               break;
+            case hir::TerminationKind::kFatal:
+              mir_kind = mir::TerminationKind::kFatal;
+              break;
           }
+
+          // Lower message_args for $fatal
+          std::vector<mir::Operand> message_operands;
+          message_operands.reserve(data.message_args.size());
+          for (hir::ExpressionId arg_id : data.message_args) {
+            message_operands.push_back(LowerExpression(arg_id, builder));
+          }
+
           builder.EmitTerminate(
-              mir::TerminationInfo{.kind = mir_kind, .level = data.level});
+              mir::TerminationInfo{
+                  .kind = mir_kind,
+                  .level = data.level,
+                  .message_args = std::move(message_operands)});
           // Create unreachable block for any code after terminate
           BlockIndex dead_bb = builder.CreateBlock();
           builder.SetCurrentBlock(dead_bb);

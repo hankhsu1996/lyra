@@ -6,6 +6,7 @@
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -14,6 +15,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/severity.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -195,6 +197,11 @@ struct StorageCollector {
                           Visit(arg, arena);
                         }
                       },
+                      [&](const SeverityEffect& op) -> void {
+                        for (const auto& arg : op.args) {
+                          Visit(arg, arena);
+                        }
+                      },
                   },
                   i.op);
             },
@@ -202,6 +209,19 @@ struct StorageCollector {
         inst);
   }
 };
+
+// Helper: format severity prefix for $info/$warning/$error messages
+auto FormatSeverityPrefix(Severity level) -> std::string_view {
+  switch (level) {
+    case Severity::kInfo:
+      return "** INFO: ";
+    case Severity::kWarning:
+      return "** WARNING: ";
+    case Severity::kError:
+      return "** ERROR: ";
+  }
+  return "** UNKNOWN: ";
+}
 
 // Helper template to apply projections uniformly for const and non-const paths.
 // IndexEval is a callable that evaluates a dynamic Operand to an int64_t index.
@@ -1028,6 +1048,7 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
   std::visit(
       Overloaded{
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
+          [&](const SeverityEffect& op) { ExecSeverityEffect(state, op); },
       },
       effect.op);
 }
@@ -1053,6 +1074,29 @@ void Interpreter::ExecDisplayEffect(
   if (disp.append_newline) {
     out << "\n";
   }
+}
+
+void Interpreter::ExecSeverityEffect(
+    const ProcessState& state, const SeverityEffect& severity) {
+  std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+  // Print severity prefix
+  out << FormatSeverityPrefix(severity.level);
+
+  // Evaluate and format message arguments
+  std::vector<TypedValue> typed_args;
+  typed_args.reserve(severity.args.size());
+  for (const auto& arg : severity.args) {
+    TypeId type = TypeOfOperand(arg, *arena_, *types_);
+    RuntimeValue value = EvalOperand(state, arg);
+    typed_args.push_back(TypedValue{.value = std::move(value), .type = type});
+  }
+
+  // Use decimal as default radix for severity messages
+  FormatContext ctx{};
+  std::string message = FormatMessage(typed_args, 'd', *types_, ctx);
+
+  out << message << "\n";
 }
 
 void Interpreter::ExecInstruction(
@@ -1129,11 +1173,36 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
     case Terminator::Kind::kFinish: {
       if (term.termination_info) {
         const auto& info = *term.termination_info;
-        if (info.level >= 1) {
-          // Get output stream (default to cout if not set)
-          std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-          // Determine termination name for message
+        // Get output stream (default to cout if not set)
+        std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+        // For $fatal, print severity message (no time line - already has
+        // prefix)
+        if (info.kind == TerminationKind::kFatal) {
+          if (info.level >= 1) {
+            out << "** FATAL: ";
+
+            // Evaluate and format message arguments
+            if (!info.message_args.empty()) {
+              std::vector<TypedValue> typed_args;
+              typed_args.reserve(info.message_args.size());
+              for (const auto& arg : info.message_args) {
+                TypeId type = TypeOfOperand(arg, *arena_, *types_);
+                RuntimeValue value = EvalOperand(state, arg);
+                typed_args.push_back(
+                    TypedValue{.value = std::move(value), .type = type});
+              }
+
+              FormatContext ctx{};
+              std::string message =
+                  FormatMessage(typed_args, 'd', *types_, ctx);
+              out << message;
+            }
+            out << "\n";
+          }
+        } else if (info.level >= 1) {
+          // Print time message for non-fatal terminations
           const char* name = nullptr;
           switch (info.kind) {
             case TerminationKind::kFinish:
@@ -1143,7 +1212,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
               name = "$stop";
               break;
             case TerminationKind::kFatal:
-              name = "$fatal";
+              name = "$fatal";  // Won't reach here
               break;
             case TerminationKind::kExit:
               name = "$exit";

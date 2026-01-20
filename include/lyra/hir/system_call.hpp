@@ -3,6 +3,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/severity.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/hir/fwd.hpp"
 
@@ -16,6 +17,14 @@ struct DisplaySystemCallData {
   auto operator==(const DisplaySystemCallData&) const -> bool = default;
 };
 
-using SystemCallExpressionData = std::variant<DisplaySystemCallData>;
+struct SeveritySystemCallData {
+  Severity level;
+  std::vector<ExpressionId> args;
+
+  auto operator==(const SeveritySystemCallData&) const -> bool = default;
+};
+
+using SystemCallExpressionData =
+    std::variant<DisplaySystemCallData, SeveritySystemCallData>;
 
 }  // namespace lyra::hir
