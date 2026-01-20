@@ -214,13 +214,13 @@ struct StorageCollector {
 auto FormatSeverityPrefix(Severity level) -> std::string_view {
   switch (level) {
     case Severity::kInfo:
-      return "** INFO: ";
+      return "info: ";
     case Severity::kWarning:
-      return "** WARNING: ";
+      return "warning: ";
     case Severity::kError:
-      return "** ERROR: ";
+      return "error: ";
   }
-  return "** UNKNOWN: ";
+  return "unknown: ";
 }
 
 // Helper template to apply projections uniformly for const and non-const paths.
@@ -1181,7 +1181,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
         // prefix)
         if (info.kind == TerminationKind::kFatal) {
           if (info.level >= 1) {
-            out << "** FATAL: ";
+            out << "fatal: ";
 
             // Evaluate and format message arguments
             if (!info.message_args.empty()) {
