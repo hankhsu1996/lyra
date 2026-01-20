@@ -131,17 +131,41 @@ All computation results are assigned to Places (often temporaries). To use a res
 
 ## Instructions
 
-Instructions do not affect control flow. Three variants:
+Instructions do not affect control flow. Four variants:
 
-| Variant | Structure       | Purpose                           |
-| ------- | --------------- | --------------------------------- |
-| Assign  | Place = Operand | Data movement                     |
-| Compute | Place = Rvalue  | Computation with result           |
-| Effect  | EffectOp        | Side effect only, no result value |
+| Variant       | Structure                   | Purpose                           |
+| ------------- | --------------------------- | --------------------------------- |
+| Assign        | Place = Operand             | Data movement                     |
+| Compute       | Place = Rvalue              | Computation with result           |
+| GuardedAssign | Place = Operand if validity | Conditional write (OOB safety)    |
+| Effect        | EffectOp                    | Side effect only, no result value |
 
-**Rvalue kinds:** Unary, Binary, Cast, Call (pure system functions only).
+**Rvalue kinds:** Unary, Binary, Cast, Call (pure system functions only), Select, IndexValidity, GuardedUse.
 
 **No Load instruction.** Reading a Place is implicit in Operand (Use kind). This keeps the operand model simple: Operands are inputs, Places are outputs.
+
+### Guarded Access Operations
+
+SystemVerilog specifies that out-of-bounds (OOB) or unknown (X/Z) indexing is not a runtime error:
+
+- **Read**: returns an "unknown" default (X-filled for 4-state; 0 for 2-state)
+- **Write**: becomes a no-op (design state must not change)
+
+MIR represents these semantics explicitly rather than synthesizing them with generic control flow:
+
+| Operation     | Type        | Semantics                                           |
+| ------------- | ----------- | --------------------------------------------------- |
+| IndexValidity | Rvalue      | Computes validity predicate: in_bounds AND is_known |
+| GuardedUse    | Rvalue      | `validity ? Use(place) : oob_default`               |
+| GuardedAssign | Instruction | `if (validity) Assign(target, source); else no-op`  |
+
+**IndexValidity** takes an index operand and bounds, returning a 1-bit 2-state bool. Bounds are stored as logical bounds (always `lower <= upper`); direction handling happens during lowering when computing bit offsets.
+
+**GuardedUse** is the one Rvalue that explicitly names a Place rather than taking it as an Operand. This is necessary because we cannot express "conditionally read" with `Use(place)` alone. The Place is the "where," the predicate is the "whether." OOB default is determined by the result type (X for 4-state, 0 for 2-state).
+
+**GuardedAssign** evaluates its source operand unconditionally; only the write is guarded. For short-circuit semantics (source has side effects), the lowering should emit explicit control flow instead.
+
+This design ensures backends do not need to understand SystemVerilog OOB rules; they are explicit in the MIR.
 
 ### System Subroutine Classification
 
@@ -250,7 +274,7 @@ These must hold for well-formed MIR:
 
 **Operand model:** Place (writable location) and Operand (readable: Const/Use/Poison)
 
-**Instruction model:** Assign, Compute, Effect
+**Instruction model:** Assign, Compute, GuardedAssign, Effect
 
 **Core fixed semantics:**
 

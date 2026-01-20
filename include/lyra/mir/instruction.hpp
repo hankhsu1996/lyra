@@ -21,14 +21,24 @@ struct Compute {
   Rvalue value;
 };
 
+// GuardedAssign: conditional write with OOB safety.
+// Semantics: if (validity) Assign(target, source); else no-op
+// The source is always evaluated; only the write is guarded.
+// For short-circuit semantics (source has side effects), use control flow.
+struct GuardedAssign {
+  PlaceId target;
+  Operand source;
+  Operand validity;  // 1-bit 2-state bool
+};
+
 // Effect: side-effect operation with no result value
 struct Effect {
   EffectOp op;
 };
 
 // An instruction that does not affect control flow.
-// - Assign and Compute write to a Place
+// - Assign, Compute, and GuardedAssign write to a Place
 // - Effect produces side effects but no value
-using Instruction = std::variant<Assign, Compute, Effect>;
+using Instruction = std::variant<Assign, Compute, GuardedAssign, Effect>;
 
 }  // namespace lyra::mir

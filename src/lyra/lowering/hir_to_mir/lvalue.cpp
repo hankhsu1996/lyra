@@ -62,20 +62,16 @@ auto ComposeValidity(
       mir::BinaryOp::kLogicalAnd, base_valid, our_valid, bool_type);
 }
 
-// Emit X/Z check for index. Returns 2-state 1-bit bool.
-auto EmitIndexIsKnown(
-    mir::Operand index, TypeId index_type, MirBuilder& builder)
-    -> mir::Operand {
-  const Context& ctx = builder.GetContext();
-  const Type& type = (*ctx.type_arena)[index_type];
-  TypeId bool_type = ctx.GetBitType();
-
-  if (type.Kind() == TypeKind::kIntegral && !type.AsIntegral().is_four_state) {
-    // 2-state type: always known
-    return mir::Operand::Const(MakeIntegralConst(1, bool_type));
+// Check if index type is 4-state (has X/Z bits).
+auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
+  const Type& type = types[index_type];
+  if (type.Kind() == TypeKind::kIntegral) {
+    return type.AsIntegral().is_four_state;
   }
-  // 4-state type: emit IsKnown check
-  return builder.EmitUnary(mir::UnaryOp::kIsKnown, index, bool_type);
+  if (IsPacked(type)) {
+    return IsPackedFourState(type, types);
+  }
+  return false;
 }
 
 // Emit bounds and X/Z validity check for packed array index.
@@ -85,40 +81,9 @@ auto EmitPackedIndexValidity(
   const Context& ctx = builder.GetContext();
   const auto& packed_info = array_type.AsPackedArray();
   const auto& range = packed_info.range;
-  const Type& idx_type = (*ctx.type_arena)[index_type];
-  bool is_signed =
-      IsPacked(idx_type) && IsPackedSigned(idx_type, *ctx.type_arena);
-  TypeId bool_type = ctx.GetBitType();
-
-  // Emit bounds constants
-  auto lower_const =
-      mir::Operand::Const(MakeIntegralConst(range.Lower(), index_type));
-  auto upper_const =
-      mir::Operand::Const(MakeIntegralConst(range.Upper(), index_type));
-
-  // Bounds check - use signed ops for signed indices
-  mir::Operand ge_lower;
-  mir::Operand le_upper;
-  if (is_signed) {
-    ge_lower = builder.EmitBinary(
-        mir::BinaryOp::kGreaterThanEqualSigned, index, lower_const, bool_type);
-    le_upper = builder.EmitBinary(
-        mir::BinaryOp::kLessThanEqualSigned, index, upper_const, bool_type);
-  } else {
-    ge_lower = builder.EmitBinary(
-        mir::BinaryOp::kGreaterThanEqual, index, lower_const, bool_type);
-    le_upper = builder.EmitBinary(
-        mir::BinaryOp::kLessThanEqual, index, upper_const, bool_type);
-  }
-  auto in_bounds = builder.EmitBinary(
-      mir::BinaryOp::kLogicalAnd, ge_lower, le_upper, bool_type);
-
-  // X/Z check
-  auto is_known = EmitIndexIsKnown(index, index_type, builder);
-
-  // valid = in_bounds && is_known
-  return builder.EmitBinary(
-      mir::BinaryOp::kLogicalAnd, in_bounds, is_known, bool_type);
+  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
+  return builder.EmitIndexValidity(
+      index, range.Lower(), range.Upper(), check_known);
 }
 
 // Emit offset computation for packed array element select.

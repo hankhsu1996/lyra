@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -56,11 +57,33 @@ struct SelectRvalueInfo {
   // operands[2] = false_value
 };
 
+// IndexValidity: computes "this index is a valid access" predicate.
+// Returns 1-bit 2-state bool: (lower <= index <= upper) && is_known(index)
+// Bounds are logical (always lower <= upper); direction handling happens
+// during lowering when computing the bit offset.
+struct IndexValidityRvalueInfo {
+  int64_t lower_bound;
+  int64_t upper_bound;
+  bool check_known;  // true for 4-state indices
+  // operands[0] = index
+};
+
+// GuardedUse: conditionally read from a place with OOB safety.
+// Semantics: validity ? Use(place) : oob_default
+// This is the one Rvalue that explicitly names a Place rather than taking
+// it as an Operand. We can't express "conditionally read" with Use(place)
+// alone because the guarding is intrinsic to the read operation.
+struct GuardedUseRvalueInfo {
+  PlaceId place;
+  TypeId result_type;  // Determines OOB default (X for 4-state, 0 for 2-state)
+  // operands[0] = validity predicate (1-bit 2-state bool)
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, SystemCallRvalueInfo,
     UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
-    SelectRvalueInfo>;
+    SelectRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -88,6 +111,10 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "builtin";
         } else if constexpr (std::is_same_v<T, SelectRvalueInfo>) {
           return "select";
+        } else if constexpr (std::is_same_v<T, IndexValidityRvalueInfo>) {
+          return "index_validity";
+        } else if constexpr (std::is_same_v<T, GuardedUseRvalueInfo>) {
+          return "guarded_use";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

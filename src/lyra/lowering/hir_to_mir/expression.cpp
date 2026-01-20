@@ -241,10 +241,6 @@ auto MakeOne(TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
-// Forward declaration for OOB default helper used by increment/decrement.
-auto MakeOobDefault(TypeId element_type, uint32_t width, const TypeArena& types)
-    -> mir::Operand;
-
 // Desugar increment/decrement operators into explicit read-modify-write.
 // These operators have side effects (modify the operand) and return a value
 // (pre returns new value, post returns old value). MIR's Place/Operand
@@ -264,17 +260,13 @@ auto LowerIncrementDecrement(
         "LowerIncrementDecrement", "operand must be integral type");
   }
 
-  // 3. Read old value with OOB handling
+  // 3. Read old value with OOB handling using GuardedUse
   mir::Operand read_val;
   if (IsAlwaysValid(target.validity)) {
     read_val = mir::Operand::Use(target.place);
   } else {
-    // OOB/X/Z index: use Select to return X (4-state) or 0 (2-state)
-    mir::Operand oob_default =
-        MakeOobDefault(expr.type, type.AsIntegral().bit_width, *ctx.type_arena);
-    read_val = builder.EmitSelect(
-        target.validity, mir::Operand::Use(target.place), oob_default,
-        expr.type);
+    // OOB/X/Z index: GuardedUse returns X (4-state) or 0 (2-state)
+    read_val = builder.EmitGuardedUse(target.validity, target.place, expr.type);
   }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
   builder.EmitAssign(old_value, read_val);
@@ -300,24 +292,8 @@ auto LowerIncrementDecrement(
   if (IsAlwaysValid(target.validity)) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
-    mir::Operand cond = target.validity;
-
-    // EmitBranch requires Use operand - materialize constant if needed
-    if (cond.kind == mir::Operand::Kind::kConst) {
-      mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
-      builder.EmitAssign(temp, std::move(cond));
-      cond = mir::Operand::Use(temp);
-    }
-
-    BlockIndex store_bb = builder.CreateBlock();
-    BlockIndex merge_bb = builder.CreateBlock();
-    builder.EmitBranch(cond, store_bb, merge_bb);
-
-    builder.SetCurrentBlock(store_bb);
-    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
-    builder.EmitJump(merge_bb);
-
-    builder.SetCurrentBlock(merge_bb);
+    builder.EmitGuardedAssign(
+        target.place, mir::Operand::Use(new_value), target.validity);
   }
 
   // 6. Return appropriate value
@@ -447,29 +423,10 @@ auto LowerAssignment(
 
   if (IsAlwaysValid(target.validity)) {
     builder.EmitAssign(target.place, value);
-    return value;
+  } else {
+    // Guarded store: only write if validity is true (OOB/X/Z = no-op)
+    builder.EmitGuardedAssign(target.place, value, target.validity);
   }
-
-  // Guarded store: only write if validity is true (OOB/X/Z = no-op)
-  Context& ctx = builder.GetContext();
-  mir::Operand cond = target.validity;
-
-  // EmitBranch requires Use operand - materialize constant if needed
-  if (cond.kind == mir::Operand::Kind::kConst) {
-    mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
-    builder.EmitAssign(temp, std::move(cond));
-    cond = mir::Operand::Use(temp);
-  }
-
-  BlockIndex store_bb = builder.CreateBlock();
-  BlockIndex merge_bb = builder.CreateBlock();
-  builder.EmitBranch(cond, store_bb, merge_bb);
-
-  builder.SetCurrentBlock(store_bb);
-  builder.EmitAssign(target.place, value);
-  builder.EmitJump(merge_bb);
-
-  builder.SetCurrentBlock(merge_bb);
 
   // Return the value (assignment expression yields the assigned value)
   return value;
@@ -751,11 +708,6 @@ auto GetOrMaterializePlace(
       "GetOrMaterializePlace", "unexpected operand kind");
 }
 
-// Get a 1-bit 2-state type for boolean results.
-auto GetBoolType(const Context& ctx) -> TypeId {
-  return ctx.GetBitType();
-}
-
 // Make an integral constant with specified value and type.
 auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
   IntegralConstant ic;
@@ -763,61 +715,16 @@ auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
-// Check if an index has any X/Z bits. Returns 2-state 1-bit bool.
-// For 2-state types, returns constant 1 (always known).
-auto EmitIndexIsKnown(
-    mir::Operand index, TypeId index_type, MirBuilder& builder)
-    -> mir::Operand {
-  Context& ctx = builder.GetContext();
-  const Type& type = (*ctx.type_arena)[index_type];
-  TypeId bool_type = GetBoolType(ctx);
-
-  if (type.Kind() == TypeKind::kIntegral && !type.AsIntegral().is_four_state) {
-    // 2-state type: always known
-    return mir::Operand::Const(MakeIntegralConst(1, bool_type));
+// Check if index type is 4-state (has X/Z bits).
+auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
+  const Type& type = types[index_type];
+  if (type.Kind() == TypeKind::kIntegral) {
+    return type.AsIntegral().is_four_state;
   }
-  // 4-state type: emit IsKnown check
-  return builder.EmitUnary(mir::UnaryOp::kIsKnown, index, bool_type);
-}
-
-// Compute validity predicate: in_bounds AND index_is_known.
-// Uses signed comparisons for signed index types (kIntegral or kPackedArray).
-auto EmitValidityCheck(
-    mir::Operand index, TypeId index_type, int64_t lower, int64_t upper,
-    MirBuilder& builder) -> mir::Operand {
-  const Context& ctx = builder.GetContext();
-  const Type& idx_type = (*ctx.type_arena)[index_type];
-  bool is_signed =
-      IsPacked(idx_type) && IsPackedSigned(idx_type, *ctx.type_arena);
-  TypeId bool_type = GetBoolType(ctx);
-
-  // Emit constants at index type
-  auto lower_const = mir::Operand::Const(MakeIntegralConst(lower, index_type));
-  auto upper_const = mir::Operand::Const(MakeIntegralConst(upper, index_type));
-
-  // Bounds check - use signed ops for signed indices
-  mir::Operand ge_lower;
-  mir::Operand le_upper;
-  if (is_signed) {
-    ge_lower = builder.EmitBinary(
-        mir::BinaryOp::kGreaterThanEqualSigned, index, lower_const, bool_type);
-    le_upper = builder.EmitBinary(
-        mir::BinaryOp::kLessThanEqualSigned, index, upper_const, bool_type);
-  } else {
-    ge_lower = builder.EmitBinary(
-        mir::BinaryOp::kGreaterThanEqual, index, lower_const, bool_type);
-    le_upper = builder.EmitBinary(
-        mir::BinaryOp::kLessThanEqual, index, upper_const, bool_type);
+  if (IsPacked(type)) {
+    return IsPackedFourState(type, types);
   }
-  auto in_bounds = builder.EmitBinary(
-      mir::BinaryOp::kLogicalAnd, ge_lower, le_upper, bool_type);
-
-  // X/Z check (returns 2-state bool)
-  auto is_known = EmitIndexIsKnown(index, index_type, builder);
-
-  // valid = in_bounds && is_known
-  return builder.EmitBinary(
-      mir::BinaryOp::kLogicalAnd, in_bounds, is_known, bool_type);
+  return false;
 }
 
 // Compute bit offset for packed array element select.
@@ -833,9 +740,10 @@ auto EmitPackedElementOffset(
   uint32_t element_width = PackedArrayElementWidth(array_type, *ctx.type_arena);
   TypeId offset_type = ctx.GetOffsetType();
 
-  // Compute validity (uses index_type for bounds comparison)
-  auto valid = EmitValidityCheck(
-      index, index_type, range.Lower(), range.Upper(), builder);
+  // Compute validity using IndexValidity rvalue
+  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
+  auto valid = builder.EmitIndexValidity(
+      index, range.Lower(), range.Upper(), check_known);
 
   // Compute offset based on direction
   // Descending [H:L]: offset = (index - lower) * width
@@ -869,36 +777,19 @@ auto EmitPackedElementOffset(
 auto EmitBitSelectOffset(
     mir::Operand index, TypeId index_type, const Type& base_type,
     MirBuilder& builder) -> std::pair<mir::Operand, mir::Operand> {
+  const Context& ctx = builder.GetContext();
   const auto& info = base_type.AsIntegral();
 
   // Implicit range: [bit_width-1:0] (descending, 0-based)
   int32_t upper = static_cast<int32_t>(info.bit_width) - 1;
   int32_t lower = 0;
 
-  // Compute validity
-  auto valid = EmitValidityCheck(index, index_type, lower, upper, builder);
+  // Compute validity using IndexValidity rvalue
+  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
+  auto valid = builder.EmitIndexValidity(index, lower, upper, check_known);
 
   // Offset = index (0-based descending)
   return {index, valid};
-}
-
-// Compute OOB default value based on element type.
-auto MakeOobDefault(TypeId element_type, uint32_t width, const TypeArena& types)
-    -> mir::Operand {
-  const Type& type = types[element_type];
-  bool is_four_state = IsPacked(type) ? IsPackedFourState(type, types)
-                                      : type.AsIntegral().is_four_state;
-  if (is_four_state) {
-    // Return all-X value
-    IntegralConstant ic;
-    uint32_t num_words = (width + 63) / 64;
-    ic.value.resize(num_words, 0);
-    ic.x_mask.resize(num_words, ~0ULL);  // All bits unknown (X)
-    return mir::Operand::Const(
-        Constant{.type = element_type, .value = std::move(ic)});
-  }
-  // Return 0
-  return mir::Operand::Const(MakeIntegralConst(0, element_type));
 }
 
 auto LowerPackedElementSelect(
@@ -932,15 +823,8 @@ auto LowerPackedElementSelect(
                           .width = element_width,
                           .element_type = expr.type}});
 
-  // Read the value (may read garbage if invalid - Select handles it)
-  mir::Operand extracted = mir::Operand::Use(slice_place);
-
-  // Compute OOB default
-  mir::Operand invalid_default =
-      MakeOobDefault(expr.type, element_width, *ctx.type_arena);
-
-  // Select: valid ? extracted : invalid_default
-  return builder.EmitSelect(valid, extracted, invalid_default, expr.type);
+  // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
+  return builder.EmitGuardedUse(valid, slice_place, expr.type);
 }
 
 auto LowerBitSelect(
@@ -972,12 +856,8 @@ auto LowerBitSelect(
           .info = mir::BitRangeProjection{
               .bit_offset = offset, .width = 1, .element_type = expr.type}});
 
-  mir::Operand extracted = mir::Operand::Use(slice_place);
-
-  // Compute OOB default (1-bit)
-  mir::Operand invalid_default = MakeOobDefault(expr.type, 1, *ctx.type_arena);
-
-  return builder.EmitSelect(valid, extracted, invalid_default, expr.type);
+  // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
+  return builder.EmitGuardedUse(valid, slice_place, expr.type);
 }
 
 auto LowerRangeSelect(

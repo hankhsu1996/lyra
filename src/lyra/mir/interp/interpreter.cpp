@@ -81,16 +81,24 @@ auto TypeOfOperand(
   return TypeId{};
 }
 
-// Checks if a type is a signed integral.
-auto IsSignedIntegral(const TypeArena& types, TypeId type_id) -> bool {
+// Checks if a type is signed (handles both kIntegral and packed types).
+auto IsSignedType(const TypeArena& types, TypeId type_id) -> bool {
   if (!type_id) {
     return false;
   }
   const auto& type = types[type_id];
-  if (type.Kind() != TypeKind::kIntegral) {
-    return false;
+  if (type.Kind() == TypeKind::kIntegral) {
+    return type.AsIntegral().is_signed;
   }
-  return type.AsIntegral().is_signed;
+  if (IsPacked(type)) {
+    return IsPackedSigned(type, types);
+  }
+  return false;
+}
+
+// Backward-compatible alias for IsSignedType (only for kIntegral).
+auto IsSignedIntegral(const TypeArena& types, TypeId type_id) -> bool {
+  return IsSignedType(types, type_id);
 }
 
 // Result of evaluating an index operand with signedness information.
@@ -284,6 +292,11 @@ struct StorageCollector {
             [&](const Compute& i) {
               Visit(arena[i.target], arena);
               Visit(i.value, arena);
+            },
+            [&](const GuardedAssign& i) {
+              Visit(arena[i.target], arena);
+              Visit(i.source, arena);
+              Visit(i.validity, arena);
             },
             [&](const Effect& i) {
               std::visit(
@@ -991,6 +1004,88 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             }
             return Clone(EvalOperand(state, rv.operands[2]));
           },
+          [&](const IndexValidityRvalueInfo& info) -> RuntimeValue {
+            if (rv.operands.size() != 1) {
+              throw common::InternalError(
+                  "EvalRvalue", "index_validity requires exactly 1 operand");
+            }
+            auto index = EvalOperand(state, rv.operands[0]);
+            if (!IsIntegral(index)) {
+              throw common::InternalError(
+                  "EvalRvalue", "index_validity operand must be integral");
+            }
+            const auto& idx_int = AsIntegral(index);
+
+            // Check if index is known (no X/Z bits)
+            bool is_known = idx_int.IsKnown();
+            if (info.check_known && !is_known) {
+              return MakeIntegral(0, 1);  // Invalid: X/Z index
+            }
+
+            // Check bounds using runtime integral comparison ops (handles wide
+            // values). Create bounds constants at the same width as the index.
+            TypeId index_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+            bool is_signed = IsSignedType(*types_, index_type);
+
+            // Special case: unsigned index with negative bounds.
+            // An unsigned value can never be less than 0, so:
+            // - If both bounds are negative → always out of bounds
+            // - If only lower is negative → treat lower as 0
+            if (!is_signed) {
+              if (info.lower_bound < 0) {
+                if (info.upper_bound < 0) {
+                  return MakeIntegral(0, 1);  // Always invalid
+                }
+                // lower is negative but upper is non-negative
+                // Check only: index <= upper (lower effectively 0)
+                auto upper_int = MakeIntegral(
+                    static_cast<uint64_t>(info.upper_bound), idx_int.bit_width);
+                const auto& upper_val = AsIntegral(upper_int);
+                return IntegralLe(idx_int, upper_val, false);
+              }
+              // Both bounds non-negative, do normal unsigned comparison
+              auto lower_int = MakeIntegral(
+                  static_cast<uint64_t>(info.lower_bound), idx_int.bit_width);
+              auto upper_int = MakeIntegral(
+                  static_cast<uint64_t>(info.upper_bound), idx_int.bit_width);
+              const auto& lower_val = AsIntegral(lower_int);
+              const auto& upper_val = AsIntegral(upper_int);
+              auto ge_lower = IntegralGe(idx_int, lower_val, false);
+              auto le_upper = IntegralLe(idx_int, upper_val, false);
+              return IntegralLogicalAnd(ge_lower, le_upper);
+            }
+
+            // Signed index: use signed comparison with proper sign extension
+            auto lower_int =
+                MakeIntegralSigned(info.lower_bound, idx_int.bit_width);
+            auto upper_int =
+                MakeIntegralSigned(info.upper_bound, idx_int.bit_width);
+            const auto& lower_val = AsIntegral(lower_int);
+            const auto& upper_val = AsIntegral(upper_int);
+            auto ge_lower = IntegralGe(idx_int, lower_val, true);
+            auto le_upper = IntegralLe(idx_int, upper_val, true);
+            return IntegralLogicalAnd(ge_lower, le_upper);
+          },
+          [&](const GuardedUseRvalueInfo& info) -> RuntimeValue {
+            if (rv.operands.size() != 1) {
+              throw common::InternalError(
+                  "EvalRvalue", "guarded_use requires exactly 1 operand");
+            }
+            auto validity = EvalOperand(state, rv.operands[0]);
+            if (!IsIntegral(validity)) {
+              throw common::InternalError(
+                  "EvalRvalue", "guarded_use validity must be integral");
+            }
+            const auto& valid_int = AsIntegral(validity);
+
+            // If valid, read from place
+            if (!valid_int.IsZero()) {
+              return ReadPlace(state, info.place);
+            }
+
+            // OOB: return default based on result type
+            return CreateDefaultValue(*types_, info.result_type);
+          },
       },
       rv.info);
 }
@@ -1269,6 +1364,29 @@ void Interpreter::ExecSeverityEffect(
   out << message << "\n";
 }
 
+void Interpreter::ExecGuardedAssign(
+    ProcessState& state, const GuardedAssign& guarded) {
+  // Always evaluate source unconditionally (per spec: only the write is
+  // guarded)
+  auto value = EvalOperand(state, guarded.source);
+
+  // Evaluate validity predicate
+  auto validity = EvalOperand(state, guarded.validity);
+  if (!IsIntegral(validity)) {
+    throw common::InternalError(
+        "ExecGuardedAssign", "validity must be integral");
+  }
+  const auto& valid_int = AsIntegral(validity);
+
+  // If invalid (OOB/X/Z), the write is a no-op
+  if (valid_int.IsZero()) {
+    return;
+  }
+
+  // Valid: perform the assignment
+  StoreToPlace(state, guarded.target, std::move(value));
+}
+
 void Interpreter::ExecInstruction(
     ProcessState& state, const Instruction& inst) {
   std::visit(
@@ -1278,6 +1396,8 @@ void Interpreter::ExecInstruction(
           ExecAssign(state, i);
         } else if constexpr (std::is_same_v<T, Compute>) {
           ExecCompute(state, i);
+        } else if constexpr (std::is_same_v<T, GuardedAssign>) {
+          ExecGuardedAssign(state, i);
         } else if constexpr (std::is_same_v<T, Effect>) {
           ExecEffect(state, i);
         }

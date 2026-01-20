@@ -104,6 +104,9 @@ class Interpreter {
   // Execute Compute instruction
   void ExecCompute(ProcessState& state, const Compute& compute);
 
+  // Execute GuardedAssign instruction
+  void ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded);
+
   // Execute Effect instruction
   void ExecEffect(ProcessState& state, const Effect& effect);
 

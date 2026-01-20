@@ -178,6 +178,10 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           } else if constexpr (std::is_same_v<T, Compute>) {
             *out_ << std::format(
                 "{} = {}\n", FormatPlace(i.target), FormatRvalue(i.value));
+          } else if constexpr (std::is_same_v<T, GuardedAssign>) {
+            *out_ << std::format(
+                "guarded_assign {} = {} if {}\n", FormatPlace(i.target),
+                FormatOperand(i.source), FormatOperand(i.validity));
           } else if constexpr (std::is_same_v<T, Effect>) {
             *out_ << FormatEffect(i.op) << "\n";
           }
@@ -391,6 +395,16 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           },
           [](const SelectRvalueInfo& /*info*/) {
             return std::string("select");
+          },
+          [](const IndexValidityRvalueInfo& info) {
+            return std::format(
+                "index_validity(bounds=[{}, {}], check_known={})",
+                info.lower_bound, info.upper_bound, info.check_known);
+          },
+          [this](const GuardedUseRvalueInfo& info) {
+            return std::format(
+                "guarded_use({}, type={})", FormatPlace(info.place),
+                FormatType(info.result_type));
           },
       },
       rv.info);
