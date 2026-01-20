@@ -1565,150 +1565,137 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
 auto Interpreter::ExecTerminatorSuspend(
     ProcessState& state, const Terminator& term)
     -> std::variant<BasicBlockId, SuspendReason> {
-  switch (term.kind) {
-    case Terminator::Kind::kJump:
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "jump terminator has no target");
-      }
-      return term.targets[0];
+  using Result = std::variant<BasicBlockId, SuspendReason>;
 
-    case Terminator::Kind::kBranch: {
-      if (term.targets.size() != 2) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "branch terminator requires 2 targets");
-      }
-      PlaceId cond_place{static_cast<uint32_t>(term.condition_operand)};
-      auto cond = ReadPlace(state, cond_place);
-      if (!IsIntegral(cond)) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "branch condition must be integral");
-      }
-      const auto& cond_int = AsIntegral(cond);
-      if (!cond_int.IsKnown()) {
-        throw std::runtime_error("branch condition is X/Z");
-      }
-      return cond_int.IsZero() ? term.targets[1] : term.targets[0];
-    }
+  return std::visit(
+      Overloaded{
+          [](const Jump& t) -> Result { return t.target; },
 
-    case Terminator::Kind::kSwitch: {
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "switch terminator has no targets");
-      }
-      PlaceId selector_place{static_cast<uint32_t>(term.condition_operand)};
-      auto selector = ReadPlace(state, selector_place);
-      if (!IsIntegral(selector)) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "switch selector must be integral");
-      }
-      const auto& sel_int = AsIntegral(selector);
-      if (!sel_int.IsKnown()) {
-        return term.targets.back();
-      }
-      uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
-      if (val >= term.targets.size() - 1) {
-        return term.targets.back();
-      }
-      return term.targets[static_cast<size_t>(val)];
-    }
-
-    case Terminator::Kind::kFinish: {
-      if (term.termination_info) {
-        const auto& info = *term.termination_info;
-        std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-
-        if (info.kind == TerminationKind::kFatal) {
-          if (info.level >= 1) {
-            out << "fatal: ";
-            if (!info.message_args.empty()) {
-              std::vector<TypedValue> typed_args;
-              typed_args.reserve(info.message_args.size());
-              for (const auto& arg : info.message_args) {
-                TypeId type = TypeOfOperand(arg, *arena_, *types_);
-                RuntimeValue value = EvalOperand(state, arg);
-                typed_args.push_back(
-                    TypedValue{.value = std::move(value), .type = type});
-              }
-              FormatContext ctx{};
-              std::string message =
-                  FormatMessage(typed_args, 'd', *types_, ctx);
-              out << message;
+          [&](const Branch& t) -> Result {
+            auto cond = ReadPlace(state, t.condition);
+            if (!IsIntegral(cond)) {
+              throw common::InternalError(
+                  "ExecTerminatorSuspend", "branch condition must be integral");
             }
-            out << "\n";
-          }
-        } else if (info.level >= 1) {
-          const char* name = nullptr;
-          switch (info.kind) {
-            case TerminationKind::kFinish:
-              name = "$finish";
-              break;
-            case TerminationKind::kStop:
-              name = "$stop";
-              break;
-            case TerminationKind::kFatal:
-              name = "$fatal";
-              break;
-            case TerminationKind::kExit:
-              name = "$exit";
-              break;
-          }
-          out << name << " called at time 0\n";
-        }
-      }
-      return SuspendReason{SuspendFinished{}};
-    }
+            const auto& cond_int = AsIntegral(cond);
+            if (!cond_int.IsKnown()) {
+              throw std::runtime_error("branch condition is X/Z");
+            }
+            return cond_int.IsZero() ? t.else_target : t.then_target;
+          },
 
-    case Terminator::Kind::kReturn:
-      return SuspendReason{SuspendFinished{}};
+          [&](const Switch& t) -> Result {
+            if (t.targets.empty()) {
+              throw common::InternalError(
+                  "ExecTerminatorSuspend", "switch terminator has no targets");
+            }
+            auto selector = ReadPlace(state, t.selector);
+            if (!IsIntegral(selector)) {
+              throw common::InternalError(
+                  "ExecTerminatorSuspend", "switch selector must be integral");
+            }
+            const auto& sel_int = AsIntegral(selector);
+            if (!sel_int.IsKnown()) {
+              return t.targets.back();
+            }
+            uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
+            if (val >= t.targets.size() - 1) {
+              return t.targets.back();
+            }
+            return t.targets[static_cast<size_t>(val)];
+          },
 
-    case Terminator::Kind::kDelay: {
-      // condition_operand holds the delay amount as a PlaceId
-      // targets[0] is the resume block
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "delay terminator has no resume target");
-      }
-      uint64_t ticks = 1;  // Default to 1 tick if no operand
-      if (term.condition_operand >= 0) {
-        PlaceId delay_place{static_cast<uint32_t>(term.condition_operand)};
-        auto delay_val = ReadPlace(state, delay_place);
-        if (IsIntegral(delay_val)) {
-          const auto& delay_int = AsIntegral(delay_val);
-          if (delay_int.IsKnown() && !delay_int.value.empty()) {
-            ticks = delay_int.value[0];
-          }
-        }
-      }
-      return SuspendReason{SuspendDelay{
-          .ticks = ticks,
-          .resume_block = term.targets[0],
-      }};
-    }
+          [&](const QualifiedDispatch& t) -> Result {
+            // Same logic as ExecTerminator - find first true condition
+            size_t first_true_index = t.conditions.size();
+            for (size_t i = 0; i < t.conditions.size(); ++i) {
+              auto cond = ReadPlace(state, t.conditions[i]);
+              if (!IsIntegral(cond)) {
+                throw common::InternalError(
+                    "ExecTerminatorSuspend",
+                    "QualifiedDispatch condition must be integral");
+              }
+              const auto& cond_int = AsIntegral(cond);
+              if (!cond_int.IsKnown()) {
+                throw std::runtime_error("QualifiedDispatch condition is X/Z");
+              }
+              if (!cond_int.IsZero() &&
+                  first_true_index == t.conditions.size()) {
+                first_true_index = i;
+              }
+            }
+            if (first_true_index < t.conditions.size()) {
+              return t.targets[first_true_index];
+            }
+            return t.targets.back();
+          },
 
-    case Terminator::Kind::kWait: {
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "wait terminator has no resume target");
-      }
-      return SuspendReason{SuspendWait{
-          .resume_block = term.targets[0],
-      }};
-    }
+          [](const Delay& /*t*/) -> Result {
+            throw common::InternalError(
+                "ExecTerminatorSuspend",
+                "delay terminator requires runtime/scheduler");
+          },
 
-    case Terminator::Kind::kRepeat: {
-      if (term.targets.empty()) {
-        throw common::InternalError(
-            "ExecTerminatorSuspend", "repeat terminator has no resume target");
-      }
-      return SuspendReason{SuspendRepeat{
-          .resume_block = term.targets[0],
-      }};
-    }
-  }
+          [](const Wait& /*t*/) -> Result {
+            throw common::InternalError(
+                "ExecTerminatorSuspend",
+                "wait terminator requires runtime/scheduler");
+          },
 
-  throw common::InternalError(
-      "ExecTerminatorSuspend", "unknown terminator kind");
+          [](const Return& /*t*/) -> Result {
+            return SuspendReason{SuspendFinished{}};
+          },
+
+          [&](const Finish& t) -> Result {
+            std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+            if (t.kind == TerminationKind::kFatal) {
+              if (t.level >= 1) {
+                out << "fatal: ";
+                if (!t.message_args.empty()) {
+                  std::vector<TypedValue> typed_args;
+                  typed_args.reserve(t.message_args.size());
+                  for (const auto& arg : t.message_args) {
+                    TypeId type = TypeOfOperand(arg, *arena_, *types_);
+                    RuntimeValue value = EvalOperand(state, arg);
+                    typed_args.push_back(
+                        TypedValue{.value = std::move(value), .type = type});
+                  }
+                  FormatContext ctx{};
+                  std::string message =
+                      FormatMessage(typed_args, 'd', *types_, ctx);
+                  out << message;
+                }
+                out << "\n";
+              }
+            } else if (t.level >= 1) {
+              const char* name = nullptr;
+              switch (t.kind) {
+                case TerminationKind::kFinish:
+                  name = "$finish";
+                  break;
+                case TerminationKind::kStop:
+                  name = "$stop";
+                  break;
+                case TerminationKind::kFatal:
+                  name = "$fatal";
+                  break;
+                case TerminationKind::kExit:
+                  name = "$exit";
+                  break;
+              }
+              out << name << " called at time 0\n";
+            }
+            return SuspendReason{SuspendFinished{}};
+          },
+
+          [](const Repeat& /*t*/) -> Result {
+            throw common::InternalError(
+                "ExecTerminatorSuspend",
+                "repeat terminator requires runtime/scheduler");
+          },
+      },
+      term);
 }
 
 auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
