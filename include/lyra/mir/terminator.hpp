@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/mir/handle.hpp"
@@ -9,6 +9,63 @@
 
 namespace lyra::mir {
 
+// Unconditional jump to a single target.
+struct Jump {
+  BasicBlockId target;
+};
+
+// Conditional branch based on a boolean condition.
+struct Branch {
+  PlaceId condition;
+  BasicBlockId then_target;
+  BasicBlockId else_target;
+};
+
+// Multi-way switch based on selector value.
+struct Switch {
+  PlaceId selector;
+  std::vector<BasicBlockId> targets;  // Index targets + default (last)
+};
+
+// Qualifier for QualifiedDispatch terminator (unique/unique0).
+// Priority uses regular branch cascade, not QualifiedDispatch.
+enum class DispatchQualifier : uint8_t {
+  kUnique,   // Warn on overlap AND no-match (unless has_else)
+  kUnique0,  // Warn on overlap only
+};
+
+// Source statement kind for QualifiedDispatch (affects warning messages).
+enum class DispatchStatementKind : uint8_t {
+  kIf,    // "unique if" / "unique0 if"
+  kCase,  // "unique case" / "unique0 case"
+};
+
+// Multi-condition dispatch with unique/unique0 semantics.
+// All conditions are pre-evaluated before the dispatch decision.
+// Semantic contract:
+// 1. Count how many conditions are true
+// 2. If count > 1: emit overlap warning
+// 3. If count == 0 AND !has_else AND qualifier == kUnique: emit no-match
+// warning
+// 4. Dispatch to first true condition's target (or else target if none true)
+struct QualifiedDispatch {
+  DispatchQualifier qualifier;
+  DispatchStatementKind statement_kind;
+  std::vector<PlaceId> conditions;    // Pre-evaluated condition results
+  std::vector<BasicBlockId> targets;  // One per condition + else (last)
+  bool has_else;                      // Suppresses no-match warning for kUnique
+};
+
+// Time delay suspension (requires scheduler).
+struct Delay {};
+
+// Event wait suspension (requires scheduler).
+struct Wait {};
+
+// Return from function.
+struct Return {};
+
+// Kind of simulation termination.
 enum class TerminationKind : uint8_t {
   kFinish,  // normal termination ($finish)
   kFatal,   // error termination ($fatal - non-zero exit)
@@ -16,37 +73,19 @@ enum class TerminationKind : uint8_t {
   kExit,    // normal termination ($exit - synonym for $finish)
 };
 
-struct TerminationInfo {
+// Simulation termination ($finish, $fatal, $stop, $exit).
+struct Finish {
   TerminationKind kind;
   int level;  // 0 = silent, 1 = print time, 2 = print time+stats
   std::vector<Operand> message_args;  // For $fatal message (if any)
 };
 
-struct Terminator {
-  enum class Kind {
-    // Control
-    kJump,
-    kBranch,
-    kSwitch,
+// Repeat loop back to entry block (requires scheduler).
+struct Repeat {};
 
-    // Suspension
-    kDelay,
-    kWait,
-
-    // Completion
-    kReturn,
-    kFinish,
-    kRepeat,
-  };
-
-  Kind kind;
-
-  // Generic fields; exact payloads can be refined later
-  std::vector<BasicBlockId> targets;  // successors or resume targets
-  int condition_operand;              // for branch/switch (opaque handle)
-
-  // Only valid for kFinish terminator
-  std::optional<TerminationInfo> termination_info;
-};
+// Terminator variant - each terminator kind has its own payload.
+using Terminator = std::variant<
+    Jump, Branch, Switch, QualifiedDispatch, Delay, Wait, Return, Finish,
+    Repeat>;
 
 }  // namespace lyra::mir

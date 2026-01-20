@@ -28,6 +28,15 @@ enum class StatementKind {
   kReturn,
 };
 
+// unique/unique0/priority qualifier for if and case statements
+// (LRM 12.4.2, 12.5.3)
+enum class UniquePriorityCheck : uint8_t {
+  kNone,      // No qualifier - standard short-circuit behavior
+  kUnique,    // unique: warn on multiple matches OR no match
+  kUnique0,   // unique0: warn on multiple matches only (no-match is OK)
+  kPriority,  // priority: warn on no match only (multiple matches OK)
+};
+
 struct BlockStatementData {
   std::vector<StatementId> statements;
 
@@ -59,6 +68,7 @@ struct ConditionalStatementData {
   ExpressionId condition;
   StatementId then_branch;
   std::optional<StatementId> else_branch;
+  UniquePriorityCheck check = UniquePriorityCheck::kNone;
 
   auto operator==(const ConditionalStatementData&) const -> bool = default;
 };
@@ -81,6 +91,7 @@ struct CaseStatementData {
   std::vector<CaseItem> items;
   std::optional<StatementId> default_statement;
   CaseCondition condition = CaseCondition::kNormal;
+  UniquePriorityCheck check = UniquePriorityCheck::kNone;
 
   auto operator==(const CaseStatementData&) const -> bool = default;
 };

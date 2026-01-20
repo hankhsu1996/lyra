@@ -1,6 +1,8 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 
 #include <cassert>
+#include <type_traits>
+#include <variant>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/basic_block.hpp"
@@ -166,13 +168,7 @@ void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
 }
 
 void MirBuilder::EmitJump(BlockIndex target) {
-  SealCurrentBlock(
-      mir::Terminator{
-          .kind = mir::Terminator::Kind::kJump,
-          .targets = {mir::BasicBlockId{target.value}},
-          .condition_operand = 0,
-          .termination_info = std::nullopt,
-      });
+  SealCurrentBlock(mir::Jump{.target = mir::BasicBlockId{target.value}});
 }
 
 void MirBuilder::EmitBranch(
@@ -184,45 +180,95 @@ void MirBuilder::EmitBranch(
   auto cond_place = std::get<mir::PlaceId>(cond.payload);
 
   SealCurrentBlock(
-      mir::Terminator{
-          .kind = mir::Terminator::Kind::kBranch,
-          .targets =
-              {mir::BasicBlockId{then_bb.value},
-               mir::BasicBlockId{else_bb.value}},
-          .condition_operand = static_cast<int>(cond_place.value),
-          .termination_info = std::nullopt,
+      mir::Branch{
+          .condition = cond_place,
+          .then_target = mir::BasicBlockId{then_bb.value},
+          .else_target = mir::BasicBlockId{else_bb.value},
+      });
+}
+
+void MirBuilder::EmitQualifiedDispatch(
+    mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
+    const std::vector<mir::PlaceId>& conditions,
+    const std::vector<BlockIndex>& targets, bool has_else) {
+  // Validate invariant: targets = one per condition + else fallthrough
+  if (targets.size() != conditions.size() + 1) {
+    throw common::InternalError(
+        "EmitQualifiedDispatch",
+        "targets.size() must equal conditions.size() + 1");
+  }
+
+  std::vector<mir::BasicBlockId> bb_targets;
+  bb_targets.reserve(targets.size());
+  for (const auto& target : targets) {
+    bb_targets.push_back(mir::BasicBlockId{target.value});
+  }
+
+  SealCurrentBlock(
+      mir::QualifiedDispatch{
+          .qualifier = qualifier,
+          .statement_kind = statement_kind,
+          .conditions = conditions,
+          .targets = std::move(bb_targets),
+          .has_else = has_else,
       });
 }
 
 void MirBuilder::EmitReturn() {
-  SealCurrentBlock(
-      mir::Terminator{
-          .kind = mir::Terminator::Kind::kReturn,
-          .targets = {},
-          .condition_operand = 0,
-          .termination_info = std::nullopt,
-      });
+  SealCurrentBlock(mir::Return{});
 }
 
 void MirBuilder::EmitRepeat() {
-  SealCurrentBlock(
-      mir::Terminator{
-          .kind = mir::Terminator::Kind::kRepeat,
-          .targets = {},
-          .condition_operand = 0,
-          .termination_info = std::nullopt,
-      });
+  SealCurrentBlock(mir::Repeat{});
 }
 
-void MirBuilder::EmitTerminate(std::optional<mir::TerminationInfo> info) {
-  SealCurrentBlock(
-      mir::Terminator{
-          .kind = mir::Terminator::Kind::kFinish,
-          .targets = {},
-          .condition_operand = 0,
-          .termination_info = info,
-      });
+void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
+  if (info) {
+    SealCurrentBlock(*std::move(info));
+  } else {
+    SealCurrentBlock(
+        mir::Finish{
+            .kind = mir::TerminationKind::kFinish,
+            .level = 0,
+            .message_args = {},
+        });
+  }
 }
+
+namespace {
+
+// Helper to validate terminator targets are in-range.
+void ValidateTerminatorTargets(const mir::Terminator& term, size_t num_blocks) {
+  auto check_target = [num_blocks](mir::BasicBlockId target) {
+    if (target.value >= num_blocks) {
+      throw common::InternalError(
+          "MirBuilder", "terminator target out of bounds");
+    }
+  };
+
+  std::visit(
+      [&](const auto& t) {
+        using T = std::decay_t<decltype(t)>;
+        if constexpr (std::is_same_v<T, mir::Jump>) {
+          check_target(t.target);
+        } else if constexpr (std::is_same_v<T, mir::Branch>) {
+          check_target(t.then_target);
+          check_target(t.else_target);
+        } else if constexpr (std::is_same_v<T, mir::Switch>) {
+          for (const auto& target : t.targets) {
+            check_target(target);
+          }
+        } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
+          for (const auto& target : t.targets) {
+            check_target(target);
+          }
+        }
+        // Delay, Wait, Return, Finish, Repeat have no targets
+      },
+      term);
+}
+
+}  // namespace
 
 auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
   if (finished_) {
@@ -234,12 +280,7 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
     if (!bb.terminator.has_value()) {
       throw common::InternalError("MirBuilder", "block has no terminator");
     }
-    for (const auto& target : bb.terminator->targets) {
-      if (target.value >= blocks_.size()) {
-        throw common::InternalError(
-            "MirBuilder", "terminator target out of bounds");
-      }
-    }
+    ValidateTerminatorTargets(*bb.terminator, blocks_.size());
   }
 
   finished_ = true;

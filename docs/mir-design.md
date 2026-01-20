@@ -19,6 +19,8 @@ Guiding question when designing MIR:
 
 MIR is correct when execution behavior is no longer inferable, only executable.
 
+"Executable" means semantics are fully determined, not that constructs are expanded into implementation patterns. Language-level constructs with specific control-flow or diagnostic semantics should remain first-class MIR concepts. Implementation strategies—boolean materialization, temporary allocation, branch structuring—belong in backend lowering, not HIR-to-MIR.
+
 ## MIR Interpreter Scope
 
 The MIR interpreter is a **process-local reference executor**. It executes a single process on an already-constructed MIR Design (no elaboration, no scheduling).
@@ -46,6 +48,7 @@ These are hard rules, not guidelines:
 | No frontend object dependencies         | No AST pointers; no slang lifetime leakage              |
 | No LLVM/ABI details                     | Platform-independent; backends handle lowering          |
 | No scheduling or execution policy       | Runtime strategy is backend responsibility              |
+| Semantic constructs are first-class     | Language control-flow semantics become MIR primitives   |
 
 ## Structure
 
@@ -224,15 +227,18 @@ Not expanded into a loop at MIR level. Backend decides the implementation strate
 
 ## What MIR Does NOT Contain
 
-| Excluded             | Belongs in     |
-| -------------------- | -------------- |
-| LLVM instructions    | LLVM lowering  |
-| ABI details          | Backend        |
-| Scheduling/queues    | Runtime        |
-| Pointer arithmetic   | Backend        |
-| Frontend pointers    | Never          |
-| SSA/phi nodes        | LLVM if needed |
-| Elaborated instances | Runtime        |
+| Excluded                   | Belongs in     |
+| -------------------------- | -------------- |
+| LLVM instructions          | LLVM lowering  |
+| ABI details                | Backend        |
+| Scheduling/queues          | Runtime        |
+| Pointer arithmetic         | Backend        |
+| Frontend pointers          | Never          |
+| SSA/phi nodes              | LLVM if needed |
+| Elaborated instances       | Runtime        |
+| Synthesized implementation | Backend        |
+
+"Synthesized implementation" means expanding a semantic construct into a pattern of primitives. If a language feature has specific evaluation or diagnostic rules, those rules should be expressed as MIR metadata or a dedicated construct—not as a procedural recipe of boolean operations, temporaries, and branches.
 
 ## Invariants
 
@@ -261,6 +267,12 @@ These must hold for well-formed MIR:
 - `initial` and `always` are normalized before MIR
 - Looping behavior expressed via process semantics, not control-flow expansion
 - Functions cannot suspend; only Processes may use Delay/Wait
+
+**Abstraction Level:**
+
+- Language constructs with specific semantics remain first-class MIR concepts
+- Implementation strategy is backend responsibility, not HIR-to-MIR lowering
+- MIR expresses intent declaratively; backends choose how to implement
 
 **Error Policy:**
 

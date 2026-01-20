@@ -46,19 +46,3 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
-
-# MIR full suite - all tests except timing/scheduling
-# Tagged manual: legacy tests, not part of CI gate yet
-cc_test(
-    name = "mir_full_tests",
-    srcs = ["framework/sv_feature_tests.cpp"],
-    args = ["--suite=mir_full"],
-    data = [
-        "suites.yaml",
-    ] + glob(["sv_features/**/*.yaml"]),
-    tags = ["manual"],
-    deps = [
-        ":test_framework",
-        "@googletest//:gtest",
-    ],
-)

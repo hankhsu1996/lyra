@@ -20,16 +20,17 @@ auto LowerFunctionBody(
     const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::Function {
   Context ctx{
       .mir_arena = &mir_arena,
-      .hir_arena = &input.hir_arena,
-      .type_arena = &input.type_arena,
-      .constant_arena = &input.constant_arena,
-      .symbol_table = &input.symbol_table,
+      .hir_arena = input.hir_arena,
+      .type_arena = input.type_arena,
+      .constant_arena = input.constant_arena,
+      .symbol_table = input.symbol_table,
       .module_places = &module_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .bit_type = input.bit_type,
       .offset_type = input.offset_type,
+      .string_type = input.string_type,
       .symbol_to_mir_function = &symbol_to_mir_function,
       .return_place = mir::kInvalidPlaceId,
   };
@@ -39,14 +40,14 @@ auto LowerFunctionBody(
   builder.SetCurrentBlock(entry_idx);
 
   // Reserve local 0 for return value (non-void only)
-  const Type& ret_type = input.type_arena[function.return_type];
+  const Type& ret_type = (*input.type_arena)[function.return_type];
   if (ret_type.Kind() != TypeKind::kVoid) {
     ctx.return_place = ctx.AllocLocal(function.symbol, function.return_type);
   }
 
   // Allocate parameters as locals
   for (SymbolId param : function.parameters) {
-    const Symbol& sym = input.symbol_table[param];
+    const Symbol& sym = (*input.symbol_table)[param];
     ctx.AllocLocal(param, sym.type);
   }
 
@@ -121,7 +122,7 @@ auto LowerModule(
   int next_module_slot = 0;
 
   for (SymbolId var_sym : module.variables) {
-    const Symbol& sym = input.symbol_table[var_sym];
+    const Symbol& sym = (*input.symbol_table)[var_sym];
     mir::Place place{
         .root =
             mir::PlaceRoot{
@@ -140,7 +141,7 @@ auto LowerModule(
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
   for (hir::FunctionId hir_func_id : module.functions) {
-    const hir::Function& hir_func = input.hir_arena[hir_func_id];
+    const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     // Reserve the mir::FunctionId
     mir::FunctionId mir_func_id = mir_arena.ReserveFunction();
@@ -151,7 +152,7 @@ auto LowerModule(
 
   // Phase 2: Lower function bodies (map is complete, recursion works)
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
-    const hir::Function& hir_func = input.hir_arena[hir_func_id];
+    const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     mir::Function mir_func = LowerFunctionBody(
         hir_func, input, mir_arena, module_places, symbol_to_mir_function);
@@ -161,7 +162,7 @@ auto LowerModule(
 
   // Phase 3: Lower processes (can reference functions)
   for (hir::ProcessId proc_id : module.processes) {
-    const hir::Process& hir_process = input.hir_arena[proc_id];
+    const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     mir::ProcessId mir_proc_id = LowerProcess(
         hir_process, input, mir_arena, module_places, symbol_to_mir_function);
     result.processes.push_back(mir_proc_id);

@@ -13,13 +13,14 @@
 namespace lyra::lowering::hir_to_mir {
 
 struct LoweringInput {
-  const hir::Design& design;
-  const hir::Arena& hir_arena;
-  const TypeArena& type_arena;
-  const ConstantArena& constant_arena;
-  const SymbolTable& symbol_table;
+  const hir::Design* design = nullptr;
+  const hir::Arena* hir_arena = nullptr;
+  const TypeArena* type_arena = nullptr;
+  const ConstantArena* constant_arena = nullptr;
+  const SymbolTable* symbol_table = nullptr;
   TypeId bit_type;     // 1-bit 2-state for bool results
   TypeId offset_type;  // 32-bit 2-state unsigned for offset arithmetic
+  TypeId string_type;  // string type for warning messages
 };
 
 struct LoweringResult {

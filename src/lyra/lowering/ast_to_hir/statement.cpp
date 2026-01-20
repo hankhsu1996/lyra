@@ -250,6 +250,23 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
+      // Map slang check to HIR check
+      hir::UniquePriorityCheck hir_check = hir::UniquePriorityCheck::kNone;
+      switch (cond_stmt.check) {
+        case slang::ast::UniquePriorityCheck::None:
+          hir_check = hir::UniquePriorityCheck::kNone;
+          break;
+        case slang::ast::UniquePriorityCheck::Unique:
+          hir_check = hir::UniquePriorityCheck::kUnique;
+          break;
+        case slang::ast::UniquePriorityCheck::Unique0:
+          hir_check = hir::UniquePriorityCheck::kUnique0;
+          break;
+        case slang::ast::UniquePriorityCheck::Priority:
+          hir_check = hir::UniquePriorityCheck::kPriority;
+          break;
+      }
+
       hir::ExpressionId condition =
           LowerExpression(*cond_stmt.conditions[0].expr, registrar, ctx);
       if (!condition) {
@@ -286,7 +303,8 @@ auto LowerStatement(
               .data = hir::ConditionalStatementData{
                   .condition = condition,
                   .then_branch = then_branch,
-                  .else_branch = else_branch}});
+                  .else_branch = else_branch,
+                  .check = hir_check}});
     }
 
     case StatementKind::Case: {
@@ -309,9 +327,22 @@ auto LowerStatement(
               span, "case inside not yet supported (range matching)");
           return hir::kInvalidStatementId;
       }
-      if (case_stmt.check != slang::ast::UniquePriorityCheck::None) {
-        ctx->sink->Error(span, "unique/priority case not yet supported");
-        return hir::kInvalidStatementId;
+
+      // Map slang check to HIR check
+      hir::UniquePriorityCheck hir_check = hir::UniquePriorityCheck::kNone;
+      switch (case_stmt.check) {
+        case slang::ast::UniquePriorityCheck::None:
+          hir_check = hir::UniquePriorityCheck::kNone;
+          break;
+        case slang::ast::UniquePriorityCheck::Unique:
+          hir_check = hir::UniquePriorityCheck::kUnique;
+          break;
+        case slang::ast::UniquePriorityCheck::Unique0:
+          hir_check = hir::UniquePriorityCheck::kUnique0;
+          break;
+        case slang::ast::UniquePriorityCheck::Priority:
+          hir_check = hir::UniquePriorityCheck::kPriority;
+          break;
       }
 
       hir::ExpressionId selector =
@@ -364,7 +395,8 @@ auto LowerStatement(
                   .selector = selector,
                   .items = std::move(items),
                   .default_statement = default_statement,
-                  .condition = hir_condition}});
+                  .condition = hir_condition,
+                  .check = hir_check}});
     }
 
     case StatementKind::ForLoop: {

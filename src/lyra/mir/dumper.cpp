@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <format>
+#include <type_traits>
 #include <variant>
 
 #include "lyra/common/overloaded.hpp"
@@ -18,51 +19,80 @@ namespace lyra::mir {
 namespace {
 
 auto FormatTerminator(const Terminator& term) -> std::string {
-  switch (term.kind) {
-    case Terminator::Kind::kJump:
-      if (!term.targets.empty()) {
-        return std::format("jump bb{}", term.targets[0].value);
-      }
-      return "jump <?>)";
-    case Terminator::Kind::kBranch:
-      if (term.targets.size() >= 2) {
-        return std::format(
-            "branch bb{}, bb{}", term.targets[0].value, term.targets[1].value);
-      }
-      return "branch <?>";
-    case Terminator::Kind::kSwitch:
-      return "switch";
-    case Terminator::Kind::kDelay:
-      return "delay";
-    case Terminator::Kind::kWait:
-      return "wait";
-    case Terminator::Kind::kReturn:
-      return "return";
-    case Terminator::Kind::kFinish:
-      if (term.termination_info) {
-        const auto& info = *term.termination_info;
-        const char* kind_str = nullptr;
-        switch (info.kind) {
-          case TerminationKind::kFinish:
-            kind_str = "finish";
-            break;
-          case TerminationKind::kStop:
-            kind_str = "stop";
-            break;
-          case TerminationKind::kFatal:
-            kind_str = "fatal";
-            break;
-          case TerminationKind::kExit:
-            kind_str = "exit";
-            break;
+  return std::visit(
+      [](const auto& t) -> std::string {
+        using T = std::decay_t<decltype(t)>;
+        if constexpr (std::is_same_v<T, Jump>) {
+          return std::format("jump bb{}", t.target.value);
+        } else if constexpr (std::is_same_v<T, Branch>) {
+          return std::format(
+              "branch %{} bb{}, bb{}", t.condition.value, t.then_target.value,
+              t.else_target.value);
+        } else if constexpr (std::is_same_v<T, Switch>) {
+          std::string result = std::format("switch %{} [", t.selector.value);
+          for (size_t i = 0; i < t.targets.size(); ++i) {
+            if (i > 0) {
+              result += ", ";
+            }
+            result += std::format("bb{}", t.targets[i].value);
+          }
+          result += "]";
+          return result;
+        } else if constexpr (std::is_same_v<T, QualifiedDispatch>) {
+          const char* qualifier_str =
+              (t.qualifier == DispatchQualifier::kUnique) ? "unique"
+                                                          : "unique0";
+          const char* stmt_str =
+              (t.statement_kind == DispatchStatementKind::kIf) ? "if" : "case";
+          std::string result = std::format("{}_{}(", qualifier_str, stmt_str);
+          for (size_t i = 0; i < t.conditions.size(); ++i) {
+            if (i > 0) {
+              result += ", ";
+            }
+            result += std::format("%{}", t.conditions[i].value);
+          }
+          result += ") -> [";
+          for (size_t i = 0; i < t.targets.size(); ++i) {
+            if (i > 0) {
+              result += ", ";
+            }
+            result += std::format("bb{}", t.targets[i].value);
+          }
+          result += "]";
+          if (t.has_else) {
+            result += " (has_else)";
+          }
+          return result;
+        } else if constexpr (std::is_same_v<T, Delay>) {
+          return "delay";
+        } else if constexpr (std::is_same_v<T, Wait>) {
+          return "wait";
+        } else if constexpr (std::is_same_v<T, Return>) {
+          return "return";
+        } else if constexpr (std::is_same_v<T, Finish>) {
+          const char* kind_str = nullptr;
+          switch (t.kind) {
+            case TerminationKind::kFinish:
+              kind_str = "finish";
+              break;
+            case TerminationKind::kStop:
+              kind_str = "stop";
+              break;
+            case TerminationKind::kFatal:
+              kind_str = "fatal";
+              break;
+            case TerminationKind::kExit:
+              kind_str = "exit";
+              break;
+          }
+          return std::format("terminate({}, {})", kind_str, t.level);
+        } else if constexpr (std::is_same_v<T, Repeat>) {
+          return "repeat";
+        } else {
+          return "<?>";
         }
-        return std::format("terminate({}, {})", kind_str, info.level);
-      }
-      return "finish";
-    case Terminator::Kind::kRepeat:
-      return "repeat";
-  }
-  return "<?>";
+      },
+      term);
 }
 
 }  // namespace

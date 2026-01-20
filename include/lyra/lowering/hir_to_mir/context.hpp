@@ -42,6 +42,7 @@ struct Context {
 
   TypeId bit_type;     // 1-bit 2-state (for bool results)
   TypeId offset_type;  // 32-bit 2-state unsigned (for offset arithmetic)
+  TypeId string_type;  // string type (for warning messages)
 
   // Function-specific: map symbols to MIR function IDs (for call lowering)
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
@@ -65,6 +66,10 @@ struct Context {
 
   [[nodiscard]] auto GetOffsetType() const -> TypeId {
     return offset_type;
+  }
+
+  [[nodiscard]] auto GetStringType() const -> TypeId {
+    return string_type;
   }
 };
 
