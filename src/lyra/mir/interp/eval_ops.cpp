@@ -324,11 +324,12 @@ auto EvalCast(
   bool src_is_signed = IsPackedSigned(source_type, arena);
   uint32_t target_width = PackedBitWidth(target_type, arena);
 
-  if (IsPackedFourState(source_type, arena) ||
-      IsPackedFourState(target_type, arena)) {
+  if (IsPackedFourState(source_type, arena)) {
     throw common::InternalError(
-        "EvalCast", "4-state types should have been rejected at lowering");
+        "EvalCast", "4-state source should have been rejected at lowering");
   }
+  // Note: 4-state target is allowed when source is 2-state (lossless
+  // conversion). The result is still 2-state representation.
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how

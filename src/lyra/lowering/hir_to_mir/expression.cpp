@@ -383,10 +383,8 @@ auto LowerCast(
     throw common::InternalError(
         "LowerCast", "4-state source should have been rejected in AST->HIR");
   }
-  if (IsPackedFourState(tgt, *ctx.type_arena)) {
-    throw common::InternalError(
-        "LowerCast", "4-state target should have been rejected in AST->HIR");
-  }
+  // Note: 4-state target is allowed when source is 2-state (lossless
+  // conversion)
 
   mir::Rvalue rvalue{
       .operands = {operand},
