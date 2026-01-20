@@ -1562,6 +1562,184 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
       term);
 }
 
+auto Interpreter::ExecTerminatorSuspend(
+    ProcessState& state, const Terminator& term)
+    -> std::variant<BasicBlockId, SuspendReason> {
+  switch (term.kind) {
+    case Terminator::Kind::kJump:
+      if (term.targets.empty()) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "jump terminator has no target");
+      }
+      return term.targets[0];
+
+    case Terminator::Kind::kBranch: {
+      if (term.targets.size() != 2) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "branch terminator requires 2 targets");
+      }
+      PlaceId cond_place{static_cast<uint32_t>(term.condition_operand)};
+      auto cond = ReadPlace(state, cond_place);
+      if (!IsIntegral(cond)) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "branch condition must be integral");
+      }
+      const auto& cond_int = AsIntegral(cond);
+      if (!cond_int.IsKnown()) {
+        throw std::runtime_error("branch condition is X/Z");
+      }
+      return cond_int.IsZero() ? term.targets[1] : term.targets[0];
+    }
+
+    case Terminator::Kind::kSwitch: {
+      if (term.targets.empty()) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "switch terminator has no targets");
+      }
+      PlaceId selector_place{static_cast<uint32_t>(term.condition_operand)};
+      auto selector = ReadPlace(state, selector_place);
+      if (!IsIntegral(selector)) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "switch selector must be integral");
+      }
+      const auto& sel_int = AsIntegral(selector);
+      if (!sel_int.IsKnown()) {
+        return term.targets.back();
+      }
+      uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
+      if (val >= term.targets.size() - 1) {
+        return term.targets.back();
+      }
+      return term.targets[static_cast<size_t>(val)];
+    }
+
+    case Terminator::Kind::kFinish: {
+      if (term.termination_info) {
+        const auto& info = *term.termination_info;
+        std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+
+        if (info.kind == TerminationKind::kFatal) {
+          if (info.level >= 1) {
+            out << "fatal: ";
+            if (!info.message_args.empty()) {
+              std::vector<TypedValue> typed_args;
+              typed_args.reserve(info.message_args.size());
+              for (const auto& arg : info.message_args) {
+                TypeId type = TypeOfOperand(arg, *arena_, *types_);
+                RuntimeValue value = EvalOperand(state, arg);
+                typed_args.push_back(
+                    TypedValue{.value = std::move(value), .type = type});
+              }
+              FormatContext ctx{};
+              std::string message =
+                  FormatMessage(typed_args, 'd', *types_, ctx);
+              out << message;
+            }
+            out << "\n";
+          }
+        } else if (info.level >= 1) {
+          const char* name = nullptr;
+          switch (info.kind) {
+            case TerminationKind::kFinish:
+              name = "$finish";
+              break;
+            case TerminationKind::kStop:
+              name = "$stop";
+              break;
+            case TerminationKind::kFatal:
+              name = "$fatal";
+              break;
+            case TerminationKind::kExit:
+              name = "$exit";
+              break;
+          }
+          out << name << " called at time 0\n";
+        }
+      }
+      return SuspendReason{SuspendFinished{}};
+    }
+
+    case Terminator::Kind::kReturn:
+      return SuspendReason{SuspendFinished{}};
+
+    case Terminator::Kind::kDelay: {
+      // condition_operand holds the delay amount as a PlaceId
+      // targets[0] is the resume block
+      if (term.targets.empty()) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "delay terminator has no resume target");
+      }
+      uint64_t ticks = 1;  // Default to 1 tick if no operand
+      if (term.condition_operand >= 0) {
+        PlaceId delay_place{static_cast<uint32_t>(term.condition_operand)};
+        auto delay_val = ReadPlace(state, delay_place);
+        if (IsIntegral(delay_val)) {
+          const auto& delay_int = AsIntegral(delay_val);
+          if (delay_int.IsKnown() && !delay_int.value.empty()) {
+            ticks = delay_int.value[0];
+          }
+        }
+      }
+      return SuspendReason{SuspendDelay{
+          .ticks = ticks,
+          .resume_block = term.targets[0],
+      }};
+    }
+
+    case Terminator::Kind::kWait: {
+      if (term.targets.empty()) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "wait terminator has no resume target");
+      }
+      return SuspendReason{SuspendWait{
+          .resume_block = term.targets[0],
+      }};
+    }
+
+    case Terminator::Kind::kRepeat: {
+      if (term.targets.empty()) {
+        throw common::InternalError(
+            "ExecTerminatorSuspend", "repeat terminator has no resume target");
+      }
+      return SuspendReason{SuspendRepeat{
+          .resume_block = term.targets[0],
+      }};
+    }
+  }
+
+  throw common::InternalError(
+      "ExecTerminatorSuspend", "unknown terminator kind");
+}
+
+auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
+  while (state.status == ProcessStatus::kRunning) {
+    const auto& process = (*arena_)[state.process];
+    const auto& block = process.blocks[state.current_block.value];
+
+    // Execute all instructions in block
+    while (state.instruction_index < block.instructions.size()) {
+      ExecInstruction(state, block.instructions[state.instruction_index]);
+      state.instruction_index++;
+    }
+
+    // Execute terminator
+    auto result = ExecTerminatorSuspend(state, block.terminator);
+
+    if (std::holds_alternative<BasicBlockId>(result)) {
+      // Continue to next block
+      state.current_block = std::get<BasicBlockId>(result);
+      state.instruction_index = 0;
+    } else {
+      // Process suspended
+      state.status = ProcessStatus::kFinished;
+      return std::get<SuspendReason>(result);
+    }
+  }
+
+  // Should not reach here if Run is called on a finished process
+  return SuspendReason{SuspendFinished{}};
+}
+
 auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Module& module)
     -> DesignState {

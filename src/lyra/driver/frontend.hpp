@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <slang/ast/Compilation.h>
 #include <slang/text/SourceManager.h>
@@ -15,5 +16,7 @@ struct ParseResult {
 };
 
 auto LoadFile(const std::string& path) -> std::optional<ParseResult>;
+auto LoadFiles(const std::vector<std::string>& paths)
+    -> std::optional<ParseResult>;
 
 }  // namespace lyra::driver

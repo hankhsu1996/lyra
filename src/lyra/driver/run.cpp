@@ -1,15 +1,19 @@
 #include "run.hpp"
 
 #include <iostream>
+#include <unordered_map>
+#include <variant>
 
 #include <fmt/color.h>
 #include <fmt/core.h>
 
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
+#include "lyra/runtime/engine.hpp"
 
 namespace lyra::driver {
 
@@ -47,8 +51,8 @@ void PrintDiagnostics(const DiagnosticSink& sink) {
 
 }  // namespace
 
-auto RunMir(const std::string& path) -> int {
-  auto parse_result = LoadFile(path);
+auto RunMir(const std::vector<std::string>& files) -> int {
+  auto parse_result = LoadFiles(files);
   if (!parse_result) {
     return 1;
   }
@@ -100,15 +104,81 @@ auto RunMir(const std::string& path) -> int {
       mir_result.mir_arena.get(), hir_result.type_arena.get());
   interp.SetOutput(&std::cout);
 
-  // Run all initial processes in order (synthetic init first, then
-  // user-defined)
-  try {
-    for (mir::ProcessId proc_id : module_info->initial_processes) {
-      auto state = mir::interp::CreateProcessState(
-          *mir_result.mir_arena, *hir_result.type_arena, proc_id,
-          &design_state);
-      interp.Run(state);
+  // Centralized storage for process states (keyed by process_id)
+  std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
+
+  // Create process states for all initial processes
+  for (mir::ProcessId proc_id : module_info->initial_processes) {
+    auto state = mir::interp::CreateProcessState(
+        *mir_result.mir_arena, *hir_result.type_arena, proc_id, &design_state);
+    process_states.emplace(proc_id.value, std::move(state));
+  }
+
+  // Create engine with process runner callback
+  runtime::Engine engine([&](runtime::Engine& eng,
+                             runtime::ProcessHandle handle,
+                             runtime::ResumePoint resume) {
+    // Look up process state
+    auto it = process_states.find(handle.process_id);
+    if (it == process_states.end()) {
+      return;
     }
+    auto& state = it->second;
+
+    // Set resume point
+    state.current_block = mir::BasicBlockId{resume.block_index};
+    state.instruction_index = resume.instruction_index;
+    state.status = mir::interp::ProcessStatus::kRunning;
+
+    // Run until suspend
+    auto reason = interp.RunUntilSuspend(state);
+
+    // Handle suspension
+    std::visit(
+        Overloaded{
+            [](const mir::interp::SuspendFinished&) {
+              // Done, no rescheduling
+            },
+            [&](const mir::interp::SuspendDelay& d) {
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = d.resume_block.value,
+                      .instruction_index = 0},
+                  d.ticks);
+            },
+            [&](const mir::interp::SuspendWait& w) {
+              // TODO(hankhsu): Subscribe to signal triggers
+              // For now, just delay by 1 tick as placeholder
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = w.resume_block.value,
+                      .instruction_index = 0},
+                  1);
+            },
+            [&](const mir::interp::SuspendRepeat& r) {
+              // Reschedule to next time slot
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = r.resume_block.value,
+                      .instruction_index = 0},
+                  1);
+            },
+        },
+        reason);
+  });
+
+  // Schedule all initial processes
+  for (mir::ProcessId proc_id : module_info->initial_processes) {
+    engine.ScheduleInitial(
+        runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+  }
+
+  // Run simulation
+  try {
+    engine.Run();
   } catch (const std::exception& e) {
     fmt::print(
         stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
