@@ -23,6 +23,8 @@ suites:
       - datatypes/arrays.yaml
       - datatypes/dynamic_arrays.yaml
       - datatypes/queues.yaml
+      - datatypes/packed_2d.yaml
+      - datatypes/packed_3d.yaml
       - system_tasks/display.yaml
       - functions/basic.yaml
       - functions/nested_calls.yaml

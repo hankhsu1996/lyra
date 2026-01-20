@@ -19,9 +19,11 @@ Where is the error?
 │   └─ Always InternalError (any error here = compiler bug)
 │
 ├─ Interpreter runtime
-│   ├─ Expected failure (file not found, invalid input)
+│   ├─ Host/runtime failure (I/O, malformed external input)
 │   │   └─ std::runtime_error("message")
-│   └─ Should never happen (invariant violated)
+│   ├─ SV-defined runtime semantics (4-state edge cases)
+│   │   └─ No exception - produce LRM-defined value/update
+│   └─ Invariant violated (should never happen)
 │       └─ InternalError("context", "message")
 │
 ├─ SDK runtime (generated C++ code)
@@ -71,24 +73,42 @@ throw common::InternalError("codegen", "unexpected expression kind");
 - Code path should be unreachable
 - Any error in HIR->MIR or codegen (these stages should never fail)
 
-### std::runtime_error (Runtime Errors)
+### std::runtime_error (Host/Runtime Failures)
 
-For errors during simulation (interpreter or SDK). These occur after compilation
-when source location info is no longer available.
+For failures external to SV semantics during simulation (interpreter or SDK).
+These are host environment or input format issues, not SV language behavior.
 
 ```cpp
 // Interpreter runtime
 throw std::runtime_error("failed to open memory file: " + path);
 
 // SDK runtime (generated C++ code)
-throw std::runtime_error("readmem address out of bounds");
+throw std::runtime_error("invalid hex digit in $readmemh input");
 ```
 
 **Use when:**
 
-- File I/O failures
-- Invalid runtime input (bad hex digit in $readmemh, etc.)
-- Resource exhaustion
+- File I/O failures ($readmemh cannot open file)
+- Malformed external input (bad hex digit in $readmemh data)
+- Resource exhaustion (OOM, allocation failure)
+
+**Do NOT use for SV semantic edge cases** (array OOB, invalid bit select, etc.) -
+those have LRM-defined behavior and should not throw.
+
+### SV-Defined Runtime Semantics (No Exception)
+
+Many "edge cases" in SystemVerilog are not errors - they have LRM-defined behavior
+that the interpreter must implement.
+
+**Examples:**
+
+- Array index out of bounds (read): return X-filled value with correct width
+- Array index out of bounds (write): defined behavior (often no-op or X-propagate)
+- Negative index / bit offset: invalid select → return X with correct width
+- Bit slice exceeds container: invalid select → return X with correct width
+
+**Rule:** If you can point to an LRM rule that defines the result as X/Z/unchanged,
+implement that behavior. Do not throw an exception.
 
 ### std::expected (Shared Code)
 
@@ -178,11 +198,11 @@ assert(expensive_graph_validation() && "graph invariant");
 
 ## Summary Table
 
-| Stage       | User Error            | Compiler Bug    | Runtime Failure      |
-| ----------- | --------------------- | --------------- | -------------------- |
-| AST->HIR    | `DiagnosticException` | `InternalError` | N/A                  |
-| HIR->MIR    | N/A                   | `InternalError` | N/A                  |
-| Codegen     | N/A                   | `InternalError` | N/A                  |
-| Interpreter | N/A                   | `InternalError` | `std::runtime_error` |
-| SDK         | N/A                   | N/A             | `std::runtime_error` |
-| Shared code | N/A                   | N/A             | `std::expected`      |
+| Stage       | User Error            | Compiler Bug    | Host Failure         | SV Semantics |
+| ----------- | --------------------- | --------------- | -------------------- | ------------ |
+| AST->HIR    | `DiagnosticException` | `InternalError` | N/A                  | N/A          |
+| HIR->MIR    | N/A                   | `InternalError` | N/A                  | N/A          |
+| Codegen     | N/A                   | `InternalError` | N/A                  | N/A          |
+| Interpreter | N/A                   | `InternalError` | `std::runtime_error` | No exception |
+| SDK         | N/A                   | N/A             | `std::runtime_error` | No exception |
+| Shared code | N/A                   | N/A             | `std::expected`      | N/A          |

@@ -900,26 +900,6 @@ auto LowerExpression(
 
       // Check if this is a packed array select
       if (value_type.isPackedArray()) {
-        // Guard: reject if result type is a multi-dimensional packed array.
-        // We support selecting to get a simple integral (e.g., `bit[7:0]`),
-        // but not another multi-dimensional packed array (e.g.,
-        // `bit[3:0][7:0]`). For 3D+ packed arrays like `bit[1:0][3:0][7:0]`,
-        // selecting gives `bit[3:0][7:0]` which has element type `bit[7:0]`
-        // (also packed).
-        const slang::ast::Type& result_type = expr.type->getCanonicalType();
-        if (result_type.isPackedArray()) {
-          const auto& result_packed =
-              result_type.as<slang::ast::PackedArrayType>();
-          // Check if the element type is also a packed array (3D+ case)
-          if (result_packed.elementType.isPackedArray()) {
-            ctx->sink->Error(
-                span,
-                "multi-dimensional packed element select not yet supported "
-                "(selecting from 3D+ packed array gives a 2D+ packed result)");
-            return hir::kInvalidExpressionId;
-          }
-        }
-
         hir::ExpressionId base =
             LowerExpression(select.value(), registrar, ctx);
         if (!base) {
@@ -1064,15 +1044,6 @@ auto LowerExpression(
 
       const slang::ast::Type& value_type =
           access.value().type->getCanonicalType();
-      if (!value_type.isUnpackedStruct()) {
-        if (value_type.isStruct()) {
-          ctx->sink->Error(span, "only unpacked structs supported");
-        } else {
-          ctx->sink->Error(
-              span, "member access only supported on struct types");
-        }
-        return hir::kInvalidExpressionId;
-      }
 
       const auto* field = access.member.as_if<slang::ast::FieldSymbol>();
       if (field == nullptr) {
@@ -1085,14 +1056,56 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
-      int field_index = static_cast<int>(field->fieldIndex);
-
       if (expr.type == nullptr) {
         ctx->sink->Error(span, "internal: member access has no resolved type");
         return hir::kInvalidExpressionId;
       }
       TypeId type = LowerType(*expr.type, span, ctx);
       if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      int field_index = static_cast<int>(field->fieldIndex);
+
+      // Handle packed struct field access
+      if (value_type.kind == slang::ast::SymbolKind::PackedStructType ||
+          value_type.getCanonicalType().kind ==
+              slang::ast::SymbolKind::PackedStructType) {
+        // Get packed struct type info to retrieve field offset and width
+        TypeId base_type = LowerType(value_type, span, ctx);
+        if (!base_type) {
+          return hir::kInvalidExpressionId;
+        }
+        const Type& base_type_info = (*ctx->type_arena)[base_type];
+        if (base_type_info.Kind() != TypeKind::kPackedStruct) {
+          ctx->sink->Error(span, "internal: expected packed struct type");
+          return hir::kInvalidExpressionId;
+        }
+        const auto& psi = base_type_info.AsPackedStruct();
+        if (field_index < 0 ||
+            static_cast<size_t>(field_index) >= psi.fields.size()) {
+          ctx->sink->Error(span, "internal: field index out of range");
+          return hir::kInvalidExpressionId;
+        }
+        const auto& field_info = psi.fields[static_cast<size_t>(field_index)];
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kPackedFieldAccess,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::PackedFieldAccessExpressionData{
+                        .base = base,
+                        .field_index = field_index,
+                        .bit_offset = field_info.bit_offset,
+                        .bit_width = field_info.bit_width},
+            });
+      }
+
+      // Handle unpacked struct field access
+      if (!value_type.isUnpackedStruct()) {
+        ctx->sink->Error(span, "member access only supported on struct types");
         return hir::kInvalidExpressionId;
       }
 

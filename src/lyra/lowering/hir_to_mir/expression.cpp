@@ -906,6 +906,37 @@ auto LowerRangeSelect(
   return mir::Operand::Use(slice_place);
 }
 
+auto LowerPackedFieldAccess(
+    const hir::PackedFieldAccessExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // Lower base expression
+  mir::Operand base_operand = LowerExpression(data.base, builder);
+
+  // Get base expression type
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+
+  // Create constant offset operand
+  mir::Operand offset = mir::Operand::Const(
+      MakeIntegralConst(data.bit_offset, ctx.GetOffsetType()));
+
+  // Get base as Place
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  // Create BitRangeProjection (address-only)
+  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+      base_place, mir::Projection{
+                      .info = mir::BitRangeProjection{
+                          .bit_offset = offset,
+                          .width = data.bit_width,
+                          .element_type = expr.type}});
+
+  // Packed field access with constant offset is always valid
+  return mir::Operand::Use(slice_place);
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -963,6 +994,9 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::RangeSelectExpressionData>) {
           return LowerRangeSelect(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::PackedFieldAccessExpressionData>) {
+          return LowerPackedFieldAccess(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

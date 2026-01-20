@@ -31,8 +31,9 @@ enum class ExpressionKind {
   kNewArray,
   kBuiltinMethodCall,
   kPackedElementSelect,
-  kBitSelect,    // x[i] on integral (single bit extraction)
-  kRangeSelect,  // x[a:b] constant range
+  kPackedFieldAccess,  // s.field on packed struct
+  kBitSelect,          // x[i] on integral (single bit extraction)
+  kRangeSelect,        // x[a:b] constant range
 };
 
 struct ConstantExpressionData {
@@ -150,6 +151,16 @@ struct PackedElementSelectExpressionData {
       -> bool = default;
 };
 
+struct PackedFieldAccessExpressionData {
+  ExpressionId base;    // The packed struct value
+  int field_index;      // Index into struct fields
+  uint32_t bit_offset;  // Pre-computed from type (from LSB)
+  uint32_t bit_width;   // Pre-computed from type
+
+  auto operator==(const PackedFieldAccessExpressionData&) const
+      -> bool = default;
+};
+
 struct BitSelectExpressionData {
   ExpressionId base;   // The integral value
   ExpressionId index;  // Bit index
@@ -172,8 +183,8 @@ using ExpressionData = std::variant<
     ElementAccessExpressionData, MemberAccessExpressionData,
     StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
     NewArrayExpressionData, BuiltinMethodCallExpressionData,
-    PackedElementSelectExpressionData, BitSelectExpressionData,
-    RangeSelectExpressionData>;
+    PackedElementSelectExpressionData, PackedFieldAccessExpressionData,
+    BitSelectExpressionData, RangeSelectExpressionData>;
 
 struct Expression {
   ExpressionKind kind;
