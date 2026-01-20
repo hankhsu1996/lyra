@@ -1562,142 +1562,6 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
       term);
 }
 
-auto Interpreter::ExecTerminatorSuspend(
-    ProcessState& state, const Terminator& term)
-    -> std::variant<BasicBlockId, SuspendReason> {
-  using Result = std::variant<BasicBlockId, SuspendReason>;
-
-  return std::visit(
-      Overloaded{
-          [](const Jump& t) -> Result { return t.target; },
-
-          [&](const Branch& t) -> Result {
-            auto cond = ReadPlace(state, t.condition);
-            if (!IsIntegral(cond)) {
-              throw common::InternalError(
-                  "ExecTerminatorSuspend", "branch condition must be integral");
-            }
-            const auto& cond_int = AsIntegral(cond);
-            if (!cond_int.IsKnown()) {
-              throw std::runtime_error("branch condition is X/Z");
-            }
-            return cond_int.IsZero() ? t.else_target : t.then_target;
-          },
-
-          [&](const Switch& t) -> Result {
-            if (t.targets.empty()) {
-              throw common::InternalError(
-                  "ExecTerminatorSuspend", "switch terminator has no targets");
-            }
-            auto selector = ReadPlace(state, t.selector);
-            if (!IsIntegral(selector)) {
-              throw common::InternalError(
-                  "ExecTerminatorSuspend", "switch selector must be integral");
-            }
-            const auto& sel_int = AsIntegral(selector);
-            if (!sel_int.IsKnown()) {
-              return t.targets.back();
-            }
-            uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
-            if (val >= t.targets.size() - 1) {
-              return t.targets.back();
-            }
-            return t.targets[static_cast<size_t>(val)];
-          },
-
-          [&](const QualifiedDispatch& t) -> Result {
-            // Same logic as ExecTerminator - find first true condition
-            size_t first_true_index = t.conditions.size();
-            for (size_t i = 0; i < t.conditions.size(); ++i) {
-              auto cond = ReadPlace(state, t.conditions[i]);
-              if (!IsIntegral(cond)) {
-                throw common::InternalError(
-                    "ExecTerminatorSuspend",
-                    "QualifiedDispatch condition must be integral");
-              }
-              const auto& cond_int = AsIntegral(cond);
-              if (!cond_int.IsKnown()) {
-                throw std::runtime_error("QualifiedDispatch condition is X/Z");
-              }
-              if (!cond_int.IsZero() &&
-                  first_true_index == t.conditions.size()) {
-                first_true_index = i;
-              }
-            }
-            if (first_true_index < t.conditions.size()) {
-              return t.targets[first_true_index];
-            }
-            return t.targets.back();
-          },
-
-          [](const Delay& /*t*/) -> Result {
-            throw common::InternalError(
-                "ExecTerminatorSuspend",
-                "delay terminator requires runtime/scheduler");
-          },
-
-          [](const Wait& /*t*/) -> Result {
-            throw common::InternalError(
-                "ExecTerminatorSuspend",
-                "wait terminator requires runtime/scheduler");
-          },
-
-          [](const Return& /*t*/) -> Result {
-            return SuspendReason{SuspendFinished{}};
-          },
-
-          [&](const Finish& t) -> Result {
-            std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-
-            if (t.kind == TerminationKind::kFatal) {
-              if (t.level >= 1) {
-                out << "fatal: ";
-                if (!t.message_args.empty()) {
-                  std::vector<TypedValue> typed_args;
-                  typed_args.reserve(t.message_args.size());
-                  for (const auto& arg : t.message_args) {
-                    TypeId type = TypeOfOperand(arg, *arena_, *types_);
-                    RuntimeValue value = EvalOperand(state, arg);
-                    typed_args.push_back(
-                        TypedValue{.value = std::move(value), .type = type});
-                  }
-                  FormatContext ctx{};
-                  std::string message =
-                      FormatMessage(typed_args, 'd', *types_, ctx);
-                  out << message;
-                }
-                out << "\n";
-              }
-            } else if (t.level >= 1) {
-              const char* name = nullptr;
-              switch (t.kind) {
-                case TerminationKind::kFinish:
-                  name = "$finish";
-                  break;
-                case TerminationKind::kStop:
-                  name = "$stop";
-                  break;
-                case TerminationKind::kFatal:
-                  name = "$fatal";
-                  break;
-                case TerminationKind::kExit:
-                  name = "$exit";
-                  break;
-              }
-              out << name << " called at time 0\n";
-            }
-            return SuspendReason{SuspendFinished{}};
-          },
-
-          [](const Repeat& /*t*/) -> Result {
-            throw common::InternalError(
-                "ExecTerminatorSuspend",
-                "repeat terminator requires runtime/scheduler");
-          },
-      },
-      term);
-}
-
 auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
   while (state.status == ProcessStatus::kRunning) {
     const auto& process = (*arena_)[state.process];
@@ -1710,21 +1574,20 @@ auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
     }
 
     // Execute terminator
-    auto result = ExecTerminatorSuspend(state, block.terminator);
+    auto next_block = ExecTerminator(state, block.terminator);
 
-    if (std::holds_alternative<BasicBlockId>(result)) {
+    if (next_block) {
       // Continue to next block
-      state.current_block = std::get<BasicBlockId>(result);
+      state.current_block = *next_block;
       state.instruction_index = 0;
     } else {
-      // Process suspended
+      // Process finished (Return or Finish terminator)
       state.status = ProcessStatus::kFinished;
-      return std::get<SuspendReason>(result);
+      return SuspendFinished{};
     }
   }
 
-  // Should not reach here if Run is called on a finished process
-  return SuspendReason{SuspendFinished{}};
+  return SuspendFinished{};
 }
 
 auto CreateDesignState(

@@ -156,14 +156,9 @@ class Interpreter {
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 
   // Execute terminator, return next block or nullopt for completion.
-  // Throws on suspension terminators (use ExecTerminatorSuspend for those).
+  // Throws on suspension terminators (Delay, Wait, Repeat).
   auto ExecTerminator(ProcessState& state, const Terminator& term)
       -> std::optional<BasicBlockId>;
-
-  // Execute terminator, returning suspension reason if it suspends.
-  // Returns nullopt if the terminator transfers to another block.
-  auto ExecTerminatorSuspend(ProcessState& state, const Terminator& term)
-      -> std::variant<BasicBlockId, SuspendReason>;
 
   const Arena* arena_;
   const TypeArena* types_;
