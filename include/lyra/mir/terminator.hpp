@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
 
@@ -18,6 +19,7 @@ enum class TerminationKind : uint8_t {
 struct TerminationInfo {
   TerminationKind kind;
   int level;  // 0 = silent, 1 = print time, 2 = print time+stats
+  std::vector<Operand> message_args;  // For $fatal message (if any)
 };
 
 struct Terminator {

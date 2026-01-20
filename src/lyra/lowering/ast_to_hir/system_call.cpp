@@ -68,6 +68,32 @@ struct LowerVisitor {
         "expressions");
     return hir::kInvalidExpressionId;
   }
+
+  auto operator()(const SeverityFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = ctx->SpanOf(call->sourceRange);
+
+    auto args = LowerArguments(*call, *registrar, ctx);
+    if (!args) {
+      return hir::kInvalidExpressionId;
+    }
+
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::SeveritySystemCallData{
+                .level = info.level, .args = std::move(*args)}});
+  }
+
+  auto operator()(const FatalFunctionInfo& /*info*/) const
+      -> hir::ExpressionId {
+    // $fatal should be handled in statement.cpp, not here.
+    // If we reach here, something is wrong.
+    SourceSpan span = ctx->SpanOf(call->sourceRange);
+    ctx->sink->Error(span, "$fatal should not be used as an expression");
+    return hir::kInvalidExpressionId;
+  }
 };
 
 }  // namespace

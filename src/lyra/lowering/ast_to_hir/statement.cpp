@@ -149,7 +149,76 @@ auto LowerStatement(
                       .span = span,
                       .data =
                           hir::TerminateStatementData{
-                              .kind = kind, .level = level},
+                              .kind = kind, .level = level, .message_args = {}},
+                  });
+            }
+
+            // Handle $fatal - terminating severity message
+            if (std::get_if<FatalFunctionInfo>(&info->payload) != nullptr) {
+              // $fatal([finish_number], [fmt, args...])
+              // LRM signature: first arg is optional finish_number (integer
+              // literal), remaining args are format string and values.
+              //
+              // Disambiguation:
+              // - Integer literal -> level, remaining args are message
+              // - String literal -> format string, level defaults to 1
+              // - Other expression -> error (level must be compile-time
+              // literal)
+              int level = 1;
+              size_t message_start = 0;
+
+              if (!call.arguments().empty()) {
+                const slang::ast::Expression& first_arg = *call.arguments()[0];
+                if (first_arg.kind ==
+                    slang::ast::ExpressionKind::IntegerLiteral) {
+                  // Integer literal: extract as level
+                  const auto& literal =
+                      first_arg.as<slang::ast::IntegerLiteral>();
+                  auto val = literal.getValue();
+                  if (val.hasUnknown()) {
+                    ctx->sink->Error(
+                        span, "$fatal level cannot contain X or Z");
+                    return hir::kInvalidStatementId;
+                  }
+                  level = static_cast<int>(val.as<int>().value());
+                  message_start = 1;
+                } else if (
+                    first_arg.kind ==
+                    slang::ast::ExpressionKind::StringLiteral) {
+                  // String literal: format string, level defaults to 1
+                  message_start = 0;
+                } else if (first_arg.type->isIntegral()) {
+                  // Non-literal integral expression: error
+                  // (could be a level, but we require literals)
+                  ctx->sink->Error(
+                      span, "$fatal level must be a constant integer literal");
+                  return hir::kInvalidStatementId;
+                } else {
+                  // Non-integral, non-string: treat as message arg
+                  message_start = 0;
+                }
+              }
+
+              // Lower remaining arguments as message
+              std::vector<hir::ExpressionId> message_args;
+              for (size_t i = message_start; i < call.arguments().size(); ++i) {
+                hir::ExpressionId arg_id =
+                    LowerExpression(*call.arguments()[i], registrar, ctx);
+                if (!arg_id) {
+                  return hir::kInvalidStatementId;
+                }
+                message_args.push_back(arg_id);
+              }
+
+              return ctx->hir_arena->AddStatement(
+                  hir::Statement{
+                      .kind = hir::StatementKind::kTerminate,
+                      .span = span,
+                      .data =
+                          hir::TerminateStatementData{
+                              .kind = hir::TerminationKind::kFatal,
+                              .level = level,
+                              .message_args = std::move(message_args)},
                   });
             }
           }

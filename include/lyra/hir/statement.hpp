@@ -129,11 +129,13 @@ enum class TerminationKind : uint8_t {
   kFinish,  // $finish - normal termination
   kStop,    // $stop - pause for debugger
   kExit,    // $exit - normal termination (synonym)
+  kFatal,   // $fatal - error termination with message
 };
 
 struct TerminateStatementData {
   TerminationKind kind;
   int level;  // 0 = silent, 1 = print time (default), 2 = print time+stats
+  std::vector<ExpressionId> message_args;  // For $fatal message (if any)
 
   auto operator==(const TerminateStatementData&) const -> bool = default;
 };

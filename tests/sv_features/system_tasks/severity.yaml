@@ -18,7 +18,7 @@ cases:
         x: 2
       stdout:
         contains:
-          - "INFO"
+          - "info"
           - "Info message"
 
   - name: info_no_message
@@ -35,7 +35,7 @@ cases:
         x: 42
       stdout:
         contains:
-          - "INFO"
+          - "info"
 
   # $warning tests - should continue simulation
   - name: warning_basic
@@ -53,7 +53,7 @@ cases:
         x: 2
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "Warning message"
 
   - name: warning_with_format
@@ -71,7 +71,7 @@ cases:
         x: 20
       stdout:
         contains:
-          - "WARNING"
+          - "warning"
           - "Value is 10"
 
   # $error tests - should continue simulation (VCS style)
@@ -90,7 +90,7 @@ cases:
         x: 2
       stdout:
         contains:
-          - "ERROR"
+          - "error"
           - "Error message"
 
   - name: error_with_format
@@ -108,7 +108,7 @@ cases:
         x: 6
       stdout:
         contains:
-          - "ERROR"
+          - "error"
           - "Invalid value: 5"
 
   - name: error_no_message
@@ -125,7 +125,7 @@ cases:
         x: 99
       stdout:
         contains:
-          - "ERROR"
+          - "error"
 
   # $fatal tests - should terminate simulation
   - name: fatal_basic
@@ -143,7 +143,7 @@ cases:
         x: 1
       stdout:
         contains:
-          - "FATAL"
+          - "fatal"
           - "Fatal error"
 
   - name: fatal_no_message
@@ -160,7 +160,7 @@ cases:
         x: 10
       stdout:
         contains:
-          - "FATAL"
+          - "fatal"
 
   - name: fatal_level_0
     sv: |
@@ -189,17 +189,34 @@ cases:
         x: 7
       stdout:
         contains:
-          - "FATAL"
+          - "fatal"
 
-  # Time in output
-  - name: info_with_delay
+  # $fatal with string as first arg (not level) - should treat as message
+  - name: fatal_string_first_arg
     sv: |
       module Test;
         int x;
         initial begin
-          #100;
-          $info("After delay");
+          x = 5;
+          $fatal("Error: %0d", x);
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+      stdout:
+        contains:
+          - "fatal"
+          - "Error: 5"
+
+  # $fatal output should be single line (no time line)
+  - name: fatal_single_line_output
+    sv: |
+      module Test;
+        int x;
+        initial begin
           x = 1;
+          $fatal(1, "Single line");
         end
       endmodule
     expect:
@@ -207,8 +224,10 @@ cases:
         x: 1
       stdout:
         contains:
-          - "INFO"
-          - "100"
+          - "fatal"
+          - "Single line"
+        not_contains:
+          - "called at time"
 
   # Multiple severity calls
   - name: multiple_severities
@@ -230,9 +249,9 @@ cases:
         x: 3
       stdout:
         contains:
-          - "INFO"
+          - "info"
           - "First"
-          - "WARNING"
+          - "warning"
           - "Second"
-          - "ERROR"
+          - "error"
           - "Third"

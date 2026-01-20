@@ -4,6 +4,7 @@
 #include <format>
 #include <variant>
 
+#include "lyra/common/severity.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
@@ -442,6 +443,24 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
               break;
             case PrintRadix::kHex:
               result = effect_op.append_newline ? "$displayh" : "$writeh";
+              break;
+          }
+          for (const Operand& arg : effect_op.args) {
+            result += ", ";
+            result += FormatOperand(arg);
+          }
+          return result;
+        } else if constexpr (std::is_same_v<T, SeverityEffect>) {
+          std::string result;
+          switch (effect_op.level) {
+            case Severity::kInfo:
+              result = "$info";
+              break;
+            case Severity::kWarning:
+              result = "$warning";
+              break;
+            case Severity::kError:
+              result = "$error";
               break;
           }
           for (const Operand& arg : effect_op.args) {
