@@ -185,25 +185,24 @@ auto SelectComparisonOp(
 
   auto mir_op = MapBinaryOp(data.op);
 
-  // Only integral types have signed/unsigned variants
-  if (lhs_type.Kind() != TypeKind::kIntegral ||
-      rhs_type.Kind() != TypeKind::kIntegral) {
+  // Only packed types (kIntegral, kPackedArray) have signed/unsigned variants
+  if (!IsPacked(lhs_type) || !IsPacked(rhs_type)) {
     return mir_op;
   }
 
-  const auto& lhs = lhs_type.AsIntegral();
-  const auto& rhs = rhs_type.AsIntegral();
-  if (lhs.is_signed != rhs.is_signed) {
+  bool lhs_signed = IsPackedSigned(lhs_type, *ctx.type_arena);
+  bool rhs_signed = IsPackedSigned(rhs_type, *ctx.type_arena);
+  if (lhs_signed != rhs_signed) {
     throw common::InternalError(
         "SelectComparisonOp",
         "operand signedness mismatch - missing conversion");
   }
 
-  return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
+  return lhs_signed ? ToSignedVariant(mir_op) : mir_op;
 }
 
 // Select the MIR operator for division/modulo ops.
-// Signed/unsigned variants only apply to integral types.
+// Signed/unsigned variants only apply to packed types.
 auto SelectDivModOp(const hir::BinaryExpressionData& data, const Context& ctx)
     -> mir::BinaryOp {
   const auto& lhs_type = (*ctx.type_arena)[(*ctx.hir_arena)[data.lhs].type];
@@ -211,20 +210,19 @@ auto SelectDivModOp(const hir::BinaryExpressionData& data, const Context& ctx)
 
   auto mir_op = MapBinaryOp(data.op);
 
-  // Only integral types have signed/unsigned variants
-  if (lhs_type.Kind() != TypeKind::kIntegral ||
-      rhs_type.Kind() != TypeKind::kIntegral) {
+  // Only packed types (kIntegral, kPackedArray) have signed/unsigned variants
+  if (!IsPacked(lhs_type) || !IsPacked(rhs_type)) {
     return mir_op;
   }
 
-  const auto& lhs = lhs_type.AsIntegral();
-  const auto& rhs = rhs_type.AsIntegral();
-  if (lhs.is_signed != rhs.is_signed) {
+  bool lhs_signed = IsPackedSigned(lhs_type, *ctx.type_arena);
+  bool rhs_signed = IsPackedSigned(rhs_type, *ctx.type_arena);
+  if (lhs_signed != rhs_signed) {
     throw common::InternalError(
         "SelectDivModOp", "operand signedness mismatch - missing conversion");
   }
 
-  return lhs.is_signed ? ToSignedVariant(mir_op) : mir_op;
+  return lhs_signed ? ToSignedVariant(mir_op) : mir_op;
 }
 
 auto IsIncrementOrDecrement(hir::UnaryOp op) -> bool {
@@ -254,9 +252,9 @@ auto LowerIncrementDecrement(
 
   // 2. Type validation (defensive - Slang already checked)
   const Type& type = (*ctx.type_arena)[expr.type];
-  if (type.Kind() != TypeKind::kIntegral) {
+  if (!IsPacked(type)) {
     throw common::InternalError(
-        "LowerIncrementDecrement", "operand must be integral type");
+        "LowerIncrementDecrement", "operand must be packed type");
   }
 
   // 3. Read old value with OOB handling using GuardedUse
@@ -709,9 +707,6 @@ auto GetOrMaterializePlace(
 // Check if index type is 4-state (has X/Z bits).
 auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
   const Type& type = types[index_type];
-  if (type.Kind() == TypeKind::kIntegral) {
-    return type.AsIntegral().is_four_state;
-  }
   if (IsPacked(type)) {
     return IsPackedFourState(type, types);
   }
