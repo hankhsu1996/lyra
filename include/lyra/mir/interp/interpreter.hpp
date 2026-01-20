@@ -129,7 +129,7 @@ auto CreateProcessState(
 // Info about the initial module to run
 struct InitialModuleInfo {
   const Module* module = nullptr;
-  ProcessId initial_process;
+  std::vector<ProcessId> initial_processes;  // All kOnce processes in order
 };
 
 // Helper: Create DesignState with properly initialized storage.

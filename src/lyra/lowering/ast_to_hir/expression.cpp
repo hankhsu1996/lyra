@@ -134,6 +134,163 @@ auto ConvertBinaryOp(slang::ast::BinaryOperator op)
   return std::nullopt;
 }
 
+auto LowerConstantValueExpression(
+    const slang::ConstantValue& cv, const slang::ast::Type& type,
+    SourceSpan span, Context* ctx) -> hir::ExpressionId {
+  if (cv.isInteger()) {
+    if (!type.isIntegral()) {
+      ctx->sink->Error(span, "unsupported non-integral constant value");
+      return hir::kInvalidExpressionId;
+    }
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) {
+      return hir::kInvalidExpressionId;
+    }
+    ConstId constant = LowerIntegralConstant(cv.integer(), type_id, ctx);
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kConstant,
+            .type = type_id,
+            .span = span,
+            .data = hir::ConstantExpressionData{.constant = constant}});
+  }
+
+  if (cv.isString()) {
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) {
+      return hir::kInvalidExpressionId;
+    }
+    ConstId constant = ctx->constant_arena->Intern(
+        type_id, StringConstant{.value = std::string(cv.str())});
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kConstant,
+            .type = type_id,
+            .span = span,
+            .data = hir::ConstantExpressionData{.constant = constant}});
+  }
+
+  if (cv.isReal() || cv.isShortReal()) {
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) {
+      return hir::kInvalidExpressionId;
+    }
+    double value = cv.isReal() ? static_cast<double>(cv.real())
+                               : static_cast<double>(cv.shortReal());
+    ConstId constant =
+        ctx->constant_arena->Intern(type_id, RealConstant{.value = value});
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kConstant,
+            .type = type_id,
+            .span = span,
+            .data = hir::ConstantExpressionData{.constant = constant}});
+  }
+
+  if (cv.isUnpacked()) {
+    const auto& canonical = type.getCanonicalType();
+    auto elements = cv.elements();
+
+    if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+      const auto& arr = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
+      auto expected_size = arr.range.width();
+      if (elements.size() != expected_size) {
+        ctx->sink->Error(span, "array constant size mismatch");
+        return hir::kInvalidExpressionId;
+      }
+
+      std::vector<hir::ExpressionId> element_ids;
+      element_ids.reserve(elements.size());
+      for (const auto& elem : elements) {
+        hir::ExpressionId elem_id =
+            LowerConstantValueExpression(elem, arr.elementType, span, ctx);
+        if (!elem_id) {
+          return hir::kInvalidExpressionId;
+        }
+        element_ids.push_back(elem_id);
+      }
+
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) {
+        return hir::kInvalidExpressionId;
+      }
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kArrayLiteral,
+              .type = type_id,
+              .span = span,
+              .data = hir::ArrayLiteralExpressionData{
+                  .elements = std::move(element_ids)}});
+    }
+
+    if (canonical.kind == slang::ast::SymbolKind::DynamicArrayType ||
+        canonical.kind == slang::ast::SymbolKind::QueueType) {
+      const slang::ast::Type* element_type =
+          canonical.kind == slang::ast::SymbolKind::DynamicArrayType
+              ? &canonical.as<slang::ast::DynamicArrayType>().elementType
+              : &canonical.as<slang::ast::QueueType>().elementType;
+
+      std::vector<hir::ExpressionId> element_ids;
+      element_ids.reserve(elements.size());
+      for (const auto& elem : elements) {
+        hir::ExpressionId elem_id =
+            LowerConstantValueExpression(elem, *element_type, span, ctx);
+        if (!elem_id) {
+          return hir::kInvalidExpressionId;
+        }
+        element_ids.push_back(elem_id);
+      }
+
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) {
+        return hir::kInvalidExpressionId;
+      }
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kArrayLiteral,
+              .type = type_id,
+              .span = span,
+              .data = hir::ArrayLiteralExpressionData{
+                  .elements = std::move(element_ids)}});
+    }
+
+    if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
+      const auto& struct_type = canonical.as<slang::ast::UnpackedStructType>();
+      auto fields = struct_type.fields;
+      if (elements.size() != fields.size()) {
+        ctx->sink->Error(span, "struct constant size mismatch");
+        return hir::kInvalidExpressionId;
+      }
+
+      std::vector<hir::ExpressionId> field_values;
+      field_values.reserve(elements.size());
+      for (size_t i = 0; i < elements.size(); ++i) {
+        hir::ExpressionId field_id = LowerConstantValueExpression(
+            elements[i], fields[i]->getType(), span, ctx);
+        if (!field_id) {
+          return hir::kInvalidExpressionId;
+        }
+        field_values.push_back(field_id);
+      }
+
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) {
+        return hir::kInvalidExpressionId;
+      }
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kStructLiteral,
+              .type = type_id,
+              .span = span,
+              .data = hir::StructLiteralExpressionData{
+                  .field_values = std::move(field_values)}});
+    }
+  }
+
+  ctx->sink->Error(span, "unsupported constant value type");
+  return hir::kInvalidExpressionId;
+}
+
 }  // namespace
 
 auto LowerExpression(
@@ -253,6 +410,13 @@ auto LowerExpression(
                   .type = type,
                   .span = span,
                   .data = hir::ConstantExpressionData{.constant = constant}});
+        }
+
+        if (cv.isUnpacked()) {
+          if (expr.type == nullptr) {
+            return hir::kInvalidExpressionId;
+          }
+          return LowerConstantValueExpression(cv, *expr.type, span, ctx);
         }
 
         // Unsupported parameter value type - clear error
@@ -852,6 +1016,83 @@ auto LowerExpression(
       bool is_queue = ct.isQueue();
       if (ct.isUnpackedArray() || is_dynamic || is_queue) {
         auto elements = get_elements();
+
+        if (expr.kind == ExpressionKind::StructuredAssignmentPattern &&
+            ct.isUnpackedArray() && !is_dynamic && !is_queue) {
+          const auto& structured =
+              expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+          if (structured.defaultSetter != nullptr &&
+              structured.typeSetters.empty()) {
+            const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
+            auto expected_size = arr.range.width();
+            hir::ExpressionId default_id =
+                LowerExpression(*structured.defaultSetter, registrar, ctx);
+            if (!default_id) {
+              return hir::kInvalidExpressionId;
+            }
+
+            std::vector<hir::ExpressionId> element_ids(
+                expected_size, default_id);
+            for (const auto& setter : structured.indexSetters) {
+              SourceSpan index_span = ctx->SpanOf(setter.index->sourceRange);
+              const auto* index_cv = setter.index->getConstant();
+              if (index_cv == nullptr || !index_cv->isInteger()) {
+                ctx->sink->Error(
+                    index_span,
+                    "array index in assignment pattern must be constant");
+                return hir::kInvalidExpressionId;
+              }
+              const auto& sv_int = index_cv->integer();
+              if (sv_int.hasUnknown()) {
+                ctx->sink->Error(
+                    index_span,
+                    "array index in assignment pattern has unknown bits");
+                return hir::kInvalidExpressionId;
+              }
+              auto maybe_index = sv_int.as<int32_t>();
+              if (!maybe_index) {
+                ctx->sink->Error(
+                    index_span,
+                    "array index in assignment pattern out of range");
+                return hir::kInvalidExpressionId;
+              }
+              int32_t index_value = *maybe_index;
+              if (!arr.range.containsPoint(index_value)) {
+                ctx->sink->Error(
+                    index_span,
+                    "array index in assignment pattern out of range");
+                return hir::kInvalidExpressionId;
+              }
+              int32_t translated = arr.range.translateIndex(index_value);
+              if (translated < 0 ||
+                  static_cast<size_t>(translated) >= element_ids.size()) {
+                ctx->sink->Error(
+                    index_span,
+                    "array index in assignment pattern out of range");
+                return hir::kInvalidExpressionId;
+              }
+
+              hir::ExpressionId value_id =
+                  LowerExpression(*setter.expr, registrar, ctx);
+              if (!value_id) {
+                return hir::kInvalidExpressionId;
+              }
+              element_ids[static_cast<size_t>(translated)] = value_id;
+            }
+
+            TypeId type = LowerType(*expr.type, span, ctx);
+            if (!type) {
+              return hir::kInvalidExpressionId;
+            }
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kArrayLiteral,
+                    .type = type,
+                    .span = span,
+                    .data = hir::ArrayLiteralExpressionData{
+                        .elements = std::move(element_ids)}});
+          }
+        }
 
         // For fixed unpacked arrays: validate size matches
         if (ct.isUnpackedArray() && !is_dynamic && !is_queue) {

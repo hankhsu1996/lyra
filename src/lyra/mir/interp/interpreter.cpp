@@ -1278,14 +1278,19 @@ auto FindInitialModule(const Design& design, const Arena& arena)
     -> std::optional<InitialModuleInfo> {
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
+      // Collect all kOnce processes (initial blocks) in module order
+      std::vector<ProcessId> initial_processes;
       for (ProcessId process_id : module->processes) {
         const auto& process = arena[process_id];
         if (process.kind == ProcessKind::kOnce) {
-          return InitialModuleInfo{
-              .module = module,
-              .initial_process = process_id,
-          };
+          initial_processes.push_back(process_id);
         }
+      }
+      if (!initial_processes.empty()) {
+        return InitialModuleInfo{
+            .module = module,
+            .initial_processes = std::move(initial_processes),
+        };
       }
     }
   }

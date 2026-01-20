@@ -12,8 +12,9 @@ namespace {
 auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
   switch (hir_kind) {
     case hir::ProcessKind::kInitial:
-    case hir::ProcessKind::kFinal:
       return mir::ProcessKind::kOnce;
+    case hir::ProcessKind::kFinal:
+      return mir::ProcessKind::kFinal;
     case hir::ProcessKind::kAlways:
     case hir::ProcessKind::kAlwaysComb:
     case hir::ProcessKind::kAlwaysFf:
@@ -52,10 +53,11 @@ auto LowerProcess(
   LowerStatement(process.body, builder);
 
   mir::ProcessKind mir_kind = ConvertProcessKind(process.kind);
-  if (mir_kind == mir::ProcessKind::kOnce) {
-    builder.EmitTerminate();
-  } else {
+  if (mir_kind == mir::ProcessKind::kLooping) {
     builder.EmitRepeat();
+  } else {
+    // kOnce (initial) and kFinal both terminate after running
+    builder.EmitTerminate();
   }
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();

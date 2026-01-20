@@ -121,8 +121,18 @@ void Dumper::Dump(ProcessId id) {
   const Process& proc = (*arena_)[id];
   PrintIndent();
 
-  const char* kind_str =
-      proc.kind == ProcessKind::kOnce ? "process.once" : "process.loop";
+  const char* kind_str = nullptr;
+  switch (proc.kind) {
+    case ProcessKind::kOnce:
+      kind_str = "process.once";
+      break;
+    case ProcessKind::kFinal:
+      kind_str = "process.final";
+      break;
+    case ProcessKind::kLooping:
+      kind_str = "process.loop";
+      break;
+  }
   *out_ << kind_str << " {\n";
   Indent();
 
