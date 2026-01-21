@@ -197,4 +197,17 @@ auto CreateDesignState(
 auto FindInitialModule(const Design& design, const Arena& arena)
     -> std::optional<InitialModuleInfo>;
 
+// Result of running a simulation
+struct SimulationResult {
+  int exit_code = 0;
+  std::string error_message;
+};
+
+// High-level API: Run simulation with MIR design.
+// Encapsulates all interpreter internals (process states, suspension handling,
+// engine integration). Returns exit code (0 = success).
+auto RunSimulation(
+    const Design& design, const Arena& mir_arena, const TypeArena& types,
+    std::ostream* output = nullptr) -> SimulationResult;
+
 }  // namespace lyra::mir::interp

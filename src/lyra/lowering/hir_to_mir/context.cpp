@@ -2,11 +2,27 @@
 
 #include <cassert>
 #include <format>
+#include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
+  return BuiltinTypes{
+      .bit_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 1, .is_signed = false, .is_four_state = true}),
+      .offset_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = false, .is_four_state = false}),
+      .string_type = arena.Intern(TypeKind::kString, std::monostate{}),
+  };
+}
 
 auto Context::AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId {
   assert(

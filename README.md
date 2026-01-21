@@ -6,7 +6,7 @@
 [![C++ Tidy](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-tidy.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-tidy.yml)
 
 **Lyra** is a SystemVerilog compiler and simulator built around a multi-stage IR pipeline.
-It supports both interpretation and native execution backends, prioritizing fast iteration (compile + run + debug) over peak simulation speed.
+It compiles to LLVM IR for execution, prioritizing fast iteration (compile + run + debug) over peak simulation speed.
 
 ## Build
 
@@ -19,32 +19,24 @@ The `lyra` binary is at `bazel-bin/lyra`.
 
 ## Usage
 
-Lyra uses a project-based workflow with `lyra.toml` configuration files.
-
 ```bash
-lyra init my_project   # Create a new project
-cd my_project
-lyra emit              # Generate C++ files to out/
-lyra build             # Compile to binary (implies emit)
-lyra run               # Run simulation (implies build)
+lyra run [files...]   # Run simulation
 ```
 
-See [docs/cli-design.md](docs/cli-design.md) for configuration options and detailed CLI documentation.
+Lyra can also use `lyra.toml` for project configuration. See [docs/cli-design.md](docs/cli-design.md) for details.
 
 ## Architecture
 
 ```
-                        +---> LIR ---> Interpreter
-                        |
-SV ---> AST ---> MIR ---+
-                        |
-                        +---> C++ ---> Binary
+SV ---> AST ---> HIR ---> MIR ---> LLVM IR ---> executable
 ```
 
 - **AST**: Parsed using [Slang](https://github.com/MikePopoloski/slang)
-- **MIR**: High-level, structure-preserving intermediate representation
-- **LIR**: Linear SSA-style IR for interpreter backend
-- **Codegen**: C++ generation for production use
+- **HIR**: High-level IR preserving SystemVerilog semantics
+- **MIR**: Mid-level IR for execution (Place/Value model, basic blocks)
+- **LLVM IR**: Generated for execution via lli (interpreter) or native compilation
+
+See [docs/architecture.md](docs/architecture.md) for detailed design.
 
 ## Philosophy
 

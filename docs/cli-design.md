@@ -52,15 +52,13 @@ warnings = ["no-unused"]       # Optional: warning control
 
 ## Commands
 
-| Command                  | Description                       |
-| ------------------------ | --------------------------------- |
-| `lyra run`               | Build and run simulation          |
-| `lyra run -i`            | Run with interpreter backend      |
-| `lyra build`             | Generate C++ and compile (no run) |
-| `lyra emit`              | Generate C++ project only         |
-| `lyra check`             | Parse and validate                |
-| `lyra init <name>`       | Create new project                |
-| `lyra dump <fmt> <file>` | Debug: dump IR (cpp, mir, lir)    |
+| Command                   | Description                           |
+| ------------------------- | ------------------------------------- |
+| `lyra run [files]`        | Run simulation (MIR backend, default) |
+| `lyra run --backend=llvm` | Run simulation via LLVM lli           |
+| `lyra dump hir <file>`    | Dump HIR representation               |
+| `lyra dump mir <file>`    | Dump MIR representation               |
+| `lyra dump llvm <file>`   | Dump LLVM IR                          |
 
 Commands can use either `lyra.toml` or CLI arguments (or both).
 
@@ -173,9 +171,9 @@ cmake --build build
 Debug command to inspect internal representations:
 
 ```bash
-lyra dump cpp file.sv   # Generated C++ code
-lyra dump mir file.sv   # MIR (high-level, structured)
-lyra dump lir file.sv   # LIR (low-level, linearized)
+lyra dump hir file.sv   # HIR (high-level IR, close to AST)
+lyra dump mir file.sv   # MIR (mid-level IR, execution semantics)
+lyra dump llvm file.sv  # LLVM IR (for LLVM backend)
 ```
 
 This is the only command that accepts file arguments directly.
@@ -184,12 +182,14 @@ This is the only command that accepts file arguments directly.
 
 Two execution backends:
 
-| Backend     | Path                             | Use Case                    |
-| ----------- | -------------------------------- | --------------------------- |
-| Interpreter | AST -> MIR -> LIR -> Interpreter | Development, debugging      |
-| Codegen     | AST -> MIR -> C++ -> Binary      | Performance, production use |
+| Backend       | Path                        | Use Case              |
+| ------------- | --------------------------- | --------------------- |
+| MIR (default) | AST -> HIR -> MIR -> Interp | Full feature support  |
+| LLVM          | AST -> HIR -> MIR -> LLVM   | Experimental, limited |
 
-Codegen is the default backend. Interpreter is useful for development (no compile step).
+The MIR interpreter is the default backend and supports the full feature set.
+The LLVM backend (`--backend=llvm`) is experimental and has limited feature support.
+It requires `lli` (LLVM interpreter) to be installed.
 
 ## Internal Architecture
 

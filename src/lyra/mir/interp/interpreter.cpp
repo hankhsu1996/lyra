@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -35,6 +36,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/engine.hpp"
 
 namespace lyra::mir::interp {
 
@@ -1816,6 +1818,100 @@ auto FindInitialModule(const Design& design, const Arena& arena)
     }
   }
   return std::nullopt;
+}
+
+auto RunSimulation(
+    const Design& design, const Arena& mir_arena, const TypeArena& types,
+    std::ostream* output) -> SimulationResult {
+  // Find initial module
+  auto module_info = FindInitialModule(design, mir_arena);
+  if (!module_info) {
+    return SimulationResult{
+        .exit_code = 1, .error_message = "no initial process found"};
+  }
+
+  // Create design state
+  auto design_state = CreateDesignState(mir_arena, types, *module_info->module);
+
+  // Create interpreter
+  Interpreter interp(&mir_arena, &types);
+  if (output != nullptr) {
+    interp.SetOutput(output);
+  } else {
+    interp.SetOutput(&std::cout);
+  }
+
+  // Create process states
+  std::unordered_map<uint32_t, ProcessState> process_states;
+  for (ProcessId proc_id : module_info->initial_processes) {
+    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    process_states.emplace(proc_id.value, std::move(state));
+  }
+
+  // Create engine with suspension handler
+  runtime::Engine engine([&](runtime::Engine& eng,
+                             runtime::ProcessHandle handle,
+                             runtime::ResumePoint resume) {
+    auto it = process_states.find(handle.process_id);
+    if (it == process_states.end()) {
+      return;
+    }
+    auto& state = it->second;
+
+    state.current_block = BasicBlockId{resume.block_index};
+    state.instruction_index = resume.instruction_index;
+    state.status = ProcessStatus::kRunning;
+
+    auto reason = interp.RunUntilSuspend(state);
+
+    std::visit(
+        Overloaded{
+            [](const SuspendFinished&) {},
+            [&](const SuspendDelay& d) {
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = d.resume_block.value,
+                      .instruction_index = 0},
+                  d.ticks);
+            },
+            [&](const SuspendWait& w) {
+              // TODO(hankhsu): Subscribe to signal triggers
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = w.resume_block.value,
+                      .instruction_index = 0},
+                  1);
+            },
+            [&](const SuspendRepeat& r) {
+              eng.Delay(
+                  handle,
+                  runtime::ResumePoint{
+                      .block_index = r.resume_block.value,
+                      .instruction_index = 0},
+                  1);
+            },
+        },
+        reason);
+  });
+
+  // Schedule initial processes
+  for (ProcessId proc_id : module_info->initial_processes) {
+    engine.ScheduleInitial(
+        runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+  }
+
+  // Run simulation
+  try {
+    engine.Run();
+  } catch (const std::exception& e) {
+    return SimulationResult{
+        .exit_code = 1,
+        .error_message = std::format("runtime error: {}", e.what())};
+  }
+
+  return SimulationResult{.exit_code = 0, .error_message = {}};
 }
 
 }  // namespace lyra::mir::interp
