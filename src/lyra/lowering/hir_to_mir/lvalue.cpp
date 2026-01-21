@@ -238,6 +238,38 @@ auto LowerPackedElementSelectLvalue(
   };
 }
 
+auto LowerPackedFieldAccessLvalue(
+    const hir::PackedFieldAccessExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
+  Context& ctx = builder.GetContext();
+
+  LvalueResult base = LowerLvalue(data.base, builder);
+
+  // Create constant offset operand
+  TypeId offset_type = ctx.GetOffsetType();
+  mir::Operand offset =
+      mir::Operand::Const(MakeIntegralConst(data.bit_offset, offset_type));
+
+  // Create BitRangeProjection
+  mir::Projection proj{
+      .info =
+          mir::BitRangeProjection{
+              .bit_offset = offset,
+              .width = data.bit_width,
+              .element_type = expr.type,
+          },
+  };
+  mir::PlaceId result_place =
+      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+
+  // Packed field access with constant offset is always valid
+  // Just inherit base validity
+  return LvalueResult{
+      .place = result_place,
+      .validity = base.validity,
+  };
+}
+
 }  // namespace
 
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -259,6 +291,9 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {
           return LowerPackedElementSelectLvalue(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::PackedFieldAccessExpressionData>) {
+          return LowerPackedFieldAccessLvalue(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerLvalue", "unsupported lvalue expression");

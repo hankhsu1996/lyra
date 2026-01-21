@@ -732,6 +732,13 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kPackedFieldAccess: {
+      const auto& data = std::get<PackedFieldAccessExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << ".<packed:" << data.field_index << ">";
+      break;
+    }
+
     case ExpressionKind::kBitSelect: {
       const auto& data = std::get<BitSelectExpressionData>(expr.data);
       Dump(data.base);

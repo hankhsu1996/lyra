@@ -12,6 +12,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/interp/frame.hpp"
+#include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place.hpp"
 
@@ -127,11 +128,19 @@ class Interpreter {
   // Resolve Place for writing (fails if place ends with BitRange)
   auto WritePlace(ProcessState& state, PlaceId place_id) -> RuntimeValue&;
 
-  // Write to a place that ends with BitRange projection (read-modify-write)
-  void WriteBitRange(ProcessState& state, PlaceId place_id, RuntimeValue value);
-
-  // Store a value to a place (dispatches to WritePlace or WriteBitRange)
+  // Store a value to a place (handles BitRange via read-modify-write)
   void StoreToPlace(ProcessState& state, PlaceId place_id, RuntimeValue value);
+
+  // Apply projections for read path (returns const location with optional bit
+  // slice)
+  auto ApplyProjectionsForRead(
+      const ProcessState& state, const Place& place, const RuntimeValue& root)
+      -> ConstLocation;
+
+  // Apply projections for write path (returns mutable location with optional
+  // bit slice)
+  auto ApplyProjectionsForWrite(
+      ProcessState& state, const Place& place, RuntimeValue& root) -> Location;
 
   // Execute Assign instruction
   void ExecAssign(ProcessState& state, const Assign& assign);

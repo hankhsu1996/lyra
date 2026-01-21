@@ -34,6 +34,49 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                 .left = packed.range.left, .right = packed.range.right}});
   }
 
+  // Check for packed struct BEFORE isIntegral - packed structs are integral in
+  // slang but we want them as a distinct type kind with field layout info.
+  // Use getCanonicalType() to resolve type aliases.
+  if (type.getCanonicalType().kind ==
+      slang::ast::SymbolKind::PackedStructType) {
+    const auto& pst =
+        type.getCanonicalType().as<slang::ast::PackedStructType>();
+    std::string name = std::string(pst.name);
+    std::vector<PackedStructField> fields;
+
+    auto total_width = static_cast<uint32_t>(pst.bitWidth);
+
+    // Iterate over scope members to find fields
+    for (const auto& member : pst.members()) {
+      if (member.kind != slang::ast::SymbolKind::Field) {
+        continue;
+      }
+      const auto& field = member.as<slang::ast::FieldSymbol>();
+      TypeId field_type = LowerType(field.getType(), source, ctx);
+      if (!field_type) {
+        return kInvalidTypeId;
+      }
+      auto field_width = static_cast<uint32_t>(field.getType().getBitWidth());
+      // slang already computes bitOffset from LSB for packed types
+      auto bit_offset = static_cast<uint32_t>(field.bitOffset);
+
+      fields.push_back({
+          .name = std::string(field.name),
+          .type = field_type,
+          .bit_offset = bit_offset,
+          .bit_width = field_width,
+      });
+    }
+
+    return ctx->type_arena->Intern(
+        TypeKind::kPackedStruct, PackedStructInfo{
+                                     .name = std::move(name),
+                                     .fields = std::move(fields),
+                                     .total_bit_width = total_width,
+                                     .is_signed = pst.isSigned,
+                                     .is_four_state = pst.isFourState});
+  }
+
   if (type.isIntegral()) {
     return ctx->type_arena->Intern(
         TypeKind::kIntegral, IntegralInfo{
@@ -117,7 +160,7 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
   }
 
   if (type.isStruct()) {
-    ctx->sink->Error(source, "only unpacked structs supported");
+    ctx->sink->Error(source, "only packed and unpacked structs supported");
     return kInvalidTypeId;
   }
 
