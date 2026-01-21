@@ -85,6 +85,16 @@ auto LowerBinaryArith(
       return builder.CreateSub(lhs, rhs, "sub");
     case mir::BinaryOp::kMultiply:
       return builder.CreateMul(lhs, rhs, "mul");
+    case mir::BinaryOp::kBitwiseAnd:
+      return builder.CreateAnd(lhs, rhs, "and");
+    case mir::BinaryOp::kBitwiseOr:
+      return builder.CreateOr(lhs, rhs, "or");
+    case mir::BinaryOp::kBitwiseXor:
+      return builder.CreateXor(lhs, rhs, "xor");
+    case mir::BinaryOp::kBitwiseXnor: {
+      auto* xor_result = builder.CreateXor(lhs, rhs, "xor");
+      return builder.CreateNot(xor_result, "xnor");
+    }
     default:
       throw std::runtime_error(
           std::format(
