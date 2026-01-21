@@ -61,12 +61,11 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
 
 ## Lyra CLI
 
-Current CLI commands (standalone, no project config needed):
-
 ```bash
+lyra run [files...]         # Run simulation (files appended to lyra.toml)
 lyra dump hir <file.sv>     # Dump HIR representation
 lyra dump mir <file.sv>     # Dump MIR representation
-lyra run mir <file.sv>      # Interpret MIR
+lyra dump llvm <file.sv>    # Dump LLVM IR
 ```
 
 ## SystemVerilog Version

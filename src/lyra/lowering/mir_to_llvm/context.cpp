@@ -13,17 +13,48 @@ Context::Context(
       builder_(*llvm_context_) {
 }
 
-auto Context::GetPrintfFunction() -> llvm::Function* {
-  if (printf_function_ == nullptr) {
-    // int printf(const char* format, ...)
-    auto* printf_type = llvm::FunctionType::get(
-        llvm::Type::getInt32Ty(*llvm_context_),
-        {llvm::PointerType::getUnqual(*llvm_context_)}, true);
-    printf_function_ = llvm::Function::Create(
-        printf_type, llvm::Function::ExternalLinkage, "printf",
+auto Context::GetLyraPrintLiteral() -> llvm::Function* {
+  if (lyra_print_literal_ == nullptr) {
+    // void LyraPrintLiteral(const char* str)
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {llvm::PointerType::getUnqual(*llvm_context_)}, false);
+    lyra_print_literal_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPrintLiteral",
         llvm_module_.get());
   }
-  return printf_function_;
+  return lyra_print_literal_;
+}
+
+auto Context::GetLyraPrintValue() -> llvm::Function* {
+  if (lyra_print_value_ == nullptr) {
+    // void LyraPrintValue(int32_t format, const void* data, int32_t width,
+    //                     bool is_signed, const void* x_mask, const void*
+    //                     z_mask)
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {i32_ty, ptr_ty, i32_ty, i1_ty, ptr_ty, ptr_ty}, false);
+    lyra_print_value_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPrintValue",
+        llvm_module_.get());
+  }
+  return lyra_print_value_;
+}
+
+auto Context::GetLyraPrintEnd() -> llvm::Function* {
+  if (lyra_print_end_ == nullptr) {
+    // void LyraPrintEnd(int32_t kind)
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {llvm::Type::getInt32Ty(*llvm_context_)}, false);
+    lyra_print_end_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPrintEnd",
+        llvm_module_.get());
+  }
+  return lyra_print_end_;
 }
 
 auto Context::TakeOwnership() -> std::pair<

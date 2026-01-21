@@ -4,6 +4,7 @@
 #include <format>
 #include <string_view>
 
+#include "lyra/common/format.hpp"
 #include "lyra/common/severity.hpp"
 
 namespace lyra::hir {
@@ -535,29 +536,42 @@ void Dumper::Dump(ExpressionId id) {
           [&](const auto& syscall_data) {
             using T = std::decay_t<decltype(syscall_data)>;
             if constexpr (std::is_same_v<T, DisplaySystemCallData>) {
-              std::string_view name = [&] {
-                switch (syscall_data.radix) {
-                  case PrintRadix::kDecimal:
-                    return syscall_data.append_newline ? "$display" : "$write";
-                  case PrintRadix::kBinary:
-                    return syscall_data.append_newline ? "$displayb"
-                                                       : "$writeb";
-                  case PrintRadix::kOctal:
-                    return syscall_data.append_newline ? "$displayo"
-                                                       : "$writeo";
-                  case PrintRadix::kHex:
-                    return syscall_data.append_newline ? "$displayh"
-                                                       : "$writeh";
-                }
-              }();
+              std::string_view name =
+                  syscall_data.print_kind == PrintKind::kDisplay ? "$display"
+                                                                 : "$write";
               *out_ << name << "(";
               bool first = true;
-              for (ExpressionId arg : syscall_data.args) {
+              for (const FormatOp& op : syscall_data.ops) {
                 if (!first) {
                   *out_ << ", ";
                 }
                 first = false;
-                Dump(arg);
+                if (op.kind == FormatKind::kLiteral) {
+                  *out_ << std::format("literal(\"{}\")", op.literal);
+                } else {
+                  const char* kind_str = "?";
+                  switch (op.kind) {
+                    case FormatKind::kDecimal:
+                      kind_str = "%d";
+                      break;
+                    case FormatKind::kHex:
+                      kind_str = "%h";
+                      break;
+                    case FormatKind::kBinary:
+                      kind_str = "%b";
+                      break;
+                    case FormatKind::kOctal:
+                      kind_str = "%o";
+                      break;
+                    case FormatKind::kString:
+                      kind_str = "%s";
+                      break;
+                    case FormatKind::kLiteral:
+                      break;  // Already handled above
+                  }
+                  *out_ << kind_str << ":";
+                  Dump(*op.value);
+                }
               }
               *out_ << ")";
             } else if constexpr (std::is_same_v<T, SeveritySystemCallData>) {
