@@ -26,6 +26,7 @@ cc_library(
     ],
     deps = [
         "//:interp",
+        "//:llvm_backend",
         "//:lowering",
         "@googletest//:gtest",
         "@slang",
@@ -40,6 +41,21 @@ cc_test(
     args = ["--suite=mir_dev"],
     data = [
         "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# LLVM development suite - tests for LLVM JIT backend
+cc_test(
+    name = "llvm_dev_tests",
+    srcs = ["framework/sv_feature_tests.cpp"],
+    args = ["--suite=llvm_dev"],
+    data = [
+        "suites.yaml",
+        "//:liblyra_runtime.so",
     ] + glob(["sv_features/**/*.yaml"]),
     deps = [
         ":test_framework",

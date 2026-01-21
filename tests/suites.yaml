@@ -5,6 +5,13 @@
 # Empty include_regex = all YAML files. Exclude wins over include.
 
 suites:
+  llvm_dev:
+    backend: llvm
+    include_regex:
+      # LLVM backend currently supports only tests with expected_stdout assertions.
+      # Start with simple display tests. As the backend matures, add more.
+      - system_tasks/display.yaml
+
   mir_dev:
     backend: mir
     include_regex:
