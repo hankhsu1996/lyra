@@ -139,74 +139,6 @@ struct IndexValue {
   }
 };
 
-// Creates a default-initialized RuntimeValue for a given type following SV
-// semantics:
-// - 2-state integrals (bit, int, etc.): default to 0
-// - 4-state integrals (logic, reg, etc.): default to X (unknown)
-// - Strings: default to empty
-// - Reals: default to 0.0
-// - Arrays/structs: recursively default-initialize each element/field
-auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
-    -> RuntimeValue {
-  const auto& type = types[type_id];
-  switch (type.Kind()) {
-    case TypeKind::kVoid:
-      return std::monostate{};
-    case TypeKind::kIntegral: {
-      const auto& info = type.AsIntegral();
-      if (info.is_four_state) {
-        return MakeIntegralX(info.bit_width);  // 4-state defaults to X
-      }
-      return MakeIntegral(0, info.bit_width);  // 2-state defaults to 0
-    }
-    case TypeKind::kPackedArray: {
-      // Packed arrays are stored as a flat integral with total bit width.
-      // Use IsPackedFourState to recursively check base element type.
-      uint32_t total_width = PackedBitWidth(type, types);
-      if (IsPackedFourState(type, types)) {
-        return MakeIntegralX(total_width);
-      }
-      return MakeIntegral(0, total_width);
-    }
-    case TypeKind::kPackedStruct: {
-      // Packed structs are stored as a flat integral with total bit width.
-      const auto& info = type.AsPackedStruct();
-      if (info.is_four_state) {
-        return MakeIntegralX(info.total_bit_width);
-      }
-      return MakeIntegral(0, info.total_bit_width);
-    }
-    case TypeKind::kString:
-      return MakeString("");
-    case TypeKind::kReal:
-      return MakeReal(0.0);
-    case TypeKind::kUnpackedArray: {
-      const auto& info = type.AsUnpackedArray();
-      auto size = static_cast<size_t>(info.range.Size());
-      std::vector<RuntimeValue> elements;
-      elements.reserve(size);
-      for (size_t i = 0; i < size; ++i) {
-        elements.push_back(CreateDefaultValue(types, info.element_type));
-      }
-      return MakeArray(std::move(elements));
-    }
-    case TypeKind::kUnpackedStruct: {
-      const auto& info = type.AsUnpackedStruct();
-      std::vector<RuntimeValue> fields;
-      fields.reserve(info.fields.size());
-      for (const auto& field : info.fields) {
-        fields.push_back(CreateDefaultValue(types, field.type));
-      }
-      return MakeStruct(std::move(fields));
-    }
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-      // Dynamic arrays and queues default to empty (size 0)
-      return MakeArray({});
-  }
-  throw common::InternalError("CreateDefaultValue", "unknown type kind");
-}
-
 // Collects storage requirements and type information for locals, temps, and
 // design slots.
 //
@@ -484,6 +416,74 @@ auto TryGetIndex(
 }
 
 }  // namespace
+
+// Creates a default-initialized RuntimeValue for a given type following SV
+// semantics:
+// - 2-state integrals (bit, int, etc.): default to 0
+// - 4-state integrals (logic, reg, etc.): default to X (unknown)
+// - Strings: default to empty
+// - Reals: default to 0.0
+// - Arrays/structs: recursively default-initialize each element/field
+auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
+    -> RuntimeValue {
+  const auto& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kVoid:
+      return std::monostate{};
+    case TypeKind::kIntegral: {
+      const auto& info = type.AsIntegral();
+      if (info.is_four_state) {
+        return MakeIntegralX(info.bit_width);  // 4-state defaults to X
+      }
+      return MakeIntegral(0, info.bit_width);  // 2-state defaults to 0
+    }
+    case TypeKind::kPackedArray: {
+      // Packed arrays are stored as a flat integral with total bit width.
+      // Use IsPackedFourState to recursively check base element type.
+      uint32_t total_width = PackedBitWidth(type, types);
+      if (IsPackedFourState(type, types)) {
+        return MakeIntegralX(total_width);
+      }
+      return MakeIntegral(0, total_width);
+    }
+    case TypeKind::kPackedStruct: {
+      // Packed structs are stored as a flat integral with total bit width.
+      const auto& info = type.AsPackedStruct();
+      if (info.is_four_state) {
+        return MakeIntegralX(info.total_bit_width);
+      }
+      return MakeIntegral(0, info.total_bit_width);
+    }
+    case TypeKind::kString:
+      return MakeString("");
+    case TypeKind::kReal:
+      return MakeReal(0.0);
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      auto size = static_cast<size_t>(info.range.Size());
+      std::vector<RuntimeValue> elements;
+      elements.reserve(size);
+      for (size_t i = 0; i < size; ++i) {
+        elements.push_back(CreateDefaultValue(types, info.element_type));
+      }
+      return MakeArray(std::move(elements));
+    }
+    case TypeKind::kUnpackedStruct: {
+      const auto& info = type.AsUnpackedStruct();
+      std::vector<RuntimeValue> fields;
+      fields.reserve(info.fields.size());
+      for (const auto& field : info.fields) {
+        fields.push_back(CreateDefaultValue(types, field.type));
+      }
+      return MakeStruct(std::move(fields));
+    }
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      // Dynamic arrays and queues default to empty (size 0)
+      return MakeArray({});
+  }
+  throw common::InternalError("CreateDefaultValue", "unknown type kind");
+}
 
 auto CreateProcessState(
     const Arena& arena, const TypeArena& types, ProcessId process_id,

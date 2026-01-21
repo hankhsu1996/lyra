@@ -44,3 +44,11 @@ suites:
       - functions/nested_calls.yaml
       - functions/recursion.yaml
       - functions/reserved_keywords.yaml
+      - processes/initial.yaml
+      - datatypes/variables.yaml
+      - datatypes/wide_integral/arithmetic.yaml
+      - datatypes/wide_integral/bitwise.yaml
+      - datatypes/wide_integral/shifts.yaml
+      - datatypes/wide_integral/reductions.yaml
+      - datatypes/wide_integral/conversions.yaml
+      - datatypes/wide_integral/packed_2d.yaml
