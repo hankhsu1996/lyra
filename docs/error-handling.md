@@ -121,6 +121,19 @@ throw common::UnsupportedErrorException(
 - Compiler bugs (use `InternalError`)
 - Runtime I/O failures (use `std::runtime_error`)
 
+**Origin Tracking:**
+
+The `origin` field enables tracing errors back to source code locations. During HIR-to-MIR lowering,
+the `OriginMap` records which HIR statement each MIR construct came from. When an error occurs in
+later stages (MIR-to-LLVM, execution), the origin can be resolved to a source file:line:col location.
+
+Error output follows clang style:
+
+- With location: `file:line:col: error: message`
+- Without location: `lyra: error: message`
+
+The driver resolves origins via `OriginMap::Resolve()` -> `hir::Statement::span` -> `FormatSourceLocation()`.
+
 ### std::runtime_error (Host/Runtime Failures)
 
 For failures external to SV semantics during simulation (interpreter or SDK).

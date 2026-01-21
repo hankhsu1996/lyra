@@ -24,7 +24,10 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/mir_to_llvm/lower.hpp"
@@ -370,6 +373,25 @@ auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
   lowering::mir_to_llvm::LoweringResult llvm_result;
   try {
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  } catch (const common::UnsupportedErrorException& e) {
+    // Try to resolve origin to source location
+    const auto& error = e.GetError();
+    std::string location;
+    if (error.origin.IsValid()) {
+      auto entry = mir_result.origin_map.Resolve(error.origin);
+      if (entry &&
+          std::holds_alternative<hir::StatementId>(entry->hir_source)) {
+        auto stmt_id = std::get<hir::StatementId>(entry->hir_source);
+        const hir::Statement& stmt = (*hir_result.hir_arena)[stmt_id];
+        location = FormatSourceLocation(stmt.span, *hir_result.source_manager);
+      }
+    }
+    if (!location.empty()) {
+      result.error_message = std::format("{}: error: {}", location, e.what());
+    } else {
+      result.error_message = std::format("LLVM lowering error: {}", e.what());
+    }
+    return result;
   } catch (const std::exception& e) {
     result.error_message = std::format("LLVM lowering error: {}", e.what());
     return result;
