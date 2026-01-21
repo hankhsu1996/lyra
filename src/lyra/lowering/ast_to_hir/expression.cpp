@@ -1418,6 +1418,50 @@ auto LowerExpression(
                   .field_values = std::move(field_values)}});
     }
 
+    case ExpressionKind::Replication: {
+      const auto& repl = expr.as<slang::ast::ReplicationExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      const auto* count_cv = repl.count().getConstant();
+      if (count_cv == nullptr || !count_cv->isInteger()) {
+        ctx->sink->Error(span, "variable-count replication not supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      auto count = count_cv->integer().as<int64_t>();
+      if (!count || *count < 0) {
+        ctx->sink->Error(span, "replication count must be non-negative");
+        return hir::kInvalidExpressionId;
+      }
+
+      if (*count == 0 || expr.type->isVoid()) {
+        ctx->sink->Error(span, "zero replication as standalone expression");
+        return hir::kInvalidExpressionId;
+      }
+
+      hir::ExpressionId inner_id =
+          LowerExpression(repl.concat(), registrar, ctx);
+      if (!inner_id) {
+        return hir::kInvalidExpressionId;
+      }
+
+      std::vector<hir::ExpressionId> operands(
+          static_cast<size_t>(*count), inner_id);
+
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConcat,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::ConcatExpressionData{.operands = std::move(operands)}});
+    }
+
     case ExpressionKind::Concatenation: {
       const auto& concat = expr.as<slang::ast::ConcatenationExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
