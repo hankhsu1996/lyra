@@ -232,3 +232,102 @@ cases:
     expect:
       variables:
         result: 12
+
+  # Write tests
+  - name: write_ascending_constant
+    sv: |
+      module Test;
+        bit [31:0] data;
+        initial begin
+          data = 32'h00000000;
+          data[8+:8] = 8'hFF;  // Set byte at position 8
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xFF00
+
+  - name: write_ascending_variable
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int i;
+        initial begin
+          data = 32'h00000000;
+          i = 4;
+          data[i+:8] = 8'hFF;  // Set bits [11:4] to 0xFF
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xFF0
+
+  - name: write_descending_constant
+    sv: |
+      module Test;
+        bit [31:0] data;
+        initial begin
+          data = 32'h00000000;
+          data[15-:8] = 8'hAB;  // Set bits [15:8] to 0xAB
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xAB00
+
+  - name: write_descending_variable
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int i;
+        initial begin
+          data = 32'h00000000;
+          i = 23;
+          data[i-:8] = 8'hCD;  // Set bits [23:16] to 0xCD
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xCD0000
+
+  - name: write_nibble
+    sv: |
+      module Test;
+        bit [15:0] data;
+        initial begin
+          data = 16'h0000;
+          data[4+:4] = 4'hA;   // Set second nibble
+          data[12+:4] = 4'hB;  // Set fourth nibble
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xB0A0
+
+  - name: write_loop
+    sv: |
+      module Test;
+        bit [31:0] data;
+        initial begin
+          data = 32'h00000000;
+          for (int i = 0; i < 4; i = i + 1) begin
+            data[i*8+:8] = i + 1;  // Set bytes to 1, 2, 3, 4
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0x04030201
+
+  - name: write_nonzero_based
+    sv: |
+      module Test;
+        bit [63:32] data;  // Non-zero-based: indices 32-63
+        initial begin
+          data = 32'h00000000;
+          data[40+:8] = 8'hAB;  // Set byte at index 40
+        end
+      endmodule
+    expect:
+      variables:
+        data: 0xAB00

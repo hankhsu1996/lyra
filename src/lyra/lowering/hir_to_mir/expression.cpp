@@ -987,6 +987,149 @@ auto LowerRangeSelect(
   return mir::Operand::Use(slice_place);
 }
 
+// Compute offset and validity for indexed part-select.
+// For ascending (+:): select bits [index .. index + width - 1]
+// For descending (-:): select bits [index - width + 1 .. index]
+// Returns {offset, valid} pair.
+auto EmitIndexedPartSelectOffset(
+    mir::Operand index, TypeId index_type, const Type& base_type,
+    uint32_t width, bool ascending, MirBuilder& builder)
+    -> std::pair<mir::Operand, mir::Operand> {
+  const Context& ctx = builder.GetContext();
+  TypeId offset_type = ctx.GetOffsetType();
+
+  // Determine base range bounds
+  int32_t lower = 0;
+  int32_t upper = 0;
+  bool base_descending = true;  // Default for kIntegral
+
+  if (base_type.Kind() == TypeKind::kIntegral) {
+    const auto& info = base_type.AsIntegral();
+    lower = 0;
+    upper = static_cast<int32_t>(info.bit_width) - 1;
+    base_descending = true;
+  } else if (base_type.Kind() == TypeKind::kPackedArray) {
+    const auto& packed = base_type.AsPackedArray();
+    lower = packed.range.Lower();
+    upper = packed.range.Upper();
+    base_descending = packed.range.IsDescending();
+  } else {
+    throw common::InternalError(
+        "EmitIndexedPartSelectOffset",
+        "base must be kIntegral or kPackedArray");
+  }
+
+  // Compute effective bounds for validity check using int64_t to avoid
+  // overflow:
+  // +: (ascending): valid index range is [lower, upper - width + 1]
+  // -: (descending): valid index range is [lower + width - 1, upper]
+  int64_t eff_lower_64 =
+      ascending ? lower : (static_cast<int64_t>(lower) + width - 1);
+  int64_t eff_upper_64 =
+      ascending ? (static_cast<int64_t>(upper) - width + 1) : upper;
+
+  mir::Operand valid;
+  if (eff_lower_64 > eff_upper_64 || eff_lower_64 < INT32_MIN ||
+      eff_lower_64 > INT32_MAX || eff_upper_64 < INT32_MIN ||
+      eff_upper_64 > INT32_MAX) {
+    // Width exceeds base range - always invalid
+    TypeId bit_type = ctx.GetBitType();
+    valid = mir::Operand::Const(MakeIntegralConst(0, bit_type));
+  } else {
+    bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
+    valid = builder.EmitIndexValidity(
+        index, static_cast<int32_t>(eff_lower_64),
+        static_cast<int32_t>(eff_upper_64), check_known);
+  }
+
+  // Compute physical bit offset based on base direction and part-select
+  // direction Physical layout: bit at Lower() is at physical position 0
+  //
+  // Base descending [H:L]:
+  //   +: offset = index - L
+  //   -: offset = (index - width + 1) - L = index - width + 1 - L
+  //
+  // Base ascending [L:H]:
+  //   +: offset = H - (index + width - 1) = H - index - width + 1
+  //   -: offset = H - index
+  //
+  // kIntegral (implicit [W-1:0] descending):
+  //   +: offset = index
+  //   -: offset = index - width + 1
+  //
+  // Use int64_t for intermediate calculations to avoid overflow
+  mir::Operand offset;
+  if (base_descending) {
+    if (ascending) {
+      // offset = index - lower
+      auto lower_const =
+          mir::Operand::Const(MakeIntegralConst(lower, offset_type));
+      offset = builder.EmitBinary(
+          mir::BinaryOp::kSubtract, index, lower_const, offset_type);
+    } else {
+      // offset = index - width + 1 - lower = index - (lower + width - 1)
+      int64_t adjust = static_cast<int64_t>(lower) + width - 1;
+      auto adjust_const =
+          mir::Operand::Const(MakeIntegralConst(adjust, offset_type));
+      offset = builder.EmitBinary(
+          mir::BinaryOp::kSubtract, index, adjust_const, offset_type);
+    }
+  } else {
+    // Ascending base
+    if (ascending) {
+      // offset = upper - index - width + 1 = (upper - width + 1) - index
+      int64_t adjust = static_cast<int64_t>(upper) - width + 1;
+      auto adjust_const =
+          mir::Operand::Const(MakeIntegralConst(adjust, offset_type));
+      offset = builder.EmitBinary(
+          mir::BinaryOp::kSubtract, adjust_const, index, offset_type);
+    } else {
+      // offset = upper - index
+      auto upper_const =
+          mir::Operand::Const(MakeIntegralConst(upper, offset_type));
+      offset = builder.EmitBinary(
+          mir::BinaryOp::kSubtract, upper_const, index, offset_type);
+    }
+  }
+
+  return {offset, valid};
+}
+
+auto LowerIndexedPartSelect(
+    const hir::IndexedPartSelectExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // Lower base and index expressions
+  mir::Operand base_operand = LowerExpression(data.base, builder);
+  mir::Operand index_operand = LowerExpression(data.index, builder);
+
+  // Get type info
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+  // Compute offset and validity
+  auto [offset, valid] = EmitIndexedPartSelectOffset(
+      index_operand, index_expr.type, base_type, data.width, data.ascending,
+      builder);
+
+  // Get base as Place
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  // Create BitRangeProjection
+  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+      base_place, mir::Projection{
+                      .info = mir::BitRangeProjection{
+                          .bit_offset = offset,
+                          .width = data.width,
+                          .element_type = expr.type}});
+
+  // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
+  return builder.EmitGuardedUse(valid, slice_place, expr.type);
+}
+
 auto LowerPackedFieldAccess(
     const hir::PackedFieldAccessExpressionData& data,
     const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
@@ -1094,6 +1237,9 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::RangeSelectExpressionData>) {
           return LowerRangeSelect(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::IndexedPartSelectExpressionData>) {
+          return LowerIndexedPartSelect(data, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
           return LowerPackedFieldAccess(data, expr, builder);

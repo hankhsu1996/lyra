@@ -35,6 +35,7 @@ enum class ExpressionKind {
   kPackedFieldAccess,  // s.field on packed struct
   kBitSelect,          // x[i] on integral (single bit extraction)
   kRangeSelect,        // x[a:b] constant range
+  kIndexedPartSelect,  // x[i +: w] or x[i -: w]
   kConcat,             // {a, b, c} packed concatenation
 };
 
@@ -187,6 +188,16 @@ struct RangeSelectExpressionData {
   auto operator==(const RangeSelectExpressionData&) const -> bool = default;
 };
 
+struct IndexedPartSelectExpressionData {
+  ExpressionId base;       // The base integral/packed value
+  ExpressionId index;      // Dynamic base index expression
+  uint32_t width = 0;      // Static width (compile-time constant)
+  bool ascending = false;  // true for +: , false for -:
+
+  auto operator==(const IndexedPartSelectExpressionData&) const
+      -> bool = default;
+};
+
 struct ConcatExpressionData {
   std::vector<ExpressionId> operands;  // MSB to LSB order
 
@@ -202,7 +213,8 @@ using ExpressionData = std::variant<
     ArrayLiteralExpressionData, CallExpressionData, NewArrayExpressionData,
     BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
     PackedFieldAccessExpressionData, BitSelectExpressionData,
-    RangeSelectExpressionData, ConcatExpressionData>;
+    RangeSelectExpressionData, IndexedPartSelectExpressionData,
+    ConcatExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

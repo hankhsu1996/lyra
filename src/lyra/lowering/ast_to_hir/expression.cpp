@@ -1091,23 +1091,50 @@ auto LowerExpression(
       const auto& select = expr.as<slang::ast::RangeSelectExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      // Only support simple constant range select for now
-      if (select.getSelectionKind() != slang::ast::RangeSelectionKind::Simple) {
-        ctx->sink->Error(span, "indexed part-select not yet supported");
-        return hir::kInvalidExpressionId;
+      auto selection_kind = select.getSelectionKind();
+
+      if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
+        // Constant range select: x[a:b]
+        const auto* left_const = select.left().getConstant();
+        const auto* right_const = select.right().getConstant();
+        if (left_const == nullptr || right_const == nullptr) {
+          ctx->sink->Error(span, "range select bounds must be constant");
+          return hir::kInvalidExpressionId;
+        }
+        auto left = left_const->integer().as<int32_t>();
+        auto right = right_const->integer().as<int32_t>();
+        if (!left || !right) {
+          ctx->sink->Error(span, "range select bounds must fit in int32");
+          return hir::kInvalidExpressionId;
+        }
+
+        hir::ExpressionId base =
+            LowerExpression(select.value(), registrar, ctx);
+        if (!base) {
+          return hir::kInvalidExpressionId;
+        }
+
+        TypeId type = LowerType(*expr.type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kRangeSelect,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::RangeSelectExpressionData{
+                        .base = base, .left = *left, .right = *right},
+            });
       }
 
-      // Get constant bounds from slang
-      const auto* left_const = select.left().getConstant();
-      const auto* right_const = select.right().getConstant();
-      if (left_const == nullptr || right_const == nullptr) {
-        ctx->sink->Error(span, "range select bounds must be constant");
-        return hir::kInvalidExpressionId;
-      }
-      auto left = left_const->integer().as<int32_t>();
-      auto right = right_const->integer().as<int32_t>();
-      if (!left || !right) {
-        ctx->sink->Error(span, "range select bounds must fit in int32");
+      // Indexed part-select: x[i +: w] or x[i -: w]
+      // Explicitly check for known indexed part-select kinds
+      if (selection_kind != slang::ast::RangeSelectionKind::IndexedUp &&
+          selection_kind != slang::ast::RangeSelectionKind::IndexedDown) {
+        ctx->sink->Error(span, "unsupported range selection kind");
         return hir::kInvalidExpressionId;
       }
 
@@ -1116,19 +1143,43 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
+      // Index expression (dynamic)
+      hir::ExpressionId index = LowerExpression(select.left(), registrar, ctx);
+      if (!index) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Width (constant)
+      const auto* width_const = select.right().getConstant();
+      if (width_const == nullptr) {
+        ctx->sink->Error(span, "indexed part-select width must be constant");
+        return hir::kInvalidExpressionId;
+      }
+      auto width = width_const->integer().as<uint32_t>();
+      if (!width || *width == 0) {
+        ctx->sink->Error(span, "indexed part-select width must be positive");
+        return hir::kInvalidExpressionId;
+      }
+
       TypeId type = LowerType(*expr.type, span, ctx);
       if (!type) {
         return hir::kInvalidExpressionId;
       }
 
+      bool ascending =
+          (selection_kind == slang::ast::RangeSelectionKind::IndexedUp);
+
       return ctx->hir_arena->AddExpression(
           hir::Expression{
-              .kind = hir::ExpressionKind::kRangeSelect,
+              .kind = hir::ExpressionKind::kIndexedPartSelect,
               .type = type,
               .span = span,
               .data =
-                  hir::RangeSelectExpressionData{
-                      .base = base, .left = *left, .right = *right},
+                  hir::IndexedPartSelectExpressionData{
+                      .base = base,
+                      .index = index,
+                      .width = *width,
+                      .ascending = ascending},
           });
     }
 
