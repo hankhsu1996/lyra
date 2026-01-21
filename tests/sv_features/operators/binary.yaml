@@ -459,3 +459,75 @@ cases:
         le: 1
         gt: 1
         ge: 1
+
+  - name: string_prefix_order
+    sv: |
+      module Test;
+        string a, b;
+        bit lt;
+        initial begin
+          a = "a";
+          b = "aa";
+          lt = (a < b);  // shorter prefix is less
+        end
+      endmodule
+    expect:
+      variables:
+        lt: 1
+
+  - name: string_empty
+    sv: |
+      module Test;
+        string a, b, c;
+        bit eq, lt;
+        initial begin
+          a = "";
+          b = "";
+          c = "a";
+          eq = (a == b);  // "" == ""
+          lt = (a < c);   // "" < "a"
+        end
+      endmodule
+    expect:
+      variables:
+        eq: 1
+        lt: 1
+
+  - name: string_non_prefix
+    sv: |
+      module Test;
+        string a, b;
+        bit lt, gt;
+        initial begin
+          a = "ab";
+          b = "ba";
+          lt = (a < b);   // "ab" < "ba" (a=97 < b=98)
+          gt = (a > b);
+        end
+      endmodule
+    expect:
+      variables:
+        lt: 1
+        gt: 0
+
+  - name: string_ge_le_sanity
+    sv: |
+      module Test;
+        string a, b, c;
+        bit ge1, le1, ge2, le2;
+        initial begin
+          a = "apple";
+          b = "apple";
+          c = "banana";
+          ge1 = (a >= b);  // equal
+          le1 = (a <= b);  // equal
+          ge2 = (c >= a);  // "banana" >= "apple"
+          le2 = (a <= c);  // "apple" <= "banana"
+        end
+      endmodule
+    expect:
+      variables:
+        ge1: 1
+        le1: 1
+        ge2: 1
+        le2: 1

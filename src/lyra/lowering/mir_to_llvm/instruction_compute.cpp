@@ -16,6 +16,19 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Type classification for LLVM lowering
+enum class PlaceKind {
+  kIntegral,  // Packed integral types (bit, logic, int, etc.)
+  kString,    // String type
+};
+
+// Type info for a place, used to select the lowering strategy
+struct PlaceTypeInfo {
+  PlaceKind kind;
+  uint32_t bit_width;  // Only valid for kIntegral
+  bool is_four_state;  // Only valid for kIntegral
+};
+
 // Check if a packed type contains a packed struct (at any level)
 auto ContainsPackedStruct(const Type& type, const TypeArena& types) -> bool {
   if (type.Kind() == TypeKind::kPackedStruct) {
@@ -28,14 +41,24 @@ auto ContainsPackedStruct(const Type& type, const TypeArena& types) -> bool {
   return false;
 }
 
-// Validates type is supported and returns {semantic_width, is_four_state}
+// Validates type is supported and returns PlaceTypeInfo
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
-    -> std::pair<uint32_t, bool> {
+    -> PlaceTypeInfo {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
   const auto& place = arena[place_id];
   const Type& type = types[place.root.type];
 
+  // Handle string type
+  if (type.Kind() == TypeKind::kString) {
+    return PlaceTypeInfo{
+        .kind = PlaceKind::kString,
+        .bit_width = 0,
+        .is_four_state = false,
+    };
+  }
+
+  // Handle packed integral types
   if (!IsPacked(type)) {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
@@ -47,7 +70,11 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
         context.GetCurrentOrigin(), "packed structs not yet supported");
   }
-  return {PackedBitWidth(type, types), IsPackedFourState(type, types)};
+  return PlaceTypeInfo{
+      .kind = PlaceKind::kIntegral,
+      .bit_width = PackedBitWidth(type, types),
+      .is_four_state = IsPackedFourState(type, types),
+  };
 }
 
 // Masks result to semantic width if needed
@@ -210,14 +237,99 @@ auto LowerBinaryComparison(
   }
 }
 
-// Lower binary rvalue: coerce operands to storage type and compute
+// Check if an operand has string type
+auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+
+  return std::visit(
+      Overloaded{
+          [&](const Constant& c) {
+            return types[c.type].Kind() == TypeKind::kString;
+          },
+          [&](mir::PlaceId place_id) {
+            const auto& place = arena[place_id];
+            return types[place.root.type].Kind() == TypeKind::kString;
+          },
+      },
+      operand.payload);
+}
+
+// Lower string binary comparison via LyraStringCmp runtime call
+auto LowerStringBinaryOp(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* result_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  // Only comparison operators are supported for strings
+  if (!IsComparisonOp(info.op)) {
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm,
+        common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+        std::format(
+            "string operation not supported (only comparisons): {}",
+            mir::ToString(info.op)));
+  }
+
+  // Lower both operands (they return string handles from LyraStringFromLiteral)
+  llvm::Value* lhs = LowerOperand(context, operands[0]);
+  llvm::Value* rhs = LowerOperand(context, operands[1]);
+
+  // Call LyraStringCmp(lhs, rhs) -> i32
+  llvm::Value* cmp_result =
+      builder.CreateCall(context.GetLyraStringCmp(), {lhs, rhs}, "strcmp");
+
+  // Convert cmp result to boolean based on operator
+  auto* zero = llvm::ConstantInt::get(cmp_result->getType(), 0);
+  llvm::Value* bool_result = nullptr;
+
+  switch (info.op) {
+    case mir::BinaryOp::kEqual:
+      bool_result = builder.CreateICmpEQ(cmp_result, zero, "str.eq");
+      break;
+    case mir::BinaryOp::kNotEqual:
+      bool_result = builder.CreateICmpNE(cmp_result, zero, "str.ne");
+      break;
+    case mir::BinaryOp::kLessThan:
+    case mir::BinaryOp::kLessThanSigned:
+      bool_result = builder.CreateICmpSLT(cmp_result, zero, "str.lt");
+      break;
+    case mir::BinaryOp::kLessThanEqual:
+    case mir::BinaryOp::kLessThanEqualSigned:
+      bool_result = builder.CreateICmpSLE(cmp_result, zero, "str.le");
+      break;
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kGreaterThanSigned:
+      bool_result = builder.CreateICmpSGT(cmp_result, zero, "str.gt");
+      break;
+    case mir::BinaryOp::kGreaterThanEqual:
+    case mir::BinaryOp::kGreaterThanEqualSigned:
+      bool_result = builder.CreateICmpSGE(cmp_result, zero, "str.ge");
+      break;
+    default:
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm,
+          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+          std::format(
+              "unsupported string comparison: {}", mir::ToString(info.op)));
+  }
+
+  // Extend to result type
+  return builder.CreateZExt(bool_result, result_type, "str.cmp.ext");
+}
+
 auto LowerBinaryRvalue(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> llvm::Value* {
+  // Dispatch to string lowering if operands are strings
+  if (IsStringOperand(context, operands[0])) {
+    return LowerStringBinaryOp(context, info, operands, storage_type);
+  }
+
   auto& builder = context.GetBuilder();
 
-  // Lower both operands
   llvm::Value* lhs = LowerOperand(context, operands[0]);
   llvm::Value* rhs = LowerOperand(context, operands[1]);
 
@@ -313,29 +425,25 @@ auto LowerCastRvalue(
 void LowerCompute(Context& context, const mir::Compute& compute) {
   auto& builder = context.GetBuilder();
 
-  // Step 1: Validate type and get info
-  auto [semantic_width, is_four_state] =
-      ValidateAndGetTypeInfo(context, compute.target);
+  PlaceTypeInfo type_info = ValidateAndGetTypeInfo(context, compute.target);
 
-  if (is_four_state) {
+  if (type_info.is_four_state) {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
         context.GetCurrentOrigin(), "4-state types not yet supported");
   }
-  if (semantic_width > 64) {
+  if (type_info.bit_width > 64) {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
         context.GetCurrentOrigin(),
         std::format(
             "types wider than 64 bits not yet supported (got {} bits)",
-            semantic_width));
+            type_info.bit_width));
   }
 
-  // Step 2: Get storage for target place
   llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(compute.target);
   llvm::Type* storage_type = alloca->getAllocatedType();
 
-  // Step 3: Lower the rvalue
   llvm::Value* result = std::visit(
       Overloaded{
           [&](const mir::UnaryRvalueInfo& info) {
@@ -361,10 +469,7 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       },
       compute.value.info);
 
-  // Step 4: Apply width mask
-  result = ApplyWidthMask(context, result, semantic_width);
-
-  // Step 5: Store to target
+  result = ApplyWidthMask(context, result, type_info.bit_width);
   builder.CreateStore(result, alloca);
 }
 

@@ -46,6 +46,8 @@ class Context {
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRegisterVar() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSnapshotVars() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFromLiteral() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringCmp() -> llvm::Function*;
 
   // Place storage management
   // Returns the alloca for a place, creating it if necessary
@@ -80,6 +82,8 @@ class Context {
   llvm::Function* lyra_print_end_ = nullptr;
   llvm::Function* lyra_register_var_ = nullptr;
   llvm::Function* lyra_snapshot_vars_ = nullptr;
+  llvm::Function* lyra_string_from_literal_ = nullptr;
+  llvm::Function* lyra_string_cmp_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;

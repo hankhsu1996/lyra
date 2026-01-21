@@ -52,15 +52,16 @@ auto InitializeAllSlots(
     llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(*place_id_opt);
     allocas[slot_id] = alloca;
 
-    // Initialize to SV default (0 for integral, 0.0 for real)
+    // Initialize to SV default (0 for integral, 0.0 for real, null for string)
     const auto& type_info = slot_types[slot_id];
     if (type_info.kind == VarTypeKind::kReal) {
       builder.CreateStore(
           llvm::ConstantFP::get(llvm::Type::getDoubleTy(llvm_ctx), 0.0),
           alloca);
     } else {
+      // Works for both integers (0) and pointers (null)
       builder.CreateStore(
-          llvm::ConstantInt::get(alloca->getAllocatedType(), 0), alloca);
+          llvm::Constant::getNullValue(alloca->getAllocatedType()), alloca);
     }
   }
   return allocas;

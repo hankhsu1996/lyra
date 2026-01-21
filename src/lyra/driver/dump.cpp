@@ -147,6 +147,12 @@ auto DumpLlvm(const std::string& path) -> int {
               .width = 64,
               .is_signed = true,
           });
+        } else if (type.Kind() == TypeKind::kString) {
+          slot_types.push_back({
+              .kind = lowering::mir_to_llvm::VarTypeKind::kString,
+              .width = 0,
+              .is_signed = false,
+          });
         } else if (IsPacked(type)) {
           uint32_t width = PackedBitWidth(type, type_arena);
           slot_types.push_back({

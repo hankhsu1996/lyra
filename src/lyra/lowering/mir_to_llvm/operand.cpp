@@ -46,7 +46,12 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
                 llvm::Type::getInt64Ty(llvm_ctx), integral.value[0]);
           },
           [&](const StringConstant& str) -> llvm::Value* {
-            return context.GetBuilder().CreateGlobalStringPtr(str.value);
+            auto& builder = context.GetBuilder();
+            auto* data = builder.CreateGlobalStringPtr(str.value);
+            auto* len = llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(llvm_ctx), str.value.size());
+            return builder.CreateCall(
+                context.GetLyraStringFromLiteral(), {data, len}, "str.handle");
           },
           [&](const RealConstant& real) -> llvm::Value* {
             return llvm::ConstantFP::get(

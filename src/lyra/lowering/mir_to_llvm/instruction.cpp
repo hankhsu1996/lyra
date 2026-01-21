@@ -30,8 +30,9 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
   // Get the storage type
   llvm::Type* storage_type = alloca->getAllocatedType();
 
-  // Adjust the value to match storage type if needed
-  if (source_value->getType() != storage_type) {
+  // Adjust the value to match storage type if needed (only for integrals)
+  if (source_value->getType() != storage_type &&
+      source_value->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
     if (type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_signed) {
       source_value = builder.CreateSExtOrTrunc(source_value, storage_type);
     } else {
