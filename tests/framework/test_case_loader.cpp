@@ -224,8 +224,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     auto case_context = std::format("case '{}'", test_case.name);
 
     ValidateKeys(
-        node,
-        {"name", "description", "sv", "files", "plusargs", "expect"},
+        node, {"name", "description", "sv", "files", "plusargs", "expect"},
         case_context, path);
 
     // Single-file format: sv: |

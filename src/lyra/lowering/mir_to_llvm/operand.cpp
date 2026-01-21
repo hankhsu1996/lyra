@@ -1,5 +1,7 @@
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 
+#include <stdexcept>
+
 #include "lyra/common/overloaded.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -12,8 +14,8 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
             return LowerConstant(context, constant);
           },
           [](mir::PlaceId /*place*/) -> llvm::Value* {
-            // TODO: Load from place
-            return nullptr;
+            throw std::runtime_error(
+                "variable reads (PlaceId) not yet supported in LLVM backend");
           },
       },
       operand.payload);
@@ -24,10 +26,16 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
 
   return std::visit(
       Overloaded{
-          [&llvm_ctx](const IntegralConstant& /*integral*/) -> llvm::Value* {
-            // TODO: Handle arbitrary-width integers
-            // For now, just return 0
-            return llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), 0);
+          [&llvm_ctx](const IntegralConstant& integral) -> llvm::Value* {
+            // For now, only handle single-word 2-state values
+            if (integral.value.size() != 1 || !integral.x_mask.empty() ||
+                !integral.z_mask.empty()) {
+              throw std::runtime_error(
+                  "multi-word or 4-state integral constants not yet supported "
+                  "in LLVM backend");
+            }
+            return llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(llvm_ctx), integral.value[0]);
           },
           [&context](const StringConstant& str) -> llvm::Value* {
             return context.GetBuilder().CreateGlobalStringPtr(str.value);
@@ -37,12 +45,12 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
                 llvm::Type::getDoubleTy(llvm_ctx), real.value);
           },
           [](const StructConstant& /*s*/) -> llvm::Value* {
-            // TODO: Handle struct constants
-            return nullptr;
+            throw std::runtime_error(
+                "struct constants not yet supported in LLVM backend");
           },
           [](const ArrayConstant& /*a*/) -> llvm::Value* {
-            // TODO: Handle array constants
-            return nullptr;
+            throw std::runtime_error(
+                "array constants not yet supported in LLVM backend");
           },
       },
       constant.value);

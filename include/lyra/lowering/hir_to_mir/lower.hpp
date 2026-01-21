@@ -7,6 +7,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -15,12 +16,10 @@ namespace lyra::lowering::hir_to_mir {
 struct LoweringInput {
   const hir::Design* design = nullptr;
   const hir::Arena* hir_arena = nullptr;
-  const TypeArena* type_arena = nullptr;
+  TypeArena* type_arena = nullptr;
   const ConstantArena* constant_arena = nullptr;
   const SymbolTable* symbol_table = nullptr;
-  TypeId bit_type;     // 1-bit 2-state for bool results
-  TypeId offset_type;  // 32-bit 2-state unsigned for offset arithmetic
-  TypeId string_type;  // string type for warning messages
+  BuiltinTypes builtin_types;
 };
 
 struct LoweringResult {

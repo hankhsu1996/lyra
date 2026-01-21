@@ -28,9 +28,7 @@ auto LowerFunctionBody(
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
-      .bit_type = input.bit_type,
-      .offset_type = input.offset_type,
-      .string_type = input.string_type,
+      .builtin_types = input.builtin_types,
       .symbol_to_mir_function = &symbol_to_mir_function,
       .return_place = mir::kInvalidPlaceId,
   };

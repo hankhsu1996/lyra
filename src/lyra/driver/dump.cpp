@@ -87,24 +87,13 @@ auto DumpMir(const std::string& path) -> int {
     return 1;
   }
 
-  TypeId bit_type = hir_result.type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{.bit_width = 1, .is_signed = false, .is_four_state = true});
-  TypeId offset_type = hir_result.type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{
-          .bit_width = 32, .is_signed = false, .is_four_state = false});
-  TypeId string_type =
-      hir_result.type_arena->Intern(TypeKind::kString, std::monostate{});
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
-      .bit_type = bit_type,
-      .offset_type = offset_type,
-      .string_type = string_type,
+      .builtin_types = {},
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
@@ -130,24 +119,13 @@ auto DumpLlvm(const std::string& path) -> int {
     return 1;
   }
 
-  TypeId bit_type = hir_result.type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{.bit_width = 1, .is_signed = false, .is_four_state = true});
-  TypeId offset_type = hir_result.type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{
-          .bit_width = 32, .is_signed = false, .is_four_state = false});
-  TypeId string_type =
-      hir_result.type_arena->Intern(TypeKind::kString, std::monostate{});
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
-      .bit_type = bit_type,
-      .offset_type = offset_type,
-      .string_type = string_type,
+      .builtin_types = {},
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 

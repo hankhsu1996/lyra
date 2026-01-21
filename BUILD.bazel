@@ -58,6 +58,13 @@ cc_library(
     deps = [":common"],
 )
 
+cc_binary(
+    name = "liblyra_runtime.so",
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [":runtime"],
+)
+
 cc_library(
     name = "interp",
     srcs = glob(["src/lyra/mir/interp/*.cpp"]),
@@ -67,6 +74,7 @@ cc_library(
     deps = [
         ":common",
         ":mir",
+        ":runtime",
     ],
 )
 
@@ -117,6 +125,7 @@ cc_binary(
         "src/lyra/driver/*.cpp",
         "src/lyra/driver/*.hpp",
     ]),
+    data = [":liblyra_runtime.so"],
     deps = [
         ":hir",
         ":interp",
@@ -124,6 +133,7 @@ cc_binary(
         ":lowering",
         ":mir",
         ":runtime",
+        "@argparse",
         "@fmt",
         "@slang",
         "@tomlplusplus",
