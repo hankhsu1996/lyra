@@ -286,6 +286,45 @@ auto LowerConstantValueExpression(
               .data = hir::StructLiteralExpressionData{
                   .field_values = std::move(field_values)}});
     }
+
+    if (canonical.kind == slang::ast::SymbolKind::PackedStructType) {
+      const auto& struct_type = canonical.as<slang::ast::PackedStructType>();
+
+      // Collect fields via Scope interface (membersOfType)
+      std::vector<const slang::ast::FieldSymbol*> fields;
+      for (const auto& field :
+           struct_type.membersOfType<slang::ast::FieldSymbol>()) {
+        fields.push_back(&field);
+      }
+
+      if (elements.size() != fields.size()) {
+        ctx->sink->Error(span, "struct constant size mismatch");
+        return hir::kInvalidExpressionId;
+      }
+
+      std::vector<hir::ExpressionId> field_values;
+      field_values.reserve(elements.size());
+      for (size_t i = 0; i < elements.size(); ++i) {
+        hir::ExpressionId field_id = LowerConstantValueExpression(
+            elements[i], fields[i]->getType(), span, ctx);
+        if (!field_id) {
+          return hir::kInvalidExpressionId;
+        }
+        field_values.push_back(field_id);
+      }
+
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) {
+        return hir::kInvalidExpressionId;
+      }
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kStructLiteral,
+              .type = type_id,
+              .span = span,
+              .data = hir::StructLiteralExpressionData{
+                  .field_values = std::move(field_values)}});
+    }
   }
 
   ctx->sink->Error(span, "unsupported constant value type");
@@ -1360,13 +1399,12 @@ auto LowerExpression(
                     .elements = std::move(element_ids)}});
       }
 
-      // Handle struct literals (existing logic)
-      if (!ct.isUnpackedStruct()) {
-        if (ct.isStruct()) {
-          ctx->sink->Error(span, "only unpacked struct literals supported");
-        } else {
-          ctx->sink->Error(span, "assignment pattern requires struct type");
-        }
+      // Handle struct literals (packed and unpacked)
+      bool is_unpacked_struct = ct.isUnpackedStruct();
+      bool is_packed_struct =
+          ct.kind == slang::ast::SymbolKind::PackedStructType;
+      if (!is_unpacked_struct && !is_packed_struct) {
+        ctx->sink->Error(span, "assignment pattern requires struct type");
         return hir::kInvalidExpressionId;
       }
 
@@ -1386,8 +1424,19 @@ auto LowerExpression(
       auto elements = get_elements();
 
       // Gate: full literal only (all fields must be specified)
-      const auto& struct_type = ct.as<slang::ast::UnpackedStructType>();
-      if (elements.size() != struct_type.fields.size()) {
+      // slang validates this and elements() returns fields in declaration order
+      size_t field_count = 0;
+      if (is_unpacked_struct) {
+        field_count = ct.as<slang::ast::UnpackedStructType>().fields.size();
+      } else {
+        // Packed struct - count fields via Scope interface
+        for ([[maybe_unused]] const auto& _ :
+             ct.as<slang::ast::PackedStructType>()
+                 .membersOfType<slang::ast::FieldSymbol>()) {
+          ++field_count;
+        }
+      }
+      if (elements.size() != field_count) {
         ctx->sink->Error(
             span, "all struct fields must be explicitly specified");
         return hir::kInvalidExpressionId;
