@@ -887,6 +887,9 @@ void LowerRepeatLoop(
 }  // namespace
 
 void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
+  // Record origin for error tracking (maps MIR back to HIR source)
+  builder.RecordStatementOrigin(stmt_id);
+
   const hir::Statement& stmt = (*builder.GetContext().hir_arena)[stmt_id];
 
   std::visit(

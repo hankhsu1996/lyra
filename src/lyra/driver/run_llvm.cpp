@@ -10,10 +10,14 @@
 #include <unistd.h>
 #include <vector>
 
+#include <fmt/color.h>
 #include <fmt/core.h>
 
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/statement.hpp"
 #include "lyra/lowering/mir_to_llvm/lower.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -187,6 +191,31 @@ auto BuildSlotTypes(const CompilationResult& compilation)
   return slot_types;
 }
 
+// Resolve an UnsupportedError origin to a source location string.
+// Returns the location if resolvable, otherwise returns empty string.
+auto ResolveErrorLocation(
+    const common::UnsupportedError& error, const CompilationResult& compilation)
+    -> std::string {
+  if (!error.origin.IsValid()) {
+    return "";
+  }
+
+  auto entry = compilation.mir.origin_map.Resolve(error.origin);
+  if (!entry) {
+    return "";
+  }
+
+  // For now, we only handle statement origins
+  if (!std::holds_alternative<hir::StatementId>(entry->hir_source)) {
+    return "";
+  }
+
+  auto stmt_id = std::get<hir::StatementId>(entry->hir_source);
+  const hir::Statement& stmt = (*compilation.hir.hir_arena)[stmt_id];
+
+  return FormatSourceLocation(stmt.span, *compilation.hir.source_manager);
+}
+
 }  // namespace
 
 auto RunLlvm(const std::vector<std::string>& files) -> int {
@@ -207,14 +236,35 @@ auto RunLlvm(const std::vector<std::string>& files) -> int {
   lowering::mir_to_llvm::LoweringResult llvm_result;
   try {
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  } catch (const common::UnsupportedErrorException& e) {
+    std::string location = ResolveErrorLocation(e.GetError(), *compilation);
+    // Format in clang style:
+    // - With location: "file:line:col: error: message"
+    // - Without location: "lyra: error: message"
+    if (!location.empty()) {
+      fmt::print(
+          stderr, "{}: {}: {}\n",
+          fmt::styled(location, fmt::fg(fmt::terminal_color::cyan)),
+          fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
+          fmt::styled(e.what(), fmt::emphasis::bold));
+    } else {
+      fmt::print(
+          stderr, "{}: {}: {}\n",
+          fmt::styled(
+              "lyra",
+              fmt::fg(fmt::terminal_color::white) | fmt::emphasis::bold),
+          fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
+          fmt::styled(e.what(), fmt::emphasis::bold));
+    }
+    return 1;
   } catch (const std::exception& e) {
-    PrintError(
-        fmt::format(
-            "LLVM backend error: {}\n"
-            "       hint: some features are not yet supported in "
-            "--backend=llvm\n"
-            "       hint: try --backend=mir instead",
-            e.what()));
+    // No location available - use clang style: "lyra: error: message"
+    fmt::print(
+        stderr, "{}: {}: {}\n",
+        fmt::styled(
+            "lyra", fmt::fg(fmt::terminal_color::white) | fmt::emphasis::bold),
+        fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
+        fmt::styled(e.what(), fmt::emphasis::bold));
     return 1;
   }
 

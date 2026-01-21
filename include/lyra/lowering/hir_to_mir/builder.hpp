@@ -6,7 +6,9 @@
 #include <vector>
 
 #include "lyra/common/unsupported_error.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -36,7 +38,7 @@ struct LoopContext {
 
 class MirBuilder {
  public:
-  MirBuilder(mir::Arena* arena, Context* ctx);
+  MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map = nullptr);
 
   auto CreateBlock() -> BlockIndex;
   void SetCurrentBlock(BlockIndex block);
@@ -101,7 +103,11 @@ class MirBuilder {
   void PopLoop();
   [[nodiscard]] auto CurrentLoop() const -> const LoopContext*;
 
-  // Origin tracking for error reporting
+  // Origin tracking for error reporting.
+  // RecordStatementOrigin records a statement origin in the OriginMap (if set)
+  // and sets it as the current origin for subsequent emit calls.
+  void RecordStatementOrigin(hir::StatementId stmt_id);
+
   void SetCurrentOrigin(common::OriginId origin) {
     current_origin_ = origin;
   }
@@ -119,6 +125,7 @@ class MirBuilder {
 
   mir::Arena* arena_;
   Context* ctx_;
+  OriginMap* origin_map_;
   BlockIndex current_block_;
   std::vector<BlockBuilder> blocks_;
   std::vector<LoopContext> loop_stack_;

@@ -29,7 +29,8 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
     mir::Arena& mir_arena, const PlaceMap& module_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::ProcessId {
+    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -45,7 +46,7 @@ auto LowerProcess(
       .return_place = mir::kInvalidPlaceId,
   };
 
-  MirBuilder builder(&mir_arena, &ctx);
+  MirBuilder builder(&mir_arena, &ctx, origin_map);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);

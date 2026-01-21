@@ -3,6 +3,7 @@
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -14,6 +15,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
     mir::Arena& mir_arena, const PlaceMap& module_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::ProcessId;
+    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    -> mir::ProcessId;
 
 }  // namespace lyra::lowering::hir_to_mir
