@@ -810,6 +810,16 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kIndexedPartSelect: {
+      const auto& data = std::get<IndexedPartSelectExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << "[";
+      Dump(data.index);
+      *out_ << (data.ascending ? " +: " : " -: ");
+      *out_ << data.width << "]";
+      break;
+    }
+
     case ExpressionKind::kConcat: {
       const auto& data = std::get<ConcatExpressionData>(expr.data);
       *out_ << "{";
