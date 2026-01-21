@@ -117,8 +117,7 @@ void AssertVariables(
     ASSERT_NE(it, actual.end())
         << "[" << test_name << "] Missing variable: " << name;
 
-    // Convert both to hex strings for comparison to handle mixed types
-    // (e.g., expected int64_t vs actual HexValue for wide variables)
+    // Convert to hex string for comparison
     auto to_hex = [](const ExtractedValue& val) -> std::string {
       return std::visit(
           [](auto&& v) -> std::string {
@@ -126,10 +125,8 @@ void AssertVariables(
             if constexpr (std::is_same_v<T, HexValue>) {
               return v.hex;
             } else if constexpr (std::is_same_v<T, int64_t>) {
-              // Format as hex, strip leading zeros
               return std::format("{:x}", static_cast<uint64_t>(v));
             } else {
-              // double - format as decimal string
               return std::format("{}", v);
             }
           },
@@ -145,9 +142,22 @@ void AssertVariables(
       EXPECT_EQ(*actual_ptr, std::get<double>(expected_val))
           << "[" << test_name << "] Variable " << name;
     } else {
-      // int64_t and HexValue can be compared via hex string conversion
+      // Compare via hex strings. For negative expected values (signed
+      // comparison), we need to handle bit-width differences: actual values
+      // are masked to their bit_width, while expected values are full 64-bit.
+      // Solution: when expected is negative, trim expected_hex to match
+      // actual_hex length (negative values have all-1s in high bits, so
+      // trimming preserves the value).
       std::string expected_hex = to_hex(expected_val);
       std::string actual_hex = to_hex(it->second);
+
+      // If expected is negative int64_t and longer than actual, trim it
+      if (std::holds_alternative<int64_t>(expected_val) &&
+          std::get<int64_t>(expected_val) < 0 &&
+          expected_hex.size() > actual_hex.size()) {
+        expected_hex = expected_hex.substr(expected_hex.size() - actual_hex.size());
+      }
+
       EXPECT_EQ(actual_hex, expected_hex)
           << "[" << test_name << "] Variable " << name;
     }

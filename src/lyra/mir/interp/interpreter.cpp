@@ -1063,6 +1063,39 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             // OOB: return default based on result type
             return CreateDefaultValue(*types_, info.result_type);
           },
+          [&](const ConcatRvalueInfo& info) -> RuntimeValue {
+            const Type& result_type = (*types_)[info.result_type];
+            uint32_t result_width = PackedBitWidth(result_type, *types_);
+
+            // Evaluate all operands and compute total width
+            std::vector<RuntimeIntegral> values;
+            values.reserve(rv.operands.size());
+            uint32_t total_width = 0;
+            for (const auto& operand : rv.operands) {
+              auto val = EvalOperand(state, operand);
+              auto& integral = AsIntegral(val);
+              total_width += integral.bit_width;
+              values.push_back(std::move(integral));
+            }
+
+            if (total_width != result_width) {
+              throw common::InternalError(
+                  "EvalRvalue",
+                  std::format(
+                      "concat operand widths {} != result width {}",
+                      total_width, result_width));
+            }
+
+            // Build result from MSB to LSB using 4-state insert
+            auto result = MakeKnownIntegral(result_width);
+            uint32_t bit_pos = result_width;
+            for (const auto& val : values) {
+              bit_pos -= val.bit_width;
+              result = IntegralInsertSlice4State(
+                  result, val, bit_pos, val.bit_width);
+            }
+            return result;
+          },
       },
       rv.info);
 }

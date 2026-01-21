@@ -34,6 +34,7 @@ enum class ExpressionKind {
   kPackedFieldAccess,  // s.field on packed struct
   kBitSelect,          // x[i] on integral (single bit extraction)
   kRangeSelect,        // x[a:b] constant range
+  kConcat,             // {a, b, c} packed concatenation
 };
 
 struct ConstantExpressionData {
@@ -176,6 +177,12 @@ struct RangeSelectExpressionData {
   auto operator==(const RangeSelectExpressionData&) const -> bool = default;
 };
 
+struct ConcatExpressionData {
+  std::vector<ExpressionId> operands;  // MSB to LSB order
+
+  auto operator==(const ConcatExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
@@ -184,7 +191,7 @@ using ExpressionData = std::variant<
     StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
     NewArrayExpressionData, BuiltinMethodCallExpressionData,
     PackedElementSelectExpressionData, PackedFieldAccessExpressionData,
-    BitSelectExpressionData, RangeSelectExpressionData>;
+    BitSelectExpressionData, RangeSelectExpressionData, ConcatExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

@@ -933,6 +933,22 @@ auto LowerPackedFieldAccess(
   return mir::Operand::Use(slice_place);
 }
 
+auto LowerConcat(
+    const hir::ConcatExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.operands.size());
+  for (hir::ExpressionId op_id : data.operands) {
+    operands.push_back(LowerExpression(op_id, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .operands = std::move(operands),
+      .info = mir::ConcatRvalueInfo{.result_type = expr.type},
+  };
+  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -993,6 +1009,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
           return LowerPackedFieldAccess(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::ConcatExpressionData>) {
+          return LowerConcat(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

@@ -433,6 +433,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 "guarded_use({}, type={})", FormatPlace(info.place),
                 FormatType(info.result_type));
           },
+          [this](const ConcatRvalueInfo& info) {
+            return std::format("concat<{}>", FormatType(info.result_type));
+          },
       },
       rv.info);
 

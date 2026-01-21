@@ -17,6 +17,7 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/builtin_method.hpp"
@@ -1328,6 +1329,69 @@ auto LowerExpression(
               .span = span,
               .data = hir::StructLiteralExpressionData{
                   .field_values = std::move(field_values)}});
+    }
+
+    case ExpressionKind::Concatenation: {
+      const auto& concat = expr.as<slang::ast::ConcatenationExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Only packed concatenation supported.
+      // Slang uses ConcatenationExpression for unpacked array literals too.
+      // Streaming concatenation ({>> ...}) is a separate ExpressionKind.
+      if (!expr.type->isIntegral()) {
+        ctx->sink->Error(span, "unpacked array concatenation not supported");
+        return hir::kInvalidExpressionId;
+      }
+
+      // LRM 11.4.12: Concatenation result is always unsigned
+      if (expr.type->isSigned()) {
+        throw common::InternalError(
+            "LowerExpression",
+            "concatenation result type should be unsigned per LRM 11.4.12");
+      }
+
+      // Lower operands, skipping void-type (zero replication like {0{x}})
+      std::vector<hir::ExpressionId> operands;
+      operands.reserve(concat.operands().size());
+      uint32_t total_width = 0;
+      for (const auto* op : concat.operands()) {
+        if (op->type->isVoid()) {
+          continue;
+        }
+        total_width += op->type->getBitWidth();
+        hir::ExpressionId op_id = LowerExpression(*op, registrar, ctx);
+        if (!op_id) {
+          return hir::kInvalidExpressionId;
+        }
+        operands.push_back(op_id);
+      }
+
+      if (operands.empty()) {
+        ctx->sink->Error(span, "concatenation has no non-zero-width operands");
+        return hir::kInvalidExpressionId;
+      }
+
+      // LRM 11.4.12: Result width equals sum of operand widths
+      if (expr.type->getBitWidth() != total_width) {
+        throw common::InternalError(
+            "LowerExpression",
+            std::format(
+                "concatenation result width {} != sum of operand widths {}",
+                expr.type->getBitWidth(), total_width));
+      }
+
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConcat,
+              .type = type,
+              .span = span,
+              .data =
+                  hir::ConcatExpressionData{.operands = std::move(operands)}});
     }
 
     default:

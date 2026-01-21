@@ -67,8 +67,12 @@ auto IntegralToHex(const mir::interp::RuntimeIntegral& integral)
 }
 
 // Extract numeric value from RuntimeValue for assertion comparison.
-// Returns int64_t for integers <= 64 bits (sign-extended for types > 1 bit),
-// HexValue for integers > 64 bits, or double for reals.
+// Returns int64_t for integers <= 64 bits, HexValue for integers > 64 bits,
+// or double for reals.
+//
+// Note: RuntimeIntegral doesn't carry signedness info. The raw value is
+// returned without sign-extension. The caller (assertion code) handles
+// sign-extension when comparing against negative expected values.
 auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
     -> std::expected<std::variant<int64_t, double, HexValue>, std::string> {
   if (mir::interp::IsIntegral(value)) {
@@ -83,14 +87,10 @@ auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
     if (integral.bit_width > 64) {
       return HexValue{IntegralToHex(integral)};
     }
+    // Return raw value masked to bit_width. No sign-extension here.
     uint64_t raw = integral.value[0];
-    // Sign-extend for types > 1 bit. 1-bit values are left unsigned since
-    // they're typically comparison/logical results (e.g., a == b returns 1'b1).
-    if (integral.bit_width > 1 && integral.bit_width < 64) {
-      uint64_t sign_bit = uint64_t{1} << (integral.bit_width - 1);
-      if ((raw & sign_bit) != 0) {
-        raw |= ~((uint64_t{1} << integral.bit_width) - 1);
-      }
+    if (integral.bit_width < 64) {
+      raw &= (uint64_t{1} << integral.bit_width) - 1;
     }
     return static_cast<int64_t>(raw);
   }
