@@ -86,6 +86,33 @@ auto Context::GetLyraPrintEnd() -> llvm::Function* {
   return lyra_print_end_;
 }
 
+auto Context::GetLyraRegisterVar() -> llvm::Function* {
+  if (lyra_register_var_ == nullptr) {
+    // void LyraRegisterVar(const char*, void*, int32_t, int32_t, bool)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty}, false);
+    lyra_register_var_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraRegisterVar",
+        llvm_module_.get());
+  }
+  return lyra_register_var_;
+}
+
+auto Context::GetLyraSnapshotVars() -> llvm::Function* {
+  if (lyra_snapshot_vars_ == nullptr) {
+    auto* fn_type =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    lyra_snapshot_vars_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSnapshotVars",
+        llvm_module_.get());
+  }
+  return lyra_snapshot_vars_;
+}
+
 auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     -> llvm::AllocaInst* {
   // Check if we already have storage for this place
@@ -111,12 +138,15 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
 
   if (type.Kind() == TypeKind::kIntegral) {
     llvm_type = GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
+  } else if (type.Kind() == TypeKind::kReal) {
+    // Real types (both real and shortreal) are stored as double
+    llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
     llvm_type = GetLlvmStorageType(*llvm_context_, width);
   } else {
     throw std::runtime_error(
-        "non-integral types not yet supported in LLVM backend place storage");
+        "type not yet supported in LLVM backend place storage");
   }
 
   // Create the alloca

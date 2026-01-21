@@ -8,8 +8,6 @@ suites:
   llvm_dev:
     backend: llvm
     include_regex:
-      # LLVM backend currently supports only tests with expected_stdout assertions.
-      # Start with simple display tests. As the backend matures, add more.
       - system_tasks/display.yaml
 
   mir_dev:

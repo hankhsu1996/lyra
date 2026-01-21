@@ -8,9 +8,12 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 
 #include <fmt/core.h>
 
+#include "lyra/common/type.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/lowering/mir_to_llvm/lower.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -133,6 +136,57 @@ auto RunLli(const std::string& runtime_path, const std::string& ir_path)
   return -1;
 }
 
+// Build slot type info for ALL module variables from HIR
+auto BuildSlotTypes(const CompilationResult& compilation)
+    -> std::vector<lowering::mir_to_llvm::SlotTypeInfo> {
+  std::vector<lowering::mir_to_llvm::SlotTypeInfo> slot_types;
+
+  // Find the HIR module
+  const hir::Module* hir_module = nullptr;
+  for (const auto& element : compilation.hir.design.elements) {
+    if (const auto* mod = std::get_if<hir::Module>(&element)) {
+      hir_module = mod;
+      break;
+    }
+  }
+  if (hir_module == nullptr) {
+    return slot_types;
+  }
+
+  const auto& type_arena = *compilation.hir.type_arena;
+  const auto& symbol_table = *compilation.hir.symbol_table;
+
+  slot_types.reserve(hir_module->variables.size());
+  for (SymbolId sym_id : hir_module->variables) {
+    const auto& sym = symbol_table[sym_id];
+    const Type& type = type_arena[sym.type];
+
+    if (type.Kind() == TypeKind::kReal) {
+      slot_types.push_back({
+          .kind = lowering::mir_to_llvm::VarTypeKind::kReal,
+          .width = 64,
+          .is_signed = true,
+      });
+    } else if (IsPacked(type)) {
+      uint32_t width = PackedBitWidth(type, type_arena);
+      bool is_signed = IsPackedSigned(type, type_arena);
+      slot_types.push_back({
+          .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
+          .width = width > 0 ? width : 32,
+          .is_signed = is_signed,
+      });
+    } else {
+      // Unsupported type - use placeholder
+      slot_types.push_back({
+          .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
+          .width = 32,
+          .is_signed = false,
+      });
+    }
+  }
+  return slot_types;
+}
+
 }  // namespace
 
 auto RunLlvm(const std::vector<std::string>& files) -> int {
@@ -146,6 +200,8 @@ auto RunLlvm(const std::vector<std::string>& files) -> int {
       .design = &compilation->mir.design,
       .mir_arena = compilation->mir.mir_arena.get(),
       .type_arena = compilation->hir.type_arena.get(),
+      .slot_types = BuildSlotTypes(*compilation),
+      .variables = {},  // No inspection for CLI
   };
 
   lowering::mir_to_llvm::LoweringResult llvm_result;
