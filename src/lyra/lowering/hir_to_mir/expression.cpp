@@ -300,6 +300,72 @@ auto LowerIncrementDecrement(
   return mir::Operand::Use(is_pre ? new_value : old_value);
 }
 
+// Lower compound assignment (+=, -=, etc.) into read-modify-write sequence.
+// Similar to LowerIncrementDecrement but uses the user-provided operand.
+auto LowerCompoundAssignment(
+    const hir::CompoundAssignmentExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  // 1. Lower target as lvalue (evaluates index expressions once)
+  LvalueResult target = LowerLvalue(data.target, builder);
+
+  // 2. Lower the RHS operand
+  mir::Operand rhs = LowerExpression(data.operand, builder);
+
+  // 3. Read old value with OOB handling using GuardedUse
+  mir::Operand read_val;
+  if (target.IsAlwaysValid()) {
+    read_val = mir::Operand::Use(target.place);
+  } else {
+    // OOB/X/Z index: GuardedUse returns X (4-state) or 0 (2-state)
+    read_val = builder.EmitGuardedUse(target.validity, target.place, expr.type);
+  }
+  mir::PlaceId old_value = ctx.AllocTemp(expr.type);
+  builder.EmitAssign(old_value, read_val);
+
+  // 4. Select the appropriate MIR operator (handle div/mod signedness)
+  // Use operand types for signedness check, mirroring SelectDivModOp logic
+  mir::BinaryOp mir_op = MapBinaryOp(data.op);
+  if (IsDivisionOrModuloOp(data.op)) {
+    const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
+    const Type& lhs_type = (*ctx.type_arena)[expr.type];  // target type
+    const Type& rhs_type = (*ctx.type_arena)[operand_expr.type];
+
+    if (IsPacked(lhs_type) && IsPacked(rhs_type)) {
+      bool lhs_signed = IsPackedSigned(lhs_type, *ctx.type_arena);
+      bool rhs_signed = IsPackedSigned(rhs_type, *ctx.type_arena);
+      if (lhs_signed != rhs_signed) {
+        throw common::InternalError(
+            "LowerCompoundAssignment",
+            "operand signedness mismatch - missing conversion");
+      }
+      if (lhs_signed) {
+        mir_op = ToSignedVariant(mir_op);
+      }
+    }
+  }
+
+  // 5. Compute new value: old_value op rhs
+  mir::Rvalue compute_rvalue{
+      .operands = {mir::Operand::Use(old_value), rhs},
+      .info = mir::BinaryRvalueInfo{.op = mir_op},
+  };
+  mir::PlaceId new_value =
+      builder.EmitTemp(expr.type, std::move(compute_rvalue));
+
+  // 6. Write back to target with guarded store for OOB safety
+  if (target.IsAlwaysValid()) {
+    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
+  } else {
+    builder.EmitGuardedAssign(
+        target.place, mir::Operand::Use(new_value), target.validity);
+  }
+
+  // 7. Return new value (compound assignment yields the new value)
+  return mir::Operand::Use(new_value);
+}
+
 auto LowerUnary(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> mir::Operand {
@@ -975,6 +1041,9 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerConditional(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::AssignmentExpressionData>) {
           return LowerAssignment(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::CompoundAssignmentExpressionData>) {
+          return LowerCompoundAssignment(data, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
           // TODO(hankhsu): Use GuardedUse for OOB-safe reads
