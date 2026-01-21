@@ -324,17 +324,31 @@ auto EvalCast(
   bool src_is_signed = IsPackedSigned(source_type, arena);
   uint32_t target_width = PackedBitWidth(target_type, arena);
 
+  // For 4-state → 2-state conversion, X/Z bits become 0.
+  // We create a clean 2-state value by masking out X/Z from the value bits.
+  RuntimeIntegral clean_src = op_int;
   if (IsPackedFourState(source_type, arena)) {
-    throw common::InternalError(
-        "EvalCast", "4-state source should have been rejected at lowering");
+    // X/Z bits become 0: clear value bits where X or Z is set
+    for (size_t i = 0; i < clean_src.value.size(); ++i) {
+      uint64_t xz_mask = 0;
+      if (i < clean_src.x_mask.size()) {
+        xz_mask |= clean_src.x_mask[i];
+      }
+      if (i < clean_src.z_mask.size()) {
+        xz_mask |= clean_src.z_mask[i];
+      }
+      clean_src.value[i] &= ~xz_mask;
+    }
+    // Clear X/Z masks (result is 2-state)
+    std::ranges::fill(clean_src.x_mask, 0);
+    std::ranges::fill(clean_src.z_mask, 0);
   }
-  // Note: 4-state target is allowed when source is 2-state (lossless
-  // conversion). The result is still 2-state representation.
+  // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how
   // downstream operations interpret the result.
-  return IntegralResize2State(op_int, src_is_signed, target_width);
+  return IntegralResize2State(clean_src, src_is_signed, target_width);
 }
 
 }  // namespace lyra::mir::interp
