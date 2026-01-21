@@ -547,12 +547,26 @@ auto LowerConditional(
 auto LowerStructLiteral(
     const hir::StructLiteralExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> mir::Operand {
+  Context& ctx = builder.GetContext();
+  const Type& type_info = (*ctx.type_arena)[expr.type];
+
   std::vector<mir::Operand> operands;
   operands.reserve(data.field_values.size());
   for (hir::ExpressionId field_id : data.field_values) {
     operands.push_back(LowerExpression(field_id, builder));
   }
 
+  if (type_info.Kind() == TypeKind::kPackedStruct) {
+    // Packed struct: concat fields (declaration order = MSB first)
+    // result_type is the packed struct type, preserving signedness
+    mir::Rvalue rvalue{
+        .operands = std::move(operands),
+        .info = mir::ConcatRvalueInfo{.result_type = expr.type},
+    };
+    return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  }
+
+  // Unpacked struct: aggregate construction
   mir::Rvalue rvalue{
       .operands = std::move(operands),
       .info = mir::AggregateRvalueInfo{.result_type = expr.type},
