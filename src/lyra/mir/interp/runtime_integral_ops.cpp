@@ -1009,4 +1009,99 @@ auto IntegralInsertSlice(
   return result;
 }
 
+auto IntegralInsertSlice4State(
+    const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width) -> RuntimeIntegral {
+  // Handle edge cases
+  if (width == 0 || bit_offset >= dst.bit_width) {
+    return dst;  // Nothing to modify
+  }
+
+  // Copy destination
+  auto result = dst;
+
+  // Ensure result vectors are properly sized
+  size_t result_words = WordsNeeded(dst.bit_width);
+  result.value.resize(result_words, 0);
+  result.x_mask.resize(result_words, 0);
+  result.z_mask.resize(result_words, 0);
+
+  // Calculate effective width (don't write beyond dst bounds)
+  uint32_t effective_width = width;
+  if (bit_offset + width > dst.bit_width) {
+    effective_width = dst.bit_width - bit_offset;
+  }
+
+  // Ensure source has properly sized vectors for safe indexing
+  size_t src_words = WordsNeeded(width);
+  std::vector<uint64_t> src_value = src.value;
+  std::vector<uint64_t> src_x_mask = src.x_mask;
+  std::vector<uint64_t> src_z_mask = src.z_mask;
+  src_value.resize(src_words, 0);
+  src_x_mask.resize(src_words, 0);
+  src_z_mask.resize(src_words, 0);
+
+  // Strategy: iterate over destination words that are affected by the slice.
+  // The slice occupies dst bits [bit_offset, bit_offset + effective_width).
+  // For each dst word, compute which source bits map there.
+  size_t first_dst_word = bit_offset / kBitsPerWord;
+  size_t last_dst_word = (bit_offset + effective_width - 1) / kBitsPerWord;
+
+  for (size_t dst_idx = first_dst_word;
+       dst_idx <= last_dst_word && dst_idx < result_words; ++dst_idx) {
+    // Global bit range for this destination word
+    uint32_t word_start_bit = static_cast<uint32_t>(dst_idx * kBitsPerWord);
+    uint32_t word_end_bit = word_start_bit + kBitsPerWord;
+
+    // Intersection with the slice range [bit_offset, bit_offset +
+    // effective_width)
+    uint32_t slice_start = std::max(word_start_bit, bit_offset);
+    uint32_t slice_end = std::min(word_end_bit, bit_offset + effective_width);
+
+    if (slice_start >= slice_end) {
+      continue;  // No intersection
+    }
+
+    uint32_t bits_to_write = slice_end - slice_start;
+    uint32_t dst_bit_pos =
+        slice_start - word_start_bit;  // Position within dst word
+    uint32_t src_bit_pos =
+        slice_start - bit_offset;  // Position within source stream
+
+    // Extract 'bits_to_write' bits from source starting at src_bit_pos
+    size_t src_word_idx = src_bit_pos / kBitsPerWord;
+    size_t src_bit_in_word = src_bit_pos % kBitsPerWord;
+
+    // Helper lambda to extract bits from a source vector
+    auto extract_bits = [&](const std::vector<uint64_t>& vec) -> uint64_t {
+      uint64_t bits = 0;
+      if (src_word_idx < vec.size()) {
+        bits = vec[src_word_idx] >> src_bit_in_word;
+      }
+      if (src_bit_in_word != 0 && src_word_idx + 1 < vec.size()) {
+        bits |= vec[src_word_idx + 1] << (kBitsPerWord - src_bit_in_word);
+      }
+      return bits & GetMask(bits_to_write);
+    };
+
+    uint64_t value_bits = extract_bits(src_value);
+    uint64_t x_bits = extract_bits(src_x_mask);
+    uint64_t z_bits = extract_bits(src_z_mask);
+
+    // Write to destination at dst_bit_pos
+    uint64_t dst_mask = GetMask(bits_to_write) << dst_bit_pos;
+    result.value[dst_idx] &= ~dst_mask;
+    result.value[dst_idx] |= value_bits << dst_bit_pos;
+    result.x_mask[dst_idx] &= ~dst_mask;
+    result.x_mask[dst_idx] |= x_bits << dst_bit_pos;
+    result.z_mask[dst_idx] &= ~dst_mask;
+    result.z_mask[dst_idx] |= z_bits << dst_bit_pos;
+  }
+
+  MaskTopWord(result.value, dst.bit_width);
+  MaskTopWord(result.x_mask, dst.bit_width);
+  MaskTopWord(result.z_mask, dst.bit_width);
+  return result;
+}
+
 }  // namespace lyra::mir::interp

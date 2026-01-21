@@ -74,11 +74,17 @@ struct GuardedUseRvalueInfo {
   // operands[0] = validity predicate (1-bit 2-state bool)
 };
 
+// Concatenation: bit-concatenate operands MSB to LSB.
+// Result type determines width and 2-state vs 4-state.
+struct ConcatRvalueInfo {
+  TypeId result_type;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, SystemCallRvalueInfo,
     UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
-    IndexValidityRvalueInfo, GuardedUseRvalueInfo>;
+    IndexValidityRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -108,6 +114,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "index_validity";
         } else if constexpr (std::is_same_v<T, GuardedUseRvalueInfo>) {
           return "guarded_use";
+        } else if constexpr (std::is_same_v<T, ConcatRvalueInfo>) {
+          return "concat";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

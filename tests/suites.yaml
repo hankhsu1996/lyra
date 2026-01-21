@@ -10,6 +10,7 @@ suites:
     include_regex:
       - operators/binary.yaml
       - operators/unary.yaml
+      - operators/concat.yaml
       - control_flow/conditional.yaml
       - control_flow/while.yaml
       - control_flow/do_while.yaml

@@ -771,6 +771,21 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << "[" << data.left << ":" << data.right << "]";
       break;
     }
+
+    case ExpressionKind::kConcat: {
+      const auto& data = std::get<ConcatExpressionData>(expr.data);
+      *out_ << "{";
+      bool first = true;
+      for (ExpressionId op : data.operands) {
+        if (!first) {
+          *out_ << ", ";
+        }
+        first = false;
+        Dump(op);
+      }
+      *out_ << "}";
+      break;
+    }
   }
 }
 

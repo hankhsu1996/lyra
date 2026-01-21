@@ -117,4 +117,12 @@ auto IntegralInsertSlice(
     const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
     uint32_t width) -> RuntimeIntegral;
 
+// Insert a value into a slice of bits in an integral (4-state aware).
+// Same as IntegralInsertSlice but handles 4-state sources by also
+// inserting x_mask and z_mask bits. For 2-state sources (empty masks),
+// the mask operations are a no-op.
+auto IntegralInsertSlice4State(
+    const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width) -> RuntimeIntegral;
+
 }  // namespace lyra::mir::interp
