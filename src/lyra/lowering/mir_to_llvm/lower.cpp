@@ -20,6 +20,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
       main_type, llvm::Function::ExternalLinkage, "main", &module);
 
   auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", main_func);
+  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", main_func);
   builder.SetInsertPoint(entry);
 
   // Lower all initial processes
@@ -31,12 +32,13 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     for (mir::ProcessId proc_id : mir_module.processes) {
       const auto& process = (*input.mir_arena)[proc_id];
       if (process.kind == mir::ProcessKind::kOnce) {
-        LowerProcess(context, process);
+        LowerProcess(context, process, exit_block);
       }
     }
   }
 
-  // Return 0
+  // Exit block returns 0
+  builder.SetInsertPoint(exit_block);
   builder.CreateRet(llvm::ConstantInt::get(llvm_ctx, llvm::APInt(32, 0)));
 
   auto [ctx, mod] = context.TakeOwnership();
