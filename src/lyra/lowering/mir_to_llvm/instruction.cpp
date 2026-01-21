@@ -2,6 +2,7 @@
 
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lowering/mir_to_llvm/instruction_compute.hpp"
 #include "lyra/lowering/mir_to_llvm/instruction_display.hpp"
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/effect.hpp"
@@ -63,8 +64,8 @@ void LowerInstruction(Context& context, const mir::Instruction& instruction) {
           [&context](const mir::Assign& assign) {
             LowerAssign(context, assign);
           },
-          [](const mir::Compute& /*compute*/) {
-            // TODO(hankhsu): Handle computations
+          [&context](const mir::Compute& compute) {
+            LowerCompute(context, compute);
           },
           [](const mir::GuardedAssign& /*guarded*/) {
             // TODO(hankhsu): Handle guarded assignments
