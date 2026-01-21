@@ -34,15 +34,19 @@ class TypeArena final {
   absl::flat_hash_map<TypeKey, TypeId, TypeKeyHash> map_;
 };
 
-// Total bit width for packed types (kIntegral or kPackedArray).
+// Total bit width for packed types (kIntegral, kPackedArray, or kPackedStruct).
 // For kIntegral: returns bit_width
 // For kPackedArray: returns PackedBitWidth(element_type) * range.Size()
+// For kPackedStruct: returns total_bit_width
 // Asserts on non-packed types.
 inline auto PackedBitWidth(const Type& type, const TypeArena& arena)
     -> uint32_t {
   assert(IsPacked(type));
   if (type.Kind() == TypeKind::kIntegral) {
     return type.AsIntegral().bit_width;
+  }
+  if (type.Kind() == TypeKind::kPackedStruct) {
+    return type.AsPackedStruct().total_bit_width;
   }
   const auto& info = type.AsPackedArray();
   return PackedBitWidth(arena[info.element_type], arena) * info.range.Size();
@@ -57,13 +61,16 @@ inline auto PackedArrayElementWidth(const Type& type, const TypeArena& arena)
   return PackedBitWidth(arena[info.element_type], arena);
 }
 
-// Get the base IntegralInfo for a packed type.
+// Get the base IntegralInfo for a packed type (kIntegral or kPackedArray only).
 // For kIntegral: returns the IntegralInfo directly
 // For kPackedArray: recursively finds the base integral element type
-// Asserts on non-packed types.
+// Does NOT support kPackedStruct (use IsPackedSigned/IsPackedFourState
+// instead).
 inline auto PackedBaseInfo(const Type& type, const TypeArena& arena)
     -> const IntegralInfo& {
-  assert(IsPacked(type));
+  assert(
+      type.Kind() == TypeKind::kIntegral ||
+      type.Kind() == TypeKind::kPackedArray);
   if (type.Kind() == TypeKind::kIntegral) {
     return type.AsIntegral();
   }
@@ -74,15 +81,23 @@ inline auto PackedBaseInfo(const Type& type, const TypeArena& arena)
 // Check if a packed type is signed.
 // For kIntegral: returns is_signed
 // For kPackedArray: returns the base element's signedness
+// For kPackedStruct: returns is_signed
 inline auto IsPackedSigned(const Type& type, const TypeArena& arena) -> bool {
+  if (type.Kind() == TypeKind::kPackedStruct) {
+    return type.AsPackedStruct().is_signed;
+  }
   return PackedBaseInfo(type, arena).is_signed;
 }
 
 // Check if a packed type is 4-state.
 // For kIntegral: returns is_four_state
 // For kPackedArray: returns the base element's 4-state nature
+// For kPackedStruct: returns is_four_state
 inline auto IsPackedFourState(const Type& type, const TypeArena& arena)
     -> bool {
+  if (type.Kind() == TypeKind::kPackedStruct) {
+    return type.AsPackedStruct().is_four_state;
+  }
   return PackedBaseInfo(type, arena).is_four_state;
 }
 
