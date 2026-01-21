@@ -292,6 +292,56 @@ auto LowerConstantValueExpression(
   return hir::kInvalidExpressionId;
 }
 
+// Skip Conversion nodes to get to the underlying expression.
+auto UnwrapConversions(const slang::ast::Expression& expr)
+    -> const slang::ast::Expression& {
+  const slang::ast::Expression* current = &expr;
+  while (current->kind == slang::ast::ExpressionKind::Conversion) {
+    current = &current->as<slang::ast::ConversionExpression>().operand();
+  }
+  return *current;
+}
+
+// Check if expression is an LValueReference (used in compound assignments).
+auto IsLValueReference(const slang::ast::Expression& expr) -> bool {
+  return UnwrapConversions(expr).kind ==
+         slang::ast::ExpressionKind::LValueReference;
+}
+
+// Extract the user's RHS from slang's expanded compound assignment.
+// For `a += b`, slang expands to `a = a + b` where inner `a` is
+// LValueReference. Returns the non-LValueReference operand from the binary
+// expression.
+//
+// Invariant: slang always expands compound assignments to a binary op with
+// exactly one LValueReference operand. Violations are compiler bugs.
+auto ExtractCompoundAssignmentRhs(const slang::ast::Expression& expanded_rhs)
+    -> const slang::ast::Expression& {
+  const auto& unwrapped = UnwrapConversions(expanded_rhs);
+  if (unwrapped.kind != slang::ast::ExpressionKind::BinaryOp) {
+    throw common::InternalError(
+        "ExtractCompoundAssignmentRhs",
+        "compound assignment RHS must be a binary expression");
+  }
+  const auto& binary = unwrapped.as<slang::ast::BinaryExpression>();
+
+  bool left_is_lvalue_ref = IsLValueReference(binary.left());
+  bool right_is_lvalue_ref = IsLValueReference(binary.right());
+
+  // Exactly one operand should be LValueReference
+  if (left_is_lvalue_ref && !right_is_lvalue_ref) {
+    return binary.right();
+  }
+  if (!left_is_lvalue_ref && right_is_lvalue_ref) {
+    return binary.left();
+  }
+
+  // Neither or both - invariant violation
+  throw common::InternalError(
+      "ExtractCompoundAssignmentRhs",
+      "expected exactly one LValueReference operand in compound assignment");
+}
+
 // Try to get constant value from a symbol (params, enum values, etc.).
 // Returns the constant value if the symbol is a compile-time constant,
 // or nullptr if it's a runtime variable that needs lookup.
@@ -870,20 +920,57 @@ auto LowerExpression(
       const auto& assign = expr.as<slang::ast::AssignmentExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Check if this is a compound assignment (+=, -=, etc.)
+      if (assign.op.has_value()) {
+        // Compound assignment: extract the operator and user's RHS
+        auto hir_op = ConvertBinaryOp(*assign.op);
+        if (!hir_op) {
+          ctx->ErrorFmt(
+              span, "unsupported compound assignment operator '{}'",
+              toString(*assign.op));
+          return hir::kInvalidExpressionId;
+        }
+
+        // Lower target (the lvalue being modified)
+        hir::ExpressionId target =
+            LowerExpression(assign.left(), registrar, ctx);
+        if (!target) {
+          return hir::kInvalidExpressionId;
+        }
+
+        // Extract and lower the user's RHS from slang's expanded binary
+        const auto& rhs = ExtractCompoundAssignmentRhs(assign.right());
+        hir::ExpressionId operand = LowerExpression(rhs, registrar, ctx);
+        if (!operand) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kCompoundAssignment,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::CompoundAssignmentExpressionData{
+                        .op = *hir_op, .target = target, .operand = operand},
+            });
+      }
+
+      // Regular assignment
       hir::ExpressionId target = LowerExpression(assign.left(), registrar, ctx);
       if (!target) {
         return hir::kInvalidExpressionId;
       }
       hir::ExpressionId value = LowerExpression(assign.right(), registrar, ctx);
       if (!value) {
-        return hir::kInvalidExpressionId;
-      }
-
-      if (expr.type == nullptr) {
-        return hir::kInvalidExpressionId;
-      }
-      TypeId type = LowerType(*expr.type, span, ctx);
-      if (!type) {
         return hir::kInvalidExpressionId;
       }
 

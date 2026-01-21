@@ -624,6 +624,44 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kCompoundAssignment: {
+      const auto& data = std::get<CompoundAssignmentExpressionData>(expr.data);
+      Dump(data.target);
+      std::string_view op_str = [&] {
+        switch (data.op) {
+          case BinaryOp::kAdd:
+            return " += ";
+          case BinaryOp::kSubtract:
+            return " -= ";
+          case BinaryOp::kMultiply:
+            return " *= ";
+          case BinaryOp::kDivide:
+            return " /= ";
+          case BinaryOp::kMod:
+            return " %= ";
+          case BinaryOp::kBitwiseAnd:
+            return " &= ";
+          case BinaryOp::kBitwiseOr:
+            return " |= ";
+          case BinaryOp::kBitwiseXor:
+            return " ^= ";
+          case BinaryOp::kLogicalShiftLeft:
+            return " <<= ";
+          case BinaryOp::kLogicalShiftRight:
+            return " >>= ";
+          case BinaryOp::kArithmeticShiftLeft:
+            return " <<<= ";
+          case BinaryOp::kArithmeticShiftRight:
+            return " >>>= ";
+          default:
+            return " <?op>= ";
+        }
+      }();
+      *out_ << op_str;
+      Dump(data.operand);
+      break;
+    }
+
     case ExpressionKind::kElementAccess: {
       const auto& data = std::get<ElementAccessExpressionData>(expr.data);
       Dump(data.base);

@@ -23,6 +23,7 @@ enum class ExpressionKind {
   kSystemCall,
   kConditional,
   kAssignment,
+  kCompoundAssignment,
   kElementAccess,
   kMemberAccess,
   kStructLiteral,
@@ -83,6 +84,15 @@ struct AssignmentExpressionData {
   ExpressionId value;
 
   auto operator==(const AssignmentExpressionData&) const -> bool = default;
+};
+
+struct CompoundAssignmentExpressionData {
+  BinaryOp op;
+  ExpressionId target;
+  ExpressionId operand;  // RHS of compound op (e.g., 'b' in 'a += b')
+
+  auto operator==(const CompoundAssignmentExpressionData&) const
+      -> bool = default;
 };
 
 struct ElementAccessExpressionData {
@@ -187,11 +197,12 @@ using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
     ConditionalExpressionData, AssignmentExpressionData,
-    ElementAccessExpressionData, MemberAccessExpressionData,
-    StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
-    NewArrayExpressionData, BuiltinMethodCallExpressionData,
-    PackedElementSelectExpressionData, PackedFieldAccessExpressionData,
-    BitSelectExpressionData, RangeSelectExpressionData, ConcatExpressionData>;
+    CompoundAssignmentExpressionData, ElementAccessExpressionData,
+    MemberAccessExpressionData, StructLiteralExpressionData,
+    ArrayLiteralExpressionData, CallExpressionData, NewArrayExpressionData,
+    BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
+    PackedFieldAccessExpressionData, BitSelectExpressionData,
+    RangeSelectExpressionData, ConcatExpressionData>;
 
 struct Expression {
   ExpressionKind kind;
