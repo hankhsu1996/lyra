@@ -26,6 +26,87 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// Helper to create an integer constant expression
+auto MakeIntConstant(int64_t value, TypeId type, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
+  IntegralConstant constant;
+  constant.value.push_back(static_cast<uint64_t>(value));
+  ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kConstant,
+          .type = type,
+          .span = span,
+          .data = hir::ConstantExpressionData{.constant = cid}});
+}
+
+// Helper to create a name reference expression
+auto MakeNameRef(SymbolId sym, TypeId type, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kNameRef,
+          .type = type,
+          .span = span,
+          .data = hir::NameRefExpressionData{.symbol = sym}});
+}
+
+// Helper to get the element type of an array type (for foreach dimension
+// traversal)
+auto GetArrayElementType(const slang::ast::Type* array_type)
+    -> const slang::ast::Type* {
+  auto type_kind = array_type->getCanonicalType().kind;
+  if (type_kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+    return &array_type->as<slang::ast::FixedSizeUnpackedArrayType>()
+                .elementType;
+  }
+  if (type_kind == slang::ast::SymbolKind::DynamicArrayType) {
+    return &array_type->as<slang::ast::DynamicArrayType>().elementType;
+  }
+  if (array_type->isQueue()) {
+    return &array_type->as<slang::ast::QueueType>().elementType;
+  }
+  if (array_type->isPackedArray()) {
+    return &array_type->as<slang::ast::PackedArrayType>().elementType;
+  }
+  return nullptr;  // Not an array type (e.g., integral for bit select)
+}
+
+// Determine the expression kind for indexing into an array type
+auto GetSelectKind(const slang::ast::Type* array_type) -> hir::ExpressionKind {
+  if (array_type->isPackedArray()) {
+    return hir::ExpressionKind::kPackedElementSelect;
+  }
+  if (array_type->isIntegral()) {
+    return hir::ExpressionKind::kBitSelect;
+  }
+  return hir::ExpressionKind::kElementAccess;
+}
+
+// Build a for loop statement from loop components
+auto BuildForLoop(
+    hir::ExpressionId init_assign, hir::ExpressionId condition,
+    hir::ExpressionId step, hir::StatementId body, SourceSpan span,
+    Context* ctx) -> hir::StatementId {
+  return ctx->hir_arena->AddStatement(
+      hir::Statement{
+          .kind = hir::StatementKind::kForLoop,
+          .span = span,
+          .data =
+              hir::ForLoopStatementData{
+                  .var_decls = {},
+                  .init_exprs = {init_assign},
+                  .condition = condition,
+                  .steps = {step},
+                  .body = body,
+              },
+      });
+}
+
+}  // namespace
+
 auto LowerStatement(
     const slang::ast::Statement& stmt, SymbolRegistrar& registrar, Context* ctx)
     -> std::optional<hir::StatementId> {
@@ -636,6 +717,376 @@ auto LowerStatement(
               .kind = hir::StatementKind::kContinue,
               .span = ctx->SpanOf(stmt.sourceRange),
               .data = hir::ContinueStatementData{},
+          });
+    }
+
+    case StatementKind::ForeachLoop: {
+      const auto& fs = stmt.as<slang::ast::ForeachLoopStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      // Reject associative arrays
+      if (fs.arrayRef.type->isAssociativeArray()) {
+        ctx->sink->Error(span, "foreach over associative arrays not supported");
+        return hir::kInvalidStatementId;
+      }
+
+      // Count active dimensions (non-skipped)
+      size_t active_count = 0;
+      for (const auto& dim : fs.loopDims) {
+        if (dim.loopVar != nullptr) {
+          ++active_count;
+        }
+      }
+
+      // Reject skipped-before-active for dynamic dimensions.
+      // For ragged arrays like int a[][], `foreach(a[,j])` is ill-defined
+      // because the bound for j depends on which row, but the row index is
+      // skipped.
+      bool seen_skip = false;
+      for (const auto& dim : fs.loopDims) {
+        if (dim.loopVar == nullptr) {
+          seen_skip = true;
+        } else if (seen_skip && !dim.range.has_value()) {
+          // Active dynamic dimension after a skipped dimension
+          ctx->sink->Error(
+              span,
+              "foreach with skipped dimension before dynamic dimension is not "
+              "supported");
+          return hir::kInvalidStatementId;
+        }
+      }
+
+      // If all dimensions are skipped, evaluate arrayRef for side effects,
+      // then execute body once
+      if (active_count == 0) {
+        hir::ExpressionId array_expr =
+            LowerExpression(fs.arrayRef, registrar, ctx);
+        if (!array_expr) {
+          return hir::kInvalidStatementId;
+        }
+
+        // Create expression statement to evaluate arrayRef
+        hir::StatementId array_eval = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kExpression,
+                .span = span,
+                .data = hir::ExpressionStatementData{.expression = array_expr},
+            });
+
+        auto body_result = LowerStatement(fs.body, registrar, ctx);
+        if (!body_result.has_value()) {
+          // Empty body - just return the array evaluation
+          return array_eval;
+        }
+        if (!*body_result) {
+          return hir::kInvalidStatementId;
+        }
+
+        // Return block with array eval + body
+        return ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kBlock,
+                .span = span,
+                .data =
+                    hir::BlockStatementData{
+                        .statements = {array_eval, *body_result}},
+            });
+      }
+
+      // Create scope for loop variables
+      ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
+
+      // Declare all loop variables upfront (no init expression)
+      std::vector<hir::StatementId> var_decls;
+      for (const auto& dim : fs.loopDims) {
+        if (dim.loopVar == nullptr) {
+          continue;
+        }
+
+        TypeId var_type = LowerType(dim.loopVar->getType(), span, ctx);
+        if (!var_type) {
+          return hir::kInvalidStatementId;
+        }
+
+        SymbolId sym =
+            registrar.Register(*dim.loopVar, SymbolKind::kVariable, var_type);
+
+        hir::StatementId var_decl = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kVariableDeclaration,
+                .span = span,
+                .data =
+                    hir::VariableDeclarationStatementData{
+                        .symbol = sym, .init = hir::kInvalidExpressionId},
+            });
+        var_decls.push_back(var_decl);
+      }
+
+      // Lower arrayRef expression and store in temp to ensure once-only eval
+      hir::ExpressionId array_expr =
+          LowerExpression(fs.arrayRef, registrar, ctx);
+      if (!array_expr) {
+        return hir::kInvalidStatementId;
+      }
+
+      // Create temp variable for arrayRef to avoid re-evaluation
+      TypeId array_type = LowerType(*fs.arrayRef.type, span, ctx);
+      if (!array_type) {
+        return hir::kInvalidStatementId;
+      }
+
+      SymbolId array_temp_sym = registrar.RegisterSynthetic(
+          ctx->MakeTempName("foreach_arr"), SymbolKind::kVariable, array_type);
+
+      // Declare temp with arrayRef as initializer
+      hir::StatementId temp_decl = ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kVariableDeclaration,
+              .span = span,
+              .data =
+                  hir::VariableDeclarationStatementData{
+                      .symbol = array_temp_sym, .init = array_expr},
+          });
+      var_decls.push_back(temp_decl);
+
+      // Create reference to temp for use in loop expressions
+      hir::ExpressionId array_temp_ref = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNameRef,
+              .type = array_type,
+              .span = span,
+              .data = hir::NameRefExpressionData{.symbol = array_temp_sym}});
+
+      // Build subarray expressions for each dimension (forward order)
+      // dim_arrays[i] is the array whose size() we use for dimension i
+      // current_type tracks the type at current indexing depth
+      std::vector<hir::ExpressionId> dim_arrays(fs.loopDims.size());
+      hir::ExpressionId current_array = array_temp_ref;
+      const slang::ast::Type* current_type =
+          &fs.arrayRef.type->getCanonicalType();
+
+      for (size_t i = 0; i < fs.loopDims.size(); ++i) {
+        dim_arrays[i] = current_array;
+
+        if (fs.loopDims[i].loopVar != nullptr) {
+          // Build arr[loop_var] for next dimension
+          SymbolId var_sym = registrar.Lookup(*fs.loopDims[i].loopVar);
+          TypeId var_type =
+              LowerType(fs.loopDims[i].loopVar->getType(), span, ctx);
+          if (!var_type) {
+            return hir::kInvalidStatementId;
+          }
+
+          hir::ExpressionId index_ref =
+              MakeNameRef(var_sym, var_type, span, ctx);
+
+          // Get element type and select kind for this dimension
+          const slang::ast::Type* elem_type = GetArrayElementType(current_type);
+          hir::ExpressionKind select_kind = GetSelectKind(current_type);
+
+          // Determine result type
+          TypeId elem_type_id;
+          if (select_kind == hir::ExpressionKind::kBitSelect) {
+            // Bit select returns 1-bit logic
+            elem_type_id = ctx->type_arena->Intern(
+                TypeKind::kIntegral,
+                IntegralInfo{
+                    .bit_width = 1,
+                    .is_signed = false,
+                    .is_four_state = current_type->isFourState()});
+          } else if (elem_type != nullptr) {
+            elem_type_id = LowerType(*elem_type, span, ctx);
+          } else {
+            ctx->ErrorFmt(
+                span, "unexpected array type in foreach: {}",
+                toString(current_type->getCanonicalType().kind));
+            return hir::kInvalidStatementId;
+          }
+
+          if (!elem_type_id) {
+            return hir::kInvalidStatementId;
+          }
+
+          // Build element access expression
+          if (select_kind == hir::ExpressionKind::kElementAccess) {
+            current_array = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kElementAccess,
+                    .type = elem_type_id,
+                    .span = span,
+                    .data =
+                        hir::ElementAccessExpressionData{
+                            .base = current_array, .index = index_ref},
+                });
+          } else if (select_kind == hir::ExpressionKind::kPackedElementSelect) {
+            current_array = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kPackedElementSelect,
+                    .type = elem_type_id,
+                    .span = span,
+                    .data =
+                        hir::PackedElementSelectExpressionData{
+                            .base = current_array, .index = index_ref},
+                });
+          } else {
+            current_array = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBitSelect,
+                    .type = elem_type_id,
+                    .span = span,
+                    .data =
+                        hir::BitSelectExpressionData{
+                            .base = current_array, .index = index_ref},
+                });
+          }
+
+          // Advance type to element type for next iteration
+          if (elem_type != nullptr) {
+            current_type = elem_type;
+          }
+        }
+      }
+
+      // Lower body
+      auto body_result = LowerStatement(fs.body, registrar, ctx);
+      if (!body_result.has_value()) {
+        ctx->sink->Error(span, "foreach loop body cannot be empty");
+        return hir::kInvalidStatementId;
+      }
+      if (!*body_result) {
+        return hir::kInvalidStatementId;
+      }
+
+      // Build nested for loops (reverse order: innermost first)
+      hir::StatementId current = *body_result;
+
+      // Signed 32-bit int type for size() return
+      TypeId int_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = true, .is_four_state = false});
+
+      for (auto dim_it = fs.loopDims.rbegin(); dim_it != fs.loopDims.rend();
+           ++dim_it) {
+        const auto& dim = *dim_it;
+        if (dim.loopVar == nullptr) {
+          continue;
+        }
+
+        auto dim_idx =
+            static_cast<size_t>(std::distance(dim_it, fs.loopDims.rend()) - 1);
+
+        TypeId iter_type = LowerType(dim.loopVar->getType(), span, ctx);
+        if (!iter_type) {
+          return hir::kInvalidStatementId;
+        }
+
+        SymbolId loop_var_sym = registrar.Lookup(*dim.loopVar);
+        hir::ExpressionId var_ref =
+            MakeNameRef(loop_var_sym, iter_type, span, ctx);
+
+        hir::ExpressionId init_val;
+        hir::ExpressionId bound;
+        hir::BinaryOp cmp_op = hir::BinaryOp::kLessThan;
+        hir::UnaryOp step_op = hir::UnaryOp::kPostincrement;
+
+        if (dim.range.has_value()) {
+          // Fixed-size dimension: iterate based on range direction
+          // [3:0] → left=3, right=0, descending (iterate 3,2,1,0)
+          // [0:3] → left=0, right=3, ascending (iterate 0,1,2,3)
+          const auto& range = *dim.range;
+          bool descending = range.left > range.right;
+
+          init_val = MakeIntConstant(range.left, iter_type, span, ctx);
+          bound = MakeIntConstant(range.right, iter_type, span, ctx);
+
+          if (descending) {
+            cmp_op = hir::BinaryOp::kGreaterThanEqual;
+            step_op = hir::UnaryOp::kPostdecrement;
+          } else {
+            cmp_op = hir::BinaryOp::kLessThanEqual;
+            step_op = hir::UnaryOp::kPostincrement;
+          }
+        } else {
+          // Dynamic dimension - iterate 0 to size()-1
+          init_val = MakeIntConstant(0, iter_type, span, ctx);
+
+          // Build size() call on dim_arrays[dim_idx]
+          hir::ExpressionId size_call = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                  .type = int_type,
+                  .span = span,
+                  .data = hir::BuiltinMethodCallExpressionData{
+                      .receiver = dim_arrays[dim_idx],
+                      .method = hir::BuiltinMethod::kSize,
+                      .args = {}}});
+
+          // Cast to iterator type if different
+          if (iter_type != int_type) {
+            bound = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kCast,
+                    .type = iter_type,
+                    .span = span,
+                    .data = hir::CastExpressionData{.operand = size_call}});
+          } else {
+            bound = size_call;
+          }
+
+          cmp_op = hir::BinaryOp::kLessThan;
+          step_op = hir::UnaryOp::kPostincrement;
+        }
+
+        // Build condition: var_ref cmp_op bound
+        TypeId bool_type = ctx->type_arena->Intern(
+            TypeKind::kIntegral,
+            IntegralInfo{
+                .bit_width = 1, .is_signed = false, .is_four_state = false});
+
+        hir::ExpressionId condition = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBinaryOp,
+                .type = bool_type,
+                .span = span,
+                .data = hir::BinaryExpressionData{
+                    .op = cmp_op, .lhs = var_ref, .rhs = bound}});
+
+        // Build step: var_ref++/--
+        hir::ExpressionId step_var_ref =
+            MakeNameRef(loop_var_sym, iter_type, span, ctx);
+        hir::ExpressionId step = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kUnaryOp,
+                .type = iter_type,
+                .span = span,
+                .data = hir::UnaryExpressionData{
+                    .op = step_op, .operand = step_var_ref}});
+
+        // Build init assignment: loop_var = init_val
+        hir::ExpressionId init_var_ref =
+            MakeNameRef(loop_var_sym, iter_type, span, ctx);
+        hir::ExpressionId init_assign = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kAssignment,
+                .type = iter_type,
+                .span = span,
+                .data = hir::AssignmentExpressionData{
+                    .target = init_var_ref, .value = init_val}});
+
+        // Build ForLoop
+        current =
+            BuildForLoop(init_assign, condition, step, current, span, ctx);
+      }
+
+      // Build outer block with var decls + nested loops
+      var_decls.push_back(current);
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kBlock,
+              .span = span,
+              .data =
+                  hir::BlockStatementData{.statements = std::move(var_decls)},
           });
     }
 

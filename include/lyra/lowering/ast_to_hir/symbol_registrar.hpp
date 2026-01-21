@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <unordered_map>
 
 #include <slang/ast/Symbol.h>
@@ -15,6 +16,10 @@ class SymbolRegistrar {
 
   auto Register(
       const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type)
+      -> SymbolId;
+
+  // Register a synthetic (compiler-generated) symbol with no slang backing
+  auto RegisterSynthetic(std::string name, SymbolKind kind, TypeId type)
       -> SymbolId;
 
   [[nodiscard]] auto Lookup(const slang::ast::Symbol& slang_sym) const

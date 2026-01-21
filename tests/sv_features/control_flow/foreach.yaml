@@ -756,3 +756,101 @@ cases:
     expect:
       variables:
         count: 0
+
+  - name: foreach_skip_dim_access_subarray
+    description: Access partial array with skipped dimension
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          int arr[2][3];
+          arr[0][0] = 1; arr[0][1] = 2; arr[0][2] = 3;
+          arr[1][0] = 4; arr[1][1] = 5; arr[1][2] = 6;
+          sum = 0;
+          foreach (arr[i]) begin
+            // arr[i] is a 1D array of size 3
+            // Access first element of each subarray
+            sum = sum + arr[i][0];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 5
+
+  - name: foreach_skip_middle_access_outer
+    description: Access outer array element with middle dim skipped
+    sv: |
+      module Test;
+        int sum_first_elem;
+        initial begin
+          int arr[2][3][4];
+          // Initialize first element of each 2D subarray
+          arr[0][0][0] = 10;
+          arr[1][0][0] = 20;
+          sum_first_elem = 0;
+          foreach (arr[i,,k]) begin
+            // Access arr[i] (a 2D array) - get element [0][k]
+            if (k == 0) begin
+              sum_first_elem = sum_first_elem + arr[i][0][0];
+            end
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum_first_elem: 30
+
+  - name: foreach_negative_indices
+    description: Foreach with negative array bounds
+    sv: |
+      module Test;
+        int sum_idx;
+        int sum_val;
+        initial begin
+          int arr[-2:1];
+          arr[-2] = 10;
+          arr[-1] = 20;
+          arr[0] = 30;
+          arr[1] = 40;
+          sum_idx = 0;
+          sum_val = 0;
+          foreach (arr[i]) begin
+            sum_idx = sum_idx + i;
+            sum_val = sum_val + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum_idx: -2
+        sum_val: 100
+
+  - name: foreach_non_zero_base
+    description: Foreach with non-zero-based positive indices
+    sv: |
+      module Test;
+        int first_idx;
+        int last_idx;
+        int count;
+        initial begin
+          int arr[2:5];
+          arr[2] = 100;
+          arr[3] = 200;
+          arr[4] = 300;
+          arr[5] = 400;
+          first_idx = -1;
+          last_idx = -1;
+          count = 0;
+          foreach (arr[i]) begin
+            if (first_idx == -1) first_idx = i;
+            last_idx = i;
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        first_idx: 2
+        last_idx: 5
+        count: 4

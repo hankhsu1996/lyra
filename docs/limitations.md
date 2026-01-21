@@ -9,7 +9,9 @@ Supported:
 - Integral types (`bit`, `logic`, `reg`, `byte`, `shortint`, `int`, `longint`)
 - Arbitrary-width bit vectors (1-bit to 200+ bits)
 - Packed multi-dimensional arrays with non-zero lower bounds
-- Unpacked fixed-size arrays
+- Unpacked fixed-size arrays (multi-dimensional, initialization patterns)
+- Dynamic arrays (`.size()`, `.delete()`, `new[size]`, multi-dimensional)
+- Queues (bounded/unbounded, `.push_*()`, `.pop_*()`, `.insert()`, `.size()`, `.delete()`)
 - `real`, `shortreal`, `string`
 - `typedef` / type aliases
 - `enum` types (named and anonymous)
@@ -20,7 +22,8 @@ Not yet supported:
 - `struct` (packed and unpacked)
 - `union` (packed and unpacked)
 - `class` types
-- Dynamic arrays, associative arrays, queues
+- Dynamic arrays: `new` copy constructor (`new[size](source)`) preserves size but not contents
+- Associative arrays
 
 ## Nets
 
@@ -118,7 +121,7 @@ Not yet supported:
 ## Statements
 
 - `case inside` - pattern matching
-- `foreach` - dynamic arrays only (multi-dimensional and skipped dimensions supported)
+- `foreach` - unpacked arrays, dynamic arrays, queues (multi-dimensional and skipped dimensions supported)
 - `wait(expr)` - wait statements
 - `->` - event triggers
 - `fork`/`join` - parallel blocks
