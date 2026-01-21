@@ -26,6 +26,7 @@ suites:
       - datatypes/packed_2d.yaml
       - datatypes/packed_3d.yaml
       - datatypes/unpacked_struct.yaml
+      - datatypes/enum.yaml
       - system_tasks/display.yaml
       - system_tasks/severity.yaml
       - functions/basic.yaml

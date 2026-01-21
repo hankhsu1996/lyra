@@ -291,6 +291,29 @@ auto LowerConstantValueExpression(
   return hir::kInvalidExpressionId;
 }
 
+// Try to get constant value from a symbol (params, enum values, etc.).
+// Returns the constant value if the symbol is a compile-time constant,
+// or nullptr if it's a runtime variable that needs lookup.
+// Note: source_range is only used for Parameter (better slang diagnostics).
+auto TryGetConstantValue(
+    const slang::ast::Symbol& symbol, slang::SourceRange source_range)
+    -> const slang::ConstantValue* {
+  using slang::ast::SymbolKind;
+
+  switch (symbol.kind) {
+    case SymbolKind::Parameter: {
+      const auto& param = symbol.as<slang::ast::ParameterSymbol>();
+      return &param.getValue(source_range);
+    }
+    case SymbolKind::EnumValue: {
+      const auto& ev = symbol.as<slang::ast::EnumValueSymbol>();
+      return &ev.getValue();  // No source_range needed for enum values
+    }
+    default:
+      return nullptr;
+  }
+}
+
 }  // namespace
 
 auto LowerExpression(
@@ -369,33 +392,24 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
-      // Handle value parameters - inline as constants
-      if (named.symbol.kind == slang::ast::SymbolKind::Parameter) {
-        const auto& param = named.symbol.as<slang::ast::ParameterSymbol>();
-        // Pass sourceRange for better slang diagnostics on evaluation errors
-        const slang::ConstantValue& cv = param.getValue(expr.sourceRange);
-
+      // Try constant symbol resolution first (params, enum values, etc.).
+      // Slang already has the constant value - we just ask for it.
+      if (const auto* cv =
+              TryGetConstantValue(named.symbol, expr.sourceRange)) {
         // Check for bad/invalid/unbounded values
-        if (cv.bad()) {
-          ctx->ErrorFmt(span, "parameter '{}' has invalid value", name);
+        if (cv->bad()) {
+          ctx->ErrorFmt(span, "symbol '{}' has invalid value", name);
           return hir::kInvalidExpressionId;
         }
-        if (cv.isUnbounded()) {
-          ctx->ErrorFmt(span, "unbounded parameter '{}' not supported", name);
+        if (cv->isUnbounded()) {
+          ctx->ErrorFmt(span, "unbounded value '{}' not supported", name);
           return hir::kInvalidExpressionId;
         }
 
-        if (cv.isInteger()) {
-          // Verify the expression type is actually integral (not a packed
-          // struct that happens to have integer representation)
-          if (expr.type == nullptr) {
-            return hir::kInvalidExpressionId;
-          }
-          if (!expr.type->isIntegral()) {
+        if (cv->isInteger()) {
+          if (expr.type == nullptr || !expr.type->isIntegral()) {
             ctx->ErrorFmt(
-                span,
-                "unsupported parameter type for '{}' "
-                "(only integral parameters supported)",
+                span, "unsupported constant type for '{}' (expected integral)",
                 name);
             return hir::kInvalidExpressionId;
           }
@@ -403,7 +417,7 @@ auto LowerExpression(
           if (!type) {
             return hir::kInvalidExpressionId;
           }
-          ConstId constant = LowerIntegralConstant(cv.integer(), type, ctx);
+          ConstId constant = LowerIntegralConstant(cv->integer(), type, ctx);
           return ctx->hir_arena->AddExpression(
               hir::Expression{
                   .kind = hir::ExpressionKind::kConstant,
@@ -412,23 +426,19 @@ auto LowerExpression(
                   .data = hir::ConstantExpressionData{.constant = constant}});
         }
 
-        if (cv.isUnpacked()) {
+        if (cv->isUnpacked()) {
           if (expr.type == nullptr) {
             return hir::kInvalidExpressionId;
           }
-          return LowerConstantValueExpression(cv, *expr.type, span, ctx);
+          return LowerConstantValueExpression(*cv, *expr.type, span, ctx);
         }
 
-        // Unsupported parameter value type - clear error
-        ctx->ErrorFmt(
-            span,
-            "unsupported parameter type for '{}' "
-            "(only integral parameters supported)",
-            name);
+        // Unsupported constant value type
+        ctx->ErrorFmt(span, "unsupported constant type for '{}'", name);
         return hir::kInvalidExpressionId;
       }
 
-      // Existing code for variables/other symbols
+      // Fall back to variable lookup (runtime symbols)
       SymbolId sym = registrar.Lookup(named.symbol);
       if (!sym) {
         ctx->ErrorFmt(span, "undefined symbol '{}'", name);
