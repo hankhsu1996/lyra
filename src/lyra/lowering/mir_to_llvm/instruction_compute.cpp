@@ -1,11 +1,12 @@
 #include "lyra/lowering/mir_to_llvm/instruction_compute.hpp"
 
 #include <format>
-#include <stdexcept>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
@@ -36,11 +37,15 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
   const Type& type = types[place.root.type];
 
   if (!IsPacked(type)) {
-    throw std::runtime_error("non-packed types not supported in LLVM backend");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        context.GetCurrentOrigin(),
+        std::format("non-packed type not supported: {}", ToString(type)));
   }
   if (ContainsPackedStruct(type, types)) {
-    throw std::runtime_error(
-        "packed structs not yet supported in LLVM backend");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+        context.GetCurrentOrigin(), "packed structs not yet supported");
   }
   return {PackedBitWidth(type, types), IsPackedFourState(type, types)};
 }
@@ -53,13 +58,13 @@ auto ApplyWidthMask(
   uint32_t storage_width = value->getType()->getIntegerBitWidth();
 
   if (semantic_width == 0) {
-    throw std::runtime_error("semantic width cannot be 0");
+    throw common::InternalError("ApplyWidthMask", "semantic width cannot be 0");
   }
   if (semantic_width > storage_width) {
-    throw std::runtime_error(
-        std::format(
-            "semantic width ({}) exceeds storage width ({})", semantic_width,
-            storage_width));
+    throw common::InternalError(
+        "ApplyWidthMask", std::format(
+                              "semantic width ({}) exceeds storage width ({})",
+                              semantic_width, storage_width));
   }
 
   // No masking needed if semantic == storage, or for 64-bit (full word)
@@ -96,9 +101,10 @@ auto LowerBinaryArith(
       return builder.CreateNot(xor_result, "xnor");
     }
     default:
-      throw std::runtime_error(
-          std::format(
-              "unsupported binary op in LLVM backend: {}", mir::ToString(op)));
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm,
+          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+          std::format("unsupported binary op: {}", mir::ToString(op)));
   }
 }
 
@@ -152,11 +158,17 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       ValidateAndGetTypeInfo(context, compute.target);
 
   if (is_four_state) {
-    throw std::runtime_error("4-state types not yet supported in LLVM backend");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        context.GetCurrentOrigin(), "4-state types not yet supported");
   }
   if (semantic_width > 64) {
-    throw std::runtime_error(
-        "types wider than 64 bits not yet supported in LLVM backend");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        context.GetCurrentOrigin(),
+        std::format(
+            "types wider than 64 bits not yet supported (got {} bits)",
+            semantic_width));
   }
 
   // Step 2: Get storage for target place
@@ -174,8 +186,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             return LowerCastRvalue(
                 context, info, compute.value.operands, storage_type);
           },
-          [](const auto& /*info*/) -> llvm::Value* {
-            throw std::runtime_error("unsupported rvalue kind in LLVM backend");
+          [&](const auto& /*info*/) -> llvm::Value* {
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kMirToLlvm,
+                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+                "unsupported rvalue kind");
           },
       },
       compute.value.info);

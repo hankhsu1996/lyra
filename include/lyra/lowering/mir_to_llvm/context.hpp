@@ -7,6 +7,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -57,6 +58,14 @@ class Context {
   auto TakeOwnership() -> std::pair<
       std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
 
+  // Origin tracking for error reporting
+  void SetCurrentOrigin(common::OriginId origin) {
+    current_origin_ = origin;
+  }
+  [[nodiscard]] auto GetCurrentOrigin() const -> common::OriginId {
+    return current_origin_;
+  }
+
  private:
   const mir::Design& design_;
   const mir::Arena& arena_;
@@ -74,6 +83,9 @@ class Context {
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
+
+  // Current origin for error reporting
+  common::OriginId current_origin_ = common::OriginId::Invalid();
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

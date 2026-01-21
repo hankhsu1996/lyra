@@ -1,9 +1,8 @@
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 
-#include <stdexcept>
-
 #include "llvm/IR/Instructions.h"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/unsupported_error.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -34,31 +33,36 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
 
   return std::visit(
       Overloaded{
-          [&llvm_ctx](const IntegralConstant& integral) -> llvm::Value* {
+          [&](const IntegralConstant& integral) -> llvm::Value* {
             // For now, only handle single-word 2-state values
             if (integral.value.size() != 1 || !integral.x_mask.empty() ||
                 !integral.z_mask.empty()) {
-              throw std::runtime_error(
-                  "multi-word or 4-state integral constants not yet supported "
-                  "in LLVM backend");
+              throw common::UnsupportedErrorException(
+                  common::UnsupportedLayer::kMirToLlvm,
+                  common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+                  "multi-word or 4-state integral constants not yet supported");
             }
             return llvm::ConstantInt::get(
                 llvm::Type::getInt64Ty(llvm_ctx), integral.value[0]);
           },
-          [&context](const StringConstant& str) -> llvm::Value* {
+          [&](const StringConstant& str) -> llvm::Value* {
             return context.GetBuilder().CreateGlobalStringPtr(str.value);
           },
-          [&llvm_ctx](const RealConstant& real) -> llvm::Value* {
+          [&](const RealConstant& real) -> llvm::Value* {
             return llvm::ConstantFP::get(
                 llvm::Type::getDoubleTy(llvm_ctx), real.value);
           },
-          [](const StructConstant& /*s*/) -> llvm::Value* {
-            throw std::runtime_error(
-                "struct constants not yet supported in LLVM backend");
+          [&](const StructConstant& /*s*/) -> llvm::Value* {
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kMirToLlvm,
+                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+                "struct constants not yet supported");
           },
-          [](const ArrayConstant& /*a*/) -> llvm::Value* {
-            throw std::runtime_error(
-                "array constants not yet supported in LLVM backend");
+          [&](const ArrayConstant& /*a*/) -> llvm::Value* {
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kMirToLlvm,
+                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+                "array constants not yet supported");
           },
       },
       constant.value);

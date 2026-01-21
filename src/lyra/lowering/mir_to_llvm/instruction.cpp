@@ -59,6 +59,9 @@ void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
 }  // namespace
 
 void LowerInstruction(Context& context, const mir::Instruction& instruction) {
+  // Set origin for error reporting
+  context.SetCurrentOrigin(instruction.origin);
+
   std::visit(
       Overloaded{
           [&context](const mir::Assign& assign) {
@@ -74,7 +77,7 @@ void LowerInstruction(Context& context, const mir::Instruction& instruction) {
             LowerEffectOp(context, effect.op);
           },
       },
-      instruction);
+      instruction.data);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

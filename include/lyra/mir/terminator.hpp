@@ -4,6 +4,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -83,9 +84,15 @@ struct Finish {
 // Repeat loop back to entry block (requires scheduler).
 struct Repeat {};
 
-// Terminator variant - each terminator kind has its own payload.
-using Terminator = std::variant<
+// Terminator data variant.
+using TerminatorData = std::variant<
     Jump, Branch, Switch, QualifiedDispatch, Delay, Wait, Return, Finish,
     Repeat>;
+
+// A block terminator that determines control flow.
+struct Terminator {
+  TerminatorData data;
+  common::OriginId origin = common::OriginId::Invalid();
+};
 
 }  // namespace lyra::mir

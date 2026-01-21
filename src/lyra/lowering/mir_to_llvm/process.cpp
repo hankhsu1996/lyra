@@ -1,11 +1,12 @@
 #include "lyra/lowering/mir_to_llvm/process.hpp"
 
 #include <format>
-#include <stdexcept>
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/lowering/mir_to_llvm/instruction.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -28,7 +29,8 @@ void LowerBranch(
   // Load condition value
   llvm::AllocaInst* cond_alloca = context.GetPlaceStorage(branch.condition);
   if (cond_alloca == nullptr) {
-    throw std::runtime_error("branch condition place not found");
+    throw common::InternalError(
+        "LowerBranch", "branch condition place not found");
   }
   llvm::Value* cond_val =
       builder.CreateLoad(cond_alloca->getAllocatedType(), cond_alloca, "cond");
@@ -57,6 +59,9 @@ void LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks,
     llvm::BasicBlock* exit_block) {
+  // Set origin for error reporting
+  context.SetCurrentOrigin(term.origin);
+
   std::visit(
       Overloaded{
           [&](const mir::Jump& t) { LowerJump(context, t, blocks); },
@@ -64,11 +69,13 @@ void LowerTerminator(
           [&](const mir::Return&) { LowerReturn(context, exit_block); },
           [&](const mir::Finish&) { LowerFinish(context, exit_block); },
           [&](const auto&) {
-            throw std::runtime_error(
-                "terminator not yet supported in LLVM backend");
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kMirToLlvm,
+                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+                "terminator not yet supported");
           },
       },
-      term);
+      term.data);
 }
 
 }  // namespace
