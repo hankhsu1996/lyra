@@ -38,7 +38,9 @@ class Context {
     return types_;
   }
 
-  [[nodiscard]] auto GetPrintfFunction() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
 
   auto TakeOwnership() -> std::pair<
       std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
@@ -52,7 +54,9 @@ class Context {
   std::unique_ptr<llvm::Module> llvm_module_;
   llvm::IRBuilder<> builder_;
 
-  llvm::Function* printf_function_ = nullptr;
+  llvm::Function* lyra_print_literal_ = nullptr;
+  llvm::Function* lyra_print_value_ = nullptr;
+  llvm::Function* lyra_print_end_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

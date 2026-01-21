@@ -12,10 +12,10 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
-#include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
@@ -308,13 +308,15 @@ struct StorageCollector {
             [&](const Effect& i) {
               std::visit(
                   Overloaded{
-                      [&](const DisplayEffect& op) -> void {
-                        for (const auto& arg : op.args) {
-                          Visit(arg, arena);
+                      [&](const DisplayEffect& d) -> void {
+                        for (const auto& format_op : d.ops) {
+                          if (format_op.value.has_value()) {
+                            Visit(*format_op.value, arena);
+                          }
                         }
                       },
-                      [&](const SeverityEffect& op) -> void {
-                        for (const auto& arg : op.args) {
+                      [&](const SeverityEffect& s) -> void {
+                        for (const auto& arg : s.args) {
                           Visit(arg, arena);
                         }
                       },
@@ -451,20 +453,6 @@ auto ApplyProjections(
     -> const RuntimeValue& {
   return *ApplyProjectionsPtr<const RuntimeValue*>(
       &root, projections, types, root_type, eval_index, projections.size());
-}
-
-auto RadixToFormatChar(PrintRadix radix) -> char {
-  switch (radix) {
-    case PrintRadix::kDecimal:
-      return 'd';
-    case PrintRadix::kHex:
-      return 'h';
-    case PrintRadix::kBinary:
-      return 'b';
-    case PrintRadix::kOctal:
-      return 'o';
-  }
-  return 'd';
 }
 
 // Helper: safely extract index from operand, return nullopt if X/Z
@@ -1452,21 +1440,29 @@ void Interpreter::ExecDisplayEffect(
     const ProcessState& state, const DisplayEffect& disp) {
   std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-  // Evaluate each argument with type provenance for semantic decisions
-  std::vector<TypedValue> typed_args;
-  typed_args.reserve(disp.args.size());
-  for (const auto& arg : disp.args) {
-    TypeId type = TypeOfOperand(arg, *arena_, *types_);
-    RuntimeValue value = EvalOperand(state, arg);
-    typed_args.push_back(TypedValue{.value = std::move(value), .type = type});
+  FormatContext ctx{};
+
+  for (const auto& op : disp.ops) {
+    if (op.kind == FormatKind::kLiteral) {
+      out << op.literal;
+    } else {
+      // Evaluate the value and format it
+      RuntimeValue value = EvalOperand(state, *op.value);
+      TypedValue typed{.value = std::move(value), .type = op.type};
+
+      // Convert FormatKind and modifiers to FormatSpec
+      FormatSpec spec{
+          .spec = FormatKindToSpecChar(op.kind),
+          .zero_pad = op.mods.zero_pad,
+          .left_align = op.mods.left_align,
+          .width = op.mods.width,
+          .precision = op.mods.precision};
+
+      out << FormatValue(typed, spec, *types_, ctx);
+    }
   }
 
-  char default_format = RadixToFormatChar(disp.radix);
-  FormatContext ctx{};
-  std::string output = FormatMessage(typed_args, default_format, *types_, ctx);
-
-  out << output;
-  if (disp.append_newline) {
+  if (disp.print_kind == PrintKind::kDisplay) {
     out << "\n";
   }
 }

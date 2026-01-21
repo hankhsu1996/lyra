@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -99,16 +100,37 @@ void LowerAssignment(
 
 void LowerDisplayEffect(
     const hir::DisplaySystemCallData& data, MirBuilder& builder) {
-  std::vector<mir::Operand> operands;
-  operands.reserve(data.args.size());
-  for (hir::ExpressionId arg_id : data.args) {
-    operands.push_back(LowerExpression(arg_id, builder));
+  Context& ctx = builder.GetContext();
+
+  std::vector<mir::FormatOp> mir_ops;
+  mir_ops.reserve(data.ops.size());
+
+  for (const auto& hir_op : data.ops) {
+    if (hir_op.kind == FormatKind::kLiteral) {
+      mir_ops.push_back(
+          mir::FormatOp{
+              .kind = FormatKind::kLiteral,
+              .value = std::nullopt,
+              .literal = hir_op.literal,
+              .type = TypeId{},
+              .mods = {}});
+    } else {
+      // Lower the value expression and get its type
+      mir::Operand operand = LowerExpression(*hir_op.value, builder);
+      const hir::Expression& expr = (*ctx.hir_arena)[*hir_op.value];
+      mir_ops.push_back(
+          mir::FormatOp{
+              .kind = hir_op.kind,
+              .value = std::move(operand),
+              .literal = {},
+              .type = expr.type,
+              .mods = hir_op.mods});
+    }
   }
 
   mir::DisplayEffect display{
-      .radix = data.radix,
-      .append_newline = data.append_newline,
-      .args = std::move(operands),
+      .print_kind = data.print_kind,
+      .ops = std::move(mir_ops),
   };
   builder.EmitEffect(std::move(display));
 }
@@ -304,13 +326,13 @@ void LowerConditionalPriority(
   } else {
     // No else clause: emit warning
     mir::DisplayEffect display{
-        .radix = PrintRadix::kDecimal,
-        .append_newline = true,
-        .args = {mir::Operand::Const(
-            Constant{
-                .type = ctx.GetStringType(),
-                .value = StringConstant{"warning: no condition matched in "
-                                        "priority if"}})},
+        .print_kind = PrintKind::kDisplay,
+        .ops = {mir::FormatOp{
+            .kind = FormatKind::kLiteral,
+            .value = std::nullopt,
+            .literal = "warning: no condition matched in priority if",
+            .type = TypeId{},
+            .mods = {}}},
     };
     builder.EmitEffect(std::move(display));
   }
@@ -550,13 +572,13 @@ void LowerCasePriority(
     LowerStatement(*data.default_statement, builder);
   } else {
     mir::DisplayEffect display{
-        .radix = PrintRadix::kDecimal,
-        .append_newline = true,
-        .args = {mir::Operand::Const(
-            Constant{
-                .type = ctx.GetStringType(),
-                .value = StringConstant{"warning: no matching case item in "
-                                        "priority case"}})},
+        .print_kind = PrintKind::kDisplay,
+        .ops = {mir::FormatOp{
+            .kind = FormatKind::kLiteral,
+            .value = std::nullopt,
+            .literal = "warning: no matching case item in priority case",
+            .type = TypeId{},
+            .mods = {}}},
     };
     builder.EmitEffect(std::move(display));
   }

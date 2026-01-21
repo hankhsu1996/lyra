@@ -5,9 +5,9 @@
 #include <type_traits>
 #include <variant>
 
+#include "lyra/common/format.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
-#include "lyra/common/system_function.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operator.hpp"
@@ -449,25 +449,47 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
       [this](const auto& effect_op) -> std::string {
         using T = std::decay_t<decltype(effect_op)>;
         if constexpr (std::is_same_v<T, DisplayEffect>) {
-          std::string result;
-          switch (effect_op.radix) {
-            case PrintRadix::kDecimal:
-              result = effect_op.append_newline ? "$display" : "$write";
-              break;
-            case PrintRadix::kBinary:
-              result = effect_op.append_newline ? "$displayb" : "$writeb";
-              break;
-            case PrintRadix::kOctal:
-              result = effect_op.append_newline ? "$displayo" : "$writeo";
-              break;
-            case PrintRadix::kHex:
-              result = effect_op.append_newline ? "$displayh" : "$writeh";
-              break;
+          std::string result = effect_op.print_kind == PrintKind::kDisplay
+                                   ? "$display"
+                                   : "$write";
+          result += "(";
+          bool first = true;
+          for (const FormatOp& op : effect_op.ops) {
+            if (!first) {
+              result += ", ";
+            }
+            first = false;
+            if (op.kind == FormatKind::kLiteral) {
+              result += std::format("literal(\"{}\")", op.literal);
+            } else {
+              const char* kind_str = "?";
+              switch (op.kind) {
+                case FormatKind::kDecimal:
+                  kind_str = "%d";
+                  break;
+                case FormatKind::kHex:
+                  kind_str = "%h";
+                  break;
+                case FormatKind::kBinary:
+                  kind_str = "%b";
+                  break;
+                case FormatKind::kOctal:
+                  kind_str = "%o";
+                  break;
+                case FormatKind::kString:
+                  kind_str = "%s";
+                  break;
+                case FormatKind::kReal:
+                  kind_str = "%f";
+                  break;
+                case FormatKind::kLiteral:
+                  break;  // Already handled above
+              }
+              result +=
+                  std::format("{}:{}", kind_str, FormatOperand(*op.value));
+            }
           }
-          for (const Operand& arg : effect_op.args) {
-            result += ", ";
-            result += FormatOperand(arg);
-          }
+          result += ")";
           return result;
         } else if constexpr (std::is_same_v<T, SeverityEffect>) {
           std::string result;
