@@ -25,7 +25,9 @@ suites:
       - datatypes/queues.yaml
       - datatypes/packed_2d.yaml
       - datatypes/packed_3d.yaml
+      - datatypes/unpacked_struct.yaml
       - system_tasks/display.yaml
+      - system_tasks/severity.yaml
       - functions/basic.yaml
       - functions/nested_calls.yaml
       - functions/recursion.yaml

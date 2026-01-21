@@ -377,12 +377,8 @@ auto LowerCast(
         "LowerCast", "non-packed target should have been rejected in AST->HIR");
   }
 
-  if (IsPackedFourState(src, *ctx.type_arena)) {
-    throw common::InternalError(
-        "LowerCast", "4-state source should have been rejected in AST->HIR");
-  }
-  // Note: 4-state target is allowed when source is 2-state (lossless
-  // conversion)
+  // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)
+  // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
 
   mir::Rvalue rvalue{
       .operands = {operand},

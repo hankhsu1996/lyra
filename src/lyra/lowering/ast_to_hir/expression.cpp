@@ -780,12 +780,8 @@ auto LowerExpression(
         ctx->sink->Error(span, "conversion to non-integral type not supported");
         return hir::kInvalidExpressionId;
       }
-      if (src_type.isFourState()) {
-        ctx->sink->Error(
-            span, "conversion from 4-state type not yet supported");
-        return hir::kInvalidExpressionId;
-      }
-      // Note: 2-state → 4-state is allowed (lossless, no X/Z bits introduced)
+      // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)
+      // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
 
       hir::ExpressionId operand =
           LowerExpression(conv.operand(), registrar, ctx);
