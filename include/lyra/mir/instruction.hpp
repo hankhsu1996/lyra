@@ -2,6 +2,7 @@
 
 #include <variant>
 
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -36,9 +37,15 @@ struct Effect {
   EffectOp op;
 };
 
+// Instruction data variant.
+using InstructionData = std::variant<Assign, Compute, GuardedAssign, Effect>;
+
 // An instruction that does not affect control flow.
 // - Assign, Compute, and GuardedAssign write to a Place
 // - Effect produces side effects but no value
-using Instruction = std::variant<Assign, Compute, GuardedAssign, Effect>;
+struct Instruction {
+  InstructionData data;
+  common::OriginId origin = common::OriginId::Invalid();
+};
 
 }  // namespace lyra::mir

@@ -15,10 +15,7 @@ refresh_compile_commands(
 
 cc_library(
     name = "common",
-    srcs = [
-        "src/lyra/common/constant_arena.cpp",
-        "src/lyra/common/type_arena.cpp",
-    ],
+    srcs = glob(["src/lyra/common/*.cpp"]),
     hdrs = glob([
         "include/lyra/common/*.hpp",
         "include/lyra/common/**/*.hpp",
@@ -82,11 +79,17 @@ cc_library(
 cc_library(
     name = "lowering",
     srcs = glob(
-        ["src/lyra/lowering/**/*.cpp"],
+        [
+            "src/lyra/lowering/*.cpp",
+            "src/lyra/lowering/**/*.cpp",
+        ],
         exclude = ["src/lyra/lowering/mir_to_llvm/*.cpp"],
     ),
     hdrs = glob(
-        ["include/lyra/lowering/**/*.hpp"],
+        [
+            "include/lyra/lowering/*.hpp",
+            "include/lyra/lowering/**/*.hpp",
+        ],
         exclude = ["include/lyra/lowering/mir_to_llvm/*.hpp"],
     ),
     includes = ["include"],
@@ -107,6 +110,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":common",
+        ":lowering",
         ":mir",
         ":runtime",
         "@llvm-project//llvm:Core",

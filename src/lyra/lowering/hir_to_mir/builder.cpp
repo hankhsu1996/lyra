@@ -48,8 +48,10 @@ void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
   if (current_block_ == kInvalidBlockIndex) {
     throw common::InternalError("MirBuilder", "EmitAssign: no current block");
   }
-  blocks_[current_block_.value].instructions.emplace_back(
-      mir::Assign{.target = target, .source = std::move(source)});
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{
+          .data = mir::Assign{.target = target, .source = std::move(source)},
+          .origin = current_origin_});
 }
 
 void MirBuilder::EmitCompute(mir::PlaceId target, mir::Rvalue value) {
@@ -60,8 +62,10 @@ void MirBuilder::EmitCompute(mir::PlaceId target, mir::Rvalue value) {
   if (current_block_ == kInvalidBlockIndex) {
     throw common::InternalError("MirBuilder", "EmitCompute: no current block");
   }
-  blocks_[current_block_.value].instructions.emplace_back(
-      mir::Compute{.target = target, .value = std::move(value)});
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{
+          .data = mir::Compute{.target = target, .value = std::move(value)},
+          .origin = current_origin_});
 }
 
 void MirBuilder::EmitEffect(mir::EffectOp op) {
@@ -72,8 +76,9 @@ void MirBuilder::EmitEffect(mir::EffectOp op) {
   if (current_block_ == kInvalidBlockIndex) {
     throw common::InternalError("MirBuilder", "EmitEffect: no current block");
   }
-  blocks_[current_block_.value].instructions.emplace_back(
-      mir::Effect{.op = std::move(op)});
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{
+          .data = mir::Effect{.op = std::move(op)}, .origin = current_origin_});
 }
 
 auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
@@ -143,11 +148,14 @@ void MirBuilder::EmitGuardedAssign(
     throw common::InternalError(
         "MirBuilder", "EmitGuardedAssign: no current block");
   }
-  blocks_[current_block_.value].instructions.emplace_back(
-      mir::GuardedAssign{
-          .target = target,
-          .source = std::move(source),
-          .validity = std::move(validity)});
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{
+          .data =
+              mir::GuardedAssign{
+                  .target = target,
+                  .source = std::move(source),
+                  .validity = std::move(validity)},
+          .origin = current_origin_});
 }
 
 void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
@@ -168,7 +176,10 @@ void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
 }
 
 void MirBuilder::EmitJump(BlockIndex target) {
-  SealCurrentBlock(mir::Jump{.target = mir::BasicBlockId{target.value}});
+  SealCurrentBlock(
+      mir::Terminator{
+          .data = mir::Jump{.target = mir::BasicBlockId{target.value}},
+          .origin = current_origin_});
 }
 
 void MirBuilder::EmitBranch(
@@ -180,11 +191,14 @@ void MirBuilder::EmitBranch(
   auto cond_place = std::get<mir::PlaceId>(cond.payload);
 
   SealCurrentBlock(
-      mir::Branch{
-          .condition = cond_place,
-          .then_target = mir::BasicBlockId{then_bb.value},
-          .else_target = mir::BasicBlockId{else_bb.value},
-      });
+      mir::Terminator{
+          .data =
+              mir::Branch{
+                  .condition = cond_place,
+                  .then_target = mir::BasicBlockId{then_bb.value},
+                  .else_target = mir::BasicBlockId{else_bb.value},
+              },
+          .origin = current_origin_});
 }
 
 void MirBuilder::EmitQualifiedDispatch(
@@ -205,33 +219,42 @@ void MirBuilder::EmitQualifiedDispatch(
   }
 
   SealCurrentBlock(
-      mir::QualifiedDispatch{
-          .qualifier = qualifier,
-          .statement_kind = statement_kind,
-          .conditions = conditions,
-          .targets = std::move(bb_targets),
-          .has_else = has_else,
-      });
+      mir::Terminator{
+          .data =
+              mir::QualifiedDispatch{
+                  .qualifier = qualifier,
+                  .statement_kind = statement_kind,
+                  .conditions = conditions,
+                  .targets = std::move(bb_targets),
+                  .has_else = has_else,
+              },
+          .origin = current_origin_});
 }
 
 void MirBuilder::EmitReturn() {
-  SealCurrentBlock(mir::Return{});
+  SealCurrentBlock(
+      mir::Terminator{.data = mir::Return{}, .origin = current_origin_});
 }
 
 void MirBuilder::EmitRepeat() {
-  SealCurrentBlock(mir::Repeat{});
+  SealCurrentBlock(
+      mir::Terminator{.data = mir::Repeat{}, .origin = current_origin_});
 }
 
 void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
   if (info) {
-    SealCurrentBlock(*std::move(info));
+    SealCurrentBlock(
+        mir::Terminator{.data = *std::move(info), .origin = current_origin_});
   } else {
     SealCurrentBlock(
-        mir::Finish{
-            .kind = mir::TerminationKind::kFinish,
-            .level = 0,
-            .message_args = {},
-        });
+        mir::Terminator{
+            .data =
+                mir::Finish{
+                    .kind = mir::TerminationKind::kFinish,
+                    .level = 0,
+                    .message_args = {},
+                },
+            .origin = current_origin_});
   }
 }
 
@@ -265,7 +288,7 @@ void ValidateTerminatorTargets(const mir::Terminator& term, size_t num_blocks) {
         }
         // Delay, Wait, Return, Finish, Repeat have no targets
       },
-      term);
+      term.data);
 }
 
 }  // namespace

@@ -92,7 +92,7 @@ auto FormatTerminator(const Terminator& term) -> std::string {
           return "<?>";
         }
       },
-      term);
+      term.data);
 }
 
 }  // namespace
@@ -216,7 +216,7 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
             *out_ << FormatEffect(i.op) << "\n";
           }
         },
-        instr);
+        instr.data);
   }
 
   PrintIndent();

@@ -5,6 +5,7 @@
 #include <optional>
 #include <vector>
 
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
@@ -100,6 +101,14 @@ class MirBuilder {
   void PopLoop();
   [[nodiscard]] auto CurrentLoop() const -> const LoopContext*;
 
+  // Origin tracking for error reporting
+  void SetCurrentOrigin(common::OriginId origin) {
+    current_origin_ = origin;
+  }
+  [[nodiscard]] auto GetCurrentOrigin() const -> common::OriginId {
+    return current_origin_;
+  }
+
  private:
   struct BlockBuilder {
     std::vector<mir::Instruction> instructions;
@@ -113,6 +122,7 @@ class MirBuilder {
   BlockIndex current_block_;
   std::vector<BlockBuilder> blocks_;
   std::vector<LoopContext> loop_stack_;
+  common::OriginId current_origin_ = common::OriginId::Invalid();
   bool finished_ = false;
 };
 

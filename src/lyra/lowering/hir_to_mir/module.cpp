@@ -96,7 +96,7 @@ auto LowerFunctionBody(
               }
             }
           },
-          inst);
+          inst.data);
     }
   }
 

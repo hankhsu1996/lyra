@@ -1,6 +1,6 @@
 #include "lyra/lowering/mir_to_llvm/context.hpp"
 
-#include <stdexcept>
+#include <format>
 
 #include "lyra/common/type.hpp"
 #include "lyra/mir/place.hpp"
@@ -126,8 +126,9 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
 
   // For now, only support simple places (no projections)
   if (!place.projections.empty()) {
-    throw std::runtime_error(
-        "places with projections not yet supported in LLVM backend");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+        current_origin_, "places with projections not yet supported");
   }
 
   // Get the type of the place
@@ -145,8 +146,10 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     auto width = PackedBitWidth(type, types_);
     llvm_type = GetLlvmStorageType(*llvm_context_, width);
   } else {
-    throw std::runtime_error(
-        "type not yet supported in LLVM backend place storage");
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        current_origin_,
+        std::format("type not yet supported: {}", ToString(type)));
   }
 
   // Create the alloca

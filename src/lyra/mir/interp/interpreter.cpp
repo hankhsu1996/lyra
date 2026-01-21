@@ -258,7 +258,7 @@ struct StorageCollector {
                   i.op);
             },
         },
-        inst);
+        inst.data);
   }
 };
 
@@ -1557,7 +1557,7 @@ void Interpreter::ExecInstruction(
           ExecEffect(state, i);
         }
       },
-      inst);
+      inst.data);
 }
 
 auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
@@ -1732,7 +1732,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                 "repeat terminator requires runtime/scheduler");
           },
       },
-      term);
+      term.data);
 }
 
 auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {

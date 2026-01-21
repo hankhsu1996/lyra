@@ -10,15 +10,28 @@ Use this flowchart to pick the right error type:
 Where is the error?
 │
 ├─ AST->HIR lowering (have source location from slang)
-│   ├─ User error (unsupported feature, invalid code)
+│   ├─ Invalid SV code (type mismatch, unknown identifier)
 │   │   └─ DiagnosticException(source_range, "message")
+│   ├─ Valid SV, not yet implemented
+│   │   └─ UnsupportedError(layer=AstToHir, kind, origin, "detail")
 │   └─ Compiler bug (invariant violated)
 │       └─ InternalError("context", "message")
 │
-├─ HIR->MIR lowering / Codegen (no source location)
-│   └─ Always InternalError (any error here = compiler bug)
+├─ HIR->MIR lowering
+│   ├─ Valid SV, not yet implemented
+│   │   └─ UnsupportedError(layer=HirToMir, kind, origin, "detail")
+│   └─ Compiler bug (invariant violated)
+│       └─ InternalError("context", "message")
+│
+├─ MIR->LLVM lowering
+│   ├─ Valid SV, not yet implemented
+│   │   └─ UnsupportedError(layer=MirToLlvm, kind, origin, "detail")
+│   └─ Compiler bug (invariant violated)
+│       └─ InternalError("context", "message")
 │
 ├─ Interpreter runtime
+│   ├─ Valid SV, not yet implemented
+│   │   └─ UnsupportedError(layer=Execution, kind, origin, "detail")
 │   ├─ Host/runtime failure (I/O, malformed external input)
 │   │   └─ std::runtime_error("message")
 │   ├─ SV-defined runtime semantics (4-state edge cases)
@@ -72,6 +85,41 @@ throw common::InternalError("codegen", "unexpected expression kind");
 - Invariant is violated
 - Code path should be unreachable
 - Any error in HIR->MIR or codegen (these stages should never fail)
+
+### UnsupportedError (Valid SV, Not Yet Implemented)
+
+For **valid SystemVerilog code** that Lyra doesn't support yet. Unlike `DiagnosticException`
+(invalid SV) and `InternalError` (compiler bug), this indicates a known limitation.
+
+```cpp
+#include "lyra/common/unsupported_error.hpp"
+
+throw common::UnsupportedErrorException(
+    common::UnsupportedLayer::kMirToLlvm,
+    common::UnsupportedKind::kType,
+    context.GetCurrentOrigin(),
+    "4-state types not yet supported");
+```
+
+**Fields:**
+
+- `layer`: Where the limitation was hit (kAstToHir, kHirToMir, kMirToLlvm, kExecution)
+- `kind`: Category of limitation (kType, kOperation, kFeature)
+- `origin`: Opaque ID for tracing back to source (can be invalid)
+- `detail`: Human-readable description
+
+**Use when:**
+
+- Wide integers (>64 bits) in LLVM backend
+- 4-state types in LLVM backend
+- Packed structs not yet implemented
+- Unsupported operators or expressions
+
+**Do NOT use for:**
+
+- Invalid SV code (use `DiagnosticException`)
+- Compiler bugs (use `InternalError`)
+- Runtime I/O failures (use `std::runtime_error`)
 
 ### std::runtime_error (Host/Runtime Failures)
 
@@ -198,11 +246,11 @@ assert(expensive_graph_validation() && "graph invariant");
 
 ## Summary Table
 
-| Stage       | User Error            | Compiler Bug    | Host Failure         | SV Semantics |
-| ----------- | --------------------- | --------------- | -------------------- | ------------ |
-| AST->HIR    | `DiagnosticException` | `InternalError` | N/A                  | N/A          |
-| HIR->MIR    | N/A                   | `InternalError` | N/A                  | N/A          |
-| Codegen     | N/A                   | `InternalError` | N/A                  | N/A          |
-| Interpreter | N/A                   | `InternalError` | `std::runtime_error` | No exception |
-| SDK         | N/A                   | N/A             | `std::runtime_error` | No exception |
-| Shared code | N/A                   | N/A             | `std::expected`      | N/A          |
+| Stage       | Invalid SV            | Unsupported SV     | Compiler Bug    | Host Failure         | SV Semantics |
+| ----------- | --------------------- | ------------------ | --------------- | -------------------- | ------------ |
+| AST->HIR    | `DiagnosticException` | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
+| HIR->MIR    | N/A                   | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
+| MIR->LLVM   | N/A                   | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
+| Interpreter | N/A                   | `UnsupportedError` | `InternalError` | `std::runtime_error` | No exception |
+| SDK         | N/A                   | N/A                | N/A             | `std::runtime_error` | No exception |
+| Shared code | N/A                   | N/A                | N/A             | `std::expected`      | N/A          |
