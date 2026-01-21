@@ -2,8 +2,6 @@
 
 #include <cstdint>
 
-#include "lyra/common/format.hpp"
-
 extern "C" {
 
 // Print a literal string (FormatKind::kLiteral only)
@@ -22,4 +20,12 @@ void LyraPrintValue(
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(int32_t kind);
+
+// Register a variable for snapshot. Called at program init.
+// kind: 0 = integral, 1 = real
+void LyraRegisterVar(
+    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed);
+
+// Output all registered variables. Called before exit.
+void LyraSnapshotVars();
 }

@@ -1,10 +1,65 @@
 #include "lyra/runtime/io.hpp"
 
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <print>
 #include <string>
+#include <vector>
+
+#include "lyra/common/format.hpp"
 
 namespace {
+
+enum class VarKind : int32_t {
+  kIntegral = 0,
+  kReal = 1,
+};
+
+struct VarEntry {
+  std::string name;
+  void* addr;
+  VarKind kind;
+  int32_t width;
+  bool is_signed;
+};
+
+// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
+std::vector<VarEntry> g_registered_vars;
+// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
+
+void SnapshotIntegral(const VarEntry& var) {
+  uint64_t raw = 0;
+  std::memcpy(&raw, var.addr, static_cast<size_t>((var.width + 7) / 8));
+
+  // Mask to actual width
+  if (var.width < 64) {
+    raw &= (1ULL << var.width) - 1;
+  }
+
+  if (var.is_signed) {
+    // Sign-extend if MSB is set
+    auto value = static_cast<int64_t>(raw);
+    if (var.width < 64) {
+      uint64_t sign_bit = 1ULL << (var.width - 1);
+      if ((raw & sign_bit) != 0) {
+        value = static_cast<int64_t>(raw | ~((1ULL << var.width) - 1));
+      }
+    }
+    std::print("__LYRA_VAR:i:{}={}\n", var.name, value);
+  } else {
+    std::print("__LYRA_VAR:i:{}={}\n", var.name, raw);
+  }
+}
+
+void SnapshotReal(const VarEntry& var) {
+  double value = 0.0;
+  std::memcpy(&value, var.addr, sizeof(double));
+  // Use max_digits10 (17 for double) to ensure round-trip precision
+  std::print(
+      "__LYRA_VAR:r:{}={:.{}g}\n", var.name, value,
+      std::numeric_limits<double>::max_digits10);
+}
 
 // Format an integral value according to the format kind.
 // For now, only handles 2-state values (x_mask and z_mask are null).
@@ -100,4 +155,24 @@ extern "C" void LyraPrintEnd(int32_t kind) {
     std::print("\n");
   }
   // No flush here - flush only at simulation end
+}
+
+extern "C" void LyraRegisterVar(
+    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed) {
+  g_registered_vars.push_back(
+      {name, addr, static_cast<VarKind>(kind), width, is_signed});
+}
+
+extern "C" void LyraSnapshotVars() {
+  for (const auto& var : g_registered_vars) {
+    switch (var.kind) {
+      case VarKind::kIntegral:
+        SnapshotIntegral(var);
+        break;
+      case VarKind::kReal:
+        SnapshotReal(var);
+        break;
+    }
+  }
+  g_registered_vars.clear();
 }

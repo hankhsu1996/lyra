@@ -73,6 +73,10 @@ class Arena final {
     return functions_[id.value];
   }
 
+  [[nodiscard]] auto PlaceCount() const -> size_t {
+    return places_.size();
+  }
+
  private:
   std::vector<Place> places_;
   std::vector<Process> processes_;

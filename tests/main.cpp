@@ -16,10 +16,10 @@ namespace lyra::test {
 namespace {
 
 // Global storage for test cases - avoids copies in lambda captures
-std::vector<TestCase>
-    g_test_cases;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-BackendKind
-    g_backend;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::vector<TestCase> g_test_cases;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+BackendKind g_backend;
 
 // Test fixture that references globally stored test case
 class SvFeatureTest : public testing::Test {
