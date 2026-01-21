@@ -9,7 +9,7 @@ Supported:
 - Integral types (`bit`, `logic`, `reg`, `byte`, `shortint`, `int`, `longint`)
 - Arbitrary-width bit vectors (1-bit to 200+ bits)
 - Packed multi-dimensional arrays with non-zero lower bounds
-- Unpacked fixed-size arrays (multi-dimensional, initialization patterns)
+- Unpacked fixed-size arrays (multi-dimensional, initialization patterns, zero-based only)
 - Dynamic arrays (`.size()`, `.delete()`, `new[size]`, multi-dimensional)
 - Queues (bounded/unbounded, `.push_*()`, `.pop_*()`, `.insert()`, `.size()`, `.delete()`)
 - `real`, `shortreal`, `string`

@@ -31,8 +31,18 @@ namespace {
 // Helper to create an integer constant expression
 auto MakeIntConstant(int64_t value, TypeId type, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
+  // Get bit width from type to properly mask the value
+  const Type& type_info = (*ctx->type_arena)[type];
+  uint32_t bit_width = type_info.AsIntegral().bit_width;
+
+  // Mask value to bit width (handles negative values correctly)
+  auto masked_value = static_cast<uint64_t>(value);
+  if (bit_width < 64) {
+    masked_value &= (static_cast<uint64_t>(1) << bit_width) - 1;
+  }
+
   IntegralConstant constant;
-  constant.value.push_back(static_cast<uint64_t>(value));
+  constant.value.push_back(masked_value);
   ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
