@@ -1,6 +1,35 @@
 #include "lyra/lowering/mir_to_llvm/context.hpp"
 
+#include <stdexcept>
+
+#include "lyra/common/type.hpp"
+#include "lyra/mir/place.hpp"
+
 namespace lyra::lowering::mir_to_llvm {
+
+namespace {
+
+// Get the LLVM type for storage of an integral type
+auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+    -> llvm::Type* {
+  // Round up to the next power-of-2 storage size for efficient access
+  if (bit_width <= 8) {
+    return llvm::Type::getInt8Ty(ctx);
+  }
+  if (bit_width <= 16) {
+    return llvm::Type::getInt16Ty(ctx);
+  }
+  if (bit_width <= 32) {
+    return llvm::Type::getInt32Ty(ctx);
+  }
+  if (bit_width <= 64) {
+    return llvm::Type::getInt64Ty(ctx);
+  }
+  // For wider types, use the exact bit width
+  return llvm::Type::getIntNTy(ctx, bit_width);
+}
+
+}  // namespace
 
 Context::Context(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types)
@@ -55,6 +84,57 @@ auto Context::GetLyraPrintEnd() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_print_end_;
+}
+
+auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
+    -> llvm::AllocaInst* {
+  // Check if we already have storage for this place
+  auto it = place_storage_.find(place_id);
+  if (it != place_storage_.end()) {
+    return it->second;
+  }
+
+  // Get the place from the arena
+  const auto& place = arena_[place_id];
+
+  // For now, only support simple places (no projections)
+  if (!place.projections.empty()) {
+    throw std::runtime_error(
+        "places with projections not yet supported in LLVM backend");
+  }
+
+  // Get the type of the place
+  TypeId type_id = place.root.type;
+  const Type& type = types_[type_id];
+
+  llvm::Type* llvm_type = nullptr;
+
+  if (type.Kind() == TypeKind::kIntegral) {
+    llvm_type = GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
+  } else if (IsPacked(type)) {
+    auto width = PackedBitWidth(type, types_);
+    llvm_type = GetLlvmStorageType(*llvm_context_, width);
+  } else {
+    throw std::runtime_error(
+        "non-integral types not yet supported in LLVM backend place storage");
+  }
+
+  // Create the alloca
+  auto* alloca = builder_.CreateAlloca(llvm_type, nullptr, "place");
+
+  // Store in the map
+  place_storage_[place_id] = alloca;
+
+  return alloca;
+}
+
+auto Context::GetPlaceStorage(mir::PlaceId place_id) const
+    -> llvm::AllocaInst* {
+  auto it = place_storage_.find(place_id);
+  if (it != place_storage_.end()) {
+    return it->second;
+  }
+  return nullptr;
 }
 
 auto Context::TakeOwnership() -> std::pair<

@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "llvm/IR/Instructions.h"
 #include "lyra/common/overloaded.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -13,9 +14,16 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
           [&context](const Constant& constant) {
             return LowerConstant(context, constant);
           },
-          [](mir::PlaceId /*place*/) -> llvm::Value* {
-            throw std::runtime_error(
-                "variable reads (PlaceId) not yet supported in LLVM backend");
+          [&context](mir::PlaceId place_id) -> llvm::Value* {
+            // Look up the alloca for this place
+            llvm::AllocaInst* alloca = context.GetPlaceStorage(place_id);
+            if (alloca == nullptr) {
+              // Place hasn't been assigned yet - try to create storage
+              alloca = context.GetOrCreatePlaceStorage(place_id);
+            }
+            // Load the value from the alloca
+            return context.GetBuilder().CreateLoad(
+                alloca->getAllocatedType(), alloca, "load");
           },
       },
       operand.payload);

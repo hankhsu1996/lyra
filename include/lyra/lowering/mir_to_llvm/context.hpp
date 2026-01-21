@@ -2,12 +2,14 @@
 
 #include <memory>
 
+#include "absl/container/flat_hash_map.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -42,6 +44,14 @@ class Context {
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
 
+  // Place storage management
+  // Returns the alloca for a place, creating it if necessary
+  auto GetOrCreatePlaceStorage(mir::PlaceId place_id) -> llvm::AllocaInst*;
+
+  // Get existing storage for a place (returns nullptr if not found)
+  [[nodiscard]] auto GetPlaceStorage(mir::PlaceId place_id) const
+      -> llvm::AllocaInst*;
+
   auto TakeOwnership() -> std::pair<
       std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
 
@@ -57,6 +67,9 @@ class Context {
   llvm::Function* lyra_print_literal_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;
   llvm::Function* lyra_print_end_ = nullptr;
+
+  // Maps PlaceId to its LLVM alloca storage
+  absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

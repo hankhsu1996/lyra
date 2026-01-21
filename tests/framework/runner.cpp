@@ -1,9 +1,12 @@
 #include "tests/framework/runner.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <expected>
 #include <filesystem>
@@ -15,8 +18,11 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <spawn.h>
 #include <stdexcept>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -34,6 +40,7 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/lowering/mir_to_llvm/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "tests/framework/assertions.hpp"
@@ -396,6 +403,216 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   return result;
 }
 
+// Find the runtime library for LLVM backend
+auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
+  // Try to find liblyra_runtime.so relative to the test binary
+  std::filesystem::path exe_path;
+  try {
+    exe_path = std::filesystem::read_symlink("/proc/self/exe");
+  } catch (const std::filesystem::filesystem_error&) {
+    return std::nullopt;
+  }
+
+  // Try runfiles path (Bazel test environment)
+  auto runfiles_path =
+      std::filesystem::path(exe_path.string() + ".runfiles") / "_main" /
+      "liblyra_runtime.so";
+  if (std::filesystem::exists(runfiles_path)) {
+    return runfiles_path;
+  }
+
+  // Try sibling path
+  auto sibling_path = exe_path.parent_path() / "liblyra_runtime.so";
+  if (std::filesystem::exists(sibling_path)) {
+    return sibling_path;
+  }
+
+  return std::nullopt;
+}
+
+// Run lli with output capture
+auto RunLliWithCapture(
+    const std::filesystem::path& runtime_path,
+    const std::filesystem::path& ir_path) -> std::pair<int, std::string> {
+  // Create a pipe for stdout capture
+  std::array<int, 2> stdout_pipe{};
+  if (pipe(stdout_pipe.data()) != 0) {
+    return {-1, "failed to create pipe"};
+  }
+
+  posix_spawn_file_actions_t actions{};
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO);
+  posix_spawn_file_actions_addclose(&actions, stdout_pipe[0]);
+
+  std::string dlopen_arg = std::format("--dlopen={}", runtime_path.string());
+  std::string ir_path_str = ir_path.string();
+
+  std::array<char*, 4> argv = {
+      const_cast<char*>("lli"),
+      const_cast<char*>(dlopen_arg.c_str()),
+      const_cast<char*>(ir_path_str.c_str()),
+      nullptr};
+
+  pid_t pid = 0;
+  // NOLINTNEXTLINE(misc-include-cleaner) - environ is from unistd.h
+  int spawn_result =
+      posix_spawnp(&pid, "lli", &actions, nullptr, argv.data(), environ);
+  posix_spawn_file_actions_destroy(&actions);
+
+  if (spawn_result != 0) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    return {-1, std::format("posix_spawnp failed: {}", std::strerror(errno))};
+  }
+
+  // Close write end of pipe in parent
+  close(stdout_pipe[1]);
+
+  // Read stdout
+  std::string output;
+  std::array<char, 4096> buffer{};
+  ssize_t bytes_read = 0;
+  while ((bytes_read = read(stdout_pipe[0], buffer.data(), buffer.size())) >
+         0) {
+    output.append(buffer.data(), static_cast<size_t>(bytes_read));
+  }
+  close(stdout_pipe[0]);
+
+  // Wait for process
+  int status = 0;
+  if (waitpid(pid, &status, 0) == -1) {
+    return {-1, "waitpid failed"};
+  }
+
+  if (WIFEXITED(status)) {
+    return {WEXITSTATUS(status), output};
+  }
+  return {-1, "process did not exit normally"};
+}
+
+// Run test using LLVM JIT backend
+auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
+  TestResult result;
+  std::optional<ScopedTempDirectory> temp_guard;
+
+  // Create slang compilation from source
+  slang::SourceManager source_manager;
+
+  slang::ast::CompilationOptions compilation_options;
+  compilation_options.languageVersion = slang::LanguageVersion::v1800_2023;
+  auto compilation =
+      std::make_unique<slang::ast::Compilation>(compilation_options);
+
+  if (test_case.IsMultiFile()) {
+    auto [file_paths, temp_dir] =
+        WriteTempFiles(test_case.files, test_case.name);
+    temp_guard.emplace(temp_dir);
+    result.work_directory = temp_dir;
+
+    for (const auto& path : file_paths) {
+      auto extension = std::filesystem::path(path).extension();
+      if (extension == ".sv" || extension == ".v") {
+        auto tree_result =
+            slang::syntax::SyntaxTree::fromFile(path, source_manager);
+        if (!tree_result) {
+          result.error_message = "Failed to parse: " + path;
+          return result;
+        }
+        compilation->addSyntaxTree(tree_result.value());
+      }
+    }
+  } else {
+    auto tree = slang::syntax::SyntaxTree::fromText(
+        test_case.sv_code, source_manager, "test.sv");
+    compilation->addSyntaxTree(tree);
+  }
+
+  // Check for slang errors
+  auto diagnostics = compilation->getAllDiagnostics();
+  bool has_errors = std::ranges::any_of(
+      diagnostics, [](const auto& diag) { return diag.isError(); });
+  if (has_errors) {
+    result.error_message =
+        "Parse errors:\n" + FormatSlangDiagnostics(diagnostics, source_manager);
+    return result;
+  }
+
+  // Lower AST to HIR
+  DiagnosticSink sink;
+  auto hir_result = lowering::ast_to_hir::LowerAstToHir(*compilation, sink);
+
+  if (sink.HasErrors()) {
+    std::ostringstream error_stream;
+    for (const auto& diagnostic : sink.GetDiagnostics()) {
+      if (diagnostic.severity == DiagnosticSeverity::kError) {
+        error_stream << diagnostic.message << "\n";
+      }
+    }
+    result.error_message = "HIR lowering errors:\n" + error_stream.str();
+    return result;
+  }
+
+  // Lower HIR to MIR
+  lowering::hir_to_mir::LoweringInput mir_input{
+      .design = &hir_result.design,
+      .hir_arena = hir_result.hir_arena.get(),
+      .type_arena = hir_result.type_arena.get(),
+      .constant_arena = hir_result.constant_arena.get(),
+      .symbol_table = hir_result.symbol_table.get(),
+      .builtin_types = {},
+  };
+  auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+
+  // Lower MIR to LLVM IR
+  lowering::mir_to_llvm::LoweringInput llvm_input{
+      .design = &mir_result.design,
+      .mir_arena = mir_result.mir_arena.get(),
+      .type_arena = hir_result.type_arena.get(),
+  };
+
+  lowering::mir_to_llvm::LoweringResult llvm_result;
+  try {
+    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  } catch (const std::exception& e) {
+    result.error_message = std::format("LLVM lowering error: {}", e.what());
+    return result;
+  }
+
+  // Write IR to temp file
+  auto ir_dir = MakeUniqueTempPath(test_case.name + "_ir");
+  std::filesystem::create_directories(ir_dir);
+  ScopedTempDirectory ir_guard(ir_dir);
+
+  auto ir_path = ir_dir / "test.ll";
+  {
+    std::ofstream out(ir_path);
+    if (!out) {
+      result.error_message = "Failed to write IR file";
+      return result;
+    }
+    out << lowering::mir_to_llvm::DumpLlvmIr(llvm_result);
+  }
+
+  // Find runtime library
+  auto runtime_path = FindRuntimeLibrary();
+  if (!runtime_path) {
+    result.error_message = "Runtime library not found";
+    return result;
+  }
+
+  // Run lli
+  auto [exit_code, output] = RunLliWithCapture(*runtime_path, ir_path);
+  if (exit_code < 0) {
+    result.error_message = std::format("Failed to run lli: {}", output);
+    return result;
+  }
+
+  result.success = true;
+  result.captured_output = output;
+  return result;
+}
+
 }  // namespace
 
 void RunTestCase(const TestCase& test_case, BackendKind backend) {
@@ -428,9 +645,29 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       break;
     }
 
-    case BackendKind::kLlvm:
-      GTEST_SKIP() << "LLVM backend not yet implemented";
+    case BackendKind::kLlvm: {
+      // LLVM backend only supports stdout assertions for now
+      // (no variable inspection in JIT'd code)
+      if (!test_case.expected_values.empty()) {
+        GTEST_SKIP() << "LLVM backend does not support variable assertions";
+      }
+      if (test_case.expected_time.has_value()) {
+        GTEST_SKIP() << "LLVM backend does not support time assertions";
+      }
+      if (!test_case.expected_files.empty()) {
+        GTEST_SKIP() << "LLVM backend does not support file assertions";
+      }
+
+      auto result = RunLlvmBackend(test_case);
+      ASSERT_TRUE(result.success)
+          << "[" << test_case.source_yaml << "] " << result.error_message;
+
+      // Check expected stdout
+      if (test_case.expected_stdout.has_value()) {
+        AssertOutput(result.captured_output, test_case.expected_stdout.value());
+      }
       break;
+    }
   }
 }
 
