@@ -278,10 +278,15 @@ auto EmitIndexedPartSelectOffsetAndValidity(
     lower = packed.range.Lower();
     upper = packed.range.Upper();
     base_descending = packed.range.IsDescending();
+  } else if (base_type.Kind() == TypeKind::kPackedStruct) {
+    const auto& info = base_type.AsPackedStruct();
+    lower = 0;
+    upper = static_cast<int32_t>(info.total_bit_width) - 1;
+    base_descending = true;
   } else {
     throw common::InternalError(
         "EmitIndexedPartSelectOffsetAndValidity",
-        "base must be kIntegral or kPackedArray");
+        "base must be kIntegral, kPackedArray, or kPackedStruct");
   }
 
   // Compute effective bounds for validity check using int64_t to avoid
