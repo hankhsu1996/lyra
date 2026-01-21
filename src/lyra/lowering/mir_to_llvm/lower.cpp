@@ -124,7 +124,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Initialize ALL design slots to SV defaults
   auto allocas = InitializeAllSlots(context, input.slot_types);
 
-  // Lower all initial processes
+  // Collect all initial processes
+  std::vector<const mir::Process*> initial_processes;
   for (const auto& element : input.design->elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
       continue;
@@ -133,17 +134,35 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     for (mir::ProcessId proc_id : mir_module.processes) {
       const auto& process = (*input.mir_arena)[proc_id];
       if (process.kind == mir::ProcessKind::kOnce) {
-        LowerProcess(context, process, exit_block);
+        initial_processes.push_back(&process);
       }
     }
   }
 
+  // Lower processes with proper chaining: each process's continuation
+  // is the start of the next process, or exit_block for the last one.
+  for (size_t i = 0; i < initial_processes.size(); ++i) {
+    bool is_last = (i == initial_processes.size() - 1);
+    auto* continuation =
+        is_last ? exit_block
+                : llvm::BasicBlock::Create(llvm_ctx, "process_cont", main_func);
+    LowerProcess(context, *initial_processes[i], continuation);
+    if (!is_last) {
+      builder.SetInsertPoint(continuation);
+    }
+  }
+
+  // If no processes, entry needs to branch somewhere
+  if (initial_processes.empty()) {
+    builder.CreateBr(exit_block);
+  }
+
+  // Exit block: register/snapshot variables (if any) then return 0
+  builder.SetInsertPoint(exit_block);
+
   // Register and snapshot tracked variables for test framework inspection
   RegisterAndSnapshotVariables(
       context, input.variables, input.slot_types, allocas);
-
-  // Exit block returns 0
-  builder.SetInsertPoint(exit_block);
   builder.CreateRet(llvm::ConstantInt::get(llvm_ctx, llvm::APInt(32, 0)));
 
   auto [ctx, mod] = context.TakeOwnership();

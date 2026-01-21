@@ -48,10 +48,9 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
   context.GetBuilder().CreateBr(exit_block);
 }
 
-void LowerFinish(Context& context) {
-  // TODO(hankhsu): Handle $finish properly - for now treat as unreachable.
-  // Tests should not rely on continuing past $finish.
-  context.GetBuilder().CreateUnreachable();
+void LowerFinish(Context& context, llvm::BasicBlock* exit_block) {
+  // $finish terminates the simulation - jump to exit block
+  context.GetBuilder().CreateBr(exit_block);
 }
 
 void LowerTerminator(
@@ -63,7 +62,7 @@ void LowerTerminator(
           [&](const mir::Jump& t) { LowerJump(context, t, blocks); },
           [&](const mir::Branch& t) { LowerBranch(context, t, blocks); },
           [&](const mir::Return&) { LowerReturn(context, exit_block); },
-          [&](const mir::Finish&) { LowerFinish(context); },
+          [&](const mir::Finish&) { LowerFinish(context, exit_block); },
           [&](const auto&) {
             throw std::runtime_error(
                 "terminator not yet supported in LLVM backend");

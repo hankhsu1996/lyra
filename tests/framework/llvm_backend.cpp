@@ -134,54 +134,80 @@ auto BuildLlvmLoweringInfo(
   return info;
 }
 
+// Parse a single __LYRA_VAR entry and extract variable value.
+void ParseLyraVarEntry(
+    std::string_view entry, std::map<std::string, ExtractedValue>& variables) {
+  // Format: "i:name=value" or "r:name=value"
+  if (entry.size() >= 2 && entry[1] == ':') {
+    char type_tag = entry[0];
+    auto name_value = entry.substr(2);  // Skip "X:"
+    auto eq_pos = name_value.find('=');
+    if (eq_pos != std::string::npos) {
+      std::string name(name_value.substr(0, eq_pos));
+      std::string value_str(name_value.substr(eq_pos + 1));
+
+      if (type_tag == 'i') {  // Integral (signed decimal)
+        int64_t value = std::stoll(value_str);
+        variables[name] = value;
+      } else if (type_tag == 'r') {  // Real
+        double value = std::stod(value_str);
+        variables[name] = value;
+      }
+    }
+  }
+}
+
 // Parse __LYRA_VAR output and extract variable values.
-// Strips __LYRA_VAR lines while preserving all other output exactly,
+// Strips __LYRA_VAR entries while preserving all other output exactly,
 // including whether the original had a trailing newline.
+// Handles __LYRA_VAR appearing mid-line (after $write with no newline).
 auto ParseLyraVarOutput(const std::string& output)
     -> std::pair<std::string, std::map<std::string, ExtractedValue>> {
   std::string clean_output;
   std::map<std::string, ExtractedValue> variables;
 
-  // Track whether original output ends with newline
-  bool ends_with_newline = !output.empty() && output.back() == '\n';
-
   std::istringstream stream(output);
   std::string line;
   bool first_clean_line = true;
-  while (std::getline(stream, line)) {
-    constexpr std::string_view kPrefix = "__LYRA_VAR:";
-    if (line.starts_with(kPrefix)) {
-      auto rest = line.substr(kPrefix.size());
-      // Format: "i:name=value" or "r:name=value"
-      if (rest.size() >= 2 && rest[1] == ':') {
-        char type_tag = rest[0];
-        auto name_value = rest.substr(2);  // Skip "X:"
-        auto eq_pos = name_value.find('=');
-        if (eq_pos != std::string::npos) {
-          std::string name(name_value.substr(0, eq_pos));
-          std::string value_str(name_value.substr(eq_pos + 1));
+  // Track whether user content should have trailing newline.
+  // True if the last user content was on its own line (followed by \n),
+  // false if user content was followed immediately by __LYRA_VAR (mid-line).
+  bool user_ends_with_newline = false;
+  constexpr std::string_view kPrefix = "__LYRA_VAR:";
 
-          if (type_tag == 'i') {  // Integral (signed decimal)
-            int64_t value = std::stoll(value_str);
-            variables[name] = value;
-          } else if (type_tag == 'r') {  // Real
-            double value = std::stod(value_str);
-            variables[name] = value;
-          }
-        }
-      }
-    } else {
-      // Add newline before this line (if not the first clean line)
+  while (std::getline(stream, line)) {
+    // Look for __LYRA_VAR: anywhere in the line
+    auto var_pos = line.find(kPrefix);
+
+    if (var_pos == std::string::npos) {
+      // No __LYRA_VAR: in this line - add whole line to clean output
       if (!first_clean_line) {
         clean_output += '\n';
       }
       clean_output += line;
       first_clean_line = false;
+      // This line had user content and ended with \n (since getline split here)
+      user_ends_with_newline = true;
+    } else if (var_pos == 0) {
+      // Line starts with __LYRA_VAR: - previous user content ended with \n
+      // (Don't change user_ends_with_newline - keep previous value)
+      ParseLyraVarEntry(line.substr(kPrefix.size()), variables);
+    } else {
+      // __LYRA_VAR: appears mid-line (after $write output with no newline)
+      if (!first_clean_line) {
+        clean_output += '\n';
+      }
+      clean_output += line.substr(0, var_pos);
+      first_clean_line = false;
+      // User content was NOT followed by newline (it was followed by
+      // __LYRA_VAR)
+      user_ends_with_newline = false;
+      ParseLyraVarEntry(line.substr(var_pos + kPrefix.size()), variables);
     }
   }
 
-  // Add trailing newline only if original had one and we have content
-  if (ends_with_newline && !first_clean_line) {
+  // Add trailing newline only if user content should have one
+  if (user_ends_with_newline && !first_clean_line) {
     clean_output += '\n';
   }
 
