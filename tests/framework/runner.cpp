@@ -17,8 +17,8 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <spawn.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/wait.h>
@@ -312,21 +312,26 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
+  // Find the HIR module (needed for variable initialization and assertions)
+  const hir::Module* hir_module = nullptr;
+  size_t module_count = 0;
+  for (const auto& element : mir_input.design->elements) {
+    if (const auto* mod = std::get_if<hir::Module>(&element)) {
+      hir_module = mod;
+      ++module_count;
+    }
+  }
+  if (module_count > 1) {
+    result.error_message = std::format(
+        "Test framework supports single module only, got {}", module_count);
+    return result;
+  }
+
   // Build variable name to slot index mapping (for variable assertions)
   std::unordered_map<std::string, size_t> var_slots;
   if (!test_case.expected_values.empty()) {
-    // Find the module in design elements
-    const hir::Module* hir_module = nullptr;
-    size_t module_count = 0;
-    for (const auto& element : mir_input.design->elements) {
-      if (const auto* mod = std::get_if<hir::Module>(&element)) {
-        hir_module = mod;
-        ++module_count;
-      }
-    }
-    if (module_count != 1) {
-      result.error_message = std::format(
-          "Variable assertions require exactly 1 module, got {}", module_count);
+    if (hir_module == nullptr) {
+      result.error_message = "Variable assertions require a module";
       return result;
     }
     for (size_t i = 0; i < hir_module->variables.size(); ++i) {
@@ -351,6 +356,28 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   // Create module storage
   auto design_state = mir::interp::CreateDesignState(
       *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
+
+  // Initialize module slots from HIR variable types.
+  // CreateDesignState only initializes slots that are referenced in code; this
+  // ensures all declared variables are properly initialized (2-state → 0,
+  // 4-state → X) even if never used.
+  //
+  // INVARIANT: MIR lowering assigns slot IDs sequentially in
+  // hir_module->variables order (see hir_to_mir/module.cpp). If this changes,
+  // initialization will break.
+  if (hir_module != nullptr) {
+    if (hir_module->variables.size() != design_state.storage.size()) {
+      result.error_message = std::format(
+          "Slot count mismatch: HIR has {} variables, MIR has {} slots",
+          hir_module->variables.size(), design_state.storage.size());
+      return result;
+    }
+    for (size_t i = 0; i < hir_module->variables.size(); ++i) {
+      const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
+      design_state.storage[i] =
+          mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
+    }
+  }
 
   // Run interpreter with output capture
   std::ostringstream output_stream;
@@ -414,9 +441,8 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
   }
 
   // Try runfiles path (Bazel test environment)
-  auto runfiles_path =
-      std::filesystem::path(exe_path.string() + ".runfiles") / "_main" /
-      "liblyra_runtime.so";
+  auto runfiles_path = std::filesystem::path(exe_path.string() + ".runfiles") /
+                       "_main" / "liblyra_runtime.so";
   if (std::filesystem::exists(runfiles_path)) {
     return runfiles_path;
   }
@@ -449,10 +475,8 @@ auto RunLliWithCapture(
   std::string ir_path_str = ir_path.string();
 
   std::array<char*, 4> argv = {
-      const_cast<char*>("lli"),
-      const_cast<char*>(dlopen_arg.c_str()),
-      const_cast<char*>(ir_path_str.c_str()),
-      nullptr};
+      const_cast<char*>("lli"), const_cast<char*>(dlopen_arg.c_str()),
+      const_cast<char*>(ir_path_str.c_str()), nullptr};
 
   pid_t pid = 0;
   // NOLINTNEXTLINE(misc-include-cleaner) - environ is from unistd.h

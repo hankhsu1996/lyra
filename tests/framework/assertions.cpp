@@ -155,7 +155,8 @@ void AssertVariables(
       if (std::holds_alternative<int64_t>(expected_val) &&
           std::get<int64_t>(expected_val) < 0 &&
           expected_hex.size() > actual_hex.size()) {
-        expected_hex = expected_hex.substr(expected_hex.size() - actual_hex.size());
+        expected_hex =
+            expected_hex.substr(expected_hex.size() - actual_hex.size());
       }
 
       EXPECT_EQ(actual_hex, expected_hex)

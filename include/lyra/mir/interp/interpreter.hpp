@@ -192,6 +192,10 @@ auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Module& module)
     -> DesignState;
 
+// Create a default RuntimeValue for a given type.
+// 2-state integral → 0, 4-state integral → X, string → empty, etc.
+auto CreateDefaultValue(const TypeArena& types, TypeId type_id) -> RuntimeValue;
+
 // Find the first module with a kOnce process (initial block).
 // Returns nullopt if no initial process found.
 auto FindInitialModule(const Design& design, const Arena& arena)
