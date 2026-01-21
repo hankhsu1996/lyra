@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "lyra/common/source_manager.hpp"
 
@@ -13,5 +14,10 @@ struct SourceSpan {
 
   auto operator==(const SourceSpan&) const -> bool = default;
 };
+
+// Format a SourceSpan as "file:line:col" using the SourceManager.
+// Returns empty string if the span or file is invalid.
+auto FormatSourceLocation(const SourceSpan& span, const SourceManager& mgr)
+    -> std::string;
 
 }  // namespace lyra

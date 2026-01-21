@@ -8,6 +8,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -25,6 +26,7 @@ struct LoweringInput {
 struct LoweringResult {
   mir::Design design;
   std::unique_ptr<mir::Arena> mir_arena;
+  OriginMap origin_map;
 };
 
 auto LowerHirToMir(const LoweringInput& input) -> LoweringResult;

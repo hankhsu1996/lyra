@@ -17,7 +17,8 @@ namespace {
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const PlaceMap& module_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function) -> mir::Function {
+    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    -> mir::Function {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -33,7 +34,7 @@ auto LowerFunctionBody(
       .return_place = mir::kInvalidPlaceId,
   };
 
-  MirBuilder builder(&mir_arena, &ctx);
+  MirBuilder builder(&mir_arena, &ctx, origin_map);
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
 
@@ -112,7 +113,7 @@ auto LowerFunctionBody(
 
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
-    mir::Arena& mir_arena) -> mir::Module {
+    mir::Arena& mir_arena, OriginMap* origin_map) -> mir::Module {
   mir::Module result;
 
   // Allocate storage for module-level variables
@@ -153,7 +154,8 @@ auto LowerModule(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     mir::Function mir_func = LowerFunctionBody(
-        hir_func, input, mir_arena, module_places, symbol_to_mir_function);
+        hir_func, input, mir_arena, module_places, symbol_to_mir_function,
+        origin_map);
 
     mir_arena.SetFunction(mir_func_id, std::move(mir_func));
   }
@@ -162,7 +164,8 @@ auto LowerModule(
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     mir::ProcessId mir_proc_id = LowerProcess(
-        hir_process, input, mir_arena, module_places, symbol_to_mir_function);
+        hir_process, input, mir_arena, module_places, symbol_to_mir_function,
+        origin_map);
     result.processes.push_back(mir_proc_id);
   }
 

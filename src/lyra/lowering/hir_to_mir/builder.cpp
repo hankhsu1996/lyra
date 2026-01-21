@@ -9,9 +9,27 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx)
-    : arena_(arena), ctx_(ctx), current_block_(kInvalidBlockIndex), blocks_{} {
+MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
+    : arena_(arena),
+      ctx_(ctx),
+      origin_map_(origin_map),
+      current_block_(kInvalidBlockIndex),
+      blocks_{} {
   assert(arena_ && ctx_);
+}
+
+void MirBuilder::RecordStatementOrigin(hir::StatementId stmt_id) {
+  if (origin_map_ == nullptr) {
+    return;  // No map, skip recording
+  }
+
+  // Record this statement as the source for subsequent MIR nodes.
+  // We use kInstruction as the kind since most emitted MIR comes from stmt
+  // lowering. The mir_index is 0 since we're tracking at statement granularity,
+  // not per-instruction.
+  common::OriginId origin =
+      origin_map_->Record(MirNodeKind::kInstruction, 0, stmt_id);
+  current_origin_ = origin;
 }
 
 auto MirBuilder::CreateBlock() -> BlockIndex {
