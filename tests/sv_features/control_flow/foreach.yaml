@@ -62,35 +62,32 @@ cases:
       variables:
         sum: 10
 
-  # TODO(hankhsu): Uncomment when interpreter supports non-zero-based arrays.
-  # The foreach lowering is correct, but the interpreter fails with
-  # "array index out of bounds" for any non-zero-based unpacked array access.
-  # - name: foreach_non_zero_base
-  #   sv: |
-  #     module Test;
-  #       int sum;
-  #       int first_idx;
-  #       int last_idx;
-  #       initial begin
-  #         int arr[2:4];
-  #         arr[2] = 10;
-  #         arr[3] = 20;
-  #         arr[4] = 30;
-  #         sum = 0;
-  #         first_idx = -1;
-  #         last_idx = -1;
-  #         foreach (arr[i]) begin
-  #           if (first_idx == -1) first_idx = i;
-  #           last_idx = i;
-  #           sum = sum + arr[i];
-  #         end
-  #       end
-  #     endmodule
-  #   expect:
-  #     variables:
-  #       sum: 60
-  #       first_idx: 2
-  #       last_idx: 4
+  - name: foreach_non_zero_base
+    sv: |
+      module Test;
+        int sum;
+        int first_idx;
+        int last_idx;
+        initial begin
+          int arr[2:4];
+          arr[2] = 10;
+          arr[3] = 20;
+          arr[4] = 30;
+          sum = 0;
+          first_idx = -1;
+          last_idx = -1;
+          foreach (arr[i]) begin
+            if (first_idx == -1) first_idx = i;
+            last_idx = i;
+            sum = sum + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 60
+        first_idx: 2
+        last_idx: 4
 
   # Packed array with descending range
   - name: foreach_packed_descending
@@ -803,30 +800,27 @@ cases:
       variables:
         sum_first_elem: 30
 
-  # TODO(hankhsu): Uncomment when interpreter supports non-zero-based arrays.
-  # The foreach lowering is correct, but the interpreter fails with
-  # "array index out of bounds" for any non-zero-based unpacked array access.
-  # - name: foreach_negative_indices
-  #   description: Foreach with negative array bounds
-  #   sv: |
-  #     module Test;
-  #       int sum_idx;
-  #       int sum_val;
-  #       initial begin
-  #         int arr[-2:1];
-  #         arr[-2] = 10;
-  #         arr[-1] = 20;
-  #         arr[0] = 30;
-  #         arr[1] = 40;
-  #         sum_idx = 0;
-  #         sum_val = 0;
-  #         foreach (arr[i]) begin
-  #           sum_idx = sum_idx + i;
-  #           sum_val = sum_val + arr[i];
-  #         end
-  #       end
-  #     endmodule
-  #   expect:
-  #     variables:
-  #       sum_idx: -2
-  #       sum_val: 100
+  - name: foreach_negative_indices
+    description: Foreach with negative array bounds
+    sv: |
+      module Test;
+        int sum_idx;
+        int sum_val;
+        initial begin
+          int arr[-2:1];
+          arr[-2] = 10;
+          arr[-1] = 20;
+          arr[0] = 30;
+          arr[1] = 40;
+          sum_idx = 0;
+          sum_val = 0;
+          foreach (arr[i]) begin
+            sum_idx = sum_idx + i;
+            sum_val = sum_val + arr[i];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        sum_idx: -2
+        sum_val: 100
