@@ -38,6 +38,7 @@ suites:
       - datatypes/packed_3d.yaml
       - datatypes/indexed_part_select.yaml
       - datatypes/unpacked_struct.yaml
+      - datatypes/packed_struct.yaml
       - datatypes/enum.yaml
       - system_tasks/display.yaml
       - system_tasks/severity.yaml

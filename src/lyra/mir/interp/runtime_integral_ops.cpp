@@ -1003,9 +1003,14 @@ auto IntegralInsertSlice(
     uint64_t dst_mask = value_mask << dst_bit_pos;
     result.value[dst_idx] &= ~dst_mask;
     result.value[dst_idx] |= src_bits << dst_bit_pos;
+    // Clear x_mask and z_mask for written bits (2-state writes known bits)
+    result.x_mask[dst_idx] &= ~dst_mask;
+    result.z_mask[dst_idx] &= ~dst_mask;
   }
 
   MaskTopWord(result.value, dst.bit_width);
+  MaskTopWord(result.x_mask, dst.bit_width);
+  MaskTopWord(result.z_mask, dst.bit_width);
   return result;
 }
 
