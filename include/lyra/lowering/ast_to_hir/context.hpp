@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <format>
+#include <string>
+#include <string_view>
 
 #include <slang/text/SourceLocation.h>
 
@@ -15,16 +18,24 @@
 namespace lyra::lowering::ast_to_hir {
 
 struct Context {
-  DiagnosticSink* sink;
-  hir::Arena* hir_arena;
-  TypeArena* type_arena;
-  ConstantArena* constant_arena;
-  SymbolTable* symbol_table;
-  ScopeTable* scope_table;
-  SourceMapper* source_mapper;
+  DiagnosticSink* sink = nullptr;
+  hir::Arena* hir_arena = nullptr;
+  TypeArena* type_arena = nullptr;
+  ConstantArena* constant_arena = nullptr;
+  SymbolTable* symbol_table = nullptr;
+  ScopeTable* scope_table = nullptr;
+  SourceMapper* source_mapper = nullptr;
+
+  // Counter for generating unique synthetic variable names
+  uint32_t temp_counter = 0;
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {
     return source_mapper->SpanOf(range);
+  }
+
+  // Generate a unique synthetic variable name
+  [[nodiscard]] auto MakeTempName(std::string_view prefix) -> std::string {
+    return std::format("__lyra_{}_{}", prefix, temp_counter++);
   }
 
   template <typename... Args>

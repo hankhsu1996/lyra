@@ -21,6 +21,7 @@ suites:
       - control_flow/case.yaml
       - control_flow/unique_priority_if.yaml
       - control_flow/unique_priority_case.yaml
+      - control_flow/foreach.yaml
       - datatypes/arrays.yaml
       - datatypes/dynamic_arrays.yaml
       - datatypes/queues.yaml

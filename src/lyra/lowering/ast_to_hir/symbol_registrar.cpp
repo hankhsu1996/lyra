@@ -26,6 +26,17 @@ auto SymbolRegistrar::Register(
   return id;
 }
 
+auto SymbolRegistrar::RegisterSynthetic(
+    std::string name, SymbolKind kind, TypeId type) -> SymbolId {
+  return ctx_->symbol_table->Add(
+      Symbol{
+          .kind = kind,
+          .name = std::move(name),
+          .type = type,
+          .scope = current_scope_,
+      });
+}
+
 auto SymbolRegistrar::Lookup(const slang::ast::Symbol& slang_sym) const
     -> SymbolId {
   auto it = slang_to_id_.find(&slang_sym);
