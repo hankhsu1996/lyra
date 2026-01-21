@@ -100,11 +100,113 @@ auto LowerBinaryArith(
       auto* xor_result = builder.CreateXor(lhs, rhs, "xor");
       return builder.CreateNot(xor_result, "xnor");
     }
+
+    // Shift operators
+    case mir::BinaryOp::kLogicalShiftLeft:
+    case mir::BinaryOp::kArithmeticShiftLeft:
+      return builder.CreateShl(lhs, rhs, "shl");
+    case mir::BinaryOp::kLogicalShiftRight:
+      return builder.CreateLShr(lhs, rhs, "lshr");
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return builder.CreateAShr(lhs, rhs, "ashr");
+
+    // Logical operators - convert to bool first, then AND/OR
+    case mir::BinaryOp::kLogicalAnd: {
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      return builder.CreateAnd(lhs_bool, rhs_bool, "land");
+    }
+    case mir::BinaryOp::kLogicalOr: {
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      return builder.CreateOr(lhs_bool, rhs_bool, "lor");
+    }
+
     default:
       throw common::UnsupportedErrorException(
           common::UnsupportedLayer::kMirToLlvm,
           common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
           std::format("unsupported binary op: {}", mir::ToString(op)));
+  }
+}
+
+// Check if the binary op returns i1 (comparisons and logical ops)
+auto ReturnsI1(mir::BinaryOp op) -> bool {
+  switch (op) {
+    case mir::BinaryOp::kEqual:
+    case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kLessThan:
+    case mir::BinaryOp::kLessThanEqual:
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kGreaterThanEqual:
+    case mir::BinaryOp::kLessThanSigned:
+    case mir::BinaryOp::kLessThanEqualSigned:
+    case mir::BinaryOp::kGreaterThanSigned:
+    case mir::BinaryOp::kGreaterThanEqualSigned:
+    case mir::BinaryOp::kLogicalAnd:
+    case mir::BinaryOp::kLogicalOr:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Check if the binary op is a comparison (needs icmp)
+auto IsComparisonOp(mir::BinaryOp op) -> bool {
+  switch (op) {
+    case mir::BinaryOp::kEqual:
+    case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kLessThan:
+    case mir::BinaryOp::kLessThanEqual:
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kGreaterThanEqual:
+    case mir::BinaryOp::kLessThanSigned:
+    case mir::BinaryOp::kLessThanEqualSigned:
+    case mir::BinaryOp::kGreaterThanSigned:
+    case mir::BinaryOp::kGreaterThanEqualSigned:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Dispatch to LLVM icmp for comparison operators
+// Returns i1, caller must extend to storage type
+auto LowerBinaryComparison(
+    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  switch (op) {
+    case mir::BinaryOp::kEqual:
+      return builder.CreateICmpEQ(lhs, rhs, "eq");
+    case mir::BinaryOp::kNotEqual:
+      return builder.CreateICmpNE(lhs, rhs, "ne");
+    case mir::BinaryOp::kLessThan:
+      return builder.CreateICmpULT(lhs, rhs, "ult");
+    case mir::BinaryOp::kLessThanEqual:
+      return builder.CreateICmpULE(lhs, rhs, "ule");
+    case mir::BinaryOp::kGreaterThan:
+      return builder.CreateICmpUGT(lhs, rhs, "ugt");
+    case mir::BinaryOp::kGreaterThanEqual:
+      return builder.CreateICmpUGE(lhs, rhs, "uge");
+    case mir::BinaryOp::kLessThanSigned:
+      return builder.CreateICmpSLT(lhs, rhs, "slt");
+    case mir::BinaryOp::kLessThanEqualSigned:
+      return builder.CreateICmpSLE(lhs, rhs, "sle");
+    case mir::BinaryOp::kGreaterThanSigned:
+      return builder.CreateICmpSGT(lhs, rhs, "sgt");
+    case mir::BinaryOp::kGreaterThanEqualSigned:
+      return builder.CreateICmpSGE(lhs, rhs, "sge");
+    default:
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm,
+          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+          std::format("unsupported comparison op: {}", mir::ToString(op)));
   }
 }
 
@@ -123,7 +225,65 @@ auto LowerBinaryRvalue(
   lhs = builder.CreateZExtOrTrunc(lhs, storage_type, "lhs.coerce");
   rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
 
-  return LowerBinaryArith(context, info.op, lhs, rhs);
+  // Comparison operators use icmp, which returns i1
+  if (IsComparisonOp(info.op)) {
+    llvm::Value* cmp = LowerBinaryComparison(context, info.op, lhs, rhs);
+    return builder.CreateZExt(cmp, storage_type, "cmp.ext");
+  }
+
+  // Arithmetic/bitwise/shift/logical operators
+  llvm::Value* result = LowerBinaryArith(context, info.op, lhs, rhs);
+
+  // Logical operators return i1, need to extend to storage type
+  if (ReturnsI1(info.op)) {
+    return builder.CreateZExt(result, storage_type, "bool.ext");
+  }
+
+  return result;
+}
+
+// Dispatch to LLVM instructions for unary operators
+auto LowerUnaryOp(
+    Context& context, mir::UnaryOp op, llvm::Value* operand,
+    llvm::Type* storage_type) -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  switch (op) {
+    case mir::UnaryOp::kPlus:
+      return operand;
+    case mir::UnaryOp::kMinus:
+      return builder.CreateNeg(operand, "neg");
+    case mir::UnaryOp::kBitwiseNot:
+      return builder.CreateNot(operand, "not");
+    case mir::UnaryOp::kLogicalNot: {
+      // Convert to bool (compare != 0), then negate
+      auto* zero = llvm::ConstantInt::get(operand->getType(), 0);
+      auto* is_nonzero = builder.CreateICmpNE(operand, zero, "nonzero");
+      auto* negated = builder.CreateNot(is_nonzero, "lnot");
+      return builder.CreateZExt(negated, storage_type, "lnot.ext");
+    }
+    default:
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm,
+          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+          std::format("unsupported unary op: {}", mir::ToString(op)));
+  }
+}
+
+// Lower unary rvalue
+auto LowerUnaryRvalue(
+    Context& context, const mir::UnaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  // Lower the operand
+  llvm::Value* operand = LowerOperand(context, operands[0]);
+
+  // Coerce operand to storage type
+  operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
+
+  return LowerUnaryOp(context, info.op, operand, storage_type);
 }
 
 // Lower cast rvalue: convert from source type to target type
@@ -178,6 +338,10 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
   // Step 3: Lower the rvalue
   llvm::Value* result = std::visit(
       Overloaded{
+          [&](const mir::UnaryRvalueInfo& info) {
+            return LowerUnaryRvalue(
+                context, info, compute.value.operands, storage_type);
+          },
           [&](const mir::BinaryRvalueInfo& info) {
             return LowerBinaryRvalue(
                 context, info, compute.value.operands, storage_type);
@@ -190,7 +354,9 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             throw common::UnsupportedErrorException(
                 common::UnsupportedLayer::kMirToLlvm,
                 common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                "unsupported rvalue kind");
+                std::format(
+                    "unsupported rvalue kind: {}",
+                    mir::GetRvalueKind(compute.value.info)));
           },
       },
       compute.value.info);
