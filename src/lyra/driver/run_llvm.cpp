@@ -1,18 +1,15 @@
 #include "run_llvm.hpp"
 
-#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <fmt/core.h>
-#include <llvm/Config/llvm-config.h>
 
 #include "lyra/lowering/mir_to_llvm/lower.hpp"
 #include "pipeline.hpp"
@@ -105,73 +102,6 @@ auto FindRuntimeLibrary(std::vector<std::string>& tried_paths) -> std::string {
   return "";
 }
 
-auto GetLliMajorVersion() -> int {
-  std::array<int, 2> pipe_fd{};
-  if (pipe(pipe_fd.data()) == -1) {
-    return 0;
-  }
-
-  posix_spawn_file_actions_t actions;
-  posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_adddup2(&actions, pipe_fd[1], STDOUT_FILENO);
-  posix_spawn_file_actions_addclose(&actions, pipe_fd[0]);
-
-  std::vector<char*> argv;
-  std::string lli_cmd = "lli";
-  std::string version_flag = "--version";
-  argv.push_back(lli_cmd.data());
-  argv.push_back(version_flag.data());
-  argv.push_back(nullptr);
-
-  pid_t pid = 0;
-  int spawn_result =
-      posix_spawnp(&pid, "lli", &actions, nullptr, argv.data(), environ);
-  posix_spawn_file_actions_destroy(&actions);
-
-  close(pipe_fd[1]);
-
-  if (spawn_result != 0) {
-    close(pipe_fd[0]);
-    return 0;
-  }
-
-  std::string output;
-  std::array<char, 256> buf{};
-  ssize_t n = 0;
-  while ((n = read(pipe_fd[0], buf.data(), buf.size())) > 0) {
-    output.append(buf.data(), static_cast<size_t>(n));
-  }
-  close(pipe_fd[0]);
-
-  int status = 0;
-  waitpid(pid, &status, 0);
-
-  std::regex version_regex(R"(LLVM version (\d+)\.)");
-  std::smatch match;
-  if (std::regex_search(output, match, version_regex)) {
-    return std::stoi(match[1].str());
-  }
-
-  return 0;
-}
-
-void CheckLlvmVersionCompatibility() {
-  int lli_major = GetLliMajorVersion();
-  if (lli_major == 0) {
-    return;
-  }
-
-  constexpr int kCompileMajor = LLVM_VERSION_MAJOR;
-  if (lli_major != kCompileMajor) {
-    PrintWarning(
-        fmt::format(
-            "lli version {} does not match compile-time LLVM version {}\n"
-            "       hint: this may cause issues; consider using matching "
-            "versions",
-            lli_major, kCompileMajor));
-  }
-}
-
 auto RunLli(const std::string& runtime_path, const std::string& ir_path)
     -> int {
   std::string dlopen_arg = fmt::format("--dlopen={}", runtime_path);
@@ -206,8 +136,6 @@ auto RunLli(const std::string& runtime_path, const std::string& ir_path)
 }  // namespace
 
 auto RunLlvm(const std::vector<std::string>& files) -> int {
-  CheckLlvmVersionCompatibility();
-
   auto compilation = CompileToMir(files);
   if (!compilation) {
     PrintError(compilation.error());
