@@ -54,6 +54,8 @@ auto SpecToFormatKind(char spec) -> std::optional<FormatKind> {
       return FormatKind::kOctal;
     case 's':
       return FormatKind::kString;
+    case 'f':
+      return FormatKind::kReal;
     default:
       return std::nullopt;
   }
@@ -81,7 +83,8 @@ auto ParseFormatString(
           hir::FormatOp{
               .kind = FormatKind::kLiteral,
               .value = std::nullopt,
-              .literal = std::move(current_literal)});
+              .literal = std::move(current_literal),
+              .mods = {}});
       current_literal.clear();
     }
   };
@@ -110,14 +113,45 @@ auto ParseFormatString(
 
     // Parse the format specifier
     // SV format: %[-][0][width][.precision]specifier
-    size_t spec_start = pos + 1;
-    size_t spec_pos = spec_start;
+    size_t spec_pos = pos + 1;
 
-    // Skip flags and width
-    while (spec_pos < fmt.size() &&
-           (std::isdigit(fmt[spec_pos]) != 0 || fmt[spec_pos] == '-' ||
-            fmt[spec_pos] == '.')) {
+    // Parse flags
+    bool left_align = false;
+    bool zero_pad = false;
+    if (spec_pos < fmt.size() && fmt[spec_pos] == '-') {
+      left_align = true;
       ++spec_pos;
+    }
+
+    // Parse width (including leading 0 which means minimal/zero-pad)
+    // Per LRM 21.2.1.2: %0h means width=0 (minimal format)
+    // %08h means width=8 with zero padding
+    std::optional<int> width;
+    if (spec_pos < fmt.size() && std::isdigit(fmt[spec_pos]) != 0) {
+      // Check for zero-padding: 0 followed by more digits
+      if (fmt[spec_pos] == '0' && spec_pos + 1 < fmt.size() &&
+          std::isdigit(fmt[spec_pos + 1]) != 0) {
+        zero_pad = true;
+        ++spec_pos;
+      }
+      int w = 0;
+      while (spec_pos < fmt.size() && std::isdigit(fmt[spec_pos]) != 0) {
+        w = w * 10 + (fmt[spec_pos] - '0');
+        ++spec_pos;
+      }
+      width = w;
+    }
+
+    // Parse precision
+    std::optional<int> precision;
+    if (spec_pos < fmt.size() && fmt[spec_pos] == '.') {
+      ++spec_pos;
+      int p = 0;
+      while (spec_pos < fmt.size() && std::isdigit(fmt[spec_pos]) != 0) {
+        p = p * 10 + (fmt[spec_pos] - '0');
+        ++spec_pos;
+      }
+      precision = p;
     }
 
     if (spec_pos >= fmt.size()) {
@@ -134,7 +168,8 @@ auto ParseFormatString(
       diag.Error(
           span, std::format("unknown format specifier '%{}'", spec_char));
       // Treat as literal to continue parsing
-      current_literal += fmt.substr(spec_start - 1, pos - spec_start + 1);
+      current_literal +=
+          fmt.substr(pos - (spec_pos - pos + 1), spec_pos - pos + 2);
       continue;
     }
 
@@ -145,7 +180,14 @@ auto ParseFormatString(
     if (arg_idx < args.size()) {
       result.ops.push_back(
           hir::FormatOp{
-              .kind = *format_kind, .value = args[arg_idx], .literal = {}});
+              .kind = *format_kind,
+              .value = args[arg_idx],
+              .literal = {},
+              .mods = {
+                  .width = width,
+                  .precision = precision,
+                  .zero_pad = zero_pad,
+                  .left_align = left_align}});
       ++arg_idx;
     } else {
       diag.Error(
@@ -236,7 +278,8 @@ struct LowerVisitor {
               hir::FormatOp{
                   .kind = default_format,
                   .value = (*args)[next_arg],
-                  .literal = {}});
+                  .literal = {},
+                  .mods = {}});
           ++next_arg;
         }
       } else if (has_format_string) {
@@ -245,18 +288,25 @@ struct LowerVisitor {
             hir::FormatOp{
                 .kind = FormatKind::kLiteral,
                 .value = std::nullopt,
-                .literal = format_str});
+                .literal = format_str,
+                .mods = {}});
         for (size_t i = 1; i < args->size(); ++i) {
           ops.push_back(
               hir::FormatOp{
-                  .kind = default_format, .value = (*args)[i], .literal = {}});
+                  .kind = default_format,
+                  .value = (*args)[i],
+                  .literal = {},
+                  .mods = {}});
         }
       } else {
         // First arg is not a string - auto-format all arguments
         for (hir::ExpressionId arg_id : *args) {
           ops.push_back(
               hir::FormatOp{
-                  .kind = default_format, .value = arg_id, .literal = {}});
+                  .kind = default_format,
+                  .value = arg_id,
+                  .literal = {},
+                  .mods = {}});
         }
       }
     }

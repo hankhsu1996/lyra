@@ -566,6 +566,9 @@ void Dumper::Dump(ExpressionId id) {
                     case FormatKind::kString:
                       kind_str = "%s";
                       break;
+                    case FormatKind::kReal:
+                      kind_str = "%f";
+                      break;
                     case FormatKind::kLiteral:
                       break;  // Already handled above
                   }

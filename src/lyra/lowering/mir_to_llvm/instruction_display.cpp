@@ -28,11 +28,15 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
       int32_t width = 32;
       bool is_signed = false;
 
+      bool is_real = false;
       if (op.type) {
         const Type& ty = types[op.type];
         if (ty.Kind() == TypeKind::kIntegral) {
           width = static_cast<int32_t>(ty.AsIntegral().bit_width);
           is_signed = ty.AsIntegral().is_signed;
+        } else if (ty.Kind() == TypeKind::kReal) {
+          is_real = true;
+          width = 64;  // double is 64 bits
         } else if (IsPacked(ty)) {
           width = static_cast<int32_t>(PackedBitWidth(ty, types));
           is_signed = IsPackedSigned(ty, types);
@@ -47,6 +51,12 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
         if (op.kind == FormatKind::kString) {
           // For strings, value is already a pointer (i8*) - pass directly
           data_ptr = value;
+        } else if (is_real) {
+          // For real types, allocate a double and store
+          auto* double_ty = llvm::Type::getDoubleTy(llvm_ctx);
+          auto* alloca = builder.CreateAlloca(double_ty);
+          builder.CreateStore(value, alloca);
+          data_ptr = alloca;
         } else {
           // For integral types, allocate storage sized to match width
           // This ensures LyraPrintValue can read the correct number of bytes

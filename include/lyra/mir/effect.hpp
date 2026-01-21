@@ -18,7 +18,8 @@ struct FormatOp {
   FormatKind kind;
   std::optional<Operand> value;  // nullopt for kLiteral
   std::string literal;           // only valid when kind == kLiteral
-  TypeId type;  // for width/signedness lookup (invalid for kLiteral)
+  TypeId type;           // for width/signedness lookup (invalid for kLiteral)
+  FormatModifiers mods;  // width, precision, flags
 };
 
 // DisplayEffect represents a $display/$write family system task.

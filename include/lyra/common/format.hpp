@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace lyra {
 
@@ -13,6 +14,7 @@ enum class FormatKind : int32_t {
   kBinary = 2,    // %b
   kOctal = 3,     // %o
   kString = 4,    // %s
+  kReal = 5,      // %f
 };
 
 // Print kind for display/write operations.
@@ -21,5 +23,38 @@ enum class PrintKind : int32_t {
   kDisplay = 0,  // $display - appends newline
   kWrite = 1,    // $write - no newline
 };
+
+// Format modifiers shared across HIR, MIR, and interpreter.
+// Extracted to prevent drift between layers.
+struct FormatModifiers {
+  std::optional<int> width;      // field width (0 = minimal)
+  std::optional<int> precision;  // decimal precision for %f
+  bool zero_pad = false;         // %0d style padding
+  bool left_align = false;       // %-d left alignment
+
+  auto operator==(const FormatModifiers&) const -> bool = default;
+};
+
+// Convert FormatKind to format specifier character.
+// Returns '\0' for kLiteral (no spec char).
+constexpr auto FormatKindToSpecChar(FormatKind kind) -> char {
+  switch (kind) {
+    case FormatKind::kDecimal:
+      return 'd';
+    case FormatKind::kHex:
+      return 'h';
+    case FormatKind::kBinary:
+      return 'b';
+    case FormatKind::kOctal:
+      return 'o';
+    case FormatKind::kString:
+      return 's';
+    case FormatKind::kReal:
+      return 'f';
+    case FormatKind::kLiteral:
+      return '\0';
+  }
+  return '\0';
+}
 
 }  // namespace lyra

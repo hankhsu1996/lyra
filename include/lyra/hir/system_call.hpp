@@ -17,6 +17,7 @@ struct FormatOp {
   FormatKind kind;
   std::optional<ExpressionId> value;  // nullopt for kLiteral
   std::string literal;                // only valid when kind == kLiteral
+  FormatModifiers mods;               // width, precision, flags
 
   auto operator==(const FormatOp&) const -> bool = default;
 };

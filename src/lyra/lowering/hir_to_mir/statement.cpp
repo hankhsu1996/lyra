@@ -112,7 +112,8 @@ void LowerDisplayEffect(
               .kind = FormatKind::kLiteral,
               .value = std::nullopt,
               .literal = hir_op.literal,
-              .type = TypeId{}});
+              .type = TypeId{},
+              .mods = {}});
     } else {
       // Lower the value expression and get its type
       mir::Operand operand = LowerExpression(*hir_op.value, builder);
@@ -122,7 +123,8 @@ void LowerDisplayEffect(
               .kind = hir_op.kind,
               .value = std::move(operand),
               .literal = {},
-              .type = expr.type});
+              .type = expr.type,
+              .mods = hir_op.mods});
     }
   }
 
@@ -329,7 +331,8 @@ void LowerConditionalPriority(
             .kind = FormatKind::kLiteral,
             .value = std::nullopt,
             .literal = "warning: no condition matched in priority if",
-            .type = TypeId{}}},
+            .type = TypeId{},
+            .mods = {}}},
     };
     builder.EmitEffect(std::move(display));
   }
@@ -574,7 +577,8 @@ void LowerCasePriority(
             .kind = FormatKind::kLiteral,
             .value = std::nullopt,
             .literal = "warning: no matching case item in priority case",
-            .type = TypeId{}}},
+            .type = TypeId{},
+            .mods = {}}},
     };
     builder.EmitEffect(std::move(display));
   }

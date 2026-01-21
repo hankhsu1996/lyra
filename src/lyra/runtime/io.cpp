@@ -63,6 +63,10 @@ auto FormatValue(
       // This case is handled specially in LyraPrintValue, not here
       return "";
 
+    case lyra::FormatKind::kReal:
+      // Real values - data points to a double
+      return std::format("{:f}", *static_cast<const double*>(data));
+
     case lyra::FormatKind::kLiteral:
       // Should not reach here - literals use LyraPrintLiteral
       return "";

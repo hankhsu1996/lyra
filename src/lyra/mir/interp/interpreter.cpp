@@ -1450,27 +1450,13 @@ void Interpreter::ExecDisplayEffect(
       RuntimeValue value = EvalOperand(state, *op.value);
       TypedValue typed{.value = std::move(value), .type = op.type};
 
-      // Convert FormatKind to FormatSpec
-      FormatSpec spec{};
-      switch (op.kind) {
-        case FormatKind::kDecimal:
-          spec.spec = 'd';
-          break;
-        case FormatKind::kHex:
-          spec.spec = 'h';
-          break;
-        case FormatKind::kBinary:
-          spec.spec = 'b';
-          break;
-        case FormatKind::kOctal:
-          spec.spec = 'o';
-          break;
-        case FormatKind::kString:
-          spec.spec = 's';
-          break;
-        case FormatKind::kLiteral:
-          break;  // Already handled above
-      }
+      // Convert FormatKind and modifiers to FormatSpec
+      FormatSpec spec{
+          .spec = FormatKindToSpecChar(op.kind),
+          .zero_pad = op.mods.zero_pad,
+          .left_align = op.mods.left_align,
+          .width = op.mods.width,
+          .precision = op.mods.precision};
 
       out << FormatValue(typed, spec, *types_, ctx);
     }
