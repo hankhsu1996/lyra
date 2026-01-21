@@ -820,16 +820,30 @@ auto EmitPackedElementOffset(
   return {offset, valid};
 }
 
-// Compute bit offset for bit select on kIntegral.
+// Compute bit offset for bit select on packed types with implicit range.
+// kIntegral and kPackedStruct have implicit descending [bit_width-1:0].
 // Returns {offset, valid} pair.
 auto EmitBitSelectOffset(
     mir::Operand index, TypeId index_type, const Type& base_type,
     MirBuilder& builder) -> std::pair<mir::Operand, mir::Operand> {
   const Context& ctx = builder.GetContext();
-  const auto& info = base_type.AsIntegral();
+
+  // Get bit width based on type kind
+  uint32_t bit_width = 0;
+  switch (base_type.Kind()) {
+    case TypeKind::kIntegral:
+      bit_width = base_type.AsIntegral().bit_width;
+      break;
+    case TypeKind::kPackedStruct:
+      bit_width = base_type.AsPackedStruct().total_bit_width;
+      break;
+    default:
+      throw common::InternalError(
+          "EmitBitSelectOffset", "base must be kIntegral or kPackedStruct");
+  }
 
   // Implicit range: [bit_width-1:0] (descending, 0-based)
-  int32_t upper = static_cast<int32_t>(info.bit_width) - 1;
+  int32_t upper = static_cast<int32_t>(bit_width) - 1;
   int32_t lower = 0;
 
   // Compute validity using IndexValidity rvalue
@@ -931,20 +945,25 @@ auto LowerRangeSelect(
   // Ascending [L:H]: offset = H - select_upper (higher indices at lower
   // positions)
   int32_t bit_offset = 0;
-  if (base_type.Kind() == TypeKind::kIntegral) {
-    // kIntegral has implicit descending [bit_width-1:0]
-    bit_offset = select_lower;
-  } else if (base_type.Kind() == TypeKind::kPackedArray) {
-    const auto& packed = base_type.AsPackedArray();
-    if (packed.range.IsDescending()) {
-      bit_offset = select_lower - packed.range.Lower();
-    } else {
-      // Ascending: higher logical index = lower physical position
-      bit_offset = packed.range.Upper() - select_upper;
+  switch (base_type.Kind()) {
+    case TypeKind::kIntegral:
+    case TypeKind::kPackedStruct:
+      // kIntegral and kPackedStruct have implicit descending [bit_width-1:0]
+      bit_offset = select_lower;
+      break;
+    case TypeKind::kPackedArray: {
+      const auto& packed = base_type.AsPackedArray();
+      if (packed.range.IsDescending()) {
+        bit_offset = select_lower - packed.range.Lower();
+      } else {
+        // Ascending: higher logical index = lower physical position
+        bit_offset = packed.range.Upper() - select_upper;
+      }
+      break;
     }
-  } else {
-    throw common::InternalError(
-        "LowerRangeSelect", "base must be kIntegral or kPackedArray");
+    default:
+      throw common::InternalError(
+          "LowerRangeSelect", "base must be packed type");
   }
 
   // Use 32-bit offset_type for consistency with packed element select
