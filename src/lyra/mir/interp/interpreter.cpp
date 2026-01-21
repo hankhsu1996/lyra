@@ -376,34 +376,28 @@ auto ApplySingleProjection(
             auto& a = AsArray(*current);
             int64_t index = eval_index(ip.index);
 
-            // Get array bounds from type and normalize index to 0-based offset
-            int64_t offset = index;
+            // MIR invariant: IndexProjection stores 0-based offset (see
+            // mir-design.md). Lowering normalizes declaration-space indices.
             auto size = static_cast<int64_t>(a.elements.size());
-            if (current_type) {
-              const auto& type_info = types[current_type];
-              if (type_info.Kind() == TypeKind::kUnpackedArray) {
-                const auto& array_info = type_info.AsUnpackedArray();
-                offset = index - array_info.range.Lower();
-                current_type = array_info.element_type;
-              } else if (type_info.Kind() == TypeKind::kDynamicArray) {
-                // Dynamic arrays are 0-based, no range normalization needed
-                offset = index;
-                current_type = type_info.AsDynamicArray().element_type;
-              } else if (type_info.Kind() == TypeKind::kQueue) {
-                // Queues are 0-based, no range normalization needed
-                offset = index;
-                current_type = type_info.AsQueue().element_type;
-              }
-            }
-
-            if (offset < 0 || offset >= size) {
-              // OOB should never reach here - lowering should emit GuardedUse/
-              // GuardedAssign for OOB-safe access per IEEE 1800-2023.
+            if (index < 0 || index >= size) {
               throw common::InternalError(
                   "ApplyProjection",
                   std::format("array index {} out of bounds", index));
             }
-            return &a.elements[static_cast<size_t>(offset)];
+
+            // Update current_type for nested access
+            if (current_type) {
+              const auto& type_info = types[current_type];
+              if (type_info.Kind() == TypeKind::kUnpackedArray) {
+                current_type = type_info.AsUnpackedArray().element_type;
+              } else if (type_info.Kind() == TypeKind::kDynamicArray) {
+                current_type = type_info.AsDynamicArray().element_type;
+              } else if (type_info.Kind() == TypeKind::kQueue) {
+                current_type = type_info.AsQueue().element_type;
+              }
+            }
+
+            return &a.elements[static_cast<size_t>(index)];
           },
           [](const SliceProjection& /*sp*/) -> ValuePtr {
             throw common::InternalError(
@@ -1185,7 +1179,7 @@ auto Interpreter::ApplyProjectionsForRead(
                 idx = static_cast<int64_t>(raw);
               }
 
-              // MIR lowering normalizes indices to 0-based
+              // MIR invariant: IndexProjection stores 0-based offset
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
                 // TODO(hankhsu): LRM says return X for OOB reads
                 // For now, throw until 4-state semantics are implemented
@@ -1306,7 +1300,7 @@ auto Interpreter::ApplyProjectionsForWrite(
                 idx = static_cast<int64_t>(raw);
               }
 
-              // MIR lowering normalizes indices to 0-based
+              // MIR invariant: IndexProjection stores 0-based offset
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
                 // TODO(hankhsu): LRM defines behavior for OOB writes
                 // For now, throw until 4-state semantics are implemented

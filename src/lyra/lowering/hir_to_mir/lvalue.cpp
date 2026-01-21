@@ -151,6 +151,20 @@ auto LowerElementAccessLvalue(
         "LowerElementAccessLvalue", "index operand must be Const or Use");
   }
 
+  // Normalize unpacked array indices to 0-based storage offset.
+  // Dynamic arrays and queues are always 0-based, no normalization needed.
+  if (base_type.Kind() == TypeKind::kUnpackedArray) {
+    const auto& array_info = base_type.AsUnpackedArray();
+    int32_t lower_bound = array_info.range.Lower();
+    if (lower_bound != 0) {
+      TypeId offset_type = ctx.GetOffsetType();
+      auto lower_const =
+          mir::Operand::Const(MakeIntegralConst(lower_bound, offset_type));
+      index_operand = builder.EmitBinary(
+          mir::BinaryOp::kSubtract, index_operand, lower_const, offset_type);
+    }
+  }
+
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
   };

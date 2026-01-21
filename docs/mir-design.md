@@ -257,6 +257,12 @@ These must hold for well-formed MIR:
 - Writes occur only through Place
 - All computation results materialize into Places (no abstract value identity)
 
+**Index Projections:**
+
+- IndexProjection stores 0-based storage offset, not declaration-space index
+- HIR→MIR lowering normalizes array indices (e.g., `arr[2]` for `int arr[2:5]` becomes offset 0)
+- IndexValidity retains logical bounds for diagnostic purposes
+
 **System Subroutines:**
 
 - Classified only by semantic role (Pure/Effect/State)
