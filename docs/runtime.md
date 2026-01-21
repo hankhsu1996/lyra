@@ -76,9 +76,9 @@ Key behaviors:
 LLVM-generated code calls the runtime via C ABI:
 
 ```cpp
-// Generated code calls these (extern "C" or C++ with stable ABI)
-void lyra_delay(ProcessState* state, uint64_t ticks);
-void lyra_subscribe(ProcessState* state, SignalId signal, EdgeKind edge);
+// Generated code calls these (extern "C" with PascalCase naming)
+void LyraDelay(ProcessState* state, uint64_t ticks);
+void LyraSubscribe(ProcessState* state, SignalId signal, EdgeKind edge);
 ```
 
 Process state is passed by pointer; generated code stores/restores locals to the state struct at suspension points.
