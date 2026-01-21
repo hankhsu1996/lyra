@@ -19,6 +19,7 @@ suites:
       - operators/unary.yaml
       - operators/concat.yaml
       - operators/compound_assignment.yaml
+      - operators/replicate.yaml
       - control_flow/conditional.yaml
       - control_flow/while.yaml
       - control_flow/do_while.yaml
