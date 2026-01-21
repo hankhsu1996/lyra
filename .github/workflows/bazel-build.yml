@@ -78,12 +78,24 @@ jobs:
           clang++ --version
 
       - name: Build
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          bazel build //...
+          CACHE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //... $CACHE_FLAGS
 
       - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          bazel test //... --test_output=errors --verbose_failures
+          CACHE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //... $CACHE_FLAGS --test_output=errors --verbose_failures
 
   # This job always runs and reports success when build is skipped
   # Required for branch protection rules that require this check

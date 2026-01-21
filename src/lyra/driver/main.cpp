@@ -21,6 +21,7 @@ void PrintUsage() {
       "  run [files...]      Run simulation (uses lyra.toml if no files)\n");
   fmt::print(stderr, "  dump hir <file.sv>  Dump HIR representation\n");
   fmt::print(stderr, "  dump mir <file.sv>  Dump MIR representation\n");
+  fmt::print(stderr, "  dump llvm <file.sv> Dump LLVM IR\n");
 }
 
 void PrintError(const std::string& message) {
@@ -76,6 +77,9 @@ auto main(int argc, char* argv[]) -> int {
     }
     if (args[1] == "mir") {
       return lyra::driver::DumpMir(args[2]);
+    }
+    if (args[1] == "llvm") {
+      return lyra::driver::DumpLlvm(args[2]);
     }
   }
 

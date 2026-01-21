@@ -36,6 +36,9 @@ bazel_dep(name = "nlohmann_json", version = "3.11.3")
 # TOML parsing for config files
 bazel_dep(name = "tomlplusplus", version = "3.4.0")
 
+# LLVM for code generation
+bazel_dep(name = "llvm-project", version = "17.0.3.bcr.4")
+
 # CLI argument parsing
 bazel_dep(name = "argparse", version = "3.2.0")
 
