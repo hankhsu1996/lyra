@@ -33,13 +33,15 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
 }  // namespace
 
 Context::Context(
-    const mir::Design& design, const mir::Arena& arena, const TypeArena& types)
+    const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
+    const Layout& layout, std::unique_ptr<llvm::LLVMContext> llvm_ctx,
+    std::unique_ptr<llvm::Module> module)
     : design_(design),
       arena_(arena),
       types_(types),
-      llvm_context_(std::make_unique<llvm::LLVMContext>()),
-      llvm_module_(
-          std::make_unique<llvm::Module>("lyra_module", *llvm_context_)),
+      layout_(layout),
+      llvm_context_(std::move(llvm_ctx)),
+      llvm_module_(std::move(module)),
       builder_(*llvm_context_) {
 }
 
@@ -168,6 +170,40 @@ auto Context::GetLyraStringRelease() -> llvm::Function* {
   return lyra_string_release_;
 }
 
+auto Context::GetLyraRunSimulation() -> llvm::Function* {
+  if (lyra_run_simulation_ == nullptr) {
+    // void LyraRunSimulation(LyraProcessFunc process, void* state)
+    // where LyraProcessFunc = void (*)(void* state, uint32_t resume_block)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_run_simulation_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
+        llvm_module_.get());
+  }
+  return lyra_run_simulation_;
+}
+
+auto Context::GetSuspendRecordType() const -> llvm::StructType* {
+  return layout_.suspend_record_type;
+}
+
+auto Context::GetHeaderType() const -> llvm::StructType* {
+  return layout_.header_type;
+}
+
+auto Context::GetDesignStateType() const -> llvm::StructType* {
+  return layout_.design.llvm_type;
+}
+
+auto Context::GetProcessFrameType() const -> llvm::StructType* {
+  return layout_.processes[current_process_index_].frame.llvm_type;
+}
+
+auto Context::GetProcessStateType() const -> llvm::StructType* {
+  return layout_.processes[current_process_index_].state_type;
+}
+
 void Context::BeginFunction(llvm::Function& func) {
   current_function_ = &func;
 
@@ -209,19 +245,16 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
   // Get the place from the arena
   const auto& place = arena_[place_id];
 
-  // For now, only support simple places (no projections)
   if (!place.projections.empty()) {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
         current_origin_, "places with projections not yet supported");
   }
 
-  // Get the type of the place
   TypeId type_id = place.root.type;
   const Type& type = types_[type_id];
 
   llvm::Type* llvm_type = nullptr;
-
   if (type.Kind() == TypeKind::kIntegral) {
     llvm_type = GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
   } else if (type.Kind() == TypeKind::kReal) {
@@ -258,13 +291,128 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
   return alloca;
 }
 
-auto Context::GetPlaceStorage(mir::PlaceId place_id) const
-    -> llvm::AllocaInst* {
-  auto it = place_storage_.find(place_id);
-  if (it != place_storage_.end()) {
-    return it->second;
+auto Context::GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t {
+  auto it = layout_.design.slot_to_field.find(slot_id);
+  if (it == layout_.design.slot_to_field.end()) {
+    throw std::runtime_error("design slot not found in layout");
   }
-  return nullptr;
+  return it->second;
+}
+
+auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
+  const auto& frame = layout_.processes[current_process_index_].frame;
+  auto it = frame.place_to_field.find(place_id);
+  if (it == frame.place_to_field.end()) {
+    throw std::runtime_error("frame place not found in layout");
+  }
+  return it->second;
+}
+
+void Context::SetCurrentProcess(size_t process_index) {
+  current_process_index_ = process_index;
+  state_ptr_ = nullptr;
+  design_ptr_ = nullptr;
+  frame_ptr_ = nullptr;
+}
+
+auto Context::GetCurrentProcessIndex() const -> size_t {
+  return current_process_index_;
+}
+
+void Context::SetStatePointer(llvm::Value* state_ptr) {
+  state_ptr_ = state_ptr;
+}
+
+auto Context::GetStatePointer() -> llvm::Value* {
+  return state_ptr_;
+}
+
+auto Context::GetSuspendRecordPointer() -> llvm::Value* {
+  if (state_ptr_ == nullptr) {
+    throw std::runtime_error("state pointer not set");
+  }
+  // SuspendRecord is at: state->header(field 0)->suspend(field 0)
+  auto* header_ptr = builder_.CreateStructGEP(
+      GetProcessStateType(), state_ptr_, 0, "header_ptr");
+  return builder_.CreateStructGEP(
+      GetHeaderType(), header_ptr, 0, "suspend_ptr");
+}
+
+void Context::SetDesignPointer(llvm::Value* design_ptr) {
+  design_ptr_ = design_ptr;
+}
+
+auto Context::GetDesignPointer() -> llvm::Value* {
+  return design_ptr_;
+}
+
+void Context::SetFramePointer(llvm::Value* frame_ptr) {
+  frame_ptr_ = frame_ptr;
+}
+
+auto Context::GetFramePointer() -> llvm::Value* {
+  return frame_ptr_;
+}
+
+auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
+  const auto& place = arena_[place_id];
+
+  if (!place.projections.empty()) {
+    throw std::runtime_error(
+        "places with projections not yet supported in LLVM backend");
+  }
+
+  if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+    // Design slot: GEP into shared DesignState
+    if (design_ptr_ == nullptr) {
+      throw std::runtime_error("design pointer not set");
+    }
+    // Convert root.id to SlotId
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+    uint32_t field_index = GetDesignFieldIndex(slot_id);
+    return builder_.CreateStructGEP(
+        GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+  }
+
+  // Local or temp: GEP into ProcessFrameN
+  if (frame_ptr_ == nullptr) {
+    throw std::runtime_error("frame pointer not set");
+  }
+  uint32_t field_index = GetFrameFieldIndex(place_id);
+  return builder_.CreateStructGEP(
+      GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
+}
+
+auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
+  const auto& place = arena_[place_id];
+
+  if (!place.projections.empty()) {
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+        current_origin_, "places with projections not yet supported");
+  }
+
+  TypeId type_id = place.root.type;
+  const Type& type = types_[type_id];
+
+  if (type.Kind() == TypeKind::kIntegral) {
+    return GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
+  }
+  if (type.Kind() == TypeKind::kReal) {
+    return llvm::Type::getDoubleTy(*llvm_context_);
+  }
+  if (type.Kind() == TypeKind::kString) {
+    return llvm::PointerType::getUnqual(*llvm_context_);
+  }
+  if (IsPacked(type)) {
+    auto width = PackedBitWidth(type, types_);
+    return GetLlvmStorageType(*llvm_context_, width);
+  }
+
+  throw common::UnsupportedErrorException(
+      common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+      current_origin_,
+      std::format("type not yet supported: {}", ToString(type)));
 }
 
 auto Context::TakeOwnership() -> std::pair<

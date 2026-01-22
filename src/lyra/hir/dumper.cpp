@@ -385,6 +385,12 @@ void Dumper::Dump(StatementId id) {
       *out_ << ";\n";
       break;
     }
+
+    case StatementKind::kDelay: {
+      const auto& data = std::get<DelayStatementData>(stmt.data);
+      *out_ << std::format("#{};\n", data.ticks);
+      break;
+    }
   }
 }
 

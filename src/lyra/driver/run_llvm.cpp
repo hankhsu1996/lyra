@@ -140,10 +140,15 @@ auto RunLli(const std::string& runtime_path, const std::string& ir_path)
   return -1;
 }
 
+// Slot information for all module variables from HIR
+struct SlotData {
+  std::vector<lowering::mir_to_llvm::SlotTypeInfo> types;
+  std::vector<TypeId> type_ids;
+};
+
 // Build slot type info for ALL module variables from HIR
-auto BuildSlotTypes(const CompilationResult& compilation)
-    -> std::vector<lowering::mir_to_llvm::SlotTypeInfo> {
-  std::vector<lowering::mir_to_llvm::SlotTypeInfo> slot_types;
+auto BuildSlotData(const CompilationResult& compilation) -> SlotData {
+  SlotData result;
 
   // Find the HIR module
   const hir::Module* hir_module = nullptr;
@@ -154,25 +159,30 @@ auto BuildSlotTypes(const CompilationResult& compilation)
     }
   }
   if (hir_module == nullptr) {
-    return slot_types;
+    return result;
   }
 
   const auto& type_arena = *compilation.hir.type_arena;
   const auto& symbol_table = *compilation.hir.symbol_table;
 
-  slot_types.reserve(hir_module->variables.size());
+  result.types.reserve(hir_module->variables.size());
+  result.type_ids.reserve(hir_module->variables.size());
+
   for (SymbolId sym_id : hir_module->variables) {
     const auto& sym = symbol_table[sym_id];
     const Type& type = type_arena[sym.type];
 
+    // Always store the actual TypeId for LLVM type derivation
+    result.type_ids.push_back(sym.type);
+
     if (type.Kind() == TypeKind::kReal) {
-      slot_types.push_back({
+      result.types.push_back({
           .kind = lowering::mir_to_llvm::VarTypeKind::kReal,
           .width = 64,
           .is_signed = true,
       });
     } else if (type.Kind() == TypeKind::kString) {
-      slot_types.push_back({
+      result.types.push_back({
           .kind = lowering::mir_to_llvm::VarTypeKind::kString,
           .width = 0,
           .is_signed = false,
@@ -180,21 +190,22 @@ auto BuildSlotTypes(const CompilationResult& compilation)
     } else if (IsPacked(type)) {
       uint32_t width = PackedBitWidth(type, type_arena);
       bool is_signed = IsPackedSigned(type, type_arena);
-      slot_types.push_back({
+      result.types.push_back({
           .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
           .width = width > 0 ? width : 32,
           .is_signed = is_signed,
       });
     } else {
-      // Unsupported type - use placeholder
-      slot_types.push_back({
+      // Unsupported type - use placeholder for SlotTypeInfo
+      // The actual TypeId is preserved for LLVM type derivation
+      result.types.push_back({
           .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
           .width = 32,
           .is_signed = false,
       });
     }
   }
-  return slot_types;
+  return result;
 }
 
 // Resolve an UnsupportedError origin to a source location string.
@@ -231,11 +242,13 @@ auto RunLlvm(const std::vector<std::string>& files) -> int {
     return 1;
   }
 
+  auto slot_data = BuildSlotData(*compilation);
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation->mir.design,
       .mir_arena = compilation->mir.mir_arena.get(),
       .type_arena = compilation->hir.type_arena.get(),
-      .slot_types = BuildSlotTypes(*compilation),
+      .slot_types = std::move(slot_data.types),
+      .slot_type_ids = std::move(slot_data.type_ids),
       .variables = {},  // No inspection for CLI
   };
 

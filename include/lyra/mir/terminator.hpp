@@ -58,7 +58,10 @@ struct QualifiedDispatch {
 };
 
 // Time delay suspension (requires scheduler).
-struct Delay {};
+struct Delay {
+  uint64_t ticks = 0;        // Canonical delay ticks (from HIR)
+  BasicBlockId resume = {};  // Block to resume after delay
+};
 
 // Event wait suspension (requires scheduler).
 struct Wait {};

@@ -64,7 +64,7 @@ auto FormatTerminator(const Terminator& term) -> std::string {
           }
           return result;
         } else if constexpr (std::is_same_v<T, Delay>) {
-          return "delay";
+          return std::format("delay #{} -> bb{}", t.ticks, t.resume.value);
         } else if constexpr (std::is_same_v<T, Wait>) {
           return "wait";
         } else if constexpr (std::is_same_v<T, Return>) {

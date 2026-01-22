@@ -132,8 +132,9 @@ auto DumpLlvm(const std::string& path) -> int {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
-  // Build slot_types from HIR for proper initialization
+  // Build slot_types and slot_type_ids from HIR for proper initialization
   std::vector<lowering::mir_to_llvm::SlotTypeInfo> slot_types;
+  std::vector<TypeId> slot_type_ids;
   for (const auto& element : hir_result.design.elements) {
     if (const auto* hir_module = std::get_if<hir::Module>(&element)) {
       const auto& type_arena = *hir_result.type_arena;
@@ -141,6 +142,7 @@ auto DumpLlvm(const std::string& path) -> int {
       for (SymbolId sym_id : hir_module->variables) {
         const auto& sym = symbol_table[sym_id];
         const Type& type = type_arena[sym.type];
+        slot_type_ids.push_back(sym.type);
         if (type.Kind() == TypeKind::kReal) {
           slot_types.push_back({
               .kind = lowering::mir_to_llvm::VarTypeKind::kReal,
@@ -177,6 +179,7 @@ auto DumpLlvm(const std::string& path) -> int {
       .mir_arena = mir_result.mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .slot_types = std::move(slot_types),
+      .slot_type_ids = std::move(slot_type_ids),
       .variables = {},
   };
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

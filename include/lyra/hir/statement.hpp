@@ -26,6 +26,7 @@ enum class StatementKind {
   kContinue,
   kTerminate,
   kReturn,
+  kDelay,
 };
 
 // unique/unique0/priority qualifier for if and case statements
@@ -157,12 +158,19 @@ struct ReturnStatementData {
   auto operator==(const ReturnStatementData&) const -> bool = default;
 };
 
+struct DelayStatementData {
+  uint64_t ticks;  // Canonical delay amount in simulation ticks
+
+  auto operator==(const DelayStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
-    ContinueStatementData, TerminateStatementData, ReturnStatementData>;
+    ContinueStatementData, TerminateStatementData, ReturnStatementData,
+    DelayStatementData>;
 
 struct Statement {
   StatementKind kind;

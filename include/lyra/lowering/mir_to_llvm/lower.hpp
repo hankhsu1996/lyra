@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -8,24 +7,11 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/mir_to_llvm/layout.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-// Type kind for variable inspection
-enum class VarTypeKind : uint8_t {
-  kIntegral,  // int, bit, logic (2-state)
-  kReal,      // real, shortreal
-  kString,    // string
-};
-
-// Type info for a design slot (for initialization)
-struct SlotTypeInfo {
-  VarTypeKind kind;
-  uint32_t width;  // Bit width (64 for real)
-  bool is_signed;  // Signedness (integral only)
-};
 
 // Information about a module variable for runtime inspection
 struct VariableInfo {
@@ -37,8 +23,11 @@ struct LoweringInput {
   const mir::Design* design = nullptr;
   const mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
-  std::vector<SlotTypeInfo> slot_types;  // Index == slot_id, for init
-  std::vector<VariableInfo> variables;   // For runtime inspection (optional)
+  std::vector<SlotTypeInfo>
+      slot_types;  // Index == slot_id, for init/registration
+  std::vector<TypeId>
+      slot_type_ids;  // Index == slot_id, for LLVM type derivation
+  std::vector<VariableInfo> variables;  // For runtime inspection (optional)
 };
 
 struct LoweringResult {

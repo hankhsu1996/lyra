@@ -17,8 +17,9 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
-  // Get or create storage for the target place
-  llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(assign.target);
+  // Get pointer to target place storage
+  llvm::Value* target_ptr = context.GetPlacePointer(assign.target);
+  llvm::Type* storage_type = context.GetPlaceLlvmType(assign.target);
 
   // Get the place type info for proper sizing
   const auto& place = arena[assign.target];
@@ -27,7 +28,7 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
   // Handle string assignment with reference counting
   if (type.Kind() == TypeKind::kString) {
     // 1. Release old value in slot
-    auto* old_val = builder.CreateLoad(alloca->getAllocatedType(), alloca);
+    auto* old_val = builder.CreateLoad(storage_type, target_ptr);
     builder.CreateCall(context.GetLyraStringRelease(), {old_val});
 
     // 2. Get new value
@@ -40,15 +41,12 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     // else: source is literal, already owned +1 from LyraStringFromLiteral
 
     // 4. Store owned value (slot now owns)
-    builder.CreateStore(new_val, alloca);
+    builder.CreateStore(new_val, target_ptr);
     return;
   }
 
   // Lower the source operand
   llvm::Value* source_value = LowerOperand(context, assign.source);
-
-  // Get the storage type
-  llvm::Type* storage_type = alloca->getAllocatedType();
 
   // Adjust the value to match storage type if needed (only for integrals)
   if (source_value->getType() != storage_type &&
@@ -60,8 +58,8 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     }
   }
 
-  // Store to the alloca
-  builder.CreateStore(source_value, alloca);
+  // Store to the place
+  builder.CreateStore(source_value, target_ptr);
 }
 
 void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
