@@ -769,10 +769,22 @@ void Dumper::Dump(ExpressionId id) {
         case BuiltinMethod::kInsert:
           *out_ << ".insert(";
           break;
+        case BuiltinMethod::kEnumNext:
+          *out_ << ".next(";
+          break;
+        case BuiltinMethod::kEnumPrev:
+          *out_ << ".prev(";
+          break;
+        case BuiltinMethod::kEnumName:
+          *out_ << ".name()";
+          break;
       }
-      if (data.method != BuiltinMethod::kSize &&
-          data.method != BuiltinMethod::kPopBack &&
-          data.method != BuiltinMethod::kPopFront) {
+      // Methods with no args or that close parens themselves
+      bool no_args = data.method == BuiltinMethod::kSize ||
+                     data.method == BuiltinMethod::kPopBack ||
+                     data.method == BuiltinMethod::kPopFront ||
+                     data.method == BuiltinMethod::kEnumName;
+      if (!no_args) {
         bool first = true;
         for (ExpressionId arg : data.args) {
           if (!first) {

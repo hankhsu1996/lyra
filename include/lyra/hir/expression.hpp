@@ -145,6 +145,10 @@ enum class BuiltinMethod {
   kPopBack,
   kPopFront,
   kInsert,
+  // Enum methods (runtime only - first/last/num are constant-folded)
+  kEnumNext,
+  kEnumPrev,
+  kEnumName,
 };
 
 struct NewArrayExpressionData {

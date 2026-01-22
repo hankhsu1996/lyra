@@ -33,7 +33,7 @@ auto MakeIntConstant(int64_t value, TypeId type, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
   // Get bit width from type to properly mask the value
   const Type& type_info = (*ctx->type_arena)[type];
-  uint32_t bit_width = type_info.AsIntegral().bit_width;
+  uint32_t bit_width = PackedBitWidth(type_info, *ctx->type_arena);
 
   // Mask value to bit width (handles negative values correctly)
   auto masked_value = static_cast<uint64_t>(value);
