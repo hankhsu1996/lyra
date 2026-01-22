@@ -36,6 +36,7 @@ enum class TypeKind {
   kIntegral,
   kString,
   kReal,
+  kShortReal,
   kPackedArray,
   kPackedStruct,
   kUnpackedArray,
@@ -324,6 +325,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "string";
     case TypeKind::kReal:
       return "real";
+    case TypeKind::kShortReal:
+      return "shortreal";
     case TypeKind::kPackedArray:
       return "packed_array";
     case TypeKind::kPackedStruct:
@@ -354,6 +357,8 @@ inline auto ToString(const Type& type) -> std::string {
       return "string";
     case TypeKind::kReal:
       return "real";
+    case TypeKind::kShortReal:
+      return "shortreal";
     case TypeKind::kPackedArray: {
       const auto& info = type.AsPackedArray();
       return std::format(

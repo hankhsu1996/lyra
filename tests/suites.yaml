@@ -53,6 +53,9 @@ suites:
       - datatypes/enum.yaml
       - datatypes/unbased_unsized_literal.yaml
       - datatypes/typedef.yaml
+      - datatypes/real_types.yaml
+      - datatypes/shortreal_types.yaml
+      - datatypes/realtime_types.yaml
       - datatypes/wide_integral/arithmetic.yaml
       - datatypes/wide_integral/bitwise.yaml
       - datatypes/wide_integral/shifts.yaml

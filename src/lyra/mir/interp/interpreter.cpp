@@ -28,6 +28,7 @@
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
+#include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -458,6 +459,8 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       return MakeString("");
     case TypeKind::kReal:
       return MakeReal(0.0);
+    case TypeKind::kShortReal:
+      return MakeShortReal(0.0F);
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
       auto size = static_cast<size_t>(info.range.Size());
@@ -647,6 +650,10 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
             } else if constexpr (std::is_same_v<T, StringConstant>) {
               return MakeString(val.value);
             } else if constexpr (std::is_same_v<T, RealConstant>) {
+              const auto& type = (*types_)[c.type];
+              if (type.Kind() == TypeKind::kShortReal) {
+                return MakeShortReal(static_cast<float>(val.value));
+              }
               return MakeReal(val.value);
             } else if constexpr (std::is_same_v<T, StructConstant>) {
               throw common::InternalError(
@@ -1568,9 +1575,18 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
 
           [&](const Branch& t) -> std::optional<BasicBlockId> {
             auto cond = ReadPlace(state, t.condition);
+            // Support integral, real, and shortreal conditions
+            if (IsReal(cond)) {
+              return RealIsTrue(AsReal(cond)) ? t.then_target : t.else_target;
+            }
+            if (IsShortReal(cond)) {
+              return ShortRealIsTrue(AsShortReal(cond)) ? t.then_target
+                                                        : t.else_target;
+            }
             if (!IsIntegral(cond)) {
               throw common::InternalError(
-                  "ExecTerminator", "branch condition must be integral");
+                  "ExecTerminator",
+                  "branch condition must be integral, real, or shortreal");
             }
             const auto& cond_int = AsIntegral(cond);
             if (!cond_int.IsKnown()) {

@@ -7,6 +7,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
+#include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -50,6 +51,155 @@ auto EvalStringBinary(
   return MakeIntegral(result ? 1 : 0, 1);
 }
 
+// Evaluate real binary operations.
+// Arithmetic returns RuntimeReal; comparison/logical returns 1-bit integral.
+auto EvalRealBinary(BinaryOp op, const RuntimeReal& lhs, const RuntimeReal& rhs)
+    -> RuntimeValue {
+  switch (op) {
+    // Arithmetic
+    case BinaryOp::kAdd:
+      return MakeReal(RealAdd(lhs, rhs).value);
+    case BinaryOp::kSubtract:
+      return MakeReal(RealSub(lhs, rhs).value);
+    case BinaryOp::kMultiply:
+      return MakeReal(RealMul(lhs, rhs).value);
+    case BinaryOp::kDivide:
+    case BinaryOp::kDivideSigned:
+      return MakeReal(RealDiv(lhs, rhs).value);
+
+    // Comparisons
+    case BinaryOp::kEqual:
+    case BinaryOp::kCaseEqual:
+      return RealEq(lhs, rhs);
+    case BinaryOp::kNotEqual:
+    case BinaryOp::kCaseNotEqual:
+      return RealNe(lhs, rhs);
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLessThanSigned:
+      return RealLt(lhs, rhs);
+    case BinaryOp::kLessThanEqual:
+    case BinaryOp::kLessThanEqualSigned:
+      return RealLe(lhs, rhs);
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kGreaterThanSigned:
+      return RealGt(lhs, rhs);
+    case BinaryOp::kGreaterThanEqual:
+    case BinaryOp::kGreaterThanEqualSigned:
+      return RealGe(lhs, rhs);
+
+    // Logical
+    case BinaryOp::kLogicalAnd:
+      return RealLogicalAnd(lhs, rhs);
+    case BinaryOp::kLogicalOr:
+      return RealLogicalOr(lhs, rhs);
+
+    // Power
+    case BinaryOp::kPower:
+      return MakeReal(RealPower(lhs, rhs).value);
+
+    // Not supported for reals
+    case BinaryOp::kMod:
+    case BinaryOp::kModSigned:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kBitwiseXnor:
+    case BinaryOp::kLogicalImplication:
+    case BinaryOp::kLogicalEquivalence:
+    case BinaryOp::kWildcardEqual:
+    case BinaryOp::kWildcardNotEqual:
+    case BinaryOp::kCaseZMatch:
+    case BinaryOp::kCaseXMatch:
+    case BinaryOp::kLogicalShiftLeft:
+    case BinaryOp::kLogicalShiftRight:
+    case BinaryOp::kArithmeticShiftLeft:
+    case BinaryOp::kArithmeticShiftRight:
+      throw common::InternalError(
+          "EvalRealBinary",
+          std::format("operator {} not supported for real type", ToString(op)));
+  }
+
+  throw common::InternalError(
+      "EvalRealBinary",
+      std::format("unknown binary operation: {}", ToString(op)));
+}
+
+// Evaluate shortreal binary operations (32-bit float).
+// Arithmetic returns RuntimeShortReal; comparison/logical returns 1-bit
+// integral.
+auto EvalShortRealBinary(
+    BinaryOp op, const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeValue {
+  switch (op) {
+    // Arithmetic
+    case BinaryOp::kAdd:
+      return MakeShortReal(ShortRealAdd(lhs, rhs).value);
+    case BinaryOp::kSubtract:
+      return MakeShortReal(ShortRealSub(lhs, rhs).value);
+    case BinaryOp::kMultiply:
+      return MakeShortReal(ShortRealMul(lhs, rhs).value);
+    case BinaryOp::kDivide:
+    case BinaryOp::kDivideSigned:
+      return MakeShortReal(ShortRealDiv(lhs, rhs).value);
+
+    // Comparisons
+    case BinaryOp::kEqual:
+    case BinaryOp::kCaseEqual:
+      return ShortRealEq(lhs, rhs);
+    case BinaryOp::kNotEqual:
+    case BinaryOp::kCaseNotEqual:
+      return ShortRealNe(lhs, rhs);
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLessThanSigned:
+      return ShortRealLt(lhs, rhs);
+    case BinaryOp::kLessThanEqual:
+    case BinaryOp::kLessThanEqualSigned:
+      return ShortRealLe(lhs, rhs);
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kGreaterThanSigned:
+      return ShortRealGt(lhs, rhs);
+    case BinaryOp::kGreaterThanEqual:
+    case BinaryOp::kGreaterThanEqualSigned:
+      return ShortRealGe(lhs, rhs);
+
+    // Logical
+    case BinaryOp::kLogicalAnd:
+      return ShortRealLogicalAnd(lhs, rhs);
+    case BinaryOp::kLogicalOr:
+      return ShortRealLogicalOr(lhs, rhs);
+
+    // Power
+    case BinaryOp::kPower:
+      return MakeShortReal(ShortRealPower(lhs, rhs).value);
+
+    // Not supported for shortreals
+    case BinaryOp::kMod:
+    case BinaryOp::kModSigned:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kBitwiseXnor:
+    case BinaryOp::kLogicalImplication:
+    case BinaryOp::kLogicalEquivalence:
+    case BinaryOp::kWildcardEqual:
+    case BinaryOp::kWildcardNotEqual:
+    case BinaryOp::kCaseZMatch:
+    case BinaryOp::kCaseXMatch:
+    case BinaryOp::kLogicalShiftLeft:
+    case BinaryOp::kLogicalShiftRight:
+    case BinaryOp::kArithmeticShiftLeft:
+    case BinaryOp::kArithmeticShiftRight:
+      throw common::InternalError(
+          "EvalShortRealBinary",
+          std::format(
+              "operator {} not supported for shortreal type", ToString(op)));
+  }
+
+  throw common::InternalError(
+      "EvalShortRealBinary",
+      std::format("unknown binary operation: {}", ToString(op)));
+}
+
 }  // namespace
 
 auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -64,6 +214,26 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     throw common::InternalError(
         "EvalBinary", std::format(
                           "cannot mix string and non-string operands "
+                          "(op={}, lhs={}, rhs={})",
+                          ToString(op), lhs.index(), rhs.index()));
+  }
+
+  // Real operations
+  if (IsReal(lhs) && IsReal(rhs)) {
+    return EvalRealBinary(op, AsReal(lhs), AsReal(rhs));
+  }
+
+  // Shortreal operations
+  if (IsShortReal(lhs) && IsShortReal(rhs)) {
+    return EvalShortRealBinary(op, AsShortReal(lhs), AsShortReal(rhs));
+  }
+
+  // Mixed real/shortreal/non-float - should never happen (MIR has explicit
+  // casts)
+  if (IsReal(lhs) || IsReal(rhs) || IsShortReal(lhs) || IsShortReal(rhs)) {
+    throw common::InternalError(
+        "EvalBinary", std::format(
+                          "cannot mix real/shortreal and other operands "
                           "(op={}, lhs={}, rhs={})",
                           ToString(op), lhs.index(), rhs.index()));
   }
@@ -208,6 +378,42 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
 }
 
 auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
+  // Real operands: only support +, -, and !
+  if (IsReal(operand)) {
+    const auto& op_real = AsReal(operand);
+    switch (op) {
+      case UnaryOp::kPlus:
+        return MakeReal(RealPlus(op_real).value);
+      case UnaryOp::kMinus:
+        return MakeReal(RealNeg(op_real).value);
+      case UnaryOp::kLogicalNot:
+        return RealLogicalNot(op_real);
+      default:
+        throw common::InternalError(
+            "EvalUnary",
+            std::format(
+                "operator {} not supported for real type", ToString(op)));
+    }
+  }
+
+  // Shortreal operands: only support +, -, and !
+  if (IsShortReal(operand)) {
+    const auto& op_shortreal = AsShortReal(operand);
+    switch (op) {
+      case UnaryOp::kPlus:
+        return MakeShortReal(ShortRealPlus(op_shortreal).value);
+      case UnaryOp::kMinus:
+        return MakeShortReal(ShortRealNeg(op_shortreal).value);
+      case UnaryOp::kLogicalNot:
+        return ShortRealLogicalNot(op_shortreal);
+      default:
+        throw common::InternalError(
+            "EvalUnary",
+            std::format(
+                "operator {} not supported for shortreal type", ToString(op)));
+    }
+  }
+
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalUnary", "unary operation requires integral operand");
@@ -306,17 +512,102 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
 auto EvalCast(
     const RuntimeValue& operand, const Type& source_type,
     const Type& target_type, const TypeArena& arena) -> RuntimeValue {
-  // Precondition checks - these should have been validated at lowering time.
-  // If they fail here, it indicates a bug in the lowering pipeline.
+  bool src_is_real = source_type.Kind() == TypeKind::kReal;
+  bool src_is_shortreal = source_type.Kind() == TypeKind::kShortReal;
+  bool tgt_is_real = target_type.Kind() == TypeKind::kReal;
+  bool tgt_is_shortreal = target_type.Kind() == TypeKind::kShortReal;
+  bool src_is_packed = IsPacked(source_type);
+  bool tgt_is_packed = IsPacked(target_type);
+
+  // Real -> Packed conversion
+  if (src_is_real && tgt_is_packed) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "real source type but operand is not real");
+    }
+    uint32_t target_width = PackedBitWidth(target_type, arena);
+    bool target_signed = IsPackedSigned(target_type, arena);
+    return RealToIntegral(AsReal(operand), target_width, target_signed);
+  }
+
+  // Packed -> Real conversion
+  if (src_is_packed && tgt_is_real) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalCast", "packed source type but operand is not integral");
+    }
+    bool src_is_signed = IsPackedSigned(source_type, arena);
+    return MakeReal(IntegralToReal(AsIntegral(operand), src_is_signed).value);
+  }
+
+  // Real -> Real (identity, but validates operand type)
+  if (src_is_real && tgt_is_real) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "real source type but operand is not real");
+    }
+    return Clone(operand);
+  }
+
+  // Shortreal -> Packed conversion
+  if (src_is_shortreal && tgt_is_packed) {
+    if (!IsShortReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "shortreal source type but operand is not shortreal");
+    }
+    uint32_t target_width = PackedBitWidth(target_type, arena);
+    bool target_signed = IsPackedSigned(target_type, arena);
+    return ShortRealToIntegral(
+        AsShortReal(operand), target_width, target_signed);
+  }
+
+  // Packed -> Shortreal conversion
+  if (src_is_packed && tgt_is_shortreal) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalCast", "packed source type but operand is not integral");
+    }
+    bool src_is_signed = IsPackedSigned(source_type, arena);
+    return MakeShortReal(
+        IntegralToShortReal(AsIntegral(operand), src_is_signed).value);
+  }
+
+  // Shortreal -> Shortreal (identity)
+  if (src_is_shortreal && tgt_is_shortreal) {
+    if (!IsShortReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "shortreal source type but operand is not shortreal");
+    }
+    return Clone(operand);
+  }
+
+  // Shortreal -> Real conversion
+  if (src_is_shortreal && tgt_is_real) {
+    if (!IsShortReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "shortreal source type but operand is not shortreal");
+    }
+    return MakeReal(ShortRealToReal(AsShortReal(operand)).value);
+  }
+
+  // Real -> Shortreal conversion
+  if (src_is_real && tgt_is_shortreal) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "real source type but operand is not real");
+    }
+    return MakeShortReal(RealToShortReal(AsReal(operand)).value);
+  }
+
+  // Packed -> Packed conversion (existing logic)
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalCast", "cast operation requires integral operand");
   }
-  // Both kIntegral and kPackedArray are valid for casts (both are packed).
-  if (!IsPacked(source_type)) {
+  if (!src_is_packed) {
     throw common::InternalError("EvalCast", "source type must be packed");
   }
-  if (!IsPacked(target_type)) {
+  if (!tgt_is_packed) {
     throw common::InternalError("EvalCast", "target type must be packed");
   }
 
@@ -324,7 +615,7 @@ auto EvalCast(
   bool src_is_signed = IsPackedSigned(source_type, arena);
   uint32_t target_width = PackedBitWidth(target_type, arena);
 
-  // For 4-state → 2-state conversion, X/Z bits become 0.
+  // For 4-state -> 2-state conversion, X/Z bits become 0.
   // We create a clean 2-state value by masking out X/Z from the value bits.
   RuntimeIntegral clean_src = op_int;
   if (IsPackedFourState(source_type, arena)) {
@@ -343,7 +634,7 @@ auto EvalCast(
     std::ranges::fill(clean_src.x_mask, 0);
     std::ranges::fill(clean_src.z_mask, 0);
   }
-  // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
+  // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
 
   // Cast = resize bits using source signedness and target width.
   // Target signedness does not affect the bit pattern; it only affects how
