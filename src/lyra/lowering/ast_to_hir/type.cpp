@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
+#include <algorithm>
 #include <format>
 
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -8,6 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 
@@ -15,8 +17,8 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Returns true if AST type can be a Phase 1 union member (bit-representable)
-auto IsUnionMemberBitRepresentable(const slang::ast::Type& type) -> bool {
+// Returns true if AST type can be a supported union member
+auto IsUnionMemberSupported(const slang::ast::Type& type) -> bool {
   const auto& ct = type.getCanonicalType();
   if (ct.isIntegral()) {
     return true;  // int, logic, bit, packed array, packed struct, packed union
@@ -24,50 +26,18 @@ auto IsUnionMemberBitRepresentable(const slang::ast::Type& type) -> bool {
   if (ct.isFloating()) {
     return true;  // real, shortreal
   }
-  return false;  // Reject: unpacked struct/array, string, class, queue, etc.
-}
-
-// Returns bit width for any Phase 1 union member type (lowered type)
-auto UnionMemberBitWidth(const Type& type, const TypeArena& types) -> uint32_t {
-  switch (type.Kind()) {
-    case TypeKind::kReal:
-      return 64;
-    case TypeKind::kShortReal:
-      return 32;
-    case TypeKind::kIntegral:
-      return type.AsIntegral().bit_width;
-    case TypeKind::kPackedArray:
-      return PackedBitWidth(type, types);
-    case TypeKind::kPackedStruct:
-      return type.AsPackedStruct().total_bit_width;
-    case TypeKind::kEnum:
-      return PackedBitWidth(type, types);
-    default:
-      throw common::InternalError(
-          "UnionMemberBitWidth", "unsupported member type");
+  if (ct.isUnpackedStruct()) {
+    const auto& ust = ct.as<slang::ast::UnpackedStructType>();
+    return std::ranges::all_of(ust.fields, [](const auto* field) {
+      return IsUnionMemberSupported(field->getType());
+    });
   }
-}
-
-// Returns true if type is 4-state (can hold X/Z) - works on lowered types
-auto IsFourStatePackedType(const Type& type, const TypeArena& types) -> bool {
-  switch (type.Kind()) {
-    case TypeKind::kReal:
-    case TypeKind::kShortReal:
-      return false;  // Floats are never 4-state
-    case TypeKind::kIntegral:
-      return type.AsIntegral().is_four_state;
-    case TypeKind::kPackedArray: {
-      const auto& info = type.AsPackedArray();
-      return IsFourStatePackedType(types[info.element_type], types);
-    }
-    case TypeKind::kPackedStruct:
-      return type.AsPackedStruct().is_four_state;
-    case TypeKind::kEnum:
-      return IsFourStatePackedType(types[type.AsEnum().base_type], types);
-    default:
-      throw common::InternalError(
-          "IsFourStatePackedType", "unsupported type kind");
+  if (ct.isUnpackedArray() &&
+      ct.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+    const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
+    return IsUnionMemberSupported(arr.elementType);
   }
+  return false;  // Reject: dynamic arrays, queues, strings, classes, etc.
 }
 
 }  // namespace
@@ -294,17 +264,13 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
   if (canonical.isUnpackedUnion()) {
     const auto& uut = canonical.as<slang::ast::UnpackedUnionType>();
     std::vector<StructField> members;
-    bool contains_float = false;
 
-    // First pass: lower all member types, collect contains_float from AST
+    // First pass: lower all member types
     for (const auto* field : uut.fields) {
       const auto& ft = field->getType();
 
-      // Phase 1: only bit-representable members
-      if (!IsUnionMemberBitRepresentable(ft)) {
-        ctx->sink->Error(
-            source,
-            "unpacked union member must be bit-representable (Phase 1)");
+      if (!IsUnionMemberSupported(ft)) {
+        ctx->sink->Error(source, "unsupported unpacked union member type");
         return kInvalidTypeId;
       }
 
@@ -313,23 +279,23 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
         return kInvalidTypeId;
       }
 
-      if (ft.isFloating()) {
-        contains_float = true;
-      }
-
       members.push_back(
           {.name = std::string(field->name), .type = member_type});
     }
 
-    // Second pass: compute max width and 4-state flag from LOWERED types
+    // Second pass: compute max width, 4-state flag, and float flag
+    // from LOWERED types using type_utils helpers
     uint32_t max_width = 0;
     bool storage_is_four_state = false;
+    bool contains_float = false;
     for (const auto& member : members) {
-      const Type& mt = (*ctx->type_arena)[member.type];
-      uint32_t member_width = UnionMemberBitWidth(mt, *ctx->type_arena);
+      uint32_t member_width = BlobBitSize(member.type, *ctx->type_arena);
       max_width = std::max(max_width, member_width);
-      if (IsFourStatePackedType(mt, *ctx->type_arena)) {
+      if (IsFourStateType(member.type, *ctx->type_arena)) {
         storage_is_four_state = true;
+      }
+      if (ContainsFloat(member.type, *ctx->type_arena)) {
+        contains_float = true;
       }
     }
 
