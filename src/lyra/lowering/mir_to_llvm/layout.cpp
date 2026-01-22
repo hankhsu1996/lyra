@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "llvm/IR/DerivedTypes.h"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -35,28 +36,44 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
   return llvm::Type::getIntNTy(ctx, bit_width);
 }
 
-// Get the LLVM type for a TypeId
+// Get the LLVM type for a TypeId - exhaustive switch for fail-fast on
+// unsupported types
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type* {
   const Type& type = types[type_id];
 
-  if (type.Kind() == TypeKind::kIntegral) {
-    return GetLlvmStorageType(ctx, type.AsIntegral().bit_width);
-  }
-  if (type.Kind() == TypeKind::kReal) {
-    return llvm::Type::getDoubleTy(ctx);
-  }
-  if (type.Kind() == TypeKind::kString) {
-    return llvm::PointerType::getUnqual(ctx);
-  }
-  if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types);
-    return GetLlvmStorageType(ctx, width);
+  switch (type.Kind()) {
+    case TypeKind::kIntegral:
+      return GetLlvmStorageType(ctx, type.AsIntegral().bit_width);
+
+    case TypeKind::kReal:
+      return llvm::Type::getDoubleTy(ctx);
+
+    case TypeKind::kString:
+      return llvm::PointerType::getUnqual(ctx);
+
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum: {
+      auto width = PackedBitWidth(type, types);
+      return GetLlvmStorageType(ctx, width);
+    }
+
+    case TypeKind::kVoid:
+    case TypeKind::kShortReal:
+    case TypeKind::kUnpackedArray:
+    case TypeKind::kUnpackedStruct:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      throw common::InternalError(
+          "GetLlvmTypeForTypeId",
+          std::format(
+              "unsupported type kind: {}", static_cast<int>(type.Kind())));
   }
 
-  // Fallback for unsupported types - use i8 as sentinel
-  return llvm::Type::getInt8Ty(ctx);
+  // Unreachable - all cases handled above
+  throw common::InternalError("GetLlvmTypeForTypeId", "unreachable");
 }
 
 // Collect a PlaceId from an Operand if it's a use
