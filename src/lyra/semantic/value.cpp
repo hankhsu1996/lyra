@@ -1,4 +1,4 @@
-#include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/semantic/value.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -14,7 +14,7 @@
 
 #include "lyra/common/constant.hpp"
 
-namespace lyra::mir::interp {
+namespace lyra::semantic {
 
 namespace {
 
@@ -376,11 +376,11 @@ auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string {
       is_negative = true;
       // Two's complement: ~value + 1
       uint64_t carry = 1;
-      for (size_t i = 0; i < words.size(); ++i) {
-        words[i] = ~words[i];
-        uint64_t sum = words[i] + carry;
-        carry = (sum < words[i]) ? 1 : 0;
-        words[i] = sum;
+      for (uint64_t& word : words) {
+        word = ~word;
+        uint64_t sum = word + carry;
+        carry = (sum < word) ? 1 : 0;
+        word = sum;
       }
       MaskTopWord(words, v.bit_width);
     }
@@ -486,4 +486,4 @@ auto ToOctalString(const RuntimeIntegral& v) -> std::string {
   return ToDecimalString(v, false);
 }
 
-}  // namespace lyra::mir::interp
+}  // namespace lyra::semantic

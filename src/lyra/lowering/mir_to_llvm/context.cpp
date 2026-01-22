@@ -58,14 +58,17 @@ auto Context::GetLyraPrintLiteral() -> llvm::Function* {
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
     // void LyraPrintValue(int32_t format, const void* data, int32_t width,
-    //                     bool is_signed, const void* x_mask, const void*
-    //                     z_mask)
+    //                     bool is_signed, int32_t output_width,
+    //                     int32_t precision, bool zero_pad, bool left_align,
+    //                     const void* x_mask, const void* z_mask)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {i32_ty, ptr_ty, i32_ty, i1_ty, ptr_ty, ptr_ty}, false);
+        {i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty, ptr_ty,
+         ptr_ty},
+        false);
     lyra_print_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintValue",
         llvm_module_.get());

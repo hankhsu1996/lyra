@@ -1481,11 +1481,11 @@ void Interpreter::ExecDisplayEffect(
 
       // Convert FormatKind and modifiers to FormatSpec
       FormatSpec spec{
-          .spec = FormatKindToSpecChar(op.kind),
-          .zero_pad = op.mods.zero_pad,
-          .left_align = op.mods.left_align,
+          .kind = op.kind,
           .width = op.mods.width,
-          .precision = op.mods.precision};
+          .precision = op.mods.precision,
+          .zero_pad = op.mods.zero_pad,
+          .left_align = op.mods.left_align};
 
       out << FormatValue(typed, spec, *types_, ctx);
     }

@@ -169,6 +169,20 @@ cases:
     expect:
       stdout: "00ff\n"
 
+  # Explicit width without 0 prefix uses space-padding (not zero-padding)
+  # %4h = width 4, space-padded; %04h = width 4, zero-padded
+  - name: display_hex_width_no_zero_prefix
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $display("[%4h]", x);
+        end
+      endmodule
+    expect:
+      stdout: "[  ff]\n"
+
   - name: display_binary_zero_pad
     sv: |
       module Test;
