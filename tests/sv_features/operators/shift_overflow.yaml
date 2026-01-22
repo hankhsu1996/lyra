@@ -1,0 +1,81 @@
+feature: shift_overflow
+description: Shift operations with shift amount >= bitwidth
+
+cases:
+  - name: shl_overflow_32
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 32'hFFFF_FFFF;
+          y = x << 32;
+        end
+      endmodule
+    expect:
+      variables:
+        y: 0
+
+  - name: shl_overflow_large
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 1;
+          y = x << 100;
+        end
+      endmodule
+    expect:
+      variables:
+        y: 0
+
+  - name: lshr_overflow_32
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 32'hFFFF_FFFF;
+          y = x >> 32;
+        end
+      endmodule
+    expect:
+      variables:
+        y: 0
+
+  - name: ashr_overflow_negative
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = -1;
+          y = x >>> 32;
+        end
+      endmodule
+    expect:
+      variables:
+        y: -1
+
+  - name: ashr_overflow_positive
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 32'h7FFF_FFFF;
+          y = x >>> 32;
+        end
+      endmodule
+    expect:
+      variables:
+        y: 0
+
+  - name: shift_by_max_valid
+    sv: |
+      module Test;
+        int x, y;
+        initial begin
+          x = 1;
+          y = x << 31;
+        end
+      endmodule
+    expect:
+      variables:
+        y: -2147483648
