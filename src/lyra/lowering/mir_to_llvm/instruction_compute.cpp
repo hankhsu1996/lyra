@@ -129,15 +129,6 @@ auto LowerBinaryArith(
       return builder.CreateNot(xor_result, "xnor");
     }
 
-    // Shift operators
-    case mir::BinaryOp::kLogicalShiftLeft:
-    case mir::BinaryOp::kArithmeticShiftLeft:
-      return builder.CreateShl(lhs, rhs, "shl");
-    case mir::BinaryOp::kLogicalShiftRight:
-      return builder.CreateLShr(lhs, rhs, "lshr");
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return builder.CreateAShr(lhs, rhs, "ashr");
-
     // Logical operators - convert to bool first, then AND/OR
     case mir::BinaryOp::kLogicalAnd: {
       auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
@@ -200,6 +191,76 @@ auto IsComparisonOp(mir::BinaryOp op) -> bool {
     default:
       return false;
   }
+}
+
+// Check if the binary op is a shift (needs overflow guards)
+auto IsShiftOp(mir::BinaryOp op) -> bool {
+  switch (op) {
+    case mir::BinaryOp::kLogicalShiftLeft:
+    case mir::BinaryOp::kArithmeticShiftLeft:
+    case mir::BinaryOp::kLogicalShiftRight:
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Get all-ones value masked to semantic width (for sign-fill fallback)
+auto GetSemanticAllOnes(llvm::Type* ty, uint32_t semantic_width)
+    -> llvm::Value* {
+  auto all_ones =
+      llvm::APInt::getLowBitsSet(ty->getIntegerBitWidth(), semantic_width);
+  return llvm::ConstantInt::get(ty, all_ones);
+}
+
+// Lower shift operation with overflow guards
+// LLVM shifts produce poison when shift_amount >= bitwidth, so we guard:
+// - shl/lshr overflow -> 0
+// - ashr overflow -> sign-fill (all 1s if negative, all 0s if positive)
+auto LowerShiftOp(
+    Context& context, mir::BinaryOp op, llvm::Value* value,
+    llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  llvm::Type* ty = value->getType();
+
+  auto* width_const = llvm::ConstantInt::get(ty, semantic_width);
+  auto* zero = llvm::ConstantInt::get(ty, 0);
+
+  // Guard: in_range = (shift_amount < semantic_width)
+  auto* in_range =
+      builder.CreateICmpULT(shift_amount, width_const, "shift.inrange");
+
+  // Safe shift amount (use 0 if out of range to avoid poison)
+  auto* safe_amount =
+      builder.CreateSelect(in_range, shift_amount, zero, "shift.safe");
+
+  llvm::Value* shifted = nullptr;
+  llvm::Value* fallback = zero;
+
+  switch (op) {
+    case mir::BinaryOp::kLogicalShiftLeft:
+    case mir::BinaryOp::kArithmeticShiftLeft:
+      shifted = builder.CreateShl(value, safe_amount, "shl");
+      break;
+    case mir::BinaryOp::kLogicalShiftRight:
+      shifted = builder.CreateLShr(value, safe_amount, "lshr");
+      break;
+    case mir::BinaryOp::kArithmeticShiftRight: {
+      shifted = builder.CreateAShr(value, safe_amount, "ashr");
+      // Sign-fill fallback: all 1s in semantic bits if sign bit set, else 0
+      auto* width_m1 = llvm::ConstantInt::get(ty, semantic_width - 1);
+      auto* sign_bit = builder.CreateLShr(value, width_m1, "signbit");
+      auto* is_neg = builder.CreateTrunc(sign_bit, builder.getInt1Ty());
+      auto* semantic_ones = GetSemanticAllOnes(ty, semantic_width);
+      fallback = builder.CreateSelect(is_neg, semantic_ones, zero, "signfill");
+      break;
+    }
+    default:
+      llvm_unreachable("not a shift op");
+  }
+
+  return builder.CreateSelect(in_range, shifted, fallback, "shift.result");
 }
 
 // Dispatch to LLVM icmp for comparison operators
@@ -351,8 +412,8 @@ auto LowerStringBinaryOp(
 
 auto LowerBinaryRvalue(
     Context& context, const mir::BinaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type,
+    uint32_t semantic_width) -> llvm::Value* {
   // Dispatch to string lowering if operands are strings
   if (IsStringOperand(context, operands[0])) {
     return LowerStringBinaryOp(context, info, operands, storage_type);
@@ -373,7 +434,12 @@ auto LowerBinaryRvalue(
     return builder.CreateZExt(cmp, storage_type, "cmp.ext");
   }
 
-  // Arithmetic/bitwise/shift/logical operators
+  // Shift operators need overflow guards
+  if (IsShiftOp(info.op)) {
+    return LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
+  }
+
+  // Arithmetic/bitwise/logical operators
   llvm::Value* result = LowerBinaryArith(context, info.op, lhs, rhs);
 
   // Logical operators return i1, need to extend to storage type
@@ -539,7 +605,8 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           },
           [&](const mir::BinaryRvalueInfo& info) {
             return LowerBinaryRvalue(
-                context, info, compute.value.operands, storage_type);
+                context, info, compute.value.operands, storage_type,
+                type_info.bit_width);
           },
           [&](const mir::CastRvalueInfo& info) {
             return LowerCastRvalue(

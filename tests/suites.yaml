@@ -11,6 +11,7 @@ suites:
       - operators/binary_integral.yaml
       - operators/binary_string.yaml
       - operators/unary.yaml
+      - operators/shift_overflow.yaml
       - control_flow/conditional.yaml
       - control_flow/while.yaml
       - control_flow/do_while.yaml
@@ -25,6 +26,7 @@ suites:
       - operators/binary_integral.yaml
       - operators/binary_string.yaml
       - operators/unary.yaml
+      - operators/shift_overflow.yaml
       - operators/concat.yaml
       - operators/compound_assignment.yaml
       - operators/replicate.yaml
