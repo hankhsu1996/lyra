@@ -886,21 +886,20 @@ auto LowerExpression(
                 .data = hir::ConstantExpressionData{.constant = constant}});
       }
 
-      // Validate source and target types for integral conversions
+      // Validate source and target types for conversions
+      // Support: integral↔integral, integral↔real, real↔real
       const slang::ast::Type& src_type =
           conv.operand().type->getCanonicalType();
 
-      if (!src_type.isIntegral()) {
-        ctx->sink->Error(
-            span, "conversion from non-integral type not supported");
-        return hir::kInvalidExpressionId;
-      }
-      if (!tgt_type.isIntegral()) {
-        ctx->sink->Error(span, "conversion to non-integral type not supported");
+      bool src_ok = src_type.isIntegral() || src_type.isFloating();
+      bool tgt_ok = tgt_type.isIntegral() || tgt_type.isFloating();
+      if (!src_ok || !tgt_ok) {
+        ctx->sink->Error(span, "conversion requires integral or real types");
         return hir::kInvalidExpressionId;
       }
       // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)
       // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
+      // Note: real → integral truncates toward zero
 
       hir::ExpressionId operand =
           LowerExpression(conv.operand(), registrar, ctx);

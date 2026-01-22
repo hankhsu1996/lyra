@@ -28,6 +28,7 @@
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
+#include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -1568,9 +1569,14 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
 
           [&](const Branch& t) -> std::optional<BasicBlockId> {
             auto cond = ReadPlace(state, t.condition);
+            // Support both integral and real conditions
+            if (IsReal(cond)) {
+              return RealIsTrue(AsReal(cond)) ? t.then_target : t.else_target;
+            }
             if (!IsIntegral(cond)) {
               throw common::InternalError(
-                  "ExecTerminator", "branch condition must be integral");
+                  "ExecTerminator",
+                  "branch condition must be integral or real");
             }
             const auto& cond_int = AsIntegral(cond);
             if (!cond_int.IsKnown()) {

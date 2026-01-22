@@ -433,14 +433,18 @@ auto LowerCast(
 
   // These checks are invariants - unsupported types should have been rejected
   // in AST->HIR lowering. If we reach here, it's a compiler bug.
-  // Both kIntegral and kPackedArray are valid for casts (both are packed).
-  if (!IsPacked(src)) {
+  // Valid casts: packed↔packed, packed↔real, real↔real
+  bool src_ok = IsPacked(src) || src.Kind() == TypeKind::kReal;
+  bool tgt_ok = IsPacked(tgt) || tgt.Kind() == TypeKind::kReal;
+  if (!src_ok) {
     throw common::InternalError(
-        "LowerCast", "non-packed source should have been rejected in AST->HIR");
+        "LowerCast",
+        "non-packed/non-real source should have been rejected in AST->HIR");
   }
-  if (!IsPacked(tgt)) {
+  if (!tgt_ok) {
     throw common::InternalError(
-        "LowerCast", "non-packed target should have been rejected in AST->HIR");
+        "LowerCast",
+        "non-packed/non-real target should have been rejected in AST->HIR");
   }
 
   // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)

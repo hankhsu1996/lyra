@@ -7,6 +7,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
+#include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -50,6 +51,79 @@ auto EvalStringBinary(
   return MakeIntegral(result ? 1 : 0, 1);
 }
 
+// Evaluate real binary operations.
+// Arithmetic returns RuntimeReal; comparison/logical returns 1-bit integral.
+auto EvalRealBinary(BinaryOp op, const RuntimeReal& lhs, const RuntimeReal& rhs)
+    -> RuntimeValue {
+  switch (op) {
+    // Arithmetic
+    case BinaryOp::kAdd:
+      return MakeReal(RealAdd(lhs, rhs).value);
+    case BinaryOp::kSubtract:
+      return MakeReal(RealSub(lhs, rhs).value);
+    case BinaryOp::kMultiply:
+      return MakeReal(RealMul(lhs, rhs).value);
+    case BinaryOp::kDivide:
+    case BinaryOp::kDivideSigned:
+      return MakeReal(RealDiv(lhs, rhs).value);
+
+    // Comparisons
+    case BinaryOp::kEqual:
+    case BinaryOp::kCaseEqual:
+      return RealEq(lhs, rhs);
+    case BinaryOp::kNotEqual:
+    case BinaryOp::kCaseNotEqual:
+      return RealNe(lhs, rhs);
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLessThanSigned:
+      return RealLt(lhs, rhs);
+    case BinaryOp::kLessThanEqual:
+    case BinaryOp::kLessThanEqualSigned:
+      return RealLe(lhs, rhs);
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kGreaterThanSigned:
+      return RealGt(lhs, rhs);
+    case BinaryOp::kGreaterThanEqual:
+    case BinaryOp::kGreaterThanEqualSigned:
+      return RealGe(lhs, rhs);
+
+    // Logical
+    case BinaryOp::kLogicalAnd:
+      return RealLogicalAnd(lhs, rhs);
+    case BinaryOp::kLogicalOr:
+      return RealLogicalOr(lhs, rhs);
+
+    // Power
+    case BinaryOp::kPower:
+      return MakeReal(RealPower(lhs, rhs).value);
+
+    // Not supported for reals
+    case BinaryOp::kMod:
+    case BinaryOp::kModSigned:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kBitwiseXnor:
+    case BinaryOp::kLogicalImplication:
+    case BinaryOp::kLogicalEquivalence:
+    case BinaryOp::kWildcardEqual:
+    case BinaryOp::kWildcardNotEqual:
+    case BinaryOp::kCaseZMatch:
+    case BinaryOp::kCaseXMatch:
+    case BinaryOp::kLogicalShiftLeft:
+    case BinaryOp::kLogicalShiftRight:
+    case BinaryOp::kArithmeticShiftLeft:
+    case BinaryOp::kArithmeticShiftRight:
+      throw common::InternalError(
+          "EvalRealBinary",
+          std::format("operator {} not supported for real type", ToString(op)));
+  }
+
+  throw common::InternalError(
+      "EvalRealBinary",
+      std::format("unknown binary operation: {}", ToString(op)));
+}
+
 }  // namespace
 
 auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
@@ -64,6 +138,20 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     throw common::InternalError(
         "EvalBinary", std::format(
                           "cannot mix string and non-string operands "
+                          "(op={}, lhs={}, rhs={})",
+                          ToString(op), lhs.index(), rhs.index()));
+  }
+
+  // Real operations
+  if (IsReal(lhs) && IsReal(rhs)) {
+    return EvalRealBinary(op, AsReal(lhs), AsReal(rhs));
+  }
+
+  // Mixed real/non-real - should never happen (MIR has explicit casts)
+  if (IsReal(lhs) || IsReal(rhs)) {
+    throw common::InternalError(
+        "EvalBinary", std::format(
+                          "cannot mix real and non-real operands "
                           "(op={}, lhs={}, rhs={})",
                           ToString(op), lhs.index(), rhs.index()));
   }
@@ -208,6 +296,24 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
 }
 
 auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
+  // Real operands: only support +, -, and !
+  if (IsReal(operand)) {
+    const auto& op_real = AsReal(operand);
+    switch (op) {
+      case UnaryOp::kPlus:
+        return MakeReal(RealPlus(op_real).value);
+      case UnaryOp::kMinus:
+        return MakeReal(RealNeg(op_real).value);
+      case UnaryOp::kLogicalNot:
+        return RealLogicalNot(op_real);
+      default:
+        throw common::InternalError(
+            "EvalUnary",
+            std::format(
+                "operator {} not supported for real type", ToString(op)));
+    }
+  }
+
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalUnary", "unary operation requires integral operand");
@@ -306,17 +412,50 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
 auto EvalCast(
     const RuntimeValue& operand, const Type& source_type,
     const Type& target_type, const TypeArena& arena) -> RuntimeValue {
-  // Precondition checks - these should have been validated at lowering time.
-  // If they fail here, it indicates a bug in the lowering pipeline.
+  bool src_is_real = source_type.Kind() == TypeKind::kReal;
+  bool tgt_is_real = target_type.Kind() == TypeKind::kReal;
+  bool src_is_packed = IsPacked(source_type);
+  bool tgt_is_packed = IsPacked(target_type);
+
+  // Real → Packed conversion
+  if (src_is_real && tgt_is_packed) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "real source type but operand is not real");
+    }
+    uint32_t target_width = PackedBitWidth(target_type, arena);
+    bool target_signed = IsPackedSigned(target_type, arena);
+    return RealToIntegral(AsReal(operand), target_width, target_signed);
+  }
+
+  // Packed → Real conversion
+  if (src_is_packed && tgt_is_real) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalCast", "packed source type but operand is not integral");
+    }
+    bool src_is_signed = IsPackedSigned(source_type, arena);
+    return MakeReal(IntegralToReal(AsIntegral(operand), src_is_signed).value);
+  }
+
+  // Real → Real (identity, but validates operand type)
+  if (src_is_real && tgt_is_real) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalCast", "real source type but operand is not real");
+    }
+    return Clone(operand);
+  }
+
+  // Packed → Packed conversion (existing logic)
   if (!IsIntegral(operand)) {
     throw common::InternalError(
         "EvalCast", "cast operation requires integral operand");
   }
-  // Both kIntegral and kPackedArray are valid for casts (both are packed).
-  if (!IsPacked(source_type)) {
+  if (!src_is_packed) {
     throw common::InternalError("EvalCast", "source type must be packed");
   }
-  if (!IsPacked(target_type)) {
+  if (!tgt_is_packed) {
     throw common::InternalError("EvalCast", "target type must be packed");
   }
 
