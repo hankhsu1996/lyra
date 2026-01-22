@@ -2,6 +2,7 @@
 
 #include <format>
 
+#include "llvm/IR/Intrinsics.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
@@ -255,6 +256,25 @@ auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
       operand.payload);
 }
 
+// Get the semantic bit width of an operand (for reduction operators)
+auto GetOperandBitWidth(Context& context, const mir::Operand& operand)
+    -> uint32_t {
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+
+  return std::visit(
+      Overloaded{
+          [&](const Constant& c) {
+            return PackedBitWidth(types[c.type], types);
+          },
+          [&](mir::PlaceId place_id) {
+            const auto& place = arena[place_id];
+            return PackedBitWidth(types[place.root.type], types);
+          },
+      },
+      operand.payload);
+}
+
 // Lower string binary comparison via LyraStringCmp runtime call
 auto LowerStringBinaryOp(
     Context& context, const mir::BinaryRvalueInfo& info,
@@ -365,9 +385,10 @@ auto LowerBinaryRvalue(
 }
 
 // Dispatch to LLVM instructions for unary operators
+// operand_bit_width is the semantic width of the operand (needed for reduction)
 auto LowerUnaryOp(
     Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type) -> llvm::Value* {
+    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value* {
   auto& builder = context.GetBuilder();
 
   switch (op) {
@@ -384,6 +405,58 @@ auto LowerUnaryOp(
       auto* negated = builder.CreateNot(is_nonzero, "lnot");
       return builder.CreateZExt(negated, storage_type, "lnot.ext");
     }
+    case mir::UnaryOp::kReductionAnd: {
+      // Returns 1 if all bits are 1, else 0
+      // Create mask with operand_bit_width bits set
+      uint64_t mask =
+          (operand_bit_width == 64) ? ~0ULL : (1ULL << operand_bit_width) - 1;
+      auto* all_ones = llvm::ConstantInt::get(operand->getType(), mask);
+      auto* is_all_ones = builder.CreateICmpEQ(operand, all_ones, "red.and");
+      return builder.CreateZExt(is_all_ones, storage_type, "red.and.ext");
+    }
+    case mir::UnaryOp::kReductionNand: {
+      // Returns 0 if all bits are 1, else 1 (opposite of AND)
+      uint64_t mask =
+          (operand_bit_width == 64) ? ~0ULL : (1ULL << operand_bit_width) - 1;
+      auto* all_ones = llvm::ConstantInt::get(operand->getType(), mask);
+      auto* is_not_all_ones =
+          builder.CreateICmpNE(operand, all_ones, "red.nand");
+      return builder.CreateZExt(is_not_all_ones, storage_type, "red.nand.ext");
+    }
+    case mir::UnaryOp::kReductionOr: {
+      // Returns 1 if any bit is 1, else 0
+      auto* zero = llvm::ConstantInt::get(operand->getType(), 0);
+      auto* is_nonzero = builder.CreateICmpNE(operand, zero, "red.or");
+      return builder.CreateZExt(is_nonzero, storage_type, "red.or.ext");
+    }
+    case mir::UnaryOp::kReductionNor: {
+      // Returns 1 if all bits are 0, else 0 (opposite of OR)
+      auto* zero = llvm::ConstantInt::get(operand->getType(), 0);
+      auto* is_zero = builder.CreateICmpEQ(operand, zero, "red.nor");
+      return builder.CreateZExt(is_zero, storage_type, "red.nor.ext");
+    }
+    case mir::UnaryOp::kReductionXor:
+    case mir::UnaryOp::kReductionXnor: {
+      // Parity: 1 if odd number of bits are 1, 0 if even
+      // Use llvm.ctpop to count bits, then extract LSB
+      auto* ctpop = llvm::Intrinsic::getDeclaration(
+          &context.GetModule(), llvm::Intrinsic::ctpop, {operand->getType()});
+      auto* count = builder.CreateCall(ctpop, {operand}, "popcount");
+      auto* one = llvm::ConstantInt::get(count->getType(), 1);
+      auto* parity_n = builder.CreateAnd(count, one, "parity");
+      auto* parity_i1 =
+          builder.CreateTrunc(parity_n, builder.getInt1Ty(), "parity.i1");
+
+      llvm::Value* result = parity_i1;
+      if (op == mir::UnaryOp::kReductionXnor) {
+        // XNOR is inverted XOR
+        result = builder.CreateXor(result, builder.getTrue(), "parity.not");
+      }
+
+      const char* name =
+          (op == mir::UnaryOp::kReductionXnor) ? "red.xnor.ext" : "red.xor.ext";
+      return builder.CreateZExt(result, storage_type, name);
+    }
     default:
       throw common::UnsupportedErrorException(
           common::UnsupportedLayer::kMirToLlvm,
@@ -399,13 +472,17 @@ auto LowerUnaryRvalue(
     -> llvm::Value* {
   auto& builder = context.GetBuilder();
 
+  // Get operand's semantic bit width (needed for reduction operators)
+  uint32_t operand_bit_width = GetOperandBitWidth(context, operands[0]);
+
   // Lower the operand
   llvm::Value* operand = LowerOperand(context, operands[0]);
 
   // Coerce operand to storage type
   operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
 
-  return LowerUnaryOp(context, info.op, operand, storage_type);
+  return LowerUnaryOp(
+      context, info.op, operand, storage_type, operand_bit_width);
 }
 
 // Lower cast rvalue: convert from source type to target type
