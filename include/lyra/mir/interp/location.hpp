@@ -17,16 +17,33 @@ struct BitSlice {
   TypeId element_type;  // From innermost projection
 };
 
+// Track union member view for proper codec dispatch (const version for reads).
+struct ConstUnionView {
+  const RuntimeUnion* union_ptr;
+  uint32_t member_index;
+  TypeId union_type;  // To retrieve UnpackedUnionInfo for codec
+};
+
+// Track union member view for proper codec dispatch (mutable version for
+// writes).
+struct UnionView {
+  RuntimeUnion* union_ptr;
+  uint32_t member_index;
+  TypeId union_type;  // To retrieve UnpackedUnionInfo for codec
+};
+
 // Location for read operations (const pointer to base).
 struct ConstLocation {
   const RuntimeValue* base = nullptr;
   std::optional<BitSlice> bit_slice;
+  std::optional<ConstUnionView> union_view;
 };
 
 // Location for write operations (mutable pointer to base).
 struct Location {
   RuntimeValue* base = nullptr;
   std::optional<BitSlice> bit_slice;
+  std::optional<UnionView> union_view;
 };
 
 }  // namespace lyra::mir::interp

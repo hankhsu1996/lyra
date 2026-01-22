@@ -1461,6 +1461,19 @@ auto LowerExpression(
             });
       }
 
+      // Handle unpacked union member access
+      if (value_type.isUnpackedUnion()) {
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kUnionMemberAccess,
+                .type = type,
+                .span = span,
+                .data =
+                    hir::UnionMemberAccessExpressionData{
+                        .base = base, .member_index = field_index},
+            });
+      }
+
       // Handle unpacked struct field access
       if (!value_type.isUnpackedStruct()) {
         ctx->sink->Error(span, "member access only supported on struct types");

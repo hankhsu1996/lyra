@@ -13,6 +13,65 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// Returns true if AST type can be a Phase 1 union member (bit-representable)
+auto IsUnionMemberBitRepresentable(const slang::ast::Type& type) -> bool {
+  const auto& ct = type.getCanonicalType();
+  if (ct.isIntegral()) {
+    return true;  // int, logic, bit, packed array, packed struct, packed union
+  }
+  if (ct.isFloating()) {
+    return true;  // real, shortreal
+  }
+  return false;  // Reject: unpacked struct/array, string, class, queue, etc.
+}
+
+// Returns bit width for any Phase 1 union member type (lowered type)
+auto UnionMemberBitWidth(const Type& type, const TypeArena& types) -> uint32_t {
+  switch (type.Kind()) {
+    case TypeKind::kReal:
+      return 64;
+    case TypeKind::kShortReal:
+      return 32;
+    case TypeKind::kIntegral:
+      return type.AsIntegral().bit_width;
+    case TypeKind::kPackedArray:
+      return PackedBitWidth(type, types);
+    case TypeKind::kPackedStruct:
+      return type.AsPackedStruct().total_bit_width;
+    case TypeKind::kEnum:
+      return PackedBitWidth(type, types);
+    default:
+      throw common::InternalError(
+          "UnionMemberBitWidth", "unsupported member type");
+  }
+}
+
+// Returns true if type is 4-state (can hold X/Z) - works on lowered types
+auto IsFourStatePackedType(const Type& type, const TypeArena& types) -> bool {
+  switch (type.Kind()) {
+    case TypeKind::kReal:
+    case TypeKind::kShortReal:
+      return false;  // Floats are never 4-state
+    case TypeKind::kIntegral:
+      return type.AsIntegral().is_four_state;
+    case TypeKind::kPackedArray: {
+      const auto& info = type.AsPackedArray();
+      return IsFourStatePackedType(types[info.element_type], types);
+    }
+    case TypeKind::kPackedStruct:
+      return type.AsPackedStruct().is_four_state;
+    case TypeKind::kEnum:
+      return IsFourStatePackedType(types[type.AsEnum().base_type], types);
+    default:
+      throw common::InternalError(
+          "IsFourStatePackedType", "unsupported type kind");
+  }
+}
+
+}  // namespace
+
 auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     -> TypeId {
   if (type.isError()) {
@@ -230,6 +289,58 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
         TypeKind::kUnpackedStruct,
         UnpackedStructInfo{
             .name = std::move(name), .fields = std::move(fields)});
+  }
+
+  if (canonical.isUnpackedUnion()) {
+    const auto& uut = canonical.as<slang::ast::UnpackedUnionType>();
+    std::vector<StructField> members;
+    bool contains_float = false;
+
+    // First pass: lower all member types, collect contains_float from AST
+    for (const auto* field : uut.fields) {
+      const auto& ft = field->getType();
+
+      // Phase 1: only bit-representable members
+      if (!IsUnionMemberBitRepresentable(ft)) {
+        ctx->sink->Error(
+            source,
+            "unpacked union member must be bit-representable (Phase 1)");
+        return kInvalidTypeId;
+      }
+
+      TypeId member_type = LowerType(ft, source, ctx);
+      if (!member_type) {
+        return kInvalidTypeId;
+      }
+
+      if (ft.isFloating()) {
+        contains_float = true;
+      }
+
+      members.push_back(
+          {.name = std::string(field->name), .type = member_type});
+    }
+
+    // Second pass: compute max width and 4-state flag from LOWERED types
+    uint32_t max_width = 0;
+    bool storage_is_four_state = false;
+    for (const auto& member : members) {
+      const Type& mt = (*ctx->type_arena)[member.type];
+      uint32_t member_width = UnionMemberBitWidth(mt, *ctx->type_arena);
+      max_width = std::max(max_width, member_width);
+      if (IsFourStatePackedType(mt, *ctx->type_arena)) {
+        storage_is_four_state = true;
+      }
+    }
+
+    return ctx->type_arena->Intern(
+        TypeKind::kUnpackedUnion,
+        UnpackedUnionInfo{
+            .members = std::move(members),
+            .storage_bit_width = max_width,
+            .contains_float = contains_float,
+            .storage_is_four_state = storage_is_four_state,
+        });
   }
 
   if (canonical.isStruct()) {

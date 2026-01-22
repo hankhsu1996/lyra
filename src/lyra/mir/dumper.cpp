@@ -281,6 +281,9 @@ auto Dumper::FormatProjection(const Projection& proj) const -> std::string {
                 FormatIndexOperand(b.bit_offset), b.width,
                 FormatType(b.element_type));
           },
+          [](const UnionMemberProjection& u) {
+            return std::format(".union_member[{}]", u.member_index);
+          },
       },
       proj.info);
 }

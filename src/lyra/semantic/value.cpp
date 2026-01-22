@@ -205,6 +205,12 @@ auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue {
   return a;
 }
 
+auto MakeUnion(RuntimeIntegral storage_bits) -> RuntimeValue {
+  auto u = std::make_unique<RuntimeUnion>();
+  u->storage_bits = std::move(storage_bits);
+  return u;
+}
+
 auto Clone(const RuntimeValue& v) -> RuntimeValue {
   return std::visit(
       [](const auto& val) -> RuntimeValue {
@@ -234,6 +240,10 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue {
             copy->elements.push_back(Clone(e));
           }
           return copy;
+        } else if constexpr (std::is_same_v<T, std::unique_ptr<RuntimeUnion>>) {
+          auto copy = std::make_unique<RuntimeUnion>();
+          copy->storage_bits = val->storage_bits;
+          return copy;
         }
       },
       v);
@@ -261,6 +271,10 @@ auto IsStruct(const RuntimeValue& v) -> bool {
 
 auto IsArray(const RuntimeValue& v) -> bool {
   return std::holds_alternative<std::unique_ptr<RuntimeArray>>(v);
+}
+
+auto IsUnion(const RuntimeValue& v) -> bool {
+  return std::holds_alternative<std::unique_ptr<RuntimeUnion>>(v);
 }
 
 auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral& {
@@ -311,6 +325,14 @@ auto AsArray(const RuntimeValue& v) -> const RuntimeArray& {
   return *std::get<std::unique_ptr<RuntimeArray>>(v);
 }
 
+auto AsUnion(RuntimeValue& v) -> RuntimeUnion& {
+  return *std::get<std::unique_ptr<RuntimeUnion>>(v);
+}
+
+auto AsUnion(const RuntimeValue& v) -> const RuntimeUnion& {
+  return *std::get<std::unique_ptr<RuntimeUnion>>(v);
+}
+
 auto ToString(const RuntimeValue& v) -> std::string {
   return std::visit(
       [](const auto& val) -> std::string {
@@ -346,6 +368,8 @@ auto ToString(const RuntimeValue& v) -> std::string {
           }
           result += "]";
           return result;
+        } else if constexpr (std::is_same_v<T, std::unique_ptr<RuntimeUnion>>) {
+          return std::format("<union[{}]>", ToHexString(val->storage_bits));
         }
       },
       v);
