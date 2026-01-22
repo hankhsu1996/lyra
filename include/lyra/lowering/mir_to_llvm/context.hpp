@@ -70,8 +70,14 @@ class Context {
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
 
+  // Function scope management - must be called when entering/leaving a function
+  // BeginFunction sets up the alloca insertion point at the entry block
+  void BeginFunction(llvm::Function& func);
+  void EndFunction();
+
   // Place storage management
   // Returns the alloca for a place, creating it if necessary
+  // Allocas are always inserted in the entry block via alloca_builder_
   auto GetOrCreatePlaceStorage(mir::PlaceId place_id) -> llvm::AllocaInst*;
 
   // Get existing storage for a place (returns nullptr if not found)
@@ -106,6 +112,10 @@ class Context {
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::unique_ptr<llvm::Module> llvm_module_;
   llvm::IRBuilder<> builder_;
+
+  // Per-function state for alloca insertion
+  llvm::Function* current_function_ = nullptr;
+  std::unique_ptr<llvm::IRBuilder<>> alloca_builder_;
 
   llvm::Function* lyra_print_literal_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;

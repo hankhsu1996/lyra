@@ -122,6 +122,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", main_func);
   builder.SetInsertPoint(entry);
 
+  // Set up function scope for alloca insertion
+  context.BeginFunction(*main_func);
+
   // Initialize ALL design slots to SV defaults
   auto allocas = InitializeAllSlots(context, input.slot_types);
 
@@ -178,6 +181,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   RegisterAndSnapshotVariables(
       context, input.variables, input.slot_types, allocas);
   builder.CreateRet(llvm::ConstantInt::get(llvm_ctx, llvm::APInt(32, 0)));
+
+  // End function scope
+  context.EndFunction();
 
   auto [ctx, mod] = context.TakeOwnership();
   return LoweringResult{

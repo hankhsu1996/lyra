@@ -2,6 +2,7 @@
 
 #include <format>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/place.hpp"
 
@@ -167,12 +168,42 @@ auto Context::GetLyraStringRelease() -> llvm::Function* {
   return lyra_string_release_;
 }
 
+void Context::BeginFunction(llvm::Function& func) {
+  current_function_ = &func;
+
+  // Set up alloca builder at the start of the entry block, before any
+  // non-alloca instructions. This ensures all allocas are grouped at the
+  // beginning and dominate all uses.
+  llvm::BasicBlock& entry = func.getEntryBlock();
+  llvm::BasicBlock::iterator insert_point = entry.begin();
+
+  // Skip past any existing allocas to keep them grouped
+  while (insert_point != entry.end() &&
+         llvm::isa<llvm::AllocaInst>(&*insert_point)) {
+    ++insert_point;
+  }
+
+  alloca_builder_ = std::make_unique<llvm::IRBuilder<>>(&entry, insert_point);
+}
+
+void Context::EndFunction() {
+  current_function_ = nullptr;
+  alloca_builder_.reset();
+}
+
 auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     -> llvm::AllocaInst* {
   // Check if we already have storage for this place
   auto it = place_storage_.find(place_id);
   if (it != place_storage_.end()) {
     return it->second;
+  }
+
+  // Must be inside a function scope
+  if (current_function_ == nullptr || alloca_builder_ == nullptr) {
+    throw common::InternalError(
+        "GetOrCreatePlaceStorage",
+        "must call BeginFunction before creating place storage");
   }
 
   // Get the place from the arena
@@ -207,8 +238,19 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
         std::format("type not yet supported: {}", ToString(type)));
   }
 
-  // Create the alloca
-  auto* alloca = builder_.CreateAlloca(llvm_type, nullptr, "place");
+  // Re-compute insertion point: after all existing allocas, before any
+  // non-alloca This is necessary because the main builder may have inserted
+  // non-alloca instructions since we last created an alloca.
+  llvm::BasicBlock& entry = current_function_->getEntryBlock();
+  llvm::BasicBlock::iterator insert_point = entry.begin();
+  while (insert_point != entry.end() &&
+         llvm::isa<llvm::AllocaInst>(&*insert_point)) {
+    ++insert_point;
+  }
+  alloca_builder_->SetInsertPoint(&entry, insert_point);
+
+  // Create the alloca using the dedicated alloca builder (entry block)
+  auto* alloca = alloca_builder_->CreateAlloca(llvm_type, nullptr, "place");
 
   // Store in the map
   place_storage_[place_id] = alloca;
