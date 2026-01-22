@@ -1,6 +1,5 @@
 #include "lyra/mir/interp/interpreter.hpp"
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -20,12 +19,14 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
+#include "lyra/mir/interp/blob_codec.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
@@ -350,7 +351,7 @@ auto ApplySingleProjection(
           },
           [](const UnionMemberProjection& /*up*/) -> ValuePtr {
             // UnionMemberProjection should be handled separately
-            // (uses union_view path in ApplyProjectionsForRead/Write)
+            // (uses blob_view path in ApplyProjectionsForRead/Write)
             throw common::InternalError(
                 "ApplyProjection",
                 "UnionMemberProjection must be handled separately");
@@ -492,23 +493,22 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
     }
     case TypeKind::kUnpackedUnion: {
       const auto& info = type.AsUnpackedUnion();
-      // Create storage blob with correct size and default value.
-      // Per AD3: default init via member[0] write path. For Phase 1,
-      // we simplify by just initializing the storage based on 4-state flag.
       RuntimeIntegral storage;
       storage.bit_width = info.storage_bit_width;
       uint32_t num_words = (info.storage_bit_width + 63) / 64;
       if (info.storage_is_four_state) {
-        // 4-state storage defaults to X
         storage.value.resize(num_words, 0);
         storage.x_mask.resize(num_words, ~uint64_t{0});
         storage.z_mask.resize(num_words, 0);
       } else {
-        // 2-state storage defaults to 0
         storage.value.resize(num_words, 0);
         storage.x_mask.resize(num_words, 0);
         storage.z_mask.resize(num_words, 0);
       }
+      // Default init member[0] via codec
+      RuntimeValue member0_default =
+          CreateDefaultValue(types, info.members[0].type);
+      StoreToBlob(info.members[0].type, member0_default, storage, 0, types);
       return MakeUnion(std::move(storage));
     }
     case TypeKind::kDynamicArray:
@@ -1342,7 +1342,7 @@ auto Interpreter::ApplyProjectionsForRead(
     const ProcessState& state, const Place& place, const RuntimeValue& root)
     -> ConstLocation {
   ConstLocation loc{
-      .base = &root, .bit_slice = std::nullopt, .union_view = std::nullopt};
+      .base = &root, .bit_slice = std::nullopt, .blob_view = std::nullopt};
   TypeId current_type = place.root.type;
 
   for (const auto& proj : place.projections) {
@@ -1353,6 +1353,25 @@ auto Interpreter::ApplyProjectionsForRead(
                 throw common::InternalError(
                     "ApplyProjectionsForRead",
                     "Field projection after BitRange");
+              }
+              if (loc.blob_view) {
+                if ((*types_)[loc.blob_view->view_type].Kind() !=
+                    TypeKind::kUnpackedStruct) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForRead",
+                      "field projection on non-struct in blob mode");
+                }
+                Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
+                auto idx = static_cast<size_t>(fp.field_index);
+                if (idx >= layout.fields.size()) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForRead",
+                      "field index out of range in blob mode");
+                }
+                loc.blob_view->bit_offset += layout.fields[idx].bit_offset;
+                loc.blob_view->view_type = layout.fields[idx].type;
+                current_type = loc.blob_view->view_type;
+                return;
               }
               if (!IsStruct(*loc.base)) {
                 throw common::InternalError(
@@ -1366,7 +1385,6 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead", "field index out of range");
               }
               loc.base = &s.fields[idx];
-              // Update current type
               const auto& struct_info =
                   (*types_)[current_type].AsUnpackedStruct();
               current_type = struct_info.fields[idx].type;
@@ -1376,6 +1394,44 @@ auto Interpreter::ApplyProjectionsForRead(
                 throw common::InternalError(
                     "ApplyProjectionsForRead",
                     "Index projection after BitRange");
+              }
+              if (loc.blob_view) {
+                if ((*types_)[loc.blob_view->view_type].Kind() !=
+                    TypeKind::kUnpackedArray) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForRead",
+                      "index projection on non-array in blob mode");
+                }
+                Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
+                auto idx_val = EvalOperand(state, ip.index);
+                if (!IsIntegral(idx_val)) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForRead", "index must be integral");
+                }
+                const auto& idx_int = AsIntegral(idx_val);
+                if (!idx_int.IsKnown()) {
+                  throw std::runtime_error("index is X/Z");
+                }
+                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+                TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
+                int64_t idx = 0;
+                if (IsSignedIntegral(*types_, type_id)) {
+                  idx = SignExtendToInt64(raw, idx_int.bit_width);
+                } else {
+                  idx = static_cast<int64_t>(raw);
+                }
+                const auto& arr_info =
+                    (*types_)[loc.blob_view->view_type].AsUnpackedArray();
+                if (idx < 0 ||
+                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                  throw std::runtime_error(
+                      "array index out of bounds in blob access");
+                }
+                loc.blob_view->bit_offset +=
+                    static_cast<uint32_t>(idx) * *layout.element_stride_bits;
+                loc.blob_view->view_type = *layout.element_type;
+                current_type = loc.blob_view->view_type;
+                return;
               }
               if (!IsArray(*loc.base)) {
                 throw common::InternalError(
@@ -1401,14 +1457,10 @@ auto Interpreter::ApplyProjectionsForRead(
                 idx = static_cast<int64_t>(raw);
               }
 
-              // MIR invariant: IndexProjection stores 0-based offset
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
-                // TODO(hankhsu): LRM says return X for OOB reads
-                // For now, throw until 4-state semantics are implemented
                 throw std::runtime_error("array index out of bounds");
               }
               loc.base = &arr.elements[static_cast<size_t>(idx)];
-              // Update current type to element type
               const auto& type = (*types_)[current_type];
               if (type.Kind() == TypeKind::kUnpackedArray) {
                 current_type = type.AsUnpackedArray().element_type;
@@ -1419,13 +1471,6 @@ auto Interpreter::ApplyProjectionsForRead(
               }
             },
             [&](const BitRangeProjection& br) {
-              // Verify base is integral before first BitRange
-              if (!loc.bit_slice && !IsIntegral(*loc.base)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForRead",
-                    "BitRangeProjection on non-integral base");
-              }
-
               auto offset_val = EvalOperand(state, br.bit_offset);
               if (!IsIntegral(offset_val)) {
                 throw common::InternalError(
@@ -1436,23 +1481,31 @@ auto Interpreter::ApplyProjectionsForRead(
                   offset_int.value.empty()
                       ? 0
                       : static_cast<int64_t>(offset_int.value[0]);
-              // Check for negative
               if (raw_offset < 0) {
-                // TODO(hankhsu): LRM defines behavior for negative offsets
-                // (return X) For now, throw until 4-state semantics are
-                // implemented
                 throw std::runtime_error("negative bit offset");
               }
               auto offset = static_cast<uint64_t>(raw_offset);
 
+              if (loc.blob_view) {
+                loc.bit_slice = BitSlice{
+                    .total_offset = loc.blob_view->bit_offset + offset,
+                    .width = br.width,
+                    .element_type = br.element_type,
+                };
+                return;
+              }
+
+              if (!loc.bit_slice && !IsIntegral(*loc.base)) {
+                throw common::InternalError(
+                    "ApplyProjectionsForRead",
+                    "BitRangeProjection on non-integral base");
+              }
+
               if (loc.bit_slice) {
-                // Accumulate: base stays same (container), add offsets
                 loc.bit_slice->total_offset += offset;
-                loc.bit_slice->width = br.width;  // innermost wins
-                loc.bit_slice->element_type =
-                    br.element_type;  // innermost wins
+                loc.bit_slice->width = br.width;
+                loc.bit_slice->element_type = br.element_type;
               } else {
-                // First BitRange: base does NOT change - it stays as container
                 loc.bit_slice = BitSlice{
                     .total_offset = offset,
                     .width = br.width,
@@ -1466,20 +1519,28 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead",
                     "Union projection after BitRange");
               }
+              if (loc.blob_view) {
+                // Already in blob mode: view-type change, offset stays 0
+                TypeId union_type = loc.blob_view->view_type;
+                const auto& union_info =
+                    (*types_)[union_type].AsUnpackedUnion();
+                loc.blob_view->view_type =
+                    union_info.members[up.member_index].type;
+                current_type = loc.blob_view->view_type;
+                return;
+              }
               if (!IsUnion(*loc.base)) {
                 throw common::InternalError(
                     "ApplyProjectionsForRead", "union projection on non-union");
               }
-              // Use tracked current_type (which is the union type at this
-              // point)
-              loc.union_view = ConstUnionView{
-                  .union_ptr = &AsUnion(*loc.base),
-                  .member_index = up.member_index,
-                  .union_type = current_type,
-              };
-              // Update current_type to member type
               const auto& union_info =
                   (*types_)[current_type].AsUnpackedUnion();
+              loc.blob_view = ConstBitBlobView{
+                  .storage = &AsUnion(*loc.base).storage_bits,
+                  .bit_offset = 0,
+                  .view_type = union_info.members[up.member_index].type,
+                  .root_union_type = current_type,
+              };
               current_type = union_info.members[up.member_index].type;
             },
             [](const SliceProjection&) {
@@ -1499,7 +1560,7 @@ auto Interpreter::ApplyProjectionsForRead(
 auto Interpreter::ApplyProjectionsForWrite(
     ProcessState& state, const Place& place, RuntimeValue& root) -> Location {
   Location loc{
-      .base = &root, .bit_slice = std::nullopt, .union_view = std::nullopt};
+      .base = &root, .bit_slice = std::nullopt, .blob_view = std::nullopt};
   TypeId current_type = place.root.type;
 
   for (const auto& proj : place.projections) {
@@ -1510,6 +1571,25 @@ auto Interpreter::ApplyProjectionsForWrite(
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
                     "Field projection after BitRange");
+              }
+              if (loc.blob_view) {
+                if ((*types_)[loc.blob_view->view_type].Kind() !=
+                    TypeKind::kUnpackedStruct) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForWrite",
+                      "field projection on non-struct in blob mode");
+                }
+                Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
+                auto idx = static_cast<size_t>(fp.field_index);
+                if (idx >= layout.fields.size()) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForWrite",
+                      "field index out of range in blob mode");
+                }
+                loc.blob_view->bit_offset += layout.fields[idx].bit_offset;
+                loc.blob_view->view_type = layout.fields[idx].type;
+                current_type = loc.blob_view->view_type;
+                return;
               }
               if (!IsStruct(*loc.base)) {
                 throw common::InternalError(
@@ -1523,7 +1603,6 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "ApplyProjectionsForWrite", "field index out of range");
               }
               loc.base = &s.fields[idx];
-              // Update current type
               const auto& struct_info =
                   (*types_)[current_type].AsUnpackedStruct();
               current_type = struct_info.fields[idx].type;
@@ -1533,6 +1612,44 @@ auto Interpreter::ApplyProjectionsForWrite(
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
                     "Index projection after BitRange");
+              }
+              if (loc.blob_view) {
+                if ((*types_)[loc.blob_view->view_type].Kind() !=
+                    TypeKind::kUnpackedArray) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForWrite",
+                      "index projection on non-array in blob mode");
+                }
+                Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
+                auto idx_val = EvalOperand(state, ip.index);
+                if (!IsIntegral(idx_val)) {
+                  throw common::InternalError(
+                      "ApplyProjectionsForWrite", "index must be integral");
+                }
+                const auto& idx_int = AsIntegral(idx_val);
+                if (!idx_int.IsKnown()) {
+                  throw std::runtime_error("index is X/Z");
+                }
+                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+                TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
+                int64_t idx = 0;
+                if (IsSignedIntegral(*types_, type_id)) {
+                  idx = SignExtendToInt64(raw, idx_int.bit_width);
+                } else {
+                  idx = static_cast<int64_t>(raw);
+                }
+                const auto& arr_info =
+                    (*types_)[loc.blob_view->view_type].AsUnpackedArray();
+                if (idx < 0 ||
+                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                  throw std::runtime_error(
+                      "array index out of bounds in blob access");
+                }
+                loc.blob_view->bit_offset +=
+                    static_cast<uint32_t>(idx) * *layout.element_stride_bits;
+                loc.blob_view->view_type = *layout.element_type;
+                current_type = loc.blob_view->view_type;
+                return;
               }
               if (!IsArray(*loc.base)) {
                 throw common::InternalError(
@@ -1559,14 +1676,10 @@ auto Interpreter::ApplyProjectionsForWrite(
                 idx = static_cast<int64_t>(raw);
               }
 
-              // MIR invariant: IndexProjection stores 0-based offset
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
-                // TODO(hankhsu): LRM defines behavior for OOB writes
-                // For now, throw until 4-state semantics are implemented
                 throw std::runtime_error("array index out of bounds");
               }
               loc.base = &arr.elements[static_cast<size_t>(idx)];
-              // Update current type to element type
               const auto& type = (*types_)[current_type];
               if (type.Kind() == TypeKind::kUnpackedArray) {
                 current_type = type.AsUnpackedArray().element_type;
@@ -1577,13 +1690,6 @@ auto Interpreter::ApplyProjectionsForWrite(
               }
             },
             [&](const BitRangeProjection& br) {
-              // Verify base is integral before first BitRange
-              if (!loc.bit_slice && !IsIntegral(*loc.base)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForWrite",
-                    "BitRangeProjection on non-integral base");
-              }
-
               auto offset_val = EvalOperand(state, br.bit_offset);
               if (!IsIntegral(offset_val)) {
                 throw common::InternalError(
@@ -1594,22 +1700,31 @@ auto Interpreter::ApplyProjectionsForWrite(
                   offset_int.value.empty()
                       ? 0
                       : static_cast<int64_t>(offset_int.value[0]);
-              // Check for negative
               if (raw_offset < 0) {
-                // TODO(hankhsu): LRM defines behavior for negative offsets
-                // For now, throw until 4-state semantics are implemented
                 throw std::runtime_error("negative bit offset");
               }
               auto offset = static_cast<uint64_t>(raw_offset);
 
+              if (loc.blob_view) {
+                loc.bit_slice = BitSlice{
+                    .total_offset = loc.blob_view->bit_offset + offset,
+                    .width = br.width,
+                    .element_type = br.element_type,
+                };
+                return;
+              }
+
+              if (!loc.bit_slice && !IsIntegral(*loc.base)) {
+                throw common::InternalError(
+                    "ApplyProjectionsForWrite",
+                    "BitRangeProjection on non-integral base");
+              }
+
               if (loc.bit_slice) {
-                // Accumulate: base stays same (container), add offsets
                 loc.bit_slice->total_offset += offset;
-                loc.bit_slice->width = br.width;  // innermost wins
-                loc.bit_slice->element_type =
-                    br.element_type;  // innermost wins
+                loc.bit_slice->width = br.width;
+                loc.bit_slice->element_type = br.element_type;
               } else {
-                // First BitRange: base does NOT change - it stays as container
                 loc.bit_slice = BitSlice{
                     .total_offset = offset,
                     .width = br.width,
@@ -1623,21 +1738,28 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "ApplyProjectionsForWrite",
                     "Union projection after BitRange");
               }
+              if (loc.blob_view) {
+                TypeId union_type = loc.blob_view->view_type;
+                const auto& union_info =
+                    (*types_)[union_type].AsUnpackedUnion();
+                loc.blob_view->view_type =
+                    union_info.members[up.member_index].type;
+                current_type = loc.blob_view->view_type;
+                return;
+              }
               if (!IsUnion(*loc.base)) {
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
                     "union projection on non-union");
               }
-              // Use tracked current_type (which is the union type at this
-              // point)
-              loc.union_view = UnionView{
-                  .union_ptr = &AsUnion(*loc.base),
-                  .member_index = up.member_index,
-                  .union_type = current_type,
-              };
-              // Update current_type to member type
               const auto& union_info =
                   (*types_)[current_type].AsUnpackedUnion();
+              loc.blob_view = BitBlobView{
+                  .storage = &AsUnion(*loc.base).storage_bits,
+                  .bit_offset = 0,
+                  .view_type = union_info.members[up.member_index].type,
+                  .root_union_type = current_type,
+              };
               current_type = union_info.members[up.member_index].type;
             },
             [](const SliceProjection&) {
@@ -1666,56 +1788,18 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
   auto loc = ApplyProjectionsForRead(state, place, root_value);
   if (loc.bit_slice) {
     const auto& bs = *loc.bit_slice;
-    // Container is union storage if union_view present, otherwise loc.base
-    const auto& container = loc.union_view
-                                ? loc.union_view->union_ptr->storage_bits
-                                : AsIntegral(*loc.base);
-    // Overflow-safe check using uint64_t arithmetic
+    const auto& container =
+        loc.blob_view ? *loc.blob_view->storage : AsIntegral(*loc.base);
     if (bs.total_offset + bs.width > container.bit_width) {
-      // TODO(hankhsu): LRM says return X for invalid slice (defined behavior)
-      // For now, throw until 4-state semantics are implemented
       throw std::runtime_error("bit slice exceeds container width");
     }
     return IntegralExtractSlice(
         container, static_cast<uint32_t>(bs.total_offset), bs.width);
   }
-  if (loc.union_view) {
-    // Full union member read
-    const auto& union_info =
-        (*types_)[loc.union_view->union_type].AsUnpackedUnion();
-    const auto& storage = loc.union_view->union_ptr->storage_bits;
-    uint32_t member_idx = loc.union_view->member_index;
-    TypeId member_type_id = union_info.members[member_idx].type;
-    const auto& member_type = (*types_)[member_type_id];
-
-    // Read member based on its type
-    switch (member_type.Kind()) {
-      case TypeKind::kReal: {
-        // Extract 64 bits and bit_cast to double
-        uint64_t bits = storage.value.empty() ? 0 : storage.value[0];
-        return MakeReal(std::bit_cast<double>(bits));
-      }
-      case TypeKind::kShortReal: {
-        // Extract 32 bits and bit_cast to float
-        uint64_t bits = storage.value.empty() ? 0 : storage.value[0];
-        return MakeShortReal(
-            std::bit_cast<float>(static_cast<uint32_t>(bits & 0xFFFFFFFF)));
-      }
-      case TypeKind::kIntegral: {
-        // Extract member_width bits from storage
-        uint32_t member_width = member_type.AsIntegral().bit_width;
-        return IntegralExtractSlice(storage, 0, member_width);
-      }
-      case TypeKind::kEnum: {
-        // Enum uses its base type's width
-        TypeId base_type = member_type.AsEnum().base_type;
-        uint32_t member_width = (*types_)[base_type].AsIntegral().bit_width;
-        return IntegralExtractSlice(storage, 0, member_width);
-      }
-      default:
-        throw common::InternalError(
-            "ReadPlace", "unsupported union member type");
-    }
+  if (loc.blob_view) {
+    return LoadFromBlob(
+        loc.blob_view->view_type, *loc.blob_view->storage,
+        loc.blob_view->bit_offset, *types_);
   }
   return Clone(*loc.base);
 }
@@ -1729,17 +1813,14 @@ auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     return root_value;
   }
 
-  // This function returns a reference, so BitRange and UnionView are not
-  // allowed (can't return reference to computed values). Callers should use
-  // StoreToPlace instead.
   auto loc = ApplyProjectionsForWrite(state, place, root_value);
   if (loc.bit_slice) {
     throw common::InternalError(
         "WritePlace", "BitRange requires StoreToPlace path");
   }
-  if (loc.union_view) {
+  if (loc.blob_view) {
     throw common::InternalError(
-        "WritePlace", "UnionView requires StoreToPlace path");
+        "WritePlace", "BlobView requires StoreToPlace path");
   }
   return *loc.base;
 }
@@ -1757,17 +1838,11 @@ void Interpreter::StoreToPlace(
   auto loc = ApplyProjectionsForWrite(state, place, root_value);
   if (loc.bit_slice) {
     const auto& bs = *loc.bit_slice;
-    // Container is union storage if union_view present, otherwise loc.base
-    auto& container = loc.union_view ? loc.union_view->union_ptr->storage_bits
-                                     : AsIntegral(*loc.base);
-    // Overflow-safe check using uint64_t arithmetic
+    auto& container =
+        loc.blob_view ? *loc.blob_view->storage : AsIntegral(*loc.base);
     if (bs.total_offset + bs.width > container.bit_width) {
-      // TODO(hankhsu): LRM defines write behavior for invalid slice
-      // For now, throw until 4-state semantics are implemented
       throw std::runtime_error("bit slice exceeds container width");
     }
-    // Validate value is integral with matching width (sanity check - MIR
-    // guarantees this)
     if (!IsIntegral(value)) {
       throw common::InternalError(
           "StoreToPlace", "writing non-integral value to bit slice");
@@ -1776,95 +1851,26 @@ void Interpreter::StoreToPlace(
     if (val_integral.bit_width != bs.width) {
       throw common::InternalError("StoreToPlace", "bit slice width mismatch");
     }
-    if (loc.union_view) {
-      // Write to union storage
-      loc.union_view->union_ptr->storage_bits = IntegralInsertSlice(
+    if (loc.blob_view) {
+      *loc.blob_view->storage = IntegralInsertSlice4State(
           container, val_integral, static_cast<uint32_t>(bs.total_offset),
           bs.width);
     } else {
-      *loc.base = IntegralInsertSlice(
+      *loc.base = IntegralInsertSlice4State(
           container, val_integral, static_cast<uint32_t>(bs.total_offset),
           bs.width);
     }
-  } else if (loc.union_view) {
-    // Full union member write
+  } else if (loc.blob_view) {
+    // Float policy check on root union
     const auto& union_info =
-        (*types_)[loc.union_view->union_type].AsUnpackedUnion();
-    auto& storage = loc.union_view->union_ptr->storage_bits;
-    uint32_t member_idx = loc.union_view->member_index;
-    TypeId member_type_id = union_info.members[member_idx].type;
-    const auto& member_type = (*types_)[member_type_id];
-
-    // Check for X/Z in float-containing unions
-    if (union_info.contains_float && IsIntegral(value)) {
-      const auto& val_int = AsIntegral(value);
-      if (!val_int.IsKnown()) {
-        throw std::runtime_error("X/Z write to float-containing union");
-      }
+        (*types_)[loc.blob_view->root_union_type].AsUnpackedUnion();
+    if (union_info.contains_float &&
+        ValueContainsXZ(value, loc.blob_view->view_type, *types_)) {
+      throw std::runtime_error("X/Z write to float-containing union");
     }
-
-    // Write member based on its type
-    switch (member_type.Kind()) {
-      case TypeKind::kReal: {
-        // Convert real to bits and store in storage
-        if (!IsReal(value)) {
-          throw common::InternalError(
-              "StoreToPlace", "writing non-real to real union member");
-        }
-        auto bits = std::bit_cast<uint64_t>(AsReal(value).value);
-        // Insert 64 bits at LSB
-        RuntimeIntegral val_bits;
-        val_bits.bit_width = 64;
-        val_bits.value = {bits};
-        val_bits.x_mask = {0};
-        val_bits.z_mask = {0};
-        storage = IntegralInsertSlice(storage, val_bits, 0, 64);
-        break;
-      }
-      case TypeKind::kShortReal: {
-        // Convert shortreal to bits and store in storage
-        if (!IsShortReal(value)) {
-          throw common::InternalError(
-              "StoreToPlace",
-              "writing non-shortreal to shortreal union member");
-        }
-        auto bits = std::bit_cast<uint32_t>(AsShortReal(value).value);
-        // Insert 32 bits at LSB
-        RuntimeIntegral val_bits;
-        val_bits.bit_width = 32;
-        val_bits.value = {bits};
-        val_bits.x_mask = {0};
-        val_bits.z_mask = {0};
-        storage = IntegralInsertSlice(storage, val_bits, 0, 32);
-        break;
-      }
-      case TypeKind::kIntegral: {
-        // Insert member_width bits into storage at LSB
-        if (!IsIntegral(value)) {
-          throw common::InternalError(
-              "StoreToPlace", "writing non-integral to integral union member");
-        }
-        uint32_t member_width = member_type.AsIntegral().bit_width;
-        storage =
-            IntegralInsertSlice(storage, AsIntegral(value), 0, member_width);
-        break;
-      }
-      case TypeKind::kEnum: {
-        // Enum uses its base type's width
-        if (!IsIntegral(value)) {
-          throw common::InternalError(
-              "StoreToPlace", "writing non-integral to enum union member");
-        }
-        TypeId base_type = member_type.AsEnum().base_type;
-        uint32_t member_width = (*types_)[base_type].AsIntegral().bit_width;
-        storage =
-            IntegralInsertSlice(storage, AsIntegral(value), 0, member_width);
-        break;
-      }
-      default:
-        throw common::InternalError(
-            "StoreToPlace", "unsupported union member type");
-    }
+    StoreToBlob(
+        loc.blob_view->view_type, value, *loc.blob_view->storage,
+        loc.blob_view->bit_offset, *types_);
   } else {
     *loc.base = std::move(value);
   }

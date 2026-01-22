@@ -17,33 +17,36 @@ struct BitSlice {
   TypeId element_type;  // From innermost projection
 };
 
-// Track union member view for proper codec dispatch (const version for reads).
-struct ConstUnionView {
-  const RuntimeUnion* union_ptr;
-  uint32_t member_index;
-  TypeId union_type;  // To retrieve UnpackedUnionInfo for codec
+// Generalized blob view for accessing union storage as typed regions (const).
+// Replaces the old ConstUnionView. Once in blob mode, all nested projections
+// (field, index) adjust bit_offset rather than navigating pointers.
+struct ConstBitBlobView {
+  const RuntimeIntegral* storage;
+  uint32_t bit_offset;
+  TypeId view_type;        // Current type being viewed within the blob
+  TypeId root_union_type;  // Outermost union; determines contains_float policy
 };
 
-// Track union member view for proper codec dispatch (mutable version for
-// writes).
-struct UnionView {
-  RuntimeUnion* union_ptr;
-  uint32_t member_index;
-  TypeId union_type;  // To retrieve UnpackedUnionInfo for codec
+// Generalized blob view for accessing union storage as typed regions (mutable).
+struct BitBlobView {
+  RuntimeIntegral* storage;
+  uint32_t bit_offset;
+  TypeId view_type;        // Current type being viewed within the blob
+  TypeId root_union_type;  // Outermost union; determines contains_float policy
 };
 
 // Location for read operations (const pointer to base).
 struct ConstLocation {
   const RuntimeValue* base = nullptr;
   std::optional<BitSlice> bit_slice;
-  std::optional<ConstUnionView> union_view;
+  std::optional<ConstBitBlobView> blob_view;
 };
 
 // Location for write operations (mutable pointer to base).
 struct Location {
   RuntimeValue* base = nullptr;
   std::optional<BitSlice> bit_slice;
-  std::optional<UnionView> union_view;
+  std::optional<BitBlobView> blob_view;
 };
 
 }  // namespace lyra::mir::interp
