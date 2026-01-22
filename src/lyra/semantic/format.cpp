@@ -182,42 +182,6 @@ auto GetAutoPadChar(const RuntimeIntegral& val) -> char {
   return '0';
 }
 
-// Convert integral to ASCII string for %s format.
-// LRM 21.2.1.7: Interpret bits as 8-bit ASCII codes, LSB-aligned.
-// Leading zero bytes are skipped.
-auto IntegralToAscii(const RuntimeIntegral& val) -> std::string {
-  if (val.IsX() || val.IsZ()) {
-    // X/Z values can't be meaningfully converted to ASCII
-    return val.IsX() ? "x" : "z";
-  }
-
-  std::string result;
-  // Process bytes from MSB to LSB, skip leading zeros
-  bool found_nonzero = false;
-
-  // Calculate number of bytes needed
-  size_t num_bytes = (val.bit_width + 7) / 8;
-
-  for (size_t byte_idx = num_bytes; byte_idx > 0; --byte_idx) {
-    size_t bit_offset = (byte_idx - 1) * 8;
-    size_t word_idx = bit_offset / 64;
-    size_t bit_in_word = bit_offset % 64;
-
-    uint8_t byte_val = 0;
-    if (word_idx < val.value.size()) {
-      byte_val =
-          static_cast<uint8_t>((val.value[word_idx] >> bit_in_word) & 0xFF);
-    }
-
-    if (byte_val != 0 || found_nonzero) {
-      found_nonzero = true;
-      result += static_cast<char>(byte_val);
-    }
-  }
-
-  return result;
-}
-
 // Format an integral value according to spec.
 auto FormatIntegral(
     const RuntimeIntegral& val, const FormatSpec& spec, bool is_signed)
@@ -240,7 +204,7 @@ auto FormatIntegral(
       break;
     case FormatKind::kString:
       // LRM 21.2.1.7: %s interprets bits as ASCII characters
-      result = IntegralToAscii(val);
+      result = PackedToStringBytes(val);
       break;
     case FormatKind::kReal:
     case FormatKind::kLiteral:
@@ -285,6 +249,41 @@ auto AutoFormatIntegral(const RuntimeIntegral& val, bool is_signed)
 }
 
 }  // namespace
+
+auto PackedToStringBytes(const RuntimeIntegral& val) -> std::string {
+  if (val.IsX() || val.IsZ()) {
+    // X/Z values can't be meaningfully converted to ASCII
+    return val.IsX() ? "x" : "z";
+  }
+
+  std::string result;
+  // Process bytes from MSB to LSB, skip leading zeros
+  bool found_nonzero = false;
+
+  // Calculate number of bytes needed
+  size_t num_bytes = (val.bit_width + 7) / 8;
+
+  for (size_t byte_idx = num_bytes; byte_idx > 0; --byte_idx) {
+    // Byte extraction never crosses 64-bit word boundaries because bit_offset
+    // is always a multiple of 8, making bit_in_word one of {0,8,16,...,56}.
+    size_t bit_offset = (byte_idx - 1) * 8;
+    size_t word_idx = bit_offset / 64;
+    size_t bit_in_word = bit_offset % 64;
+
+    uint8_t byte_val = 0;
+    if (word_idx < val.value.size()) {
+      byte_val =
+          static_cast<uint8_t>((val.value[word_idx] >> bit_in_word) & 0xFF);
+    }
+
+    if (byte_val != 0 || found_nonzero) {
+      found_nonzero = true;
+      result += static_cast<char>(byte_val);
+    }
+  }
+
+  return result;
+}
 
 auto FormatValue(
     const RuntimeValue& value, const FormatSpec& spec, bool is_signed)

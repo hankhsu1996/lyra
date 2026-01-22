@@ -67,6 +67,14 @@ auto FormatDefault(const RuntimeValue& value, bool is_signed) -> ByteBuffer;
 auto FormatMessage(std::string_view fmt, std::span<const FormatArg> args)
     -> std::expected<FormatResult, FormatError>;
 
+// Convert packed integral to ASCII string (byte extraction).
+// LRM 21.2.1.7: Interpret bits as 8-bit ASCII codes, MSB-first.
+// - Leading zero bytes are skipped; subsequent zeros become NUL chars.
+// - X/Z handling: If ANY bit is X/Z, returns single "x" or "z" string.
+//   This is a simplification; the LRM doesn't specify per-byte X/Z handling
+//   for string casts, so we collapse to a single unknown indicator.
+auto PackedToStringBytes(const RuntimeIntegral& val) -> std::string;
+
 namespace detail {
 
 // Token from parsing a format string.

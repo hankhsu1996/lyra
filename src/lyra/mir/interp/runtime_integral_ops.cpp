@@ -168,6 +168,31 @@ auto MakeUnknownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   return result;
 }
 
+auto StringBytesToIntegral(std::string_view str, uint32_t bit_width)
+    -> RuntimeIntegral {
+  auto result = MakeKnownIntegral(bit_width);
+  size_t num_bytes = (bit_width + 7) / 8;
+
+  // Pack bytes from string into integral, MSB first.
+  // First character goes to most significant byte.
+  for (size_t i = 0; i < str.size() && i < num_bytes; ++i) {
+    // Target bit offset for this byte (MSB-aligned)
+    size_t byte_idx = num_bytes - 1 - i;
+    size_t bit_offset = byte_idx * 8;
+    size_t word_idx = bit_offset / 64;
+    size_t bit_in_word = bit_offset % 64;
+
+    if (word_idx < result.value.size()) {
+      auto byte_val = static_cast<uint8_t>(str[i]);
+      result.value[word_idx] |= static_cast<uint64_t>(byte_val) << bit_in_word;
+    }
+  }
+
+  // Ensure normalization when bit_width isn't a multiple of 8
+  MaskTopWord(result.value, bit_width);
+  return result;
+}
+
 auto IntegralAdd(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width)
     -> RuntimeIntegral {

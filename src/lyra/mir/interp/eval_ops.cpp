@@ -10,6 +10,7 @@
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -597,6 +598,27 @@ auto EvalCast(
           "EvalCast", "real source type but operand is not real");
     }
     return MakeShortReal(RealToShortReal(AsReal(operand)).value);
+  }
+
+  // Packed -> String conversion (byte extraction)
+  bool tgt_is_string = target_type.Kind() == TypeKind::kString;
+  if (src_is_packed && tgt_is_string) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalCast", "packed source type but operand is not integral");
+    }
+    return MakeString(semantic::PackedToStringBytes(AsIntegral(operand)));
+  }
+
+  // String -> Packed conversion (byte packing)
+  bool src_is_string = source_type.Kind() == TypeKind::kString;
+  if (src_is_string && tgt_is_packed) {
+    if (!IsString(operand)) {
+      throw common::InternalError(
+          "EvalCast", "string source type but operand is not string");
+    }
+    uint32_t target_width = PackedBitWidth(target_type, arena);
+    return StringBytesToIntegral(AsString(operand).value, target_width);
   }
 
   // Packed -> Packed conversion (existing logic)

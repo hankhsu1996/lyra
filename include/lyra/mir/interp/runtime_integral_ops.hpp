@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 #include "lyra/mir/interp/runtime_value.hpp"
 
@@ -12,6 +13,11 @@ auto MakeKnownIntegral(uint32_t bit_width) -> RuntimeIntegral;
 // Create an unknown (all-X) integral result.
 // Use this for operations with X/Z operands.
 auto MakeUnknownIntegral(uint32_t bit_width) -> RuntimeIntegral;
+
+// Convert string bytes to integral (for string literal in packed context).
+// First character is most significant byte, packed into MSB of result.
+auto StringBytesToIntegral(std::string_view str, uint32_t bit_width)
+    -> RuntimeIntegral;
 
 // Arithmetic operations
 auto IntegralAdd(
