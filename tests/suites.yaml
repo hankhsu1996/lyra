@@ -50,6 +50,7 @@ suites:
       - datatypes/packed_struct.yaml
       - datatypes/enum.yaml
       - datatypes/unbased_unsized_literal.yaml
+      - datatypes/typedef.yaml
       - datatypes/wide_integral/arithmetic.yaml
       - datatypes/wide_integral/bitwise.yaml
       - datatypes/wide_integral/shifts.yaml
