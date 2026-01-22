@@ -12,6 +12,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 struct BuiltinTypes {
+  // 2-state bit[1] for MIR control predicates (branch conditions, case
+  // comparisons, validity flags). MIR control predicates are always 2-state
+  // by construction - any SV 4-state-to-boolean conversion happens at the
+  // point of lowering an expression into a control predicate.
   TypeId bit_type;
   TypeId offset_type;
   TypeId string_type;
