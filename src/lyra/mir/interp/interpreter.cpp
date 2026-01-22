@@ -2213,11 +2213,23 @@ auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
 }
 
 auto CreateDesignState(
-    const Arena& arena, const TypeArena& types, const Module& module)
+    const Arena& arena, const TypeArena& types, const Design& design)
     -> DesignState {
   // Collect design slot types by scanning all processes
   StorageCollector collector;
-  for (ProcessId process_id : module.processes) {
+  for (const auto& element : design.elements) {
+    if (const auto* module = std::get_if<Module>(&element)) {
+      for (ProcessId process_id : module->processes) {
+        const auto& process = arena[process_id];
+        for (const BasicBlock& block : process.blocks) {
+          for (const auto& inst : block.instructions) {
+            collector.Visit(inst, arena);
+          }
+        }
+      }
+    }
+  }
+  for (ProcessId process_id : design.init_processes) {
     const auto& process = arena[process_id];
     for (const BasicBlock& block : process.blocks) {
       for (const auto& inst : block.instructions) {
@@ -2228,7 +2240,7 @@ auto CreateDesignState(
 
   // Initialize design storage with default values based on types
   std::vector<RuntimeValue> storage;
-  storage.resize(module.num_module_slots);
+  storage.resize(design.num_design_slots);
   for (size_t i = 0; i < collector.design_types.size(); ++i) {
     if (i < storage.size() && collector.design_types[i]) {
       storage[i] = CreateDefaultValue(types, collector.design_types[i]);
@@ -2274,7 +2286,7 @@ auto RunSimulation(
   }
 
   // Create design state
-  auto design_state = CreateDesignState(mir_arena, types, *module_info->module);
+  auto design_state = CreateDesignState(mir_arena, types, design);
 
   // Create interpreter
   Interpreter interp(&mir_arena, &types);
@@ -2282,6 +2294,12 @@ auto RunSimulation(
     interp.SetOutput(output);
   } else {
     interp.SetOutput(&std::cout);
+  }
+
+  // Run design init processes (package variable initialization)
+  for (ProcessId proc_id : design.init_processes) {
+    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    interp.Run(state);
   }
 
   // Create process states
