@@ -131,6 +131,21 @@ auto MirBuilder::EmitBinary(
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
+auto MirBuilder::EmitCast(
+    mir::Operand source, TypeId source_type, TypeId target_type)
+    -> mir::Operand {
+  if (source_type == target_type) {
+    return source;
+  }
+  mir::Rvalue rvalue{
+      .operands = {std::move(source)},
+      .info =
+          mir::CastRvalueInfo{
+              .source_type = source_type, .target_type = target_type},
+  };
+  return mir::Operand::Use(EmitTemp(target_type, std::move(rvalue)));
+}
+
 auto MirBuilder::EmitIndexValidity(
     mir::Operand index, int64_t lower, int64_t upper, bool check_known)
     -> mir::Operand {

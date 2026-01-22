@@ -59,6 +59,10 @@ class MirBuilder {
       mir::BinaryOp op, mir::Operand lhs, mir::Operand rhs, TypeId result_type)
       -> mir::Operand;
 
+  // Emit a cast operation and materialize to temp.
+  auto EmitCast(mir::Operand source, TypeId source_type, TypeId target_type)
+      -> mir::Operand;
+
   // Emit IndexValidity rvalue: computes "index is valid access" predicate.
   // Returns 1-bit 2-state bool: (lower <= index <= upper) && is_known(index).
   auto EmitIndexValidity(
