@@ -851,10 +851,8 @@ auto LowerExpression(
       switch (conv.conversionKind) {
         case CK::Implicit:
         case CK::Propagated:
-          break;
         case CK::Explicit:
-          ctx->sink->Error(span, "explicit casts not yet supported");
-          return hir::kInvalidExpressionId;
+          break;
         case CK::StreamingConcat:
           ctx->sink->Error(span, "streaming concatenation not supported");
           return hir::kInvalidExpressionId;

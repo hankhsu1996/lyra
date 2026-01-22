@@ -62,6 +62,7 @@ suites:
       - datatypes/real_types.yaml
       - datatypes/shortreal_types.yaml
       - datatypes/realtime_types.yaml
+      - datatypes/arbitrary_width.yaml
       - datatypes/wide_integral/arithmetic.yaml
       - datatypes/wide_integral/bitwise.yaml
       - datatypes/wide_integral/shifts.yaml
