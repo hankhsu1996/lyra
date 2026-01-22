@@ -179,6 +179,11 @@ auto ParseLyraVarOutput(const std::string& output)
   std::string clean_output;
   std::map<std::string, ExtractedValue> variables;
 
+  // Check if original output ends with newline - we need this to know
+  // whether to add a trailing newline to the clean output
+  bool output_ends_with_newline =
+      !output.empty() && output.back() == '\n';
+
   std::istringstream stream(output);
   std::string line;
   bool first_clean_line = true;
@@ -199,7 +204,8 @@ auto ParseLyraVarOutput(const std::string& output)
       }
       clean_output += line;
       first_clean_line = false;
-      // This line had user content and ended with \n (since getline split here)
+      // Assume this line had user content and ended with \n, but we'll
+      // correct this assumption at the end using output_ends_with_newline
       user_ends_with_newline = true;
     } else if (var_pos == 0) {
       // Line starts with __LYRA_VAR: - previous user content ended with \n
@@ -219,8 +225,11 @@ auto ParseLyraVarOutput(const std::string& output)
     }
   }
 
-  // Add trailing newline only if user content should have one
-  if (user_ends_with_newline && !first_clean_line) {
+  // Add trailing newline only if:
+  // 1. User content should have one (user_ends_with_newline)
+  // 2. There was some clean output (!first_clean_line)
+  // 3. The original output actually ended with a newline
+  if (user_ends_with_newline && !first_clean_line && output_ends_with_newline) {
     clean_output += '\n';
   }
 

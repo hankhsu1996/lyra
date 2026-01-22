@@ -100,15 +100,30 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
         data_ptr = null_ptr;
       }
 
-      // Call LyraPrintValue(format, data, width, is_signed, x_mask, z_mask)
+      // Call LyraPrintValue(format, data, width, is_signed,
+      //                     field_width, precision, zero_pad, left_align,
+      //                     x_mask, z_mask)
       auto* format_val =
           llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
       auto* width_val = llvm::ConstantInt::get(i32_ty, width);
       auto* signed_val = llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0);
 
+      // Pass format modifiers
+      // output_width encodes FormatModifiers.width (optional<int>):
+      // -1 = nullopt (auto-size), 0 = minimal, >0 = explicit width
+      auto* output_width_val =
+          llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1));
+      auto* precision_val =
+          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1));
+      auto* zero_pad_val =
+          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0);
+      auto* left_align_val =
+          llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0);
+
       builder.CreateCall(
           context.GetLyraPrintValue(),
-          {format_val, data_ptr, width_val, signed_val, null_ptr, null_ptr});
+          {format_val, data_ptr, width_val, signed_val, output_width_val,
+           precision_val, zero_pad_val, left_align_val, null_ptr, null_ptr});
     }
   }
 
