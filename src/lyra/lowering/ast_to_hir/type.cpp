@@ -17,14 +17,18 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     return kInvalidTypeId;
   }
 
-  if (type.isVoid()) {
+  // Resolve type aliases once at entry. Use 'canonical' for all type checks
+  // and casts. Keep 'type' for error messages to show the original type name.
+  const auto& canonical = type.getCanonicalType();
+
+  if (canonical.isVoid()) {
     return ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
   }
 
   // Check isPackedArray BEFORE isIntegral - packed arrays are integral in slang
   // but we want them as a distinct type kind with their own range/direction.
-  if (type.isPackedArray()) {
-    const auto& packed = type.as<slang::ast::PackedArrayType>();
+  if (canonical.isPackedArray()) {
+    const auto& packed = canonical.as<slang::ast::PackedArrayType>();
     TypeId element = LowerType(packed.elementType, source, ctx);
     return ctx->type_arena->Intern(
         TypeKind::kPackedArray,
@@ -36,11 +40,8 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
 
   // Check for packed struct BEFORE isIntegral - packed structs are integral in
   // slang but we want them as a distinct type kind with field layout info.
-  // Use getCanonicalType() to resolve type aliases.
-  if (type.getCanonicalType().kind ==
-      slang::ast::SymbolKind::PackedStructType) {
-    const auto& pst =
-        type.getCanonicalType().as<slang::ast::PackedStructType>();
+  if (canonical.kind == slang::ast::SymbolKind::PackedStructType) {
+    const auto& pst = canonical.as<slang::ast::PackedStructType>();
     std::string name = std::string(pst.name);
     std::vector<PackedStructField> fields;
 
@@ -77,20 +78,20 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                                      .is_four_state = pst.isFourState});
   }
 
-  if (type.isIntegral()) {
+  if (canonical.isIntegral()) {
     return ctx->type_arena->Intern(
         TypeKind::kIntegral, IntegralInfo{
-                                 .bit_width = type.getBitWidth(),
-                                 .is_signed = type.isSigned(),
-                                 .is_four_state = type.isFourState()});
+                                 .bit_width = canonical.getBitWidth(),
+                                 .is_signed = canonical.isSigned(),
+                                 .is_four_state = canonical.isFourState()});
   }
 
-  if (type.isString()) {
+  if (canonical.isString()) {
     return ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
   }
 
-  if (type.isFloating()) {
-    const auto& ft = type.as<slang::ast::FloatingType>();
+  if (canonical.isFloating()) {
+    const auto& ft = canonical.as<slang::ast::FloatingType>();
     if (ft.floatKind != slang::ast::FloatingType::Real) {
       ctx->sink->Error(
           source, std::format(
@@ -102,8 +103,8 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
   }
 
   // Must check before isUnpackedArray() - dynamic arrays are a subset
-  if (type.kind == slang::ast::SymbolKind::DynamicArrayType) {
-    const auto& dynamic = type.as<slang::ast::DynamicArrayType>();
+  if (canonical.kind == slang::ast::SymbolKind::DynamicArrayType) {
+    const auto& dynamic = canonical.as<slang::ast::DynamicArrayType>();
     TypeId element = LowerType(dynamic.elementType, source, ctx);
     if (!element) {
       return kInvalidTypeId;
@@ -113,8 +114,8 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
   }
 
   // Must check before isUnpackedArray() - queues are a subset
-  if (type.isQueue()) {
-    const auto& queue = type.as<slang::ast::QueueType>();
+  if (canonical.isQueue()) {
+    const auto& queue = canonical.as<slang::ast::QueueType>();
     TypeId element = LowerType(queue.elementType, source, ctx);
     if (!element) {
       return kInvalidTypeId;
@@ -124,12 +125,12 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
         QueueInfo{.element_type = element, .max_bound = queue.maxBound});
   }
 
-  if (type.isUnpackedArray()) {
-    if (type.kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+  if (canonical.isUnpackedArray()) {
+    if (canonical.kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
       ctx->sink->Error(source, "only fixed-size unpacked arrays supported");
       return kInvalidTypeId;
     }
-    const auto& array = type.as<slang::ast::FixedSizeUnpackedArrayType>();
+    const auto& array = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
     TypeId element = LowerType(array.elementType, source, ctx);
     return ctx->type_arena->Intern(
         TypeKind::kUnpackedArray,
@@ -139,9 +140,8 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                 .left = array.range.left, .right = array.range.right}});
   }
 
-  if (type.isUnpackedStruct()) {
-    const auto& ust =
-        type.getCanonicalType().as<slang::ast::UnpackedStructType>();
+  if (canonical.isUnpackedStruct()) {
+    const auto& ust = canonical.as<slang::ast::UnpackedStructType>();
     std::string name = std::string(ust.name);
     std::vector<StructField> fields;
 
@@ -159,7 +159,7 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
             .name = std::move(name), .fields = std::move(fields)});
   }
 
-  if (type.isStruct()) {
+  if (canonical.isStruct()) {
     ctx->sink->Error(source, "only packed and unpacked structs supported");
     return kInvalidTypeId;
   }
