@@ -95,16 +95,16 @@ auto RealToIntegral(
     -> RuntimeIntegral {
   assert(target_width > 0 && "RealToIntegral: target_width must be positive");
 
-  // Truncate toward zero (C++ static_cast semantics for floating → int)
+  // Truncate toward zero (C++ static_cast semantics for floating -> int)
   // Handle overflow by clamping to representable range
   double val = std::trunc(src.value);
 
   // Handle special cases first
   if (std::isnan(val)) {
-    return MakeKnownIntegral(target_width);  // NaN → 0
+    return MakeKnownIntegral(target_width);  // NaN -> 0
   }
   if (std::isinf(val)) {
-    // +Inf → max value, -Inf → min value (or 0 for unsigned)
+    // +Inf -> max value, -Inf -> min value (or 0 for unsigned)
     auto result = MakeKnownIntegral(target_width);
     if (val > 0) {
       // Fill with all 1s, then mask for correct width
@@ -120,14 +120,14 @@ auto RealToIntegral(
         }
       }
     } else if (target_signed) {
-      // -Inf → min negative (sign bit set, rest 0)
+      // -Inf -> min negative (sign bit set, rest 0)
       size_t sign_word = (target_width - 1) / 64;
       size_t sign_bit = (target_width - 1) % 64;
       if (sign_word < result.value.size()) {
         result.value[sign_word] = uint64_t{1} << sign_bit;
       }
     }
-    // -Inf with unsigned → 0 (already initialized)
+    // -Inf with unsigned -> 0 (already initialized)
     return result;
   }
 
@@ -218,7 +218,7 @@ auto RealToIntegral(
 auto IntegralToReal(const RuntimeIntegral& src, bool src_is_signed)
     -> RuntimeReal {
   if (!src.IsKnown()) {
-    // X/Z → 0.0 (matches SV semantics for 4-state to real conversion)
+    // X/Z -> 0.0 (matches SV semantics for 4-state to real conversion)
     return {.value = 0.0};
   }
 
@@ -267,6 +267,111 @@ auto IntegralToReal(const RuntimeIntegral& src, bool src_is_signed)
 
 auto RealIsTrue(const RuntimeReal& op) -> bool {
   return op.value != 0.0;
+}
+
+auto ShortRealAdd(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeShortReal {
+  return {.value = lhs.value + rhs.value};
+}
+
+auto ShortRealSub(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeShortReal {
+  return {.value = lhs.value - rhs.value};
+}
+
+auto ShortRealMul(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeShortReal {
+  return {.value = lhs.value * rhs.value};
+}
+
+auto ShortRealDiv(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeShortReal {
+  return {.value = lhs.value / rhs.value};
+}
+
+auto ShortRealNeg(const RuntimeShortReal& op) -> RuntimeShortReal {
+  return {.value = -op.value};
+}
+
+auto ShortRealPlus(const RuntimeShortReal& op) -> RuntimeShortReal {
+  return {.value = op.value};
+}
+
+auto ShortRealEq(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value == rhs.value);
+}
+
+auto ShortRealNe(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value != rhs.value);
+}
+
+auto ShortRealLt(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value < rhs.value);
+}
+
+auto ShortRealLe(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value <= rhs.value);
+}
+
+auto ShortRealGt(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value > rhs.value);
+}
+
+auto ShortRealGe(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value >= rhs.value);
+}
+
+auto ShortRealLogicalAnd(
+    const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value != 0.0F && rhs.value != 0.0F);
+}
+
+auto ShortRealLogicalOr(
+    const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeIntegral {
+  return Make1BitResult(lhs.value != 0.0F || rhs.value != 0.0F);
+}
+
+auto ShortRealLogicalNot(const RuntimeShortReal& op) -> RuntimeIntegral {
+  return Make1BitResult(op.value == 0.0F);
+}
+
+auto ShortRealPower(const RuntimeShortReal& lhs, const RuntimeShortReal& rhs)
+    -> RuntimeShortReal {
+  return {.value = std::powf(lhs.value, rhs.value)};
+}
+
+auto ShortRealToIntegral(
+    const RuntimeShortReal& src, uint32_t target_width, bool target_signed)
+    -> RuntimeIntegral {
+  // Reuse real logic by converting to double
+  RuntimeReal r{.value = static_cast<double>(src.value)};
+  return RealToIntegral(r, target_width, target_signed);
+}
+
+auto IntegralToShortReal(const RuntimeIntegral& src, bool src_is_signed)
+    -> RuntimeShortReal {
+  RuntimeReal r = IntegralToReal(src, src_is_signed);
+  return {.value = static_cast<float>(r.value)};
+}
+
+auto ShortRealToReal(const RuntimeShortReal& src) -> RuntimeReal {
+  return {.value = static_cast<double>(src.value)};
+}
+
+auto RealToShortReal(const RuntimeReal& src) -> RuntimeShortReal {
+  return {.value = static_cast<float>(src.value)};
+}
+
+auto ShortRealIsTrue(const RuntimeShortReal& op) -> bool {
+  return op.value != 0.0F;
 }
 
 }  // namespace lyra::mir::interp

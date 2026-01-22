@@ -428,27 +428,8 @@ auto LowerCast(
   TypeId source_type = operand_expr.type;
   TypeId target_type = expr.type;
 
-  const auto& src = (*ctx.type_arena)[source_type];
-  const auto& tgt = (*ctx.type_arena)[target_type];
-
-  // These checks are invariants - unsupported types should have been rejected
-  // in AST->HIR lowering. If we reach here, it's a compiler bug.
-  // Valid casts: packed↔packed, packed↔real, real↔real
-  bool src_ok = IsPacked(src) || src.Kind() == TypeKind::kReal;
-  bool tgt_ok = IsPacked(tgt) || tgt.Kind() == TypeKind::kReal;
-  if (!src_ok) {
-    throw common::InternalError(
-        "LowerCast",
-        "non-packed/non-real source should have been rejected in AST->HIR");
-  }
-  if (!tgt_ok) {
-    throw common::InternalError(
-        "LowerCast",
-        "non-packed/non-real target should have been rejected in AST->HIR");
-  }
-
-  // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)
-  // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
+  // Note: 4-state -> 2-state converts X/Z to 0 (lossy but well-defined)
+  // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
 
   mir::Rvalue rvalue{
       .operands = {operand},

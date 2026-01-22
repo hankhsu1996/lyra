@@ -92,14 +92,13 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
 
   if (canonical.isFloating()) {
     const auto& ft = canonical.as<slang::ast::FloatingType>();
-    if (ft.floatKind != slang::ast::FloatingType::Real) {
-      ctx->sink->Error(
-          source, std::format(
-                      "unsupported floating type '{}' (only 'real' supported)",
-                      type.toString()));
-      return kInvalidTypeId;
+    switch (ft.floatKind) {
+      case slang::ast::FloatingType::Real:
+      case slang::ast::FloatingType::RealTime:
+        return ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
+      case slang::ast::FloatingType::ShortReal:
+        return ctx->type_arena->Intern(TypeKind::kShortReal, std::monostate{});
     }
-    return ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
   }
 
   // Must check before isUnpackedArray() - dynamic arrays are a subset

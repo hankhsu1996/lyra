@@ -863,7 +863,7 @@ auto LowerExpression(
           return hir::kInvalidExpressionId;
       }
 
-      // Handle StringLiteral → string conversion specially.
+      // Handle StringLiteral -> string conversion specially.
       // Slang represents string literals as bit[N:0] internally, then wraps
       // with Conversion to string. We extract the byte content directly.
       const slang::ast::Type& tgt_type = expr.type->getCanonicalType();
@@ -887,19 +887,21 @@ auto LowerExpression(
       }
 
       // Validate source and target types for conversions
-      // Support: integral↔integral, integral↔real, real↔real
+      // Support: integral<->integral, integral<->float, float<->float
+      // (float = real, shortreal, realtime)
       const slang::ast::Type& src_type =
           conv.operand().type->getCanonicalType();
 
       bool src_ok = src_type.isIntegral() || src_type.isFloating();
       bool tgt_ok = tgt_type.isIntegral() || tgt_type.isFloating();
       if (!src_ok || !tgt_ok) {
-        ctx->sink->Error(span, "conversion requires integral or real types");
+        ctx->sink->Error(
+            span, "conversion requires integral or floating types");
         return hir::kInvalidExpressionId;
       }
-      // Note: 4-state → 2-state converts X/Z to 0 (lossy but well-defined)
-      // Note: 2-state → 4-state is lossless (no X/Z bits introduced)
-      // Note: real → integral truncates toward zero
+      // Note: 4-state -> 2-state converts X/Z to 0 (lossy but well-defined)
+      // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
+      // Note: real -> integral truncates toward zero
 
       hir::ExpressionId operand =
           LowerExpression(conv.operand(), registrar, ctx);

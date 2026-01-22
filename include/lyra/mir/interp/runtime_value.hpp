@@ -12,6 +12,7 @@ namespace lyra::mir::interp {
 using RuntimeIntegral = semantic::RuntimeIntegral;
 using RuntimeString = semantic::RuntimeString;
 using RuntimeReal = semantic::RuntimeReal;
+using RuntimeShortReal = semantic::RuntimeShortReal;
 using RuntimeStruct = semantic::RuntimeStruct;
 using RuntimeArray = semantic::RuntimeArray;
 using RuntimeValue = semantic::RuntimeValue;
@@ -24,6 +25,7 @@ using semantic::MakeIntegralFromConstant;
 using semantic::MakeIntegralSigned;
 using semantic::MakeIntegralX;
 using semantic::MakeReal;
+using semantic::MakeShortReal;
 using semantic::MakeString;
 using semantic::MakeStruct;
 
@@ -31,6 +33,7 @@ using semantic::MakeStruct;
 using semantic::IsArray;
 using semantic::IsIntegral;
 using semantic::IsReal;
+using semantic::IsShortReal;
 using semantic::IsString;
 using semantic::IsStruct;
 
@@ -38,6 +41,7 @@ using semantic::IsStruct;
 using semantic::AsArray;
 using semantic::AsIntegral;
 using semantic::AsReal;
+using semantic::AsShortReal;
 using semantic::AsString;
 using semantic::AsStruct;
 

@@ -297,6 +297,12 @@ auto FormatValue(
     return FormatReal(AsReal(value), spec);
   }
 
+  if (IsShortReal(value)) {
+    // Format shortreal as double for display
+    RuntimeReal r{.value = static_cast<double>(AsShortReal(value).value)};
+    return FormatReal(r, spec);
+  }
+
   if (IsString(value)) {
     return FormatString(AsString(value), spec);
   }
@@ -312,6 +318,10 @@ auto FormatDefault(const RuntimeValue& value, bool is_signed) -> ByteBuffer {
 
   if (IsReal(value)) {
     return std::format("{:g}", AsReal(value).value);
+  }
+
+  if (IsShortReal(value)) {
+    return std::format("{:g}", static_cast<double>(AsShortReal(value).value));
   }
 
   if (IsString(value)) {

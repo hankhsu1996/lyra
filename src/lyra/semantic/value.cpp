@@ -189,6 +189,10 @@ auto MakeReal(double val) -> RuntimeValue {
   return RuntimeReal{.value = val};
 }
 
+auto MakeShortReal(float val) -> RuntimeValue {
+  return RuntimeShortReal{.value = val};
+}
+
 auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue {
   auto s = std::make_unique<RuntimeStruct>();
   s->fields = std::move(fields);
@@ -212,6 +216,8 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue {
         } else if constexpr (std::is_same_v<T, RuntimeString>) {
           return val;
         } else if constexpr (std::is_same_v<T, RuntimeReal>) {
+          return val;  // Trivial copy
+        } else if constexpr (std::is_same_v<T, RuntimeShortReal>) {
           return val;  // Trivial copy
         } else if constexpr (std::is_same_v<
                                  T, std::unique_ptr<RuntimeStruct>>) {
@@ -243,6 +249,10 @@ auto IsString(const RuntimeValue& v) -> bool {
 
 auto IsReal(const RuntimeValue& v) -> bool {
   return std::holds_alternative<RuntimeReal>(v);
+}
+
+auto IsShortReal(const RuntimeValue& v) -> bool {
+  return std::holds_alternative<RuntimeShortReal>(v);
 }
 
 auto IsStruct(const RuntimeValue& v) -> bool {
@@ -277,6 +287,14 @@ auto AsReal(const RuntimeValue& v) -> const RuntimeReal& {
   return std::get<RuntimeReal>(v);
 }
 
+auto AsShortReal(RuntimeValue& v) -> RuntimeShortReal& {
+  return std::get<RuntimeShortReal>(v);
+}
+
+auto AsShortReal(const RuntimeValue& v) -> const RuntimeShortReal& {
+  return std::get<RuntimeShortReal>(v);
+}
+
 auto AsStruct(RuntimeValue& v) -> RuntimeStruct& {
   return *std::get<std::unique_ptr<RuntimeStruct>>(v);
 }
@@ -305,6 +323,8 @@ auto ToString(const RuntimeValue& v) -> std::string {
           return val.value;
         } else if constexpr (std::is_same_v<T, RuntimeReal>) {
           return std::format("{:g}", val.value);
+        } else if constexpr (std::is_same_v<T, RuntimeShortReal>) {
+          return std::format("{:g}", static_cast<double>(val.value));
         } else if constexpr (std::is_same_v<
                                  T, std::unique_ptr<RuntimeStruct>>) {
           std::string result = "'{";
