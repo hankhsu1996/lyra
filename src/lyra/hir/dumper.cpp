@@ -530,6 +530,14 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kBitCast: {
+      const auto& data = std::get<BitCastExpressionData>(expr.data);
+      *out_ << "bitcast<" << TypeString(expr.type) << ">(";
+      Dump(data.operand);
+      *out_ << ")";
+      break;
+    }
+
     case ExpressionKind::kSystemCall: {
       const auto& data = std::get<SystemCallExpressionData>(expr.data);
       std::visit(
