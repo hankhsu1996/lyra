@@ -24,6 +24,29 @@ enum class UnaryOp {
   kReductionNor,
   kReductionXor,
   kReductionXnor,
+
+  // Math functions (real)
+  kLn,
+  kLog10,
+  kExp,
+  kSqrt,
+  kFloor,
+  kCeil,
+  kSin,
+  kCos,
+  kTan,
+  kAsin,
+  kAcos,
+  kAtan,
+  kSinh,
+  kCosh,
+  kTanh,
+  kAsinh,
+  kAcosh,
+  kAtanh,
+
+  // Math functions (integral)
+  kClog2,
 };
 
 enum class BinaryOp {
@@ -64,6 +87,10 @@ enum class BinaryOp {
   kLogicalShiftRight,
   kArithmeticShiftLeft,
   kArithmeticShiftRight,
+
+  // Math functions (real binary)
+  kAtan2,
+  kHypot,
 };
 
 inline auto ToString(UnaryOp op) -> const char* {
@@ -96,6 +123,44 @@ inline auto ToString(UnaryOp op) -> const char* {
       return "^";
     case UnaryOp::kReductionXnor:
       return "~^";
+    case UnaryOp::kLn:
+      return "$ln";
+    case UnaryOp::kLog10:
+      return "$log10";
+    case UnaryOp::kExp:
+      return "$exp";
+    case UnaryOp::kSqrt:
+      return "$sqrt";
+    case UnaryOp::kFloor:
+      return "$floor";
+    case UnaryOp::kCeil:
+      return "$ceil";
+    case UnaryOp::kSin:
+      return "$sin";
+    case UnaryOp::kCos:
+      return "$cos";
+    case UnaryOp::kTan:
+      return "$tan";
+    case UnaryOp::kAsin:
+      return "$asin";
+    case UnaryOp::kAcos:
+      return "$acos";
+    case UnaryOp::kAtan:
+      return "$atan";
+    case UnaryOp::kSinh:
+      return "$sinh";
+    case UnaryOp::kCosh:
+      return "$cosh";
+    case UnaryOp::kTanh:
+      return "$tanh";
+    case UnaryOp::kAsinh:
+      return "$asinh";
+    case UnaryOp::kAcosh:
+      return "$acosh";
+    case UnaryOp::kAtanh:
+      return "$atanh";
+    case UnaryOp::kClog2:
+      return "$clog2";
   }
   return "?";
 }
@@ -158,6 +223,10 @@ inline auto ToString(BinaryOp op) -> const char* {
       return "<<<";
     case BinaryOp::kArithmeticShiftRight:
       return ">>>";
+    case BinaryOp::kAtan2:
+      return "$atan2";
+    case BinaryOp::kHypot:
+      return "$hypot";
   }
   return "?";
 }

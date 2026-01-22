@@ -90,6 +90,86 @@ auto RealPower(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal {
   return {.value = std::pow(lhs.value, rhs.value)};
 }
 
+auto RealLn(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::log(op.value)};
+}
+
+auto RealLog10(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::log10(op.value)};
+}
+
+auto RealExp(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::exp(op.value)};
+}
+
+auto RealSqrt(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::sqrt(op.value)};
+}
+
+auto RealFloor(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::floor(op.value)};
+}
+
+auto RealCeil(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::ceil(op.value)};
+}
+
+auto RealSin(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::sin(op.value)};
+}
+
+auto RealCos(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::cos(op.value)};
+}
+
+auto RealTan(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::tan(op.value)};
+}
+
+auto RealAsin(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::asin(op.value)};
+}
+
+auto RealAcos(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::acos(op.value)};
+}
+
+auto RealAtan(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::atan(op.value)};
+}
+
+auto RealSinh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::sinh(op.value)};
+}
+
+auto RealCosh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::cosh(op.value)};
+}
+
+auto RealTanh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::tanh(op.value)};
+}
+
+auto RealAsinh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::asinh(op.value)};
+}
+
+auto RealAcosh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::acosh(op.value)};
+}
+
+auto RealAtanh(const RuntimeReal& op) -> RuntimeReal {
+  return {.value = std::atanh(op.value)};
+}
+
+auto RealAtan2(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal {
+  return {.value = std::atan2(lhs.value, rhs.value)};
+}
+
+auto RealHypot(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal {
+  return {.value = std::hypot(lhs.value, rhs.value)};
+}
+
 auto RealToIntegral(
     const RuntimeReal& src, uint32_t target_width, bool target_signed)
     -> RuntimeIntegral {

@@ -33,6 +33,29 @@ auto RealLogicalNot(const RuntimeReal& op) -> RuntimeIntegral;
 // Power operation (uses std::pow, IEEE 754 semantics)
 auto RealPower(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal;
 
+// Math system functions (IEEE 1800-2023 §20.8)
+auto RealLn(const RuntimeReal& op) -> RuntimeReal;
+auto RealLog10(const RuntimeReal& op) -> RuntimeReal;
+auto RealExp(const RuntimeReal& op) -> RuntimeReal;
+auto RealSqrt(const RuntimeReal& op) -> RuntimeReal;
+auto RealFloor(const RuntimeReal& op) -> RuntimeReal;
+auto RealCeil(const RuntimeReal& op) -> RuntimeReal;
+auto RealSin(const RuntimeReal& op) -> RuntimeReal;
+auto RealCos(const RuntimeReal& op) -> RuntimeReal;
+auto RealTan(const RuntimeReal& op) -> RuntimeReal;
+auto RealAsin(const RuntimeReal& op) -> RuntimeReal;
+auto RealAcos(const RuntimeReal& op) -> RuntimeReal;
+auto RealAtan(const RuntimeReal& op) -> RuntimeReal;
+auto RealSinh(const RuntimeReal& op) -> RuntimeReal;
+auto RealCosh(const RuntimeReal& op) -> RuntimeReal;
+auto RealTanh(const RuntimeReal& op) -> RuntimeReal;
+auto RealAsinh(const RuntimeReal& op) -> RuntimeReal;
+auto RealAcosh(const RuntimeReal& op) -> RuntimeReal;
+auto RealAtanh(const RuntimeReal& op) -> RuntimeReal;
+
+auto RealAtan2(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal;
+auto RealHypot(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal;
+
 // Conversions
 // Real -> Integral: truncates toward zero (C++ static_cast semantics)
 auto RealToIntegral(

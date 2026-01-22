@@ -412,119 +412,165 @@ void Dumper::Dump(ExpressionId id) {
 
     case ExpressionKind::kUnaryOp: {
       const auto& data = std::get<UnaryExpressionData>(expr.data);
-      struct UnaryInfo {
-        std::string_view str;
-        bool is_prefix;
-      };
-      auto info = [&]() -> UnaryInfo {
-        switch (data.op) {
-          case UnaryOp::kPlus:
-            return {.str = "+", .is_prefix = true};
-          case UnaryOp::kMinus:
-            return {.str = "-", .is_prefix = true};
-          case UnaryOp::kPreincrement:
-            return {.str = "++", .is_prefix = true};
-          case UnaryOp::kPostincrement:
-            return {.str = "++", .is_prefix = false};
-          case UnaryOp::kPredecrement:
-            return {.str = "--", .is_prefix = true};
-          case UnaryOp::kPostdecrement:
-            return {.str = "--", .is_prefix = false};
-          case UnaryOp::kLogicalNot:
-            return {.str = "!", .is_prefix = true};
-          case UnaryOp::kBitwiseNot:
-            return {.str = "~", .is_prefix = true};
-          case UnaryOp::kReductionAnd:
-            return {.str = "&", .is_prefix = true};
-          case UnaryOp::kReductionNand:
-            return {.str = "~&", .is_prefix = true};
-          case UnaryOp::kReductionOr:
-            return {.str = "|", .is_prefix = true};
-          case UnaryOp::kReductionNor:
-            return {.str = "~|", .is_prefix = true};
-          case UnaryOp::kReductionXor:
-            return {.str = "^", .is_prefix = true};
-          case UnaryOp::kReductionXnor:
-            return {.str = "~^", .is_prefix = true};
-        }
-      }();
-      if (info.is_prefix) {
-        *out_ << info.str;
+      // Math ops use function-call syntax: $fn(operand)
+      const char* fn_name = nullptr;
+      switch (data.op) {
+        case UnaryOp::kLn:
+        case UnaryOp::kLog10:
+        case UnaryOp::kExp:
+        case UnaryOp::kSqrt:
+        case UnaryOp::kFloor:
+        case UnaryOp::kCeil:
+        case UnaryOp::kSin:
+        case UnaryOp::kCos:
+        case UnaryOp::kTan:
+        case UnaryOp::kAsin:
+        case UnaryOp::kAcos:
+        case UnaryOp::kAtan:
+        case UnaryOp::kSinh:
+        case UnaryOp::kCosh:
+        case UnaryOp::kTanh:
+        case UnaryOp::kAsinh:
+        case UnaryOp::kAcosh:
+        case UnaryOp::kAtanh:
+        case UnaryOp::kClog2:
+          fn_name = ToString(data.op);
+          break;
+        default:
+          break;
+      }
+      if (fn_name != nullptr) {
+        *out_ << fn_name << "(";
         Dump(data.operand);
+        *out_ << ")";
       } else {
-        Dump(data.operand);
-        *out_ << info.str;
+        struct UnaryInfo {
+          std::string_view str;
+          bool is_prefix;
+        };
+        auto info = [&]() -> UnaryInfo {
+          switch (data.op) {
+            case UnaryOp::kPlus:
+              return {.str = "+", .is_prefix = true};
+            case UnaryOp::kMinus:
+              return {.str = "-", .is_prefix = true};
+            case UnaryOp::kPreincrement:
+              return {.str = "++", .is_prefix = true};
+            case UnaryOp::kPostincrement:
+              return {.str = "++", .is_prefix = false};
+            case UnaryOp::kPredecrement:
+              return {.str = "--", .is_prefix = true};
+            case UnaryOp::kPostdecrement:
+              return {.str = "--", .is_prefix = false};
+            case UnaryOp::kLogicalNot:
+              return {.str = "!", .is_prefix = true};
+            case UnaryOp::kBitwiseNot:
+              return {.str = "~", .is_prefix = true};
+            case UnaryOp::kReductionAnd:
+              return {.str = "&", .is_prefix = true};
+            case UnaryOp::kReductionNand:
+              return {.str = "~&", .is_prefix = true};
+            case UnaryOp::kReductionOr:
+              return {.str = "|", .is_prefix = true};
+            case UnaryOp::kReductionNor:
+              return {.str = "~|", .is_prefix = true};
+            case UnaryOp::kReductionXor:
+              return {.str = "^", .is_prefix = true};
+            case UnaryOp::kReductionXnor:
+              return {.str = "~^", .is_prefix = true};
+            default:
+              return {.str = "?", .is_prefix = true};
+          }
+        }();
+        if (info.is_prefix) {
+          *out_ << info.str;
+          Dump(data.operand);
+        } else {
+          Dump(data.operand);
+          *out_ << info.str;
+        }
       }
       break;
     }
 
     case ExpressionKind::kBinaryOp: {
       const auto& data = std::get<BinaryExpressionData>(expr.data);
-      *out_ << "(";
-      Dump(data.lhs);
-      std::string_view op_str = [&] {
-        switch (data.op) {
-          case BinaryOp::kAdd:
-            return " + ";
-          case BinaryOp::kSubtract:
-            return " - ";
-          case BinaryOp::kMultiply:
-            return " * ";
-          case BinaryOp::kDivide:
-            return " / ";
-          case BinaryOp::kMod:
-            return " % ";
-          case BinaryOp::kPower:
-            return " ** ";
-          case BinaryOp::kBitwiseAnd:
-            return " & ";
-          case BinaryOp::kBitwiseOr:
-            return " | ";
-          case BinaryOp::kBitwiseXor:
-            return " ^ ";
-          case BinaryOp::kBitwiseXnor:
-            return " ~^ ";
-          case BinaryOp::kLogicalAnd:
-            return " && ";
-          case BinaryOp::kLogicalOr:
-            return " || ";
-          case BinaryOp::kLogicalImplication:
-            return " -> ";
-          case BinaryOp::kLogicalEquivalence:
-            return " <-> ";
-          case BinaryOp::kEqual:
-            return " == ";
-          case BinaryOp::kNotEqual:
-            return " != ";
-          case BinaryOp::kCaseEqual:
-            return " === ";
-          case BinaryOp::kCaseNotEqual:
-            return " !== ";
-          case BinaryOp::kWildcardEqual:
-            return " ==? ";
-          case BinaryOp::kWildcardNotEqual:
-            return " !=? ";
-          case BinaryOp::kLessThan:
-            return " < ";
-          case BinaryOp::kLessThanEqual:
-            return " <= ";
-          case BinaryOp::kGreaterThan:
-            return " > ";
-          case BinaryOp::kGreaterThanEqual:
-            return " >= ";
-          case BinaryOp::kLogicalShiftLeft:
-            return " << ";
-          case BinaryOp::kLogicalShiftRight:
-            return " >> ";
-          case BinaryOp::kArithmeticShiftLeft:
-            return " <<< ";
-          case BinaryOp::kArithmeticShiftRight:
-            return " >>> ";
-        }
-      }();
-      *out_ << op_str;
-      Dump(data.rhs);
-      *out_ << ")";
+      // Math binary ops use function-call syntax: $fn(lhs, rhs)
+      if (data.op == BinaryOp::kAtan2 || data.op == BinaryOp::kHypot) {
+        *out_ << ToString(data.op) << "(";
+        Dump(data.lhs);
+        *out_ << ", ";
+        Dump(data.rhs);
+        *out_ << ")";
+      } else {
+        *out_ << "(";
+        Dump(data.lhs);
+        std::string_view op_str = [&]() -> std::string_view {
+          switch (data.op) {
+            case BinaryOp::kAdd:
+              return " + ";
+            case BinaryOp::kSubtract:
+              return " - ";
+            case BinaryOp::kMultiply:
+              return " * ";
+            case BinaryOp::kDivide:
+              return " / ";
+            case BinaryOp::kMod:
+              return " % ";
+            case BinaryOp::kPower:
+              return " ** ";
+            case BinaryOp::kBitwiseAnd:
+              return " & ";
+            case BinaryOp::kBitwiseOr:
+              return " | ";
+            case BinaryOp::kBitwiseXor:
+              return " ^ ";
+            case BinaryOp::kBitwiseXnor:
+              return " ~^ ";
+            case BinaryOp::kLogicalAnd:
+              return " && ";
+            case BinaryOp::kLogicalOr:
+              return " || ";
+            case BinaryOp::kLogicalImplication:
+              return " -> ";
+            case BinaryOp::kLogicalEquivalence:
+              return " <-> ";
+            case BinaryOp::kEqual:
+              return " == ";
+            case BinaryOp::kNotEqual:
+              return " != ";
+            case BinaryOp::kCaseEqual:
+              return " === ";
+            case BinaryOp::kCaseNotEqual:
+              return " !== ";
+            case BinaryOp::kWildcardEqual:
+              return " ==? ";
+            case BinaryOp::kWildcardNotEqual:
+              return " !=? ";
+            case BinaryOp::kLessThan:
+              return " < ";
+            case BinaryOp::kLessThanEqual:
+              return " <= ";
+            case BinaryOp::kGreaterThan:
+              return " > ";
+            case BinaryOp::kGreaterThanEqual:
+              return " >= ";
+            case BinaryOp::kLogicalShiftLeft:
+              return " << ";
+            case BinaryOp::kLogicalShiftRight:
+              return " >> ";
+            case BinaryOp::kArithmeticShiftLeft:
+              return " <<< ";
+            case BinaryOp::kArithmeticShiftRight:
+              return " >>> ";
+            default:
+              return " ? ";
+          }
+        }();
+        *out_ << op_str;
+        Dump(data.rhs);
+        *out_ << ")";
+      }
       break;
     }
 

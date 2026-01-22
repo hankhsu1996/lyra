@@ -13,8 +13,10 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     -> RuntimeValue;
 
 // Evaluate a MIR unary operation on a runtime value.
-// Throws InternalError if operand is not integral.
-auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue;
+// result_type and types are needed for $clog2 (determines result width).
+auto EvalUnary(
+    UnaryOp op, const RuntimeValue& operand, TypeId result_type,
+    const TypeArena& types) -> RuntimeValue;
 
 // Evaluate a cast operation (width/sign conversion).
 // Both types must be packed (kIntegral or kPackedArray).
