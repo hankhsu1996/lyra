@@ -61,21 +61,24 @@ jobs:
           disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      - name: Install Clang 20
+      - name: Install LLVM 20
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           . /etc/lsb-release
           echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang-20
+          sudo apt-get install -y clang-20 llvm-20
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo update-alternatives --install /usr/bin/lli lli /usr/bin/lli-20 100
           sudo update-alternatives --set clang++ /usr/bin/clang++-20
           sudo update-alternatives --set clang /usr/bin/clang-20
+          sudo update-alternatives --set lli /usr/bin/lli-20
 
-      - name: Verify Clang version
+      - name: Verify LLVM tools
         run: |
           clang++ --version
+          lli --version
 
       - name: Build
         env:
@@ -87,7 +90,7 @@ jobs:
           fi
           bazel build //... $CACHE_FLAGS
 
-      - name: Test
+      - name: Test (MIR)
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
@@ -96,6 +99,16 @@ jobs:
             CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
           bazel test //tests:mir_dev_tests $CACHE_FLAGS --test_output=errors --verbose_failures
+
+      - name: Test (LLVM)
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          CACHE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //tests:llvm_dev_tests $CACHE_FLAGS --test_output=errors --verbose_failures
 
   # This job always runs and reports success when build is skipped
   # Required for branch protection rules that require this check

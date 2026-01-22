@@ -97,6 +97,16 @@ auto BuildLlvmLoweringInfo(
       continue;
     }
 
+    // Handle string types (no variable inspection yet)
+    if (type.Kind() == TypeKind::kString) {
+      info.slot_types.push_back({
+          .kind = lowering::mir_to_llvm::VarTypeKind::kString,
+          .width = 0,
+          .is_signed = false,
+      });
+      continue;
+    }
+
     // Handle packed integral types
     if (!IsPacked(type)) {
       // Unsupported type - use placeholder for slot_types, skip for variables

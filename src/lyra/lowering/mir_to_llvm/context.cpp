@@ -113,6 +113,57 @@ auto Context::GetLyraSnapshotVars() -> llvm::Function* {
   return lyra_snapshot_vars_;
 }
 
+auto Context::GetLyraStringFromLiteral() -> llvm::Function* {
+  if (lyra_string_from_literal_ == nullptr) {
+    // ptr LyraStringFromLiteral(const char* data, int64_t len)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i64_ty}, false);
+    lyra_string_from_literal_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFromLiteral",
+        llvm_module_.get());
+  }
+  return lyra_string_from_literal_;
+}
+
+auto Context::GetLyraStringCmp() -> llvm::Function* {
+  if (lyra_string_cmp_ == nullptr) {
+    // int32_t LyraStringCmp(ptr a, ptr b)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_string_cmp_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringCmp",
+        llvm_module_.get());
+  }
+  return lyra_string_cmp_;
+}
+
+auto Context::GetLyraStringRetain() -> llvm::Function* {
+  if (lyra_string_retain_ == nullptr) {
+    // ptr LyraStringRetain(ptr handle)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_string_retain_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringRetain",
+        llvm_module_.get());
+  }
+  return lyra_string_retain_;
+}
+
+auto Context::GetLyraStringRelease() -> llvm::Function* {
+  if (lyra_string_release_ == nullptr) {
+    // void LyraStringRelease(ptr handle)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_string_release_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringRelease",
+        llvm_module_.get());
+  }
+  return lyra_string_release_;
+}
+
 auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     -> llvm::AllocaInst* {
   // Check if we already have storage for this place
@@ -140,8 +191,9 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
   if (type.Kind() == TypeKind::kIntegral) {
     llvm_type = GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
   } else if (type.Kind() == TypeKind::kReal) {
-    // Real types (both real and shortreal) are stored as double
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
+  } else if (type.Kind() == TypeKind::kString) {
+    llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
     llvm_type = GetLlvmStorageType(*llvm_context_, width);
@@ -173,6 +225,29 @@ auto Context::GetPlaceStorage(mir::PlaceId place_id) const
 auto Context::TakeOwnership() -> std::pair<
     std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>> {
   return {std::move(llvm_context_), std::move(llvm_module_)};
+}
+
+void Context::RegisterOwnedTemp(llvm::Value* handle) {
+  owned_temps_.push_back(handle);
+}
+
+void Context::ClearOwnedTemps() {
+  owned_temps_.clear();
+}
+
+void Context::ReleaseOwnedTemps() {
+  for (llvm::Value* temp : owned_temps_) {
+    builder_.CreateCall(GetLyraStringRelease(), {temp});
+  }
+  owned_temps_.clear();
+}
+
+StatementScope::StatementScope(Context& ctx) : ctx_(ctx) {
+  ctx_.ClearOwnedTemps();
+}
+
+StatementScope::~StatementScope() {
+  ctx_.ReleaseOwnedTemps();
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

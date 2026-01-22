@@ -171,6 +171,12 @@ auto BuildSlotTypes(const CompilationResult& compilation)
           .width = 64,
           .is_signed = true,
       });
+    } else if (type.Kind() == TypeKind::kString) {
+      slot_types.push_back({
+          .kind = lowering::mir_to_llvm::VarTypeKind::kString,
+          .width = 0,
+          .is_signed = false,
+      });
     } else if (IsPacked(type)) {
       uint32_t width = PackedBitWidth(type, type_arena);
       bool is_signed = IsPackedSigned(type, type_arena);

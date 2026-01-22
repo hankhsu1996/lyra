@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "llvm/IR/IRBuilder.h"
@@ -13,6 +14,24 @@
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
+
+class Context;
+
+// RAII guard for statement-scoped cleanup of owned string temps.
+// Destructor emits LyraStringRelease calls for all registered temps.
+class StatementScope {
+ public:
+  explicit StatementScope(Context& ctx);
+  ~StatementScope();
+
+  StatementScope(const StatementScope&) = delete;
+  auto operator=(const StatementScope&) -> StatementScope& = delete;
+  StatementScope(StatementScope&&) = delete;
+  auto operator=(StatementScope&&) -> StatementScope& = delete;
+
+ private:
+  Context& ctx_;
+};
 
 // Shared context for MIR → LLVM lowering
 class Context {
@@ -46,6 +65,10 @@ class Context {
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRegisterVar() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSnapshotVars() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFromLiteral() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringCmp() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
 
   // Place storage management
   // Returns the alloca for a place, creating it if necessary
@@ -66,6 +89,15 @@ class Context {
     return current_origin_;
   }
 
+  // Register an owned string temp that needs release at end of statement
+  void RegisterOwnedTemp(llvm::Value* handle);
+
+  // Clear owned temps (called by StatementScope constructor)
+  void ClearOwnedTemps();
+
+  // Release all registered owned temps (called by StatementScope destructor)
+  void ReleaseOwnedTemps();
+
  private:
   const mir::Design& design_;
   const mir::Arena& arena_;
@@ -80,12 +112,19 @@ class Context {
   llvm::Function* lyra_print_end_ = nullptr;
   llvm::Function* lyra_register_var_ = nullptr;
   llvm::Function* lyra_snapshot_vars_ = nullptr;
+  llvm::Function* lyra_string_from_literal_ = nullptr;
+  llvm::Function* lyra_string_cmp_ = nullptr;
+  llvm::Function* lyra_string_retain_ = nullptr;
+  llvm::Function* lyra_string_release_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
+
+  // Owned string temps that need release at end of current statement
+  std::vector<llvm::Value*> owned_temps_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -8,12 +8,14 @@ suites:
   llvm_dev:
     backend: llvm
     include_regex:
-      - system_tasks/display.yaml
+      - operators/binary_integral.yaml
+      - operators/binary_string.yaml
 
   mir_dev:
     backend: mir
     include_regex:
-      - operators/binary.yaml
+      - operators/binary_integral.yaml
+      - operators/binary_string.yaml
       - operators/unary.yaml
       - operators/concat.yaml
       - operators/compound_assignment.yaml

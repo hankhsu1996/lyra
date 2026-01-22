@@ -90,7 +90,8 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite definitions.
 
 ```bash
-bazel test //tests:mir_dev_tests --test_output=errors   # Core tests
+bazel test //tests:mir_dev_tests --test_output=errors    # MIR interpreter tests
+bazel test //tests:llvm_dev_tests --test_output=errors   # LLVM JIT backend tests
 ```
 
 ### Ad-Hoc Testing
@@ -98,9 +99,16 @@ bazel test //tests:mir_dev_tests --test_output=errors   # Core tests
 Run a specific test file without modifying suite definitions:
 
 ```bash
+# MIR backend
 bazel test //tests:mir_dev_tests \
   --test_arg=--test_file=control_flow/conditionals.yaml \
   --test_arg=--backend=mir \
+  --test_output=errors
+
+# LLVM backend (use llvm_dev_tests for runtime.so dependency)
+bazel test //tests:llvm_dev_tests \
+  --test_arg=--test_file=operators/binary.yaml \
+  --test_arg=--backend=llvm \
   --test_output=errors
 ```
 

@@ -17,6 +17,7 @@ namespace lyra::lowering::mir_to_llvm {
 enum class VarTypeKind : uint8_t {
   kIntegral,  // int, bit, logic (2-state)
   kReal,      // real, shortreal
+  kString,    // string
 };
 
 // Type info for a design slot (for initialization)
