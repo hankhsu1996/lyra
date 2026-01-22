@@ -158,8 +158,21 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     builder.CreateBr(exit_block);
   }
 
-  // Exit block: register/snapshot variables (if any) then return 0
+  // Exit block: release strings, register/snapshot variables (if any), return 0
   builder.SetInsertPoint(exit_block);
+
+  // Release all string locals to prevent memory leaks
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  for (size_t slot_id = 0; slot_id < input.slot_types.size(); ++slot_id) {
+    if (input.slot_types[slot_id].kind != VarTypeKind::kString) {
+      continue;
+    }
+    if (allocas[slot_id] == nullptr) {
+      continue;
+    }
+    auto* val = builder.CreateLoad(ptr_ty, allocas[slot_id]);
+    builder.CreateCall(context.GetLyraStringRelease(), {val});
+  }
 
   // Register and snapshot tracked variables for test framework inspection
   RegisterAndSnapshotVariables(

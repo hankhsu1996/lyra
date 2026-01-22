@@ -131,3 +131,56 @@ cases:
         le1: 1
         ge2: 1
         le2: 1
+
+  - name: string_assignment_chain
+    description: Tests variable-to-variable string assignment (refcount sharing)
+    sv: |
+      module Test;
+        string a, b;
+        bit eq;
+        initial begin
+          a = "hello";
+          b = a;         // b should get a copy/retained reference to a's value
+          a = "world";   // modifying a shouldn't affect b
+          eq = (b == "hello");  // b should still be "hello"
+        end
+      endmodule
+    expect:
+      variables:
+        eq: 1
+
+  - name: string_reassignment
+    description: Tests multiple reassignments to same variable (releases old values)
+    sv: |
+      module Test;
+        string a;
+        bit eq;
+        initial begin
+          a = "first";
+          a = "second";
+          a = "third";
+          eq = (a == "third");
+        end
+      endmodule
+    expect:
+      variables:
+        eq: 1
+
+  - name: string_comparison_with_literal
+    description: Tests comparison with literal strings (owned temps cleanup)
+    sv: |
+      module Test;
+        string a;
+        bit eq1, eq2, eq3;
+        initial begin
+          a = "hello";
+          eq1 = (a == "hello");
+          eq2 = (a == "world");
+          eq3 = ("hello" == a);
+        end
+      endmodule
+    expect:
+      variables:
+        eq1: 1
+        eq2: 0
+        eq3: 1

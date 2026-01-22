@@ -276,6 +276,16 @@ auto LowerStringBinaryOp(
   llvm::Value* lhs = LowerOperand(context, operands[0]);
   llvm::Value* rhs = LowerOperand(context, operands[1]);
 
+  // Register owned temps (literals) for cleanup at statement end
+  // Constants get a freshly allocated string from LyraStringFromLiteral,
+  // which we own and must release. Place references are borrowed.
+  if (std::holds_alternative<Constant>(operands[0].payload)) {
+    context.RegisterOwnedTemp(lhs);
+  }
+  if (std::holds_alternative<Constant>(operands[1].payload)) {
+    context.RegisterOwnedTemp(rhs);
+  }
+
   // Call LyraStringCmp(lhs, rhs) -> i32
   llvm::Value* cmp_result =
       builder.CreateCall(context.GetLyraStringCmp(), {lhs, rhs}, "strcmp");

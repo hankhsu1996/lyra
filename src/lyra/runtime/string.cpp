@@ -7,9 +7,7 @@
 
 namespace {
 
-// Internal string representation
-// TODO(hankhsu): Phase 2 - implement retain/release for proper memory
-// management
+// Internal string representation with reference counting
 struct LyraStringData {
   char* data;
   uint64_t len;
@@ -33,9 +31,6 @@ extern "C" auto LyraStringFromLiteral(const char* data, int64_t len)
 
   str->len = static_cast<uint64_t>(len);
   str->refcount = 1;
-
-  // TODO(hankhsu): Phase 2 - strings are currently leaked. Add retain/release
-  // and call release when handles go out of scope.
 
   return str;
 }
@@ -61,4 +56,27 @@ extern "C" auto LyraStringCmp(LyraStringHandle a, LyraStringHandle b)
     return 1;
   }
   return 0;
+}
+
+extern "C" auto LyraStringRetain(LyraStringHandle handle) -> LyraStringHandle {
+  if (handle == nullptr) {
+    return nullptr;
+  }
+  auto* str = static_cast<LyraStringData*>(handle);
+  ++str->refcount;
+  return handle;
+}
+
+extern "C" void LyraStringRelease(LyraStringHandle handle) {
+  if (handle == nullptr) {
+    return;
+  }
+  auto* str = static_cast<LyraStringData*>(handle);
+  --str->refcount;
+  if (str->refcount == 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    delete[] str->data;
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    delete str;
+  }
 }
