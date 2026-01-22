@@ -191,9 +191,9 @@ struct InitialModuleInfo {
 };
 
 // Helper: Create DesignState with properly initialized storage.
-// Scans all processes in the module to collect type information for slots.
+// Scans all processes in the design to collect type information for slots.
 auto CreateDesignState(
-    const Arena& arena, const TypeArena& types, const Module& module)
+    const Arena& arena, const TypeArena& types, const Design& design)
     -> DesignState;
 
 // Create a default RuntimeValue for a given type.

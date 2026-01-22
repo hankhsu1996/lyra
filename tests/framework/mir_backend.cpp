@@ -13,6 +13,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
@@ -137,11 +138,18 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   }
 
   // Build variable name to slot index mapping (for variable assertions)
+  // Slot layout: [package vars...] [module vars...]
   std::unordered_map<std::string, size_t> var_slots;
   if (!test_case.expected_values.empty()) {
     if (hir_module == nullptr) {
       result.error_message = "Variable assertions require a module";
       return result;
+    }
+    size_t num_package_vars = 0;
+    for (const auto& element : mir_input.design->elements) {
+      if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+        num_package_vars += pkg->variables.size();
+      }
     }
     for (size_t i = 0; i < hir_module->variables.size(); ++i) {
       const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
@@ -150,7 +158,7 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
             std::format("Duplicate variable name '{}' in module", sym.name);
         return result;
       }
-      var_slots[sym.name] = i;
+      var_slots[sym.name] = num_package_vars + i;
     }
   }
 
@@ -162,30 +170,41 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     return result;
   }
 
-  // Create module storage
+  // Create design storage
   auto design_state = mir::interp::CreateDesignState(
-      *mir_result.mir_arena, *hir_result.type_arena, *module_info->module);
+      *mir_result.mir_arena, *hir_result.type_arena, mir_result.design);
 
-  // Initialize module slots from HIR variable types.
+  // Initialize design slots from HIR variable types.
   // CreateDesignState only initializes slots that are referenced in code; this
   // ensures all declared variables are properly initialized (2-state -> 0,
   // 4-state -> X) even if never used.
   //
-  // INVARIANT: MIR lowering assigns slot IDs sequentially in
-  // hir_module->variables order (see hir_to_mir/module.cpp). If this changes,
-  // initialization will break.
+  // INVARIANT: MIR lowering assigns slot IDs sequentially:
+  //   [0, N_pkg) = package variables, [N_pkg, N_pkg+N_mod) = module variables
+  // (see hir_to_mir/design.cpp and hir_to_mir/module.cpp).
+  std::vector<SymbolId> all_design_vars;
+  for (const auto& element : mir_input.design->elements) {
+    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+      for (SymbolId var : pkg->variables) {
+        all_design_vars.push_back(var);
+      }
+    }
+  }
   if (hir_module != nullptr) {
-    if (hir_module->variables.size() != design_state.storage.size()) {
-      result.error_message = std::format(
-          "Slot count mismatch: HIR has {} variables, MIR has {} slots",
-          hir_module->variables.size(), design_state.storage.size());
-      return result;
+    for (SymbolId var : hir_module->variables) {
+      all_design_vars.push_back(var);
     }
-    for (size_t i = 0; i < hir_module->variables.size(); ++i) {
-      const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
-      design_state.storage[i] =
-          mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
-    }
+  }
+  if (all_design_vars.size() != design_state.storage.size()) {
+    result.error_message = std::format(
+        "Slot count mismatch: HIR has {} variables, MIR has {} slots",
+        all_design_vars.size(), design_state.storage.size());
+    return result;
+  }
+  for (size_t i = 0; i < all_design_vars.size(); ++i) {
+    const auto& sym = (*mir_input.symbol_table)[all_design_vars[i]];
+    design_state.storage[i] =
+        mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
   }
 
   // Run interpreter with output capture
@@ -200,6 +219,13 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     scoped_path.emplace(result.work_directory);
   }
 
+  // Run design init processes (package variable initialization)
+  for (mir::ProcessId proc_id : mir_result.design.init_processes) {
+    auto state = mir::interp::CreateProcessState(
+        *mir_result.mir_arena, *hir_result.type_arena, proc_id, &design_state);
+    interpreter.Run(state);
+  }
+
   // Create process states for all initial processes
   std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
   for (mir::ProcessId proc_id : module_info->initial_processes) {
@@ -210,56 +236,57 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
 
   // Run with Engine-based scheduler for proper delay handling
   try {
-    runtime::Engine engine(
-        [&](runtime::Engine& eng, runtime::ProcessHandle handle,
-            runtime::ResumePoint resume) {
-          auto it = process_states.find(handle.process_id);
-          if (it == process_states.end()) {
-            return;
-          }
-          auto& state = it->second;
+    runtime::Engine engine([&](runtime::Engine& eng,
+                               runtime::ProcessHandle handle,
+                               runtime::ResumePoint resume) {
+      auto it = process_states.find(handle.process_id);
+      if (it == process_states.end()) {
+        return;
+      }
+      auto& state = it->second;
 
-          state.current_block = mir::BasicBlockId{resume.block_index};
-          state.instruction_index = resume.instruction_index;
-          state.status = mir::interp::ProcessStatus::kRunning;
+      state.current_block = mir::BasicBlockId{resume.block_index};
+      state.instruction_index = resume.instruction_index;
+      state.status = mir::interp::ProcessStatus::kRunning;
 
-          auto reason = interpreter.RunUntilSuspend(state);
+      auto reason = interpreter.RunUntilSuspend(state);
 
-          std::visit(
-              Overloaded{
-                  [](const mir::interp::SuspendFinished&) {},
-                  [&](const mir::interp::SuspendDelay& d) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = d.resume_block.value,
-                            .instruction_index = 0},
-                        d.ticks);
-                  },
-                  [&](const mir::interp::SuspendWait& w) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = w.resume_block.value,
-                            .instruction_index = 0},
-                        1);
-                  },
-                  [&](const mir::interp::SuspendRepeat& r) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = r.resume_block.value,
-                            .instruction_index = 0},
-                        1);
-                  },
+      std::visit(
+          Overloaded{
+              [](const mir::interp::SuspendFinished&) {},
+              [&](const mir::interp::SuspendDelay& d) {
+                eng.Delay(
+                    handle,
+                    runtime::ResumePoint{
+                        .block_index = d.resume_block.value,
+                        .instruction_index = 0},
+                    d.ticks);
               },
-              reason);
-        });
+              [&](const mir::interp::SuspendWait& w) {
+                eng.Delay(
+                    handle,
+                    runtime::ResumePoint{
+                        .block_index = w.resume_block.value,
+                        .instruction_index = 0},
+                    1);
+              },
+              [&](const mir::interp::SuspendRepeat& r) {
+                eng.Delay(
+                    handle,
+                    runtime::ResumePoint{
+                        .block_index = r.resume_block.value,
+                        .instruction_index = 0},
+                    1);
+              },
+          },
+          reason);
+    });
 
     // Schedule initial processes
     for (mir::ProcessId proc_id : module_info->initial_processes) {
       engine.ScheduleInitial(
-          runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+          runtime::ProcessHandle{
+              .process_id = proc_id.value, .instance_id = 0});
     }
 
     // Run simulation

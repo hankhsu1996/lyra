@@ -65,7 +65,8 @@ class ScopedTempDirectory {
   auto operator=(const ScopedTempDirectory&) -> ScopedTempDirectory& = delete;
 
   ScopedTempDirectory(ScopedTempDirectory&& other) noexcept
-      : path_(std::exchange(other.path_, {})) {}
+      : path_(std::exchange(other.path_, {})) {
+  }
   auto operator=(ScopedTempDirectory&& other) noexcept -> ScopedTempDirectory& {
     if (this != &other) {
       Cleanup();
@@ -74,7 +75,9 @@ class ScopedTempDirectory {
     return *this;
   }
 
-  ~ScopedTempDirectory() noexcept { Cleanup(); }
+  ~ScopedTempDirectory() noexcept {
+    Cleanup();
+  }
 
   [[nodiscard]] auto Path() const -> const std::filesystem::path& {
     return path_;

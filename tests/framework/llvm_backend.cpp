@@ -191,8 +191,7 @@ auto ParseLyraVarOutput(const std::string& output)
 
   // Check if original output ends with newline - we need this to know
   // whether to add a trailing newline to the clean output
-  bool output_ends_with_newline =
-      !output.empty() && output.back() == '\n';
+  bool output_ends_with_newline = !output.empty() && output.back() == '\n';
 
   std::istringstream stream(output);
   std::string line;

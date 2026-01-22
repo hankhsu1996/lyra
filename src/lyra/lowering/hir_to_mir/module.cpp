@@ -16,7 +16,7 @@ namespace {
 
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& module_places,
+    mir::Arena& mir_arena, const PlaceMap& design_places,
     const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
     -> mir::Function {
   Context ctx{
@@ -25,7 +25,7 @@ auto LowerFunctionBody(
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
       .symbol_table = input.symbol_table,
-      .module_places = &module_places,
+      .module_places = &design_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -113,27 +113,9 @@ auto LowerFunctionBody(
 
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map) -> mir::Module {
+    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places)
+    -> mir::Module {
   mir::Module result;
-
-  // Allocate storage for module-level variables
-  PlaceMap module_places;
-  int next_module_slot = 0;
-
-  for (SymbolId var_sym : module.variables) {
-    const Symbol& sym = (*input.symbol_table)[var_sym];
-    mir::Place place{
-        .root =
-            mir::PlaceRoot{
-                .kind = mir::PlaceRoot::Kind::kDesign,
-                .id = next_module_slot++,
-                .type = sym.type,
-            },
-        .projections = {},
-    };
-    mir::PlaceId place_id = mir_arena.AddPlace(std::move(place));
-    module_places[var_sym] = place_id;
-  }
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
   SymbolToMirFunctionMap symbol_to_mir_function;
@@ -154,17 +136,17 @@ auto LowerModule(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     mir::Function mir_func = LowerFunctionBody(
-        hir_func, input, mir_arena, module_places, symbol_to_mir_function,
+        hir_func, input, mir_arena, design_places, symbol_to_mir_function,
         origin_map);
 
     mir_arena.SetFunction(mir_func_id, std::move(mir_func));
   }
 
-  // Phase 3: Lower processes (can reference functions)
+  // Phase 3: Lower module processes (can reference functions)
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     mir::ProcessId mir_proc_id = LowerProcess(
-        hir_process, input, mir_arena, module_places, symbol_to_mir_function,
+        hir_process, input, mir_arena, design_places, symbol_to_mir_function,
         origin_map);
     result.processes.push_back(mir_proc_id);
   }
@@ -174,7 +156,6 @@ auto LowerModule(
     (void)task_id;
   }
 
-  result.num_module_slots = static_cast<size_t>(next_module_slot);
   return result;
 }
 
