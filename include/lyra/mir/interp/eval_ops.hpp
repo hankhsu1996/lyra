@@ -23,4 +23,13 @@ auto EvalCast(
     const RuntimeValue& operand, const Type& source_type,
     const Type& target_type, const TypeArena& arena) -> RuntimeValue;
 
+// Evaluate a bitcast operation (bit reinterpretation).
+// Preserves bit pattern - used for $realtobits/$bitstoreal etc.
+// HIR lowering guarantees validity, so this only handles 4 legal cases:
+// - real <-> bit[63:0]
+// - shortreal <-> bit[31:0]
+auto EvalBitCast(
+    const RuntimeValue& operand, TypeId source_type, TypeId target_type,
+    const TypeArena& arena) -> RuntimeValue;
+
 }  // namespace lyra::mir::interp

@@ -664,4 +664,74 @@ auto EvalCast(
   return IntegralResize2State(clean_src, src_is_signed, target_width);
 }
 
+namespace {
+
+// Check if type is a packed integral (kIntegral or kPackedArray, not
+// kPackedStruct)
+auto IsPackedIntegral(const Type& type) -> bool {
+  return type.Kind() == TypeKind::kIntegral ||
+         type.Kind() == TypeKind::kPackedArray;
+}
+
+}  // namespace
+
+auto EvalBitCast(
+    const RuntimeValue& operand, TypeId source_type, TypeId target_type,
+    const TypeArena& arena) -> RuntimeValue {
+  const Type& src = arena[source_type];
+  const Type& tgt = arena[target_type];
+
+  // Case 1: real -> packed integral ($realtobits)
+  if (src.Kind() == TypeKind::kReal && IsPackedIntegral(tgt)) {
+    if (!IsReal(operand)) {
+      throw common::InternalError(
+          "EvalBitCast", "real source type but operand is not real");
+    }
+    double val = AsReal(operand).value;
+    auto bits = std::bit_cast<uint64_t>(val);
+    return std::get<RuntimeIntegral>(MakeIntegral(bits, 64));
+  }
+
+  // Case 2: packed integral -> real ($bitstoreal)
+  if (IsPackedIntegral(src) && tgt.Kind() == TypeKind::kReal) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalBitCast", "integral source type but operand is not integral");
+    }
+    const auto& integral = AsIntegral(operand);
+    auto bits = integral.value.empty() ? 0ULL : integral.value[0];
+    auto val = std::bit_cast<double>(bits);
+    return MakeReal(val);
+  }
+
+  // Case 3: shortreal -> packed integral ($shortrealtobits)
+  if (src.Kind() == TypeKind::kShortReal && IsPackedIntegral(tgt)) {
+    if (!IsShortReal(operand)) {
+      throw common::InternalError(
+          "EvalBitCast", "shortreal source type but operand is not shortreal");
+    }
+    float val = AsShortReal(operand).value;
+    auto bits = std::bit_cast<uint32_t>(val);
+    return std::get<RuntimeIntegral>(MakeIntegral(bits, 32));
+  }
+
+  // Case 4: packed integral -> shortreal ($bitstoshortreal)
+  if (IsPackedIntegral(src) && tgt.Kind() == TypeKind::kShortReal) {
+    if (!IsIntegral(operand)) {
+      throw common::InternalError(
+          "EvalBitCast", "integral source type but operand is not integral");
+    }
+    const auto& integral = AsIntegral(operand);
+    auto bits =
+        static_cast<uint32_t>(integral.value.empty() ? 0 : integral.value[0]);
+    auto val = std::bit_cast<float>(bits);
+    return MakeShortReal(val);
+  }
+
+  // HIR guarantees validity - unreachable
+  throw common::InternalError(
+      "EvalBitCast",
+      std::format("invalid bitcast: {} -> {}", ToString(src), ToString(tgt)));
+}
+
 }  // namespace lyra::mir::interp

@@ -25,6 +25,7 @@
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/system_call.hpp"
+#include "lyra/lowering/ast_to_hir/system_function_desugar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -790,7 +791,12 @@ auto LowerExpression(
                     .args = std::move(args)}});
       }
 
-      // Handle system calls ($display, etc.)
+      // Pure system functions ($signed, $unsigned, $itor, etc.) -> desugar
+      if (auto pure_kind = ClassifyPureSystemFunction(call)) {
+        return LowerPureSystemFunction(call, *pure_kind, registrar, ctx);
+      }
+
+      // Effectful system calls ($display, etc.)
       if (call.isSystemCall()) {
         return LowerSystemCall(call, registrar, ctx);
       }

@@ -375,6 +375,11 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 "cast({} -> {})", FormatType(info.source_type),
                 FormatType(info.target_type));
           },
+          [this](const BitCastRvalueInfo& info) {
+            return std::format(
+                "bitcast({} -> {})", FormatType(info.source_type),
+                FormatType(info.target_type));
+          },
           [](const SystemCallRvalueInfo& info) {
             return std::format("syscall({})", info.opcode);
           },

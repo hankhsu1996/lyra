@@ -710,6 +710,15 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             const auto& tgt_type = (*types_)[info.target_type];
             return EvalCast(operand, src_type, tgt_type, *types_);
           },
+          [&](const BitCastRvalueInfo& info) -> RuntimeValue {
+            if (rv.operands.size() != 1) {
+              throw common::InternalError(
+                  "EvalRvalue", "bitcast operation requires exactly 1 operand");
+            }
+            auto operand = EvalOperand(state, rv.operands[0]);
+            return EvalBitCast(
+                operand, info.source_type, info.target_type, *types_);
+          },
           [&](const SystemCallRvalueInfo& /*info*/) -> RuntimeValue {
             // System calls that produce values (pure functions like $clog2)
             // would be handled here. Currently all supported system calls are

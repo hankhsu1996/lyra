@@ -442,6 +442,28 @@ auto LowerCast(
   return mir::Operand::Use(temp_id);
 }
 
+auto LowerBitCast(
+    const hir::BitCastExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  // Lower operand
+  mir::Operand operand = LowerExpression(data.operand, builder);
+
+  const Context& ctx = builder.GetContext();
+  const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
+  TypeId source_type = operand_expr.type;
+  TypeId target_type = expr.type;
+
+  mir::Rvalue rvalue{
+      .operands = {operand},
+      .info =
+          mir::BitCastRvalueInfo{
+              .source_type = source_type, .target_type = target_type},
+  };
+
+  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
+  return mir::Operand::Use(temp_id);
+}
+
 auto LowerSystemCall(
     const hir::SystemCallExpressionData& /*data*/,
     const hir::Expression& /*expr*/, MirBuilder& /*builder*/) -> mir::Operand {
@@ -1200,6 +1222,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerBinary(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::CastExpressionData>) {
           return LowerCast(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::BitCastExpressionData>) {
+          return LowerBitCast(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::SystemCallExpressionData>) {
           return LowerSystemCall(data, expr, builder);
         } else if constexpr (std::is_same_v<

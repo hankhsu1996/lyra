@@ -591,6 +591,53 @@ auto LowerCastRvalue(
   return builder.CreateZExtOrTrunc(source, storage_type, "cast");
 }
 
+// Check if type is a packed integral (kIntegral or kPackedArray, not
+// kPackedStruct)
+auto IsPackedIntegral(const Type& type) -> bool {
+  return type.Kind() == TypeKind::kIntegral ||
+         type.Kind() == TypeKind::kPackedArray;
+}
+
+// Lower bitcast rvalue: reinterpret bits (real <-> integral)
+auto LowerBitCastRvalue(
+    Context& context, const mir::BitCastRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
+
+  llvm::Value* src = LowerOperand(context, operands[0]);
+  const Type& src_type = types[info.source_type];
+  const Type& tgt_type = types[info.target_type];
+
+  // Case 1: real -> packed integral
+  if (src_type.Kind() == TypeKind::kReal && IsPackedIntegral(tgt_type)) {
+    return builder.CreateBitCast(
+        src, llvm::Type::getInt64Ty(llvm_ctx), "bitcast");
+  }
+
+  // Case 2: packed integral -> real
+  if (IsPackedIntegral(src_type) && tgt_type.Kind() == TypeKind::kReal) {
+    return builder.CreateBitCast(
+        src, llvm::Type::getDoubleTy(llvm_ctx), "bitcast");
+  }
+
+  // Case 3: shortreal -> packed integral
+  if (src_type.Kind() == TypeKind::kShortReal && IsPackedIntegral(tgt_type)) {
+    return builder.CreateBitCast(
+        src, llvm::Type::getInt32Ty(llvm_ctx), "bitcast");
+  }
+
+  // Case 4: packed integral -> shortreal
+  if (IsPackedIntegral(src_type) && tgt_type.Kind() == TypeKind::kShortReal) {
+    return builder.CreateBitCast(
+        src, llvm::Type::getFloatTy(llvm_ctx), "bitcast");
+  }
+
+  // HIR guarantees validity - unreachable
+  llvm_unreachable("invalid bitcast types");
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -621,6 +668,9 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           [&](const mir::CastRvalueInfo& info) {
             return LowerCastRvalue(
                 context, info, compute.value.operands, storage_type);
+          },
+          [&](const mir::BitCastRvalueInfo& info) {
+            return LowerBitCastRvalue(context, info, compute.value.operands);
           },
           [&](const auto& /*info*/) -> llvm::Value* {
             throw common::UnsupportedErrorException(

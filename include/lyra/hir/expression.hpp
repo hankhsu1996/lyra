@@ -20,6 +20,7 @@ enum class ExpressionKind {
   kUnaryOp,
   kBinaryOp,
   kCast,
+  kBitCast,  // Bit reinterpretation (preserves bit pattern)
   kSystemCall,
   kConditional,
   kAssignment,
@@ -70,6 +71,13 @@ struct CastExpressionData {
   ExpressionId operand;
 
   auto operator==(const CastExpressionData&) const -> bool = default;
+};
+
+struct BitCastExpressionData {
+  ExpressionId operand;
+  // Target type is expr.type (same pattern as CastExpressionData)
+
+  auto operator==(const BitCastExpressionData&) const -> bool = default;
 };
 
 struct ConditionalExpressionData {
@@ -206,15 +214,15 @@ struct ConcatExpressionData {
 
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
-    BinaryExpressionData, CastExpressionData, SystemCallExpressionData,
-    ConditionalExpressionData, AssignmentExpressionData,
-    CompoundAssignmentExpressionData, ElementAccessExpressionData,
-    MemberAccessExpressionData, StructLiteralExpressionData,
-    ArrayLiteralExpressionData, CallExpressionData, NewArrayExpressionData,
-    BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
-    PackedFieldAccessExpressionData, BitSelectExpressionData,
-    RangeSelectExpressionData, IndexedPartSelectExpressionData,
-    ConcatExpressionData>;
+    BinaryExpressionData, CastExpressionData, BitCastExpressionData,
+    SystemCallExpressionData, ConditionalExpressionData,
+    AssignmentExpressionData, CompoundAssignmentExpressionData,
+    ElementAccessExpressionData, MemberAccessExpressionData,
+    StructLiteralExpressionData, ArrayLiteralExpressionData, CallExpressionData,
+    NewArrayExpressionData, BuiltinMethodCallExpressionData,
+    PackedElementSelectExpressionData, PackedFieldAccessExpressionData,
+    BitSelectExpressionData, RangeSelectExpressionData,
+    IndexedPartSelectExpressionData, ConcatExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

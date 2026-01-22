@@ -10,7 +10,6 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::mir {
 
@@ -26,6 +25,11 @@ struct BinaryRvalueInfo {
 };
 
 struct CastRvalueInfo {
+  TypeId source_type;
+  TypeId target_type;
+};
+
+struct BitCastRvalueInfo {
   TypeId source_type;
   TypeId target_type;
 };
@@ -82,9 +86,10 @@ struct ConcatRvalueInfo {
 
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
-    UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, SystemCallRvalueInfo,
-    UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
-    IndexValidityRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo>;
+    UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
+    SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
+    BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
+    ConcatRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -102,6 +107,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "binary";
         } else if constexpr (std::is_same_v<T, CastRvalueInfo>) {
           return "cast";
+        } else if constexpr (std::is_same_v<T, BitCastRvalueInfo>) {
+          return "bitcast";
         } else if constexpr (std::is_same_v<T, SystemCallRvalueInfo>) {
           return "syscall";
         } else if constexpr (std::is_same_v<T, UserCallRvalueInfo>) {

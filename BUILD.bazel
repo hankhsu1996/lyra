@@ -111,6 +111,7 @@ cc_library(
         ":common",
         ":hir",
         ":mir",
+        ":semantic",
         "@slang",
     ],
 )
