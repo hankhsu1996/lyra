@@ -886,12 +886,54 @@ auto LowerExpression(
                 .data = hir::ConstantExpressionData{.constant = constant}});
       }
 
-      // Validate source and target types for conversions
-      // Support: integral<->integral, integral<->float, float<->float
-      // (float = real, shortreal, realtime)
       const slang::ast::Type& src_type =
           conv.operand().type->getCanonicalType();
 
+      // Handle integral -> string conversion (packed bits to byte string)
+      if (tgt_type.isString() && src_type.isIntegral()) {
+        hir::ExpressionId operand =
+            LowerExpression(conv.operand(), registrar, ctx);
+        if (!operand) {
+          return hir::kInvalidExpressionId;
+        }
+
+        TypeId type = LowerType(tgt_type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kCast,
+                .type = type,
+                .span = span,
+                .data = hir::CastExpressionData{.operand = operand}});
+      }
+
+      // Handle string -> integral conversion (byte string to packed bits)
+      if (tgt_type.isIntegral() && src_type.isString()) {
+        hir::ExpressionId operand =
+            LowerExpression(conv.operand(), registrar, ctx);
+        if (!operand) {
+          return hir::kInvalidExpressionId;
+        }
+
+        TypeId type = LowerType(tgt_type, span, ctx);
+        if (!type) {
+          return hir::kInvalidExpressionId;
+        }
+
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kCast,
+                .type = type,
+                .span = span,
+                .data = hir::CastExpressionData{.operand = operand}});
+      }
+
+      // Validate source and target types for conversions
+      // Support: integral<->integral, integral<->float, float<->float
+      // (float = real, shortreal, realtime)
       bool src_ok = src_type.isIntegral() || src_type.isFloating();
       bool tgt_ok = tgt_type.isIntegral() || tgt_type.isFloating();
       if (!src_ok || !tgt_ok) {
@@ -1586,19 +1628,36 @@ auto LowerExpression(
       const auto& concat = expr.as<slang::ast::ConcatenationExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      // Only packed concatenation supported.
+      // Packed (integral) or string concatenation supported.
       // Slang uses ConcatenationExpression for unpacked array literals too.
       // Streaming concatenation ({>> ...}) is a separate ExpressionKind.
-      if (!expr.type->isIntegral()) {
+      if (!expr.type->isIntegral() && !expr.type->isString()) {
         ctx->sink->Error(span, "unpacked array concatenation not supported");
         return hir::kInvalidExpressionId;
       }
 
-      // LRM 11.4.12: Concatenation result is always unsigned
-      if (expr.type->isSigned()) {
+      bool is_integral_concat = expr.type->isIntegral();
+
+      // LRM 11.4.12: Integral concatenation result is always unsigned
+      if (is_integral_concat && expr.type->isSigned()) {
         throw common::InternalError(
             "LowerExpression",
             "concatenation result type should be unsigned per LRM 11.4.12");
+      }
+
+      // For string concat, validate operand types at compile time
+      if (!is_integral_concat) {
+        for (const auto* op : concat.operands()) {
+          if (op->type->isVoid()) {
+            continue;
+          }
+          if (!op->type->isString() && !op->type->isIntegral()) {
+            ctx->sink->Error(
+                span,
+                "string concatenation operand must be string or integral");
+            return hir::kInvalidExpressionId;
+          }
+        }
       }
 
       // Lower operands, skipping void-type (zero replication like {0{x}})
@@ -1609,7 +1668,9 @@ auto LowerExpression(
         if (op->type->isVoid()) {
           continue;
         }
-        total_width += op->type->getBitWidth();
+        if (is_integral_concat) {
+          total_width += op->type->getBitWidth();
+        }
         hir::ExpressionId op_id = LowerExpression(*op, registrar, ctx);
         if (!op_id) {
           return hir::kInvalidExpressionId;
@@ -1622,8 +1683,8 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
-      // LRM 11.4.12: Result width equals sum of operand widths
-      if (expr.type->getBitWidth() != total_width) {
+      // LRM 11.4.12: Result width equals sum of operand widths (integral only)
+      if (is_integral_concat && expr.type->getBitWidth() != total_width) {
         throw common::InternalError(
             "LowerExpression",
             std::format(

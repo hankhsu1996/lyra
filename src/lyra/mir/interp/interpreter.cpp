@@ -38,6 +38,7 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -1068,6 +1069,26 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
           },
           [&](const ConcatRvalueInfo& info) -> RuntimeValue {
             const Type& result_type = (*types_)[info.result_type];
+
+            // String concatenation (byte-based)
+            if (result_type.Kind() == TypeKind::kString) {
+              std::string result;
+              for (const auto& operand : rv.operands) {
+                auto val = EvalOperand(state, operand);
+                if (IsString(val)) {
+                  result += AsString(val).value;
+                } else if (IsIntegral(val)) {
+                  result += semantic::PackedToStringBytes(AsIntegral(val));
+                } else {
+                  throw common::InternalError(
+                      "EvalRvalue",
+                      "string concat operand must be string or integral");
+                }
+              }
+              return MakeString(std::move(result));
+            }
+
+            // Integral concatenation (bit-based)
             uint32_t result_width = PackedBitWidth(result_type, *types_);
 
             // Evaluate all operands and compute total width
@@ -1076,7 +1097,23 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
             uint32_t total_width = 0;
             for (const auto& operand : rv.operands) {
               auto val = EvalOperand(state, operand);
-              auto& integral = AsIntegral(val);
+              RuntimeIntegral integral;
+              if (IsString(val)) {
+                // String literal in packed concat: convert to integral
+                TypeId op_type = TypeOfOperand(operand, *arena_, *types_);
+                const Type& op_type_ref = (*types_)[op_type];
+                uint32_t op_width = 0;
+                if (IsPacked(op_type_ref)) {
+                  op_width = PackedBitWidth(op_type_ref, *types_);
+                } else {
+                  // String type: derive width from string length (8 bits/char)
+                  op_width =
+                      static_cast<uint32_t>(AsString(val).value.size()) * 8;
+                }
+                integral = StringBytesToIntegral(AsString(val).value, op_width);
+              } else {
+                integral = std::move(AsIntegral(val));
+              }
               total_width += integral.bit_width;
               values.push_back(std::move(integral));
             }
