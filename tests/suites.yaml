@@ -55,6 +55,7 @@ suites:
       - datatypes/indexed_part_select.yaml
       - datatypes/unpacked_struct.yaml
       - datatypes/packed_struct.yaml
+      - datatypes/packed_union.yaml
       - datatypes/enum.yaml
       - datatypes/unbased_unsized_literal.yaml
       - datatypes/typedef.yaml

@@ -1,27 +1,18 @@
 #include "tests/framework/llvm_backend.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <format>
 #include <fstream>
-#include <memory>
-#include <optional>
 #include <spawn.h>
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
-
-#include <slang/ast/Compilation.h>
-#include <slang/syntax/SyntaxTree.h>
-#include <slang/text/SourceManager.h>
-#include <slang/util/LanguageVersion.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -315,53 +306,19 @@ auto RunLliWithCapture(
 
 auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
   TestResult result;
-  std::optional<ScopedTempDirectory> temp_guard;
 
-  // Create slang compilation from source
-  slang::SourceManager source_manager;
-
-  slang::ast::CompilationOptions compilation_options;
-  compilation_options.languageVersion = slang::LanguageVersion::v1800_2023;
-  auto compilation =
-      std::make_unique<slang::ast::Compilation>(compilation_options);
-
-  if (test_case.IsMultiFile()) {
-    auto [file_paths, temp_dir] =
-        WriteTempFiles(test_case.files, test_case.name);
-    temp_guard.emplace(temp_dir);
-    result.work_directory = temp_dir;
-
-    for (const auto& path : file_paths) {
-      auto extension = std::filesystem::path(path).extension();
-      if (extension == ".sv" || extension == ".v") {
-        auto tree_result =
-            slang::syntax::SyntaxTree::fromFile(path, source_manager);
-        if (!tree_result) {
-          result.error_message = "Failed to parse: " + path;
-          return result;
-        }
-        compilation->addSyntaxTree(tree_result.value());
-      }
-    }
-  } else {
-    auto tree = slang::syntax::SyntaxTree::fromText(
-        test_case.sv_code, source_manager, "test.sv");
-    compilation->addSyntaxTree(tree);
-  }
-
-  // Check for slang errors
-  auto diagnostics = compilation->getAllDiagnostics();
-  bool has_errors = std::ranges::any_of(
-      diagnostics, [](const auto& diag) { return diag.isError(); });
-  if (has_errors) {
-    result.error_message =
-        "Parse errors:\n" + FormatSlangDiagnostics(diagnostics, source_manager);
+  // Parse test case using slang
+  auto parse_result = ParseTestCase(test_case);
+  if (!parse_result.Success()) {
+    result.error_message = parse_result.error_message;
     return result;
   }
+  result.work_directory = parse_result.work_directory;
 
   // Lower AST to HIR
   DiagnosticSink sink;
-  auto hir_result = lowering::ast_to_hir::LowerAstToHir(*compilation, sink);
+  auto hir_result =
+      lowering::ast_to_hir::LowerAstToHir(*parse_result.compilation, sink);
 
   if (sink.HasErrors()) {
     std::ostringstream error_stream;
