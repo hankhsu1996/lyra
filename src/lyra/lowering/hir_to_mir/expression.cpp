@@ -1272,6 +1272,39 @@ auto LowerConcat(
   return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
 }
 
+auto LowerElementAccessRvalue(
+    const hir::ElementAccessExpressionData& data, MirBuilder& builder)
+    -> mir::Operand {
+  Context& ctx = builder.GetContext();
+
+  mir::Operand base_operand = LowerExpression(data.base, builder);
+  mir::Operand index_operand = LowerExpression(data.index, builder);
+
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  mir::PlaceId base_place =
+      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+  if (base_type.Kind() != TypeKind::kUnpackedArray &&
+      base_type.Kind() != TypeKind::kDynamicArray &&
+      base_type.Kind() != TypeKind::kQueue) {
+    throw common::InternalError(
+        "LowerElementAccessRvalue", "base is not an array or queue");
+  }
+
+  const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  index_operand = NormalizeUnpackedIndex(
+      index_operand, index_expr.type, base_type, builder);
+
+  mir::Projection proj{
+      .info = mir::IndexProjection{.index = index_operand},
+  };
+  mir::PlaceId result_place =
+      ctx.mir_arena->DerivePlace(base_place, std::move(proj));
+
+  return mir::Operand::Use(result_place);
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -1306,8 +1339,7 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
           // TODO(hankhsu): Use GuardedUse for OOB-safe reads
-          LvalueResult lv = LowerLvalue(expr_id, builder);
-          return mir::Operand::Use(lv.place);
+          return LowerElementAccessRvalue(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
           // Struct member access - always valid (field index is compile-time)

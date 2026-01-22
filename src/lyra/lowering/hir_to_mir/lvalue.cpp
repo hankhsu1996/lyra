@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 
+#include <format>
 #include <type_traits>
 #include <variant>
 
@@ -151,19 +152,9 @@ auto LowerElementAccessLvalue(
         "LowerElementAccessLvalue", "index operand must be Const or Use");
   }
 
-  // Normalize unpacked array indices to 0-based storage offset.
-  // Dynamic arrays and queues are always 0-based, no normalization needed.
-  if (base_type.Kind() == TypeKind::kUnpackedArray) {
-    const auto& array_info = base_type.AsUnpackedArray();
-    int32_t lower_bound = array_info.range.Lower();
-    if (lower_bound != 0) {
-      TypeId offset_type = ctx.GetOffsetType();
-      auto lower_const =
-          mir::Operand::Const(MakeIntegralConst(lower_bound, offset_type));
-      index_operand = builder.EmitBinary(
-          mir::BinaryOp::kSubtract, index_operand, lower_const, offset_type);
-    }
-  }
+  const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  index_operand = NormalizeUnpackedIndex(
+      index_operand, index_expr.type, base_type, builder);
 
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
@@ -458,6 +449,44 @@ auto LowerPackedFieldAccessLvalue(
 }
 
 }  // namespace
+
+auto NormalizeUnpackedIndex(
+    mir::Operand index_operand, TypeId index_type, const Type& base_type,
+    MirBuilder& builder) -> mir::Operand {
+  switch (base_type.Kind()) {
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      return index_operand;
+    case TypeKind::kUnpackedArray:
+      break;
+    default:
+      throw common::InternalError(
+          "NormalizeUnpackedIndex", std::format(
+                                        "unexpected base type kind: {}",
+                                        static_cast<int>(base_type.Kind())));
+  }
+
+  const auto& range = base_type.AsUnpackedArray().range;
+  TypeId offset_type = builder.GetContext().GetOffsetType();
+
+  mir::Operand index_i32 =
+      builder.EmitCast(index_operand, index_type, offset_type);
+
+  if (range.IsDescending()) {
+    auto upper_const =
+        mir::Operand::Const(MakeIntegralConst(range.Upper(), offset_type));
+    return builder.EmitBinary(
+        mir::BinaryOp::kSubtract, upper_const, index_i32, offset_type);
+  }
+
+  int32_t lower = range.Lower();
+  if (lower == 0) {
+    return index_i32;
+  }
+  auto lower_const = mir::Operand::Const(MakeIntegralConst(lower, offset_type));
+  return builder.EmitBinary(
+      mir::BinaryOp::kSubtract, index_i32, lower_const, offset_type);
+}
 
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
     -> LvalueResult {

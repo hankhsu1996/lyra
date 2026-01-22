@@ -48,6 +48,7 @@ suites:
       - control_flow/foreach.yaml
       - datatypes/variables.yaml
       - datatypes/arrays.yaml
+      - datatypes/unpacked_array_constants.yaml
       - datatypes/dynamic_arrays.yaml
       - datatypes/queues.yaml
       - datatypes/packed_2d.yaml

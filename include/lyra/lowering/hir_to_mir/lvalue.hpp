@@ -57,4 +57,12 @@ struct LvalueResult {
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
     -> LvalueResult;
 
+// Normalize a declaration-space index to a 0-based storage offset.
+// Ascending [L:U]: offset = index - L
+// Descending [U:L]: offset = U - index
+// Dynamic arrays and queues are always 0-based (returned unchanged).
+auto NormalizeUnpackedIndex(
+    mir::Operand index_operand, TypeId index_type, const Type& base_type,
+    MirBuilder& builder) -> mir::Operand;
+
 }  // namespace lyra::lowering::hir_to_mir
