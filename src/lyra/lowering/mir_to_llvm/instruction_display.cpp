@@ -1,9 +1,9 @@
 #include "lyra/lowering/mir_to_llvm/instruction_display.hpp"
 
 #include "lyra/common/format.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -61,10 +61,11 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
           // For integral types, allocate storage sized to match width
           // This ensures LyraPrintValue can read the correct number of bytes
           if (width > 64) {
-            throw common::InternalError(
-                "LowerDisplayEffect",
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kMirToLlvm,
+                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
                 std::format(
-                    "values wider than 64 bits not yet supported "
+                    "display of values wider than 64 bits not yet supported "
                     "(got {} bits)",
                     width));
           }

@@ -19,6 +19,11 @@ suites:
       - control_flow/repeat.yaml
       - control_flow/forever.yaml
       - control_flow/ternary.yaml
+      - datatypes/wide_integral/arithmetic.yaml
+      - datatypes/wide_integral/bitwise.yaml
+      - datatypes/wide_integral/shifts.yaml
+      - datatypes/wide_integral/reductions.yaml
+      - datatypes/wide_integral/conversions.yaml
 
   mir_dev:
     backend: mir

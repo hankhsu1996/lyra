@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -139,8 +140,9 @@ auto BuildLlvmLoweringInfo(
     });
 
     // Add to variables for inspection (only types we can parse back)
-    // Skip: width 0, width > 64, or unsigned 64-bit (would overflow int64_t)
-    if (width > 0 && width <= 64 && (width < 64 || is_signed)) {
+    // Skip: width 0, or unsigned 64-bit (would overflow int64_t)
+    // >64-bit uses 'h:' hex format, ≤64-bit uses 'i:' decimal format
+    if (width > 64 || (width > 0 && width <= 64 && (width < 64 || is_signed))) {
       info.variables.push_back({.name = sym.name, .slot_id = i});
     }
   }
@@ -162,6 +164,18 @@ void ParseLyraVarEntry(
       if (type_tag == 'i') {  // Integral (signed decimal)
         int64_t value = std::stoll(value_str);
         variables[name] = value;
+      } else if (type_tag == 'h') {  // Wide integral (hex)
+        std::string hex(value_str);
+        // Strip 0x/0X prefix if present
+        if (hex.size() >= 2 && hex[0] == '0' &&
+            (hex[1] == 'x' || hex[1] == 'X')) {
+          hex = hex.substr(2);
+        }
+        // Normalize to lowercase
+        std::ranges::transform(hex, hex.begin(), [](unsigned char c) {
+          return static_cast<char>(std::tolower(c));
+        });
+        variables[name] = HexValue{std::move(hex)};
       } else if (type_tag == 'r') {  // Real
         double value = std::stod(value_str);
         variables[name] = value;
