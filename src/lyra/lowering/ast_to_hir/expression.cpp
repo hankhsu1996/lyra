@@ -431,6 +431,25 @@ auto LowerExpression(
               .data = hir::ConstantExpressionData{.constant = constant}});
     }
 
+    case ExpressionKind::UnbasedUnsizedIntegerLiteral: {
+      const auto& literal = expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+      ConstId constant = LowerIntegralConstant(literal.getValue(), type, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kConstant,
+              .type = type,
+              .span = span,
+              .data = hir::ConstantExpressionData{.constant = constant}});
+    }
+
     case ExpressionKind::StringLiteral: {
       const auto& literal = expr.as<slang::ast::StringLiteral>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
