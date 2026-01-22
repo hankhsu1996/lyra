@@ -94,9 +94,13 @@ auto EvalRealBinary(BinaryOp op, const RuntimeReal& lhs, const RuntimeReal& rhs)
     case BinaryOp::kLogicalOr:
       return RealLogicalOr(lhs, rhs);
 
-    // Power
+    // Power and math binary
     case BinaryOp::kPower:
       return MakeReal(RealPower(lhs, rhs).value);
+    case BinaryOp::kAtan2:
+      return MakeReal(RealAtan2(lhs, rhs).value);
+    case BinaryOp::kHypot:
+      return MakeReal(RealHypot(lhs, rhs).value);
 
     // Not supported for reals
     case BinaryOp::kMod:
@@ -190,6 +194,8 @@ auto EvalShortRealBinary(
     case BinaryOp::kLogicalShiftRight:
     case BinaryOp::kArithmeticShiftLeft:
     case BinaryOp::kArithmeticShiftRight:
+    case BinaryOp::kAtan2:
+    case BinaryOp::kHypot:
       throw common::InternalError(
           "EvalShortRealBinary",
           std::format(
@@ -273,8 +279,12 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       return IntegralMod(lhs_int, rhs_int, arith_width, true);
 
     case BinaryOp::kPower:
+    case BinaryOp::kAtan2:
+    case BinaryOp::kHypot:
       throw common::InternalError(
-          "EvalBinary", "power operation not supported");
+          "EvalBinary",
+          std::format(
+              "operator {} not supported for integral type", ToString(op)));
 
     case BinaryOp::kBitwiseAnd:
       return IntegralAnd(lhs_int, rhs_int, arith_width);
@@ -378,8 +388,10 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       "EvalBinary", std::format("unknown binary operation: {}", ToString(op)));
 }
 
-auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
-  // Real operands: only support +, -, and !
+auto EvalUnary(
+    UnaryOp op, const RuntimeValue& operand, TypeId result_type,
+    const TypeArena& types) -> RuntimeValue {
+  // Real operands
   if (IsReal(operand)) {
     const auto& op_real = AsReal(operand);
     switch (op) {
@@ -389,6 +401,42 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
         return MakeReal(RealNeg(op_real).value);
       case UnaryOp::kLogicalNot:
         return RealLogicalNot(op_real);
+      case UnaryOp::kLn:
+        return MakeReal(RealLn(op_real).value);
+      case UnaryOp::kLog10:
+        return MakeReal(RealLog10(op_real).value);
+      case UnaryOp::kExp:
+        return MakeReal(RealExp(op_real).value);
+      case UnaryOp::kSqrt:
+        return MakeReal(RealSqrt(op_real).value);
+      case UnaryOp::kFloor:
+        return MakeReal(RealFloor(op_real).value);
+      case UnaryOp::kCeil:
+        return MakeReal(RealCeil(op_real).value);
+      case UnaryOp::kSin:
+        return MakeReal(RealSin(op_real).value);
+      case UnaryOp::kCos:
+        return MakeReal(RealCos(op_real).value);
+      case UnaryOp::kTan:
+        return MakeReal(RealTan(op_real).value);
+      case UnaryOp::kAsin:
+        return MakeReal(RealAsin(op_real).value);
+      case UnaryOp::kAcos:
+        return MakeReal(RealAcos(op_real).value);
+      case UnaryOp::kAtan:
+        return MakeReal(RealAtan(op_real).value);
+      case UnaryOp::kSinh:
+        return MakeReal(RealSinh(op_real).value);
+      case UnaryOp::kCosh:
+        return MakeReal(RealCosh(op_real).value);
+      case UnaryOp::kTanh:
+        return MakeReal(RealTanh(op_real).value);
+      case UnaryOp::kAsinh:
+        return MakeReal(RealAsinh(op_real).value);
+      case UnaryOp::kAcosh:
+        return MakeReal(RealAcosh(op_real).value);
+      case UnaryOp::kAtanh:
+        return MakeReal(RealAtanh(op_real).value);
       default:
         throw common::InternalError(
             "EvalUnary",
@@ -444,7 +492,6 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
       return IntegralNot(op_int, width);
 
     case UnaryOp::kReductionAnd: {
-      // All bits must be 1
       if (!op_int.IsKnown()) {
         return MakeUnknownIntegral(1);
       }
@@ -480,7 +527,6 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
       if (!op_int.IsKnown()) {
         return MakeUnknownIntegral(1);
       }
-      // Count bits set
       int count = 0;
       for (uint64_t w : op_int.value) {
         count += std::popcount(w);
@@ -502,8 +548,53 @@ auto EvalUnary(UnaryOp op, const RuntimeValue& operand) -> RuntimeValue {
     }
 
     case UnaryOp::kIsKnown:
-      // Returns 1 if no X/Z bits, 0 otherwise (always 2-state 1-bit result)
       return MakeIntegral(op_int.IsKnown() ? 1 : 0, 1);
+
+    case UnaryOp::kClog2: {
+      uint32_t result_width = PackedBitWidth(types[result_type], types);
+      if (!op_int.IsKnown()) {
+        return MakeUnknownIntegral(result_width);
+      }
+      if (op_int.IsZero()) {
+        return MakeIntegral(0, result_width);
+      }
+      auto one = std::get<RuntimeIntegral>(MakeIntegral(1, op_int.bit_width));
+      auto n_minus_1 = IntegralSub(op_int, one, op_int.bit_width);
+      if (n_minus_1.IsZero()) {
+        return MakeIntegral(0, result_width);
+      }
+      int highest_bit = -1;
+      for (int i = static_cast<int>(n_minus_1.value.size()) - 1; i >= 0; --i) {
+        if (n_minus_1.value[i] != 0) {
+          highest_bit = i * 64 + (63 - std::countl_zero(n_minus_1.value[i]));
+          break;
+        }
+      }
+      return MakeIntegral(highest_bit + 1, result_width);
+    }
+
+    case UnaryOp::kLn:
+    case UnaryOp::kLog10:
+    case UnaryOp::kExp:
+    case UnaryOp::kSqrt:
+    case UnaryOp::kFloor:
+    case UnaryOp::kCeil:
+    case UnaryOp::kSin:
+    case UnaryOp::kCos:
+    case UnaryOp::kTan:
+    case UnaryOp::kAsin:
+    case UnaryOp::kAcos:
+    case UnaryOp::kAtan:
+    case UnaryOp::kSinh:
+    case UnaryOp::kCosh:
+    case UnaryOp::kTanh:
+    case UnaryOp::kAsinh:
+    case UnaryOp::kAcosh:
+    case UnaryOp::kAtanh:
+      throw common::InternalError(
+          "EvalUnary",
+          std::format(
+              "operator {} requires real operand, got integral", ToString(op)));
   }
 
   throw common::InternalError(

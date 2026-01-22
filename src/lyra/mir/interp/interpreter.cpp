@@ -721,8 +721,8 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
   throw common::InternalError("EvalOperand", "unknown operand kind");
 }
 
-auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+auto Interpreter::EvalRvalue(
+    ProcessState& state, const Rvalue& rv, TypeId result_type) -> RuntimeValue {
   return std::visit(
       Overloaded{
           [&](const UnaryRvalueInfo& info) -> RuntimeValue {
@@ -731,7 +731,7 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
                   "EvalRvalue", "unary operation requires exactly 1 operand");
             }
             auto operand = EvalOperand(state, rv.operands[0]);
-            return EvalUnary(info.op, operand);
+            return EvalUnary(info.op, operand, result_type, *types_);
           },
           [&](const BinaryRvalueInfo& info) -> RuntimeValue {
             if (rv.operands.size() != 2) {
@@ -1876,7 +1876,8 @@ void Interpreter::ExecAssign(ProcessState& state, const Assign& assign) {
 }
 
 void Interpreter::ExecCompute(ProcessState& state, const Compute& compute) {
-  auto value = EvalRvalue(state, compute.value);
+  TypeId result_type = TypeOfPlace(*types_, (*arena_)[compute.target]);
+  auto value = EvalRvalue(state, compute.value, result_type);
   StoreToPlace(state, compute.target, std::move(value));
 }
 

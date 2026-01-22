@@ -75,6 +75,44 @@ auto MapUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
       return mir::UnaryOp::kReductionXor;
     case hir::UnaryOp::kReductionXnor:
       return mir::UnaryOp::kReductionXnor;
+    case hir::UnaryOp::kLn:
+      return mir::UnaryOp::kLn;
+    case hir::UnaryOp::kLog10:
+      return mir::UnaryOp::kLog10;
+    case hir::UnaryOp::kExp:
+      return mir::UnaryOp::kExp;
+    case hir::UnaryOp::kSqrt:
+      return mir::UnaryOp::kSqrt;
+    case hir::UnaryOp::kFloor:
+      return mir::UnaryOp::kFloor;
+    case hir::UnaryOp::kCeil:
+      return mir::UnaryOp::kCeil;
+    case hir::UnaryOp::kSin:
+      return mir::UnaryOp::kSin;
+    case hir::UnaryOp::kCos:
+      return mir::UnaryOp::kCos;
+    case hir::UnaryOp::kTan:
+      return mir::UnaryOp::kTan;
+    case hir::UnaryOp::kAsin:
+      return mir::UnaryOp::kAsin;
+    case hir::UnaryOp::kAcos:
+      return mir::UnaryOp::kAcos;
+    case hir::UnaryOp::kAtan:
+      return mir::UnaryOp::kAtan;
+    case hir::UnaryOp::kSinh:
+      return mir::UnaryOp::kSinh;
+    case hir::UnaryOp::kCosh:
+      return mir::UnaryOp::kCosh;
+    case hir::UnaryOp::kTanh:
+      return mir::UnaryOp::kTanh;
+    case hir::UnaryOp::kAsinh:
+      return mir::UnaryOp::kAsinh;
+    case hir::UnaryOp::kAcosh:
+      return mir::UnaryOp::kAcosh;
+    case hir::UnaryOp::kAtanh:
+      return mir::UnaryOp::kAtanh;
+    case hir::UnaryOp::kClog2:
+      return mir::UnaryOp::kClog2;
   }
   throw common::InternalError("MapUnaryOp", "unknown unary op");
 }
@@ -137,6 +175,10 @@ auto MapBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kArithmeticShiftLeft;
     case hir::BinaryOp::kArithmeticShiftRight:
       return mir::BinaryOp::kArithmeticShiftRight;
+    case hir::BinaryOp::kAtan2:
+      return mir::BinaryOp::kAtan2;
+    case hir::BinaryOp::kHypot:
+      return mir::BinaryOp::kHypot;
   }
   throw common::InternalError("MapBinaryOp", "unknown binary op");
 }

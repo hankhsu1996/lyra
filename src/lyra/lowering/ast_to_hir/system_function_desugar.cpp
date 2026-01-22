@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
@@ -15,39 +16,107 @@
 namespace lyra::lowering::ast_to_hir {
 
 auto ClassifyPureSystemFunction(const slang::ast::CallExpression& call)
-    -> std::optional<PureSysFnKind> {
+    -> std::optional<PureSysFnClassification> {
   if (!call.isSystemCall()) {
     return std::nullopt;
   }
 
   std::string_view name = call.getSubroutineName();
 
-  // Value conversion functions -> kCast
+  // Conversion functions
   if (name == "$signed") {
-    return PureSysFnKind::kSigned;
+    return ConversionSysFnKind::kSigned;
   }
   if (name == "$unsigned") {
-    return PureSysFnKind::kUnsigned;
+    return ConversionSysFnKind::kUnsigned;
   }
   if (name == "$itor") {
-    return PureSysFnKind::kItor;
+    return ConversionSysFnKind::kItor;
   }
   if (name == "$rtoi") {
-    return PureSysFnKind::kRtoi;
+    return ConversionSysFnKind::kRtoi;
   }
-
-  // Bit reinterpretation functions -> kBitCast
   if (name == "$realtobits") {
-    return PureSysFnKind::kRealToBits;
+    return ConversionSysFnKind::kRealToBits;
   }
   if (name == "$bitstoreal") {
-    return PureSysFnKind::kBitsToReal;
+    return ConversionSysFnKind::kBitsToReal;
   }
   if (name == "$shortrealtobits") {
-    return PureSysFnKind::kShortRealToBits;
+    return ConversionSysFnKind::kShortRealToBits;
   }
   if (name == "$bitstoshortreal") {
-    return PureSysFnKind::kBitsToShortReal;
+    return ConversionSysFnKind::kBitsToShortReal;
+  }
+
+  // Math unary functions -> UnaryOpSysFn
+  if (name == "$ln") {
+    return UnaryOpSysFn{hir::UnaryOp::kLn};
+  }
+  if (name == "$log10") {
+    return UnaryOpSysFn{hir::UnaryOp::kLog10};
+  }
+  if (name == "$exp") {
+    return UnaryOpSysFn{hir::UnaryOp::kExp};
+  }
+  if (name == "$sqrt") {
+    return UnaryOpSysFn{hir::UnaryOp::kSqrt};
+  }
+  if (name == "$floor") {
+    return UnaryOpSysFn{hir::UnaryOp::kFloor};
+  }
+  if (name == "$ceil") {
+    return UnaryOpSysFn{hir::UnaryOp::kCeil};
+  }
+  if (name == "$sin") {
+    return UnaryOpSysFn{hir::UnaryOp::kSin};
+  }
+  if (name == "$cos") {
+    return UnaryOpSysFn{hir::UnaryOp::kCos};
+  }
+  if (name == "$tan") {
+    return UnaryOpSysFn{hir::UnaryOp::kTan};
+  }
+  if (name == "$asin") {
+    return UnaryOpSysFn{hir::UnaryOp::kAsin};
+  }
+  if (name == "$acos") {
+    return UnaryOpSysFn{hir::UnaryOp::kAcos};
+  }
+  if (name == "$atan") {
+    return UnaryOpSysFn{hir::UnaryOp::kAtan};
+  }
+  if (name == "$sinh") {
+    return UnaryOpSysFn{hir::UnaryOp::kSinh};
+  }
+  if (name == "$cosh") {
+    return UnaryOpSysFn{hir::UnaryOp::kCosh};
+  }
+  if (name == "$tanh") {
+    return UnaryOpSysFn{hir::UnaryOp::kTanh};
+  }
+  if (name == "$asinh") {
+    return UnaryOpSysFn{hir::UnaryOp::kAsinh};
+  }
+  if (name == "$acosh") {
+    return UnaryOpSysFn{hir::UnaryOp::kAcosh};
+  }
+  if (name == "$atanh") {
+    return UnaryOpSysFn{hir::UnaryOp::kAtanh};
+  }
+  if (name == "$clog2") {
+    return UnaryOpSysFn{hir::UnaryOp::kClog2};
+  }
+
+  // Math binary functions -> BinaryOpSysFn
+  if (name == "$pow") {
+    return BinaryOpSysFn{hir::BinaryOp::kPower};
+  }
+  if (name == "$atan2") {
+    return BinaryOpSysFn{hir::BinaryOp::kAtan2};
+  }
+  if (name == "$hypot") {
+    return BinaryOpSysFn{hir::BinaryOp::kHypot};
   }
 
   return std::nullopt;
@@ -68,7 +137,6 @@ auto MakeCast(
 }
 
 // Create kBitCast expression node with validation
-// Returns kInvalidExpressionId on validation failure (error already emitted)
 auto MakeBitCast(
     hir::ExpressionId operand, TypeId target_type, SourceSpan span,
     Context* ctx) -> hir::ExpressionId {
@@ -92,31 +160,14 @@ auto MakeBitCast(
           .data = hir::BitCastExpressionData{.operand = operand}});
 }
 
-}  // namespace
-
-auto LowerPureSystemFunction(
-    const slang::ast::CallExpression& call, PureSysFnKind kind,
-    SymbolRegistrar& registrar, Context* ctx) -> hir::ExpressionId {
-  SourceSpan span = ctx->SpanOf(call.sourceRange);
-
-  // All pure system functions take exactly one argument
-  if (call.arguments().size() != 1) {
-    ctx->ErrorFmt(
-        span, "{}() requires exactly one argument", call.getSubroutineName());
-    return hir::kInvalidExpressionId;
-  }
-
-  // Lower the operand
-  hir::ExpressionId operand =
-      LowerExpression(*call.arguments()[0], registrar, ctx);
-  if (!operand) {
-    return hir::kInvalidExpressionId;
-  }
-
+auto LowerConversion(
+    const slang::ast::CallExpression& call, ConversionSysFnKind kind,
+    hir::ExpressionId operand, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
   const hir::Expression& operand_expr = (*ctx->hir_arena)[operand];
 
   switch (kind) {
-    case PureSysFnKind::kSigned: {
+    case ConversionSysFnKind::kSigned: {
       auto result =
           semantic::MakeSignedVariant(operand_expr.type, *ctx->type_arena);
       if (!result) {
@@ -126,7 +177,7 @@ auto LowerPureSystemFunction(
       return MakeCast(operand, *result, span, ctx);
     }
 
-    case PureSysFnKind::kUnsigned: {
+    case ConversionSysFnKind::kUnsigned: {
       auto result =
           semantic::MakeUnsignedVariant(operand_expr.type, *ctx->type_arena);
       if (!result) {
@@ -136,15 +187,13 @@ auto LowerPureSystemFunction(
       return MakeCast(operand, *result, span, ctx);
     }
 
-    case PureSysFnKind::kItor: {
-      // $itor: integer to real
+    case ConversionSysFnKind::kItor: {
       TypeId real_type =
           ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
       return MakeCast(operand, real_type, span, ctx);
     }
 
-    case PureSysFnKind::kRtoi: {
-      // $rtoi: real to integer (32-bit signed 4-state per SV spec)
+    case ConversionSysFnKind::kRtoi: {
       TypeId integer_type = ctx->type_arena->Intern(
           TypeKind::kIntegral,
           IntegralInfo{
@@ -152,37 +201,106 @@ auto LowerPureSystemFunction(
       return MakeCast(operand, integer_type, span, ctx);
     }
 
-    case PureSysFnKind::kRealToBits: {
-      // $realtobits: real -> bit[63:0]
+    case ConversionSysFnKind::kRealToBits: {
       TypeId target = semantic::GetBitVectorType(*ctx->type_arena, 64);
       return MakeBitCast(operand, target, span, ctx);
     }
 
-    case PureSysFnKind::kBitsToReal: {
-      // $bitstoreal: bit[63:0] -> real
+    case ConversionSysFnKind::kBitsToReal: {
       TypeId real_type =
           ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
       return MakeBitCast(operand, real_type, span, ctx);
     }
 
-    case PureSysFnKind::kShortRealToBits: {
-      // $shortrealtobits: shortreal -> bit[31:0]
+    case ConversionSysFnKind::kShortRealToBits: {
       TypeId target = semantic::GetBitVectorType(*ctx->type_arena, 32);
       return MakeBitCast(operand, target, span, ctx);
     }
 
-    case PureSysFnKind::kBitsToShortReal: {
-      // $bitstoshortreal: bit[31:0] -> shortreal
+    case ConversionSysFnKind::kBitsToShortReal: {
       TypeId shortreal_type =
           ctx->type_arena->Intern(TypeKind::kShortReal, std::monostate{});
       return MakeBitCast(operand, shortreal_type, span, ctx);
     }
   }
 
-  // Should not reach here
   ctx->ErrorFmt(
-      span, "unhandled pure system function: {}", call.getSubroutineName());
+      span, "unhandled conversion function: {}", call.getSubroutineName());
   return hir::kInvalidExpressionId;
+}
+
+}  // namespace
+
+auto LowerPureSystemFunction(
+    const slang::ast::CallExpression& call,
+    const PureSysFnClassification& classification, SymbolRegistrar& registrar,
+    Context* ctx) -> hir::ExpressionId {
+  SourceSpan span = ctx->SpanOf(call.sourceRange);
+
+  return std::visit(
+      Overloaded{
+          [&](ConversionSysFnKind kind) -> hir::ExpressionId {
+            if (call.arguments().size() != 1) {
+              ctx->ErrorFmt(
+                  span, "{}() requires exactly one argument",
+                  call.getSubroutineName());
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId operand =
+                LowerExpression(*call.arguments()[0], registrar, ctx);
+            if (!operand) {
+              return hir::kInvalidExpressionId;
+            }
+            return LowerConversion(call, kind, operand, span, ctx);
+          },
+          [&](UnaryOpSysFn fn) -> hir::ExpressionId {
+            if (call.arguments().size() != 1) {
+              ctx->ErrorFmt(
+                  span, "{}() requires exactly one argument",
+                  call.getSubroutineName());
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId operand =
+                LowerExpression(*call.arguments()[0], registrar, ctx);
+            if (!operand) {
+              return hir::kInvalidExpressionId;
+            }
+            TypeId result_type = LowerType(*call.type, span, ctx);
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kUnaryOp,
+                    .type = result_type,
+                    .span = span,
+                    .data = hir::UnaryExpressionData{
+                        .op = fn.op, .operand = operand}});
+          },
+          [&](BinaryOpSysFn fn) -> hir::ExpressionId {
+            if (call.arguments().size() != 2) {
+              ctx->ErrorFmt(
+                  span, "{}() requires exactly two arguments",
+                  call.getSubroutineName());
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId lhs =
+                LowerExpression(*call.arguments()[0], registrar, ctx);
+            if (!lhs) {
+              return hir::kInvalidExpressionId;
+            }
+            hir::ExpressionId rhs =
+                LowerExpression(*call.arguments()[1], registrar, ctx);
+            if (!rhs) {
+              return hir::kInvalidExpressionId;
+            }
+            TypeId result_type = LowerType(*call.type, span, ctx);
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBinaryOp,
+                    .type = result_type,
+                    .span = span,
+                    .data = hir::BinaryExpressionData{
+                        .op = fn.op, .lhs = lhs, .rhs = rhs}});
+          }},
+      classification);
 }
 
 }  // namespace lyra::lowering::ast_to_hir
