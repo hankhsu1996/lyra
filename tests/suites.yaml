@@ -11,6 +11,12 @@ suites:
       - operators/binary_integral.yaml
       - operators/binary_string.yaml
       - operators/unary.yaml
+      - control_flow/conditional.yaml
+      - control_flow/while.yaml
+      - control_flow/do_while.yaml
+      - control_flow/for.yaml
+      - control_flow/forever.yaml
+      - control_flow/ternary.yaml
 
   mir_dev:
     backend: mir
