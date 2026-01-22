@@ -15,6 +15,7 @@ suites:
       - control_flow/while.yaml
       - control_flow/do_while.yaml
       - control_flow/for.yaml
+      - control_flow/repeat.yaml
       - control_flow/forever.yaml
       - control_flow/ternary.yaml
 
@@ -38,6 +39,7 @@ suites:
       - control_flow/unique_priority_if.yaml
       - control_flow/unique_priority_case.yaml
       - control_flow/foreach.yaml
+      - datatypes/variables.yaml
       - datatypes/arrays.yaml
       - datatypes/dynamic_arrays.yaml
       - datatypes/queues.yaml
@@ -47,6 +49,12 @@ suites:
       - datatypes/unpacked_struct.yaml
       - datatypes/packed_struct.yaml
       - datatypes/enum.yaml
+      - datatypes/wide_integral/arithmetic.yaml
+      - datatypes/wide_integral/bitwise.yaml
+      - datatypes/wide_integral/shifts.yaml
+      - datatypes/wide_integral/reductions.yaml
+      - datatypes/wide_integral/conversions.yaml
+      - datatypes/wide_integral/packed_2d.yaml
       - system_tasks/display.yaml
       - system_tasks/severity.yaml
       - functions/basic.yaml
@@ -54,10 +62,3 @@ suites:
       - functions/recursion.yaml
       - functions/reserved_keywords.yaml
       - processes/initial.yaml
-      - datatypes/variables.yaml
-      - datatypes/wide_integral/arithmetic.yaml
-      - datatypes/wide_integral/bitwise.yaml
-      - datatypes/wide_integral/shifts.yaml
-      - datatypes/wide_integral/reductions.yaml
-      - datatypes/wide_integral/conversions.yaml
-      - datatypes/wide_integral/packed_2d.yaml
