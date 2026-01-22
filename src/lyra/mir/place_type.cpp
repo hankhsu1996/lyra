@@ -53,6 +53,21 @@ auto TypeAfterProjection(
             // BitRange yields the element type stored in the projection
             return p.element_type;
           },
+          [&](const UnionMemberProjection& p) -> TypeId {
+            if (type.Kind() != TypeKind::kUnpackedUnion) {
+              throw common::InternalError(
+                  "TypeAfterProjection",
+                  std::format(
+                      "kUnionMember projection on non-union type: {}",
+                      ToString(type)));
+            }
+            const auto& union_info = type.AsUnpackedUnion();
+            if (p.member_index >= union_info.members.size()) {
+              throw common::InternalError(
+                  "TypeAfterProjection", "union member index out of range");
+            }
+            return union_info.members[p.member_index].type;
+          },
           [](const SliceProjection& /*p*/) -> TypeId {
             throw common::InternalError(
                 "TypeAfterProjection", "slice projection not yet supported");

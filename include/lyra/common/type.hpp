@@ -42,6 +42,7 @@ enum class TypeKind {
   kPackedStruct,
   kUnpackedArray,
   kUnpackedStruct,
+  kUnpackedUnion,
   kDynamicArray,
   kQueue,
   kEnum,
@@ -189,10 +190,26 @@ struct UnpackedStructInfo {
   }
 };
 
+struct UnpackedUnionInfo {
+  std::vector<StructField> members;
+  uint32_t storage_bit_width;
+  bool contains_float;
+  bool storage_is_four_state;
+
+  auto operator==(const UnpackedUnionInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const UnpackedUnionInfo& info) -> H {
+    return H::combine(
+        std::move(h), info.members, info.storage_bit_width, info.contains_float,
+        info.storage_is_four_state);
+  }
+};
+
 using TypePayload = std::variant<
     std::monostate, IntegralInfo, PackedArrayInfo, PackedStructInfo,
-    UnpackedArrayInfo, UnpackedStructInfo, DynamicArrayInfo, QueueInfo,
-    EnumInfo>;
+    UnpackedArrayInfo, UnpackedStructInfo, UnpackedUnionInfo, DynamicArrayInfo,
+    QueueInfo, EnumInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -216,6 +233,7 @@ class Type {
   static auto UnpackedArray(TypeId element, ConstantRange range) -> Type;
   static auto UnpackedStruct(std::string name, std::vector<StructField> fields)
       -> Type;
+  static auto UnpackedUnion(UnpackedUnionInfo info) -> Type;
   static auto DynamicArray(TypeId element) -> Type;
   static auto Queue(TypeId element, uint32_t max_bound) -> Type;
   static auto Enum(EnumInfo info) -> Type;
@@ -230,6 +248,7 @@ class Type {
   [[nodiscard]] auto AsPackedStruct() const -> const PackedStructInfo&;
   [[nodiscard]] auto AsUnpackedArray() const -> const UnpackedArrayInfo&;
   [[nodiscard]] auto AsUnpackedStruct() const -> const UnpackedStructInfo&;
+  [[nodiscard]] auto AsUnpackedUnion() const -> const UnpackedUnionInfo&;
   [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
   [[nodiscard]] auto AsQueue() const -> const QueueInfo&;
   [[nodiscard]] auto AsEnum() const -> const EnumInfo&;
@@ -289,6 +308,13 @@ inline auto Type::UnpackedStruct(
   return t;
 }
 
+inline auto Type::UnpackedUnion(UnpackedUnionInfo info) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kUnpackedUnion;
+  t.payload_ = std::move(info);
+  return t;
+}
+
 inline auto Type::DynamicArray(TypeId element) -> Type {
   Type t;
   t.kind_ = TypeKind::kDynamicArray;
@@ -326,6 +352,11 @@ inline auto Type::AsUnpackedArray() const -> const UnpackedArrayInfo& {
 inline auto Type::AsUnpackedStruct() const -> const UnpackedStructInfo& {
   assert(kind_ == TypeKind::kUnpackedStruct);
   return std::get<UnpackedStructInfo>(payload_);
+}
+
+inline auto Type::AsUnpackedUnion() const -> const UnpackedUnionInfo& {
+  assert(kind_ == TypeKind::kUnpackedUnion);
+  return std::get<UnpackedUnionInfo>(payload_);
 }
 
 inline auto Type::AsDynamicArray() const -> const DynamicArrayInfo& {
@@ -377,6 +408,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "unpacked_array";
     case TypeKind::kUnpackedStruct:
       return "unpacked_struct";
+    case TypeKind::kUnpackedUnion:
+      return "unpacked_union";
     case TypeKind::kDynamicArray:
       return "dynamic_array";
     case TypeKind::kQueue:
@@ -422,6 +455,10 @@ inline auto ToString(const Type& type) -> std::string {
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();
       return std::format("struct {}", info.name);
+    }
+    case TypeKind::kUnpackedUnion: {
+      const auto& info = type.AsUnpackedUnion();
+      return std::format("union<{} members>", info.members.size());
     }
     case TypeKind::kDynamicArray: {
       const auto& info = type.AsDynamicArray();

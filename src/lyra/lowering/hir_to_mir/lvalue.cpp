@@ -208,6 +208,36 @@ auto LowerMemberAccessLvalue(
   };
 }
 
+auto LowerUnionMemberAccessLvalue(
+    const hir::UnionMemberAccessExpressionData& data, MirBuilder& builder)
+    -> LvalueResult {
+  Context& ctx = builder.GetContext();
+
+  LvalueResult base = LowerLvalue(data.base, builder);
+
+  const mir::Place& base_place = (*ctx.mir_arena)[base.place];
+  TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
+  const Type& base_type = (*ctx.type_arena)[base_type_id];
+  if (base_type.Kind() != TypeKind::kUnpackedUnion) {
+    throw common::InternalError(
+        "LowerUnionMemberAccessLvalue", "base is not an unpacked union");
+  }
+
+  mir::Projection proj{
+      .info =
+          mir::UnionMemberProjection{
+              .member_index = static_cast<uint32_t>(data.member_index)},
+  };
+  mir::PlaceId result_place =
+      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+
+  // Union member access is always valid - validity inherited from base
+  return LvalueResult{
+      .place = result_place,
+      .validity = base.validity,
+  };
+}
+
 auto LowerPackedElementSelectLvalue(
     const hir::PackedElementSelectExpressionData& data,
     const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
@@ -445,6 +475,9 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
           return LowerMemberAccessLvalue(data, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::UnionMemberAccessExpressionData>) {
+          return LowerUnionMemberAccessLvalue(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {
           return LowerPackedElementSelectLvalue(data, expr, builder);

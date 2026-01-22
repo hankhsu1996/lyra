@@ -692,6 +692,13 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kUnionMemberAccess: {
+      const auto& data = std::get<UnionMemberAccessExpressionData>(expr.data);
+      Dump(data.base);
+      *out_ << ".union<" << data.member_index << ">";
+      break;
+    }
+
     case ExpressionKind::kStructLiteral: {
       const auto& data = std::get<StructLiteralExpressionData>(expr.data);
       *out_ << "'{";

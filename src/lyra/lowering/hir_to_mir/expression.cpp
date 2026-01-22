@@ -1314,6 +1314,11 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           LvalueResult lv = LowerLvalue(expr_id, builder);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
+                                 T, hir::UnionMemberAccessExpressionData>) {
+          // Union member access - always valid (member index is compile-time)
+          LvalueResult lv = LowerLvalue(expr_id, builder);
+          return mir::Operand::Use(lv.place);
+        } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder);
         } else if constexpr (std::is_same_v<

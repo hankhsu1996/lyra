@@ -48,9 +48,16 @@ struct BitRangeProjection {
   TypeId element_type;  // Type of the extracted element
 };
 
+// UnionMember: access a union member by index.
+// Unlike struct field access, this is storage reinterpretation, not selection.
+// Offset is always 0; only the view type changes.
+struct UnionMemberProjection {
+  uint32_t member_index = 0;
+};
+
 using ProjectionInfo = std::variant<
     FieldProjection, IndexProjection, SliceProjection, DerefProjection,
-    BitRangeProjection>;
+    BitRangeProjection, UnionMemberProjection>;
 
 struct Projection {
   ProjectionInfo info;

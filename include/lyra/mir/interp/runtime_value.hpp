@@ -15,6 +15,7 @@ using RuntimeReal = semantic::RuntimeReal;
 using RuntimeShortReal = semantic::RuntimeShortReal;
 using RuntimeStruct = semantic::RuntimeStruct;
 using RuntimeArray = semantic::RuntimeArray;
+using RuntimeUnion = semantic::RuntimeUnion;
 using RuntimeValue = semantic::RuntimeValue;
 
 // Re-export factory functions
@@ -28,6 +29,7 @@ using semantic::MakeReal;
 using semantic::MakeShortReal;
 using semantic::MakeString;
 using semantic::MakeStruct;
+using semantic::MakeUnion;
 
 // Re-export type checks
 using semantic::IsArray;
@@ -36,6 +38,7 @@ using semantic::IsReal;
 using semantic::IsShortReal;
 using semantic::IsString;
 using semantic::IsStruct;
+using semantic::IsUnion;
 
 // Re-export accessors
 using semantic::AsArray;
@@ -44,6 +47,7 @@ using semantic::AsReal;
 using semantic::AsShortReal;
 using semantic::AsString;
 using semantic::AsStruct;
+using semantic::AsUnion;
 
 // Re-export conversion functions
 using semantic::ToBinaryString;

@@ -40,11 +40,12 @@ struct RuntimeShortReal {
 // Forward declarations for recursive types
 struct RuntimeStruct;
 struct RuntimeArray;
+struct RuntimeUnion;
 
 using RuntimeValue = std::variant<
     std::monostate, RuntimeIntegral, RuntimeString, RuntimeReal,
     RuntimeShortReal, std::unique_ptr<RuntimeStruct>,
-    std::unique_ptr<RuntimeArray>>;
+    std::unique_ptr<RuntimeArray>, std::unique_ptr<RuntimeUnion>>;
 
 struct RuntimeStruct {
   std::vector<RuntimeValue> fields;
@@ -52,6 +53,11 @@ struct RuntimeStruct {
 
 struct RuntimeArray {
   std::vector<RuntimeValue> elements;
+};
+
+struct RuntimeUnion {
+  RuntimeIntegral
+      storage_bits;  // Single storage blob, width = max member width
 };
 
 // Factory functions
@@ -66,6 +72,7 @@ auto MakeReal(double value) -> RuntimeValue;
 auto MakeShortReal(float value) -> RuntimeValue;
 auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue;
 auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue;
+auto MakeUnion(RuntimeIntegral storage_bits) -> RuntimeValue;
 
 // Deep copy
 auto Clone(const RuntimeValue& v) -> RuntimeValue;
@@ -77,6 +84,7 @@ auto IsReal(const RuntimeValue& v) -> bool;
 auto IsShortReal(const RuntimeValue& v) -> bool;
 auto IsStruct(const RuntimeValue& v) -> bool;
 auto IsArray(const RuntimeValue& v) -> bool;
+auto IsUnion(const RuntimeValue& v) -> bool;
 
 // Accessors (assert correct type)
 auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral&;
@@ -91,6 +99,8 @@ auto AsStruct(RuntimeValue& v) -> RuntimeStruct&;
 auto AsStruct(const RuntimeValue& v) -> const RuntimeStruct&;
 auto AsArray(RuntimeValue& v) -> RuntimeArray&;
 auto AsArray(const RuntimeValue& v) -> const RuntimeArray&;
+auto AsUnion(RuntimeValue& v) -> RuntimeUnion&;
+auto AsUnion(const RuntimeValue& v) -> const RuntimeUnion&;
 
 // Conversion to printable string (for $display)
 auto ToString(const RuntimeValue& v) -> std::string;
