@@ -10,6 +10,7 @@ namespace lyra::lowering {
 enum class ContainerKind {
   kDynamicArray,
   kQueue,
+  kEnum,
 };
 
 // Builtin method kind (shared across container types where applicable).
@@ -21,6 +22,13 @@ enum class BuiltinMethodKind {
   kPopBack,
   kPopFront,
   kInsert,
+  // Enum methods
+  kEnumFirst,  // compile-time
+  kEnumLast,   // compile-time
+  kEnumNum,    // compile-time
+  kEnumNext,   // runtime
+  kEnumPrev,   // runtime
+  kEnumName,   // runtime
 };
 
 // Whether the method returns a value or is void.

@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/type.hpp"
 
 namespace lyra {
@@ -26,19 +27,6 @@ struct ConstId {
 };
 
 constexpr ConstId kInvalidConstId{UINT32_MAX};
-
-struct IntegralConstant {
-  std::vector<uint64_t> value;   // Value bits
-  std::vector<uint64_t> x_mask;  // X (unknown) mask
-  std::vector<uint64_t> z_mask;  // Z (high-impedance) mask
-
-  auto operator==(const IntegralConstant&) const -> bool = default;
-
-  template <typename H>
-  friend auto AbslHashValue(H h, const IntegralConstant& c) -> H {
-    return H::combine(std::move(h), c.value, c.x_mask, c.z_mask);
-  }
-};
 
 struct StringConstant {
   std::string value;

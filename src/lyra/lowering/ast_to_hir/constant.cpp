@@ -8,8 +8,8 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerIntegralConstant(
-    const slang::SVInt& sv_int, TypeId type, Context* ctx) -> ConstId {
+auto LowerSVIntToIntegralConstant(const slang::SVInt& sv_int)
+    -> IntegralConstant {
   bool has_unknown = sv_int.hasUnknown();
   uint32_t total_words = sv_int.getNumWords();
 
@@ -43,6 +43,12 @@ auto LowerIntegralConstant(
     }
   }
 
+  return constant;
+}
+
+auto LowerIntegralConstant(
+    const slang::SVInt& sv_int, TypeId type, Context* ctx) -> ConstId {
+  IntegralConstant constant = LowerSVIntToIntegralConstant(sv_int);
   return ctx->constant_arena->Intern(type, std::move(constant));
 }
 

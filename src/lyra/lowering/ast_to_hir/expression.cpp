@@ -16,6 +16,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
@@ -776,6 +777,113 @@ auto LowerExpression(
             }
             args.push_back(idx);
             args.push_back(value);
+            break;
+          }
+
+          // Enum compile-time methods - constant fold from EnumInfo
+          case BuiltinMethodKind::kEnumFirst:
+          case BuiltinMethodKind::kEnumLast:
+          case BuiltinMethodKind::kEnumNum: {
+            // These methods take no arguments (receiver only)
+            if (call.arguments().size() > 1) {
+              ctx->sink->Error(span, "enum first/last/num takes no arguments");
+              return hir::kInvalidExpressionId;
+            }
+
+            // Get the enum type from the receiver expression
+            const hir::Expression& receiver_expr = (*ctx->hir_arena)[receiver];
+            TypeId enum_type_id = receiver_expr.type;
+            const Type& enum_type = (*ctx->type_arena)[enum_type_id];
+
+            if (enum_type.Kind() != TypeKind::kEnum) {
+              throw common::InternalError(
+                  "LowerExpression", "enum method on non-enum type");
+            }
+            const auto& enum_info = enum_type.AsEnum();
+
+            // Defensive check: SV doesn't allow empty enums, but be safe
+            if (enum_info.members.empty()) {
+              throw common::InternalError(
+                  "LowerExpression", "enum has no members");
+            }
+
+            if (info->method == BuiltinMethodKind::kEnumNum) {
+              // num() returns int (32-bit signed 2-state)
+              TypeId int_type = ctx->type_arena->Intern(
+                  TypeKind::kIntegral, IntegralInfo{
+                                           .bit_width = 32,
+                                           .is_signed = true,
+                                           .is_four_state = false});
+              auto num_val = static_cast<uint64_t>(enum_info.members.size());
+              IntegralConstant num_ic;
+              num_ic.value = {num_val};
+              ConstId num_const =
+                  ctx->constant_arena->Intern(int_type, std::move(num_ic));
+              return ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kConstant,
+                      .type = int_type,
+                      .span = span,
+                      .data =
+                          hir::ConstantExpressionData{.constant = num_const}});
+            }
+
+            // first() and last() return the enum type
+            const IntegralConstant& member_val =
+                (info->method == BuiltinMethodKind::kEnumFirst)
+                    ? enum_info.members.front().value
+                    : enum_info.members.back().value;
+            IntegralConstant ic_copy = member_val;
+            ConstId member_const =
+                ctx->constant_arena->Intern(enum_type_id, std::move(ic_copy));
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kConstant,
+                    .type = enum_type_id,
+                    .span = span,
+                    .data =
+                        hir::ConstantExpressionData{.constant = member_const}});
+          }
+
+          // Enum runtime methods - emit BuiltinMethodCall
+          case BuiltinMethodKind::kEnumNext:
+          case BuiltinMethodKind::kEnumPrev: {
+            // next/prev take at most one argument (step)
+            if (call.arguments().size() > 2) {
+              ctx->sink->Error(
+                  span, "enum next/prev takes at most one argument");
+              return hir::kInvalidExpressionId;
+            }
+
+            hir_method = (info->method == BuiltinMethodKind::kEnumNext)
+                             ? hir::BuiltinMethod::kEnumNext
+                             : hir::BuiltinMethod::kEnumPrev;
+            // Get enum type from receiver for result type
+            const hir::Expression& receiver_expr = (*ctx->hir_arena)[receiver];
+            result_type = receiver_expr.type;
+
+            // Optional step argument: next(N) or prev(N)
+            if (call.arguments().size() > 1) {
+              hir::ExpressionId step =
+                  LowerExpression(*call.arguments()[1], registrar, ctx);
+              if (!step) {
+                return hir::kInvalidExpressionId;
+              }
+              args.push_back(step);
+            }
+            break;
+          }
+
+          case BuiltinMethodKind::kEnumName: {
+            // name() takes no arguments (receiver only)
+            if (call.arguments().size() > 1) {
+              ctx->sink->Error(span, "enum name takes no arguments");
+              return hir::kInvalidExpressionId;
+            }
+
+            hir_method = hir::BuiltinMethod::kEnumName;
+            result_type =
+                ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
             break;
           }
         }

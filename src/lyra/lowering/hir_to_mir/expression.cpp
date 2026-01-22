@@ -623,7 +623,8 @@ auto LowerNewArray(
           mir::BuiltinCallRvalueInfo{
               .method = mir::BuiltinMethod::kNewArray,
               .result_type = expr.type,
-              .receiver = std::nullopt},
+              .receiver = std::nullopt,
+              .enum_type = std::nullopt},
   };
 
   mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -666,7 +667,8 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = std::nullopt},
+                  .receiver = std::nullopt,
+                  .enum_type = std::nullopt},
       };
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
@@ -688,7 +690,8 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = lv.place},
+                  .receiver = lv.place,
+                  .enum_type = std::nullopt},
       };
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
@@ -712,7 +715,8 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = lv.place},
+                  .receiver = lv.place,
+                  .enum_type = std::nullopt},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -732,7 +736,8 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = mir::BuiltinMethod::kQueueInsert,
                   .result_type = expr.type,
-                  .receiver = lv.place},
+                  .receiver = lv.place,
+                  .enum_type = std::nullopt},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
@@ -763,7 +768,71 @@ auto LowerBuiltinMethodCall(
               mir::BuiltinCallRvalueInfo{
                   .method = method,
                   .result_type = expr.type,
-                  .receiver = lv.place},
+                  .receiver = lv.place,
+                  .enum_type = std::nullopt},
+      };
+
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+
+    case hir::BuiltinMethod::kEnumNext:
+    case hir::BuiltinMethod::kEnumPrev: {
+      // operands[0] = receiver value
+      mir::Operand receiver_val = LowerExpression(data.receiver, builder);
+      std::vector<mir::Operand> operands = {receiver_val};
+
+      // operands[1] = optional step N
+      if (!data.args.empty()) {
+        operands.push_back(LowerExpression(data.args[0], builder));
+      }
+
+      // Get enum type from receiver
+      TypeId enum_type_id = receiver_expr.type;
+      const Type& enum_type = (*ctx.type_arena)[enum_type_id];
+      if (enum_type.Kind() != TypeKind::kEnum) {
+        throw common::InternalError(
+            "LowerBuiltinMethodCall", "enum method on non-enum type");
+      }
+
+      mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kEnumNext)
+                                      ? mir::BuiltinMethod::kEnumNext
+                                      : mir::BuiltinMethod::kEnumPrev;
+
+      mir::Rvalue rvalue{
+          .operands = std::move(operands),
+          .info =
+              mir::BuiltinCallRvalueInfo{
+                  .method = method,
+                  .result_type = expr.type,
+                  .receiver = std::nullopt,
+                  .enum_type = enum_type_id},
+      };
+
+      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      return mir::Operand::Use(temp);
+    }
+
+    case hir::BuiltinMethod::kEnumName: {
+      // operands[0] = receiver value
+      mir::Operand receiver_val = LowerExpression(data.receiver, builder);
+
+      // Get enum type from receiver
+      TypeId enum_type_id = receiver_expr.type;
+      const Type& enum_type = (*ctx.type_arena)[enum_type_id];
+      if (enum_type.Kind() != TypeKind::kEnum) {
+        throw common::InternalError(
+            "LowerBuiltinMethodCall", "enum method on non-enum type");
+      }
+
+      mir::Rvalue rvalue{
+          .operands = {receiver_val},
+          .info =
+              mir::BuiltinCallRvalueInfo{
+                  .method = mir::BuiltinMethod::kEnumName,
+                  .result_type = expr.type,
+                  .receiver = std::nullopt,
+                  .enum_type = enum_type_id},
       };
 
       mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));

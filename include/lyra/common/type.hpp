@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/range.hpp"
 
 namespace lyra {
@@ -43,6 +44,7 @@ enum class TypeKind {
   kUnpackedStruct,
   kDynamicArray,
   kQueue,
+  kEnum,
 };
 
 struct IntegralInfo {
@@ -106,6 +108,30 @@ struct QueueInfo {
   }
 };
 
+struct EnumMember {
+  std::string name;
+  IntegralConstant value;
+
+  auto operator==(const EnumMember&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const EnumMember& m) -> H {
+    return H::combine(std::move(h), m.name, m.value);
+  }
+};
+
+struct EnumInfo {
+  TypeId base_type;                 // Underlying integral type
+  std::vector<EnumMember> members;  // Declaration order
+
+  auto operator==(const EnumInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const EnumInfo& info) -> H {
+    return H::combine(std::move(h), info.base_type, info.members);
+  }
+};
+
 struct PackedStructField {
   std::string name;
   TypeId type;
@@ -165,7 +191,8 @@ struct UnpackedStructInfo {
 
 using TypePayload = std::variant<
     std::monostate, IntegralInfo, PackedArrayInfo, PackedStructInfo,
-    UnpackedArrayInfo, UnpackedStructInfo, DynamicArrayInfo, QueueInfo>;
+    UnpackedArrayInfo, UnpackedStructInfo, DynamicArrayInfo, QueueInfo,
+    EnumInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -191,6 +218,7 @@ class Type {
       -> Type;
   static auto DynamicArray(TypeId element) -> Type;
   static auto Queue(TypeId element, uint32_t max_bound) -> Type;
+  static auto Enum(EnumInfo info) -> Type;
 
   [[nodiscard]] auto Kind() const -> TypeKind {
     return kind_;
@@ -204,6 +232,7 @@ class Type {
   [[nodiscard]] auto AsUnpackedStruct() const -> const UnpackedStructInfo&;
   [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
   [[nodiscard]] auto AsQueue() const -> const QueueInfo&;
+  [[nodiscard]] auto AsEnum() const -> const EnumInfo&;
 
   auto operator==(const Type& other) const -> bool = default;
 
@@ -309,10 +338,23 @@ inline auto Type::AsQueue() const -> const QueueInfo& {
   return std::get<QueueInfo>(payload_);
 }
 
+inline auto Type::Enum(EnumInfo info) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kEnum;
+  t.payload_ = std::move(info);
+  return t;
+}
+
+inline auto Type::AsEnum() const -> const EnumInfo& {
+  assert(kind_ == TypeKind::kEnum);
+  return std::get<EnumInfo>(payload_);
+}
+
 inline auto IsPacked(const Type& type) -> bool {
   return type.Kind() == TypeKind::kIntegral ||
          type.Kind() == TypeKind::kPackedArray ||
-         type.Kind() == TypeKind::kPackedStruct;
+         type.Kind() == TypeKind::kPackedStruct ||
+         type.Kind() == TypeKind::kEnum;
 }
 
 inline auto ToString(TypeKind kind) -> std::string {
@@ -339,6 +381,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "dynamic_array";
     case TypeKind::kQueue:
       return "queue";
+    case TypeKind::kEnum:
+      return "enum";
   }
   return "unknown";
 }
@@ -390,6 +434,12 @@ inline auto ToString(const Type& type) -> std::string {
       }
       return std::format(
           "type#{}[$:{}]", info.element_type.value, info.max_bound);
+    }
+    case TypeKind::kEnum: {
+      const auto& info = type.AsEnum();
+      return std::format(
+          "enum<base_type#{}, {} members>", info.base_type.value,
+          info.members.size());
     }
   }
   return "unknown";

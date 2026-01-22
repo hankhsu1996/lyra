@@ -27,10 +27,13 @@ auto ClassifyBuiltinMethod(const slang::ast::CallExpression& call)
 
   // Determine container kind from receiver type.
   std::optional<ContainerKind> container;
-  if (first_arg->type->kind == slang::ast::SymbolKind::DynamicArrayType) {
+  const auto& receiver_type = first_arg->type->getCanonicalType();
+  if (receiver_type.kind == slang::ast::SymbolKind::DynamicArrayType) {
     container = ContainerKind::kDynamicArray;
-  } else if (first_arg->type->kind == slang::ast::SymbolKind::QueueType) {
+  } else if (receiver_type.kind == slang::ast::SymbolKind::QueueType) {
     container = ContainerKind::kQueue;
+  } else if (receiver_type.isEnum()) {
+    container = ContainerKind::kEnum;
   }
 
   if (!container) {
@@ -92,6 +95,52 @@ auto ClassifyBuiltinMethod(const slang::ast::CallExpression& call)
           .method = BuiltinMethodKind::kInsert,
           .return_kind = ReturnKind::kVoid,
           .has_side_effect = true};
+    }
+  }
+
+  // Enum-only methods.
+  if (*container == ContainerKind::kEnum) {
+    if (name == "first") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumFirst,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "last") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumLast,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "num") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumNum,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "next") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumNext,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "prev") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumPrev,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "name") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kEnumName,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
     }
   }
 

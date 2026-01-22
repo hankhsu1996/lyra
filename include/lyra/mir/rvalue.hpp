@@ -50,10 +50,12 @@ struct AggregateRvalueInfo {
 // q.pop_back()).
 // - result_type: Required for kNewArray (element type can't be inferred)
 // - receiver: For pop methods that both return a value and mutate the queue
+// - enum_type: For enum methods (required to look up EnumInfo)
 struct BuiltinCallRvalueInfo {
   BuiltinMethod method;
   TypeId result_type;
   std::optional<PlaceId> receiver;
+  std::optional<TypeId> enum_type;  // For kEnumNext, kEnumPrev, kEnumName
 };
 
 // IndexValidity: computes "this index is a valid access" predicate.

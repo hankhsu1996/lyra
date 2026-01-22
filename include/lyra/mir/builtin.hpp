@@ -17,6 +17,11 @@ enum class BuiltinMethod {
   kQueuePopBack,    // q.pop_back() - returns element, mutates queue
   kQueuePopFront,   // q.pop_front() - returns element, mutates queue
   kQueueInsert,     // q.insert(idx, val) - insert at index
+
+  // Enum operations (runtime only - first/last/num are constant-folded)
+  kEnumNext,  // e.next([N]) - returns next enum value (wraps)
+  kEnumPrev,  // e.prev([N]) - returns previous enum value (wraps)
+  kEnumName,  // e.name() - returns string name of current value
 };
 
 }  // namespace lyra::mir

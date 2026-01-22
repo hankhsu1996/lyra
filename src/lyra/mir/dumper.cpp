@@ -425,6 +425,15 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
               case BuiltinMethod::kQueueInsert:
                 method_name = "queue_insert";
                 break;
+              case BuiltinMethod::kEnumNext:
+                method_name = "enum_next";
+                break;
+              case BuiltinMethod::kEnumPrev:
+                method_name = "enum_prev";
+                break;
+              case BuiltinMethod::kEnumName:
+                method_name = "enum_name";
+                break;
             }
             return std::format("builtin({})", method_name);
           },

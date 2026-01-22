@@ -485,6 +485,16 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
     case TypeKind::kQueue:
       // Dynamic arrays and queues default to empty (size 0)
       return MakeArray({});
+    case TypeKind::kEnum: {
+      // Enum defaults to 0 (or X for 4-state base type)
+      // Use PackedBitWidth/IsPackedFourState since base type can be packed
+      // array
+      uint32_t bit_width = PackedBitWidth(type, types);
+      if (IsPackedFourState(type, types)) {
+        return MakeIntegralX(bit_width);
+      }
+      return MakeIntegral(0, bit_width);
+    }
   }
   throw common::InternalError("CreateDefaultValue", "unknown type kind");
 }
@@ -990,6 +1000,127 @@ auto Interpreter::EvalRvalue(ProcessState& state, const Rvalue& rv)
                   elements.erase(elements.begin() + idx);
                 }
                 return std::monostate{};
+              }
+
+              case BuiltinMethod::kEnumNext:
+              case BuiltinMethod::kEnumPrev: {
+                if (!info.enum_type) {
+                  throw common::InternalError(
+                      "EvalRvalue", "enum next/prev requires enum_type");
+                }
+                const Type& enum_type = (*types_)[*info.enum_type];
+                if (enum_type.Kind() != TypeKind::kEnum) {
+                  throw common::InternalError(
+                      "EvalRvalue", "enum_type is not kEnum");
+                }
+                const auto& enum_info = enum_type.AsEnum();
+                const auto& members = enum_info.members;
+                if (members.empty()) {
+                  throw common::InternalError(
+                      "EvalRvalue", "enum has no members");
+                }
+
+                // Get bit width (use PackedBitWidth since base can be packed
+                // array)
+                auto bit_width = PackedBitWidth(enum_type, *types_);
+
+                // Get current value from operands[0]
+                auto current_val = EvalOperand(state, rv.operands[0]);
+                if (!IsIntegral(current_val)) {
+                  throw common::InternalError(
+                      "EvalRvalue", "enum value must be integral");
+                }
+                const auto& current_int = AsIntegral(current_val);
+
+                // X/Z anywhere → invalid
+                bool is_invalid = !current_int.IsKnown();
+
+                // Get step from operands[1] (default 1 if no operand)
+                size_t step = 1;
+                if (rv.operands.size() > 1) {
+                  auto step_val = EvalOperand(state, rv.operands[1]);
+                  const auto& step_int = AsIntegral(step_val);
+                  if (!step_int.IsKnown()) {
+                    throw std::runtime_error(
+                        "enum next/prev step cannot be X/Z");
+                  }
+                  // Step is expected to be an int - extract low 32 bits
+                  auto lo = step_int.value.empty()
+                                ? 0ULL
+                                : step_int.value[0] & 0xFFFF'FFFFU;
+                  step = static_cast<size_t>(lo);
+                }
+
+                // Find current index by bitwise equality
+                size_t n = members.size();
+                size_t current_idx = n;  // n means "not found"
+                if (!is_invalid) {
+                  for (size_t i = 0; i < n; ++i) {
+                    auto member_ri =
+                        MakeIntegralFromConstant(members[i].value, bit_width);
+                    auto eq = IntegralEq(current_int, AsIntegral(member_ri));
+                    if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
+                      current_idx = i;
+                      break;  // First match wins for duplicate values
+                    }
+                  }
+                }
+
+                // Compute result index using size_t math
+                size_t step_mod = step % n;
+                size_t result_idx = 0;
+                if (current_idx >= n) {
+                  // Invalid value: next→first, prev→last
+                  result_idx =
+                      (info.method == BuiltinMethod::kEnumNext) ? 0 : n - 1;
+                } else if (info.method == BuiltinMethod::kEnumNext) {
+                  result_idx = (current_idx + step_mod) % n;
+                } else {
+                  // prev: add (n - step_mod) to avoid underflow
+                  result_idx = (current_idx + (n - step_mod)) % n;
+                }
+
+                // Return member value as RuntimeIntegral
+                return MakeIntegralFromConstant(
+                    members[result_idx].value, bit_width);
+              }
+
+              case BuiltinMethod::kEnumName: {
+                if (!info.enum_type) {
+                  throw common::InternalError(
+                      "EvalRvalue", "name() requires enum_type");
+                }
+                const Type& enum_type = (*types_)[*info.enum_type];
+                if (enum_type.Kind() != TypeKind::kEnum) {
+                  throw common::InternalError(
+                      "EvalRvalue", "enum_type is not kEnum");
+                }
+                const auto& enum_info = enum_type.AsEnum();
+                auto bit_width = PackedBitWidth(enum_type, *types_);
+
+                auto current_val = EvalOperand(state, rv.operands[0]);
+                if (!IsIntegral(current_val)) {
+                  return MakeString("");
+                }
+                const auto& current_int = AsIntegral(current_val);
+
+                // X/Z → empty string
+                if (!current_int.IsKnown()) {
+                  return MakeString("");
+                }
+
+                // Find first matching member name
+                for (const auto& member : enum_info.members) {
+                  auto member_ri =
+                      MakeIntegralFromConstant(member.value, bit_width);
+                  auto eq = IntegralEq(current_int, AsIntegral(member_ri));
+                  if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
+                    return MakeString(member.name);
+                  }
+                }
+
+                // Invalid value → empty string
+                return MakeString("");
               }
             }
             throw common::InternalError("EvalRvalue", "unknown builtin method");

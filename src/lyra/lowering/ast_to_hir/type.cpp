@@ -8,6 +8,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -122,6 +123,33 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                                      .total_bit_width = total_width,
                                      .is_signed = put.isSigned,
                                      .is_four_state = put.isFourState});
+  }
+
+  // Check for enum types BEFORE isIntegral() - enums are integrals in slang
+  // but we want to preserve enum identity for methods like first/last/num.
+  if (canonical.isEnum()) {
+    const auto& enum_type = canonical.as<slang::ast::EnumType>();
+
+    // Lower the base type first
+    TypeId base_type = LowerType(enum_type.baseType, source, ctx);
+    if (!base_type) {
+      return kInvalidTypeId;
+    }
+
+    // Extract enum members, converting each value to IntegralConstant
+    std::vector<EnumMember> members;
+    for (const auto& value_sym : enum_type.values()) {
+      const auto& cv = value_sym.getValue();
+      IntegralConstant ic = LowerSVIntToIntegralConstant(cv.integer());
+      members.push_back({
+          .name = std::string(value_sym.name),
+          .value = std::move(ic),
+      });
+    }
+
+    return ctx->type_arena->Intern(
+        TypeKind::kEnum,
+        EnumInfo{.base_type = base_type, .members = std::move(members)});
   }
 
   if (canonical.isIntegral()) {
