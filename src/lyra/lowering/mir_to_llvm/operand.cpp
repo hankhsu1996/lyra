@@ -15,15 +15,10 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
             return LowerConstant(context, constant);
           },
           [&context](mir::PlaceId place_id) -> llvm::Value* {
-            // Look up the alloca for this place
-            llvm::AllocaInst* alloca = context.GetPlaceStorage(place_id);
-            if (alloca == nullptr) {
-              // Place hasn't been assigned yet - try to create storage
-              alloca = context.GetOrCreatePlaceStorage(place_id);
-            }
-            // Load the value from the alloca
-            return context.GetBuilder().CreateLoad(
-                alloca->getAllocatedType(), alloca, "load");
+            // Get pointer to place storage and load value
+            llvm::Value* ptr = context.GetPlacePointer(place_id);
+            llvm::Type* type = context.GetPlaceLlvmType(place_id);
+            return context.GetBuilder().CreateLoad(type, ptr, "load");
           },
       },
       operand.payload);

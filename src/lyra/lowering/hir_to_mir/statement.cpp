@@ -985,6 +985,15 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           // Create dead block for unreachable code after return
           BlockIndex dead_bb = builder.CreateBlock();
           builder.SetCurrentBlock(dead_bb);
+        } else if constexpr (std::is_same_v<T, hir::DelayStatementData>) {
+          // Create resume block for code after delay
+          BlockIndex resume_bb = builder.CreateBlock();
+
+          // Emit delay terminator with resume block
+          builder.EmitDelay(data.ticks, resume_bb);
+
+          // Continue lowering in the resume block
+          builder.SetCurrentBlock(resume_bb);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

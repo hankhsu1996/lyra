@@ -58,6 +58,7 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
 // Result from building LLVM lowering info
 struct LlvmLoweringInfo {
   std::vector<lowering::mir_to_llvm::SlotTypeInfo> slot_types;
+  std::vector<TypeId> slot_type_ids;
   std::vector<lowering::mir_to_llvm::VariableInfo> variables;
 };
 
@@ -73,10 +74,14 @@ auto BuildLlvmLoweringInfo(
   }
 
   info.slot_types.reserve(hir_module->variables.size());
+  info.slot_type_ids.reserve(hir_module->variables.size());
 
   for (size_t i = 0; i < hir_module->variables.size(); ++i) {
     const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
     const Type& type = (*hir_result.type_arena)[sym.type];
+
+    // Always store the TypeId for LLVM type derivation
+    info.slot_type_ids.push_back(sym.type);
 
     // Handle real types
     if (type.Kind() == TypeKind::kReal) {
@@ -357,6 +362,7 @@ auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
       .mir_arena = mir_result.mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .slot_types = std::move(lowering_info.slot_types),
+      .slot_type_ids = std::move(lowering_info.slot_type_ids),
       .variables = std::move(lowering_info.variables),
   };
 

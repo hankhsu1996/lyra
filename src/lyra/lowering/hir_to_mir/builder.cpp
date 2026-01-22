@@ -259,6 +259,17 @@ void MirBuilder::EmitRepeat() {
       mir::Terminator{.data = mir::Repeat{}, .origin = current_origin_});
 }
 
+void MirBuilder::EmitDelay(uint64_t ticks, BlockIndex resume) {
+  SealCurrentBlock(
+      mir::Terminator{
+          .data =
+              mir::Delay{
+                  .ticks = ticks,
+                  .resume = mir::BasicBlockId{resume.value},
+              },
+          .origin = current_origin_});
+}
+
 void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
   if (info) {
     SealCurrentBlock(
@@ -303,8 +314,10 @@ void ValidateTerminatorTargets(const mir::Terminator& term, size_t num_blocks) {
           for (const auto& target : t.targets) {
             check_target(target);
           }
+        } else if constexpr (std::is_same_v<T, mir::Delay>) {
+          check_target(t.resume);
         }
-        // Delay, Wait, Return, Finish, Repeat have no targets
+        // Wait, Return, Finish, Repeat have no targets
       },
       term.data);
 }

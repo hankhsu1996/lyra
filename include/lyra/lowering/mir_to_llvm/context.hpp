@@ -3,12 +3,12 @@
 #include <memory>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
+#include "lyra/lowering/mir_to_llvm/layout.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -38,7 +38,9 @@ class Context {
  public:
   Context(
       const mir::Design& design, const mir::Arena& arena,
-      const TypeArena& types);
+      const TypeArena& types, const Layout& layout,
+      std::unique_ptr<llvm::LLVMContext> llvm_ctx,
+      std::unique_ptr<llvm::Module> module);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
     return *llvm_context_;
@@ -59,6 +61,9 @@ class Context {
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
     return types_;
   }
+  [[nodiscard]] auto GetLayout() const -> const Layout& {
+    return layout_;
+  }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
@@ -69,6 +74,14 @@ class Context {
   [[nodiscard]] auto GetLyraStringCmp() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
+
+  // Type accessors from layout
+  [[nodiscard]] auto GetSuspendRecordType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetDesignStateType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetProcessFrameType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetProcessStateType() const -> llvm::StructType*;
 
   // Function scope management - must be called when entering/leaving a function
   // BeginFunction sets up the alloca insertion point at the entry block
@@ -80,9 +93,36 @@ class Context {
   // Allocas are always inserted in the entry block via alloca_builder_
   auto GetOrCreatePlaceStorage(mir::PlaceId place_id) -> llvm::AllocaInst*;
 
-  // Get existing storage for a place (returns nullptr if not found)
-  [[nodiscard]] auto GetPlaceStorage(mir::PlaceId place_id) const
-      -> llvm::AllocaInst*;
+  // FieldIndex accessors (encapsulate map lookups)
+  [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;
+  [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
+      -> uint32_t;
+
+  // Per-process setup (set before generating each process function)
+  void SetCurrentProcess(size_t process_index);
+  [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
+
+  // Cached pointers (computed in entry block, reused for all place accesses)
+  // state_ptr: the function argument pointing to ProcessStateN
+  void SetStatePointer(llvm::Value* state_ptr);
+  [[nodiscard]] auto GetStatePointer() -> llvm::Value*;
+
+  // design_ptr: loaded from state->header.design, points to shared DesignState
+  void SetDesignPointer(llvm::Value* design_ptr);
+  [[nodiscard]] auto GetDesignPointer() -> llvm::Value*;
+
+  // frame_ptr: GEP to state->frame, points to this process's ProcessFrameN
+  void SetFramePointer(llvm::Value* frame_ptr);
+  [[nodiscard]] auto GetFramePointer() -> llvm::Value*;
+
+  // Get pointer to suspend record via GEP: state->header.suspend
+  [[nodiscard]] auto GetSuspendRecordPointer() -> llvm::Value*;
+
+  // Get pointer to a place's storage via GEP into design or frame
+  [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id) -> llvm::Value*;
+
+  // Get the LLVM type for a place's storage
+  [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type*;
 
   auto TakeOwnership() -> std::pair<
       std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
@@ -108,6 +148,7 @@ class Context {
   const mir::Design& design_;
   const mir::Arena& arena_;
   const TypeArena& types_;
+  const Layout& layout_;
 
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::unique_ptr<llvm::Module> llvm_module_;
@@ -126,9 +167,18 @@ class Context {
   llvm::Function* lyra_string_cmp_ = nullptr;
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
+  llvm::Function* lyra_run_simulation_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
+
+  // Current process index (set before generating each process)
+  size_t current_process_index_ = 0;
+
+  // Cached pointers for current process function
+  llvm::Value* state_ptr_ = nullptr;
+  llvm::Value* design_ptr_ = nullptr;
+  llvm::Value* frame_ptr_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

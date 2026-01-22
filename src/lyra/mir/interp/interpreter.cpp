@@ -535,6 +535,7 @@ auto CreateProcessState(
       .frame = Frame(std::move(locals), std::move(temps)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
+      .pending_suspend = std::nullopt,
   };
 }
 
@@ -612,6 +613,7 @@ auto Interpreter::RunFunction(
       .frame = Frame(std::move(locals), std::move(temps)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
+      .pending_suspend = std::nullopt,
   };
 
   // Execute function (look up blocks from func directly)
@@ -1861,10 +1863,13 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return t.targets.back();
           },
 
-          [](const Delay& /*t*/) -> std::optional<BasicBlockId> {
-            throw common::InternalError(
-                "ExecTerminator",
-                "delay terminator requires runtime/scheduler");
+          [&](const Delay& t) -> std::optional<BasicBlockId> {
+            // Signal suspension - RunUntilSuspend will return SuspendDelay
+            state.pending_suspend = SuspendDelay{
+                .ticks = t.ticks,
+                .resume_block = t.resume,
+            };
+            return std::nullopt;
           },
 
           [](const Wait& /*t*/) -> std::optional<BasicBlockId> {
@@ -1947,6 +1952,12 @@ auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
       state.current_block = *next_block;
       state.instruction_index = 0;
     } else {
+      // Check if a suspension terminator set pending_suspend
+      if (state.pending_suspend) {
+        SuspendReason result = *state.pending_suspend;
+        state.pending_suspend = std::nullopt;
+        return result;
+      }
       // Process finished (Return or Finish terminator)
       state.status = ProcessStatus::kFinished;
       return SuspendFinished{};

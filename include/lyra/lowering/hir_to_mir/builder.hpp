@@ -85,6 +85,7 @@ class MirBuilder {
       const std::vector<BlockIndex>& targets, bool has_else);
   void EmitReturn();
   void EmitRepeat();
+  void EmitDelay(uint64_t ticks, BlockIndex resume);
   void EmitTerminate(std::optional<mir::Finish> info = std::nullopt);
 
   // Materialize all blocks. Returns blocks in the same order as they were

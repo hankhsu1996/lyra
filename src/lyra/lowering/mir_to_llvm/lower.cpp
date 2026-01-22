@@ -1,77 +1,79 @@
 #include "lyra/lowering/mir_to_llvm/lower.hpp"
 
 #include <cstddef>
-#include <optional>
+#include <format>
 #include <vector>
 
 #include "llvm/IR/Constants.h"
 #include "llvm/Support/raw_ostream.h"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/lowering/mir_to_llvm/context.hpp"
+#include "lyra/lowering/mir_to_llvm/layout.hpp"
 #include "lyra/lowering/mir_to_llvm/process.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Find the PlaceId for a design slot by scanning the arena
-auto FindDesignSlotPlaceId(const mir::Arena& arena, size_t slot_id)
-    -> std::optional<mir::PlaceId> {
-  for (uint32_t i = 0; i < arena.PlaceCount(); ++i) {
-    mir::PlaceId place_id{i};
-    const auto& place = arena[place_id];
-    if (place.root.kind == mir::PlaceRoot::Kind::kDesign &&
-        place.root.id == static_cast<int>(slot_id) &&
-        place.projections.empty()) {
-      return place_id;
-    }
+// Build SlotInfo list from LoweringInput
+auto BuildSlotInfoList(
+    const std::vector<SlotTypeInfo>& slot_types,
+    const std::vector<TypeId>& type_ids) -> std::vector<SlotInfo> {
+  if (slot_types.size() != type_ids.size()) {
+    throw common::InternalError(
+        "BuildSlotInfoList",
+        std::format(
+            "slot_types.size() ({}) != slot_type_ids.size() ({})",
+            slot_types.size(), type_ids.size()));
   }
-  return std::nullopt;
+
+  std::vector<SlotInfo> slots;
+  slots.reserve(slot_types.size());
+
+  for (size_t i = 0; i < slot_types.size(); ++i) {
+    slots.push_back(
+        SlotInfo{
+            .slot_id = mir::SlotId{static_cast<uint32_t>(i)},
+            .type_id = type_ids[i],
+            .type_info = slot_types[i],
+        });
+  }
+
+  return slots;
 }
 
-// Pre-create allocas for ALL design slots and initialize to SV defaults.
-// Returns a vector of allocas indexed by slot_id.
-auto InitializeAllSlots(
-    Context& context, const std::vector<SlotTypeInfo>& slot_types)
-    -> std::vector<llvm::AllocaInst*> {
-  std::vector<llvm::AllocaInst*> allocas(slot_types.size(), nullptr);
-  if (slot_types.empty()) {
-    return allocas;
-  }
-
+// Initialize DesignState with aggregate zero
+void InitializeDesignState(Context& context, llvm::Value* design_state) {
   auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  const auto& arena = context.GetMirArena();
+  auto* design_type = context.GetDesignStateType();
 
-  for (size_t slot_id = 0; slot_id < slot_types.size(); ++slot_id) {
-    auto place_id_opt = FindDesignSlotPlaceId(arena, slot_id);
-    if (!place_id_opt) {
-      continue;
-    }
+  // Use aggregate zero for simple initialization
+  auto* zero = llvm::ConstantAggregateZero::get(design_type);
+  builder.CreateStore(zero, design_state);
+}
 
-    llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(*place_id_opt);
-    allocas[slot_id] = alloca;
+// Initialize ProcessStateN: zero everything, then set design pointer
+void InitializeProcessState(
+    Context& context, llvm::Value* process_state, llvm::Value* design_state) {
+  auto& builder = context.GetBuilder();
+  auto* state_type = context.GetProcessStateType();
+  auto* header_type = context.GetHeaderType();
 
-    // Initialize to SV default (0 for integral, 0.0 for real, null for string)
-    const auto& type_info = slot_types[slot_id];
-    if (type_info.kind == VarTypeKind::kReal) {
-      builder.CreateStore(
-          llvm::ConstantFP::get(llvm::Type::getDoubleTy(llvm_ctx), 0.0),
-          alloca);
-    } else {
-      // Works for both integers (0) and pointers (null)
-      builder.CreateStore(
-          llvm::Constant::getNullValue(alloca->getAllocatedType()), alloca);
-    }
-  }
-  return allocas;
+  // Use aggregate zero for the entire state
+  auto* zero = llvm::ConstantAggregateZero::get(state_type);
+  builder.CreateStore(zero, process_state);
+
+  // Set design pointer: header->design (field 1)
+  auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
+  auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
+  builder.CreateStore(design_state, design_ptr_ptr);
 }
 
 // Register tracked variables with runtime and emit snapshot call.
+// O(N) complexity using pre-built SlotId -> field_index map from layout.
 void RegisterAndSnapshotVariables(
     Context& context, const std::vector<VariableInfo>& variables,
-    const std::vector<SlotTypeInfo>& slot_types,
-    const std::vector<llvm::AllocaInst*>& allocas) {
+    const std::vector<SlotTypeInfo>& slot_types, llvm::Value* design_state) {
   if (variables.empty()) {
     return;
   }
@@ -80,13 +82,23 @@ void RegisterAndSnapshotVariables(
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+  auto* design_type = context.GetDesignStateType();
 
   for (const auto& var : variables) {
-    if (var.slot_id >= allocas.size() || allocas[var.slot_id] == nullptr) {
+    if (var.slot_id >= slot_types.size()) {
       continue;
     }
 
-    auto* alloca = allocas[var.slot_id];
+    // Direct lookup using SlotId - no O(N) search needed
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
+
+    // Check if this slot exists in the layout
+    // Use GetDesignFieldIndex which throws if slot is missing (catches
+    // mismatches)
+    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+    auto* slot_ptr = builder.CreateStructGEP(
+        design_type, design_state, field_index, "var_ptr");
+
     const auto& type_info = slot_types[var.slot_id];
 
     auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
@@ -97,98 +109,127 @@ void RegisterAndSnapshotVariables(
         llvm::ConstantInt::get(i1_ty, type_info.is_signed ? 1 : 0);
     builder.CreateCall(
         context.GetLyraRegisterVar(),
-        {name_ptr, alloca, kind_val, width_val, signed_val});
+        {name_ptr, slot_ptr, kind_val, width_val, signed_val});
   }
 
   builder.CreateCall(context.GetLyraSnapshotVars());
 }
 
+// Release all string slots to prevent memory leaks
+void ReleaseStringSlots(
+    Context& context, const std::vector<SlotTypeInfo>& slot_types,
+    llvm::Value* design_state) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* design_type = context.GetDesignStateType();
+
+  for (size_t slot_id = 0; slot_id < slot_types.size(); ++slot_id) {
+    if (slot_types[slot_id].kind != VarTypeKind::kString) {
+      continue;
+    }
+
+    auto mir_slot_id = mir::SlotId{static_cast<uint32_t>(slot_id)};
+    uint32_t field_index = context.GetDesignFieldIndex(mir_slot_id);
+    auto* slot_ptr =
+        builder.CreateStructGEP(design_type, design_state, field_index);
+    auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
+    builder.CreateCall(context.GetLyraStringRelease(), {val});
+  }
+}
+
 }  // namespace
 
 auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
-  Context context(*input.design, *input.mir_arena, *input.type_arena);
+  // Create LLVM context and module
+  auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
+  auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
+
+  // Build slot info list from input (includes TypeIds for LLVM type derivation)
+  auto slot_info = BuildSlotInfoList(input.slot_types, input.slot_type_ids);
+
+  // Build layout first (pure analysis, no LLVM IR emission)
+  Layout layout = BuildLayout(
+      *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx);
+
+  // Create context with layout
+  Context context(
+      *input.design, *input.mir_arena, *input.type_arena, layout,
+      std::move(llvm_ctx), std::move(module));
 
   auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& module = context.GetModule();
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+
+  // Generate process functions (use process_ids from layout for single source
+  // of truth)
+  std::vector<llvm::Function*> process_funcs;
+  process_funcs.reserve(layout.process_ids.size());
+
+  for (size_t i = 0; i < layout.process_ids.size(); ++i) {
+    context.SetCurrentProcess(i);
+
+    // Use the canonical process list from layout
+    mir::ProcessId proc_id = layout.process_ids[i];
+    const auto& mir_process = (*input.mir_arena)[proc_id];
+
+    auto* func = GenerateProcessFunction(
+        context, mir_process, std::format("process_{}", i));
+    process_funcs.push_back(func);
+  }
 
   // Create main function: int main()
-  auto* main_type =
-      llvm::FunctionType::get(llvm::Type::getInt32Ty(llvm_ctx), false);
+  auto* main_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), false);
   auto* main_func = llvm::Function::Create(
-      main_type, llvm::Function::ExternalLinkage, "main", &module);
+      main_type, llvm::Function::ExternalLinkage, "main", &mod);
 
-  auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", main_func);
-  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", main_func);
+  auto* entry = llvm::BasicBlock::Create(ctx, "entry", main_func);
+  auto* exit_block = llvm::BasicBlock::Create(ctx, "exit", main_func);
   builder.SetInsertPoint(entry);
 
-  // Set up function scope for alloca insertion
-  context.BeginFunction(*main_func);
+  // Allocate DesignState (shared by all processes)
+  auto* design_state = builder.CreateAlloca(
+      context.GetDesignStateType(), nullptr, "design_state");
 
-  // Initialize ALL design slots to SV defaults
-  auto allocas = InitializeAllSlots(context, input.slot_types);
+  // Initialize DesignState with aggregate zero
+  InitializeDesignState(context, design_state);
 
-  // Collect all initial processes
-  std::vector<const mir::Process*> initial_processes;
-  for (const auto& element : input.design->elements) {
-    if (!std::holds_alternative<mir::Module>(element)) {
-      continue;
-    }
-    const auto& mir_module = std::get<mir::Module>(element);
-    for (mir::ProcessId proc_id : mir_module.processes) {
-      const auto& process = (*input.mir_arena)[proc_id];
-      if (process.kind == mir::ProcessKind::kOnce) {
-        initial_processes.push_back(&process);
-      }
-    }
+  // Run each process through the scheduler
+  for (size_t i = 0; i < process_funcs.size(); ++i) {
+    auto* process_func = process_funcs[i];
+    context.SetCurrentProcess(i);
+
+    // Allocate ProcessStateN
+    auto* process_state = builder.CreateAlloca(
+        context.GetProcessStateType(), nullptr,
+        std::format("process_state_{}", i));
+
+    // Initialize ProcessStateN with aggregate zero + design pointer
+    InitializeProcessState(context, process_state, design_state);
+
+    // Call runtime scheduler: LyraRunSimulation(process_func, state)
+    builder.CreateCall(
+        context.GetLyraRunSimulation(), {process_func, process_state});
   }
 
-  // Lower processes with proper chaining: each process's continuation
-  // is the start of the next process, or exit_block for the last one.
-  for (size_t i = 0; i < initial_processes.size(); ++i) {
-    bool is_last = (i == initial_processes.size() - 1);
-    auto* continuation =
-        is_last ? exit_block
-                : llvm::BasicBlock::Create(llvm_ctx, "process_cont", main_func);
-    LowerProcess(context, *initial_processes[i], continuation);
-    if (!is_last) {
-      builder.SetInsertPoint(continuation);
-    }
-  }
-
-  // If no processes, entry needs to branch somewhere
-  if (initial_processes.empty()) {
-    builder.CreateBr(exit_block);
-  }
+  // Branch to exit block
+  builder.CreateBr(exit_block);
 
   // Exit block: release strings, register/snapshot variables (if any), return 0
   builder.SetInsertPoint(exit_block);
 
   // Release all string locals to prevent memory leaks
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-  for (size_t slot_id = 0; slot_id < input.slot_types.size(); ++slot_id) {
-    if (input.slot_types[slot_id].kind != VarTypeKind::kString) {
-      continue;
-    }
-    if (allocas[slot_id] == nullptr) {
-      continue;
-    }
-    auto* val = builder.CreateLoad(ptr_ty, allocas[slot_id]);
-    builder.CreateCall(context.GetLyraStringRelease(), {val});
-  }
+  ReleaseStringSlots(context, input.slot_types, design_state);
 
   // Register and snapshot tracked variables for test framework inspection
   RegisterAndSnapshotVariables(
-      context, input.variables, input.slot_types, allocas);
-  builder.CreateRet(llvm::ConstantInt::get(llvm_ctx, llvm::APInt(32, 0)));
+      context, input.variables, input.slot_types, design_state);
+  builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));
 
-  // End function scope
-  context.EndFunction();
-
-  auto [ctx, mod] = context.TakeOwnership();
+  auto [result_ctx, result_mod] = context.TakeOwnership();
   return LoweringResult{
-      .context = std::move(ctx),
-      .module = std::move(mod),
+      .context = std::move(result_ctx),
+      .module = std::move(result_mod),
   };
 }
 

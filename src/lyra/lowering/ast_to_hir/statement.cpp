@@ -2,6 +2,7 @@
 
 #include <format>
 
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
@@ -1118,6 +1119,74 @@ auto LowerStatement(
               .span = span,
               .data = hir::ReturnStatementData{.value = value},
           });
+    }
+
+    case StatementKind::Timed: {
+      const auto& timed = stmt.as<slang::ast::TimedStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      // Only support DelayControl timing
+      if (timed.timing.kind != slang::ast::TimingControlKind::Delay) {
+        ctx->sink->Error(span, "only delay timing control (#N) is supported");
+        return hir::kInvalidStatementId;
+      }
+
+      const auto& delay_ctrl = timed.timing.as<slang::ast::DelayControl>();
+
+      // Extract delay value - must be a constant integer literal
+      const slang::ast::Expression& delay_expr = delay_ctrl.expr;
+      if (delay_expr.kind != slang::ast::ExpressionKind::IntegerLiteral) {
+        ctx->sink->Error(span, "only constant integer delays are supported");
+        return hir::kInvalidStatementId;
+      }
+
+      const auto& literal = delay_expr.as<slang::ast::IntegerLiteral>();
+      auto val = literal.getValue();
+      if (val.hasUnknown()) {
+        ctx->sink->Error(span, "delay value cannot contain X or Z");
+        return hir::kInvalidStatementId;
+      }
+
+      // Check for negative delay values
+      if (val.isSigned() && val.isNegative()) {
+        ctx->sink->Error(span, "delay value cannot be negative");
+        return hir::kInvalidStatementId;
+      }
+
+      auto ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
+
+      // Create delay statement
+      hir::StatementId delay_stmt = ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kDelay,
+              .span = span,
+              .data = hir::DelayStatementData{.ticks = ticks},
+          });
+
+      // If there's a body statement (e.g., #5 a = 1), lower it and wrap
+      // in a block with the delay
+      if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
+        auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+        if (!body_result.has_value()) {
+          // Body is empty, just return delay
+          return delay_stmt;
+        }
+        if (!*body_result) {
+          return hir::kInvalidStatementId;
+        }
+
+        // Create block containing delay + body
+        return ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kBlock,
+                .span = span,
+                .data =
+                    hir::BlockStatementData{
+                        .statements = {delay_stmt, *body_result}},
+            });
+      }
+
+      return delay_stmt;
     }
 
     default:

@@ -11,11 +11,13 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 
@@ -198,14 +200,70 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     scoped_path.emplace(result.work_directory);
   }
 
-  // Run all initial processes in order
+  // Create process states for all initial processes
+  std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
+  for (mir::ProcessId proc_id : module_info->initial_processes) {
+    auto state = mir::interp::CreateProcessState(
+        *mir_result.mir_arena, *hir_result.type_arena, proc_id, &design_state);
+    process_states.emplace(proc_id.value, std::move(state));
+  }
+
+  // Run with Engine-based scheduler for proper delay handling
   try {
+    runtime::Engine engine(
+        [&](runtime::Engine& eng, runtime::ProcessHandle handle,
+            runtime::ResumePoint resume) {
+          auto it = process_states.find(handle.process_id);
+          if (it == process_states.end()) {
+            return;
+          }
+          auto& state = it->second;
+
+          state.current_block = mir::BasicBlockId{resume.block_index};
+          state.instruction_index = resume.instruction_index;
+          state.status = mir::interp::ProcessStatus::kRunning;
+
+          auto reason = interpreter.RunUntilSuspend(state);
+
+          std::visit(
+              Overloaded{
+                  [](const mir::interp::SuspendFinished&) {},
+                  [&](const mir::interp::SuspendDelay& d) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = d.resume_block.value,
+                            .instruction_index = 0},
+                        d.ticks);
+                  },
+                  [&](const mir::interp::SuspendWait& w) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = w.resume_block.value,
+                            .instruction_index = 0},
+                        1);
+                  },
+                  [&](const mir::interp::SuspendRepeat& r) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = r.resume_block.value,
+                            .instruction_index = 0},
+                        1);
+                  },
+              },
+              reason);
+        });
+
+    // Schedule initial processes
     for (mir::ProcessId proc_id : module_info->initial_processes) {
-      auto state = mir::interp::CreateProcessState(
-          *mir_result.mir_arena, *hir_result.type_arena, proc_id,
-          &design_state);
-      interpreter.Run(state);
+      engine.ScheduleInitial(
+          runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
     }
+
+    // Run simulation
+    engine.Run();
   } catch (const std::exception& e) {
     result.error_message = std::string("Runtime error: ") + e.what();
     return result;

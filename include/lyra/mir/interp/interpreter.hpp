@@ -76,6 +76,9 @@ struct ProcessState {
   Frame frame;
   DesignState* design_state = nullptr;
   ProcessStatus status = ProcessStatus::kRunning;
+  // Set by ExecTerminator when process suspends (Delay, Wait, Repeat).
+  // RunUntilSuspend checks this before returning.
+  std::optional<SuspendReason> pending_suspend;
 };
 
 // MIR Interpreter: executes a single process to completion.

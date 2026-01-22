@@ -651,8 +651,9 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
         context.GetCurrentOrigin(), "4-state types not yet supported");
   }
 
-  llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(compute.target);
-  llvm::Type* storage_type = alloca->getAllocatedType();
+  // Get storage for target place
+  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+  llvm::Type* storage_type = context.GetPlaceLlvmType(compute.target);
 
   llvm::Value* result = std::visit(
       Overloaded{
@@ -683,8 +684,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       },
       compute.value.info);
 
+  // Apply width mask
   result = ApplyWidthMask(context, result, type_info.bit_width);
-  builder.CreateStore(result, alloca);
+
+  // Store to target
+  builder.CreateStore(result, target_ptr);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

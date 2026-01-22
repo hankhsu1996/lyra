@@ -4,7 +4,6 @@
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/lowering/mir_to_llvm/instruction.hpp"
@@ -26,14 +25,10 @@ void LowerBranch(
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  // Load condition value
-  llvm::AllocaInst* cond_alloca = context.GetPlaceStorage(branch.condition);
-  if (cond_alloca == nullptr) {
-    throw common::InternalError(
-        "LowerBranch", "branch condition place not found");
-  }
-  llvm::Value* cond_val =
-      builder.CreateLoad(cond_alloca->getAllocatedType(), cond_alloca, "cond");
+  // Load condition value from place storage
+  llvm::Value* cond_ptr = context.GetPlacePointer(branch.condition);
+  llvm::Type* cond_type = context.GetPlaceLlvmType(branch.condition);
+  llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
 
   // Truncate to i1 only if needed
   if (!cond_val->getType()->isIntegerTy(1)) {
@@ -55,6 +50,38 @@ void LowerFinish(Context& context, llvm::BasicBlock* exit_block) {
   context.GetBuilder().CreateBr(exit_block);
 }
 
+void LowerDelay(
+    Context& context, const mir::Delay& delay, llvm::BasicBlock* exit_block) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  // Get pointer to suspend record via state->header.suspend
+  llvm::Value* suspend_record = context.GetSuspendRecordPointer();
+
+  // Write SuspendTag::kDelay (1) to tag field at offset 0
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+  auto* tag_ptr = builder.CreateStructGEP(
+      context.GetSuspendRecordType(), suspend_record, 0, "tag_ptr");
+  builder.CreateStore(llvm::ConstantInt::get(i8_ty, 1), tag_ptr);  // kDelay = 1
+
+  // Write ticks to delay_ticks field at offset 1
+  auto* ticks_ptr = builder.CreateStructGEP(
+      context.GetSuspendRecordType(), suspend_record, 1, "ticks_ptr");
+  builder.CreateStore(llvm::ConstantInt::get(i64_ty, delay.ticks), ticks_ptr);
+
+  // Write resume block ID to resume_block field at offset 2
+  auto* resume_ptr = builder.CreateStructGEP(
+      context.GetSuspendRecordType(), suspend_record, 2, "resume_ptr");
+  builder.CreateStore(
+      llvm::ConstantInt::get(i32_ty, delay.resume.value), resume_ptr);
+
+  // Yield to runtime by branching to exit
+  builder.CreateBr(exit_block);
+}
+
 void LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks,
@@ -68,6 +95,7 @@ void LowerTerminator(
           [&](const mir::Branch& t) { LowerBranch(context, t, blocks); },
           [&](const mir::Return&) { LowerReturn(context, exit_block); },
           [&](const mir::Finish&) { LowerFinish(context, exit_block); },
+          [&](const mir::Delay& d) { LowerDelay(context, d, exit_block); },
           [&](const auto&) {
             throw common::UnsupportedErrorException(
                 common::UnsupportedLayer::kMirToLlvm,
@@ -80,17 +108,32 @@ void LowerTerminator(
 
 }  // namespace
 
-void LowerProcess(
-    Context& context, const mir::Process& process,
-    llvm::BasicBlock* exit_block) {
-  auto& builder = context.GetBuilder();
+auto GenerateProcessFunction(
+    Context& context, const mir::Process& process, const std::string& name)
+    -> llvm::Function* {
   auto& llvm_ctx = context.GetLlvmContext();
+  auto& module = context.GetModule();
 
-  // Get current function from builder's insert block
-  llvm::BasicBlock* entry_block = builder.GetInsertBlock();
-  llvm::Function* func = entry_block->getParent();
+  // Create function type: void(ptr %state, i32 %resume_block)
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* fn_type = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty}, false);
 
-  // Phase 1: Create all LLVM basic blocks upfront (enables forward refs)
+  auto* func = llvm::Function::Create(
+      fn_type, llvm::Function::ExternalLinkage, name, &module);
+
+  // Name the arguments
+  auto* state_arg = func->getArg(0);
+  auto* resume_block_arg = func->getArg(1);
+  state_arg->setName("state");
+  resume_block_arg->setName("resume_block");
+
+  // Create blocks
+  auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
+  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
+
+  // Create all MIR basic blocks upfront (enables forward refs)
   std::vector<llvm::BasicBlock*> llvm_blocks;
   llvm_blocks.reserve(process.blocks.size());
   for (size_t i = 0; i < process.blocks.size(); ++i) {
@@ -98,10 +141,39 @@ void LowerProcess(
     llvm_blocks.push_back(bb);
   }
 
-  // Bridge from current insert point to bb0
-  builder.CreateBr(llvm_blocks[0]);
+  auto& builder = context.GetBuilder();
 
-  // Phase 2: Lower each block
+  // Entry block: set up cached pointers and switch dispatch
+  builder.SetInsertPoint(entry_block);
+
+  // Set up context with state pointer
+  context.SetStatePointer(state_arg);
+
+  // Load design pointer from state->header.design
+  // state->header is field 0, header->design is field 1
+  auto* header_ptr = builder.CreateStructGEP(
+      context.GetProcessStateType(), state_arg, 0, "header_ptr");
+  auto* design_ptr_ptr = builder.CreateStructGEP(
+      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+  auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
+  context.SetDesignPointer(design_ptr);
+
+  // Compute frame pointer: state->frame (field 1)
+  auto* frame_ptr = builder.CreateStructGEP(
+      context.GetProcessStateType(), state_arg, 1, "frame_ptr");
+  context.SetFramePointer(frame_ptr);
+
+  // Create switch with bb0 as default (initial execution)
+  auto* sw = builder.CreateSwitch(
+      resume_block_arg, llvm_blocks[0],
+      static_cast<unsigned>(process.blocks.size()));
+
+  // Add cases for each block (block 0 is already the default)
+  for (size_t i = 0; i < process.blocks.size(); ++i) {
+    sw->addCase(llvm::ConstantInt::get(i32_ty, i), llvm_blocks[i]);
+  }
+
+  // Lower each MIR block
   for (size_t i = 0; i < process.blocks.size(); ++i) {
     const auto& block = process.blocks[i];
     builder.SetInsertPoint(llvm_blocks[i]);
@@ -111,9 +183,20 @@ void LowerProcess(
       LowerInstruction(context, instruction);
     }
 
-    // Lower terminator (exactly one per block)
+    // Lower terminator
     LowerTerminator(context, block.terminator, llvm_blocks, exit_block);
   }
+
+  // Exit block: just return
+  builder.SetInsertPoint(exit_block);
+  builder.CreateRetVoid();
+
+  // Clear cached pointers for next function
+  context.SetStatePointer(nullptr);
+  context.SetDesignPointer(nullptr);
+  context.SetFramePointer(nullptr);
+
+  return func;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
