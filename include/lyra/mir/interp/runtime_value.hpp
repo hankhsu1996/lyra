@@ -1,93 +1,51 @@
 #pragma once
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <variant>
-#include <vector>
+// Forwarding header: RuntimeValue has moved to lyra::semantic.
+// This header re-exports all symbols into lyra::mir::interp for backward
+// compatibility. New code should include "lyra/semantic/value.hpp" directly.
 
-#include "lyra/common/constant.hpp"
+#include "lyra/semantic/value.hpp"
 
 namespace lyra::mir::interp {
 
-struct RuntimeIntegral {
-  std::vector<uint64_t> value;
-  std::vector<uint64_t> x_mask;  // 4-state: X (unknown)
-  std::vector<uint64_t> z_mask;  // 4-state: Z (high-impedance)
-  uint32_t bit_width;
+// Re-export types
+using RuntimeIntegral = semantic::RuntimeIntegral;
+using RuntimeString = semantic::RuntimeString;
+using RuntimeReal = semantic::RuntimeReal;
+using RuntimeStruct = semantic::RuntimeStruct;
+using RuntimeArray = semantic::RuntimeArray;
+using RuntimeValue = semantic::RuntimeValue;
 
-  [[nodiscard]] auto IsZero() const -> bool;
-  [[nodiscard]] auto IsX() const -> bool;     // Any bit is X
-  [[nodiscard]] auto IsZ() const -> bool;     // Any bit is Z
-  [[nodiscard]] auto IsAllX() const -> bool;  // All bits are X
-  [[nodiscard]] auto IsAllZ() const -> bool;  // All bits are Z
-  [[nodiscard]] auto IsKnown() const -> bool;
-  [[nodiscard]] auto IsAllOnes() const -> bool;
-};
+// Re-export factory functions
+using semantic::Clone;
+using semantic::MakeArray;
+using semantic::MakeIntegral;
+using semantic::MakeIntegralFromConstant;
+using semantic::MakeIntegralSigned;
+using semantic::MakeIntegralX;
+using semantic::MakeReal;
+using semantic::MakeString;
+using semantic::MakeStruct;
 
-struct RuntimeString {
-  std::string value;
-};
+// Re-export type checks
+using semantic::IsArray;
+using semantic::IsIntegral;
+using semantic::IsReal;
+using semantic::IsString;
+using semantic::IsStruct;
 
-struct RuntimeReal {
-  double value;
-};
+// Re-export accessors
+using semantic::AsArray;
+using semantic::AsIntegral;
+using semantic::AsReal;
+using semantic::AsString;
+using semantic::AsStruct;
 
-// Forward declarations for recursive types
-struct RuntimeStruct;
-struct RuntimeArray;
-
-using RuntimeValue = std::variant<
-    std::monostate, RuntimeIntegral, RuntimeString, RuntimeReal,
-    std::unique_ptr<RuntimeStruct>, std::unique_ptr<RuntimeArray>>;
-
-struct RuntimeStruct {
-  std::vector<RuntimeValue> fields;
-};
-
-struct RuntimeArray {
-  std::vector<RuntimeValue> elements;
-};
-
-// Factory functions
-auto MakeIntegral(uint64_t value, uint32_t bit_width) -> RuntimeValue;
-auto MakeIntegralSigned(int64_t value, uint32_t bit_width)
-    -> RuntimeValue;  // Sign-extends for wide values
-auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue;  // All bits unknown (X)
-auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
-    -> RuntimeValue;
-auto MakeString(std::string value) -> RuntimeValue;
-auto MakeReal(double value) -> RuntimeValue;
-auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue;
-auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue;
-
-// Deep copy
-auto Clone(const RuntimeValue& v) -> RuntimeValue;
-
-// Type checks
-auto IsIntegral(const RuntimeValue& v) -> bool;
-auto IsString(const RuntimeValue& v) -> bool;
-auto IsReal(const RuntimeValue& v) -> bool;
-auto IsStruct(const RuntimeValue& v) -> bool;
-auto IsArray(const RuntimeValue& v) -> bool;
-
-// Accessors (assert correct type)
-auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral&;
-auto AsIntegral(const RuntimeValue& v) -> const RuntimeIntegral&;
-auto AsString(RuntimeValue& v) -> RuntimeString&;
-auto AsString(const RuntimeValue& v) -> const RuntimeString&;
-auto AsReal(RuntimeValue& v) -> RuntimeReal&;
-auto AsReal(const RuntimeValue& v) -> const RuntimeReal&;
-auto AsStruct(RuntimeValue& v) -> RuntimeStruct&;
-auto AsStruct(const RuntimeValue& v) -> const RuntimeStruct&;
-auto AsArray(RuntimeValue& v) -> RuntimeArray&;
-auto AsArray(const RuntimeValue& v) -> const RuntimeArray&;
-
-// Conversion to printable string (for $display)
-auto ToString(const RuntimeValue& v) -> std::string;
-auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string;
-auto ToHexString(const RuntimeIntegral& v) -> std::string;
-auto ToBinaryString(const RuntimeIntegral& v) -> std::string;
-auto ToOctalString(const RuntimeIntegral& v) -> std::string;
+// Re-export conversion functions
+using semantic::ToBinaryString;
+using semantic::ToDecimalString;
+using semantic::ToHexString;
+using semantic::ToOctalString;
+using semantic::ToString;
 
 }  // namespace lyra::mir::interp

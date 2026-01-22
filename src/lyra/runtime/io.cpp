@@ -3,11 +3,14 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <print>
 #include <string>
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/semantic/format.hpp"
+#include "lyra/semantic/value.hpp"
 
 namespace {
 
@@ -61,43 +64,10 @@ void SnapshotReal(const VarEntry& var) {
       std::numeric_limits<double>::max_digits10);
 }
 
-// Apply width and alignment to a formatted string.
-// Ported from src/lyra/mir/interp/format.cpp ApplyWidth/ApplyWidthWithChar.
-auto ApplyWidth(
-    std::string value, int32_t output_width, bool zero_pad, bool left_align)
-    -> std::string {
-  if (output_width <= 0) {
-    return value;
-  }
-
-  auto width = static_cast<size_t>(output_width);
-  if (value.size() >= width) {
-    return value;
-  }
-  size_t pad_count = width - value.size();
-
-  if (left_align) {
-    return value + std::string(pad_count, ' ');
-  }
-
-  char pad_char = zero_pad ? '0' : ' ';
-
-  // For zero-padding negative numbers, put sign before the zeros
-  // e.g., output_width=5 on -5 should be "-0005", not "00-5"
-  if (pad_char == '0' && !value.empty() && value[0] == '-') {
-    return "-" + std::string(pad_count, '0') + value.substr(1);
-  }
-
-  return std::string(pad_count, pad_char) + value;
-}
-
-// Format an integral value according to the format kind.
+// Marshal raw data to RuntimeValue for integral types.
 // For now, only handles 2-state values (x_mask and z_mask are null).
-auto FormatValue(
-    lyra::FormatKind format, const void* data, int32_t width, bool is_signed,
-    int32_t output_width, int32_t precision, bool zero_pad, bool left_align)
-    -> std::string {
-  // Read the value - for now, assume it fits in 64 bits
+auto MarshalIntegral(const void* data, int32_t width)
+    -> lyra::semantic::RuntimeValue {
   uint64_t value = 0;
   if (width <= 8) {
     value = *static_cast<const uint8_t*>(data);
@@ -114,110 +84,18 @@ auto FormatValue(
     value &= (1ULL << width) - 1;
   }
 
-  std::string result;
+  return lyra::semantic::MakeIntegral(value, static_cast<uint32_t>(width));
+}
 
-  switch (format) {
-    case lyra::FormatKind::kDecimal:
-      if (is_signed && width > 0) {
-        // Sign extend if needed
-        if (width < 64 && ((value >> (width - 1)) & 1) != 0) {
-          value |= ~((1ULL << width) - 1);
-        }
-        result = std::format("{}", static_cast<int64_t>(value));
-      } else {
-        result = std::format("{}", value);
-      }
-      // Apply output_width if specified
-      return ApplyWidth(std::move(result), output_width, zero_pad, left_align);
-
-    case lyra::FormatKind::kHex: {
-      // Generate minimal hex string first
-      result = std::format("{:x}", value);
-
-      // Determine effective width and padding:
-      // - Auto-size (output_width < 0): pad to full bit-width with zeros
-      // - Explicit width (output_width > 0): use specified zero_pad
-      // - Minimal (output_width == 0): no padding
-      int effective_width = 0;
-      bool effective_zero_pad = zero_pad;
-      if (output_width < 0) {
-        // Auto-size: always zero-pad to full bit-width
-        effective_width = (width + 3) / 4;
-        effective_zero_pad = true;
-      } else if (output_width > 0) {
-        // Explicit width: respect zero_pad flag
-        effective_width = output_width;
-      }
-
-      return ApplyWidth(
-          std::move(result), effective_width, effective_zero_pad, left_align);
-    }
-
-    case lyra::FormatKind::kBinary: {
-      // Generate minimal binary string first
-      if (value == 0) {
-        result = "0";
-      } else {
-        for (int i = 63; i >= 0; --i) {
-          if (((value >> i) & 1) != 0 || !result.empty()) {
-            result += ((value >> i) & 1) != 0 ? '1' : '0';
-          }
-        }
-      }
-
-      // Determine effective width and padding
-      int effective_width = 0;
-      bool effective_zero_pad = zero_pad;
-      if (output_width < 0) {
-        // Auto-size: always zero-pad to full bit-width
-        effective_width = width;
-        effective_zero_pad = true;
-      } else if (output_width > 0) {
-        // Explicit width: respect zero_pad flag
-        effective_width = output_width;
-      }
-
-      return ApplyWidth(
-          std::move(result), effective_width, effective_zero_pad, left_align);
-    }
-
-    case lyra::FormatKind::kOctal: {
-      // Generate minimal octal string first
-      result = std::format("{:o}", value);
-
-      // Determine effective width and padding
-      int effective_width = 0;
-      bool effective_zero_pad = zero_pad;
-      if (output_width < 0) {
-        // Auto-size: always zero-pad to full bit-width
-        effective_width = (width + 2) / 3;
-        effective_zero_pad = true;
-      } else if (output_width > 0) {
-        // Explicit width: respect zero_pad flag
-        effective_width = output_width;
-      }
-
-      return ApplyWidth(
-          std::move(result), effective_width, effective_zero_pad, left_align);
-    }
-
-    case lyra::FormatKind::kString:
-      // For strings, data is the string pointer itself (passed directly)
-      // This case is handled specially in LyraPrintValue, not here
-      return "";
-
-    case lyra::FormatKind::kReal: {
-      // Real values - data points to a double
-      int prec = precision >= 0 ? precision : 6;  // Default precision
-      result = std::format("{:.{}f}", *static_cast<const double*>(data), prec);
-      return ApplyWidth(std::move(result), output_width, zero_pad, left_align);
-    }
-
-    case lyra::FormatKind::kLiteral:
-      // Should not reach here - literals use LyraPrintLiteral
-      return "";
+// Convert output_width parameter to FormatSpec width.
+// LLVM backend uses: -1 = auto-size, 0 = minimal, >0 = explicit width
+auto ConvertWidth(int32_t output_width) -> std::optional<int> {
+  if (output_width < 0) {
+    // Auto-size: nullopt means semantic layer applies auto-sizing
+    return std::nullopt;
   }
-  return "";
+  // Minimal (0) or explicit width (>0)
+  return output_width;
 }
 
 }  // namespace
@@ -232,15 +110,30 @@ extern "C" void LyraPrintValue(
     const void* /*x_mask*/, const void* /*z_mask*/) {
   auto kind = static_cast<lyra::FormatKind>(format);
 
+  // Handle string specially - data IS the string pointer
   if (kind == lyra::FormatKind::kString) {
-    // For strings, data IS the string pointer (not a pointer to data)
     std::print("{}", static_cast<const char*>(data));
     return;
   }
 
-  std::string formatted = FormatValue(
-      kind, data, width, is_signed, output_width, precision, zero_pad,
-      left_align);
+  // Build FormatSpec from parameters
+  lyra::semantic::FormatSpec spec{
+      .kind = kind,
+      .width = ConvertWidth(output_width),
+      .precision = precision >= 0 ? std::optional(precision) : std::nullopt,
+      .zero_pad = zero_pad,
+      .left_align = left_align,
+  };
+
+  // Marshal data to RuntimeValue and format
+  lyra::semantic::RuntimeValue value;
+  if (kind == lyra::FormatKind::kReal) {
+    value = lyra::semantic::MakeReal(*static_cast<const double*>(data));
+  } else {
+    value = MarshalIntegral(data, width);
+  }
+
+  std::string formatted = lyra::semantic::FormatValue(value, spec, is_signed);
   std::print("{}", formatted);
 }
 

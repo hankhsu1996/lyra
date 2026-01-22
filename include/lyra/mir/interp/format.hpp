@@ -1,6 +1,5 @@
 #pragma once
 
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -8,6 +7,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -18,13 +18,8 @@ struct TypedValue {
   TypeId type;
 };
 
-struct FormatSpec {
-  char spec{};  // d, h, x, b, o, s, f
-  bool zero_pad = false;
-  bool left_align = false;
-  std::optional<int> width;
-  std::optional<int> precision;
-};
+// Re-export semantic FormatSpec for use by callers
+using FormatSpec = semantic::FormatSpec;
 
 // Future-proof context for %t/$timeformat, locale, etc.
 struct FormatContext {};
