@@ -2,6 +2,7 @@
 
 #include "llvm/IR/Instructions.h"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -34,16 +35,23 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
   return std::visit(
       Overloaded{
           [&](const IntegralConstant& integral) -> llvm::Value* {
-            // For now, only handle single-word 2-state values
-            if (integral.value.size() != 1 || !integral.x_mask.empty() ||
-                !integral.z_mask.empty()) {
+            // 4-state not supported yet
+            if (!integral.x_mask.empty() || !integral.z_mask.empty()) {
               throw common::UnsupportedErrorException(
                   common::UnsupportedLayer::kMirToLlvm,
                   common::UnsupportedKind::kType, context.GetCurrentOrigin(),
-                  "multi-word or 4-state integral constants not yet supported");
+                  "4-state integral constants not yet supported");
             }
-            return llvm::ConstantInt::get(
-                llvm::Type::getInt64Ty(llvm_ctx), integral.value[0]);
+
+            // Get semantic bit width from type
+            const Type& type = context.GetTypeArena()[constant.type];
+            uint32_t bit_width = PackedBitWidth(type, context.GetTypeArena());
+
+            // Create APInt from word array (little-endian in both MIR and LLVM)
+            llvm::APInt ap_value(bit_width, integral.value);
+
+            // Create constant with the exact bit width
+            return llvm::ConstantInt::get(llvm_ctx, ap_value);
           },
           [&](const StringConstant& str) -> llvm::Value* {
             auto& builder = context.GetBuilder();

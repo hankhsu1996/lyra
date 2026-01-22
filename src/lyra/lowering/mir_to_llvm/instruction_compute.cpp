@@ -1,8 +1,15 @@
 #include "lyra/lowering/mir_to_llvm/instruction_compute.hpp"
 
+#include <cstdint>
 #include <format>
+#include <variant>
+#include <vector>
 
+#include "llvm/ADT/APInt.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
@@ -78,6 +85,13 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
   };
 }
 
+// Get mask with semantic_width low bits set (for width masking and all-ones)
+auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value* {
+  auto mask =
+      llvm::APInt::getLowBitsSet(ty->getIntegerBitWidth(), semantic_width);
+  return llvm::ConstantInt::get(ty, mask);
+}
+
 // Masks result to semantic width if needed
 auto ApplyWidthMask(
     Context& context, llvm::Value* value, uint32_t semantic_width)
@@ -95,14 +109,13 @@ auto ApplyWidthMask(
                               semantic_width, storage_width));
   }
 
-  // No masking needed if semantic == storage, or for 64-bit (full word)
-  if (semantic_width == storage_width || semantic_width == 64) {
+  // No masking needed if semantic == storage
+  if (semantic_width == storage_width) {
     return value;
   }
 
-  uint64_t mask = (1ULL << semantic_width) - 1;
   return builder.CreateAnd(
-      value, llvm::ConstantInt::get(value->getType(), mask), "mask");
+      value, GetSemanticMask(value->getType(), semantic_width), "mask");
 }
 
 // Dispatch to LLVM add/sub/mul
@@ -206,12 +219,19 @@ auto IsShiftOp(mir::BinaryOp op) -> bool {
   }
 }
 
-// Get all-ones value masked to semantic width (for sign-fill fallback)
-auto GetSemanticAllOnes(llvm::Type* ty, uint32_t semantic_width)
-    -> llvm::Value* {
-  auto all_ones =
-      llvm::APInt::getLowBitsSet(ty->getIntegerBitWidth(), semantic_width);
-  return llvm::ConstantInt::get(ty, all_ones);
+// Check if the unary op is a reduction (needs original operand type)
+auto IsReductionOp(mir::UnaryOp op) -> bool {
+  switch (op) {
+    case mir::UnaryOp::kReductionAnd:
+    case mir::UnaryOp::kReductionNand:
+    case mir::UnaryOp::kReductionOr:
+    case mir::UnaryOp::kReductionNor:
+    case mir::UnaryOp::kReductionXor:
+    case mir::UnaryOp::kReductionXnor:
+      return true;
+    default:
+      return false;
+  }
 }
 
 // Lower shift operation with overflow guards
@@ -252,7 +272,7 @@ auto LowerShiftOp(
       auto* width_m1 = llvm::ConstantInt::get(ty, semantic_width - 1);
       auto* sign_bit = builder.CreateLShr(value, width_m1, "signbit");
       auto* is_neg = builder.CreateTrunc(sign_bit, builder.getInt1Ty());
-      auto* semantic_ones = GetSemanticAllOnes(ty, semantic_width);
+      auto* semantic_ones = GetSemanticMask(ty, semantic_width);
       fallback = builder.CreateSelect(is_neg, semantic_ones, zero, "signfill");
       break;
     }
@@ -473,18 +493,13 @@ auto LowerUnaryOp(
     }
     case mir::UnaryOp::kReductionAnd: {
       // Returns 1 if all bits are 1, else 0
-      // Create mask with operand_bit_width bits set
-      uint64_t mask =
-          (operand_bit_width == 64) ? ~0ULL : (1ULL << operand_bit_width) - 1;
-      auto* all_ones = llvm::ConstantInt::get(operand->getType(), mask);
+      auto* all_ones = GetSemanticMask(operand->getType(), operand_bit_width);
       auto* is_all_ones = builder.CreateICmpEQ(operand, all_ones, "red.and");
       return builder.CreateZExt(is_all_ones, storage_type, "red.and.ext");
     }
     case mir::UnaryOp::kReductionNand: {
       // Returns 0 if all bits are 1, else 1 (opposite of AND)
-      uint64_t mask =
-          (operand_bit_width == 64) ? ~0ULL : (1ULL << operand_bit_width) - 1;
-      auto* all_ones = llvm::ConstantInt::get(operand->getType(), mask);
+      auto* all_ones = GetSemanticMask(operand->getType(), operand_bit_width);
       auto* is_not_all_ones =
           builder.CreateICmpNE(operand, all_ones, "red.nand");
       return builder.CreateZExt(is_not_all_ones, storage_type, "red.nand.ext");
@@ -544,8 +559,11 @@ auto LowerUnaryRvalue(
   // Lower the operand
   llvm::Value* operand = LowerOperand(context, operands[0]);
 
-  // Coerce operand to storage type
-  operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
+  // Reduction operators work on the source type and return a boolean.
+  // Don't coerce them - they need the full source value to compare against.
+  if (!IsReductionOp(info.op)) {
+    operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
+  }
 
   return LowerUnaryOp(
       context, info.op, operand, storage_type, operand_bit_width);
@@ -584,14 +602,6 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
         context.GetCurrentOrigin(), "4-state types not yet supported");
-  }
-  if (type_info.bit_width > 64) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-        context.GetCurrentOrigin(),
-        std::format(
-            "types wider than 64 bits not yet supported (got {} bits)",
-            type_info.bit_width));
   }
 
   llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(compute.target);
