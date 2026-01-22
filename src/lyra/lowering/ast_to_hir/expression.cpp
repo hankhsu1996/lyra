@@ -1271,10 +1271,10 @@ auto LowerExpression(
 
       int field_index = static_cast<int>(field->fieldIndex);
 
-      // Handle packed struct field access
-      if (value_type.kind == slang::ast::SymbolKind::PackedStructType ||
-          value_type.getCanonicalType().kind ==
-              slang::ast::SymbolKind::PackedStructType) {
+      // Handle packed struct/union field access
+      const auto& canonical_base = value_type.getCanonicalType();
+      if (canonical_base.kind == slang::ast::SymbolKind::PackedStructType ||
+          canonical_base.kind == slang::ast::SymbolKind::PackedUnionType) {
         // Get packed struct type info to retrieve field offset and width
         TypeId base_type = LowerType(value_type, span, ctx);
         if (!base_type) {

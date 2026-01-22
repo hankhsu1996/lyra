@@ -6,6 +6,7 @@
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 
@@ -76,6 +77,51 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
                                      .total_bit_width = total_width,
                                      .is_signed = pst.isSigned,
                                      .is_four_state = pst.isFourState});
+  }
+
+  // Check for packed union BEFORE isIntegral - packed unions are integral in
+  // slang but we want field layout info. Reuse PackedStruct representation.
+  if (canonical.kind == slang::ast::SymbolKind::PackedUnionType) {
+    const auto& put = canonical.as<slang::ast::PackedUnionType>();
+    std::string name = std::string(put.name);
+    std::vector<PackedStructField> fields;
+
+    auto total_width = static_cast<uint32_t>(put.bitWidth);
+
+    for (const auto& member : put.members()) {
+      if (member.kind != slang::ast::SymbolKind::Field) {
+        continue;
+      }
+      const auto& field = member.as<slang::ast::FieldSymbol>();
+      TypeId field_type = LowerType(field.getType(), source, ctx);
+      if (!field_type) {
+        return kInvalidTypeId;
+      }
+      auto field_width = static_cast<uint32_t>(field.getType().getBitWidth());
+      // slang provides bitOffset=0 for all union members (LSB aligned)
+      auto bit_offset = static_cast<uint32_t>(field.bitOffset);
+
+      // Invariant: field must fit within union storage
+      if (bit_offset + field_width > total_width) {
+        throw common::InternalError(
+            "LowerType", "packed union field exceeds container width");
+      }
+
+      fields.push_back({
+          .name = std::string(field.name),
+          .type = field_type,
+          .bit_offset = bit_offset,
+          .bit_width = field_width,
+      });
+    }
+
+    return ctx->type_arena->Intern(
+        TypeKind::kPackedStruct, PackedStructInfo{
+                                     .name = std::move(name),
+                                     .fields = std::move(fields),
+                                     .total_bit_width = total_width,
+                                     .is_signed = put.isSigned,
+                                     .is_four_state = put.isFourState});
   }
 
   if (canonical.isIntegral()) {
