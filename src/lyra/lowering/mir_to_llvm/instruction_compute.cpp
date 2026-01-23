@@ -638,6 +638,41 @@ auto LowerBitCastRvalue(
   llvm_unreachable("invalid bitcast types");
 }
 
+auto LowerConcatRvalue(
+    Context& context, const mir::ConcatRvalueInfo& /*info*/,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  if (operands.empty()) {
+    throw common::InternalError(
+        "LowerConcatRvalue", "concat must have at least one operand");
+  }
+
+  // First operand (MSB): trunc to semantic width, then zext to result type
+  uint32_t first_width = GetOperandBitWidth(context, operands[0]);
+  llvm::Value* first = LowerOperand(context, operands[0]);
+  auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
+  first = builder.CreateZExtOrTrunc(first, first_ty, "concat.trunc");
+  llvm::Value* acc = builder.CreateZExt(first, storage_type, "concat.ext");
+
+  // Rolling append: acc = (acc << w_next) | zext(trunc(next))
+  for (size_t i = 1; i < operands.size(); ++i) {
+    uint32_t op_width = GetOperandBitWidth(context, operands[i]);
+    llvm::Value* op = LowerOperand(context, operands[i]);
+
+    auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
+    op = builder.CreateZExtOrTrunc(op, op_ty, "concat.trunc");
+    op = builder.CreateZExt(op, storage_type, "concat.ext");
+
+    auto* shift_amount = llvm::ConstantInt::get(storage_type, op_width);
+    acc = builder.CreateShl(acc, shift_amount, "concat.shl");
+    acc = builder.CreateOr(acc, op, "concat.or");
+  }
+
+  return acc;
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -672,6 +707,10 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           },
           [&](const mir::BitCastRvalueInfo& info) {
             return LowerBitCastRvalue(context, info, compute.value.operands);
+          },
+          [&](const mir::ConcatRvalueInfo& info) {
+            return LowerConcatRvalue(
+                context, info, compute.value.operands, storage_type);
           },
           [&](const auto& /*info*/) -> llvm::Value* {
             throw common::UnsupportedErrorException(
