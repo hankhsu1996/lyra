@@ -13,6 +13,7 @@
 #include <fmt/color.h>
 #include <fmt/core.h>
 
+#include "frontend.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/unsupported_error.hpp"
@@ -235,8 +236,8 @@ auto ResolveErrorLocation(
 
 }  // namespace
 
-auto RunLlvm(const std::vector<std::string>& files) -> int {
-  auto compilation = CompileToMir(files);
+auto RunLlvm(const CompilationInput& input) -> int {
+  auto compilation = CompileToMir(input);
   if (!compilation) {
     compilation.error().Print();
     return 1;

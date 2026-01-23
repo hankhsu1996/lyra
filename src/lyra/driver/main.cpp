@@ -1,119 +1,90 @@
 #include <argparse/argparse.hpp>
 #include <exception>
-#include <optional>
+#include <filesystem>
+#include <format>
+#include <iostream>
+#include <span>
 #include <string>
-#include <vector>
 
-#include "config.hpp"
-#include "dump.hpp"
+#include "commands.hpp"
+#include "input.hpp"
 #include "print.hpp"
-#include "run_llvm.hpp"
-#include "run_mir.hpp"
-
-namespace {
-
-auto RunCommand(const argparse::ArgumentParser& cmd) -> int {
-  auto backend = cmd.get<std::string>("--backend");
-
-  // Validate backend
-  if (backend != "mir" && backend != "llvm") {
-    lyra::driver::PrintError(
-        "unknown backend '" + backend + "', use 'mir' or 'llvm'");
-    return 1;
-  }
-
-  // Get CLI files (if provided)
-  std::vector<std::string> cli_files;
-  if (auto files = cmd.present<std::vector<std::string>>("files")) {
-    cli_files = *files;
-  }
-
-  std::vector<std::string> files;
-
-  // Try to load lyra.toml
-  auto config_path = lyra::driver::FindConfig();
-  if (config_path) {
-    try {
-      auto config = lyra::driver::LoadConfig(*config_path);
-      files = config.files;
-      files.insert(files.end(), cli_files.begin(), cli_files.end());
-    } catch (const std::exception& e) {
-      lyra::driver::PrintError(e.what());
-      return 1;
-    }
-  } else if (!cli_files.empty()) {
-    files = cli_files;
-  } else {
-    lyra::driver::PrintError("no lyra.toml found and no files specified");
-    return 1;
-  }
-
-  if (backend == "llvm") {
-    return lyra::driver::RunLlvm(files);
-  }
-  return lyra::driver::RunMir(files);
-}
-
-auto DumpCommand(const argparse::ArgumentParser& cmd) -> int {
-  std::string format = cmd.get<std::string>("format");
-  std::string file = cmd.get<std::string>("file");
-
-  if (format == "hir") {
-    return lyra::driver::DumpHir(file);
-  }
-  if (format == "mir") {
-    return lyra::driver::DumpMir(file);
-  }
-  if (format == "llvm") {
-    return lyra::driver::DumpLlvm(file);
-  }
-
-  lyra::driver::PrintError(
-      "unknown format '" + format + "', use 'hir', 'mir', or 'llvm'");
-  return 1;
-}
-
-}  // namespace
 
 auto main(int argc, char* argv[]) -> int {
-  argparse::ArgumentParser program("lyra", "0.1.0");
-  program.add_description("SystemVerilog compiler and simulator");
+  auto args = lyra::driver::PreprocessArgs(
+      std::span<char*>(argv, static_cast<size_t>(argc)));
 
-  // Subcommand: run
+  argparse::ArgumentParser program("lyra", "0.1.0");
+  program.add_description("A modern SystemVerilog simulation toolchain");
+  program.add_argument("-C").help("Run as if started in <dir>").metavar("dir");
+
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Run simulation");
   run_cmd.add_argument("--backend")
       .default_value(std::string("llvm"))
       .help("Execution backend: llvm (default) or mir (development)");
+  lyra::driver::AddCompilationFlags(run_cmd);
   run_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
 
-  // Subcommand: dump
+  argparse::ArgumentParser check_cmd("check");
+  check_cmd.add_description("Check source files for errors");
+  lyra::driver::AddCompilationFlags(check_cmd);
+  check_cmd.add_argument("files").remaining().help(
+      "Source files (uses lyra.toml if not specified)");
+
   argparse::ArgumentParser dump_cmd("dump");
   dump_cmd.add_description("Dump internal representations (for debugging)");
   dump_cmd.add_argument("format").help("Output format: hir, mir, or llvm");
-  dump_cmd.add_argument("file").help("SystemVerilog source file");
+  lyra::driver::AddCompilationFlags(dump_cmd);
+  dump_cmd.add_argument("files").remaining().help(
+      "Source files (uses lyra.toml if not specified)");
+
+  argparse::ArgumentParser init_cmd("init");
+  init_cmd.add_description("Create a new Lyra project");
+  init_cmd.add_argument("name").nargs(0, 1).help("Project name");
+  init_cmd.add_argument("--force", "-f")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Overwrite existing lyra.toml");
 
   program.add_subparser(run_cmd);
+  program.add_subparser(check_cmd);
   program.add_subparser(dump_cmd);
+  program.add_subparser(init_cmd);
 
   try {
-    program.parse_args(argc, argv);
+    program.parse_args(args);
   } catch (const std::exception& err) {
     lyra::driver::PrintError(err.what());
     std::cerr << program;
     return 1;
   }
 
+  // Handle -C before dispatching subcommands
+  if (auto dir = program.present("-C")) {
+    std::error_code ec;
+    std::filesystem::current_path(*dir, ec);
+    if (ec) {
+      lyra::driver::PrintError(
+          std::format("cannot change to '{}': {}", *dir, ec.message()));
+      return 1;
+    }
+  }
+
   if (program.is_subcommand_used("run")) {
-    return RunCommand(run_cmd);
+    return lyra::driver::RunCommand(run_cmd);
   }
-
+  if (program.is_subcommand_used("check")) {
+    return lyra::driver::CheckCommand(check_cmd);
+  }
   if (program.is_subcommand_used("dump")) {
-    return DumpCommand(dump_cmd);
+    return lyra::driver::DumpCommand(dump_cmd);
+  }
+  if (program.is_subcommand_used("init")) {
+    return lyra::driver::InitCommand(init_cmd);
   }
 
-  // No subcommand provided
   std::cout << program;
   return 0;
 }

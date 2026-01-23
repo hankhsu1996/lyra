@@ -16,8 +16,8 @@
 
 namespace lyra::driver {
 
-auto DumpHir(const std::string& path) -> int {
-  auto parse_result = LoadFile(path);
+auto DumpHir(const CompilationInput& input) -> int {
+  auto parse_result = LoadFiles(input);
   if (!parse_result) {
     return 1;
   }
@@ -39,8 +39,8 @@ auto DumpHir(const std::string& path) -> int {
   return 0;
 }
 
-auto DumpMir(const std::string& path) -> int {
-  auto parse_result = LoadFile(path);
+auto DumpMir(const CompilationInput& input) -> int {
+  auto parse_result = LoadFiles(input);
   if (!parse_result) {
     return 1;
   }
@@ -71,8 +71,8 @@ auto DumpMir(const std::string& path) -> int {
   return 0;
 }
 
-auto DumpLlvm(const std::string& path) -> int {
-  auto parse_result = LoadFile(path);
+auto DumpLlvm(const CompilationInput& input) -> int {
+  auto parse_result = LoadFiles(input);
   if (!parse_result) {
     return 1;
   }

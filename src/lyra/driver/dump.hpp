@@ -1,11 +1,11 @@
 #pragma once
 
-#include <string>
-
 namespace lyra::driver {
 
-auto DumpHir(const std::string& path) -> int;
-auto DumpMir(const std::string& path) -> int;
-auto DumpLlvm(const std::string& path) -> int;
+struct CompilationInput;
+
+auto DumpHir(const CompilationInput& input) -> int;
+auto DumpMir(const CompilationInput& input) -> int;
+auto DumpLlvm(const CompilationInput& input) -> int;
 
 }  // namespace lyra::driver

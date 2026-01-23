@@ -10,13 +10,19 @@
 
 namespace lyra::driver {
 
+struct CompilationInput {
+  std::vector<std::string> files;
+  std::string top;
+  std::vector<std::string> incdir;
+  std::vector<std::string> defines;
+  std::vector<std::string> warnings;
+};
+
 struct ParseResult {
   std::shared_ptr<slang::SourceManager> source_manager;
   std::unique_ptr<slang::ast::Compilation> compilation;
 };
 
-auto LoadFile(const std::string& path) -> std::optional<ParseResult>;
-auto LoadFiles(const std::vector<std::string>& paths)
-    -> std::optional<ParseResult>;
+auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult>;
 
 }  // namespace lyra::driver
