@@ -6,24 +6,24 @@
 
 namespace lyra {
 
-// 4-state encoding: (a, b) pair where:
-//   b=0, a=0 -> 0
-//   b=0, a=1 -> 1
-//   b=1, a=0 -> X
-//   b=1, a=1 -> Z
+// 4-state encoding: (value, unknown) pair where:
+//   unknown=0, value=0 -> 0
+//   unknown=0, value=1 -> 1
+//   unknown=1, value=0 -> X
+//   unknown=1, value=1 -> Z
 struct FourStatePair {
-  llvm::APInt a;
-  llvm::APInt b;
+  llvm::APInt value;
+  llvm::APInt unknown;
 };
 
-// Semantic mask: clear bits above semantic_width in both a and b
+// Semantic mask: clear bits above semantic_width in both planes
 inline void MaskFourState(FourStatePair& pair, uint32_t semantic_width) {
-  uint32_t storage_width = pair.a.getBitWidth();
+  uint32_t storage_width = pair.value.getBitWidth();
   if (semantic_width < storage_width) {
     llvm::APInt mask =
         llvm::APInt::getLowBitsSet(storage_width, semantic_width);
-    pair.a &= mask;
-    pair.b &= mask;
+    pair.value &= mask;
+    pair.unknown &= mask;
   }
 }
 
