@@ -113,6 +113,12 @@ struct StorageCollector {
         Visit(arena[*info->receiver], arena);
       }
     }
+    // Visit output place for $value$plusargs
+    if (const auto* info = std::get_if<PlusargsRvalueInfo>(&rv.info)) {
+      if (info->output) {
+        Visit(arena[*info->output], arena);
+      }
+    }
   }
 
   // Uses exhaustive Overloaded pattern - adding a new Instruction or EffectOp
@@ -263,7 +269,8 @@ auto FindInitialModule(const Design& design, const Arena& arena)
 
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
-    std::ostream* output) -> SimulationResult {
+    std::ostream* output, std::span<const std::string> plusargs)
+    -> SimulationResult {
   // Find initial module
   auto module_info = FindInitialModule(design, mir_arena);
   if (!module_info) {
@@ -281,6 +288,8 @@ auto RunSimulation(
   } else {
     interp.SetOutput(&std::cout);
   }
+  interp.SetPlusargs(
+      std::vector<std::string>(plusargs.begin(), plusargs.end()));
 
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {

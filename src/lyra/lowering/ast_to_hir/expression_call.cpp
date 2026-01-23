@@ -1,7 +1,9 @@
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
 
 #include <format>
+#include <string_view>
 
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -256,8 +258,59 @@ auto LowerCallExpression(
     return LowerPureSystemFunction(call, *pure_kind, registrar, ctx);
   }
 
-  // Effectful system calls ($display, etc.)
+  // Plusargs system functions - intercept before general system call dispatch
   if (call.isSystemCall()) {
+    std::string_view name = call.getSubroutineName();
+    if (name == "$test$plusargs") {
+      if (call.arguments().size() != 1) {
+        ctx->ErrorFmt(span, "$test$plusargs expects 1 argument");
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId query =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!query) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{
+                  hir::TestPlusargsData{.query = query}}});
+    }
+    if (name == "$value$plusargs") {
+      if (call.arguments().size() != 2) {
+        ctx->ErrorFmt(span, "$value$plusargs expects 2 arguments");
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId format_expr =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!format_expr) {
+        return hir::kInvalidExpressionId;
+      }
+      // Output argument: slang may wrap as AssignmentExpression
+      const slang::ast::Expression* out_arg = call.arguments()[1];
+      hir::ExpressionId output_expr;
+      if (out_arg->kind == slang::ast::ExpressionKind::Assignment) {
+        const auto& assign = out_arg->as<slang::ast::AssignmentExpression>();
+        output_expr = LowerExpression(assign.left(), registrar, ctx);
+      } else {
+        output_expr = LowerExpression(*out_arg, registrar, ctx);
+      }
+      if (!output_expr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{hir::ValuePlusargsData{
+                  .format = format_expr, .output = output_expr}}});
+    }
     return LowerSystemCall(call, registrar, ctx);
   }
 

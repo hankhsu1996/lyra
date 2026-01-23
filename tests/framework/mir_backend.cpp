@@ -212,6 +212,7 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   mir::interp::Interpreter interpreter(
       mir_result.mir_arena.get(), hir_result.type_arena.get());
   interpreter.SetOutput(&output_stream);
+  interpreter.SetPlusargs(test_case.plusargs);
 
   // Change to work_directory if we have one (for file I/O tests)
   std::optional<ScopedCurrentPath> scoped_path;

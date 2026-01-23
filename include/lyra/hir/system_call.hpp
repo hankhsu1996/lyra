@@ -45,7 +45,21 @@ struct SFormatSystemCallData {
   auto operator==(const SFormatSystemCallData&) const -> bool = default;
 };
 
+struct TestPlusargsData {
+  ExpressionId query;
+
+  auto operator==(const TestPlusargsData&) const -> bool = default;
+};
+
+struct ValuePlusargsData {
+  ExpressionId format;
+  ExpressionId output;  // The lvalue target
+
+  auto operator==(const ValuePlusargsData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
-    DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData>;
+    DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
+    TestPlusargsData, ValuePlusargsData>;
 
 }  // namespace lyra::hir

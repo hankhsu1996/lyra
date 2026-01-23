@@ -459,6 +459,16 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 FormatKindToSpecChar(info.default_format),
                 info.has_runtime_format);
           },
+          [this](const PlusargsRvalueInfo& info) {
+            const char* kind_str =
+                info.kind == PlusargsKind::kTest ? "test" : "value";
+            if (info.output.has_value()) {
+              return std::format(
+                  "plusargs.{}(output={})", kind_str,
+                  FormatPlace(*info.output));
+            }
+            return std::format("plusargs.{}", kind_str);
+          },
       },
       rv.info);
 

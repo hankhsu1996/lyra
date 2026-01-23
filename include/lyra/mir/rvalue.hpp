@@ -101,12 +101,21 @@ struct SFormatRvalueInfo {
   bool has_runtime_format = false;
 };
 
+enum class PlusargsKind : uint8_t { kTest, kValue };
+
+struct PlusargsRvalueInfo {
+  PlusargsKind kind;
+  std::optional<PlaceId> output;  // kValue only: place to write parsed value
+  TypeId output_type;             // kValue only: type of output variable
+  // operands[0] = query/format string (always a string operand)
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
     BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
-    ConcatRvalueInfo, SFormatRvalueInfo>;
+    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -142,6 +151,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "concat";
         } else if constexpr (std::is_same_v<T, SFormatRvalueInfo>) {
           return "sformat";
+        } else if constexpr (std::is_same_v<T, PlusargsRvalueInfo>) {
+          return "plusargs";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }
