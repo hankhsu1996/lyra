@@ -21,13 +21,13 @@ suites:
       - control_flow/unique_priority_case.yaml
       - control_flow/foreach_2d.yaml
       - datatypes/wide_integral/
-      - datatypes/unpacked_arrays.yaml
-      - datatypes/unpacked_array_constants.yaml
-      - datatypes/arbitrary_width.yaml
-      - datatypes/enum.yaml
-      - datatypes/variables.yaml
-      - datatypes/typedef.yaml
-      - datatypes/packed_2d.yaml
+      - datatypes/unpacked/unpacked_arrays.yaml
+      - datatypes/unpacked/unpacked_array_constants.yaml
+      - datatypes/integral/arbitrary_width.yaml
+      - datatypes/enum/enum.yaml
+      - datatypes/integral/variables.yaml
+      - datatypes/general/typedef.yaml
+      - datatypes/packed/packed_2d.yaml
       - processes/initial.yaml
       - processes/delay.yaml
       - processes/wait_event.yaml
@@ -40,12 +40,7 @@ suites:
       - control_flow/
       - datatypes/
       - system_tf/pure/
-      - system_tf/effect/display.yaml
-      - system_tf/effect/severity.yaml
-      - system_tf/effect/plusargs.yaml
-      - system_tf/effect/readmem.yaml
-      - system_tf/effect/fopen.yaml
-      - system_tf/effect/fdisplay.yaml
+      - system_tf/effect/
       - functions/
       - packages/
       - hierarchy/refs/
