@@ -25,6 +25,7 @@ struct FormatOp {
 struct DisplaySystemCallData {
   PrintKind print_kind;
   std::vector<FormatOp> ops;
+  std::optional<ExpressionId> descriptor;  // nullopt = stdout
 
   auto operator==(const DisplaySystemCallData&) const -> bool = default;
 };

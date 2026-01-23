@@ -22,11 +22,12 @@ struct FormatOp {
   FormatModifiers mods;  // width, precision, flags
 };
 
-// DisplayEffect represents a $display/$write family system task.
-// These are immediate observable effects that print to stdout.
+// DisplayEffect represents a $display/$write/$fdisplay/$fwrite family system
+// task. When descriptor is absent, output goes to stdout.
 struct DisplayEffect {
   PrintKind print_kind;
   std::vector<FormatOp> ops;
+  std::optional<Operand> descriptor;  // nullopt = stdout
 };
 
 // SeverityEffect represents $info/$warning/$error system tasks.

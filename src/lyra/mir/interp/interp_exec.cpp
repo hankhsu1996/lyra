@@ -178,21 +178,18 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
       effect.op);
 }
 
-void Interpreter::ExecDisplayEffect(
-    const ProcessState& state, const DisplayEffect& disp) {
-  std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-
+auto Interpreter::FormatDisplayOps(
+    const ProcessState& state, std::span<const FormatOp> ops) -> std::string {
+  std::string result;
   FormatContext ctx{};
 
-  for (const auto& op : disp.ops) {
+  for (const auto& op : ops) {
     if (op.kind == FormatKind::kLiteral) {
-      out << op.literal;
+      result += op.literal;
     } else {
-      // Evaluate the value and format it
       RuntimeValue value = EvalOperand(state, *op.value);
       TypedValue typed{.value = std::move(value), .type = op.type};
 
-      // Convert FormatKind and modifiers to FormatSpec
       FormatSpec spec{
           .kind = op.kind,
           .width = op.mods.width,
@@ -200,12 +197,49 @@ void Interpreter::ExecDisplayEffect(
           .zero_pad = op.mods.zero_pad,
           .left_align = op.mods.left_align};
 
-      out << FormatValue(typed, spec, *types_, ctx);
+      result += FormatValue(typed, spec, *types_, ctx);
     }
   }
 
-  if (disp.print_kind == PrintKind::kDisplay) {
-    out << "\n";
+  return result;
+}
+
+void Interpreter::ExecDisplayEffect(
+    const ProcessState& state, const DisplayEffect& disp) {
+  if (disp.descriptor) {
+    // File-directed output: evaluate descriptor and route through FileManager
+    RuntimeValue desc_val = EvalOperand(state, *disp.descriptor);
+    if (!IsIntegral(desc_val)) {
+      return;  // Invalid descriptor: no-op
+    }
+    const auto& desc_int = AsIntegral(desc_val);
+    auto udesc =
+        static_cast<uint32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+
+    StreamTargets targets = file_manager_.CollectStreams(udesc);
+    if (!targets.include_stdout && targets.file_stream_count == 0) {
+      return;  // No targets: no-op
+    }
+
+    std::string formatted = FormatDisplayOps(state, disp.ops);
+    if (disp.print_kind == PrintKind::kDisplay) {
+      formatted += "\n";
+    }
+
+    if (targets.include_stdout) {
+      std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+      out << formatted;
+    }
+    for (int i = 0; i < targets.file_stream_count; ++i) {
+      *targets.file_streams.at(i) << formatted;
+    }
+  } else {
+    // Direct stdout output (original $display/$write path)
+    std::ostream& out = output_ != nullptr ? *output_ : std::cout;
+    out << FormatDisplayOps(state, disp.ops);
+    if (disp.print_kind == PrintKind::kDisplay) {
+      out << "\n";
+    }
   }
 }
 

@@ -64,6 +64,39 @@ void FileManager::Fclose(int32_t descriptor) {
   }
 }
 
+auto FileManager::CollectStreams(uint32_t descriptor) -> StreamTargets {
+  StreamTargets targets;
+
+  if (descriptor == 0) {
+    return targets;  // No-op
+  }
+
+  if ((descriptor & kFdBit) != 0) {
+    // FD mode: mask off bit 31, look up fd index
+    auto index = static_cast<int32_t>(descriptor & ~kFdBit);
+    auto it = fd_table_.find(index);
+    if (it != fd_table_.end() && it->second && it->second->is_open()) {
+      targets.file_streams.at(targets.file_stream_count++) = it->second.get();
+    }
+  } else {
+    // MCD mode: bit 0 = stdout, bits 1-30 = file channels
+    if ((descriptor & 1U) != 0) {
+      targets.include_stdout = true;
+    }
+    for (int bit = 1; bit <= kMaxMcdBit; ++bit) {
+      if ((descriptor & (1U << bit)) != 0) {
+        auto it = mcd_channels_.find(bit);
+        if (it != mcd_channels_.end() && it->second && it->second->is_open()) {
+          targets.file_streams.at(targets.file_stream_count++) =
+              it->second.get();
+        }
+      }
+    }
+  }
+
+  return targets;
+}
+
 auto FileManager::ParseMode(const std::string& mode)
     -> std::optional<std::ios_base::openmode> {
   std::string base = mode;

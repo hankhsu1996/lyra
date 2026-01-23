@@ -319,7 +319,9 @@ struct LowerVisitor {
             .type = result_type,
             .span = span,
             .data = hir::DisplaySystemCallData{
-                .print_kind = print_kind, .ops = std::move(ops)}});
+                .print_kind = print_kind,
+                .ops = std::move(ops),
+                .descriptor = std::nullopt}});
   }
 
   auto operator()(const TerminationFunctionInfo& /*info*/) const
@@ -520,6 +522,85 @@ struct LowerVisitor {
 };
 
 }  // namespace
+
+auto BuildDisplayFormatOps(
+    std::span<const slang::ast::Expression* const> slang_args,
+    std::span<const hir::ExpressionId> hir_args, FormatKind default_format,
+    Context* ctx) -> std::vector<hir::FormatOp> {
+  SourceSpan span = ctx->SpanOf(
+      slang_args.empty() ? slang::SourceRange{} : slang_args[0]->sourceRange);
+  std::vector<hir::FormatOp> ops;
+
+  if (hir_args.empty()) {
+    return ops;
+  }
+
+  // Check if first argument is a string literal with '%'
+  const slang::ast::Expression* first_arg = slang_args[0];
+
+  // Unwrap conversion if present (slang wraps string literals)
+  if (first_arg->kind == slang::ast::ExpressionKind::Conversion) {
+    const auto& conv = first_arg->as<slang::ast::ConversionExpression>();
+    first_arg = &conv.operand();
+  }
+
+  bool has_format_string = false;
+  std::string format_str;
+
+  if (first_arg->kind == slang::ast::ExpressionKind::StringLiteral) {
+    const auto& literal = first_arg->as<slang::ast::StringLiteral>();
+    format_str = std::string(literal.getValue());
+    has_format_string = true;
+  }
+
+  if (has_format_string && format_str.find('%') != std::string::npos) {
+    // Parse format string with remaining arguments
+    auto remaining_args = hir_args.subspan(1);
+    auto parse_result = ParseFormatString(
+        format_str, remaining_args, default_format, *ctx->sink, span);
+    ops = std::move(parse_result.ops);
+
+    // Auto-format any remaining arguments not consumed by format string
+    size_t next_arg = 1 + parse_result.args_consumed;
+    while (next_arg < hir_args.size()) {
+      ops.push_back(
+          hir::FormatOp{
+              .kind = default_format,
+              .value = hir_args[next_arg],
+              .literal = {},
+              .mods = {}});
+      ++next_arg;
+    }
+  } else if (has_format_string) {
+    // String without '%' - output as literal prefix + auto-format rest
+    ops.push_back(
+        hir::FormatOp{
+            .kind = FormatKind::kLiteral,
+            .value = std::nullopt,
+            .literal = format_str,
+            .mods = {}});
+    for (size_t i = 1; i < hir_args.size(); ++i) {
+      ops.push_back(
+          hir::FormatOp{
+              .kind = default_format,
+              .value = hir_args[i],
+              .literal = {},
+              .mods = {}});
+    }
+  } else {
+    // First arg is not a string - auto-format all arguments
+    for (hir::ExpressionId arg_id : hir_args) {
+      ops.push_back(
+          hir::FormatOp{
+              .kind = default_format,
+              .value = arg_id,
+              .literal = {},
+              .mods = {}});
+    }
+  }
+
+  return ops;
+}
 
 auto LowerSystemCall(
     const slang::ast::CallExpression& call, SymbolRegistrar& registrar,

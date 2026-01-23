@@ -622,11 +622,22 @@ void Dumper::Dump(ExpressionId id) {
           [&](const auto& syscall_data) {
             using T = std::decay_t<decltype(syscall_data)>;
             if constexpr (std::is_same_v<T, DisplaySystemCallData>) {
-              std::string_view name =
-                  syscall_data.print_kind == PrintKind::kDisplay ? "$display"
-                                                                 : "$write";
+              const char* name = nullptr;
+              if (syscall_data.descriptor.has_value()) {
+                name = syscall_data.print_kind == PrintKind::kDisplay
+                           ? "$fdisplay"
+                           : "$fwrite";
+              } else {
+                name = syscall_data.print_kind == PrintKind::kDisplay
+                           ? "$display"
+                           : "$write";
+              }
               *out_ << name << "(";
               bool first = true;
+              if (syscall_data.descriptor) {
+                Dump(*syscall_data.descriptor);
+                first = false;
+              }
               for (const FormatOp& op : syscall_data.ops) {
                 if (!first) {
                   *out_ << ", ";

@@ -145,6 +145,9 @@ struct StorageCollector {
               std::visit(
                   Overloaded{
                       [&](const DisplayEffect& d) -> void {
+                        if (d.descriptor) {
+                          Visit(*d.descriptor, arena);
+                        }
                         for (const auto& format_op : d.ops) {
                           if (format_op.value.has_value()) {
                             Visit(*format_op.value, arena);

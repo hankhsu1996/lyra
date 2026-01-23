@@ -107,6 +107,17 @@ void LowerDisplayEffect(
     const hir::DisplaySystemCallData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
 
+  // Lower descriptor first (single eval, before format args)
+  std::optional<mir::Operand> mir_descriptor;
+  if (data.descriptor) {
+    mir::Operand desc_val = LowerExpression(*data.descriptor, builder);
+    // Materialize to a temp so it's evaluated once
+    const hir::Expression& desc_expr = (*ctx.hir_arena)[*data.descriptor];
+    mir::PlaceId temp = ctx.AllocTemp(desc_expr.type);
+    builder.EmitAssign(temp, std::move(desc_val));
+    mir_descriptor = mir::Operand::Use(temp);
+  }
+
   std::vector<mir::FormatOp> mir_ops;
   mir_ops.reserve(data.ops.size());
 
@@ -136,6 +147,7 @@ void LowerDisplayEffect(
   mir::DisplayEffect display{
       .print_kind = data.print_kind,
       .ops = std::move(mir_ops),
+      .descriptor = std::move(mir_descriptor),
   };
   builder.EmitEffect(std::move(display));
 }
@@ -447,6 +459,7 @@ void LowerConditionalPriority(
             .literal = "warning: no condition matched in priority if",
             .type = TypeId{},
             .mods = {}}},
+        .descriptor = std::nullopt,
     };
     builder.EmitEffect(std::move(display));
   }
@@ -693,6 +706,7 @@ void LowerCasePriority(
             .literal = "warning: no matching case item in priority case",
             .type = TypeId{},
             .mods = {}}},
+        .descriptor = std::nullopt,
     };
     builder.EmitEffect(std::move(display));
   }

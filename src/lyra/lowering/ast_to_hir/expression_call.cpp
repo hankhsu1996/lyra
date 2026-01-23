@@ -1,7 +1,10 @@
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
 
 #include <format>
+#include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -10,10 +13,13 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/builtin_method.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
@@ -23,6 +29,63 @@
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+// Classify $fdisplay/$fwrite family system tasks.
+// Returns DisplayFunctionInfo if name matches, nullopt otherwise.
+auto ClassifyFdisplay(std::string_view name)
+    -> std::optional<DisplayFunctionInfo> {
+  if (name == "$fdisplay") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kDecimal, .append_newline = true};
+  }
+  if (name == "$fdisplayb") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kBinary, .append_newline = true};
+  }
+  if (name == "$fdisplayo") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kOctal, .append_newline = true};
+  }
+  if (name == "$fdisplayh") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kHex, .append_newline = true};
+  }
+  if (name == "$fwrite") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kDecimal, .append_newline = false};
+  }
+  if (name == "$fwriteb") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kBinary, .append_newline = false};
+  }
+  if (name == "$fwriteo") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kOctal, .append_newline = false};
+  }
+  if (name == "$fwriteh") {
+    return DisplayFunctionInfo{
+        .radix = PrintRadix::kHex, .append_newline = false};
+  }
+  return std::nullopt;
+}
+
+auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
+  switch (radix) {
+    case PrintRadix::kDecimal:
+      return FormatKind::kDecimal;
+    case PrintRadix::kBinary:
+      return FormatKind::kBinary;
+    case PrintRadix::kOctal:
+      return FormatKind::kOctal;
+    case PrintRadix::kHex:
+      return FormatKind::kHex;
+  }
+  return FormatKind::kDecimal;
+}
+
+}  // namespace
 
 auto LowerCallExpression(
     const slang::ast::Expression& expr, SymbolRegistrar& registrar,
@@ -423,6 +486,53 @@ auto LowerCallExpression(
               .span = span,
               .data = hir::SystemCallExpressionData{
                   hir::FcloseData{.descriptor = descriptor}}});
+    }
+    if (auto fdisp_info = ClassifyFdisplay(name)) {
+      // $fdisplay/$fwrite family: first arg is descriptor, rest are display
+      // args
+      if (call.arguments().empty()) {
+        ctx->ErrorFmt(span, "{} requires at least a file descriptor", name);
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower descriptor (arg 0)
+      hir::ExpressionId desc_expr =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!desc_expr) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower remaining display arguments
+      std::vector<hir::ExpressionId> display_args;
+      std::vector<const slang::ast::Expression*> slang_display_args;
+      for (size_t i = 1; i < call.arguments().size(); ++i) {
+        hir::ExpressionId arg =
+            LowerExpression(*call.arguments()[i], registrar, ctx);
+        if (!arg) {
+          return hir::kInvalidExpressionId;
+        }
+        display_args.push_back(arg);
+        slang_display_args.push_back(call.arguments()[i]);
+      }
+
+      PrintKind print_kind =
+          fdisp_info->append_newline ? PrintKind::kDisplay : PrintKind::kWrite;
+      FormatKind default_format = RadixToFormatKind(fdisp_info->radix);
+
+      std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
+          slang_display_args, display_args, default_format, ctx);
+
+      TypeId result_type =
+          ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::DisplaySystemCallData{
+                  .print_kind = print_kind,
+                  .ops = std::move(ops),
+                  .descriptor = desc_expr}});
     }
     return LowerSystemCall(call, registrar, ctx);
   }
