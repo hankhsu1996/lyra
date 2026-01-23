@@ -54,10 +54,10 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
   }
   const Constant& c = (*constants_)[id];
   if (const auto* integral = std::get_if<IntegralConstant>(&c.value)) {
-    if (integral->a.empty()) {
+    if (integral->value.empty()) {
       return "0";
     }
-    return std::format("{}", integral->a[0]);
+    return std::format("{}", integral->value[0]);
   }
   if (const auto* str = std::get_if<StringConstant>(&c.value)) {
     return std::format("\"{}\"", str->value);

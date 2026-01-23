@@ -18,10 +18,10 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
   }
   const auto& constant = std::get<Constant>(validity.payload);
   const auto* ic = std::get_if<IntegralConstant>(&constant.value);
-  if (ic == nullptr || ic->a.empty()) {
+  if (ic == nullptr || ic->value.empty()) {
     return false;
   }
-  return ic->a[0] == 1;
+  return ic->value[0] == 1;
 }
 
 // Result of lvalue lowering: place to write and validity predicate.

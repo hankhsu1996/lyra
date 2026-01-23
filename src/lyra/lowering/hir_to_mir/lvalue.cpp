@@ -25,8 +25,8 @@ namespace {
 // Make an integral constant with specified value and type.
 auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
   IntegralConstant ic;
-  ic.a.push_back(static_cast<uint64_t>(value));
-  ic.b.push_back(0);
+  ic.value.push_back(static_cast<uint64_t>(value));
+  ic.unknown.push_back(0);
   return Constant{.type = type, .value = std::move(ic)};
 }
 
@@ -43,10 +43,10 @@ auto IsAlwaysValid(const mir::Operand& validity) -> bool {
   }
   const auto& constant = std::get<Constant>(validity.payload);
   const auto* ic = std::get_if<IntegralConstant>(&constant.value);
-  if (ic == nullptr || ic->a.empty()) {
+  if (ic == nullptr || ic->value.empty()) {
     return false;
   }
-  return ic->a[0] == 1;
+  return ic->value[0] == 1;
 }
 
 // Compose two validities with &&. Optimizes for constant 1 cases.

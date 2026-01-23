@@ -11,15 +11,15 @@
 namespace lyra::semantic {
 
 struct RuntimeIntegral {
-  std::vector<uint64_t> a;  // Value/Z bits
-  std::vector<uint64_t> b;  // Unknown bits (0 = known)
+  std::vector<uint64_t> value;    // Value/Z bits
+  std::vector<uint64_t> unknown;  // Unknown bits (0 = known)
   uint32_t bit_width;
 
   [[nodiscard]] auto IsZero() const -> bool;
-  [[nodiscard]] auto IsX() const -> bool;     // Any bit is X (b=1, a=0)
-  [[nodiscard]] auto IsZ() const -> bool;     // Any bit is Z (b=1, a=1)
-  [[nodiscard]] auto IsAllX() const -> bool;  // All bits are X
-  [[nodiscard]] auto IsAllZ() const -> bool;  // All bits are Z
+  [[nodiscard]] auto IsX() const -> bool;
+  [[nodiscard]] auto IsZ() const -> bool;
+  [[nodiscard]] auto IsAllX() const -> bool;
+  [[nodiscard]] auto IsAllZ() const -> bool;
   [[nodiscard]] auto IsKnown() const -> bool;
   [[nodiscard]] auto IsAllOnes() const -> bool;
 };

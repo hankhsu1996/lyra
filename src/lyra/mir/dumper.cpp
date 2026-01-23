@@ -233,7 +233,7 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
       const auto& constant = std::get<Constant>(op.payload);
       if (const auto* integral =
               std::get_if<IntegralConstant>(&constant.value)) {
-        auto value = integral->a.empty() ? 0UL : integral->a[0];
+        auto value = integral->value.empty() ? 0UL : integral->value[0];
         return std::format("{}", value);
       }
       return "?";
@@ -322,11 +322,11 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
           [this, &constant](const auto& val) -> std::string {
             using T = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<T, IntegralConstant>) {
-              if (val.a.empty()) {
+              if (val.value.empty()) {
                 return std::format("const(0: {})", FormatType(constant.type));
               }
               return std::format(
-                  "const({}: {})", val.a[0], FormatType(constant.type));
+                  "const({}: {})", val.value[0], FormatType(constant.type));
             } else if constexpr (std::is_same_v<T, StringConstant>) {
               return std::format(
                   "const(\"{}\": {})", val.value, FormatType(constant.type));

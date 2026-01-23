@@ -48,14 +48,14 @@ auto RuntimeIntegral::IsZero() const -> bool {
   if (!IsKnown()) {
     return false;
   }
-  return std::ranges::all_of(a, [](uint64_t w) { return w == 0; });
+  return std::ranges::all_of(value, [](uint64_t w) { return w == 0; });
 }
 
 auto RuntimeIntegral::IsX() const -> bool {
-  // X: b=1, a=0
-  for (size_t i = 0; i < b.size(); ++i) {
-    uint64_t ai = (i < a.size()) ? a[i] : 0;
-    if ((b[i] & ~ai) != 0) {
+  // X: unknown=1, value=0
+  for (size_t i = 0; i < unknown.size(); ++i) {
+    uint64_t vi = (i < value.size()) ? value[i] : 0;
+    if ((unknown[i] & ~vi) != 0) {
       return true;
     }
   }
@@ -63,10 +63,10 @@ auto RuntimeIntegral::IsX() const -> bool {
 }
 
 auto RuntimeIntegral::IsZ() const -> bool {
-  // Z: b=1, a=1
-  for (size_t i = 0; i < b.size(); ++i) {
-    uint64_t ai = (i < a.size()) ? a[i] : 0;
-    if ((b[i] & ai) != 0) {
+  // Z: unknown=1, value=1
+  for (size_t i = 0; i < unknown.size(); ++i) {
+    uint64_t vi = (i < value.size()) ? value[i] : 0;
+    if ((unknown[i] & vi) != 0) {
       return true;
     }
   }
@@ -74,16 +74,16 @@ auto RuntimeIntegral::IsZ() const -> bool {
 }
 
 auto RuntimeIntegral::IsAllX() const -> bool {
-  if (b.empty() || bit_width == 0) {
+  if (unknown.empty() || bit_width == 0) {
     return false;
   }
-  // All X: a=0, b=all-ones (within bit_width)
+  // All X: value=0, unknown=all-ones (within bit_width)
   uint32_t top_bits = bit_width % kBitsPerWord;
   uint64_t top_mask = (top_bits == 0) ? ~uint64_t{0} : GetMask(top_bits);
-  for (size_t i = 0; i < b.size(); ++i) {
-    uint64_t ai = (i < a.size()) ? a[i] : 0;
-    uint64_t word_mask = (i + 1 == b.size()) ? top_mask : ~uint64_t{0};
-    if (ai != 0 || b[i] != word_mask) {
+  for (size_t i = 0; i < unknown.size(); ++i) {
+    uint64_t vi = (i < value.size()) ? value[i] : 0;
+    uint64_t word_mask = (i + 1 == unknown.size()) ? top_mask : ~uint64_t{0};
+    if (vi != 0 || unknown[i] != word_mask) {
       return false;
     }
   }
@@ -91,16 +91,16 @@ auto RuntimeIntegral::IsAllX() const -> bool {
 }
 
 auto RuntimeIntegral::IsAllZ() const -> bool {
-  if (b.empty() || bit_width == 0) {
+  if (unknown.empty() || bit_width == 0) {
     return false;
   }
-  // All Z: a=all-ones, b=all-ones (within bit_width)
+  // All Z: value=all-ones, unknown=all-ones (within bit_width)
   uint32_t top_bits = bit_width % kBitsPerWord;
   uint64_t top_mask = (top_bits == 0) ? ~uint64_t{0} : GetMask(top_bits);
-  for (size_t i = 0; i < b.size(); ++i) {
-    uint64_t ai = (i < a.size()) ? a[i] : 0;
-    uint64_t word_mask = (i + 1 == b.size()) ? top_mask : ~uint64_t{0};
-    if (ai != word_mask || b[i] != word_mask) {
+  for (size_t i = 0; i < unknown.size(); ++i) {
+    uint64_t vi = (i < value.size()) ? value[i] : 0;
+    uint64_t word_mask = (i + 1 == unknown.size()) ? top_mask : ~uint64_t{0};
+    if (vi != word_mask || unknown[i] != word_mask) {
       return false;
     }
   }
@@ -108,20 +108,20 @@ auto RuntimeIntegral::IsAllZ() const -> bool {
 }
 
 auto RuntimeIntegral::IsKnown() const -> bool {
-  return std::ranges::all_of(b, [](uint64_t w) { return w == 0; });
+  return std::ranges::all_of(unknown, [](uint64_t w) { return w == 0; });
 }
 
 auto RuntimeIntegral::IsAllOnes() const -> bool {
   if (!IsKnown()) {
     return false;
   }
-  if (a.empty()) {
+  if (value.empty()) {
     return false;
   }
 
   // Check all but the last word
-  for (size_t i = 0; i + 1 < a.size(); ++i) {
-    if (a[i] != ~uint64_t{0}) {
+  for (size_t i = 0; i + 1 < value.size(); ++i) {
+    if (value[i] != ~uint64_t{0}) {
       return false;
     }
   }
@@ -129,18 +129,18 @@ auto RuntimeIntegral::IsAllOnes() const -> bool {
   // Check the last word with mask
   uint32_t top_bits = bit_width % kBitsPerWord;
   uint64_t mask = (top_bits == 0) ? ~uint64_t{0} : GetMask(top_bits);
-  return a.back() == mask;
+  return value.back() == mask;
 }
 
 auto MakeIntegral(uint64_t val, uint32_t bit_width) -> RuntimeValue {
   size_t num_words = WordsNeeded(bit_width);
   RuntimeIntegral result;
   result.bit_width = bit_width;
-  result.a.resize(num_words, 0);
-  result.b.resize(num_words, 0);
-  if (!result.a.empty()) {
-    result.a[0] = val;
-    MaskTopWord(result.a, bit_width);
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, 0);
+  if (!result.value.empty()) {
+    result.value[0] = val;
+    MaskTopWord(result.value, bit_width);
   }
   return result;
 }
@@ -149,17 +149,17 @@ auto MakeIntegralSigned(int64_t val, uint32_t bit_width) -> RuntimeValue {
   size_t num_words = WordsNeeded(bit_width);
   RuntimeIntegral result;
   result.bit_width = bit_width;
-  result.b.resize(num_words, 0);
+  result.unknown.resize(num_words, 0);
 
   // Sign-extend: if negative and bit_width > 64, fill high words with 1s
   if (val < 0 && num_words > 1) {
-    result.a.resize(num_words, ~uint64_t{0});  // All 1s for sign extension
+    result.value.resize(num_words, ~uint64_t{0});  // All 1s for sign extension
   } else {
-    result.a.resize(num_words, 0);
+    result.value.resize(num_words, 0);
   }
-  if (!result.a.empty()) {
-    result.a[0] = static_cast<uint64_t>(val);
-    MaskTopWord(result.a, bit_width);
+  if (!result.value.empty()) {
+    result.value[0] = static_cast<uint64_t>(val);
+    MaskTopWord(result.value, bit_width);
   }
   return result;
 }
@@ -168,9 +168,9 @@ auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue {
   size_t num_words = WordsNeeded(bit_width);
   RuntimeIntegral result;
   result.bit_width = bit_width;
-  result.a.resize(num_words, 0);             // X: a=0
-  result.b.resize(num_words, ~uint64_t{0});  // X: b=1
-  MaskTopWord(result.b, bit_width);
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, ~uint64_t{0});
+  MaskTopWord(result.unknown, bit_width);
   return result;
 }
 
@@ -178,15 +178,15 @@ auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue {
   RuntimeIntegral result;
   result.bit_width = bit_width;
-  result.a = c.a;
-  result.b = c.b;
+  result.value = c.value;
+  result.unknown = c.unknown;
 
   // Ensure proper size
   size_t num_words = WordsNeeded(bit_width);
-  result.a.resize(num_words, 0);
-  result.b.resize(num_words, 0);
-  MaskTopWord(result.a, bit_width);
-  MaskTopWord(result.b, bit_width);
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, 0);
+  MaskTopWord(result.value, bit_width);
+  MaskTopWord(result.unknown, bit_width);
 
   return result;
 }
@@ -395,7 +395,7 @@ auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string {
   }
 
   if (v.bit_width <= 64) {
-    uint64_t val = v.a.empty() ? 0 : v.a[0];
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
     if (is_signed) {
       auto sval = static_cast<int64_t>(val);
       // Sign extend if needed
@@ -415,7 +415,7 @@ auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string {
   // 10^19 is the largest power of 10 that fits in uint64_t.
   constexpr uint64_t kChunkDivisor = 10000000000000000000ULL;  // 10^19
 
-  std::vector<uint64_t> words = v.a;
+  std::vector<uint64_t> words = v.value;
   size_t num_words = WordsNeeded(v.bit_width);
   words.resize(num_words, 0);
   MaskTopWord(words, v.bit_width);
@@ -484,12 +484,12 @@ auto ToHexString(const RuntimeIntegral& v) -> std::string {
   }
 
   if (v.bit_width <= 64) {
-    uint64_t val = v.a.empty() ? 0 : v.a[0];
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
     return std::format("{:x}", val);
   }
 
   std::string result;
-  for (uint64_t word : std::ranges::reverse_view(v.a)) {
+  for (uint64_t word : std::ranges::reverse_view(v.value)) {
     if (result.empty()) {
       result = std::format("{:x}", word);
     } else {
@@ -508,12 +508,12 @@ auto ToBinaryString(const RuntimeIntegral& v) -> std::string {
   }
 
   if (v.bit_width <= 64) {
-    uint64_t val = v.a.empty() ? 0 : v.a[0];
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
     return std::format("{:b}", val);
   }
 
   std::string result;
-  for (uint64_t word : std::ranges::reverse_view(v.a)) {
+  for (uint64_t word : std::ranges::reverse_view(v.value)) {
     if (result.empty()) {
       result = std::format("{:b}", word);
     } else {
@@ -532,7 +532,7 @@ auto ToOctalString(const RuntimeIntegral& v) -> std::string {
   }
 
   if (v.bit_width <= 64) {
-    uint64_t val = v.a.empty() ? 0 : v.a[0];
+    uint64_t val = v.value.empty() ? 0 : v.value[0];
     return std::format("{:o}", val);
   }
 

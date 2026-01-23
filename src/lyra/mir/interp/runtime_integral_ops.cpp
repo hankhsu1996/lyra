@@ -25,8 +25,8 @@ auto CompareMultiWordUnsigned(
 
   size_t num_words = WordsNeeded(bit_width);
   for (size_t i = num_words; i > 0; --i) {
-    uint64_t lw = lhs.a[i - 1];
-    uint64_t rw = rhs.a[i - 1];
+    uint64_t lw = lhs.value[i - 1];
+    uint64_t rw = rhs.value[i - 1];
     if (lw < rw) {
       return -1;
     }
@@ -79,16 +79,16 @@ auto DivModMultiWord(
 
   // Shift amount for left shift by 1
   auto one = MakeKnownIntegral(bit_width);
-  one.a[0] = 1;
+  one.value[0] = 1;
 
   for (int32_t bit_pos = static_cast<int32_t>(bit_width) - 1; bit_pos >= 0;
        --bit_pos) {
     // remainder = (remainder << 1) | bit(dividend, bit_pos)
     remainder = IntegralShl(remainder, one, bit_width);
     if (GetBit(dividend_n, bit_pos, bit_width)) {
-      remainder.a[0] |= 1;
+      remainder.value[0] |= 1;
     }
-    MaskTopWord(remainder.a, bit_width);
+    MaskTopWord(remainder.value, bit_width);
 
     if (CompareMultiWordUnsigned(remainder, divisor_n, bit_width) >= 0) {
       remainder = IntegralSub(remainder, divisor_n, bit_width);
@@ -152,8 +152,8 @@ auto MakeKnownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   RuntimeIntegral result;
   result.bit_width = bit_width;
   size_t num_words = WordsNeeded(bit_width);
-  result.a.resize(num_words, 0);
-  result.b.resize(num_words, 0);
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, 0);
   return result;
 }
 
@@ -161,9 +161,9 @@ auto MakeUnknownIntegral(uint32_t bit_width) -> RuntimeIntegral {
   RuntimeIntegral result;
   result.bit_width = bit_width;
   size_t num_words = WordsNeeded(bit_width);
-  result.a.resize(num_words, 0);
-  result.b.resize(num_words, ~uint64_t{0});
-  MaskTopWord(result.b, bit_width);
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, ~uint64_t{0});
+  MaskTopWord(result.unknown, bit_width);
   return result;
 }
 
@@ -181,14 +181,14 @@ auto StringBytesToIntegral(std::string_view str, uint32_t bit_width)
     size_t word_idx = bit_offset / 64;
     size_t bit_in_word = bit_offset % 64;
 
-    if (word_idx < result.a.size()) {
+    if (word_idx < result.value.size()) {
       auto byte_val = static_cast<uint8_t>(str[i]);
-      result.a[word_idx] |= static_cast<uint64_t>(byte_val) << bit_in_word;
+      result.value[word_idx] |= static_cast<uint64_t>(byte_val) << bit_in_word;
     }
   }
 
   // Ensure normalization when bit_width isn't a multiple of 8
-  MaskTopWord(result.a, bit_width);
+  MaskTopWord(result.value, bit_width);
   return result;
 }
 
@@ -204,14 +204,14 @@ auto IntegralAdd(
 
   uint64_t carry = 0;
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t lw = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t rw = (i < rhs.a.size()) ? rhs.a[i] : 0;
+    uint64_t lw = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t rw = (i < rhs.value.size()) ? rhs.value[i] : 0;
     __uint128_t sum = static_cast<__uint128_t>(lw) + rw + carry;
-    result.a[i] = static_cast<uint64_t>(sum);
+    result.value[i] = static_cast<uint64_t>(sum);
     carry = static_cast<uint64_t>(sum >> 64);
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -227,16 +227,16 @@ auto IntegralSub(
 
   uint64_t borrow = 0;
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t lw = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t rw = (i < rhs.a.size()) ? rhs.a[i] : 0;
+    uint64_t lw = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t rw = (i < rhs.value.size()) ? rhs.value[i] : 0;
     __uint128_t diff =
         static_cast<__uint128_t>(lw) - rw - borrow + (uint64_t{1} << 63);
     diff += (uint64_t{1} << 63);  // Add back the bias
-    result.a[i] = static_cast<uint64_t>(diff);
+    result.value[i] = static_cast<uint64_t>(diff);
     borrow = (diff < (static_cast<__uint128_t>(1) << 64)) ? 1 : 0;
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -251,20 +251,21 @@ auto IntegralMul(
   size_t num_words = WordsNeeded(width);
 
   // Simple O(n^2) multiplication
-  for (size_t i = 0; i < lhs.a.size() && i < num_words; ++i) {
+  for (size_t i = 0; i < lhs.value.size() && i < num_words; ++i) {
     uint64_t carry = 0;
-    for (size_t j = 0; j < rhs.a.size() && (i + j) < num_words; ++j) {
-      __uint128_t prod = (static_cast<__uint128_t>(lhs.a[i]) * rhs.a[j]) +
-                         result.a[i + j] + carry;
-      result.a[i + j] = static_cast<uint64_t>(prod);
+    for (size_t j = 0; j < rhs.value.size() && (i + j) < num_words; ++j) {
+      __uint128_t prod =
+          (static_cast<__uint128_t>(lhs.value[i]) * rhs.value[j]) +
+          result.value[i + j] + carry;
+      result.value[i + j] = static_cast<uint64_t>(prod);
       carry = static_cast<uint64_t>(prod >> 64);
     }
-    if ((i + rhs.a.size()) < num_words) {
-      result.a[i + rhs.a.size()] += carry;
+    if ((i + rhs.value.size()) < num_words) {
+      result.value[i + rhs.value.size()] += carry;
     }
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -279,8 +280,8 @@ auto IntegralDiv(
 
   // Single-word division
   if (width <= 64) {
-    uint64_t lv = lhs.a.empty() ? 0 : lhs.a[0];
-    uint64_t rv = rhs.a.empty() ? 0 : rhs.a[0];
+    uint64_t lv = lhs.value.empty() ? 0 : lhs.value[0];
+    uint64_t rv = rhs.value.empty() ? 0 : rhs.value[0];
     // Note: rv cannot be 0 here since rhs.IsZero() was already checked above.
     // This explicit check makes the invariant visible to static analyzers.
     if (rv == 0) {
@@ -331,8 +332,8 @@ auto IntegralMod(
 
   // Single-word modulo
   if (width <= 64) {
-    uint64_t lv = lhs.a.empty() ? 0 : lhs.a[0];
-    uint64_t rv = rhs.a.empty() ? 0 : rhs.a[0];
+    uint64_t lv = lhs.value.empty() ? 0 : lhs.value[0];
+    uint64_t rv = rhs.value.empty() ? 0 : rhs.value[0];
     // Note: rv cannot be 0 here since rhs.IsZero() was already checked above.
     // This explicit check makes the invariant visible to static analyzers.
     if (rv == 0) {
@@ -379,22 +380,23 @@ auto IntegralAnd(
   size_t num_words = WordsNeeded(width);
 
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t a1 = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t b1 = (i < lhs.b.size()) ? lhs.b[i] : 0;
-    uint64_t a2 = (i < rhs.a.size()) ? rhs.a[i] : 0;
-    uint64_t b2 = (i < rhs.b.size()) ? rhs.b[i] : 0;
+    uint64_t a1 = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t b1 = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t a2 = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t b2 = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
 
     // AND: 0&?=0, 1&1=1, else X
-    uint64_t kz1 = ~a1 & ~b1;                   // known-zero in lhs
-    uint64_t kz2 = ~a2 & ~b2;                   // known-zero in rhs
-    uint64_t ko1 = a1 & ~b1;                    // known-one in lhs
-    uint64_t ko2 = a2 & ~b2;                    // known-one in rhs
-    result.a[i] = ko1 & ko2;                    // 1 only if both known-1
-    result.b[i] = ~(kz1 | kz2) & ~result.a[i];  // unknown unless forced 0 or 1
+    uint64_t kz1 = ~a1 & ~b1;     // known-zero in lhs
+    uint64_t kz2 = ~a2 & ~b2;     // known-zero in rhs
+    uint64_t ko1 = a1 & ~b1;      // known-one in lhs
+    uint64_t ko2 = a2 & ~b2;      // known-one in rhs
+    result.value[i] = ko1 & ko2;  // 1 only if both known-1
+    result.unknown[i] =
+        ~(kz1 | kz2) & ~result.value[i];  // unknown unless forced 0 or 1
   }
 
-  MaskTopWord(result.a, width);
-  MaskTopWord(result.b, width);
+  MaskTopWord(result.value, width);
+  MaskTopWord(result.unknown, width);
   return result;
 }
 
@@ -405,22 +407,23 @@ auto IntegralOr(
   size_t num_words = WordsNeeded(width);
 
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t a1 = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t b1 = (i < lhs.b.size()) ? lhs.b[i] : 0;
-    uint64_t a2 = (i < rhs.a.size()) ? rhs.a[i] : 0;
-    uint64_t b2 = (i < rhs.b.size()) ? rhs.b[i] : 0;
+    uint64_t a1 = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t b1 = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t a2 = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t b2 = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
 
     // OR: 1|?=1, 0|0=0, else X
-    uint64_t ko1 = a1 & ~b1;                    // known-one in lhs
-    uint64_t ko2 = a2 & ~b2;                    // known-one in rhs
-    uint64_t kz1 = ~a1 & ~b1;                   // known-zero in lhs
-    uint64_t kz2 = ~a2 & ~b2;                   // known-zero in rhs
-    result.a[i] = ko1 | ko2;                    // 1 if either known-1
-    result.b[i] = ~result.a[i] & ~(kz1 & kz2);  // unknown unless forced 1 or 0
+    uint64_t ko1 = a1 & ~b1;      // known-one in lhs
+    uint64_t ko2 = a2 & ~b2;      // known-one in rhs
+    uint64_t kz1 = ~a1 & ~b1;     // known-zero in lhs
+    uint64_t kz2 = ~a2 & ~b2;     // known-zero in rhs
+    result.value[i] = ko1 | ko2;  // 1 if either known-1
+    result.unknown[i] =
+        ~result.value[i] & ~(kz1 & kz2);  // unknown unless forced 1 or 0
   }
 
-  MaskTopWord(result.a, width);
-  MaskTopWord(result.b, width);
+  MaskTopWord(result.value, width);
+  MaskTopWord(result.unknown, width);
   return result;
 }
 
@@ -431,19 +434,19 @@ auto IntegralXor(
   size_t num_words = WordsNeeded(width);
 
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t a1 = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t b1 = (i < lhs.b.size()) ? lhs.b[i] : 0;
-    uint64_t a2 = (i < rhs.a.size()) ? rhs.a[i] : 0;
-    uint64_t b2 = (i < rhs.b.size()) ? rhs.b[i] : 0;
+    uint64_t a1 = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t b1 = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t a2 = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t b2 = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
 
     // XOR: any unknown propagates
-    result.b[i] = b1 | b2;
-    result.a[i] =
-        (a1 ^ a2) & ~result.b[i];  // known bits XORed; unknown→X (a=0)
+    result.unknown[i] = b1 | b2;
+    result.value[i] =
+        (a1 ^ a2) & ~result.unknown[i];  // known bits XORed; unknown→X
   }
 
-  MaskTopWord(result.a, width);
-  MaskTopWord(result.b, width);
+  MaskTopWord(result.value, width);
+  MaskTopWord(result.unknown, width);
   return result;
 }
 
@@ -458,13 +461,13 @@ auto IntegralNeg(const RuntimeIntegral& op, uint32_t width) -> RuntimeIntegral {
 
   uint64_t carry = 1;
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t v = (i < op.a.size()) ? op.a[i] : 0;
+    uint64_t v = (i < op.value.size()) ? op.value[i] : 0;
     __uint128_t sum = static_cast<__uint128_t>(~v) + carry;
-    result.a[i] = static_cast<uint64_t>(sum);
+    result.value[i] = static_cast<uint64_t>(sum);
     carry = static_cast<uint64_t>(sum >> 64);
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -473,16 +476,17 @@ auto IntegralNot(const RuntimeIntegral& op, uint32_t width) -> RuntimeIntegral {
   size_t num_words = WordsNeeded(width);
 
   for (size_t i = 0; i < num_words; ++i) {
-    uint64_t av = (i < op.a.size()) ? op.a[i] : 0;
-    uint64_t bv = (i < op.b.size()) ? op.b[i] : 0;
+    uint64_t av = (i < op.value.size()) ? op.value[i] : 0;
+    uint64_t bv = (i < op.unknown.size()) ? op.unknown[i] : 0;
 
     // NOT: invert known bits; unknown stays unknown (X)
-    result.a[i] = ~av & ~bv;  // known 0→1, known 1→0, unknown→0 (X encoding)
-    result.b[i] = bv;         // unknowns propagate
+    result.value[i] =
+        ~av & ~bv;           // known 0→1, known 1→0, unknown→0 (X encoding)
+    result.unknown[i] = bv;  // unknowns propagate
   }
 
-  MaskTopWord(result.a, width);
-  MaskTopWord(result.b, width);
+  MaskTopWord(result.value, width);
+  MaskTopWord(result.unknown, width);
   return result;
 }
 
@@ -492,8 +496,8 @@ namespace {
 auto MakeUnknown1Bit() -> RuntimeIntegral {
   RuntimeIntegral result;
   result.bit_width = 1;
-  result.a = {0};  // X: a=0
-  result.b = {1};  // X: b=1
+  result.value = {0};
+  result.unknown = {1};
   return result;
 }
 
@@ -505,11 +509,11 @@ auto IntegralEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     return MakeUnknown1Bit();
   }
 
-  size_t max_words = std::max(lhs.a.size(), rhs.a.size());
+  size_t max_words = std::max(lhs.value.size(), rhs.value.size());
   bool equal = true;
   for (size_t i = 0; i < max_words; ++i) {
-    uint64_t lw = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t rw = (i < rhs.a.size()) ? rhs.a[i] : 0;
+    uint64_t lw = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t rw = (i < rhs.value.size()) ? rhs.value[i] : 0;
     if (lw != rw) {
       equal = false;
       break;
@@ -538,14 +542,15 @@ auto IntegralCaseXMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     return IntegralEq(lhs, rhs);
   }
 
-  size_t max_words =
-      std::max({lhs.a.size(), rhs.a.size(), lhs.b.size(), rhs.b.size()});
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.unknown.size(),
+       rhs.unknown.size()});
 
   for (size_t i = 0; i < max_words; ++i) {
-    uint64_t a1 = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t b1 = (i < lhs.b.size()) ? lhs.b[i] : 0;
-    uint64_t a2 = (i < rhs.a.size()) ? rhs.a[i] : 0;
-    uint64_t b2 = (i < rhs.b.size()) ? rhs.b[i] : 0;
+    uint64_t a1 = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t b1 = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t a2 = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t b2 = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
 
     // Wildcard mask: any unknown bit (b != 0) in either operand
     uint64_t wildcard = b1 | b2;
@@ -570,21 +575,22 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     return IntegralEq(lhs, rhs);
   }
 
-  size_t max_words =
-      std::max({lhs.a.size(), rhs.a.size(), lhs.b.size(), rhs.b.size()});
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.unknown.size(),
+       rhs.unknown.size()});
 
   for (size_t i = 0; i < max_words; ++i) {
-    uint64_t a1 = (i < lhs.a.size()) ? lhs.a[i] : 0;
-    uint64_t b1 = (i < lhs.b.size()) ? lhs.b[i] : 0;
-    uint64_t a2 = (i < rhs.a.size()) ? rhs.a[i] : 0;
-    uint64_t b2 = (i < rhs.b.size()) ? rhs.b[i] : 0;
+    uint64_t a1 = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t b1 = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t a2 = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t b2 = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
 
-    // Z wildcard: Z bits are b=1, a=1
+    // Z wildcard: Z bits have both unknown=1 and value=1
     uint64_t z_wildcard = (b1 & a1) | (b2 & a2);
     // Compare mask: bits we need to compare (not Z in either operand)
     uint64_t compare_mask = ~z_wildcard;
 
-    // Both a and b must match for non-wildcard positions
+    // Both value and unknown must match for non-wildcard positions
     if ((a1 & compare_mask) != (a2 & compare_mask)) {
       return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
     }
@@ -610,8 +616,8 @@ auto IntegralLt(
   // Single-word comparison is fully supported
   uint32_t width = std::max(lhs.bit_width, rhs.bit_width);
   if (width <= 64) {
-    uint64_t lv = lhs.a.empty() ? 0 : lhs.a[0];
-    uint64_t rv = rhs.a.empty() ? 0 : rhs.a[0];
+    uint64_t lv = lhs.value.empty() ? 0 : lhs.value[0];
+    uint64_t rv = rhs.value.empty() ? 0 : rhs.value[0];
     bool cmp_result = false;
     if (is_signed) {
       auto sa = static_cast<int64_t>(lv);
@@ -736,7 +742,7 @@ auto IntegralShl(
     return MakeUnknownIntegral(width);
   }
 
-  uint64_t shift = rhs.a.empty() ? 0 : rhs.a[0];
+  uint64_t shift = rhs.value.empty() ? 0 : rhs.value[0];
   if (shift >= width) {
     return std::get<RuntimeIntegral>(MakeIntegral(0, width));
   }
@@ -749,14 +755,14 @@ auto IntegralShl(
 
   for (size_t i = word_shift; i < num_words; ++i) {
     size_t src = i - word_shift;
-    uint64_t v = (src < lhs.a.size()) ? lhs.a[src] : 0;
-    result.a[i] |= v << bit_shift;
-    if (bit_shift != 0 && i + 1 < num_words && src < lhs.a.size()) {
-      result.a[i + 1] |= v >> (kBitsPerWord - bit_shift);
+    uint64_t v = (src < lhs.value.size()) ? lhs.value[src] : 0;
+    result.value[i] |= v << bit_shift;
+    if (bit_shift != 0 && i + 1 < num_words && src < lhs.value.size()) {
+      result.value[i + 1] |= v >> (kBitsPerWord - bit_shift);
     }
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -770,20 +776,20 @@ auto IntegralShr(
     return MakeUnknownIntegral(width);
   }
 
-  uint64_t shift = rhs.a.empty() ? 0 : rhs.a[0];
+  uint64_t shift = rhs.value.empty() ? 0 : rhs.value[0];
   if (shift >= width) {
     if (is_signed) {
       // Arithmetic shift: fill with sign bit
-      uint64_t sign_bit = (lhs.a.empty() ? 0 : lhs.a.back()) >>
+      uint64_t sign_bit = (lhs.value.empty() ? 0 : lhs.value.back()) >>
                           ((lhs.bit_width - 1) % kBitsPerWord);
       sign_bit &= 1;
       uint64_t fill = (sign_bit != 0) ? ~uint64_t{0} : 0;
       RuntimeIntegral result;
       result.bit_width = width;
       size_t num_words = WordsNeeded(width);
-      result.a.resize(num_words, fill);
-      result.b.resize(num_words, 0);
-      MaskTopWord(result.a, width);
+      result.value.resize(num_words, fill);
+      result.unknown.resize(num_words, 0);
+      MaskTopWord(result.value, width);
       return result;
     }
     return std::get<RuntimeIntegral>(MakeIntegral(0, width));
@@ -797,16 +803,16 @@ auto IntegralShr(
 
   for (size_t i = 0; i + word_shift < num_words; ++i) {
     size_t src = i + word_shift;
-    uint64_t v = (src < lhs.a.size()) ? lhs.a[src] : 0;
-    result.a[i] |= v >> bit_shift;
-    if (bit_shift != 0 && src + 1 < lhs.a.size()) {
-      result.a[i] |= lhs.a[src + 1] << (kBitsPerWord - bit_shift);
+    uint64_t v = (src < lhs.value.size()) ? lhs.value[src] : 0;
+    result.value[i] |= v >> bit_shift;
+    if (bit_shift != 0 && src + 1 < lhs.value.size()) {
+      result.value[i] |= lhs.value[src + 1] << (kBitsPerWord - bit_shift);
     }
   }
 
   if (is_signed) {
     // Fill upper bits with sign bit
-    uint64_t sign_bit = (lhs.a.empty() ? 0 : lhs.a.back()) >>
+    uint64_t sign_bit = (lhs.value.empty() ? 0 : lhs.value.back()) >>
                         ((lhs.bit_width - 1) % kBitsPerWord);
     sign_bit &= 1;
     if (sign_bit != 0) {
@@ -814,14 +820,14 @@ auto IntegralShr(
       for (uint32_t i = result_bits; i < width; ++i) {
         size_t word = i / kBitsPerWord;
         size_t bit = i % kBitsPerWord;
-        if (word < result.a.size()) {
-          result.a[word] |= uint64_t{1} << bit;
+        if (word < result.value.size()) {
+          result.value[word] |= uint64_t{1} << bit;
         }
       }
     }
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -837,12 +843,12 @@ auto IntegralResize2State(
   }
 
   auto result = MakeKnownIntegral(target_width);
-  size_t source_words = src.a.size();
+  size_t source_words = src.value.size();
   size_t result_words = WordsNeeded(target_width);
 
   // Copy source words (up to target size)
   for (size_t i = 0; i < std::min(source_words, result_words); ++i) {
-    result.a[i] = src.a[i];
+    result.value[i] = src.value[i];
   }
 
   // Sign extension: fill upper bits with sign bit using word-level ops
@@ -850,26 +856,26 @@ auto IntegralResize2State(
     uint32_t sign_bit_pos = (src.bit_width - 1) % kBitsPerWord;
     size_t sign_word_idx = (src.bit_width - 1) / kBitsPerWord;
     bool sign_bit = false;
-    if (sign_word_idx < src.a.size()) {
-      sign_bit = ((src.a[sign_word_idx] >> sign_bit_pos) & 1) != 0;
+    if (sign_word_idx < src.value.size()) {
+      sign_bit = ((src.value[sign_word_idx] >> sign_bit_pos) & 1) != 0;
     }
 
     if (sign_bit) {
       // Fill whole words above sign_word_idx with all 1s
       for (size_t i = sign_word_idx + 1; i < result_words; ++i) {
-        result.a[i] = ~uint64_t{0};
+        result.value[i] = ~uint64_t{0};
       }
       // Set bits above sign_bit_pos in the sign word.
       // Special case: if sign_bit_pos == 63, there are no bits above it in
       // this word (shifting by 64 is UB), so upper_mask is 0.
       if (sign_word_idx < result_words && sign_bit_pos < 63) {
         uint64_t upper_mask = ~((uint64_t{1} << (sign_bit_pos + 1)) - 1);
-        result.a[sign_word_idx] |= upper_mask;
+        result.value[sign_word_idx] |= upper_mask;
       }
     }
   }
 
-  MaskTopWord(result.a, target_width);
+  MaskTopWord(result.value, target_width);
   return result;
 }
 
@@ -904,23 +910,23 @@ auto IntegralExtractSlice(
 
   for (size_t i = 0; i < result_words; ++i) {
     size_t src_word_idx = word_offset + i;
-    if (src_word_idx >= src.a.size()) {
+    if (src_word_idx >= src.value.size()) {
       // Beyond source - leave as zero
       break;
     }
 
-    uint64_t low_part = src.a[src_word_idx] >> bit_shift;
+    uint64_t low_part = src.value[src_word_idx] >> bit_shift;
     uint64_t high_part = 0;
 
     // Get bits from next word if shift is non-zero and next word exists
-    if (bit_shift != 0 && src_word_idx + 1 < src.a.size()) {
-      high_part = src.a[src_word_idx + 1] << (kBitsPerWord - bit_shift);
+    if (bit_shift != 0 && src_word_idx + 1 < src.value.size()) {
+      high_part = src.value[src_word_idx + 1] << (kBitsPerWord - bit_shift);
     }
 
-    result.a[i] = low_part | high_part;
+    result.value[i] = low_part | high_part;
   }
 
-  MaskTopWord(result.a, width);
+  MaskTopWord(result.value, width);
   return result;
 }
 
@@ -943,8 +949,8 @@ auto IntegralInsertSlice(
 
   // Ensure result vectors are properly sized
   size_t result_words = WordsNeeded(dst.bit_width);
-  result.a.resize(result_words, 0);
-  result.b.resize(result_words, 0);
+  result.value.resize(result_words, 0);
+  result.unknown.resize(result_words, 0);
 
   // Calculate effective width (don't write beyond dst bounds)
   uint32_t effective_width = width;
@@ -978,11 +984,12 @@ auto IntegralInsertSlice(
     size_t src_bit_in_word = src_bit_pos % kBitsPerWord;
 
     uint64_t src_bits = 0;
-    if (src_word_idx < src_normalized.a.size()) {
-      src_bits = src_normalized.a[src_word_idx] >> src_bit_in_word;
+    if (src_word_idx < src_normalized.value.size()) {
+      src_bits = src_normalized.value[src_word_idx] >> src_bit_in_word;
     }
-    if (src_bit_in_word != 0 && src_word_idx + 1 < src_normalized.a.size()) {
-      src_bits |= src_normalized.a[src_word_idx + 1]
+    if (src_bit_in_word != 0 &&
+        src_word_idx + 1 < src_normalized.value.size()) {
+      src_bits |= src_normalized.value[src_word_idx + 1]
                   << (kBitsPerWord - src_bit_in_word);
     }
 
@@ -990,14 +997,14 @@ auto IntegralInsertSlice(
     src_bits &= value_mask;
 
     uint64_t dst_mask = value_mask << dst_bit_pos;
-    result.a[dst_idx] &= ~dst_mask;
-    result.a[dst_idx] |= src_bits << dst_bit_pos;
+    result.value[dst_idx] &= ~dst_mask;
+    result.value[dst_idx] |= src_bits << dst_bit_pos;
     // Clear b for written bits (2-state writes known bits)
-    result.b[dst_idx] &= ~dst_mask;
+    result.unknown[dst_idx] &= ~dst_mask;
   }
 
-  MaskTopWord(result.a, dst.bit_width);
-  MaskTopWord(result.b, dst.bit_width);
+  MaskTopWord(result.value, dst.bit_width);
+  MaskTopWord(result.unknown, dst.bit_width);
   return result;
 }
 
@@ -1014,8 +1021,8 @@ auto IntegralInsertSlice4State(
 
   // Ensure result vectors are properly sized
   size_t result_words = WordsNeeded(dst.bit_width);
-  result.a.resize(result_words, 0);
-  result.b.resize(result_words, 0);
+  result.value.resize(result_words, 0);
+  result.unknown.resize(result_words, 0);
 
   // Calculate effective width (don't write beyond dst bounds)
   uint32_t effective_width = width;
@@ -1025,8 +1032,8 @@ auto IntegralInsertSlice4State(
 
   // Ensure source has properly sized vectors for safe indexing
   size_t src_words = WordsNeeded(width);
-  std::vector<uint64_t> src_a = src.a;
-  std::vector<uint64_t> src_b = src.b;
+  std::vector<uint64_t> src_a = src.value;
+  std::vector<uint64_t> src_b = src.unknown;
   src_a.resize(src_words, 0);
   src_b.resize(src_words, 0);
 
@@ -1069,14 +1076,14 @@ auto IntegralInsertSlice4State(
 
     // Write to destination at dst_bit_pos
     uint64_t dst_mask = GetMask(bits_to_write) << dst_bit_pos;
-    result.a[dst_idx] &= ~dst_mask;
-    result.a[dst_idx] |= a_bits << dst_bit_pos;
-    result.b[dst_idx] &= ~dst_mask;
-    result.b[dst_idx] |= b_bits << dst_bit_pos;
+    result.value[dst_idx] &= ~dst_mask;
+    result.value[dst_idx] |= a_bits << dst_bit_pos;
+    result.unknown[dst_idx] &= ~dst_mask;
+    result.unknown[dst_idx] |= b_bits << dst_bit_pos;
   }
 
-  MaskTopWord(result.a, dst.bit_width);
-  MaskTopWord(result.b, dst.bit_width);
+  MaskTopWord(result.value, dst.bit_width);
+  MaskTopWord(result.unknown, dst.bit_width);
   return result;
 }
 

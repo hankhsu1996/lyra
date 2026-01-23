@@ -37,7 +37,7 @@ auto LoadFromBlob(
         throw std::runtime_error("reading real from X/Z-containing storage");
       }
       RuntimeIntegral bits = IntegralExtractSlice(storage, bit_offset, 64);
-      uint64_t raw = bits.a.empty() ? 0 : bits.a[0];
+      uint64_t raw = bits.value.empty() ? 0 : bits.value[0];
       return MakeReal(std::bit_cast<double>(raw));
     }
     case TypeKind::kShortReal: {
@@ -46,7 +46,7 @@ auto LoadFromBlob(
             "reading shortreal from X/Z-containing storage");
       }
       RuntimeIntegral bits = IntegralExtractSlice(storage, bit_offset, 32);
-      uint64_t raw = bits.a.empty() ? 0 : bits.a[0];
+      uint64_t raw = bits.value.empty() ? 0 : bits.value[0];
       return MakeShortReal(
           std::bit_cast<float>(static_cast<uint32_t>(raw & 0xFFFFFFFF)));
     }
@@ -112,8 +112,8 @@ void StoreToBlob(
       auto bits = std::bit_cast<uint64_t>(AsReal(val).value);
       RuntimeIntegral val_bits;
       val_bits.bit_width = 64;
-      val_bits.a = {bits};
-      val_bits.b = {0};
+      val_bits.value = {bits};
+      val_bits.unknown = {0};
       storage = IntegralInsertSlice4State(storage, val_bits, bit_offset, 64);
       break;
     }
@@ -124,8 +124,8 @@ void StoreToBlob(
       auto bits = std::bit_cast<uint32_t>(AsShortReal(val).value);
       RuntimeIntegral val_bits;
       val_bits.bit_width = 32;
-      val_bits.a = {bits};
-      val_bits.b = {0};
+      val_bits.value = {bits};
+      val_bits.unknown = {0};
       storage = IntegralInsertSlice4State(storage, val_bits, bit_offset, 32);
       break;
     }
@@ -140,7 +140,7 @@ void StoreToBlob(
       RuntimeIntegral src = AsIntegral(val);
       // 2-state canonicalization: force-clear unknown bits
       if (!IsFourStateType(type_id, types)) {
-        std::ranges::fill(src.b, 0ULL);
+        std::ranges::fill(src.unknown, 0ULL);
       }
       storage = IntegralInsertSlice4State(storage, src, bit_offset, width);
       break;

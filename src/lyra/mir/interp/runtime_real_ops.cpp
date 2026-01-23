@@ -188,23 +188,23 @@ auto RealToIntegral(
     auto result = MakeKnownIntegral(target_width);
     if (val > 0) {
       // Fill with all 1s, then mask for correct width
-      for (auto& word : result.a) {
+      for (auto& word : result.value) {
         word = ~uint64_t{0};
       }
       // For signed, clear sign bit to get max positive
       if (target_signed && target_width > 0) {
         size_t sign_word = (target_width - 1) / 64;
         size_t sign_bit = (target_width - 1) % 64;
-        if (sign_word < result.a.size()) {
-          result.a[sign_word] &= ~(uint64_t{1} << sign_bit);
+        if (sign_word < result.value.size()) {
+          result.value[sign_word] &= ~(uint64_t{1} << sign_bit);
         }
       }
     } else if (target_signed) {
       // -Inf -> min negative (sign bit set, rest 0)
       size_t sign_word = (target_width - 1) / 64;
       size_t sign_bit = (target_width - 1) % 64;
-      if (sign_word < result.a.size()) {
-        result.a[sign_word] = uint64_t{1} << sign_bit;
+      if (sign_word < result.value.size()) {
+        result.value[sign_word] = uint64_t{1} << sign_bit;
       }
     }
     // -Inf with unsigned -> 0 (already initialized)
@@ -231,7 +231,7 @@ auto RealToIntegral(
       }
 
       auto result = MakeKnownIntegral(target_width);
-      result.a[0] = static_cast<uint64_t>(int_val);
+      result.value[0] = static_cast<uint64_t>(int_val);
       return result;
     }
 
@@ -250,7 +250,7 @@ auto RealToIntegral(
     }
 
     auto result = MakeKnownIntegral(target_width);
-    result.a[0] = int_val;
+    result.value[0] = int_val;
     return result;
   }
 
@@ -270,11 +270,11 @@ auto RealToIntegral(
       int_val = static_cast<int64_t>(val);
     }
 
-    result.a[0] = static_cast<uint64_t>(int_val);
+    result.value[0] = static_cast<uint64_t>(int_val);
     // Sign-extend: if negative, fill upper words with all 1s
     if (int_val < 0) {
-      for (size_t i = 1; i < result.a.size(); ++i) {
-        result.a[i] = ~uint64_t{0};
+      for (size_t i = 1; i < result.value.size(); ++i) {
+        result.value[i] = ~uint64_t{0};
       }
     }
   } else {
@@ -288,7 +288,7 @@ auto RealToIntegral(
     } else {
       int_val = static_cast<uint64_t>(val);
     }
-    result.a[0] = int_val;
+    result.value[0] = int_val;
     // Upper words already 0 from MakeKnownIntegral
   }
 
@@ -304,7 +304,7 @@ auto IntegralToReal(const RuntimeIntegral& src, bool src_is_signed)
 
   // For 64-bit or less, simple conversion
   if (src.bit_width <= 64) {
-    uint64_t val = src.a.empty() ? 0 : src.a[0];
+    uint64_t val = src.value.empty() ? 0 : src.value[0];
     if (src_is_signed) {
       // Sign-extend if needed
       if (src.bit_width < 64) {
@@ -324,7 +324,7 @@ auto IntegralToReal(const RuntimeIntegral& src, bool src_is_signed)
   // For wider values, accumulate (may lose precision)
   double result = 0.0;
   double multiplier = 1.0;
-  for (uint64_t word : src.a) {
+  for (uint64_t word : src.value) {
     result += static_cast<double>(word) * multiplier;
     multiplier *= static_cast<double>(uint64_t{1} << 32) *
                   static_cast<double>(uint64_t{1} << 32);
@@ -334,8 +334,8 @@ auto IntegralToReal(const RuntimeIntegral& src, bool src_is_signed)
   if (src_is_signed && src.bit_width > 0) {
     size_t sign_word_idx = (src.bit_width - 1) / 64;
     size_t sign_bit_pos = (src.bit_width - 1) % 64;
-    if (sign_word_idx < src.a.size() &&
-        ((src.a[sign_word_idx] >> sign_bit_pos) & 1) != 0) {
+    if (sign_word_idx < src.value.size() &&
+        ((src.value[sign_word_idx] >> sign_bit_pos) & 1) != 0) {
       // Negative value: compute 2^n - result
       double max_val = std::pow(2.0, static_cast<double>(src.bit_width));
       result = result - max_val;

@@ -170,8 +170,8 @@ auto LowerCallExpression(
                   .bit_width = 32, .is_signed = true, .is_four_state = false});
           auto num_val = static_cast<uint64_t>(enum_info.members.size());
           IntegralConstant num_ic;
-          num_ic.a = {num_val};
-          num_ic.b = {0};
+          num_ic.value = {num_val};
+          num_ic.unknown = {0};
           ConstId num_const =
               ctx->constant_arena->Intern(int_type, std::move(num_ic));
           return ctx->hir_arena->AddExpression(

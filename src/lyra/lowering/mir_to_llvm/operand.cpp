@@ -54,12 +54,13 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
 
             // Create APInt from word arrays (little-endian in both MIR and
             // LLVM)
-            llvm::APInt a_ap(bit_width, integral.a);
+            llvm::APInt value_ap(bit_width, integral.value);
 
             // 4-state constant: create (a, b) struct directly
             if (!integral.IsKnown()) {
-              llvm::APInt b_ap(bit_width, integral.b);
-              FourStatePair pair{.a = std::move(a_ap), .b = std::move(b_ap)};
+              llvm::APInt unknown_ap(bit_width, integral.unknown);
+              FourStatePair pair{
+                  .a = std::move(value_ap), .b = std::move(unknown_ap)};
               MaskFourState(pair, bit_width);
 
               // Get the struct type {iN_storage, iN_storage}
@@ -77,7 +78,7 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             }
 
             // 2-state constant: simple integer
-            return llvm::ConstantInt::get(llvm_ctx, a_ap);
+            return llvm::ConstantInt::get(llvm_ctx, value_ap);
           },
           [&](const StringConstant& str) -> llvm::Value* {
             auto& builder = context.GetBuilder();

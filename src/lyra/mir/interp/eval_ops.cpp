@@ -528,7 +528,7 @@ auto EvalUnary(
         return MakeUnknownIntegral(1);
       }
       int count = 0;
-      for (uint64_t w : op_int.a) {
+      for (uint64_t w : op_int.value) {
         count += std::popcount(w);
       }
       return std::get<RuntimeIntegral>(
@@ -540,7 +540,7 @@ auto EvalUnary(
         return MakeUnknownIntegral(1);
       }
       int count = 0;
-      for (uint64_t w : op_int.a) {
+      for (uint64_t w : op_int.value) {
         count += std::popcount(w);
       }
       return std::get<RuntimeIntegral>(
@@ -564,9 +564,9 @@ auto EvalUnary(
         return MakeIntegral(0, result_width);
       }
       int highest_bit = -1;
-      for (int i = static_cast<int>(n_minus_1.a.size()) - 1; i >= 0; --i) {
-        if (n_minus_1.a[i] != 0) {
-          highest_bit = i * 64 + (63 - std::countl_zero(n_minus_1.a[i]));
+      for (int i = static_cast<int>(n_minus_1.value.size()) - 1; i >= 0; --i) {
+        if (n_minus_1.value[i] != 0) {
+          highest_bit = i * 64 + (63 - std::countl_zero(n_minus_1.value[i]));
           break;
         }
       }
@@ -733,13 +733,13 @@ auto EvalCast(
   RuntimeIntegral clean_src = op_int;
   if (IsPackedFourState(source_type, arena)) {
     // Unknown bits become 0: clear value bits where b is set
-    for (size_t i = 0; i < clean_src.a.size(); ++i) {
-      if (i < clean_src.b.size()) {
-        clean_src.a[i] &= ~clean_src.b[i];
+    for (size_t i = 0; i < clean_src.value.size(); ++i) {
+      if (i < clean_src.unknown.size()) {
+        clean_src.value[i] &= ~clean_src.unknown[i];
       }
     }
     // Clear unknown mask (result is 2-state)
-    std::ranges::fill(clean_src.b, 0ULL);
+    std::ranges::fill(clean_src.unknown, 0ULL);
   }
   // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
 
@@ -784,7 +784,7 @@ auto EvalBitCast(
           "EvalBitCast", "integral source type but operand is not integral");
     }
     const auto& integral = AsIntegral(operand);
-    auto bits = integral.a.empty() ? 0ULL : integral.a[0];
+    auto bits = integral.value.empty() ? 0ULL : integral.value[0];
     auto val = std::bit_cast<double>(bits);
     return MakeReal(val);
   }
@@ -807,7 +807,8 @@ auto EvalBitCast(
           "EvalBitCast", "integral source type but operand is not integral");
     }
     const auto& integral = AsIntegral(operand);
-    auto bits = static_cast<uint32_t>(integral.a.empty() ? 0 : integral.a[0]);
+    auto bits =
+        static_cast<uint32_t>(integral.value.empty() ? 0 : integral.value[0]);
     auto val = std::bit_cast<float>(bits);
     return MakeShortReal(val);
   }

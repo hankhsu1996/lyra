@@ -28,16 +28,16 @@ auto LowerSVIntToIntegralConstant(const slang::SVInt& sv_int)
   std::span<const uint64_t> value_words = raw_data.subspan(0, value_word_count);
 
   // Slang layout: [a_words | b_words] where a = value bits, b = unknown bits
-  // This directly maps to our (a, b) encoding
+  // This directly maps to our (value, unknown) encoding
   IntegralConstant constant;
-  constant.a.assign(value_words.begin(), value_words.end());
+  constant.value.assign(value_words.begin(), value_words.end());
 
   if (has_unknown) {
     std::span<const uint64_t> unknown_words =
         raw_data.subspan(value_word_count);
-    constant.b.assign(unknown_words.begin(), unknown_words.end());
+    constant.unknown.assign(unknown_words.begin(), unknown_words.end());
   } else {
-    constant.b.resize(value_word_count, 0);
+    constant.unknown.resize(value_word_count, 0);
   }
 
   return constant;
