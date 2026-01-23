@@ -17,6 +17,8 @@ suites:
       - control_flow/repeat.yaml
       - control_flow/forever.yaml
       - control_flow/ternary.yaml
+      - control_flow/unique_priority_if.yaml
+      - control_flow/unique_priority_case.yaml
       - datatypes/wide_integral/arithmetic.yaml
       - datatypes/wide_integral/bitwise.yaml
       - datatypes/wide_integral/shifts.yaml
