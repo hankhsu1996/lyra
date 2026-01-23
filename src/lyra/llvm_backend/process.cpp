@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -24,20 +26,11 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-void LowerJump(
-    Context& context, const mir::Jump& jump,
-    const std::vector<llvm::BasicBlock*>& blocks) {
-  context.GetBuilder().CreateBr(blocks[jump.target.value]);
-}
-
-void LowerBranch(
-    Context& context, const mir::Branch& branch,
-    const std::vector<llvm::BasicBlock*>& blocks) {
+auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
-
-  // Load condition value from place storage
-  llvm::Value* cond_ptr = context.GetPlacePointer(branch.condition);
-  llvm::Type* cond_type = context.GetPlaceLlvmType(branch.condition);
+  llvm::Value* cond_ptr = context.GetPlacePointer(place_id);
+  llvm::Type* cond_type = context.GetPlaceLlvmType(place_id);
   llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
 
   // 4-state struct: extract known-true bits (a & ~b)
@@ -48,13 +41,25 @@ void LowerBranch(
     cond_val = builder.CreateAnd(a, not_b, "cond.known");
   }
 
-  // Truncate to i1 only if needed
+  // Truncate to i1
   if (!cond_val->getType()->isIntegerTy(1)) {
     auto* zero = llvm::ConstantInt::get(cond_val->getType(), 0);
     cond_val = builder.CreateICmpNE(cond_val, zero, "cond.bool");
   }
+  return cond_val;
+}
 
-  builder.CreateCondBr(
+void LowerJump(
+    Context& context, const mir::Jump& jump,
+    const std::vector<llvm::BasicBlock*>& blocks) {
+  context.GetBuilder().CreateBr(blocks[jump.target.value]);
+}
+
+void LowerBranch(
+    Context& context, const mir::Branch& branch,
+    const std::vector<llvm::BasicBlock*>& blocks) {
+  auto* cond_val = LoadConditionAsI1(context, branch.condition);
+  context.GetBuilder().CreateCondBr(
       cond_val, blocks[branch.then_target.value],
       blocks[branch.else_target.value]);
 }
@@ -153,6 +158,109 @@ void LowerRepeat(Context& context, llvm::BasicBlock* exit_block) {
   builder.CreateBr(exit_block);
 }
 
+auto ComputeOverlapMessage(const mir::QualifiedDispatch& d) -> std::string {
+  const char* what = (d.statement_kind == mir::DispatchStatementKind::kIf)
+                         ? "multiple conditions true"
+                         : "multiple case items match";
+  const char* qualifier =
+      (d.qualifier == mir::DispatchQualifier::kUnique) ? "unique" : "unique0";
+  const char* stmt =
+      (d.statement_kind == mir::DispatchStatementKind::kIf) ? "if" : "case";
+  return std::format("warning: {} in {} {}\n", what, qualifier, stmt);
+}
+
+auto ComputeNomatchMessage(const mir::QualifiedDispatch& d) -> std::string {
+  const char* what = (d.statement_kind == mir::DispatchStatementKind::kIf)
+                         ? "no condition matched"
+                         : "no matching case item";
+  const char* stmt =
+      (d.statement_kind == mir::DispatchStatementKind::kIf) ? "if" : "case";
+  return std::format("warning: {} in unique {}\n", what, stmt);
+}
+
+void LowerQualifiedDispatch(
+    Context& context, const mir::QualifiedDispatch& dispatch,
+    const std::vector<llvm::BasicBlock*>& blocks) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* func = builder.GetInsertBlock()->getParent();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  auto* else_target = blocks[dispatch.targets.back().value];
+
+  // Load all conditions as i1
+  std::vector<llvm::Value*> conds;
+  conds.reserve(dispatch.conditions.size());
+  for (auto place_id : dispatch.conditions) {
+    conds.push_back(LoadConditionAsI1(context, place_id));
+  }
+
+  // No conditions: jump directly to else target
+  if (conds.empty()) {
+    builder.CreateBr(else_target);
+    return;
+  }
+
+  // Count true conditions (i32 accumulator)
+  llvm::Value* cnt = llvm::ConstantInt::get(i32_ty, 0);
+  for (auto* cond : conds) {
+    auto* ext = builder.CreateZExt(cond, i32_ty);
+    cnt = builder.CreateAdd(cnt, ext);
+  }
+
+  // Overlap warning: cnt > 1
+  auto overlap_msg = ComputeOverlapMessage(dispatch);
+  auto* overlap_str =
+      builder.CreateGlobalStringPtr(overlap_msg, "qd.overlap.str");
+  auto* after_overlap =
+      llvm::BasicBlock::Create(llvm_ctx, "qd.after_overlap", func);
+  auto* overlap_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "qd.warn_overlap", func);
+  auto* overlap_cond =
+      builder.CreateICmpUGT(cnt, llvm::ConstantInt::get(i32_ty, 1));
+  builder.CreateCondBr(overlap_cond, overlap_bb, after_overlap);
+
+  builder.SetInsertPoint(overlap_bb);
+  builder.CreateCall(context.GetLyraPrintLiteral(), {overlap_str});
+  builder.CreateBr(after_overlap);
+
+  builder.SetInsertPoint(after_overlap);
+
+  // No-match warning: only for kUnique && !has_else
+  if (dispatch.qualifier == mir::DispatchQualifier::kUnique &&
+      !dispatch.has_else) {
+    auto nomatch_msg = ComputeNomatchMessage(dispatch);
+    auto* nomatch_str =
+        builder.CreateGlobalStringPtr(nomatch_msg, "qd.nomatch.str");
+    auto* dispatch_bb = llvm::BasicBlock::Create(llvm_ctx, "qd.dispatch", func);
+    auto* nomatch_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "qd.warn_nomatch", func);
+    auto* nomatch_cond =
+        builder.CreateICmpEQ(cnt, llvm::ConstantInt::get(i32_ty, 0));
+    builder.CreateCondBr(nomatch_cond, nomatch_bb, dispatch_bb);
+
+    builder.SetInsertPoint(nomatch_bb);
+    builder.CreateCall(context.GetLyraPrintLiteral(), {nomatch_str});
+    builder.CreateBr(dispatch_bb);
+
+    builder.SetInsertPoint(dispatch_bb);
+  }
+
+  // Dispatch cascade: first true condition wins
+  for (size_t i = 0; i < conds.size(); ++i) {
+    auto* target = blocks[dispatch.targets[i].value];
+    auto* next_check =
+        (i + 1 < conds.size())
+            ? llvm::BasicBlock::Create(
+                  llvm_ctx, std::format("qd.check{}", i + 1), func)
+            : else_target;
+    builder.CreateCondBr(conds[i], target, next_check);
+    if (i + 1 < conds.size()) {
+      builder.SetInsertPoint(next_check);
+    }
+  }
+}
+
 void LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks,
@@ -169,6 +277,9 @@ void LowerTerminator(
           [&](const mir::Delay& d) { LowerDelay(context, d, exit_block); },
           [&](const mir::Wait& w) { LowerWait(context, w, exit_block); },
           [&](const mir::Repeat&) { LowerRepeat(context, exit_block); },
+          [&](const mir::QualifiedDispatch& d) {
+            LowerQualifiedDispatch(context, d, blocks);
+          },
           [&](const auto&) {
             throw common::UnsupportedErrorException(
                 common::UnsupportedLayer::kMirToLlvm,
