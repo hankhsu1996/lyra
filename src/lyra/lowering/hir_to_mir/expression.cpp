@@ -1433,7 +1433,22 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerElementAccessRvalue(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
-          // Struct member access - always valid (field index is compile-time)
+          Context& ctx = builder.GetContext();
+          const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+          if (const auto* lit = std::get_if<hir::StructLiteralExpressionData>(
+                  &base_expr.data)) {
+            // Struct literal field access — extract directly without lvalue.
+            // field_index and field_values are both in declaration order.
+            if (data.field_index < 0 || static_cast<size_t>(data.field_index) >=
+                                            lit->field_values.size()) {
+              throw common::InternalError(
+                  "MemberAccessExpression",
+                  "field_index out of range for struct literal");
+            }
+            return LowerExpression(
+                lit->field_values[data.field_index], builder);
+          }
+          // Addressable base — use existing lvalue+load path
           LvalueResult lv = LowerLvalue(expr_id, builder);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
