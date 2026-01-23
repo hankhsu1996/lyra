@@ -63,8 +63,9 @@ Simple fixes may need only Summary. Don't force sections that have nothing meani
 
 1. Check context above; ensure working tree is clean
 2. If commits behind main > 0, rebase first: `git rebase origin/main`
-3. Push if needed: `git push -u origin <branch>`
-4. Create PR: `gh pr create --title "..." --body "..."`
-5. Return the PR URL to the user
+3. **Read the full diff** (`git diff origin/main..HEAD`) before writing the PR description. The `--stat` above is not sufficient — you must see the actual code changes.
+4. Push if needed: `git push -u origin <branch>`
+5. Create PR: `gh pr create --title "..." --body "..."`
+6. Return the PR URL to the user
 
 If updating an existing PR, push the new commits and update the PR body with `gh pr edit`.
