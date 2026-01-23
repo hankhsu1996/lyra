@@ -15,7 +15,6 @@ suites:
     exclude_regex:
       - control_flow/foreach.yaml
       - datatypes/enum/enum_methods.yaml
-      - datatypes/general/parameters.yaml
       - datatypes/integral/unbased_unsized_literal.yaml
       - datatypes/packed/nested_aggregates.yaml
       - datatypes/packed/packed_3d.yaml
