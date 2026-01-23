@@ -92,11 +92,19 @@ class Context {
   [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueuePushBack() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueuePushFront() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueuePopBack() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueuePopFront() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueueInsert() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraQueueDeleteAt() -> llvm::Function*;
 
   struct ElemOpsInfo {
-    int32_t elem_size;
-    llvm::Constant* clone_fn;
-    llvm::Constant* destroy_fn;
+    int32_t elem_size = 0;
+    llvm::Type* elem_llvm_type = nullptr;
+    llvm::Constant* clone_fn = nullptr;
+    llvm::Constant* destroy_fn = nullptr;
+    bool needs_clone = false;
   };
   auto GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo;
 
@@ -221,6 +229,12 @@ class Context {
   llvm::Function* lyra_store_dynarray_ = nullptr;
   llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
   llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
+  llvm::Function* lyra_queue_push_back_ = nullptr;
+  llvm::Function* lyra_queue_push_front_ = nullptr;
+  llvm::Function* lyra_queue_pop_back_ = nullptr;
+  llvm::Function* lyra_queue_pop_front_ = nullptr;
+  llvm::Function* lyra_queue_insert_ = nullptr;
+  llvm::Function* lyra_queue_delete_at_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;

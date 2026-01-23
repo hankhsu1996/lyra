@@ -22,6 +22,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
@@ -1284,6 +1285,188 @@ void LowerDynArrayBuiltin(
   }
 }
 
+void NotifyIfDesignSlot(Context& context, mir::PlaceId receiver) {
+  const auto& arena = context.GetMirArena();
+  const auto& place = arena[receiver];
+  if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    return;
+  }
+  auto& builder = context.GetBuilder();
+  auto signal_id = static_cast<uint32_t>(place.root.id);
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+  llvm::Value* recv_ptr = context.GetPlacePointer(receiver);
+  llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.notify.h");
+  builder.CreateCall(
+      context.GetLyraStoreDynArray(),
+      {context.GetEnginePointer(), recv_ptr, handle,
+       llvm::ConstantInt::get(i32_ty, signal_id)});
+}
+
+struct QueueTypeInfo {
+  TypeId elem_type_id{};
+  uint32_t max_bound = 0;
+  Context::ElemOpsInfo elem_ops{};
+};
+
+auto GetQueueTypeInfo(Context& context, mir::PlaceId receiver)
+    -> QueueTypeInfo {
+  const auto& types = context.GetTypeArena();
+  const auto& arena = context.GetMirArena();
+  const auto& recv_place = arena[receiver];
+  TypeId recv_type_id = mir::TypeOfPlace(types, recv_place);
+  const auto& queue_type = types[recv_type_id];
+  TypeId elem_type_id = queue_type.AsQueue().element_type;
+  return {
+      .elem_type_id = elem_type_id,
+      .max_bound = queue_type.AsQueue().max_bound,
+      .elem_ops = context.GetElemOpsForType(elem_type_id),
+  };
+}
+
+void LowerQueueBuiltin(
+    Context& context, const mir::Compute& compute,
+    const mir::BuiltinCallRvalueInfo& info) {
+  auto& builder = context.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+  auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
+
+  switch (info.method) {
+    case mir::BuiltinMethod::kQueueSize: {
+      llvm::Value* handle = LowerOperand(context, compute.value.operands[0]);
+      llvm::Value* size =
+          builder.CreateCall(context.GetLyraDynArraySize(), {handle}, "q.size");
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      llvm::Type* target_type = context.GetPlaceLlvmType(compute.target);
+      size = builder.CreateZExtOrTrunc(size, target_type, "q.size.fit");
+      builder.CreateStore(size, target_ptr);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueueDelete: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.del.h");
+      builder.CreateCall(context.GetLyraDynArrayRelease(), {handle});
+      builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueueDeleteAt: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.delat.h");
+      llvm::Value* index = LowerOperand(context, compute.value.operands[0]);
+      index = builder.CreateSExtOrTrunc(index, i64_ty, "q.delat.idx");
+      builder.CreateCall(context.GetLyraQueueDeleteAt(), {handle, index});
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueuePushBack: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      auto qi = GetQueueTypeInfo(context, *info.receiver);
+
+      llvm::Value* val = LowerOperandAsStorage(
+          context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
+      auto* temp =
+          builder.CreateAlloca(qi.elem_ops.elem_llvm_type, nullptr, "q.pb.tmp");
+      builder.CreateStore(val, temp);
+
+      builder.CreateCall(
+          context.GetLyraQueuePushBack(),
+          {recv_ptr, temp,
+           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
+           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
+           qi.elem_ops.destroy_fn});
+
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueuePushFront: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      auto qi = GetQueueTypeInfo(context, *info.receiver);
+
+      llvm::Value* val = LowerOperandAsStorage(
+          context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
+      auto* temp =
+          builder.CreateAlloca(qi.elem_ops.elem_llvm_type, nullptr, "q.pf.tmp");
+      builder.CreateStore(val, temp);
+
+      builder.CreateCall(
+          context.GetLyraQueuePushFront(),
+          {recv_ptr, temp,
+           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
+           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
+           qi.elem_ops.destroy_fn});
+
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueuePopBack: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popb.h");
+
+      // Zero-init target (default if queue is empty)
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      llvm::Type* target_type = context.GetPlaceLlvmType(compute.target);
+      builder.CreateStore(
+          llvm::Constant::getNullValue(target_type), target_ptr);
+
+      builder.CreateCall(context.GetLyraQueuePopBack(), {handle, target_ptr});
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueuePopFront: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popf.h");
+
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      llvm::Type* target_type = context.GetPlaceLlvmType(compute.target);
+      builder.CreateStore(
+          llvm::Constant::getNullValue(target_type), target_ptr);
+
+      builder.CreateCall(context.GetLyraQueuePopFront(), {handle, target_ptr});
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    case mir::BuiltinMethod::kQueueInsert: {
+      llvm::Value* recv_ptr = context.GetPlacePointer(*info.receiver);
+      auto qi = GetQueueTypeInfo(context, *info.receiver);
+
+      // operand[0] = index, operand[1] = value
+      llvm::Value* index = LowerOperand(context, compute.value.operands[0]);
+      index = builder.CreateSExtOrTrunc(index, i64_ty, "q.ins.idx");
+
+      llvm::Value* val = LowerOperandAsStorage(
+          context, compute.value.operands[1], qi.elem_ops.elem_llvm_type);
+      auto* temp = builder.CreateAlloca(
+          qi.elem_ops.elem_llvm_type, nullptr, "q.ins.tmp");
+      builder.CreateStore(val, temp);
+
+      builder.CreateCall(
+          context.GetLyraQueueInsert(),
+          {recv_ptr, index, temp,
+           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
+           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
+           qi.elem_ops.destroy_fn});
+
+      NotifyIfDesignSlot(context, *info.receiver);
+      break;
+    }
+
+    default:
+      throw common::InternalError(
+          "LowerQueueBuiltin",
+          std::format(
+              "unexpected queue builtin: {}", static_cast<int>(info.method)));
+  }
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -1297,6 +1480,17 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
         builtin->method == mir::BuiltinMethod::kArraySize ||
         builtin->method == mir::BuiltinMethod::kArrayDelete) {
       LowerDynArrayBuiltin(context, compute, *builtin);
+      return;
+    }
+    if (builtin->method == mir::BuiltinMethod::kQueueSize ||
+        builtin->method == mir::BuiltinMethod::kQueueDelete ||
+        builtin->method == mir::BuiltinMethod::kQueueDeleteAt ||
+        builtin->method == mir::BuiltinMethod::kQueuePushBack ||
+        builtin->method == mir::BuiltinMethod::kQueuePushFront ||
+        builtin->method == mir::BuiltinMethod::kQueuePopBack ||
+        builtin->method == mir::BuiltinMethod::kQueuePopFront ||
+        builtin->method == mir::BuiltinMethod::kQueueInsert) {
+      LowerQueueBuiltin(context, compute, *builtin);
       return;
     }
   }
@@ -1320,6 +1514,55 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             aggregate, elem, {static_cast<unsigned>(i)});
       }
       builder.CreateStore(aggregate, target_ptr);
+      return;
+    }
+    if (target_type.Kind() == TypeKind::kQueue) {
+      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+      auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
+      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+
+      // Compute effective size (apply max_bound truncation at compile time)
+      size_t n = compute.value.operands.size();
+      uint32_t max_bound = target_type.AsQueue().max_bound;
+      if (max_bound > 0 && n > static_cast<size_t>(max_bound) + 1) {
+        n = static_cast<size_t>(max_bound) + 1;
+      }
+
+      TypeId elem_type_id = target_type.AsQueue().element_type;
+      auto elem_ops = context.GetElemOpsForType(elem_type_id);
+
+      // Allocate fresh queue with n elements
+      llvm::Value* handle = builder.CreateCall(
+          context.GetLyraDynArrayNew(),
+          {llvm::ConstantInt::get(i64_ty, n),
+           llvm::ConstantInt::get(i32_ty, elem_ops.elem_size),
+           elem_ops.clone_fn, elem_ops.destroy_fn},
+          "q.lit.new");
+
+      // Store each element
+      for (size_t i = 0; i < n; ++i) {
+        llvm::Value* elem_ptr = builder.CreateCall(
+            context.GetLyraDynArrayElementPtr(),
+            {handle, llvm::ConstantInt::get(i64_ty, i)}, "q.lit.ep");
+        llvm::Value* val = LowerOperandAsStorage(
+            context, compute.value.operands[i], elem_ops.elem_llvm_type);
+
+        if (elem_ops.needs_clone) {
+          auto* clone_fn = llvm::cast<llvm::Function>(elem_ops.clone_fn);
+          auto* temp = builder.CreateAlloca(
+              elem_ops.elem_llvm_type, nullptr, "q.lit.tmp");
+          builder.CreateStore(val, temp);
+          builder.CreateCall(clone_fn, {elem_ptr, temp});
+        } else {
+          builder.CreateStore(val, elem_ptr);
+        }
+      }
+
+      // Release old handle, store new
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      auto* old = builder.CreateLoad(ptr_ty, target_ptr, "q.lit.old");
+      builder.CreateCall(context.GetLyraDynArrayRelease(), {old});
+      builder.CreateStore(handle, target_ptr);
       return;
     }
   }

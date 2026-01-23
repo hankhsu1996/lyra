@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -220,8 +221,9 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
-  // Dynamic array: clone/move semantics with ownership tracking
-  if (type.Kind() == TypeKind::kDynamicArray) {
+  // Dynamic array / queue: clone/move semantics with ownership tracking
+  if (type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
     auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
     llvm::Value* new_handle = LowerOperand(context, assign.source);
 
@@ -270,6 +272,7 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     const auto& arr_info = type.AsUnpackedArray();
     const Type& elem_type = types[arr_info.element_type];
     if (elem_type.Kind() == TypeKind::kDynamicArray ||
+        elem_type.Kind() == TypeKind::kQueue ||
         elem_type.Kind() == TypeKind::kString) {
       throw common::UnsupportedErrorException(
           common::UnsupportedLayer::kMirToLlvm,
@@ -381,8 +384,9 @@ void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
     const auto& ga_place = context.GetMirArena()[guarded.target];
     const Type& ga_type = types[mir::TypeOfPlace(types, ga_place)];
 
-    if (ga_type.Kind() == TypeKind::kDynamicArray) {
-      // Dynamic array: clone source, store new, release old
+    if (ga_type.Kind() == TypeKind::kDynamicArray ||
+        ga_type.Kind() == TypeKind::kQueue) {
+      // Dynamic array / queue: clone source, store new, release old
       llvm::Value* new_handle = source_raw;
       new_handle = builder.CreateCall(
           context.GetLyraDynArrayClone(), {new_handle}, "ga.da.clone");

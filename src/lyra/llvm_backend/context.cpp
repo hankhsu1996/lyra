@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -81,7 +82,8 @@ auto GetLlvmTypeForTypeId(
     llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
     return llvm::ArrayType::get(elem, info.range.Size());
   }
-  if (type.Kind() == TypeKind::kDynamicArray) {
+  if (type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
     return llvm::PointerType::getUnqual(ctx);
   }
   if (IsPacked(type)) {
@@ -485,20 +487,112 @@ auto Context::GetLyraDynArrayDestroyElem() -> llvm::Function* {
   return lyra_dynarray_destroy_elem_;
 }
 
+auto Context::GetLyraQueuePushBack() -> llvm::Function* {
+  if (lyra_queue_push_back_ == nullptr) {
+    // void LyraQueuePushBack(ptr slot, ptr elem, i32 elem_size,
+    //                        i32 max_bound, ptr clone_fn, ptr destroy_fn)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_queue_push_back_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueuePushBack",
+        llvm_module_.get());
+  }
+  return lyra_queue_push_back_;
+}
+
+auto Context::GetLyraQueuePushFront() -> llvm::Function* {
+  if (lyra_queue_push_front_ == nullptr) {
+    // void LyraQueuePushFront(ptr slot, ptr elem, i32 elem_size,
+    //                         i32 max_bound, ptr clone_fn, ptr destroy_fn)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_queue_push_front_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueuePushFront",
+        llvm_module_.get());
+  }
+  return lyra_queue_push_front_;
+}
+
+auto Context::GetLyraQueuePopBack() -> llvm::Function* {
+  if (lyra_queue_pop_back_ == nullptr) {
+    // void LyraQueuePopBack(ptr handle, ptr out_elem)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_queue_pop_back_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueuePopBack",
+        llvm_module_.get());
+  }
+  return lyra_queue_pop_back_;
+}
+
+auto Context::GetLyraQueuePopFront() -> llvm::Function* {
+  if (lyra_queue_pop_front_ == nullptr) {
+    // void LyraQueuePopFront(ptr handle, ptr out_elem)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_queue_pop_front_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueuePopFront",
+        llvm_module_.get());
+  }
+  return lyra_queue_pop_front_;
+}
+
+auto Context::GetLyraQueueInsert() -> llvm::Function* {
+  if (lyra_queue_insert_ == nullptr) {
+    // void LyraQueueInsert(ptr slot, i64 index, ptr elem, i32 elem_size,
+    //                      i32 max_bound, ptr clone_fn, ptr destroy_fn)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, i64_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_queue_insert_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueueInsert",
+        llvm_module_.get());
+  }
+  return lyra_queue_insert_;
+}
+
+auto Context::GetLyraQueueDeleteAt() -> llvm::Function* {
+  if (lyra_queue_delete_at_ == nullptr) {
+    // void LyraQueueDeleteAt(ptr handle, i64 index)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i64_ty}, false);
+    lyra_queue_delete_at_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraQueueDeleteAt",
+        llvm_module_.get());
+  }
+  return lyra_queue_delete_at_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  if (type.Kind() == TypeKind::kDynamicArray) {
-    // Nested dynamic array: element is a pointer
+  if (type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
+    // Nested dynamic array or queue: element is a pointer
     auto ptr_size =
         static_cast<int32_t>(llvm_module_->getDataLayout().getPointerSize());
     return ElemOpsInfo{
         .elem_size = ptr_size,
+        .elem_llvm_type = ptr_ty,
         .clone_fn = GetLyraDynArrayCloneElem(),
         .destroy_fn = GetLyraDynArrayDestroyElem(),
+        .needs_clone = true,
     };
   }
 
@@ -509,6 +603,7 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
       llvm_module_->getDataLayout().getTypeAllocSize(llvm_type));
   return ElemOpsInfo{
       .elem_size = byte_size,
+      .elem_llvm_type = llvm_type,
       .clone_fn = null_ptr,
       .destroy_fn = null_ptr,
   };
@@ -592,7 +687,8 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
   } else if (
       type.Kind() == TypeKind::kString ||
-      type.Kind() == TypeKind::kDynamicArray) {
+      type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
@@ -622,9 +718,10 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
   // Create the alloca using the dedicated alloca builder (entry block)
   auto* alloca = alloca_builder_->CreateAlloca(llvm_type, nullptr, "place");
 
-  // Initialize pointer-typed places to nullptr (dynamic arrays and strings)
+  // Initialize pointer-typed places to nullptr (dynamic arrays, queues,
+  // strings)
   if (type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kString) {
+      type.Kind() == TypeKind::kQueue || type.Kind() == TypeKind::kString) {
     auto* null_val = llvm::ConstantPointerNull::get(
         llvm::PointerType::getUnqual(*llvm_context_));
     alloca_builder_->CreateStore(null_val, alloca);
@@ -734,7 +831,8 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
     }
 
     const Type& cur_type = types_[current_type];
-    if (cur_type.Kind() == TypeKind::kDynamicArray) {
+    if (cur_type.Kind() == TypeKind::kDynamicArray ||
+        cur_type.Kind() == TypeKind::kQueue) {
       // Load the handle, call ElementPtr
       auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
       llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
@@ -743,7 +841,9 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
           index, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
       ptr = builder_.CreateCall(
           GetLyraDynArrayElementPtr(), {handle, index}, "da.elem_ptr");
-      current_type = cur_type.AsDynamicArray().element_type;
+      current_type = (cur_type.Kind() == TypeKind::kQueue)
+                         ? cur_type.AsQueue().element_type
+                         : cur_type.AsDynamicArray().element_type;
     } else {
       // Unpacked array: GEP into fixed array
       llvm::Type* array_type =
@@ -775,7 +875,8 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
     return llvm::Type::getDoubleTy(*llvm_context_);
   }
   if (type.Kind() == TypeKind::kString ||
-      type.Kind() == TypeKind::kDynamicArray) {
+      type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
     return llvm::PointerType::getUnqual(*llvm_context_);
   }
   if (IsPacked(type)) {
@@ -829,6 +930,8 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
       base_type_id = t.AsUnpackedArray().element_type;
     } else if (t.Kind() == TypeKind::kDynamicArray) {
       base_type_id = t.AsDynamicArray().element_type;
+    } else if (t.Kind() == TypeKind::kQueue) {
+      base_type_id = t.AsQueue().element_type;
     }
   }
 

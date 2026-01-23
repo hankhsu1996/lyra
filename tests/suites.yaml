@@ -13,7 +13,6 @@ suites:
       - datatypes/
       - processes/
     exclude_regex:
-      - control_flow/foreach.yaml
       - datatypes/enum/enum_methods.yaml
       - datatypes/integral/unbased_unsized_literal.yaml
       - datatypes/packed/nested_aggregates.yaml
@@ -22,7 +21,6 @@ suites:
       - datatypes/packed/packed_union.yaml
       - datatypes/real/
       - datatypes/string/
-      - datatypes/unpacked/queues.yaml
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml
       - processes/non_blocking.yaml
