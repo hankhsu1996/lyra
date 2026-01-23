@@ -1,8 +1,17 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 
+#include <utility>
+#include <vector>
+
+#include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/statement.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -28,8 +37,7 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& module_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
     -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
@@ -37,12 +45,12 @@ auto LowerProcess(
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
       .symbol_table = input.symbol_table,
-      .module_places = &module_places,
+      .module_places = decl_view.places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .builtin_types = input.builtin_types,
-      .symbol_to_mir_function = &symbol_to_mir_function,
+      .symbol_to_mir_function = decl_view.functions,
       .return_place = mir::kInvalidPlaceId,
   };
 

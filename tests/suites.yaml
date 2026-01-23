@@ -82,4 +82,6 @@ suites:
       - functions/nested_calls.yaml
       - functions/recursion.yaml
       - functions/reserved_keywords.yaml
+      - packages/basic.yaml
+      - packages/functions.yaml
       - processes/initial.yaml

@@ -23,9 +23,31 @@ struct Process {
   std::vector<BasicBlock> blocks;  // Direct ownership
 };
 
+enum class PassingKind {
+  kValue,  // Input by value (only mode supported today)
+};
+
+enum class ReturnPolicy {
+  kDirect,  // Return value in register/local 0
+};
+
+struct FunctionParam {
+  TypeId type;
+  PassingKind kind = PassingKind::kValue;
+};
+
+// Frozen at pre-allocation time. Immutable once the FunctionId is reserved.
+struct FunctionSignature {
+  TypeId return_type;
+  std::vector<FunctionParam> params;
+  ReturnPolicy return_policy = ReturnPolicy::kDirect;
+};
+
 // A function is a callable unit that cannot suspend.
 // Allowed terminators: Control (Jump/Branch/Switch), Return.
 struct Function {
+  FunctionSignature signature;  // Frozen at pre-allocation
+
   BasicBlockId entry;              // Local index within blocks
   std::vector<BasicBlock> blocks;  // Direct ownership
 

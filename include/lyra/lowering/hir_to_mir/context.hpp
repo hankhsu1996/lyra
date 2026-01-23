@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <unordered_map>
 
 #include "lyra/common/constant_arena.hpp"
@@ -35,6 +36,29 @@ using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
 using SymbolToMirFunctionMap =
     std::unordered_map<SymbolId, mir::FunctionId, SymbolIdHash>;
 
+// Frozen design-level declarations produced by CollectDeclarations().
+// Immutable after construction; passed as const& to all lowering functions.
+//
+// Invariants (guaranteed on exit from CollectDeclarations):
+//   - design_places is complete for all design variables (pkg + module)
+//   - functions is complete for all package functions
+//   - All mir::FunctionIds in the map have frozen signatures in the arena
+//     (written by ReserveFunction at pre-allocation time)
+//   - No later phase may mutate any of the above
+struct DesignDeclarations {
+  PlaceMap design_places;
+  SymbolToMirFunctionMap functions;
+  size_t num_design_slots = 0;
+};
+
+// Read-only view into declaration artifacts for lower-level helpers
+// (LowerProcess, LowerFunctionBody). Ensures the frozen boundary is
+// consistent throughout the lowering layer.
+struct DeclView {
+  const PlaceMap* places;
+  const SymbolToMirFunctionMap* functions;
+};
+
 // Context for lowering within a process or function activation.
 struct Context {
   mir::Arena* mir_arena;
@@ -66,9 +90,10 @@ struct Context {
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
 
-  // Look up mir::FunctionId for a function symbol. Returns invalid if not
-  // found.
-  [[nodiscard]] auto LookupFunction(SymbolId sym) const -> mir::FunctionId;
+  // Resolve a function symbol to its pre-allocated mir::FunctionId.
+  // Throws std::runtime_error with function name if symbol not found.
+  // Throws InternalError if function map pointer is null (programmer bug).
+  [[nodiscard]] auto ResolveCallee(SymbolId sym) const -> mir::FunctionId;
 
   [[nodiscard]] auto GetBitType() const -> TypeId {
     return builtin_types.bit_type;

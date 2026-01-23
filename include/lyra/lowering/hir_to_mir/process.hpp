@@ -9,13 +9,11 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a process with module places for module-level variables.
-// module_places is read-only; the process creates its own local_places.
-// symbol_to_mir_function enables calling user functions from processes.
+// Lower a process with design-level declarations.
+// decl_view provides read-only access to design places and functions.
 auto LowerProcess(
     const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& module_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
     -> mir::ProcessId;
 
 }  // namespace lyra::lowering::hir_to_mir
