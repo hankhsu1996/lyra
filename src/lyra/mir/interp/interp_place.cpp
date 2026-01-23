@@ -25,7 +25,6 @@ namespace lyra::mir::interp {
 namespace {
 
 // Sign-extends a value based on its bit width to produce a signed int64.
-// For example, a 32-bit value 0xFFFFFFFF becomes -1 as int64_t.
 auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
   if (bit_width > 0 && bit_width < 64) {
     uint64_t sign_bit = 1ULL << (bit_width - 1);
@@ -35,6 +34,40 @@ auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
     }
   }
   return static_cast<int64_t>(raw);
+}
+
+// Evaluates an index operand to int64, handling sign extension and X/Z checks.
+auto ResolveIndex(
+    const RuntimeValue& idx_val, const Operand& idx_operand, const Arena& arena,
+    const TypeArena& types) -> int64_t {
+  if (!IsIntegral(idx_val)) {
+    throw common::InternalError("ResolveIndex", "index must be integral");
+  }
+  const auto& idx_int = AsIntegral(idx_val);
+  if (!idx_int.IsKnown()) {
+    throw std::runtime_error("index is X/Z");
+  }
+  uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+  TypeId type_id = TypeOfOperand(idx_operand, arena, types);
+  if (IsSignedIntegral(types, type_id)) {
+    return SignExtendToInt64(raw, idx_int.bit_width);
+  }
+  return static_cast<int64_t>(raw);
+}
+
+// Evaluates a bit offset operand to uint64, checking for negative values.
+auto ResolveBitOffset(const RuntimeValue& offset_val) -> uint64_t {
+  if (!IsIntegral(offset_val)) {
+    throw common::InternalError(
+        "ResolveBitOffset", "bit offset must be integral");
+  }
+  const auto& offset_int = AsIntegral(offset_val);
+  int64_t raw_offset =
+      offset_int.value.empty() ? 0 : static_cast<int64_t>(offset_int.value[0]);
+  if (raw_offset < 0) {
+    throw std::runtime_error("negative bit offset");
+  }
+  return static_cast<uint64_t>(raw_offset);
 }
 
 }  // namespace
@@ -81,15 +114,9 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead",
                     "Field projection after BitRange");
               }
+              auto idx = static_cast<size_t>(fp.field_index);
               if (loc.blob_view) {
-                if ((*types_)[loc.blob_view->view_type].Kind() !=
-                    TypeKind::kUnpackedStruct) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForRead",
-                      "field projection on non-struct in blob mode");
-                }
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
-                auto idx = static_cast<size_t>(fp.field_index);
                 if (idx >= layout.fields.size()) {
                   throw common::InternalError(
                       "ApplyProjectionsForRead",
@@ -106,7 +133,6 @@ auto Interpreter::ApplyProjectionsForRead(
                     "field projection on non-struct");
               }
               const auto& s = AsStruct(*loc.base);
-              auto idx = static_cast<size_t>(fp.field_index);
               if (idx >= s.fields.size()) {
                 throw common::InternalError(
                     "ApplyProjectionsForRead", "field index out of range");
@@ -122,31 +148,11 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead",
                     "Index projection after BitRange");
               }
+              auto idx_val = EvalOperand(state, ip.index);
+              int64_t idx = ResolveIndex(idx_val, ip.index, *arena_, *types_);
+
               if (loc.blob_view) {
-                if ((*types_)[loc.blob_view->view_type].Kind() !=
-                    TypeKind::kUnpackedArray) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForRead",
-                      "index projection on non-array in blob mode");
-                }
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
-                auto idx_val = EvalOperand(state, ip.index);
-                if (!IsIntegral(idx_val)) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForRead", "index must be integral");
-                }
-                const auto& idx_int = AsIntegral(idx_val);
-                if (!idx_int.IsKnown()) {
-                  throw std::runtime_error("index is X/Z");
-                }
-                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
-                TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
-                int64_t idx = 0;
-                if (IsSignedIntegral(*types_, type_id)) {
-                  idx = SignExtendToInt64(raw, idx_int.bit_width);
-                } else {
-                  idx = static_cast<int64_t>(raw);
-                }
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
@@ -165,25 +171,6 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead", "index projection on non-array");
               }
               const auto& arr = AsArray(*loc.base);
-
-              auto idx_val = EvalOperand(state, ip.index);
-              if (!IsIntegral(idx_val)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForRead", "index must be integral");
-              }
-              const auto& idx_int = AsIntegral(idx_val);
-              if (!idx_int.IsKnown()) {
-                throw std::runtime_error("index is X/Z");
-              }
-              uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
-              TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
-              int64_t idx = 0;
-              if (IsSignedIntegral(*types_, type_id)) {
-                idx = SignExtendToInt64(raw, idx_int.bit_width);
-              } else {
-                idx = static_cast<int64_t>(raw);
-              }
-
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
                 throw std::runtime_error("array index out of bounds");
               }
@@ -199,19 +186,7 @@ auto Interpreter::ApplyProjectionsForRead(
             },
             [&](const BitRangeProjection& br) {
               auto offset_val = EvalOperand(state, br.bit_offset);
-              if (!IsIntegral(offset_val)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForRead", "bit offset must be integral");
-              }
-              const auto& offset_int = AsIntegral(offset_val);
-              int64_t raw_offset =
-                  offset_int.value.empty()
-                      ? 0
-                      : static_cast<int64_t>(offset_int.value[0]);
-              if (raw_offset < 0) {
-                throw std::runtime_error("negative bit offset");
-              }
-              auto offset = static_cast<uint64_t>(raw_offset);
+              uint64_t offset = ResolveBitOffset(offset_val);
 
               if (loc.blob_view) {
                 loc.bit_slice = BitSlice{
@@ -247,10 +222,8 @@ auto Interpreter::ApplyProjectionsForRead(
                     "Union projection after BitRange");
               }
               if (loc.blob_view) {
-                // Already in blob mode: view-type change, offset stays 0
-                TypeId union_type = loc.blob_view->view_type;
                 const auto& union_info =
-                    (*types_)[union_type].AsUnpackedUnion();
+                    (*types_)[loc.blob_view->view_type].AsUnpackedUnion();
                 loc.blob_view->view_type =
                     union_info.members[up.member_index].type;
                 current_type = loc.blob_view->view_type;
@@ -299,15 +272,9 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "ApplyProjectionsForWrite",
                     "Field projection after BitRange");
               }
+              auto idx = static_cast<size_t>(fp.field_index);
               if (loc.blob_view) {
-                if ((*types_)[loc.blob_view->view_type].Kind() !=
-                    TypeKind::kUnpackedStruct) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForWrite",
-                      "field projection on non-struct in blob mode");
-                }
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
-                auto idx = static_cast<size_t>(fp.field_index);
                 if (idx >= layout.fields.size()) {
                   throw common::InternalError(
                       "ApplyProjectionsForWrite",
@@ -324,7 +291,6 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "field projection on non-struct");
               }
               auto& s = AsStruct(*loc.base);
-              auto idx = static_cast<size_t>(fp.field_index);
               if (idx >= s.fields.size()) {
                 throw common::InternalError(
                     "ApplyProjectionsForWrite", "field index out of range");
@@ -340,31 +306,11 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "ApplyProjectionsForWrite",
                     "Index projection after BitRange");
               }
+              auto idx_val = EvalOperand(state, ip.index);
+              int64_t idx = ResolveIndex(idx_val, ip.index, *arena_, *types_);
+
               if (loc.blob_view) {
-                if ((*types_)[loc.blob_view->view_type].Kind() !=
-                    TypeKind::kUnpackedArray) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForWrite",
-                      "index projection on non-array in blob mode");
-                }
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
-                auto idx_val = EvalOperand(state, ip.index);
-                if (!IsIntegral(idx_val)) {
-                  throw common::InternalError(
-                      "ApplyProjectionsForWrite", "index must be integral");
-                }
-                const auto& idx_int = AsIntegral(idx_val);
-                if (!idx_int.IsKnown()) {
-                  throw std::runtime_error("index is X/Z");
-                }
-                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
-                TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
-                int64_t idx = 0;
-                if (IsSignedIntegral(*types_, type_id)) {
-                  idx = SignExtendToInt64(raw, idx_int.bit_width);
-                } else {
-                  idx = static_cast<int64_t>(raw);
-                }
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
@@ -384,25 +330,6 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "index projection on non-array");
               }
               auto& arr = AsArray(*loc.base);
-
-              auto idx_val = EvalOperand(state, ip.index);
-              if (!IsIntegral(idx_val)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForWrite", "index must be integral");
-              }
-              const auto& idx_int = AsIntegral(idx_val);
-              if (!idx_int.IsKnown()) {
-                throw std::runtime_error("index is X/Z");
-              }
-              uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
-              TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
-              int64_t idx = 0;
-              if (IsSignedIntegral(*types_, type_id)) {
-                idx = SignExtendToInt64(raw, idx_int.bit_width);
-              } else {
-                idx = static_cast<int64_t>(raw);
-              }
-
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
                 throw std::runtime_error("array index out of bounds");
               }
@@ -418,19 +345,7 @@ auto Interpreter::ApplyProjectionsForWrite(
             },
             [&](const BitRangeProjection& br) {
               auto offset_val = EvalOperand(state, br.bit_offset);
-              if (!IsIntegral(offset_val)) {
-                throw common::InternalError(
-                    "ApplyProjectionsForWrite", "bit offset must be integral");
-              }
-              const auto& offset_int = AsIntegral(offset_val);
-              int64_t raw_offset =
-                  offset_int.value.empty()
-                      ? 0
-                      : static_cast<int64_t>(offset_int.value[0]);
-              if (raw_offset < 0) {
-                throw std::runtime_error("negative bit offset");
-              }
-              auto offset = static_cast<uint64_t>(raw_offset);
+              uint64_t offset = ResolveBitOffset(offset_val);
 
               if (loc.blob_view) {
                 loc.bit_slice = BitSlice{
@@ -466,9 +381,8 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "Union projection after BitRange");
               }
               if (loc.blob_view) {
-                TypeId union_type = loc.blob_view->view_type;
                 const auto& union_info =
-                    (*types_)[union_type].AsUnpackedUnion();
+                    (*types_)[loc.blob_view->view_type].AsUnpackedUnion();
                 loc.blob_view->view_type =
                     union_info.members[up.member_index].type;
                 current_type = loc.blob_view->view_type;

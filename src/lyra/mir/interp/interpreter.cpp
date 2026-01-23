@@ -6,13 +6,11 @@
 #include <format>
 #include <iostream>
 #include <optional>
-#include <string>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -22,7 +20,6 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
-#include "lyra/mir/interp/blob_codec.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -160,104 +157,6 @@ struct StorageCollector {
 };
 
 }  // namespace
-
-// Creates a default-initialized RuntimeValue for a given type following SV
-// semantics:
-// - 2-state integrals (bit, int, etc.): default to 0
-// - 4-state integrals (logic, reg, etc.): default to X (unknown)
-// - Strings: default to empty
-// - Reals: default to 0.0
-// - Arrays/structs: recursively default-initialize each element/field
-auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
-    -> RuntimeValue {
-  const auto& type = types[type_id];
-  switch (type.Kind()) {
-    case TypeKind::kVoid:
-      return std::monostate{};
-    case TypeKind::kIntegral: {
-      const auto& info = type.AsIntegral();
-      if (info.is_four_state) {
-        return MakeIntegralX(info.bit_width);  // 4-state defaults to X
-      }
-      return MakeIntegral(0, info.bit_width);  // 2-state defaults to 0
-    }
-    case TypeKind::kPackedArray: {
-      // Packed arrays are stored as a flat integral with total bit width.
-      // Use IsPackedFourState to recursively check base element type.
-      uint32_t total_width = PackedBitWidth(type, types);
-      if (IsPackedFourState(type, types)) {
-        return MakeIntegralX(total_width);
-      }
-      return MakeIntegral(0, total_width);
-    }
-    case TypeKind::kPackedStruct: {
-      // Packed structs are stored as a flat integral with total bit width.
-      const auto& info = type.AsPackedStruct();
-      if (info.is_four_state) {
-        return MakeIntegralX(info.total_bit_width);
-      }
-      return MakeIntegral(0, info.total_bit_width);
-    }
-    case TypeKind::kString:
-      return MakeString("");
-    case TypeKind::kReal:
-      return MakeReal(0.0);
-    case TypeKind::kShortReal:
-      return MakeShortReal(0.0F);
-    case TypeKind::kUnpackedArray: {
-      const auto& info = type.AsUnpackedArray();
-      auto size = static_cast<size_t>(info.range.Size());
-      std::vector<RuntimeValue> elements;
-      elements.reserve(size);
-      for (size_t i = 0; i < size; ++i) {
-        elements.push_back(CreateDefaultValue(types, info.element_type));
-      }
-      return MakeArray(std::move(elements));
-    }
-    case TypeKind::kUnpackedStruct: {
-      const auto& info = type.AsUnpackedStruct();
-      std::vector<RuntimeValue> fields;
-      fields.reserve(info.fields.size());
-      for (const auto& field : info.fields) {
-        fields.push_back(CreateDefaultValue(types, field.type));
-      }
-      return MakeStruct(std::move(fields));
-    }
-    case TypeKind::kUnpackedUnion: {
-      const auto& info = type.AsUnpackedUnion();
-      RuntimeIntegral storage;
-      storage.bit_width = info.storage_bit_width;
-      uint32_t num_words = (info.storage_bit_width + 63) / 64;
-      if (info.storage_is_four_state) {
-        storage.value.resize(num_words, 0);
-        storage.unknown.resize(num_words, ~uint64_t{0});
-      } else {
-        storage.value.resize(num_words, 0);
-        storage.unknown.resize(num_words, 0);
-      }
-      // Default init member[0] via codec
-      RuntimeValue member0_default =
-          CreateDefaultValue(types, info.members[0].type);
-      StoreToBlob(info.members[0].type, member0_default, storage, 0, types);
-      return MakeUnion(std::move(storage));
-    }
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-      // Dynamic arrays and queues default to empty (size 0)
-      return MakeArray({});
-    case TypeKind::kEnum: {
-      // Enum defaults to 0 (or X for 4-state base type)
-      // Use PackedBitWidth/IsPackedFourState since base type can be packed
-      // array
-      uint32_t bit_width = PackedBitWidth(type, types);
-      if (IsPackedFourState(type, types)) {
-        return MakeIntegralX(bit_width);
-      }
-      return MakeIntegral(0, bit_width);
-    }
-  }
-  throw common::InternalError("CreateDefaultValue", "unknown type kind");
-}
 
 auto CreateProcessState(
     const Arena& arena, const TypeArena& types, ProcessId process_id,
