@@ -60,10 +60,16 @@ auto GetLlvmTypeForTypeId(
       return GetLlvmStorageType(ctx, width);
     }
 
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
+      return llvm::ArrayType::get(elem, info.range.Size());
+    }
+
     case TypeKind::kVoid:
     case TypeKind::kShortReal:
-    case TypeKind::kUnpackedArray:
     case TypeKind::kUnpackedStruct:
+    case TypeKind::kUnpackedUnion:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
       throw common::InternalError(

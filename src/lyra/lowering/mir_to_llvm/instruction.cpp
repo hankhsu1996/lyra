@@ -7,6 +7,7 @@
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -21,9 +22,9 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
   llvm::Value* target_ptr = context.GetPlacePointer(assign.target);
   llvm::Type* storage_type = context.GetPlaceLlvmType(assign.target);
 
-  // Get the place type info for proper sizing
+  // Get the effective type (element type if projected, root type otherwise)
   const auto& place = arena[assign.target];
-  const Type& type = types[place.root.type];
+  const Type& type = types[mir::TypeOfPlace(types, place)];
 
   // Handle string assignment with reference counting
   if (type.Kind() == TypeKind::kString) {

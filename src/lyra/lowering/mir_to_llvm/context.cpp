@@ -4,7 +4,9 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -28,6 +30,31 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
   }
   // For wider types, use the exact bit width
   return llvm::Type::getIntNTy(ctx, bit_width);
+}
+
+// Convert a TypeId to its LLVM type representation (for GEP type operands)
+auto GetLlvmTypeForTypeId(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type* {
+  const Type& type = types[type_id];
+  if (type.Kind() == TypeKind::kIntegral) {
+    return GetLlvmStorageType(ctx, type.AsIntegral().bit_width);
+  }
+  if (type.Kind() == TypeKind::kReal) {
+    return llvm::Type::getDoubleTy(ctx);
+  }
+  if (type.Kind() == TypeKind::kUnpackedArray) {
+    const auto& info = type.AsUnpackedArray();
+    llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
+    return llvm::ArrayType::get(elem, info.range.Size());
+  }
+  if (IsPacked(type)) {
+    auto width = PackedBitWidth(type, types);
+    return GetLlvmStorageType(ctx, width);
+  }
+  throw common::InternalError(
+      "GetLlvmTypeForTypeId",
+      std::format("unsupported type kind: {}", static_cast<int>(type.Kind())));
 }
 
 }  // namespace
@@ -357,42 +384,48 @@ auto Context::GetFramePointer() -> llvm::Value* {
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
   const auto& place = arena_[place_id];
 
-  if (!place.projections.empty()) {
-    throw std::runtime_error(
-        "places with projections not yet supported in LLVM backend");
-  }
-
+  // Get base pointer from root
+  llvm::Value* ptr = nullptr;
   if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-    // Design slot: GEP into shared DesignState
     if (design_ptr_ == nullptr) {
       throw std::runtime_error("design pointer not set");
     }
-    // Convert root.id to SlotId
     auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
     uint32_t field_index = GetDesignFieldIndex(slot_id);
-    return builder_.CreateStructGEP(
+    ptr = builder_.CreateStructGEP(
         GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+  } else {
+    if (frame_ptr_ == nullptr) {
+      throw std::runtime_error("frame pointer not set");
+    }
+    uint32_t field_index = GetFrameFieldIndex(place_id);
+    ptr = builder_.CreateStructGEP(
+        GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
   }
 
-  // Local or temp: GEP into ProcessFrameN
-  if (frame_ptr_ == nullptr) {
-    throw std::runtime_error("frame pointer not set");
+  // Apply projections (index into arrays)
+  TypeId current_type = place.root.type;
+  for (const auto& proj : place.projections) {
+    const auto* idx = std::get_if<mir::IndexProjection>(&proj.info);
+    if (idx == nullptr) {
+      throw std::runtime_error(
+          "only index projections supported in LLVM backend");
+    }
+    llvm::Type* array_type =
+        GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
+    llvm::Value* index = LowerOperand(*this, idx->index);
+    ptr = builder_.CreateGEP(
+        array_type, ptr, {builder_.getInt32(0), index}, "array_elem_ptr");
+    current_type = types_[current_type].AsUnpackedArray().element_type;
   }
-  uint32_t field_index = GetFrameFieldIndex(place_id);
-  return builder_.CreateStructGEP(
-      GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
+
+  return ptr;
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
   const auto& place = arena_[place_id];
 
-  if (!place.projections.empty()) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
-        current_origin_, "places with projections not yet supported");
-  }
-
-  TypeId type_id = place.root.type;
+  TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
 
   if (type.Kind() == TypeKind::kIntegral) {
