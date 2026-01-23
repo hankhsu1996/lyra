@@ -28,6 +28,7 @@ struct LoweringInput {
   std::vector<TypeId>
       slot_type_ids;  // Index == slot_id, for LLVM type derivation
   std::vector<VariableInfo> variables;  // For runtime inspection (optional)
+  bool emit_time_report = false;        // Emit LyraReportTime() call in main()
 };
 
 struct LoweringResult {

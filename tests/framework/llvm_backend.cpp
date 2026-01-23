@@ -170,14 +170,19 @@ void ParseLyraVarEntry(
   }
 }
 
-// Parse __LYRA_VAR output and extract variable values.
-// Strips __LYRA_VAR entries while preserving all other output exactly,
-// including whether the original had a trailing newline.
-// Handles __LYRA_VAR appearing mid-line (after $write with no newline).
-auto ParseLyraVarOutput(const std::string& output)
-    -> std::pair<std::string, std::map<std::string, ExtractedValue>> {
-  std::string clean_output;
+struct ParsedOutput {
+  std::string clean;
   std::map<std::string, ExtractedValue> variables;
+  uint64_t final_time = 0;
+};
+
+// Parse __LYRA_VAR and __LYRA_TIME__ output, stripping protocol lines.
+// Preserves all other output exactly, including trailing newlines.
+// Handles __LYRA_VAR appearing mid-line (after $write with no newline).
+auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
+  ParsedOutput parsed;
+  std::string& clean_output = parsed.clean;
+  std::map<std::string, ExtractedValue>& variables = parsed.variables;
 
   // Check if original output ends with newline - we need this to know
   // whether to add a trailing newline to the clean output
@@ -191,8 +196,16 @@ auto ParseLyraVarOutput(const std::string& output)
   // false if user content was followed immediately by __LYRA_VAR (mid-line).
   bool user_ends_with_newline = false;
   constexpr std::string_view kPrefix = "__LYRA_VAR:";
+  constexpr std::string_view kTimePrefix = "__LYRA_TIME__=";
 
   while (std::getline(stream, line)) {
+    // Check for __LYRA_TIME__=<N> (always a full line)
+    if (line.starts_with(kTimePrefix)) {
+      parsed.final_time =
+          std::stoull(std::string(line.substr(kTimePrefix.size())));
+      continue;
+    }
+
     // Look for __LYRA_VAR: anywhere in the line
     auto var_pos = line.find(kPrefix);
 
@@ -232,7 +245,7 @@ auto ParseLyraVarOutput(const std::string& output)
     clean_output += '\n';
   }
 
-  return {clean_output, variables};
+  return parsed;
 }
 
 // Run lli with output capture
@@ -353,6 +366,7 @@ auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
       .slot_types = std::move(lowering_info.slot_types),
       .slot_type_ids = std::move(lowering_info.slot_type_ids),
       .variables = std::move(lowering_info.variables),
+      .emit_time_report = true,
   };
 
   lowering::mir_to_llvm::LoweringResult llvm_result;
@@ -411,11 +425,12 @@ auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
     return result;
   }
 
-  // Parse output to extract variables
-  auto [clean_output, variables] = ParseLyraVarOutput(output);
+  // Parse output to extract variables and time
+  auto parsed = ParseLyraVarOutput(output);
   result.success = true;
-  result.captured_output = clean_output;
-  result.variables = std::move(variables);
+  result.captured_output = std::move(parsed.clean);
+  result.variables = std::move(parsed.variables);
+  result.final_time = parsed.final_time;
   return result;
 }
 

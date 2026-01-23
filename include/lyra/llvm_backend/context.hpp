@@ -75,6 +75,8 @@ class Context {
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
 
   // Type accessors from layout
   [[nodiscard]] auto GetSuspendRecordType() const -> llvm::StructType*;
@@ -180,6 +182,8 @@ class Context {
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
+  llvm::Function* lyra_init_runtime_ = nullptr;
+  llvm::Function* lyra_report_time_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;

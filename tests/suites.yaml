@@ -25,6 +25,8 @@ suites:
       - datatypes/wide_integral/shifts.yaml
       - datatypes/wide_integral/reductions.yaml
       - datatypes/wide_integral/conversions.yaml
+      - processes/initial.yaml
+      - processes/delay.yaml
 
   mir_dev:
     backend: mir
