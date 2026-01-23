@@ -48,9 +48,15 @@ struct MemIOEffect {
   std::optional<Operand> end_addr;
 };
 
+// $fclose: closes a file descriptor (FD or MCD).
+struct FcloseEffect {
+  Operand descriptor;
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
-using EffectOp = std::variant<DisplayEffect, SeverityEffect, MemIOEffect>;
+using EffectOp =
+    std::variant<DisplayEffect, SeverityEffect, MemIOEffect, FcloseEffect>;
 
 }  // namespace lyra::mir

@@ -110,12 +110,17 @@ struct PlusargsRvalueInfo {
   // operands[0] = query/format string (always a string operand)
 };
 
+// $fopen: opens a file, returns int32 descriptor.
+// operands[0] = filename (string)
+// operands[1] = mode string (FD mode only, absent for MCD)
+struct FopenRvalueInfo {};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
     BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
-    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo>;
+    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo, FopenRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -153,6 +158,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "sformat";
         } else if constexpr (std::is_same_v<T, PlusargsRvalueInfo>) {
           return "plusargs";
+        } else if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
+          return "fopen";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

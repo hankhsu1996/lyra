@@ -6,6 +6,8 @@
 #include <format>
 #include <iostream>
 #include <optional>
+#include <span>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -163,6 +165,9 @@ struct StorageCollector {
                         if (m.end_addr) {
                           Visit(*m.end_addr, arena);
                         }
+                      },
+                      [&](const FcloseEffect& f) -> void {
+                        Visit(f.descriptor, arena);
                       },
                   },
                   i.op);

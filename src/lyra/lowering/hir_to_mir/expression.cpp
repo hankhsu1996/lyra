@@ -608,6 +608,19 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
+  // $fopen → FopenRvalueInfo
+  if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
+    mir::Operand filename_op = LowerExpression(fopen_data->filename, builder);
+    std::vector<mir::Operand> operands = {filename_op};
+    if (fopen_data->mode) {
+      operands.push_back(LowerExpression(*fopen_data->mode, builder));
+    }
+    mir::Rvalue rvalue{
+        .operands = std::move(operands), .info = mir::FopenRvalueInfo{}};
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
   // Effect system calls ($display, etc.) are handled in statement.cpp.
   throw common::InternalError(
       "LowerSystemCall",

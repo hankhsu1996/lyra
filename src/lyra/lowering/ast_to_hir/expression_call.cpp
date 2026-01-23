@@ -376,6 +376,54 @@ auto LowerCallExpression(
                   .start_addr = start_addr,
                   .end_addr = end_addr}}});
     }
+    if (name == "$fopen") {
+      if (call.arguments().empty() || call.arguments().size() > 2) {
+        ctx->ErrorFmt(span, "$fopen expects 1 or 2 arguments");
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId filename =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!filename) {
+        return hir::kInvalidExpressionId;
+      }
+      std::optional<hir::ExpressionId> mode;
+      if (call.arguments().size() == 2) {
+        hir::ExpressionId mode_expr =
+            LowerExpression(*call.arguments()[1], registrar, ctx);
+        if (!mode_expr) {
+          return hir::kInvalidExpressionId;
+        }
+        mode = mode_expr;
+      }
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{
+                  hir::FopenData{.filename = filename, .mode = mode}}});
+    }
+    if (name == "$fclose") {
+      if (call.arguments().size() != 1) {
+        ctx->ErrorFmt(span, "$fclose expects 1 argument");
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId descriptor =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!descriptor) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId result_type =
+          ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{
+                  hir::FcloseData{.descriptor = descriptor}}});
+    }
     return LowerSystemCall(call, registrar, ctx);
   }
 
