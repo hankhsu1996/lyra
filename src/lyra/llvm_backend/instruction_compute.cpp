@@ -1,4 +1,4 @@
-#include "lyra/lowering/mir_to_llvm/instruction_compute.hpp"
+#include "lyra/llvm_backend/instruction_compute.hpp"
 
 #include <cstdint>
 #include <format>
@@ -15,7 +15,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
-#include "lyra/lowering/mir_to_llvm/operand.hpp"
+#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"

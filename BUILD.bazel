@@ -16,10 +16,7 @@ refresh_compile_commands(
 cc_library(
     name = "common",
     srcs = glob(["src/lyra/common/*.cpp"]),
-    hdrs = glob([
-        "include/lyra/common/*.hpp",
-        "include/lyra/common/**/*.hpp",
-    ]),
+    hdrs = glob(["include/lyra/common/**/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -91,20 +88,8 @@ cc_library(
 
 cc_library(
     name = "lowering",
-    srcs = glob(
-        [
-            "src/lyra/lowering/*.cpp",
-            "src/lyra/lowering/**/*.cpp",
-        ],
-        exclude = ["src/lyra/lowering/mir_to_llvm/*.cpp"],
-    ),
-    hdrs = glob(
-        [
-            "include/lyra/lowering/*.hpp",
-            "include/lyra/lowering/**/*.hpp",
-        ],
-        exclude = ["include/lyra/lowering/mir_to_llvm/*.hpp"],
-    ),
+    srcs = glob(["src/lyra/lowering/**/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/**/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -118,8 +103,8 @@ cc_library(
 
 cc_library(
     name = "llvm_backend",
-    srcs = glob(["src/lyra/lowering/mir_to_llvm/*.cpp"]),
-    hdrs = glob(["include/lyra/lowering/mir_to_llvm/*.hpp"]),
+    srcs = glob(["src/lyra/llvm_backend/*.cpp"]),
+    hdrs = glob(["include/lyra/llvm_backend/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [

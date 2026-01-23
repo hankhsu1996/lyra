@@ -7,7 +7,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/lowering/mir_to_llvm/layout.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 

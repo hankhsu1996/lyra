@@ -1,4 +1,4 @@
-#include "lyra/lowering/mir_to_llvm/lower.hpp"
+#include "lyra/llvm_backend/lower.hpp"
 
 #include <cstddef>
 #include <format>
@@ -10,9 +10,9 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/type_utils.hpp"
-#include "lyra/lowering/mir_to_llvm/context.hpp"
-#include "lyra/lowering/mir_to_llvm/layout.hpp"
-#include "lyra/lowering/mir_to_llvm/process.hpp"
+#include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout.hpp"
+#include "lyra/llvm_backend/process.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lyra/lowering/mir_to_llvm/context.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/instruction.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
