@@ -23,17 +23,24 @@ void LowerBranch(
     Context& context, const mir::Branch& branch,
     const std::vector<llvm::BasicBlock*>& blocks) {
   auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
 
   // Load condition value from place storage
   llvm::Value* cond_ptr = context.GetPlacePointer(branch.condition);
   llvm::Type* cond_type = context.GetPlaceLlvmType(branch.condition);
   llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
 
+  // 4-state struct: extract known-true bits (a & ~b)
+  if (cond_type->isStructTy()) {
+    auto* a = builder.CreateExtractValue(cond_val, 0, "cond.a");
+    auto* b = builder.CreateExtractValue(cond_val, 1, "cond.b");
+    auto* not_b = builder.CreateNot(b, "cond.notb");
+    cond_val = builder.CreateAnd(a, not_b, "cond.known");
+  }
+
   // Truncate to i1 only if needed
   if (!cond_val->getType()->isIntegerTy(1)) {
-    cond_val = builder.CreateTrunc(
-        cond_val, llvm::Type::getInt1Ty(llvm_ctx), "cond.i1");
+    auto* zero = llvm::ConstantInt::get(cond_val->getType(), 0);
+    cond_val = builder.CreateICmpNE(cond_val, zero, "cond.bool");
   }
 
   builder.CreateCondBr(

@@ -7,6 +7,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/module.hpp"
@@ -36,6 +37,13 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
   return llvm::Type::getIntNTy(ctx, bit_width);
 }
 
+// Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
+auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
+    -> llvm::StructType* {
+  auto* elem = GetLlvmStorageType(ctx, bit_width);
+  return llvm::StructType::get(ctx, {elem, elem});
+}
+
 // Get the LLVM type for a TypeId - exhaustive switch for fail-fast on
 // unsupported types
 auto GetLlvmTypeForTypeId(
@@ -44,8 +52,13 @@ auto GetLlvmTypeForTypeId(
   const Type& type = types[type_id];
 
   switch (type.Kind()) {
-    case TypeKind::kIntegral:
-      return GetLlvmStorageType(ctx, type.AsIntegral().bit_width);
+    case TypeKind::kIntegral: {
+      uint32_t bit_width = type.AsIntegral().bit_width;
+      if (type.AsIntegral().is_four_state) {
+        return GetFourStateStructType(ctx, bit_width);
+      }
+      return GetLlvmStorageType(ctx, bit_width);
+    }
 
     case TypeKind::kReal:
       return llvm::Type::getDoubleTy(ctx);
@@ -57,6 +70,9 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum: {
       auto width = PackedBitWidth(type, types);
+      if (IsPackedFourState(type, types)) {
+        return GetFourStateStructType(ctx, width);
+      }
       return GetLlvmStorageType(ctx, width);
     }
 

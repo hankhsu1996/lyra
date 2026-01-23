@@ -124,6 +124,10 @@ class Context {
   // Get the LLVM type for a place's storage
   [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type*;
 
+  // Get the 4-state struct type for a given semantic bit width
+  [[nodiscard]] auto GetPlaceLlvmType4State(uint32_t bit_width)
+      -> llvm::StructType*;
+
   auto TakeOwnership() -> std::pair<
       std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
 

@@ -4,6 +4,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -32,13 +33,24 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
   return llvm::Type::getIntNTy(ctx, bit_width);
 }
 
+// Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
+auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
+    -> llvm::StructType* {
+  auto* elem = GetLlvmStorageType(ctx, bit_width);
+  return llvm::StructType::get(ctx, {elem, elem});
+}
+
 // Convert a TypeId to its LLVM type representation (for GEP type operands)
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type* {
   const Type& type = types[type_id];
   if (type.Kind() == TypeKind::kIntegral) {
-    return GetLlvmStorageType(ctx, type.AsIntegral().bit_width);
+    uint32_t bit_width = type.AsIntegral().bit_width;
+    if (type.AsIntegral().is_four_state) {
+      return GetFourStateStructType(ctx, bit_width);
+    }
+    return GetLlvmStorageType(ctx, bit_width);
   }
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(ctx);
@@ -50,6 +62,9 @@ auto GetLlvmTypeForTypeId(
   }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types);
+    if (IsPackedFourState(type, types)) {
+      return GetFourStateStructType(ctx, width);
+    }
     return GetLlvmStorageType(ctx, width);
   }
   throw common::InternalError(
@@ -283,14 +298,23 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
 
   llvm::Type* llvm_type = nullptr;
   if (type.Kind() == TypeKind::kIntegral) {
-    llvm_type = GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
+    uint32_t bit_width = type.AsIntegral().bit_width;
+    if (type.AsIntegral().is_four_state) {
+      llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
+    } else {
+      llvm_type = GetLlvmStorageType(*llvm_context_, bit_width);
+    }
   } else if (type.Kind() == TypeKind::kReal) {
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
   } else if (type.Kind() == TypeKind::kString) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
-    llvm_type = GetLlvmStorageType(*llvm_context_, width);
+    if (IsPackedFourState(type, types_)) {
+      llvm_type = GetFourStateStructType(*llvm_context_, width);
+    } else {
+      llvm_type = GetLlvmStorageType(*llvm_context_, width);
+    }
   } else {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
@@ -429,7 +453,11 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
   const Type& type = types_[type_id];
 
   if (type.Kind() == TypeKind::kIntegral) {
-    return GetLlvmStorageType(*llvm_context_, type.AsIntegral().bit_width);
+    uint32_t bit_width = type.AsIntegral().bit_width;
+    if (type.AsIntegral().is_four_state) {
+      return GetFourStateStructType(*llvm_context_, bit_width);
+    }
+    return GetLlvmStorageType(*llvm_context_, bit_width);
   }
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(*llvm_context_);
@@ -439,6 +467,9 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
   }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
+    if (IsPackedFourState(type, types_)) {
+      return GetFourStateStructType(*llvm_context_, width);
+    }
     return GetLlvmStorageType(*llvm_context_, width);
   }
 
@@ -446,6 +477,10 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
       common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
       current_origin_,
       std::format("type not yet supported: {}", ToString(type)));
+}
+
+auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
+  return GetFourStateStructType(*llvm_context_, bit_width);
 }
 
 auto Context::TakeOwnership() -> std::pair<
