@@ -1,10 +1,13 @@
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -292,6 +295,9 @@ auto Interpreter::EvalRvalue(
           },
           [&](const SFormatRvalueInfo&) -> RuntimeValue {
             return EvalSFormat(state, rv);
+          },
+          [&](const PlusargsRvalueInfo&) -> RuntimeValue {
+            return EvalPlusargs(state, rv);
           },
       },
       rv.info);
@@ -810,6 +816,97 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
   }
 
   return MakeString(std::move(result));
+}
+
+auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
+    -> RuntimeValue {
+  const auto& info = std::get<PlusargsRvalueInfo>(rv.info);
+
+  // Evaluate query/format operand (always a string)
+  RuntimeValue query_val = EvalOperand(state, rv.operands[0]);
+  if (!IsString(query_val)) {
+    throw common::InternalError(
+        "EvalPlusargs", "query operand is not a string");
+  }
+  std::string_view query = AsString(query_val).value;
+
+  // Helper: strip '+' prefix from a plusarg
+  auto get_content = [](std::string_view arg) -> std::string_view {
+    if (arg.starts_with('+')) {
+      return arg.substr(1);
+    }
+    return arg;
+  };
+
+  if (info.kind == PlusargsKind::kTest) {
+    // $test$plusargs: prefix match
+    for (const auto& arg : plusargs_) {
+      std::string_view content = get_content(arg);
+      if (content.starts_with(query)) {
+        return MakeIntegralSigned(1, 32);
+      }
+    }
+    return MakeIntegralSigned(0, 32);
+  }
+
+  // $value$plusargs: parse format and extract value
+  // Parse format string: "PREFIX%<spec>" → prefix + spec char
+  auto percent_pos = query.find('%');
+  if (percent_pos == std::string_view::npos) {
+    // No format specifier, treat as test
+    for (const auto& arg : plusargs_) {
+      std::string_view content = get_content(arg);
+      if (content.starts_with(query)) {
+        return MakeIntegralSigned(1, 32);
+      }
+    }
+    return MakeIntegralSigned(0, 32);
+  }
+
+  std::string_view prefix = query.substr(0, percent_pos);
+  char spec = '\0';
+  size_t spec_pos = percent_pos + 1;
+  if (spec_pos < query.size()) {
+    spec = query[spec_pos];
+    // Skip leading '0' in format specifier (e.g., %0d → %d)
+    if (spec == '0' && spec_pos + 1 < query.size()) {
+      spec = query[spec_pos + 1];
+    }
+  }
+
+  for (const auto& arg : plusargs_) {
+    std::string_view content = get_content(arg);
+    if (!content.starts_with(prefix)) {
+      continue;
+    }
+    std::string_view remainder = content.substr(prefix.size());
+
+    // Parse based on format specifier
+    if (spec == 'd' || spec == 'D') {
+      int32_t parsed_value = 0;
+      auto [ptr, ec] = std::from_chars(
+          remainder.data(), remainder.data() + remainder.size(), parsed_value);
+      if (ec != std::errc{}) {
+        parsed_value = 0;  // Conversion failed
+      }
+      if (info.output.has_value()) {
+        StoreToPlace(state, *info.output, MakeIntegralSigned(parsed_value, 32));
+      }
+      return MakeIntegralSigned(1, 32);
+    }
+    if (spec == 's' || spec == 'S') {
+      if (info.output.has_value()) {
+        StoreToPlace(state, *info.output, MakeString(std::string(remainder)));
+      }
+      return MakeIntegralSigned(1, 32);
+    }
+
+    // Unsupported format spec - match but don't write
+    return MakeIntegralSigned(1, 32);
+  }
+
+  // No match found
+  return MakeIntegralSigned(0, 32);
 }
 
 }  // namespace lyra::mir::interp

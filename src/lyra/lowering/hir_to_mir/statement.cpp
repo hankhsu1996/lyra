@@ -232,6 +232,11 @@ void LowerExpressionStatement(
             LowerSeverityEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SFormatSystemCallData>) {
             LowerSFormatEffect(call_data, builder);
+          } else if constexpr (
+              std::is_same_v<T, hir::TestPlusargsData> ||
+              std::is_same_v<T, hir::ValuePlusargsData>) {
+            // Plusargs always produce a value; evaluate and discard
+            LowerExpression(data.expression, builder);
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");

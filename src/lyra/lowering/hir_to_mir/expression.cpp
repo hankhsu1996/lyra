@@ -572,6 +572,42 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
+  // $test$plusargs → PlusargsRvalueInfo{kTest}
+  if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
+    mir::Operand query_op = LowerExpression(test_pa->query, builder);
+    mir::Rvalue rvalue{
+        .operands = {query_op},
+        .info =
+            mir::PlusargsRvalueInfo{
+                .kind = mir::PlusargsKind::kTest,
+                .output = std::nullopt,
+                .output_type = {}},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
+  // $value$plusargs → PlusargsRvalueInfo{kValue, output_place, output_type}
+  if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
+    mir::Operand format_op = LowerExpression(val_pa->format, builder);
+    LvalueResult output_lv = LowerLvalue(val_pa->output, builder);
+
+    Context& ctx = builder.GetContext();
+    const hir::Expression& out_expr = (*ctx.hir_arena)[val_pa->output];
+    TypeId output_type = out_expr.type;
+
+    mir::Rvalue rvalue{
+        .operands = {format_op},
+        .info =
+            mir::PlusargsRvalueInfo{
+                .kind = mir::PlusargsKind::kValue,
+                .output = output_lv.place,
+                .output_type = output_type},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
   // Effect system calls ($display, etc.) are handled in statement.cpp.
   throw common::InternalError(
       "LowerSystemCall",

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <optional>
 #include <ostream>
+#include <span>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -97,6 +99,11 @@ class Interpreter {
     output_ = out;
   }
 
+  // Set plusargs for $test$plusargs/$value$plusargs queries
+  void SetPlusargs(std::vector<std::string> plusargs) {
+    plusargs_ = std::move(plusargs);
+  }
+
   // Execute process to completion. Returns final status.
   // Throws on suspension terminators (Delay, Wait, Repeat).
   auto Run(ProcessState& state) -> ProcessStatus;
@@ -129,6 +136,7 @@ class Interpreter {
   auto EvalConcat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalIndexValidity(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalSFormat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalPlusargs(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
 
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)
   static auto ResolveRoot(const ProcessState& state, const PlaceRoot& root)
@@ -186,6 +194,7 @@ class Interpreter {
   const Arena* arena_;
   const TypeArena* types_;
   std::ostream* output_ = nullptr;
+  std::vector<std::string> plusargs_;
 };
 
 // Helper: Create ProcessState for a given process.
@@ -226,6 +235,7 @@ struct SimulationResult {
 // engine integration). Returns exit code (0 = success).
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
-    std::ostream* output = nullptr) -> SimulationResult;
+    std::ostream* output = nullptr, std::span<const std::string> plusargs = {})
+    -> SimulationResult;
 
 }  // namespace lyra::mir::interp

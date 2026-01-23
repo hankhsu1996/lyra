@@ -35,5 +35,6 @@ suites:
       - system_tf/pure/
       - system_tf/effect/display.yaml
       - system_tf/effect/severity.yaml
+      - system_tf/effect/plusargs.yaml
       - functions/
       - packages/
