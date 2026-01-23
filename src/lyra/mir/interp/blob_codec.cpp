@@ -113,8 +113,7 @@ void StoreToBlob(
       RuntimeIntegral val_bits;
       val_bits.bit_width = 64;
       val_bits.value = {bits};
-      val_bits.x_mask = {0};
-      val_bits.z_mask = {0};
+      val_bits.unknown = {0};
       storage = IntegralInsertSlice4State(storage, val_bits, bit_offset, 64);
       break;
     }
@@ -126,8 +125,7 @@ void StoreToBlob(
       RuntimeIntegral val_bits;
       val_bits.bit_width = 32;
       val_bits.value = {bits};
-      val_bits.x_mask = {0};
-      val_bits.z_mask = {0};
+      val_bits.unknown = {0};
       storage = IntegralInsertSlice4State(storage, val_bits, bit_offset, 32);
       break;
     }
@@ -140,10 +138,9 @@ void StoreToBlob(
       }
       uint32_t width = BlobBitSize(type_id, types);
       RuntimeIntegral src = AsIntegral(val);
-      // 2-state canonicalization: force-clear X/Z masks
+      // 2-state canonicalization: force-clear unknown bits
       if (!IsFourStateType(type_id, types)) {
-        std::ranges::fill(src.x_mask, 0ULL);
-        std::ranges::fill(src.z_mask, 0ULL);
+        std::ranges::fill(src.unknown, 0ULL);
       }
       storage = IntegralInsertSlice4State(storage, src, bit_offset, width);
       break;

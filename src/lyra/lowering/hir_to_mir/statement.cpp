@@ -886,6 +886,7 @@ void LowerDoWhileLoop(
 auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
   IntegralConstant ic;
   ic.value.push_back(value);
+  ic.unknown.push_back(0);
   return Constant{.type = type, .value = std::move(ic)};
 }
 

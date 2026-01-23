@@ -683,25 +683,25 @@ auto LowerConcatRvalue(
 }
 
 struct FourStateValue {
-  llvm::Value* a;  // value/Z bits
-  llvm::Value* b;  // state bits (0 = known)
+  llvm::Value* value;    // Value/Z bits
+  llvm::Value* unknown;  // Unknown bits (0 = known)
 };
 
-// Extract (a, b) from a loaded struct value
+// Extract (value, unknown) from a loaded struct value
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
     -> FourStateValue {
-  auto* a = builder.CreateExtractValue(struct_val, 0, "fs.a");
-  auto* b = builder.CreateExtractValue(struct_val, 1, "fs.b");
-  return {.a = a, .b = b};
+  auto* val = builder.CreateExtractValue(struct_val, 0, "fs.val");
+  auto* unk = builder.CreateExtractValue(struct_val, 1, "fs.unk");
+  return {.value = val, .unknown = unk};
 }
 
-// Pack (a, b) into a struct for storing
+// Pack (value, unknown) into a struct for storing
 auto PackFourState(
-    llvm::IRBuilderBase& builder, llvm::StructType* struct_type, llvm::Value* a,
-    llvm::Value* b) -> llvm::Value* {
+    llvm::IRBuilderBase& builder, llvm::StructType* struct_type,
+    llvm::Value* val, llvm::Value* unk) -> llvm::Value* {
   llvm::Value* result = llvm::UndefValue::get(struct_type);
-  result = builder.CreateInsertValue(result, a, 0, "fs.pack.a");
-  result = builder.CreateInsertValue(result, b, 1, "fs.pack.b");
+  result = builder.CreateInsertValue(result, val, 0, "fs.pack.val");
+  result = builder.CreateInsertValue(result, unk, 1, "fs.pack.unk");
   return result;
 }
 
@@ -738,13 +738,13 @@ auto LowerOperandFourState(
   }
 
   // 2-state: use LowerOperand (returns integer), coerce to elem_type
-  llvm::Value* val = LowerOperand(context, operand);
-  auto* a = builder.CreateZExtOrTrunc(val, elem_type, "fs2.a");
-  auto* b = llvm::ConstantInt::get(elem_type, 0);
-  return {.a = a, .b = b};
+  llvm::Value* loaded_val = LowerOperand(context, operand);
+  auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "fs2.val");
+  auto* unk = llvm::ConstantInt::get(elem_type, 0);
+  return {.value = val, .unknown = unk};
 }
 
-// 4-state concat: same shift+OR algorithm as 2-state, applied to both a and b
+// 4-state concat: same shift+OR algorithm as 2-state, applied to both planes
 auto LowerConcatRvalue4State(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
@@ -762,10 +762,12 @@ auto LowerConcatRvalue4State(
 
   // Trunc to semantic width, then zext to result type
   auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
-  auto* a_first = builder.CreateZExtOrTrunc(first.a, first_ty, "cat4.a.trunc");
-  auto* b_first = builder.CreateZExtOrTrunc(first.b, first_ty, "cat4.b.trunc");
-  auto* acc_a = builder.CreateZExt(a_first, elem_type, "cat4.a.ext");
-  auto* acc_b = builder.CreateZExt(b_first, elem_type, "cat4.b.ext");
+  auto* val_first =
+      builder.CreateZExtOrTrunc(first.value, first_ty, "cat4.val.trunc");
+  auto* unk_first =
+      builder.CreateZExtOrTrunc(first.unknown, first_ty, "cat4.unk.trunc");
+  auto* acc_val = builder.CreateZExt(val_first, elem_type, "cat4.val.ext");
+  auto* acc_unk = builder.CreateZExt(unk_first, elem_type, "cat4.unk.ext");
 
   // Rolling append: acc = (acc << w_next) | zext(trunc(next))
   for (size_t i = 1; i < operands.size(); ++i) {
@@ -773,22 +775,23 @@ auto LowerConcatRvalue4State(
     auto op = LowerOperandFourState(context, operands[i], elem_type);
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
-    auto* a_op = builder.CreateZExtOrTrunc(op.a, op_ty, "cat4.a.trunc");
-    auto* b_op = builder.CreateZExtOrTrunc(op.b, op_ty, "cat4.b.trunc");
-    a_op = builder.CreateZExt(a_op, elem_type, "cat4.a.ext");
-    b_op = builder.CreateZExt(b_op, elem_type, "cat4.b.ext");
+    auto* val_op = builder.CreateZExtOrTrunc(op.value, op_ty, "cat4.val.trunc");
+    auto* unk_op =
+        builder.CreateZExtOrTrunc(op.unknown, op_ty, "cat4.unk.trunc");
+    val_op = builder.CreateZExt(val_op, elem_type, "cat4.val.ext");
+    unk_op = builder.CreateZExt(unk_op, elem_type, "cat4.unk.ext");
 
     auto* shift_amount = llvm::ConstantInt::get(elem_type, op_width);
-    acc_a = builder.CreateShl(acc_a, shift_amount, "cat4.a.shl");
-    acc_a = builder.CreateOr(acc_a, a_op, "cat4.a.or");
-    acc_b = builder.CreateShl(acc_b, shift_amount, "cat4.b.shl");
-    acc_b = builder.CreateOr(acc_b, b_op, "cat4.b.or");
+    acc_val = builder.CreateShl(acc_val, shift_amount, "cat4.val.shl");
+    acc_val = builder.CreateOr(acc_val, val_op, "cat4.val.or");
+    acc_unk = builder.CreateShl(acc_unk, shift_amount, "cat4.unk.shl");
+    acc_unk = builder.CreateOr(acc_unk, unk_op, "cat4.unk.or");
   }
 
-  return {.a = acc_a, .b = acc_b};
+  return {.value = acc_val, .unknown = acc_unk};
 }
 
-// 4-state cast (pure width-adjust): zext/trunc both a and b
+// 4-state cast (pure width-adjust): zext/trunc both planes
 auto LowerCastRvalue4State(
     Context& context, const mir::CastRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
@@ -796,8 +799,8 @@ auto LowerCastRvalue4State(
   auto& builder = context.GetBuilder();
   auto src = LowerOperandFourState(context, operands[0], elem_type);
   return {
-      .a = builder.CreateZExtOrTrunc(src.a, elem_type, "cast4.a"),
-      .b = builder.CreateZExtOrTrunc(src.b, elem_type, "cast4.b"),
+      .value = builder.CreateZExtOrTrunc(src.value, elem_type, "cast4.val"),
+      .unknown = builder.CreateZExtOrTrunc(src.unknown, elem_type, "cast4.unk"),
   };
 }
 
@@ -838,11 +841,12 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
         compute.value.info);
 
     // INVARIANT: semantic mask on both components
-    result.a = ApplyWidthMask(context, result.a, type_info.bit_width);
-    result.b = ApplyWidthMask(context, result.b, type_info.bit_width);
+    result.value = ApplyWidthMask(context, result.value, type_info.bit_width);
+    result.unknown =
+        ApplyWidthMask(context, result.unknown, type_info.bit_width);
 
     llvm::Value* packed =
-        PackFourState(builder, struct_type, result.a, result.b);
+        PackFourState(builder, struct_type, result.value, result.unknown);
     builder.CreateStore(packed, target_ptr);
     return;
   }

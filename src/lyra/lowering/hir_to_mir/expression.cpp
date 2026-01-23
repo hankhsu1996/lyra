@@ -289,6 +289,7 @@ auto IsIncrementOrDecrement(hir::UnaryOp op) -> bool {
 auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
   IntegralConstant ic;
   ic.value.push_back(static_cast<uint64_t>(value));
+  ic.unknown.push_back(0);
   return Constant{.type = type, .value = std::move(ic)};
 }
 

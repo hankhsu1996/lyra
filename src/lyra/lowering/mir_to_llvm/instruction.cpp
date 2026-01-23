@@ -48,7 +48,7 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
-  // 4-state target: construct {a=value, b=0} struct
+  // 4-state target: construct {value, unknown=0} struct
   if (storage_type->isStructTy()) {
     auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
     auto* elem_type = struct_type->getElementType(0);
@@ -56,25 +56,25 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     // Load source as raw value (struct if 4-state, integer if 2-state)
     llvm::Value* raw = LowerOperandRaw(context, assign.source);
 
-    llvm::Value* a = nullptr;
-    llvm::Value* b = nullptr;
+    llvm::Value* val = nullptr;
+    llvm::Value* unk = nullptr;
     if (raw->getType()->isStructTy()) {
       // Source is 4-state: pass through
-      a = builder.CreateExtractValue(raw, 0, "assign.a");
-      b = builder.CreateExtractValue(raw, 1, "assign.b");
+      val = builder.CreateExtractValue(raw, 0, "assign.val");
+      unk = builder.CreateExtractValue(raw, 1, "assign.unk");
     } else {
-      // Source is 2-state: wrap as {a=value, b=0}
-      a = builder.CreateZExtOrTrunc(raw, elem_type, "assign.a");
-      b = llvm::ConstantInt::get(elem_type, 0);
+      // Source is 2-state: wrap as {value, unknown=0}
+      val = builder.CreateZExtOrTrunc(raw, elem_type, "assign.val");
+      unk = llvm::ConstantInt::get(elem_type, 0);
     }
 
-    // Coerce a to elem_type if width differs
-    a = builder.CreateZExtOrTrunc(a, elem_type, "assign.a.fit");
-    b = builder.CreateZExtOrTrunc(b, elem_type, "assign.b.fit");
+    // Coerce to elem_type if width differs
+    val = builder.CreateZExtOrTrunc(val, elem_type, "assign.val.fit");
+    unk = builder.CreateZExtOrTrunc(unk, elem_type, "assign.unk.fit");
 
     llvm::Value* packed = llvm::UndefValue::get(struct_type);
-    packed = builder.CreateInsertValue(packed, a, 0);
-    packed = builder.CreateInsertValue(packed, b, 1);
+    packed = builder.CreateInsertValue(packed, val, 0);
+    packed = builder.CreateInsertValue(packed, unk, 1);
     builder.CreateStore(packed, target_ptr);
     return;
   }

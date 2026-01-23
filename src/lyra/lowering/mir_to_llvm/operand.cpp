@@ -31,13 +31,13 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
     -> llvm::Value* {
   llvm::Value* val = LowerOperandRaw(context, operand);
 
-  // Coerce 4-state struct to 2-state integer: extract a & ~b (known bits)
+  // Coerce 4-state struct to 2-state integer: value & ~unknown (known bits)
   if (val->getType()->isStructTy()) {
     auto& builder = context.GetBuilder();
-    auto* a = builder.CreateExtractValue(val, 0, "coerce.a");
-    auto* b = builder.CreateExtractValue(val, 1, "coerce.b");
-    auto* not_b = builder.CreateNot(b, "coerce.notb");
-    val = builder.CreateAnd(a, not_b, "coerce.val");
+    auto* value_bits = builder.CreateExtractValue(val, 0, "coerce.val");
+    auto* unk_bits = builder.CreateExtractValue(val, 1, "coerce.unk");
+    auto* not_unk = builder.CreateNot(unk_bits, "coerce.notunk");
+    val = builder.CreateAnd(value_bits, not_unk, "coerce.known");
   }
   return val;
 }
@@ -52,14 +52,16 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             const Type& type = context.GetTypeArena()[constant.type];
             uint32_t bit_width = PackedBitWidth(type, context.GetTypeArena());
 
-            // Create APInt from word array (little-endian in both MIR and LLVM)
-            llvm::APInt ap_value(bit_width, integral.value);
+            // Create APInt from word arrays (little-endian in both MIR and
+            // LLVM)
+            llvm::APInt value_ap(bit_width, integral.value);
 
-            // 4-state constant: convert to (a, b) struct
-            if (!integral.x_mask.empty() || !integral.z_mask.empty()) {
-              llvm::APInt x_mask_ap(bit_width, integral.x_mask);
-              llvm::APInt z_mask_ap(bit_width, integral.z_mask);
-              auto pair = ToAB(ap_value, x_mask_ap, z_mask_ap);
+            // 4-state constant: create {value, unknown} struct directly
+            if (!integral.IsKnown()) {
+              llvm::APInt unknown_ap(bit_width, integral.unknown);
+              FourStatePair pair{
+                  .value = std::move(value_ap),
+                  .unknown = std::move(unknown_ap)};
               MaskFourState(pair, bit_width);
 
               // Get the struct type {iN_storage, iN_storage}
@@ -69,15 +71,16 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
               uint32_t storage_width = elem_type->getIntegerBitWidth();
 
               // Extend to storage width if needed
-              auto* a_const = llvm::ConstantInt::get(
-                  elem_type, pair.a.zextOrTrunc(storage_width));
-              auto* b_const = llvm::ConstantInt::get(
-                  elem_type, pair.b.zextOrTrunc(storage_width));
-              return llvm::ConstantStruct::get(struct_type, {a_const, b_const});
+              auto* val_const = llvm::ConstantInt::get(
+                  elem_type, pair.value.zextOrTrunc(storage_width));
+              auto* unk_const = llvm::ConstantInt::get(
+                  elem_type, pair.unknown.zextOrTrunc(storage_width));
+              return llvm::ConstantStruct::get(
+                  struct_type, {val_const, unk_const});
             }
 
             // 2-state constant: simple integer
-            return llvm::ConstantInt::get(llvm_ctx, ap_value);
+            return llvm::ConstantInt::get(llvm_ctx, value_ap);
           },
           [&](const StringConstant& str) -> llvm::Value* {
             auto& builder = context.GetBuilder();

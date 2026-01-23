@@ -1,13 +1,16 @@
 #include "lyra/mir/interp/interpreter.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <format>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -15,6 +18,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
@@ -22,6 +26,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -30,6 +35,7 @@
 #include "lyra/mir/interp/blob_codec.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
+#include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -499,12 +505,10 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       uint32_t num_words = (info.storage_bit_width + 63) / 64;
       if (info.storage_is_four_state) {
         storage.value.resize(num_words, 0);
-        storage.x_mask.resize(num_words, ~uint64_t{0});
-        storage.z_mask.resize(num_words, 0);
+        storage.unknown.resize(num_words, ~uint64_t{0});
       } else {
         storage.value.resize(num_words, 0);
-        storage.x_mask.resize(num_words, 0);
-        storage.z_mask.resize(num_words, 0);
+        storage.unknown.resize(num_words, 0);
       }
       // Default init member[0] via codec
       RuntimeValue member0_default =
@@ -1472,7 +1476,7 @@ auto Interpreter::ApplyProjectionsForRead(
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
-                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                    std::cmp_greater_equal(idx, arr_info.range.Size())) {
                   throw std::runtime_error(
                       "array index out of bounds in blob access");
                 }
@@ -1690,7 +1694,7 @@ auto Interpreter::ApplyProjectionsForWrite(
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
-                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                    std::cmp_greater_equal(idx, arr_info.range.Size())) {
                   throw std::runtime_error(
                       "array index out of bounds in blob access");
                 }

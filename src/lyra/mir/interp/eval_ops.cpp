@@ -729,23 +729,17 @@ auto EvalCast(
   uint32_t target_width = PackedBitWidth(target_type, arena);
 
   // For 4-state -> 2-state conversion, X/Z bits become 0.
-  // We create a clean 2-state value by masking out X/Z from the value bits.
+  // We create a clean 2-state value by masking out unknown bits.
   RuntimeIntegral clean_src = op_int;
   if (IsPackedFourState(source_type, arena)) {
-    // X/Z bits become 0: clear value bits where X or Z is set
+    // Unknown bits become 0: clear value bits where b is set
     for (size_t i = 0; i < clean_src.value.size(); ++i) {
-      uint64_t xz_mask = 0;
-      if (i < clean_src.x_mask.size()) {
-        xz_mask |= clean_src.x_mask[i];
+      if (i < clean_src.unknown.size()) {
+        clean_src.value[i] &= ~clean_src.unknown[i];
       }
-      if (i < clean_src.z_mask.size()) {
-        xz_mask |= clean_src.z_mask[i];
-      }
-      clean_src.value[i] &= ~xz_mask;
     }
-    // Clear X/Z masks (result is 2-state)
-    std::ranges::fill(clean_src.x_mask, 0);
-    std::ranges::fill(clean_src.z_mask, 0);
+    // Clear unknown mask (result is 2-state)
+    std::ranges::fill(clean_src.unknown, 0ULL);
   }
   // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
 

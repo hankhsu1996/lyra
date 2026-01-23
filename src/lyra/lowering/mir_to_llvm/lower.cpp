@@ -45,20 +45,20 @@ auto BuildSlotInfoList(
   return slots;
 }
 
-// Store X-encoded value ({a=0, b=semantic_mask}) to a 4-state pointer
+// Store X-encoded value ({value=0, unknown=semantic_mask}) to a 4-state pointer
 void StoreFourStateX(
     llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::StructType* struct_type,
     uint32_t semantic_width) {
   auto* elem_type = struct_type->getElementType(0);
   auto* zero = llvm::ConstantInt::get(elem_type, 0);
   uint32_t storage_width = elem_type->getIntegerBitWidth();
-  auto b_mask = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
-  auto* b_val = llvm::ConstantInt::get(elem_type, b_mask);
+  auto unk_mask = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
+  auto* unk_val = llvm::ConstantInt::get(elem_type, unk_mask);
 
-  // Build {a=0, b=semantic_mask}
+  // Build {value=0, unknown=semantic_mask}
   llvm::Value* init = llvm::UndefValue::get(struct_type);
   init = builder.CreateInsertValue(init, zero, 0);
-  init = builder.CreateInsertValue(init, b_val, 1);
+  init = builder.CreateInsertValue(init, unk_val, 1);
   builder.CreateStore(init, ptr);
 }
 
