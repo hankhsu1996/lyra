@@ -114,16 +114,6 @@ auto BuildLlvmLoweringInfo(
       });
       continue;
     }
-    if (IsPackedFourState(type, *hir_result.type_arena)) {
-      // 4-state type - use placeholder for slot_types, skip for variables
-      uint32_t width = PackedBitWidth(type, *hir_result.type_arena);
-      info.slot_types.push_back({
-          .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
-          .width = width > 0 ? width : 32,
-          .is_signed = false,
-      });
-      continue;
-    }
 
     uint32_t width = PackedBitWidth(type, *hir_result.type_arena);
     bool is_signed = IsPackedSigned(type, *hir_result.type_arena);

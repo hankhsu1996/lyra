@@ -18,6 +18,7 @@
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -55,7 +56,7 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
   const auto& place = arena[place_id];
-  const Type& type = types[place.root.type];
+  const Type& type = types[mir::TypeOfPlace(types, place)];
 
   // Handle string type
   if (type.Kind() == TypeKind::kString) {
@@ -131,6 +132,14 @@ auto LowerBinaryArith(
       return builder.CreateSub(lhs, rhs, "sub");
     case mir::BinaryOp::kMultiply:
       return builder.CreateMul(lhs, rhs, "mul");
+    case mir::BinaryOp::kDivide:
+      return builder.CreateUDiv(lhs, rhs, "udiv");
+    case mir::BinaryOp::kDivideSigned:
+      return builder.CreateSDiv(lhs, rhs, "sdiv");
+    case mir::BinaryOp::kMod:
+      return builder.CreateURem(lhs, rhs, "urem");
+    case mir::BinaryOp::kModSigned:
+      return builder.CreateSRem(lhs, rhs, "srem");
     case mir::BinaryOp::kBitwiseAnd:
       return builder.CreateAnd(lhs, rhs, "and");
     case mir::BinaryOp::kBitwiseOr:
@@ -680,11 +689,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
 
   PlaceTypeInfo type_info = ValidateAndGetTypeInfo(context, compute.target);
 
-  if (type_info.is_four_state) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-        context.GetCurrentOrigin(), "4-state types not yet supported");
-  }
+  // 2-state contract: The LLVM backend does not model X/Z propagation. All
+  // storage is zeroinit'd. Operations on 4-state-typed values produce correct
+  // results when those values are known 2-state at runtime (which is always
+  // true under this contract). The is_four_state annotation is irrelevant for
+  // computation correctness here.
 
   // Get storage for target place
   llvm::Value* target_ptr = context.GetPlacePointer(compute.target);

@@ -46,6 +46,22 @@ Before lowering, MIR has already fixed:
 
 LLVM is a backend, not a language layer. See [pipeline-contract.md](pipeline-contract.md) for layer boundaries.
 
+## 2-State Execution Contract
+
+The LLVM backend operates in 2-state mode. It does not model X/Z propagation, unknown initialization, or any 4-state semantics. All storage is zeroinit'd (not X-filled). Operations on 4-state-typed values produce correct results only when those values are known 2-state at runtime.
+
+This is a deliberate semantic limitation, not an incidental property.
+
+**Enforcement boundary:** The 2-state contract is enforced at value entry points:
+
+| Entry point    | Mechanism                                             |
+| -------------- | ----------------------------------------------------- |
+| Constants      | `LowerConstant` rejects integral constants with X/Z   |
+| Initialization | LLVM zeroinits all storage (design state, frame)      |
+| Future         | Backend entry point rejects 4-state processes/modules |
+
+The `is_four_state` type annotation is irrelevant for computation correctness under this contract. All arithmetic, logic, and cast operations produce correct 2-state results on `iN` integers regardless of whether the type could theoretically hold X/Z.
+
 ## Lowering Decision Framework
 
 For every MIR construct, answer three questions:
