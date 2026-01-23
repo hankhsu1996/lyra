@@ -9,29 +9,26 @@ suites:
     backend: llvm
     include_regex:
       - operators/
-      - control_flow/case.yaml
-      - control_flow/conditional.yaml
-      - control_flow/while.yaml
-      - control_flow/do_while.yaml
-      - control_flow/for.yaml
-      - control_flow/repeat.yaml
-      - control_flow/forever.yaml
-      - control_flow/ternary.yaml
-      - control_flow/unique_priority_if.yaml
-      - control_flow/unique_priority_case.yaml
-      - control_flow/foreach_2d.yaml
-      - datatypes/wide_integral/
-      - datatypes/unpacked/unpacked_arrays.yaml
-      - datatypes/unpacked/unpacked_array_constants.yaml
-      - datatypes/integral/arbitrary_width.yaml
-      - datatypes/enum/enum.yaml
-      - datatypes/integral/variables.yaml
-      - datatypes/general/typedef.yaml
-      - datatypes/packed/packed_2d.yaml
-      - processes/initial.yaml
-      - processes/delay.yaml
-      - processes/wait_event.yaml
-      - processes/event_triggers.yaml
+      - control_flow/
+      - datatypes/
+      - processes/
+    exclude_regex:
+      - control_flow/foreach.yaml
+      - datatypes/enum/enum_methods.yaml
+      - datatypes/general/parameters.yaml
+      - datatypes/integral/unbased_unsized_literal.yaml
+      - datatypes/packed/nested_aggregates.yaml
+      - datatypes/packed/packed_3d.yaml
+      - datatypes/packed/packed_struct.yaml
+      - datatypes/packed/packed_union.yaml
+      - datatypes/real/
+      - datatypes/string/
+      - datatypes/unpacked/dynamic_arrays.yaml
+      - datatypes/unpacked/queues.yaml
+      - datatypes/unpacked/unpacked_struct.yaml
+      - datatypes/unpacked/unpacked_union.yaml
+      - processes/non_blocking.yaml
+      - processes/continuous_assign.yaml
 
   mir_dev:
     backend: mir
