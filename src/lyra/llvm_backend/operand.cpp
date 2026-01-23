@@ -1,8 +1,12 @@
 #include "lyra/llvm_backend/operand.hpp"
 
+#include <utility>
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/Casting.h"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/four_state.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -195,9 +199,14 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             // LLVM)
             llvm::APInt value_ap(bit_width, integral.value);
 
-            // 4-state constant: create {value, unknown} struct directly
-            if (!integral.IsKnown()) {
-              llvm::APInt unknown_ap(bit_width, integral.unknown);
+            // 4-state type: always create {value, unknown} struct
+            // Type determines LLVM shape, not whether value has unknown bits.
+            // Uses the same canonical predicate as IsOperandFourState.
+            if (IsPacked(type) &&
+                IsPackedFourState(type, context.GetTypeArena())) {
+              llvm::APInt unknown_ap =
+                  integral.IsKnown() ? llvm::APInt::getZero(bit_width)
+                                     : llvm::APInt(bit_width, integral.unknown);
               FourStatePair pair{
                   .value = std::move(value_ap),
                   .unknown = std::move(unknown_ap)};
