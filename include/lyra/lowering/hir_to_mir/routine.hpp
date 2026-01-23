@@ -18,8 +18,7 @@ auto BuildFunctionSignature(
 
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
     -> mir::Function;
 
 }  // namespace lyra::lowering::hir_to_mir

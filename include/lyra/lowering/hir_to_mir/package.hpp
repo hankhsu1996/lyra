@@ -11,7 +11,7 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerPackage(
     const hir::Package& package, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& design_functions) -> mir::Package;
+    mir::Arena& mir_arena, OriginMap* origin_map,
+    const DesignDeclarations& decls) -> mir::Package;
 
 }  // namespace lyra::lowering::hir_to_mir

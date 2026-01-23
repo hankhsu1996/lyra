@@ -20,14 +20,14 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& design_functions) -> mir::Module {
+    mir::Arena& mir_arena, OriginMap* origin_map,
+    const DesignDeclarations& decls) -> mir::Module {
   mir::Module result;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
   // Start with design-wide functions (package functions) so module code can
   // call them.
-  SymbolToMirFunctionMap symbol_to_mir_function = design_functions;
+  SymbolToMirFunctionMap symbol_to_mir_function = decls.functions;
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
   for (hir::FunctionId hir_func_id : module.functions) {
@@ -43,12 +43,13 @@ auto LowerModule(
   }
 
   // Phase 2: Lower function bodies (map is complete, recursion works)
+  DeclView decl_view{
+      .places = &decls.design_places, .functions = &symbol_to_mir_function};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
-    mir::Function mir_func = LowerFunctionBody(
-        hir_func, input, mir_arena, design_places, symbol_to_mir_function,
-        origin_map);
+    mir::Function mir_func =
+        LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
 
     mir_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
@@ -56,9 +57,8 @@ auto LowerModule(
   // Phase 3: Lower module processes (can reference functions)
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
-    mir::ProcessId mir_proc_id = LowerProcess(
-        hir_process, input, mir_arena, design_places, symbol_to_mir_function,
-        origin_map);
+    mir::ProcessId mir_proc_id =
+        LowerProcess(hir_process, input, mir_arena, decl_view, origin_map);
     result.processes.push_back(mir_proc_id);
   }
 

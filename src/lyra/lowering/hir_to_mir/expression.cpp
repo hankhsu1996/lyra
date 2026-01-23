@@ -687,11 +687,8 @@ auto LowerCall(
     MirBuilder& builder) -> mir::Operand {
   Context& ctx = builder.GetContext();
 
-  // Look up mir::FunctionId from symbol
-  mir::FunctionId callee = ctx.LookupFunction(data.callee);
-  if (!callee) {
-    throw common::InternalError("LowerCall", "function not found in map");
-  }
+  // Resolve mir::FunctionId from symbol (throws if not found)
+  mir::FunctionId callee = ctx.ResolveCallee(data.callee);
 
   // Validate against the frozen signature
   const mir::FunctionSignature& sig = builder.GetArena()[callee].signature;

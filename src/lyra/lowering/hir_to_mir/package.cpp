@@ -18,18 +18,19 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerPackage(
     const hir::Package& package, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& design_functions) -> mir::Package {
+    mir::Arena& mir_arena, OriginMap* origin_map,
+    const DesignDeclarations& decls) -> mir::Package {
   mir::Package result;
 
-  // Lower function bodies (IDs were pre-allocated in design-level Phase 1)
+  // Lower function bodies (IDs were pre-allocated in CollectDeclarations)
+  DeclView decl_view{
+      .places = &decls.design_places, .functions = &decls.functions};
   for (hir::FunctionId hir_func_id : package.functions) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
-    mir::FunctionId mir_func_id = design_functions.at(hir_func.symbol);
+    mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);
 
-    mir::Function mir_func = LowerFunctionBody(
-        hir_func, input, mir_arena, design_places, design_functions,
-        origin_map);
+    mir::Function mir_func =
+        LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
     mir_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
     result.functions.push_back(mir_func_id);
   }

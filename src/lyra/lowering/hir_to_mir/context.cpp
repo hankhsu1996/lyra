@@ -2,10 +2,14 @@
 
 #include <cassert>
 #include <format>
+#include <stdexcept>
+#include <utility>
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -74,15 +78,18 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
       std::format("symbol {} not found in place mapping", sym.value));
 }
 
-auto Context::LookupFunction(SymbolId sym) const -> mir::FunctionId {
+auto Context::ResolveCallee(SymbolId sym) const -> mir::FunctionId {
   if (symbol_to_mir_function == nullptr) {
-    return mir::kInvalidFunctionId;
+    throw common::InternalError(
+        "ResolveCallee", "function map not set in context");
   }
   auto it = symbol_to_mir_function->find(sym);
   if (it != symbol_to_mir_function->end()) {
     return it->second;
   }
-  return mir::kInvalidFunctionId;
+  const Symbol& s = (*symbol_table)[sym];
+  throw std::runtime_error(
+      std::format("unresolved function '{}' in MIR lowering", s.name));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

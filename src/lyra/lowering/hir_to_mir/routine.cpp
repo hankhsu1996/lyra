@@ -41,8 +41,7 @@ auto BuildFunctionSignature(
 
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
     -> mir::Function {
   Context ctx{
       .mir_arena = &mir_arena,
@@ -50,12 +49,12 @@ auto LowerFunctionBody(
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
       .symbol_table = input.symbol_table,
-      .module_places = &design_places,
+      .module_places = decl_view.places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .builtin_types = input.builtin_types,
-      .symbol_to_mir_function = &symbol_to_mir_function,
+      .symbol_to_mir_function = decl_view.functions,
       .return_place = mir::kInvalidPlaceId,
   };
 
