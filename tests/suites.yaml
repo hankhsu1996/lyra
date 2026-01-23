@@ -19,18 +19,13 @@ suites:
       - control_flow/ternary.yaml
       - control_flow/unique_priority_if.yaml
       - control_flow/unique_priority_case.yaml
-      - datatypes/wide_integral/arithmetic.yaml
-      - datatypes/wide_integral/bitwise.yaml
-      - datatypes/wide_integral/shifts.yaml
-      - datatypes/wide_integral/reductions.yaml
-      - datatypes/wide_integral/conversions.yaml
+      - datatypes/wide_integral/
       - datatypes/unpacked_arrays.yaml
       - datatypes/unpacked_array_constants.yaml
       - datatypes/arbitrary_width.yaml
       - datatypes/enum.yaml
       - datatypes/variables.yaml
       - datatypes/typedef.yaml
-      - datatypes/wide_integral/packed_2d.yaml
       - datatypes/packed_2d.yaml
       - processes/initial.yaml
       - processes/delay.yaml
