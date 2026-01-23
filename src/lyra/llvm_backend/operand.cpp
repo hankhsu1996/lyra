@@ -13,7 +13,9 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Load a place with BitRangeProjection: load base, lshr by offset, trunc.
+// Load a place with BitRangeProjection: load base, lshr by offset, mask.
+// Invariant: offset is always in-range (dynamic offsets are guarded by
+// GuardedUse/IndexValidity which branches to OOB default before reaching here).
 auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   const auto& bitrange = context.GetBitRangeProjection(place_id);
@@ -51,28 +53,47 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
         unk = builder.CreateTrunc(unk, result_elem, "br.unk.trunc");
       }
 
+      // Mask to semantic width (storage type may be wider due to rounding)
+      uint32_t result_width = result_elem->getIntegerBitWidth();
+      if (bitrange.width < result_width) {
+        auto mask = llvm::APInt::getLowBitsSet(result_width, bitrange.width);
+        auto* mask_val = llvm::ConstantInt::get(result_elem, mask);
+        val = builder.CreateAnd(val, mask_val, "br.val.mask");
+        unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
+      }
+
       llvm::Value* result = llvm::UndefValue::get(result_struct);
       result = builder.CreateInsertValue(result, val, 0);
       result = builder.CreateInsertValue(result, unk, 1);
       return result;
     }
 
-    // 2-state result from 4-state base: trunc to element width, mask unknown
+    // 2-state result from 4-state base: trunc/mask, then extract known bits
     if (elem_type != plane_type) {
       val = builder.CreateTrunc(val, elem_type, "br.val.trunc");
       unk = builder.CreateTrunc(unk, elem_type, "br.unk.trunc");
+    }
+    uint32_t elem_width = elem_type->getIntegerBitWidth();
+    if (bitrange.width < elem_width) {
+      auto mask = llvm::APInt::getLowBitsSet(elem_width, bitrange.width);
+      auto* mask_val = llvm::ConstantInt::get(elem_type, mask);
+      val = builder.CreateAnd(val, mask_val, "br.val.mask");
+      unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
     }
     auto* not_unk = builder.CreateNot(unk, "br.notunk");
     return builder.CreateAnd(val, not_unk, "br.known");
   }
 
-  // 2-state base: shift + trunc
+  // 2-state base: shift + mask to semantic width
   auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "br.offset");
   llvm::Value* shifted = builder.CreateLShr(base, shift_amt, "br.shr");
-  if (elem_type == base_type) {
-    return shifted;
+  uint32_t base_width = base_type->getIntegerBitWidth();
+  if (bitrange.width < base_width) {
+    auto mask = llvm::APInt::getLowBitsSet(base_width, bitrange.width);
+    shifted = builder.CreateAnd(
+        shifted, llvm::ConstantInt::get(base_type, mask), "br.mask");
   }
-  return builder.CreateTrunc(shifted, elem_type, "br.trunc");
+  return shifted;
 }
 
 }  // namespace

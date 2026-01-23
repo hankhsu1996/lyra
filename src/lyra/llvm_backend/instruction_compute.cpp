@@ -226,6 +226,34 @@ auto IsComparisonOp(mir::BinaryOp op) -> bool {
   }
 }
 
+// Check if the binary op is a signed comparison (needs sign-extended operands)
+auto IsSignedComparisonOp(mir::BinaryOp op) -> bool {
+  switch (op) {
+    case mir::BinaryOp::kLessThanSigned:
+    case mir::BinaryOp::kLessThanEqualSigned:
+    case mir::BinaryOp::kGreaterThanSigned:
+    case mir::BinaryOp::kGreaterThanEqualSigned:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Sign-extend value from semantic_width to fill storage type.
+// Required before signed comparison when storage is wider than semantic width.
+auto SignExtendToStorage(
+    llvm::IRBuilderBase& builder, llvm::Value* val, uint32_t semantic_width)
+    -> llvm::Value* {
+  auto* storage_type = val->getType();
+  uint32_t storage_width = storage_type->getIntegerBitWidth();
+  if (semantic_width >= storage_width) {
+    return val;
+  }
+  auto* sem_ty = llvm::Type::getIntNTy(builder.getContext(), semantic_width);
+  auto* truncated = builder.CreateTrunc(val, sem_ty, "sext.trunc");
+  return builder.CreateSExt(truncated, storage_type, "sext.ext");
+}
+
 // Check if the binary op is a shift (needs overflow guards)
 auto IsShiftOp(mir::BinaryOp op) -> bool {
   switch (op) {
@@ -506,6 +534,11 @@ auto LowerBinaryRvalue(
 
   // Comparison operators use icmp, which returns i1
   if (IsComparisonOp(info.op)) {
+    if (IsSignedComparisonOp(info.op)) {
+      uint32_t op_width = GetOperandBitWidth(context, operands[0]);
+      lhs = SignExtendToStorage(builder, lhs, op_width);
+      rhs = SignExtendToStorage(builder, rhs, op_width);
+    }
     llvm::Value* cmp = LowerBinaryComparison(context, info.op, lhs, rhs);
     return builder.CreateZExt(cmp, storage_type, "cmp.ext");
   }
@@ -902,6 +935,71 @@ auto LowerCastRvalue4State(
   };
 }
 
+auto LowerUnaryRvalue4State(
+    Context& context, const mir::UnaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
+    uint32_t semantic_width) -> FourStateValue {
+  auto& builder = context.GetBuilder();
+  auto* zero = llvm::ConstantInt::get(elem_type, 0);
+
+  auto src = LowerOperandFourState(context, operands[0], elem_type);
+  src.value = builder.CreateZExtOrTrunc(src.value, elem_type, "un4.val");
+  src.unknown = builder.CreateZExtOrTrunc(src.unknown, elem_type, "un4.unk");
+
+  switch (info.op) {
+    case mir::UnaryOp::kPlus:
+      return src;
+
+    case mir::UnaryOp::kMinus: {
+      // Carry propagation: any unknown bit can affect all higher bits
+      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
+      auto* sem_mask = GetSemanticMask(elem_type, semantic_width);
+      return {
+          .value = builder.CreateNeg(src.value, "un4.neg"),
+          .unknown =
+              builder.CreateSelect(any_unk, sem_mask, zero, "un4.neg.unk"),
+      };
+    }
+
+    case mir::UnaryOp::kBitwiseNot:
+      // Each bit independent: unknown unchanged
+      return {
+          .value = builder.CreateNot(src.value, "un4.not"),
+          .unknown = src.unknown,
+      };
+
+    case mir::UnaryOp::kLogicalNot: {
+      // Operate on known bits, taint if any unknown
+      auto* known = builder.CreateAnd(
+          src.value, builder.CreateNot(src.unknown), "un4.known");
+      auto* is_nonzero = builder.CreateICmpNE(known, zero, "un4.nz");
+      auto* negated = builder.CreateNot(is_nonzero, "un4.lnot");
+      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
+      return {
+          .value = builder.CreateZExt(negated, elem_type, "un4.lnot.val"),
+          .unknown = builder.CreateZExt(any_unk, elem_type, "un4.lnot.unk"),
+      };
+    }
+
+    default: {
+      // Reductions: mask to semantic width, compute on known bits, taint result
+      auto* masked_val = ApplyWidthMask(context, src.value, semantic_width);
+      auto* masked_unk = ApplyWidthMask(context, src.unknown, semantic_width);
+      auto* known = builder.CreateAnd(
+          masked_val, builder.CreateNot(masked_unk), "un4.red.known");
+
+      auto* red_result =
+          LowerUnaryOp(context, info.op, known, elem_type, semantic_width);
+
+      auto* any_unk = builder.CreateICmpNE(masked_unk, zero, "un4.red.taint");
+      return {
+          .value = red_result,
+          .unknown = builder.CreateZExt(any_unk, elem_type, "un4.red.unk"),
+      };
+    }
+  }
+}
+
 auto LowerIndexValidity(
     Context& context, const mir::IndexValidityRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
@@ -1053,7 +1151,14 @@ auto LowerBinaryRvalue4State(
   auto* combined_unk = builder.CreateOr(lhs.unknown, rhs.unknown, "bin4.unk");
 
   if (IsComparisonOp(info.op)) {
-    auto* cmp = LowerBinaryComparison(context, info.op, lhs.value, rhs.value);
+    auto* cmp_lhs = lhs.value;
+    auto* cmp_rhs = rhs.value;
+    if (IsSignedComparisonOp(info.op)) {
+      uint32_t op_width = GetOperandBitWidth(context, operands[0]);
+      cmp_lhs = SignExtendToStorage(builder, cmp_lhs, op_width);
+      cmp_rhs = SignExtendToStorage(builder, cmp_rhs, op_width);
+    }
+    auto* cmp = LowerBinaryComparison(context, info.op, cmp_lhs, cmp_rhs);
     auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
     return {
         .value = builder.CreateZExt(cmp, elem_type, "bin4.cmp.val"),
@@ -1136,6 +1241,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             [&](const mir::CastRvalueInfo& info) {
               return LowerCastRvalue4State(
                   context, info, compute.value.operands, elem_type);
+            },
+            [&](const mir::UnaryRvalueInfo& info) {
+              return LowerUnaryRvalue4State(
+                  context, info, compute.value.operands, elem_type,
+                  type_info.bit_width);
             },
             [&](const mir::BinaryRvalueInfo& info) {
               return LowerBinaryRvalue4State(
