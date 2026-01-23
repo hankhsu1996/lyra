@@ -35,13 +35,13 @@ void MaskTopWord(std::vector<uint64_t>& words, uint32_t bit_width) {
 void AssertNormalized(const RuntimeIntegral& val, uint32_t bit_width) {
   size_t expected_words = WordsNeeded(bit_width);
   assert(
-      val.value.size() == expected_words &&
+      val.a.size() == expected_words &&
       "value.size() != WordsNeeded(bit_width)");
   if (bit_width > 0) {
     uint32_t top_bits = bit_width % kBitsPerWord;
     if (top_bits != 0) {
       uint64_t mask = GetMask(top_bits);
-      assert((val.value.back() & ~mask) == 0 && "garbage bits in top word");
+      assert((val.a.back() & ~mask) == 0 && "garbage bits in top word");
     }
   }
 }
@@ -53,15 +53,15 @@ auto GetBit(const RuntimeIntegral& val, uint32_t bit_pos, uint32_t bit_width)
   }
   size_t word_idx = bit_pos / kBitsPerWord;
   size_t bit_in_word = bit_pos % kBitsPerWord;
-  assert(word_idx < val.value.size() && "GetBit: word_idx out of range");
-  return ((val.value[word_idx] >> bit_in_word) & 1) != 0;
+  assert(word_idx < val.a.size() && "GetBit: word_idx out of range");
+  return ((val.a[word_idx] >> bit_in_word) & 1) != 0;
 }
 
 void SetBit(RuntimeIntegral& val, uint32_t bit_pos) {
   size_t word_idx = bit_pos / kBitsPerWord;
   size_t bit_in_word = bit_pos % kBitsPerWord;
-  assert(word_idx < val.value.size() && "SetBit: word index out of range");
-  val.value[word_idx] |= (uint64_t{1} << bit_in_word);
+  assert(word_idx < val.a.size() && "SetBit: word index out of range");
+  val.a[word_idx] |= (uint64_t{1} << bit_in_word);
 }
 
 auto GetSignBit(const RuntimeIntegral& val, uint32_t bit_width) -> bool {
@@ -72,11 +72,11 @@ auto GetSignBit(const RuntimeIntegral& val, uint32_t bit_width) -> bool {
 auto NormalizeToWidth(const RuntimeIntegral& val, uint32_t bit_width)
     -> RuntimeIntegral {
   auto result = MakeKnownIntegral(bit_width);
-  size_t copy_words = std::min(val.value.size(), result.value.size());
+  size_t copy_words = std::min(val.a.size(), result.a.size());
   for (size_t i = 0; i < copy_words; ++i) {
-    result.value[i] = val.value[i];
+    result.a[i] = val.a[i];
   }
-  MaskTopWord(result.value, bit_width);
+  MaskTopWord(result.a, bit_width);
   return result;
 }
 

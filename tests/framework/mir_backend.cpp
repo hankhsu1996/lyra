@@ -31,8 +31,8 @@ auto IntegralToHex(const mir::interp::RuntimeIntegral& integral)
   std::string result;
   // Process words from most significant to least significant
   bool leading = true;
-  for (auto it = integral.value.rbegin(); it != integral.value.rend(); ++it) {
-    if (leading && *it == 0 && std::next(it) != integral.value.rend()) {
+  for (auto it = integral.a.rbegin(); it != integral.a.rend(); ++it) {
+    if (leading && *it == 0 && std::next(it) != integral.a.rend()) {
       // Skip leading zero words (but keep at least one word)
       continue;
     }
@@ -62,7 +62,7 @@ auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
     if (integral.IsX() || integral.IsZ()) {
       return std::unexpected("X/Z values not supported in assertions");
     }
-    if (integral.value.empty()) {
+    if (integral.a.empty()) {
       return std::unexpected("Empty integral value");
     }
     // Wide values (>64 bits): return as hex string
@@ -70,7 +70,7 @@ auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
       return HexValue{IntegralToHex(integral)};
     }
     // Return raw value masked to bit_width. No sign-extension here.
-    uint64_t raw = integral.value[0];
+    uint64_t raw = integral.a[0];
     if (integral.bit_width < 64) {
       raw &= (uint64_t{1} << integral.bit_width) - 1;
     }

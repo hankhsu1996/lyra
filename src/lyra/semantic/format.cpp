@@ -271,9 +271,8 @@ auto PackedToStringBytes(const RuntimeIntegral& val) -> std::string {
     size_t bit_in_word = bit_offset % 64;
 
     uint8_t byte_val = 0;
-    if (word_idx < val.value.size()) {
-      byte_val =
-          static_cast<uint8_t>((val.value[word_idx] >> bit_in_word) & 0xFF);
+    if (word_idx < val.a.size()) {
+      byte_val = static_cast<uint8_t>((val.a[word_idx] >> bit_in_word) & 0xFF);
     }
 
     if (byte_val != 0 || found_nonzero) {

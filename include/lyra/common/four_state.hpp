@@ -16,17 +16,6 @@ struct FourStatePair {
   llvm::APInt b;
 };
 
-// Convert MIR (value, x_mask, z_mask) -> LLVM (a, b)
-//   b = x_mask | z_mask
-//   a = (value & ~b) | z_mask
-inline auto ToAB(
-    const llvm::APInt& value, const llvm::APInt& x_mask,
-    const llvm::APInt& z_mask) -> FourStatePair {
-  llvm::APInt b = x_mask | z_mask;
-  llvm::APInt a = (value & ~b) | z_mask;
-  return {.a = std::move(a), .b = std::move(b)};
-}
-
 // Semantic mask: clear bits above semantic_width in both a and b
 inline void MaskFourState(FourStatePair& pair, uint32_t semantic_width) {
   uint32_t storage_width = pair.a.getBitWidth();

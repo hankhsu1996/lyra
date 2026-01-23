@@ -1,13 +1,16 @@
 #include "lyra/mir/interp/interpreter.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <format>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -15,6 +18,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
@@ -22,6 +26,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -30,6 +35,7 @@
 #include "lyra/mir/interp/blob_codec.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
+#include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -410,7 +416,7 @@ auto TryGetIndex(
   }
 
   // Extract raw bits
-  uint64_t raw_bits = integral.value.empty() ? 0 : integral.value[0];
+  uint64_t raw_bits = integral.a.empty() ? 0 : integral.a[0];
 
   // Sign-extend if operand type is signed
   const auto& type_info = types[type_id];
@@ -498,13 +504,11 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
       storage.bit_width = info.storage_bit_width;
       uint32_t num_words = (info.storage_bit_width + 63) / 64;
       if (info.storage_is_four_state) {
-        storage.value.resize(num_words, 0);
-        storage.x_mask.resize(num_words, ~uint64_t{0});
-        storage.z_mask.resize(num_words, 0);
+        storage.a.resize(num_words, 0);
+        storage.b.resize(num_words, ~uint64_t{0});
       } else {
-        storage.value.resize(num_words, 0);
-        storage.x_mask.resize(num_words, 0);
-        storage.z_mask.resize(num_words, 0);
+        storage.a.resize(num_words, 0);
+        storage.b.resize(num_words, 0);
       }
       // Default init member[0] via codec
       RuntimeValue member0_default =
@@ -834,8 +838,7 @@ auto Interpreter::EvalRvalue(
                   throw std::runtime_error("new[] size is X/Z");
                 }
                 // Sign-extend based on operand type to detect negatives
-                uint64_t raw_bits =
-                    size_int.value.empty() ? 0 : size_int.value[0];
+                uint64_t raw_bits = size_int.a.empty() ? 0 : size_int.a[0];
                 TypeId size_type =
                     TypeOfOperand(rv.operands[0], *arena_, *types_);
                 const auto& type_info = (*types_)[size_type];
@@ -1078,9 +1081,8 @@ auto Interpreter::EvalRvalue(
                         "enum next/prev step cannot be X/Z");
                   }
                   // Step is expected to be an int - extract low 32 bits
-                  auto lo = step_int.value.empty()
-                                ? 0ULL
-                                : step_int.value[0] & 0xFFFF'FFFFU;
+                  auto lo =
+                      step_int.a.empty() ? 0ULL : step_int.a[0] & 0xFFFF'FFFFU;
                   step = static_cast<size_t>(lo);
                 }
 
@@ -1092,7 +1094,7 @@ auto Interpreter::EvalRvalue(
                     auto member_ri =
                         MakeIntegralFromConstant(members[i].value, bit_width);
                     auto eq = IntegralEq(current_int, AsIntegral(member_ri));
-                    if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
+                    if (eq.IsKnown() && !eq.a.empty() && eq.a[0] == 1) {
                       current_idx = i;
                       break;  // First match wins for duplicate values
                     }
@@ -1147,7 +1149,7 @@ auto Interpreter::EvalRvalue(
                   auto member_ri =
                       MakeIntegralFromConstant(member.value, bit_width);
                   auto eq = IntegralEq(current_int, AsIntegral(member_ri));
-                  if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
+                  if (eq.IsKnown() && !eq.a.empty() && eq.a[0] == 1) {
                     return MakeString(member.name);
                   }
                 }
@@ -1461,7 +1463,7 @@ auto Interpreter::ApplyProjectionsForRead(
                 if (!idx_int.IsKnown()) {
                   throw std::runtime_error("index is X/Z");
                 }
-                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+                uint64_t raw = idx_int.a.empty() ? 0 : idx_int.a[0];
                 TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
                 int64_t idx = 0;
                 if (IsSignedIntegral(*types_, type_id)) {
@@ -1472,7 +1474,7 @@ auto Interpreter::ApplyProjectionsForRead(
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
-                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                    std::cmp_greater_equal(idx, arr_info.range.Size())) {
                   throw std::runtime_error(
                       "array index out of bounds in blob access");
                 }
@@ -1497,7 +1499,7 @@ auto Interpreter::ApplyProjectionsForRead(
               if (!idx_int.IsKnown()) {
                 throw std::runtime_error("index is X/Z");
               }
-              uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+              uint64_t raw = idx_int.a.empty() ? 0 : idx_int.a[0];
               TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
               int64_t idx = 0;
               if (IsSignedIntegral(*types_, type_id)) {
@@ -1526,10 +1528,9 @@ auto Interpreter::ApplyProjectionsForRead(
                     "ApplyProjectionsForRead", "bit offset must be integral");
               }
               const auto& offset_int = AsIntegral(offset_val);
-              int64_t raw_offset =
-                  offset_int.value.empty()
-                      ? 0
-                      : static_cast<int64_t>(offset_int.value[0]);
+              int64_t raw_offset = offset_int.a.empty()
+                                       ? 0
+                                       : static_cast<int64_t>(offset_int.a[0]);
               if (raw_offset < 0) {
                 throw std::runtime_error("negative bit offset");
               }
@@ -1679,7 +1680,7 @@ auto Interpreter::ApplyProjectionsForWrite(
                 if (!idx_int.IsKnown()) {
                   throw std::runtime_error("index is X/Z");
                 }
-                uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+                uint64_t raw = idx_int.a.empty() ? 0 : idx_int.a[0];
                 TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
                 int64_t idx = 0;
                 if (IsSignedIntegral(*types_, type_id)) {
@@ -1690,7 +1691,7 @@ auto Interpreter::ApplyProjectionsForWrite(
                 const auto& arr_info =
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
-                    static_cast<size_t>(idx) >= arr_info.range.Size()) {
+                    std::cmp_greater_equal(idx, arr_info.range.Size())) {
                   throw std::runtime_error(
                       "array index out of bounds in blob access");
                 }
@@ -1716,7 +1717,7 @@ auto Interpreter::ApplyProjectionsForWrite(
               if (!idx_int.IsKnown()) {
                 throw std::runtime_error("index is X/Z");
               }
-              uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
+              uint64_t raw = idx_int.a.empty() ? 0 : idx_int.a[0];
               TypeId type_id = TypeOfOperand(ip.index, *arena_, *types_);
               int64_t idx = 0;
               if (IsSignedIntegral(*types_, type_id)) {
@@ -1745,10 +1746,9 @@ auto Interpreter::ApplyProjectionsForWrite(
                     "ApplyProjectionsForWrite", "bit offset must be integral");
               }
               const auto& offset_int = AsIntegral(offset_val);
-              int64_t raw_offset =
-                  offset_int.value.empty()
-                      ? 0
-                      : static_cast<int64_t>(offset_int.value[0]);
+              int64_t raw_offset = offset_int.a.empty()
+                                       ? 0
+                                       : static_cast<int64_t>(offset_int.a[0]);
               if (raw_offset < 0) {
                 throw std::runtime_error("negative bit offset");
               }
@@ -2082,7 +2082,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             if (!sel_int.IsKnown()) {
               return t.targets.back();
             }
-            uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
+            uint64_t val = sel_int.a.empty() ? 0 : sel_int.a[0];
             if (val >= t.targets.size() - 1) {
               return t.targets.back();
             }

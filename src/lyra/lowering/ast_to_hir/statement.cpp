@@ -43,7 +43,8 @@ auto MakeIntConstant(int64_t value, TypeId type, SourceSpan span, Context* ctx)
   }
 
   IntegralConstant constant;
-  constant.value.push_back(masked_value);
+  constant.a.push_back(masked_value);
+  constant.b.push_back(0);
   ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
@@ -654,7 +655,8 @@ auto LowerStatement(
           IntegralInfo{
               .bit_width = 1, .is_signed = false, .is_four_state = true});
       IntegralConstant one_const;
-      one_const.value.push_back(1);
+      one_const.a.push_back(1);
+      one_const.b.push_back(0);
       ConstId const_id =
           ctx->constant_arena->Intern(bit_type, std::move(one_const));
       hir::ExpressionId true_expr = ctx->hir_arena->AddExpression(
