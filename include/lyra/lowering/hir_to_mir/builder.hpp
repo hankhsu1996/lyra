@@ -90,6 +90,7 @@ class MirBuilder {
   void EmitReturn();
   void EmitRepeat();
   void EmitDelay(uint64_t ticks, BlockIndex resume);
+  void EmitWait(std::vector<mir::WaitTrigger> triggers, BlockIndex resume);
   void EmitTerminate(std::optional<mir::Finish> info = std::nullopt);
 
   // Materialize all blocks. Returns blocks in the same order as they were

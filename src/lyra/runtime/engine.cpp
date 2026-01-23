@@ -1,5 +1,10 @@
 #include "lyra/runtime/engine.hpp"
 
+#include <utility>
+#include <vector>
+
+#include "lyra/common/edge_kind.hpp"
+
 namespace lyra::runtime {
 
 void Engine::ScheduleInitial(ProcessHandle handle) {
@@ -37,37 +42,47 @@ void Engine::Subscribe(
       });
 }
 
-void Engine::NotifyChange(SignalId signal, bool old_lsb, bool new_lsb) {
+void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
+  pending_queue_.push_back(
+      ScheduledEvent{
+          .handle = handle,
+          .resume = resume,
+      });
+}
+
+void Engine::NotifyChange(
+    SignalId signal, bool old_lsb, bool new_lsb, bool value_changed) {
+  if (!value_changed) {
+    return;
+  }
+
   auto it = waiters_.find(signal);
   if (it == waiters_.end()) {
     return;
   }
 
-  // Check each waiter's edge condition
   std::vector<Waiter> remaining;
   for (const auto& waiter : it->second) {
     bool triggered = false;
     switch (waiter.edge) {
       case EdgeKind::kPosedge:
-        triggered = !old_lsb && new_lsb;  // 0 → 1
+        triggered = !old_lsb && new_lsb;
         break;
       case EdgeKind::kNegedge:
-        triggered = old_lsb && !new_lsb;  // 1 → 0
+        triggered = old_lsb && !new_lsb;
         break;
       case EdgeKind::kAnyChange:
-        triggered = old_lsb != new_lsb;
+        triggered = true;
         break;
     }
 
     if (triggered) {
-      // Move to active queue
-      active_queue_.push_back(
+      pending_queue_.push_back(
           ScheduledEvent{
               .handle = waiter.handle,
               .resume = waiter.resume,
           });
     } else {
-      // Keep waiting
       remaining.push_back(waiter);
     }
   }
@@ -110,20 +125,27 @@ void Engine::ExecuteRegion(Region region) {
 }
 
 void Engine::ExecuteTimeSlot() {
-  // IEEE 1800 stratified event scheduler:
-  // Loop until Active + Inactive + NBA are all empty
-  while (!active_queue_.empty() || !inactive_queue_.empty()) {
-    // Active region: execute all ready processes
-    ExecuteRegion(Region::kActive);
+  // IEEE 1800 stratified event scheduler with delta cycle support.
+  // Each iteration of the outer loop is one delta cycle.
+  while (!active_queue_.empty() || !inactive_queue_.empty() ||
+         !pending_queue_.empty()) {
+    // Execute current delta cycle
+    while (!active_queue_.empty() || !inactive_queue_.empty()) {
+      ExecuteRegion(Region::kActive);
 
-    // Inactive region: move #0 delays to active
-    if (!inactive_queue_.empty()) {
-      ExecuteRegion(Region::kInactive);
-      continue;  // Re-execute active region
+      if (!inactive_queue_.empty()) {
+        ExecuteRegion(Region::kInactive);
+        continue;
+      }
+
+      ExecuteRegion(Region::kNBA);
     }
 
-    // NBA region: commit nonblocking updates
-    ExecuteRegion(Region::kNBA);
+    // Advance to next delta: pending → active
+    if (!pending_queue_.empty()) {
+      active_queue_ = std::move(pending_queue_);
+      pending_queue_.clear();
+    }
   }
 }
 

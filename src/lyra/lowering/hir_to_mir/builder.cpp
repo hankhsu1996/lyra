@@ -1,11 +1,29 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <type_traits>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/unsupported_error.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/effect.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/operand.hpp"
+#include "lyra/mir/operator.hpp"
+#include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -285,6 +303,18 @@ void MirBuilder::EmitDelay(uint64_t ticks, BlockIndex resume) {
           .origin = current_origin_});
 }
 
+void MirBuilder::EmitWait(
+    std::vector<mir::WaitTrigger> triggers, BlockIndex resume) {
+  SealCurrentBlock(
+      mir::Terminator{
+          .data =
+              mir::Wait{
+                  .triggers = std::move(triggers),
+                  .resume = mir::BasicBlockId{resume.value},
+              },
+          .origin = current_origin_});
+}
+
 void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
   if (info) {
     SealCurrentBlock(
@@ -331,8 +361,10 @@ void ValidateTerminatorTargets(const mir::Terminator& term, size_t num_blocks) {
           }
         } else if constexpr (std::is_same_v<T, mir::Delay>) {
           check_target(t.resume);
+        } else if constexpr (std::is_same_v<T, mir::Wait>) {
+          check_target(t.resume);
         }
-        // Wait, Return, Finish, Repeat have no targets
+        // Return, Finish, Repeat have no targets
       },
       term.data);
 }

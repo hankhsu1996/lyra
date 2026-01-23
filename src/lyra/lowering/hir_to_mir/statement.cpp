@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -27,6 +28,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -935,6 +937,54 @@ auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
+void LowerEventWait(
+    const hir::EventWaitStatementData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+  BlockIndex resume_bb = builder.CreateBlock();
+
+  std::vector<mir::WaitTrigger> triggers;
+  for (const auto& hir_trigger : data.triggers) {
+    mir::Operand signal_op = LowerExpression(hir_trigger.signal, builder);
+    if (signal_op.kind != mir::Operand::Kind::kUse) {
+      throw common::InternalError(
+          "LowerEventWait", "event trigger signal must be a design variable");
+    }
+    auto place_id = std::get<mir::PlaceId>(signal_op.payload);
+    const auto& place = (*ctx.mir_arena)[place_id];
+    if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+      throw common::InternalError(
+          "LowerEventWait", "event trigger must reference a design variable");
+    }
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+
+    if (hir_trigger.edge == hir::EventEdgeKind::kBothEdges) {
+      triggers.push_back(
+          {.signal = slot_id, .edge = runtime::EdgeKind::kPosedge});
+      triggers.push_back(
+          {.signal = slot_id, .edge = runtime::EdgeKind::kNegedge});
+    } else {
+      runtime::EdgeKind edge = runtime::EdgeKind::kAnyChange;
+      switch (hir_trigger.edge) {
+        case hir::EventEdgeKind::kNone:
+          edge = runtime::EdgeKind::kAnyChange;
+          break;
+        case hir::EventEdgeKind::kPosedge:
+          edge = runtime::EdgeKind::kPosedge;
+          break;
+        case hir::EventEdgeKind::kNegedge:
+          edge = runtime::EdgeKind::kNegedge;
+          break;
+        case hir::EventEdgeKind::kBothEdges:
+          break;  // Already handled above
+      }
+      triggers.push_back({.signal = slot_id, .edge = edge});
+    }
+  }
+
+  builder.EmitWait(std::move(triggers), resume_bb);
+  builder.SetCurrentBlock(resume_bb);
+}
+
 void LowerRepeatLoop(
     const hir::RepeatLoopStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
@@ -1107,6 +1157,8 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
 
           // Continue lowering in the resume block
           builder.SetCurrentBlock(resume_bb);
+        } else if constexpr (std::is_same_v<T, hir::EventWaitStatementData>) {
+          LowerEventWait(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

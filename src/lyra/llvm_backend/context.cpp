@@ -1,11 +1,32 @@
 #include "lyra/llvm_backend/context.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <format>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+#include <variant>
 
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 
@@ -226,6 +247,52 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
   return lyra_run_simulation_;
 }
 
+auto Context::GetLyraRunSimulationMulti() -> llvm::Function* {
+  if (lyra_run_simulation_multi_ == nullptr) {
+    // void LyraRunSimulationMulti(ptr* processes, ptr* states, uint32_t num)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
+    lyra_run_simulation_multi_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulationMulti",
+        llvm_module_.get());
+  }
+  return lyra_run_simulation_multi_;
+}
+
+auto Context::GetLyraDesignStoreAndNotify() -> llvm::Function* {
+  if (lyra_design_store_and_notify_ == nullptr) {
+    // void LyraDesignStoreAndNotify(ptr engine, ptr slot, ptr new_value,
+    //                               i32 byte_size, i32 signal_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
+    lyra_design_store_and_notify_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDesignStoreAndNotify",
+        llvm_module_.get());
+  }
+  return lyra_design_store_and_notify_;
+}
+
+auto Context::GetLyraDesignStoreStringAndNotify() -> llvm::Function* {
+  if (lyra_design_store_string_and_notify_ == nullptr) {
+    // void LyraDesignStoreStringAndNotify(ptr engine, ptr slot, ptr new_str,
+    //                                     i32 signal_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty, i32_ty},
+        false);
+    lyra_design_store_string_and_notify_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraDesignStoreStringAndNotify", llvm_module_.get());
+  }
+  return lyra_design_store_string_and_notify_;
+}
+
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
     auto* fn_type =
@@ -386,6 +453,7 @@ void Context::SetCurrentProcess(size_t process_index) {
   state_ptr_ = nullptr;
   design_ptr_ = nullptr;
   frame_ptr_ = nullptr;
+  engine_ptr_ = nullptr;
 }
 
 auto Context::GetCurrentProcessIndex() const -> size_t {
@@ -425,6 +493,14 @@ void Context::SetFramePointer(llvm::Value* frame_ptr) {
 
 auto Context::GetFramePointer() -> llvm::Value* {
   return frame_ptr_;
+}
+
+void Context::SetEnginePointer(llvm::Value* engine_ptr) {
+  engine_ptr_ = engine_ptr;
+}
+
+auto Context::GetEnginePointer() -> llvm::Value* {
+  return engine_ptr_;
 }
 
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {

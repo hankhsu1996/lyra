@@ -1,18 +1,29 @@
 #include "lyra/llvm_backend/lower.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <format>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -257,23 +268,45 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Initialize runtime state (reset time tracker)
   builder.CreateCall(context.GetLyraInitRuntime());
 
-  // Run each process through the scheduler
+  // Allocate and initialize all process states
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto num_processes = static_cast<uint32_t>(process_funcs.size());
+  std::vector<llvm::Value*> process_states;
+  process_states.reserve(num_processes);
+
   for (size_t i = 0; i < process_funcs.size(); ++i) {
-    auto* process_func = process_funcs[i];
     context.SetCurrentProcess(i);
 
-    // Allocate ProcessStateN
     auto* process_state = builder.CreateAlloca(
         context.GetProcessStateType(), nullptr,
         std::format("process_state_{}", i));
 
-    // Initialize ProcessStateN with aggregate zero + design pointer
     InitializeProcessState(context, process_state, design_state);
-
-    // Call runtime scheduler: LyraRunSimulation(process_func, state)
-    builder.CreateCall(
-        context.GetLyraRunSimulation(), {process_func, process_state});
+    process_states.push_back(process_state);
   }
+
+  // Build function pointer and state pointer arrays for multi-process call
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* funcs_array = builder.CreateAlloca(
+      ptr_ty, llvm::ConstantInt::get(i32_ty, num_processes), "funcs_array");
+  auto* states_array = builder.CreateAlloca(
+      ptr_ty, llvm::ConstantInt::get(i32_ty, num_processes), "states_array");
+
+  for (uint32_t i = 0; i < num_processes; ++i) {
+    auto* func_slot =
+        builder.CreateGEP(ptr_ty, funcs_array, {builder.getInt32(i)});
+    builder.CreateStore(process_funcs[i], func_slot);
+
+    auto* state_slot =
+        builder.CreateGEP(ptr_ty, states_array, {builder.getInt32(i)});
+    builder.CreateStore(process_states[i], state_slot);
+  }
+
+  // Call multi-process scheduler
+  builder.CreateCall(
+      context.GetLyraRunSimulationMulti(),
+      {funcs_array, states_array,
+       llvm::ConstantInt::get(i32_ty, num_processes)});
 
   // Branch to exit block
   builder.CreateBr(exit_block);
