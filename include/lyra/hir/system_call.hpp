@@ -36,7 +36,16 @@ struct SeveritySystemCallData {
   auto operator==(const SeveritySystemCallData&) const -> bool = default;
 };
 
-using SystemCallExpressionData =
-    std::variant<DisplaySystemCallData, SeveritySystemCallData>;
+struct SFormatSystemCallData {
+  std::vector<FormatOp> ops;  // Compile-time format ops (empty = runtime path)
+  std::vector<ExpressionId> args;      // Runtime args (used when ops is empty)
+  std::optional<ExpressionId> output;  // Output lvalue (for $sformat/$swrite*)
+  FormatKind default_format = FormatKind::kDecimal;
+
+  auto operator==(const SFormatSystemCallData&) const -> bool = default;
+};
+
+using SystemCallExpressionData = std::variant<
+    DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData>;
 
 }  // namespace lyra::hir

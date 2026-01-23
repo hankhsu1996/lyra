@@ -1,12 +1,14 @@
 #include "lyra/lowering/ast_to_hir/system_call.hpp"
 
 #include <cctype>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 
@@ -357,6 +359,164 @@ struct LowerVisitor {
     ctx->sink->Error(span, "$fatal should not be used as an expression");
     return hir::kInvalidExpressionId;
   }
+
+  auto operator()(const SFormatFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = ctx->SpanOf(call->sourceRange);
+
+    FormatKind default_format = RadixToFormatKind(info.radix);
+    hir::SFormatSystemCallData data;
+    data.default_format = default_format;
+
+    // Cursor into slang arguments
+    size_t arg_cursor = 0;
+
+    // Extract output target if present.
+    // Slang wraps the output arg as Assignment(left=target,
+    // right=EmptyArgument). We extract the left side and lower it as the output
+    // expression.
+    if (info.has_output_target) {
+      const slang::ast::Expression* out_arg = call->arguments()[0];
+      if (out_arg->kind == slang::ast::ExpressionKind::Assignment) {
+        const auto& assign = out_arg->as<slang::ast::AssignmentExpression>();
+        data.output = LowerExpression(assign.left(), *registrar, ctx);
+      } else {
+        data.output = LowerExpression(*out_arg, *registrar, ctx);
+      }
+      if (!data.output || !*data.output) {
+        return hir::kInvalidExpressionId;
+      }
+      ++arg_cursor;
+    }
+
+    // Lower remaining arguments (skip the output arg)
+    std::vector<hir::ExpressionId> lowered_args;
+    for (size_t i = arg_cursor; i < call->arguments().size(); ++i) {
+      hir::ExpressionId arg_id =
+          LowerExpression(*call->arguments()[i], *registrar, ctx);
+      if (!arg_id) {
+        return hir::kInvalidExpressionId;
+      }
+      lowered_args.push_back(arg_id);
+    }
+
+    std::span<const hir::ExpressionId> remaining(lowered_args);
+
+    if (info.has_format_string && !remaining.empty()) {
+      // $sformatf/$sformat: next arg is format string
+      const slang::ast::Expression* fmt_arg = call->arguments()[arg_cursor];
+
+      // Unwrap conversion
+      if (fmt_arg->kind == slang::ast::ExpressionKind::Conversion) {
+        const auto& conv = fmt_arg->as<slang::ast::ConversionExpression>();
+        fmt_arg = &conv.operand();
+      }
+
+      bool is_literal = false;
+      std::string format_str;
+      if (fmt_arg->kind == slang::ast::ExpressionKind::StringLiteral) {
+        const auto& literal = fmt_arg->as<slang::ast::StringLiteral>();
+        format_str = std::string(literal.getValue());
+        is_literal = true;
+      }
+
+      if (is_literal) {
+        // Compile-time path: parse format string with value args
+        auto value_args = remaining.subspan(1);
+        auto parse_result = ParseFormatString(
+            format_str, value_args, default_format, *ctx->sink, span);
+        data.ops = std::move(parse_result.ops);
+
+        // Auto-format any remaining arguments not consumed
+        size_t next_arg = 1 + parse_result.args_consumed;
+        while (next_arg < remaining.size()) {
+          data.ops.push_back(
+              hir::FormatOp{
+                  .kind = default_format,
+                  .value = remaining[next_arg],
+                  .literal = {},
+                  .mods = {}});
+          ++next_arg;
+        }
+      } else {
+        // Runtime path: put format arg + remaining value args in data.args
+        for (hir::ExpressionId expr_id : remaining) {
+          data.args.push_back(expr_id);
+        }
+      }
+    } else if (!info.has_format_string) {
+      // $swrite* family: reuse same $display logic on remaining args
+      if (remaining.empty()) {
+        // No args - empty string result
+      } else {
+        // Check if first argument is a string literal
+        const slang::ast::Expression* first_arg = call->arguments()[arg_cursor];
+        if (first_arg->kind == slang::ast::ExpressionKind::Conversion) {
+          const auto& conv = first_arg->as<slang::ast::ConversionExpression>();
+          first_arg = &conv.operand();
+        }
+
+        bool has_format_string = false;
+        std::string format_str;
+        if (first_arg->kind == slang::ast::ExpressionKind::StringLiteral) {
+          const auto& literal = first_arg->as<slang::ast::StringLiteral>();
+          format_str = std::string(literal.getValue());
+          has_format_string = true;
+        }
+
+        if (has_format_string && format_str.find('%') != std::string::npos) {
+          // String with '%': parse as format string
+          auto value_args = remaining.subspan(1);
+          auto parse_result = ParseFormatString(
+              format_str, value_args, default_format, *ctx->sink, span);
+          data.ops = std::move(parse_result.ops);
+
+          size_t next_arg = 1 + parse_result.args_consumed;
+          while (next_arg < remaining.size()) {
+            data.ops.push_back(
+                hir::FormatOp{
+                    .kind = default_format,
+                    .value = remaining[next_arg],
+                    .literal = {},
+                    .mods = {}});
+            ++next_arg;
+          }
+        } else if (has_format_string) {
+          // String without '%': literal prefix + auto-format rest
+          data.ops.push_back(
+              hir::FormatOp{
+                  .kind = FormatKind::kLiteral,
+                  .value = std::nullopt,
+                  .literal = format_str,
+                  .mods = {}});
+          for (size_t i = 1; i < remaining.size(); ++i) {
+            data.ops.push_back(
+                hir::FormatOp{
+                    .kind = default_format,
+                    .value = remaining[i],
+                    .literal = {},
+                    .mods = {}});
+          }
+        } else {
+          // First arg not a string literal: auto-format all
+          for (hir::ExpressionId expr_id : remaining) {
+            data.ops.push_back(
+                hir::FormatOp{
+                    .kind = default_format,
+                    .value = expr_id,
+                    .literal = {},
+                    .mods = {}});
+          }
+        }
+      }
+    }
+
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = std::move(data)});
+  }
 };
 
 }  // namespace
@@ -389,8 +549,9 @@ auto LowerSystemCall(
       result_type = ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
       break;
     case SystemFunctionReturnType::kString:
-      ctx->sink->Error(span, "string return type not yet supported");
-      return hir::kInvalidExpressionId;
+      result_type =
+          ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+      break;
   }
 
   return std::visit(

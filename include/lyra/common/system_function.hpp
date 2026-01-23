@@ -45,9 +45,16 @@ struct SeverityFunctionInfo {
 // $fatal - terminating severity message (handled specially in statement.cpp)
 struct FatalFunctionInfo {};
 
+// $sformatf, $sformat, $swrite, $swriteh, $swriteb, $swriteo
+struct SFormatFunctionInfo {
+  PrintRadix radix;
+  bool has_format_string;  // true for $sformatf/$sformat
+  bool has_output_target;  // true for $sformat/$swrite*
+};
+
 using CategoryPayload = std::variant<
     DisplayFunctionInfo, TerminationFunctionInfo, SeverityFunctionInfo,
-    FatalFunctionInfo>;
+    FatalFunctionInfo, SFormatFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -85,6 +92,14 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
 
   // Fatal severity task (terminating)
   {.name = "$fatal",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = FatalFunctionInfo{}},
+
+  // $sformatf/$sformat/$swrite family (string formatting)
+  {.name = "$sformatf", .min_args = 1, .max_args = 255, .return_type = Ret::kString, .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = false}},
+  {.name = "$sformat",  .min_args = 2, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = true}},
+  {.name = "$swrite",   .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteh",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kHex,     .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteb",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kBinary,  .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteo",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kOctal,   .has_format_string = false, .has_output_target = true}},
 });
 // clang-format on
 

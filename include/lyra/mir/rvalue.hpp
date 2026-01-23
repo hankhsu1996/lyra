@@ -7,6 +7,7 @@
 
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -86,12 +87,26 @@ struct ConcatRvalueInfo {
   TypeId result_type;
 };
 
+// SFormat: produces a RuntimeString from format ops or runtime args.
+// Operand layout:
+// - Compile-time path (ops non-empty): FormatOp.value has embedded Operands.
+//   rv.operands is empty.
+// - Runtime format path (has_runtime_format=true, ops empty):
+//   rv.operands[0] is format string, rv.operands[1..] are value args.
+// - Auto-format path (has_runtime_format=false, ops empty):
+//   all rv.operands are value args.
+struct SFormatRvalueInfo {
+  std::vector<FormatOp> ops;
+  FormatKind default_format = FormatKind::kDecimal;
+  bool has_runtime_format = false;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
     BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
-    ConcatRvalueInfo>;
+    ConcatRvalueInfo, SFormatRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -125,6 +140,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "guarded_use";
         } else if constexpr (std::is_same_v<T, ConcatRvalueInfo>) {
           return "concat";
+        } else if constexpr (std::is_same_v<T, SFormatRvalueInfo>) {
+          return "sformat";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

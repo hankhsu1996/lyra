@@ -6,6 +6,7 @@
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -1307,6 +1308,54 @@ auto Interpreter::EvalRvalue(
                   result, val, bit_pos, val.bit_width);
             }
             return result;
+          },
+          [&](const SFormatRvalueInfo& info) -> RuntimeValue {
+            FormatContext ctx{};
+            std::string result;
+
+            if (!info.ops.empty()) {
+              // Compile-time path: iterate ops like ExecDisplayEffect
+              for (const auto& op : info.ops) {
+                if (op.kind == FormatKind::kLiteral) {
+                  result += op.literal;
+                } else {
+                  RuntimeValue value = EvalOperand(state, *op.value);
+                  TypedValue typed{.value = std::move(value), .type = op.type};
+                  FormatSpec spec{
+                      .kind = op.kind,
+                      .width = op.mods.width,
+                      .precision = op.mods.precision,
+                      .zero_pad = op.mods.zero_pad,
+                      .left_align = op.mods.left_align};
+                  result += FormatValue(typed, spec, *types_, ctx);
+                }
+              }
+            } else if (info.has_runtime_format) {
+              // Runtime format path: rv.operands[0] is format string,
+              // rv.operands[1..] are value args
+              RuntimeValue fmt_val = EvalOperand(state, rv.operands[0]);
+              std::string fmt_str = AsString(fmt_val).value;
+              std::vector<TypedValue> value_args;
+              for (size_t i = 1; i < rv.operands.size(); ++i) {
+                TypeId type = TypeOfOperand(rv.operands[i], *arena_, *types_);
+                value_args.push_back(
+                    {EvalOperand(state, rv.operands[i]), type});
+              }
+              char fmt_char = FormatKindToSpecChar(info.default_format);
+              result =
+                  FormatDisplay(fmt_str, value_args, fmt_char, *types_, ctx);
+            } else {
+              // Auto-format path: all rv.operands are value args
+              std::vector<TypedValue> typed_args;
+              for (const auto& operand : rv.operands) {
+                TypeId type = TypeOfOperand(operand, *arena_, *types_);
+                typed_args.push_back({EvalOperand(state, operand), type});
+              }
+              char fmt_char = FormatKindToSpecChar(info.default_format);
+              result = FormatMessage(typed_args, fmt_char, *types_, ctx);
+            }
+
+            return MakeString(std::move(result));
           },
       },
       rv.info);

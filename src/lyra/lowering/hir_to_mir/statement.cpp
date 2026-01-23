@@ -150,6 +150,71 @@ void LowerSeverityEffect(
   builder.EmitEffect(std::move(severity));
 }
 
+auto BuildSFormatRvalue(
+    const hir::SFormatSystemCallData& data, MirBuilder& builder)
+    -> mir::Rvalue {
+  Context& ctx = builder.GetContext();
+  mir::SFormatRvalueInfo info;
+  info.default_format = data.default_format;
+
+  if (!data.ops.empty()) {
+    // Compile-time path: convert HIR FormatOps to MIR FormatOps
+    info.ops.reserve(data.ops.size());
+    for (const auto& hir_op : data.ops) {
+      if (hir_op.kind == FormatKind::kLiteral) {
+        info.ops.push_back(
+            mir::FormatOp{
+                .kind = FormatKind::kLiteral,
+                .value = std::nullopt,
+                .literal = hir_op.literal,
+                .type = TypeId{},
+                .mods = {}});
+      } else {
+        mir::Operand operand = LowerExpression(*hir_op.value, builder);
+        const hir::Expression& expr = (*ctx.hir_arena)[*hir_op.value];
+        info.ops.push_back(
+            mir::FormatOp{
+                .kind = hir_op.kind,
+                .value = std::move(operand),
+                .literal = {},
+                .type = expr.type,
+                .mods = hir_op.mods});
+      }
+    }
+    return mir::Rvalue{.operands = {}, .info = std::move(info)};
+  }
+
+  // Runtime path: lower args to operands.
+  // In AST->HIR lowering, runtime format path puts format+value args in
+  // data.args (args[0] is format string). For $swrite* (no format string),
+  // all args go into data.ops (not data.args). So if data.args is non-empty,
+  // it's always the runtime format path.
+  info.has_runtime_format = !data.args.empty();
+
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.args.size());
+  for (hir::ExpressionId arg_id : data.args) {
+    operands.push_back(LowerExpression(arg_id, builder));
+  }
+  return mir::Rvalue{.operands = std::move(operands), .info = std::move(info)};
+}
+
+void LowerSFormatEffect(
+    const hir::SFormatSystemCallData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  // Build the SFormat rvalue
+  mir::Rvalue rvalue = BuildSFormatRvalue(data, builder);
+
+  // Get string type from the output expression (output is always a string)
+  const hir::Expression& out_expr = (*ctx.hir_arena)[*data.output];
+  mir::PlaceId tmp = builder.EmitTemp(out_expr.type, std::move(rvalue));
+
+  // Assign to output
+  LvalueResult target = LowerLvalue(*data.output, builder);
+  builder.EmitAssign(target.place, mir::Operand::Use(tmp));
+}
+
 void LowerExpressionStatement(
     const hir::ExpressionStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
@@ -165,6 +230,8 @@ void LowerExpressionStatement(
             LowerDisplayEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SeveritySystemCallData>) {
             LowerSeverityEffect(call_data, builder);
+          } else if constexpr (std::is_same_v<T, hir::SFormatSystemCallData>) {
+            LowerSFormatEffect(call_data, builder);
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");
