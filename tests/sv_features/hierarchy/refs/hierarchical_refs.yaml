@@ -1,0 +1,110 @@
+feature: hierarchical_refs
+description: Test hierarchical path references (read and write through child instances)
+
+cases:
+  - name: basic_ref
+    description: Write and read a child module signal via hierarchical path
+    sv: |
+      module Child;
+        logic [7:0] value;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic [7:0] x;
+
+        initial begin
+          u_child.value = 42;
+          x = u_child.value;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+
+  - name: expression_write
+    description: Write an expression result to a child variable
+    sv: |
+      module Child;
+        int value;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int base;
+        int result;
+
+        initial begin
+          base = 10;
+          u_child.value = base + 5;
+          result = u_child.value;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: multi_level
+    description: Read and write through multiple levels of hierarchy
+    sv: |
+      module Inner;
+        int data;
+      endmodule
+
+      module Middle;
+        Inner u_inner();
+      endmodule
+
+      module Top;
+        Middle u_mid();
+        int x;
+
+        initial begin
+          u_mid.u_inner.data = 123;
+          x = u_mid.u_inner.data;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 123
+
+  - name: multiple_children
+    description: References to variables in different child instances
+    sv: |
+      module Child;
+        int value;
+      endmodule
+
+      module Top;
+        Child u_a();
+        Child u_b();
+        int sum;
+
+        initial begin
+          u_a.value = 3;
+          u_b.value = 7;
+          sum = u_a.value + u_b.value;
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 10
+
+  - name: display_arg
+    description: Hierarchical ref used as $display argument
+    sv: |
+      module Child;
+        int value;
+      endmodule
+
+      module Top;
+        Child u_child();
+
+        initial begin
+          u_child.value = 99;
+          $display("value = %d", u_child.value);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["value = 99"]
