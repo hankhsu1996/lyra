@@ -28,61 +28,11 @@ suites:
   mir_dev:
     backend: mir
     include_regex:
-      - operators/binary_integral.yaml
-      - operators/binary_string.yaml
-      - operators/unary.yaml
-      - operators/shift_overflow.yaml
-      - operators/concat.yaml
-      - operators/compound_assignment.yaml
-      - operators/replicate.yaml
-      - control_flow/conditional.yaml
-      - control_flow/while.yaml
-      - control_flow/do_while.yaml
-      - control_flow/for.yaml
-      - control_flow/repeat.yaml
-      - control_flow/forever.yaml
-      - control_flow/ternary.yaml
-      - control_flow/case.yaml
-      - control_flow/unique_priority_if.yaml
-      - control_flow/unique_priority_case.yaml
-      - control_flow/foreach.yaml
-      - datatypes/variables.yaml
-      - datatypes/arrays.yaml
-      - datatypes/unpacked_array_constants.yaml
-      - datatypes/dynamic_arrays.yaml
-      - datatypes/queues.yaml
-      - datatypes/packed_2d.yaml
-      - datatypes/packed_3d.yaml
-      - datatypes/indexed_part_select.yaml
-      - datatypes/unpacked_struct.yaml
-      - datatypes/nested_aggregates.yaml
-      - datatypes/packed_struct.yaml
-      - datatypes/packed_union.yaml
-      - datatypes/enum.yaml
-      - datatypes/unbased_unsized_literal.yaml
-      - datatypes/typedef.yaml
-      - datatypes/real_types.yaml
-      - datatypes/shortreal_types.yaml
-      - datatypes/realtime_types.yaml
-      - datatypes/arbitrary_width.yaml
-      - datatypes/wide_integral/arithmetic.yaml
-      - datatypes/wide_integral/bitwise.yaml
-      - datatypes/wide_integral/shifts.yaml
-      - datatypes/wide_integral/reductions.yaml
-      - datatypes/wide_integral/conversions.yaml
-      - datatypes/wide_integral/packed_2d.yaml
-      - datatypes/string_concat.yaml
-      - constants/parameters.yaml
-      - system_tf/pure/conversions.yaml
-      - system_tf/pure/sformat.yaml
-      - system_tf/pure/math.yaml
+      - operators/
+      - control_flow/
+      - datatypes/
+      - system_tf/pure/
       - system_tf/effect/display.yaml
       - system_tf/effect/severity.yaml
-      - system_tf/effect/finish.yaml
-      - functions/basic.yaml
-      - functions/nested_calls.yaml
-      - functions/recursion.yaml
-      - functions/reserved_keywords.yaml
-      - packages/basic.yaml
-      - packages/functions.yaml
-      - processes/initial.yaml
+      - functions/
+      - packages/
