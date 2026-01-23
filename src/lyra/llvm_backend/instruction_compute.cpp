@@ -26,7 +26,6 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -392,41 +391,36 @@ auto LowerBinaryComparison(
   }
 }
 
-// Check if an operand has string type
-auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
+// Resolve the final value type of an operand. For places with projections
+// (e.g. arr[i][j]), this returns the element type, not the container type.
+auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
   return std::visit(
       Overloaded{
-          [&](const Constant& c) {
-            return types[c.type].Kind() == TypeKind::kString;
-          },
-          [&](mir::PlaceId place_id) {
+          [&](const Constant& c) -> TypeId { return c.type; },
+          [&](mir::PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];
-            return types[place.root.type].Kind() == TypeKind::kString;
+            return mir::TypeOfPlace(types, place);
           },
       },
       operand.payload);
 }
 
-// Get the semantic bit width of an operand (for reduction operators)
-auto GetOperandBitWidth(Context& context, const mir::Operand& operand)
-    -> uint32_t {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
+// Check if an operand has string type.
+auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
+  TypeId type_id = GetOperandTypeId(context, operand);
+  return context.GetTypeArena()[type_id].Kind() == TypeKind::kString;
+}
 
-  return std::visit(
-      Overloaded{
-          [&](const Constant& c) {
-            return PackedBitWidth(types[c.type], types);
-          },
-          [&](mir::PlaceId place_id) {
-            const auto& place = arena[place_id];
-            return PackedBitWidth(types[place.root.type], types);
-          },
-      },
-      operand.payload);
+// Get the semantic bit width of a packed scalar operand (for sign-extension,
+// reduction operators, etc.). Asserts the resolved type is packed.
+auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
+    -> uint32_t {
+  TypeId type_id = GetOperandTypeId(context, operand);
+  const auto& types = context.GetTypeArena();
+  return PackedBitWidth(types[type_id], types);
 }
 
 // Lower string binary comparison via LyraStringCmp runtime call
@@ -535,7 +529,7 @@ auto LowerBinaryRvalue(
   // Comparison operators use icmp, which returns i1
   if (IsComparisonOp(info.op)) {
     if (IsSignedComparisonOp(info.op)) {
-      uint32_t op_width = GetOperandBitWidth(context, operands[0]);
+      uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
       lhs = SignExtendToStorage(builder, lhs, op_width);
       rhs = SignExtendToStorage(builder, rhs, op_width);
     }
@@ -643,7 +637,7 @@ auto LowerUnaryRvalue(
   auto& builder = context.GetBuilder();
 
   // Get operand's semantic bit width (needed for reduction operators)
-  uint32_t operand_bit_width = GetOperandBitWidth(context, operands[0]);
+  uint32_t operand_bit_width = GetOperandPackedWidth(context, operands[0]);
 
   // Lower the operand
   llvm::Value* operand = LowerOperand(context, operands[0]);
@@ -739,7 +733,7 @@ auto LowerConcatRvalue(
   }
 
   // First operand (MSB): trunc to semantic width, then zext to result type
-  uint32_t first_width = GetOperandBitWidth(context, operands[0]);
+  uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
   llvm::Value* first = LowerOperand(context, operands[0]);
   auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
   first = builder.CreateZExtOrTrunc(first, first_ty, "concat.trunc");
@@ -747,7 +741,7 @@ auto LowerConcatRvalue(
 
   // Rolling append: acc = (acc << w_next) | zext(trunc(next))
   for (size_t i = 1; i < operands.size(); ++i) {
-    uint32_t op_width = GetOperandBitWidth(context, operands[i]);
+    uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
     llvm::Value* op = LowerOperand(context, operands[i]);
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
@@ -833,7 +827,7 @@ auto LowerCaseMatchOp(
     -> llvm::Value* {
   auto& builder = context.GetBuilder();
 
-  uint32_t operand_width = GetOperandBitWidth(context, operands[0]);
+  uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
   auto* elem_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
@@ -888,7 +882,7 @@ auto LowerConcatRvalue4State(
   }
 
   // First operand (MSB)
-  uint32_t first_width = GetOperandBitWidth(context, operands[0]);
+  uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
   auto first = LowerOperandFourState(context, operands[0], elem_type);
 
   // Trunc to semantic width, then zext to result type
@@ -902,7 +896,7 @@ auto LowerConcatRvalue4State(
 
   // Rolling append: acc = (acc << w_next) | zext(trunc(next))
   for (size_t i = 1; i < operands.size(); ++i) {
-    uint32_t op_width = GetOperandBitWidth(context, operands[i]);
+    uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
     auto op = LowerOperandFourState(context, operands[i], elem_type);
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
@@ -1154,7 +1148,7 @@ auto LowerBinaryRvalue4State(
     auto* cmp_lhs = lhs.value;
     auto* cmp_rhs = rhs.value;
     if (IsSignedComparisonOp(info.op)) {
-      uint32_t op_width = GetOperandBitWidth(context, operands[0]);
+      uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
       cmp_lhs = SignExtendToStorage(builder, cmp_lhs, op_width);
       cmp_rhs = SignExtendToStorage(builder, cmp_rhs, op_width);
     }
