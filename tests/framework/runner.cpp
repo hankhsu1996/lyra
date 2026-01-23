@@ -41,9 +41,6 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
     }
 
     case BackendKind::kLlvm: {
-      if (test_case.expected_time.has_value()) {
-        GTEST_SKIP() << "LLVM backend does not support time assertions";
-      }
       if (!test_case.expected_files.empty()) {
         GTEST_SKIP() << "LLVM backend does not support file assertions";
       }
@@ -56,6 +53,12 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       if (!test_case.expected_values.empty()) {
         AssertVariables(
             result.variables, test_case.expected_values, test_case.source_yaml);
+      }
+
+      // Check expected time
+      if (test_case.expected_time.has_value()) {
+        EXPECT_EQ(result.final_time, *test_case.expected_time)
+            << "[" << test_case.source_yaml << "] Time mismatch";
       }
 
       // Check expected stdout

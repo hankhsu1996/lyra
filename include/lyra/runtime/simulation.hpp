@@ -16,4 +16,10 @@ extern "C" {
 // - state: pointer to ProcessState (allocated by caller, contains suspend
 // record + slots)
 void LyraRunSimulation(LyraProcessFunc process, void* state);
+
+// Reset runtime state (call before running processes).
+void LyraInitRuntime();
+
+// Print final simulation time as __LYRA_TIME__=<N> for test harness.
+void LyraReportTime();
 }

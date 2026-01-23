@@ -1,7 +1,16 @@
 #include "lyra/runtime/simulation.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <print>
+
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+
+namespace {
+uint64_t g_final_time = 0;
+}  // namespace
 
 extern "C" void LyraRunSimulation(LyraProcessFunc process, void* state) {
   // State layout: SuspendRecord at offset 0, followed by slots
@@ -51,5 +60,15 @@ extern "C" void LyraRunSimulation(LyraProcessFunc process, void* state) {
       lyra::runtime::ProcessHandle{.process_id = 0, .instance_id = 0});
 
   // Run simulation until completion
-  engine.Run();
+  auto final_time = engine.Run();
+  g_final_time = std::max(g_final_time, final_time);
+}
+
+extern "C" void LyraInitRuntime() {
+  g_final_time = 0;
+}
+
+extern "C" void LyraReportTime() {
+  std::print("__LYRA_TIME__={}\n", g_final_time);
+  std::fflush(stdout);
 }

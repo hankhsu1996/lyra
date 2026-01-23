@@ -254,6 +254,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Initialize DesignState (zero + 4-state X init)
   InitializeDesignState(context, design_state, slot_info);
 
+  // Initialize runtime state (reset time tracker)
+  builder.CreateCall(context.GetLyraInitRuntime());
+
   // Run each process through the scheduler
   for (size_t i = 0; i < process_funcs.size(); ++i) {
     auto* process_func = process_funcs[i];
@@ -284,6 +287,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Register and snapshot tracked variables for test framework inspection
   RegisterAndSnapshotVariables(
       context, input.variables, input.slot_types, design_state);
+
+  // Report final simulation time for test harness
+  if (input.emit_time_report) {
+    builder.CreateCall(context.GetLyraReportTime());
+  }
+
   builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));
 
   auto [result_ctx, result_mod] = context.TakeOwnership();

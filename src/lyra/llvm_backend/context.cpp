@@ -226,6 +226,28 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
   return lyra_run_simulation_;
 }
 
+auto Context::GetLyraInitRuntime() -> llvm::Function* {
+  if (lyra_init_runtime_ == nullptr) {
+    auto* fn_type =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    lyra_init_runtime_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraInitRuntime",
+        llvm_module_.get());
+  }
+  return lyra_init_runtime_;
+}
+
+auto Context::GetLyraReportTime() -> llvm::Function* {
+  if (lyra_report_time_ == nullptr) {
+    auto* fn_type =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    lyra_report_time_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraReportTime",
+        llvm_module_.get());
+  }
+  return lyra_report_time_;
+}
+
 auto Context::GetSuspendRecordType() const -> llvm::StructType* {
   return layout_.suspend_record_type;
 }
