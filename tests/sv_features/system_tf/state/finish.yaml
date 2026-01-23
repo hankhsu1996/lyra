@@ -1,0 +1,39 @@
+feature: simulation_control_time
+description: Tests for simulation control with time semantics (requires runtime scheduler)
+
+cases:
+  - name: finish_after_delay
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          #100;
+          x = 1;
+          $finish(1);
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1
+      stdout:
+        contains:
+          - "$finish called at time 100"
+
+  - name: stop_after_delay
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          #50;
+          x = 1;
+          $stop(1);
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1
+      stdout:
+        contains:
+          - "$stop called at time 50"

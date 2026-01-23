@@ -1,5 +1,5 @@
 feature: simulation_control
-description: Tests for simulation control system tasks ($finish, $stop, $exit)
+description: Tests for simulation control system tasks ($finish, $stop, $exit) - process-local behavior
 
 cases:
   # $finish tests
@@ -63,24 +63,6 @@ cases:
         contains:
           - "$finish called at time 0"
 
-  - name: finish_after_delay
-    sv: |
-      module Test;
-        int x;
-        initial begin
-          x = 0;
-          #100;
-          x = 1;
-          $finish(1);
-        end
-      endmodule
-    expect:
-      variables:
-        x: 1
-      stdout:
-        contains:
-          - "$finish called at time 100"
-
   # $stop tests
   - name: stop_terminates
     sv: |
@@ -125,24 +107,6 @@ cases:
       variables:
         x: 7
       stdout: ""
-
-  - name: stop_after_delay
-    sv: |
-      module Test;
-        int x;
-        initial begin
-          x = 0;
-          #50;
-          x = 1;
-          $stop(1);
-        end
-      endmodule
-    expect:
-      variables:
-        x: 1
-      stdout:
-        contains:
-          - "$stop called at time 50"
 
   # $exit tests
   - name: exit_terminates
