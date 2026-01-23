@@ -4,6 +4,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "lyra/common/four_state.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
@@ -108,6 +109,55 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
     val = builder.CreateAnd(value_bits, not_unk, "coerce.known");
   }
   return val;
+}
+
+auto LowerOperandAsStorage(
+    Context& context, const mir::Operand& operand, llvm::Type* target_type)
+    -> llvm::Value* {
+  llvm::Value* val = LowerOperandRaw(context, operand);
+
+  if (val->getType() == target_type) {
+    return val;
+  }
+
+  auto& builder = context.GetBuilder();
+
+  // 2-state integer → 4-state struct: wrap as {zext(value), 0}
+  if (target_type->isStructTy() && val->getType()->isIntegerTy()) {
+    auto* struct_type = llvm::cast<llvm::StructType>(target_type);
+    auto* elem_type = struct_type->getElementType(0);
+    llvm::Value* coerced =
+        builder.CreateZExtOrTrunc(val, elem_type, "stor.val");
+    llvm::Value* packed = llvm::UndefValue::get(struct_type);
+    packed = builder.CreateInsertValue(packed, coerced, 0);
+    packed = builder.CreateInsertValue(
+        packed, llvm::ConstantInt::get(elem_type, 0), 1);
+    return packed;
+  }
+
+  // 4-state struct → 4-state struct (different storage width): widen/narrow
+  // both planes
+  if (target_type->isStructTy() && val->getType()->isStructTy()) {
+    auto* target_struct = llvm::cast<llvm::StructType>(target_type);
+    auto* target_elem = target_struct->getElementType(0);
+    llvm::Value* src_val = builder.CreateExtractValue(val, 0, "stor.src.val");
+    llvm::Value* src_unk = builder.CreateExtractValue(val, 1, "stor.src.unk");
+    src_val = builder.CreateZExtOrTrunc(src_val, target_elem, "stor.val.fit");
+    src_unk = builder.CreateZExtOrTrunc(src_unk, target_elem, "stor.unk.fit");
+    llvm::Value* packed = llvm::UndefValue::get(target_struct);
+    packed = builder.CreateInsertValue(packed, src_val, 0);
+    packed = builder.CreateInsertValue(packed, src_unk, 1);
+    return packed;
+  }
+
+  // 2-state integer width coercion (storage rounding: e.g. i4 → i8)
+  if (val->getType()->isIntegerTy() && target_type->isIntegerTy()) {
+    return builder.CreateZExtOrTrunc(val, target_type, "stor.ext");
+  }
+
+  throw common::InternalError(
+      "LowerOperandAsStorage",
+      "unsupported storage coercion: source and target types incompatible");
 }
 
 auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {

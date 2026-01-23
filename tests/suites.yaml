@@ -24,6 +24,8 @@ suites:
       - datatypes/wide_integral/shifts.yaml
       - datatypes/wide_integral/reductions.yaml
       - datatypes/wide_integral/conversions.yaml
+      - datatypes/arrays.yaml
+      - datatypes/unpacked_array_constants.yaml
       - processes/initial.yaml
       - processes/delay.yaml
       - processes/wait_event.yaml

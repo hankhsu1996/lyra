@@ -27,6 +27,24 @@ struct PlaceIdHash {
   }
 };
 
+// Root identity key for de-duplicating places in frame layout.
+// Multiple PlaceIds with the same root (but different projections) share
+// one frame slot.
+struct PlaceRootKey {
+  mir::PlaceRoot::Kind kind;
+  int id;
+
+  auto operator==(const PlaceRootKey&) const -> bool = default;
+};
+
+struct PlaceRootKeyHash {
+  auto operator()(const PlaceRootKey& key) const noexcept -> size_t {
+    return std::hash<uint64_t>{}(
+        (static_cast<uint64_t>(key.kind) << 32) |
+        static_cast<uint32_t>(key.id));
+  }
+};
+
 // Design state layout - one per module
 // Maps SlotId (the design variable) to field index in DesignState struct.
 struct DesignLayout {
@@ -39,12 +57,14 @@ struct DesignLayout {
 };
 
 // Process frame layout - one per process
-// Maps PlaceId (the local/temp place) to field index in ProcessFrameN struct.
+// Maps place root identity to field index in ProcessFrameN struct.
+// Multiple PlaceIds sharing a root (with different projections) map to
+// the same frame slot.
 struct FrameLayout {
-  // Ordered places for ProcessFrameN, sorted by PlaceId for determinism
-  std::vector<mir::PlaceId> places;
-  // Map from PlaceId to field index
-  std::unordered_map<mir::PlaceId, uint32_t, PlaceIdHash> place_to_field;
+  // Root types in field order (for 4-state initialization)
+  std::vector<TypeId> root_types;
+  // Map from root identity to field index
+  std::unordered_map<PlaceRootKey, uint32_t, PlaceRootKeyHash> root_to_field;
   // LLVM struct type for ProcessFrameN (built by BuildLayout)
   llvm::StructType* llvm_type = nullptr;
 };
