@@ -122,33 +122,34 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
-  // Find the HIR module (needed for variable initialization and assertions)
+  // Find the top HIR module (the one with processes) for variable assertions
   const hir::Module* hir_module = nullptr;
-  size_t module_count = 0;
   for (const auto& element : mir_input.design->elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      hir_module = mod;
-      ++module_count;
+      if (!mod->processes.empty()) {
+        hir_module = mod;
+      }
     }
-  }
-  if (module_count > 1) {
-    result.error_message = std::format(
-        "Test framework supports single module only, got {}", module_count);
-    return result;
   }
 
   // Build variable name to slot index mapping (for variable assertions)
-  // Slot layout: [package vars...] [module vars...]
+  // Slot layout: [package vars...] [child module vars...] [top module vars...]
   std::unordered_map<std::string, size_t> var_slots;
   if (!test_case.expected_values.empty()) {
     if (hir_module == nullptr) {
       result.error_message = "Variable assertions require a module";
       return result;
     }
-    size_t num_package_vars = 0;
+    size_t var_offset = 0;
     for (const auto& element : mir_input.design->elements) {
       if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-        num_package_vars += pkg->variables.size();
+        var_offset += pkg->variables.size();
+      }
+      if (const auto* mod = std::get_if<hir::Module>(&element)) {
+        if (mod == hir_module) {
+          break;
+        }
+        var_offset += mod->variables.size();
       }
     }
     for (size_t i = 0; i < hir_module->variables.size(); ++i) {
@@ -158,7 +159,7 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
             std::format("Duplicate variable name '{}' in module", sym.name);
         return result;
       }
-      var_slots[sym.name] = num_package_vars + i;
+      var_slots[sym.name] = var_offset + i;
     }
   }
 
@@ -189,10 +190,10 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
         all_design_vars.push_back(var);
       }
     }
-  }
-  if (hir_module != nullptr) {
-    for (SymbolId var : hir_module->variables) {
-      all_design_vars.push_back(var);
+    if (const auto* mod = std::get_if<hir::Module>(&element)) {
+      for (SymbolId var : mod->variables) {
+        all_design_vars.push_back(var);
+      }
     }
   }
   if (all_design_vars.size() != design_state.storage.size()) {

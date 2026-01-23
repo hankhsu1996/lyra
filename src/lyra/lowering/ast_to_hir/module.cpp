@@ -26,7 +26,7 @@ auto LowerModule(
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
   SymbolId symbol =
-      registrar.Register(instance, SymbolKind::kModule, kInvalidTypeId);
+      registrar.Register(instance, SymbolKind::kInstance, kInvalidTypeId);
 
   std::vector<SymbolId> variables;
   std::vector<hir::ProcessId> processes;

@@ -33,9 +33,11 @@ class SymbolRegistrar {
   }
 
  private:
+  friend class LookupOnlyGuard;
   Context* ctx_;
   std::unordered_map<const slang::ast::Symbol*, SymbolId> slang_to_id_;
   ScopeId current_scope_ = kInvalidScopeId;
+  bool lookup_only_ = false;
 };
 
 // RAII scope guard for SymbolRegistrar - ensures PopScope on all exit paths.
@@ -56,6 +58,29 @@ class ScopeGuard {
 
  private:
   SymbolRegistrar& registrar_;
+};
+
+// RAII guard: forbids symbol creation for its lifetime.
+// Register() for already-registered symbols still succeeds (idempotent).
+// Register() for unregistered symbols throws InternalError.
+class LookupOnlyGuard {
+ public:
+  explicit LookupOnlyGuard(SymbolRegistrar& registrar)
+      : registrar_(registrar), saved_(registrar.lookup_only_) {
+    registrar_.lookup_only_ = true;
+  }
+  ~LookupOnlyGuard() {
+    registrar_.lookup_only_ = saved_;
+  }
+
+  LookupOnlyGuard(const LookupOnlyGuard&) = delete;
+  LookupOnlyGuard(LookupOnlyGuard&&) = delete;
+  auto operator=(const LookupOnlyGuard&) -> LookupOnlyGuard& = delete;
+  auto operator=(LookupOnlyGuard&&) -> LookupOnlyGuard& = delete;
+
+ private:
+  SymbolRegistrar& registrar_;
+  bool saved_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

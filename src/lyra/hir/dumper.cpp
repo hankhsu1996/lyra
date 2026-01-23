@@ -939,6 +939,12 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << "}";
       break;
     }
+
+    case ExpressionKind::kHierarchicalRef: {
+      const auto& data = std::get<HierarchicalRefExpressionData>(expr.data);
+      *out_ << SymbolName(data.target);
+      break;
+    }
   }
 }
 

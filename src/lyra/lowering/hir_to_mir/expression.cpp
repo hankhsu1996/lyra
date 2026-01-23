@@ -1563,6 +1563,10 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerPackedFieldAccess(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::ConcatExpressionData>) {
           return LowerConcat(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::HierarchicalRefExpressionData>) {
+          mir::PlaceId place_id = builder.GetContext().LookupPlace(data.target);
+          return mir::Operand::Use(place_id);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

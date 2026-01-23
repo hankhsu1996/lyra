@@ -517,6 +517,12 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
           return LowerPackedFieldAccessLvalue(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::HierarchicalRefExpressionData>) {
+          return LvalueResult{
+              .place = builder.GetContext().LookupPlace(data.target),
+              .validity = MakeAlwaysValid(builder),
+          };
         } else {
           throw common::InternalError(
               "LowerLvalue", "unsupported lvalue expression");
