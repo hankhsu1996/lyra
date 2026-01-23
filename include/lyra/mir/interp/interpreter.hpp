@@ -120,6 +120,16 @@ class Interpreter {
   auto EvalRvalue(ProcessState& state, const Rvalue& rv, TypeId result_type)
       -> RuntimeValue;
 
+  // Rvalue evaluation helpers (one per Rvalue info kind)
+  auto EvalBuiltinCall(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalNewArray(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalEnumNextPrev(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalEnumName(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalAggregate(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalConcat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalIndexValidity(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalSFormat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)
   static auto ResolveRoot(const ProcessState& state, const PlaceRoot& root)
       -> const RuntimeValue&;
