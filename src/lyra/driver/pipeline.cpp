@@ -1,18 +1,15 @@
 #include "pipeline.hpp"
 
-#include <fmt/core.h>
-
 #include "frontend.hpp"
-#include "lyra/common/diagnostic/diagnostic_sink.hpp"
-#include "print.hpp"
 
 namespace lyra::driver {
 
 auto CompileToMir(const std::vector<std::string>& files)
-    -> std::expected<CompilationResult, std::string> {
+    -> std::expected<CompilationResult, CompilationError> {
   auto parse_result = LoadFiles(files);
   if (!parse_result) {
-    return std::unexpected("failed to parse input files");
+    return std::unexpected(
+        CompilationError::Simple("failed to parse input files"));
   }
 
   DiagnosticSink sink;
@@ -20,7 +17,9 @@ auto CompileToMir(const std::vector<std::string>& files)
       lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
 
   if (sink.HasErrors()) {
-    return std::unexpected(FormatDiagnostics(sink));
+    return std::unexpected(
+        CompilationError::FromDiagnostics(
+            std::move(sink), std::move(hir_result.source_manager)));
   }
 
   lowering::hir_to_mir::LoweringInput mir_input{
@@ -36,8 +35,7 @@ auto CompileToMir(const std::vector<std::string>& files)
   try {
     mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   } catch (const std::exception& e) {
-    return std::unexpected(
-        fmt::format("HIR to MIR lowering failed: {}", e.what()));
+    return std::unexpected(CompilationError::Simple(e.what()));
   }
 
   return CompilationResult{

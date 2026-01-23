@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 
 #include <slang/ast/Symbol.h>
@@ -37,7 +38,8 @@ inline void RegisterSourceFiles(
       throw common::InternalError(
           "source registration", "duplicate BufferID in slang SourceManager");
     }
-    std::string path = slang_sm.getFullPath(buffer).string();
+    std::string path =
+        std::filesystem::proximate(slang_sm.getFullPath(buffer)).string();
     std::string content{slang_sm.getSourceText(buffer)};
     FileId file_id =
         source_manager.AddFile(std::move(path), std::move(content));

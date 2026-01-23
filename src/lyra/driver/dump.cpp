@@ -3,9 +3,6 @@
 #include <iostream>
 #include <vector>
 
-#include <fmt/color.h>
-#include <fmt/core.h>
-
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/type.hpp"
@@ -15,42 +12,9 @@
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/dumper.hpp"
+#include "print.hpp"
 
 namespace lyra::driver {
-
-namespace {
-
-constexpr auto kToolColor = fmt::terminal_color::white;
-constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
-
-void PrintDiagnostics(const DiagnosticSink& sink) {
-  for (const auto& diag : sink.GetDiagnostics()) {
-    const char* severity_str = nullptr;
-    fmt::text_style severity_style;
-
-    switch (diag.severity) {
-      case DiagnosticSeverity::kError:
-        severity_str = "error";
-        severity_style = fmt::fg(fmt::terminal_color::bright_red);
-        break;
-      case DiagnosticSeverity::kWarning:
-        severity_str = "warning";
-        severity_style = fmt::fg(fmt::terminal_color::bright_yellow);
-        break;
-      case DiagnosticSeverity::kNote:
-        severity_str = "note";
-        severity_style = fmt::fg(fmt::terminal_color::bright_cyan);
-        break;
-    }
-
-    fmt::print(
-        stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
-        fmt::styled(severity_str, severity_style),
-        fmt::styled(diag.message, fmt::emphasis::bold));
-  }
-}
-
-}  // namespace
 
 auto DumpHir(const std::string& path) -> int {
   auto parse_result = LoadFile(path);
@@ -63,7 +27,7 @@ auto DumpHir(const std::string& path) -> int {
       lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink);
+    PrintDiagnostics(sink, result.source_manager.get());
     return 1;
   }
 
@@ -86,7 +50,7 @@ auto DumpMir(const std::string& path) -> int {
       lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink);
+    PrintDiagnostics(sink, hir_result.source_manager.get());
     return 1;
   }
 
@@ -118,7 +82,7 @@ auto DumpLlvm(const std::string& path) -> int {
       lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink);
+    PrintDiagnostics(sink, hir_result.source_manager.get());
     return 1;
   }
 

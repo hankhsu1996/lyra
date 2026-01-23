@@ -238,7 +238,7 @@ auto ResolveErrorLocation(
 auto RunLlvm(const std::vector<std::string>& files) -> int {
   auto compilation = CompileToMir(files);
   if (!compilation) {
-    PrintError(compilation.error());
+    compilation.error().Print();
     return 1;
   }
 
@@ -257,33 +257,19 @@ auto RunLlvm(const std::vector<std::string>& files) -> int {
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   } catch (const common::UnsupportedErrorException& e) {
     std::string location = ResolveErrorLocation(e.GetError(), *compilation);
-    // Format in clang style:
-    // - With location: "file:line:col: error: message"
-    // - Without location: "lyra: error: message"
     if (!location.empty()) {
       fmt::print(
-          stderr, "{}: {}: {}\n",
-          fmt::styled(location, fmt::fg(fmt::terminal_color::cyan)),
-          fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
+          stderr, "{}: {} {}\n", fmt::styled(location, fmt::emphasis::bold),
+          fmt::styled(
+              "error:",
+              fmt::fg(fmt::terminal_color::bright_red) | fmt::emphasis::bold),
           fmt::styled(e.what(), fmt::emphasis::bold));
     } else {
-      fmt::print(
-          stderr, "{}: {}: {}\n",
-          fmt::styled(
-              "lyra",
-              fmt::fg(fmt::terminal_color::white) | fmt::emphasis::bold),
-          fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
-          fmt::styled(e.what(), fmt::emphasis::bold));
+      PrintError(e.what());
     }
     return 1;
   } catch (const std::exception& e) {
-    // No location available - use clang style: "lyra: error: message"
-    fmt::print(
-        stderr, "{}: {}: {}\n",
-        fmt::styled(
-            "lyra", fmt::fg(fmt::terminal_color::white) | fmt::emphasis::bold),
-        fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
-        fmt::styled(e.what(), fmt::emphasis::bold));
+    PrintError(e.what());
     return 1;
   }
 
