@@ -45,6 +45,7 @@ suites:
       - system_tf/effect/plusargs.yaml
       - system_tf/effect/readmem.yaml
       - system_tf/effect/fopen.yaml
+      - system_tf/effect/fdisplay.yaml
       - functions/
       - packages/
       - hierarchy/refs/

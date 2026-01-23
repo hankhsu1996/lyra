@@ -20,10 +20,12 @@ struct TestResult {
   std::string captured_output;
   std::map<std::string, ExtractedValue> variables;
   uint64_t final_time = 0;
-  std::filesystem::path work_directory;
 };
 
-// Run test using LLVM JIT backend
-auto RunLlvmBackend(const TestCase& test_case) -> TestResult;
+// Run test using LLVM JIT backend.
+// work_directory is the runner-owned directory for file I/O (may be empty).
+auto RunLlvmBackend(
+    const TestCase& test_case, const std::filesystem::path& work_directory)
+    -> TestResult;
 
 }  // namespace lyra::test

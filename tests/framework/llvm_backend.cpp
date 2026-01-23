@@ -1,25 +1,37 @@
 #include "tests/framework/llvm_backend.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <exception>
+#include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
+#include <optional>
 #include <spawn.h>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_span.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -311,16 +323,17 @@ auto RunLliWithCapture(
 
 }  // namespace
 
-auto RunLlvmBackend(const TestCase& test_case) -> TestResult {
+auto RunLlvmBackend(
+    const TestCase& test_case, const std::filesystem::path& work_directory)
+    -> TestResult {
   TestResult result;
 
   // Parse test case using slang
-  auto parse_result = ParseTestCase(test_case);
+  auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
     result.error_message = parse_result.error_message;
     return result;
   }
-  result.work_directory = parse_result.work_directory;
 
   // Lower AST to HIR
   DiagnosticSink sink;

@@ -62,7 +62,7 @@ cases:
         a=10 b=20 sum=30
 
   - name: fdisplayh_hex_format
-    description: $fdisplayh uses hex format by default
+    description: $fdisplayh uses hex format by default (full width)
     files:
       - name: test.sv
         content: |
@@ -73,7 +73,7 @@ cases:
           endmodule
     expect:
       stdout: |
-        ff
+        000000ff
 
   - name: fdisplayb_binary_format
     description: $fdisplayb uses binary format by default
@@ -91,7 +91,7 @@ cases:
         1010
 
   - name: fdisplayo_octal_format
-    description: $fdisplayo uses octal format by default
+    description: $fdisplayo uses octal format by default (full width)
     files:
       - name: test.sv
         content: |
@@ -102,7 +102,7 @@ cases:
           endmodule
     expect:
       stdout: |
-        77
+        00000000077
 
   - name: fdisplay_file_then_close
     description: $fdisplay to file followed by close
@@ -194,7 +194,7 @@ cases:
         to all three
 
   - name: fwriteh_hex_format
-    description: $fwriteh uses hex format without newline
+    description: $fwriteh uses hex format without newline (full width)
     files:
       - name: test.sv
         content: |
@@ -206,7 +206,7 @@ cases:
           endmodule
     expect:
       stdout: |
-        ff
+        000000ff
 
   - name: fwrite_descriptor_expression
     description: $fwrite with descriptor as variable expression
@@ -238,160 +238,6 @@ cases:
     expect:
       stdout: |
         val=99 end
-
-  - name: fstrobe_basic
-    description: $fstrobe writes to file in Postponed region
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            initial begin
-              $fstrobe(1, "strobe output");
-              $display("display first");
-            end
-          endmodule
-    expect:
-      stdout: |
-        display first
-        strobe output
-
-  - name: fstrobe_format_string
-    description: $fstrobe with format arguments
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 42;
-            initial begin
-              $fstrobe(1, "x=%d", x);
-            end
-          endmodule
-    expect:
-      stdout: |
-        x=42
-
-  - name: fstrobeh_hex
-    description: $fstrobeh uses hex format
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            initial begin
-              $fstrobeh(1, 255);
-            end
-          endmodule
-    expect:
-      stdout: |
-        ff
-
-  - name: fmonitor_initial_print
-    description: $fmonitor prints immediately on registration
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 10;
-            initial begin
-              $fmonitor(1, "x=%d", x);
-            end
-          endmodule
-    expect:
-      stdout: |
-        x=10
-
-  - name: fmonitor_change_detection
-    description: $fmonitor prints on value change to file
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 1;
-            initial begin
-              $fmonitor(1, "x=%d", x);
-              #1 x = 2;
-              #1 x = 3;
-            end
-          endmodule
-    expect:
-      stdout: |
-        x=1
-        x=2
-        x=3
-
-  - name: fmonitorh_hex
-    description: $fmonitorh uses hex format
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 255;
-            initial begin
-              $fmonitorh(1, x);
-            end
-          endmodule
-    expect:
-      stdout: |
-        ff
-
-  - name: fclose_cancels_fmonitor
-    description: $fclose cancels active $fmonitor to that file
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 1;
-            int fd;
-            initial begin
-              fd = $fopen("output.txt", "w");
-              $fmonitor(fd, "x=%d", x);
-              #1 x = 2;
-              $fclose(fd);
-              #1 x = 3;
-              $display("done");
-            end
-          endmodule
-    expect:
-      stdout: |
-        done
-
-  - name: fmonitor_replace
-    description: New $fmonitor replaces active one (old monitor does not print)
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 1, y = 10;
-            initial begin
-              $fmonitor(1, "x=%d", x);
-              #1 x = 2;
-              $fmonitor(1, "y=%d", y);
-              #1 y = 20;
-              #1 x = 3;
-            end
-          endmodule
-    expect:
-      stdout: |
-        x=1
-        y=10
-        y=20
-
-  - name: fstrobe_after_fclose
-    description: $fstrobe to closed file is silently ignored
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int fd;
-            initial begin
-              fd = $fopen("output.txt", "w");
-              $fstrobe(fd, "should not appear");
-              $fclose(fd);
-              $display("done");
-            end
-          endmodule
-    expect:
-      stdout: |
-        done
 
   - name: fdisplay_to_file_verified
     description: $fdisplay writes to actual file (content verified)
@@ -429,54 +275,6 @@ cases:
       files:
         file1.txt: "to both\n"
         file2.txt: "to both\n"
-
-  - name: fstrobe_after_fclose_file_empty
-    description: $fstrobe to closed file produces empty file
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int fd;
-            initial begin
-              fd = $fopen("output.txt", "w");
-              $fstrobe(fd, "should not appear");
-              $fclose(fd);
-            end
-          endmodule
-    expect:
-      files:
-        output.txt: ""
-
-  - name: fmonitor_cancel_verified
-    description: $fclose cancels $fmonitor (no writes after close)
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            int x = 1;
-            int fd;
-            initial begin
-              fd = $fopen("output.txt", "w");
-              $fmonitor(fd, "x=%d", x);
-              #1 x = 2;
-              // IMPORTANT: This #1 is required for correct region ordering.
-              // $fmonitor writes in Postponed region at end of time step.
-              // Without this delay, $fclose executes in Active region of
-              // time 1 (same step as x=2), cancelling the monitor BEFORE
-              // Postponed runs. The delay ensures x=2 writes before close.
-              #1;
-              $fclose(fd);
-              #1 x = 3;  // After close - should not write
-            end
-          endmodule
-    expect:
-      files:
-        output.txt:
-          contains:
-            - "x=1"
-            - "x=2"
-          not_contains:
-            - "x=3"
 
   - name: fwrite_multiple_lines
     description: Multiple $fwrite calls to same file

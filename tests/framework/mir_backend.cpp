@@ -1,11 +1,17 @@
 #include "tests/framework/mir_backend.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <expected>
+#include <filesystem>
 #include <format>
+#include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -16,9 +22,11 @@
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "tests/framework/llvm_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 
@@ -84,16 +92,17 @@ auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
 
 }  // namespace
 
-auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
+auto RunMirInterpreter(
+    const TestCase& test_case, const std::filesystem::path& work_directory)
+    -> TestResult {
   TestResult result;
 
   // Parse test case using slang
-  auto parse_result = ParseTestCase(test_case);
+  auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
     result.error_message = parse_result.error_message;
     return result;
   }
-  result.work_directory = parse_result.work_directory;
 
   // Lower AST to HIR
   DiagnosticSink sink;
@@ -217,8 +226,8 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
 
   // Change to work_directory if we have one (for file I/O tests)
   std::optional<ScopedCurrentPath> scoped_path;
-  if (!result.work_directory.empty()) {
-    scoped_path.emplace(result.work_directory);
+  if (!work_directory.empty()) {
+    scoped_path.emplace(work_directory);
   }
 
   // Run design init processes (package variable initialization)
@@ -320,7 +329,6 @@ auto RunMirInterpreter(const TestCase& test_case) -> TestResult {
     result.variables[name] = *extracted;
   }
 
-  // On success, temp_guard destructor will clean up (unless LYRA_TEST_KEEP_TMP)
   return result;
 }
 

@@ -149,6 +149,9 @@ void CollectPlacesFromEffectOp(
   std::visit(
       Overloaded{
           [&](const mir::DisplayEffect& d) {
+            if (d.descriptor) {
+              CollectPlaceFromOperand(*d.descriptor, places);
+            }
             for (const auto& op : d.ops) {
               if (op.value) {
                 CollectPlaceFromOperand(*op.value, places);

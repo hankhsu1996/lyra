@@ -505,10 +505,22 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
       [this](const auto& effect_op) -> std::string {
         using T = std::decay_t<decltype(effect_op)>;
         if constexpr (std::is_same_v<T, DisplayEffect>) {
-          std::string result = effect_op.print_kind == PrintKind::kDisplay
-                                   ? "$display"
-                                   : "$write";
+          const char* name = nullptr;
+          if (effect_op.descriptor.has_value()) {
+            name = effect_op.print_kind == PrintKind::kDisplay ? "$fdisplay"
+                                                               : "$fwrite";
+          } else {
+            name = effect_op.print_kind == PrintKind::kDisplay ? "$display"
+                                                               : "$write";
+          }
+          std::string result = name;
           result += "(";
+          if (effect_op.descriptor) {
+            result += FormatOperand(*effect_op.descriptor);
+            if (!effect_op.ops.empty()) {
+              result += ", ";
+            }
+          }
           bool first = true;
           for (const FormatOp& op : effect_op.ops) {
             if (!first) {

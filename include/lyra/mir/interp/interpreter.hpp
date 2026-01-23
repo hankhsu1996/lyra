@@ -181,6 +181,10 @@ class Interpreter {
   // Execute Effect instruction
   void ExecEffect(ProcessState& state, const Effect& effect);
 
+  // Format display ops to string (no newline appended).
+  auto FormatDisplayOps(
+      const ProcessState& state, std::span<const FormatOp> ops) -> std::string;
+
   // Execute DisplayEffect
   void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
 

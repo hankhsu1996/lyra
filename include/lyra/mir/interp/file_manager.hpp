@@ -1,13 +1,23 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <string>
 
 namespace lyra::mir::interp {
+
+// Result of CollectStreams: identifies which output streams a descriptor
+// targets.
+struct StreamTargets {
+  bool include_stdout = false;
+  std::array<std::ostream*, 30> file_streams{};
+  int file_stream_count = 0;
+};
 
 // Manages open file handles for $fopen/$fclose system tasks.
 // Supports both MCD (multi-channel descriptor) and FD (file descriptor) modes.
@@ -30,6 +40,10 @@ class FileManager {
   // Close descriptor. MCD: iterates set bits. FD: closes single file. Invalid:
   // no-op.
   void Fclose(int32_t descriptor);
+
+  // Decode descriptor and collect target output streams.
+  // MCD bit 0 = stdout; bits 1-30 = MCD channels; bit 31 = FD mode.
+  auto CollectStreams(uint32_t descriptor) -> StreamTargets;
 
  private:
   static constexpr uint32_t kFdBit = 0x80000000;

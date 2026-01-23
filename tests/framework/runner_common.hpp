@@ -1,14 +1,12 @@
 #pragma once
 
 #include <atomic>
-#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <ios>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -109,16 +107,13 @@ inline auto MakeUniqueTempPath(const std::string& test_name)
          (test_name + "_" + unique_suffix);
 }
 
-// Write test source files to a temp directory
+// Write test source files to an existing directory (caller owns the directory)
 inline auto WriteTempFiles(
-    const std::vector<SourceFile>& files, const std::string& test_name)
-    -> std::pair<std::vector<std::string>, std::filesystem::path> {
-  auto temp_directory = MakeUniqueTempPath(test_name);
-  std::filesystem::create_directories(temp_directory);
-
+    const std::vector<SourceFile>& files,
+    const std::filesystem::path& directory) -> std::vector<std::string> {
   std::vector<std::string> result_paths;
   for (const auto& file : files) {
-    auto path = temp_directory / file.name;
+    auto path = directory / file.name;
 
     // Validate extension - don't silently ignore unknown files
     auto extension = path.extension().string();
@@ -137,7 +132,7 @@ inline auto WriteTempFiles(
     }
     result_paths.push_back(path.string());
   }
-  return {result_paths, temp_directory};
+  return result_paths;
 }
 
 // Format slang diagnostics for error output
@@ -159,8 +154,6 @@ inline auto FormatSlangDiagnostics(
 struct SlangParseResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
   std::unique_ptr<slang::SourceManager> source_manager;
-  std::optional<ScopedTempDirectory> temp_guard;
-  std::filesystem::path work_directory;
   std::string error_message;  // Empty on success
 
   [[nodiscard]] auto Success() const -> bool {
@@ -168,8 +161,12 @@ struct SlangParseResult {
   }
 };
 
-// Parse a test case using slang with SV 2023 language features enabled
-inline auto ParseTestCase(const TestCase& test_case) -> SlangParseResult {
+// Parse a test case using slang with SV 2023 language features enabled.
+// If work_directory is non-empty and test is multi-file, source files are
+// written there. The caller owns the work directory lifetime.
+inline auto ParseTestCase(
+    const TestCase& test_case, const std::filesystem::path& work_directory)
+    -> SlangParseResult {
   SlangParseResult result;
   result.source_manager = std::make_unique<slang::SourceManager>();
 
@@ -191,10 +188,7 @@ inline auto ParseTestCase(const TestCase& test_case) -> SlangParseResult {
       std::make_unique<slang::ast::Compilation>(compilation_options);
 
   if (test_case.IsMultiFile()) {
-    auto [file_paths, temp_dir] =
-        WriteTempFiles(test_case.files, test_case.name);
-    result.temp_guard.emplace(temp_dir);
-    result.work_directory = temp_dir;
+    auto file_paths = WriteTempFiles(test_case.files, work_directory);
 
     for (const auto& path : file_paths) {
       auto extension = std::filesystem::path(path).extension();
@@ -214,14 +208,6 @@ inline auto ParseTestCase(const TestCase& test_case) -> SlangParseResult {
         test_case.sv_code, *result.source_manager, "test.sv", "",
         parse_options);
     result.compilation->addSyntaxTree(tree);
-
-    // Create work directory for single-file tests with file expectations
-    if (!test_case.expected_files.empty()) {
-      auto temp_dir = MakeUniqueTempPath(test_case.name);
-      std::filesystem::create_directories(temp_dir);
-      result.temp_guard.emplace(temp_dir);
-      result.work_directory = temp_dir;
-    }
   }
 
   // Check for slang errors

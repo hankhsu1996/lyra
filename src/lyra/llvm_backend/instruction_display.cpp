@@ -9,6 +9,13 @@
 namespace lyra::lowering::mir_to_llvm {
 
 void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
+  if (display.descriptor) {
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        context.GetCurrentOrigin(),
+        "$fdisplay/$fwrite not supported in LLVM backend");
+  }
+
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
