@@ -123,7 +123,7 @@ inline auto WriteTempFiles(
     // Validate extension - don't silently ignore unknown files
     auto extension = path.extension().string();
     if (extension != ".sv" && extension != ".v" && extension != ".hex" &&
-        extension != ".mem" && extension != ".txt") {
+        extension != ".bin" && extension != ".mem" && extension != ".txt") {
       throw std::runtime_error(
           std::format(
               "Unsupported file extension in test files: {} ({})", file.name,

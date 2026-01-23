@@ -146,6 +146,16 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(arg, places);
             }
           },
+          [&](const mir::MemIOEffect& m) {
+            places.insert(m.target);
+            CollectPlaceFromOperand(m.filename, places);
+            if (m.start_addr) {
+              CollectPlaceFromOperand(*m.start_addr, places);
+            }
+            if (m.end_addr) {
+              CollectPlaceFromOperand(*m.end_addr, places);
+            }
+          },
       },
       effect);
 }

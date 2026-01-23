@@ -545,6 +545,25 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result += FormatOperand(arg);
           }
           return result;
+        } else if constexpr (std::is_same_v<T, MemIOEffect>) {
+          std::string result;
+          if (effect_op.is_read) {
+            result = effect_op.is_hex ? "$readmemh" : "$readmemb";
+          } else {
+            result = effect_op.is_hex ? "$writememh" : "$writememb";
+          }
+          result += std::format(
+              "({}, @{})", FormatOperand(effect_op.filename),
+              FormatPlace(effect_op.target));
+          if (effect_op.start_addr) {
+            result +=
+                std::format(" start={}", FormatOperand(*effect_op.start_addr));
+          }
+          if (effect_op.end_addr) {
+            result +=
+                std::format(" end={}", FormatOperand(*effect_op.end_addr));
+          }
+          return result;
         } else {
           return "unknown_effect";
         }

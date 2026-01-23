@@ -311,6 +311,71 @@ auto LowerCallExpression(
               .data = hir::SystemCallExpressionData{hir::ValuePlusargsData{
                   .format = format_expr, .output = output_expr}}});
     }
+    if (name == "$readmemh" || name == "$readmemb" || name == "$writememh" ||
+        name == "$writememb") {
+      bool is_read = (name == "$readmemh" || name == "$readmemb");
+      bool is_hex = (name == "$readmemh" || name == "$writememh");
+
+      if (call.arguments().size() < 2 || call.arguments().size() > 4) {
+        ctx->ErrorFmt(span, "{} expects 2-4 arguments", name);
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower filename (arg 0)
+      hir::ExpressionId filename =
+          LowerExpression(*call.arguments()[0], registrar, ctx);
+      if (!filename) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower target lvalue (arg 1) - unwrap AssignmentExpression if present
+      const slang::ast::Expression* target_arg = call.arguments()[1];
+      hir::ExpressionId target;
+      if (target_arg->kind == slang::ast::ExpressionKind::Assignment) {
+        const auto& assign = target_arg->as<slang::ast::AssignmentExpression>();
+        target = LowerExpression(assign.left(), registrar, ctx);
+      } else {
+        target = LowerExpression(*target_arg, registrar, ctx);
+      }
+      if (!target) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Lower optional start/end address args
+      std::optional<hir::ExpressionId> start_addr;
+      std::optional<hir::ExpressionId> end_addr;
+      if (call.arguments().size() >= 3) {
+        hir::ExpressionId addr =
+            LowerExpression(*call.arguments()[2], registrar, ctx);
+        if (!addr) {
+          return hir::kInvalidExpressionId;
+        }
+        start_addr = addr;
+      }
+      if (call.arguments().size() >= 4) {
+        hir::ExpressionId addr =
+            LowerExpression(*call.arguments()[3], registrar, ctx);
+        if (!addr) {
+          return hir::kInvalidExpressionId;
+        }
+        end_addr = addr;
+      }
+
+      TypeId result_type =
+          ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{hir::MemIOData{
+                  .is_read = is_read,
+                  .is_hex = is_hex,
+                  .filename = filename,
+                  .target = target,
+                  .start_addr = start_addr,
+                  .end_addr = end_addr}}});
+    }
     return LowerSystemCall(call, registrar, ctx);
   }
 

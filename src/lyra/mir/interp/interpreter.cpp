@@ -154,6 +154,16 @@ struct StorageCollector {
                           Visit(arg, arena);
                         }
                       },
+                      [&](const MemIOEffect& m) -> void {
+                        Visit(arena[m.target], arena);
+                        Visit(m.filename, arena);
+                        if (m.start_addr) {
+                          Visit(*m.start_addr, arena);
+                        }
+                        if (m.end_addr) {
+                          Visit(*m.end_addr, arena);
+                        }
+                      },
                   },
                   i.op);
             },
