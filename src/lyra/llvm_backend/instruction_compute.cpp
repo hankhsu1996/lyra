@@ -760,11 +760,14 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
   return std::visit(
       Overloaded{
           [&](const Constant& c) {
-            return IsPackedFourState(types[c.type], types);
+            const Type& type = types[c.type];
+            return IsPacked(type) && IsPackedFourState(type, types);
           },
           [&](mir::PlaceId place_id) {
             const auto& place = arena[place_id];
-            return IsPackedFourState(types[place.root.type], types);
+            TypeId type_id = mir::TypeOfPlace(types, place);
+            const Type& type = types[type_id];
+            return IsPacked(type) && IsPackedFourState(type, types);
           },
       },
       operand.payload);
@@ -1089,6 +1092,30 @@ auto LowerBinaryRvalue4State(
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
   auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+
+  // Unpacked array aggregate construction: early-exit before
+  // ValidateAndGetTypeInfo
+  if (std::holds_alternative<mir::AggregateRvalueInfo>(compute.value.info)) {
+    const auto& arena = context.GetMirArena();
+    const Type& target_type =
+        types[mir::TypeOfPlace(types, arena[compute.target])];
+    if (target_type.Kind() == TypeKind::kUnpackedArray) {
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      llvm::Type* arr_type = context.GetPlaceLlvmType(compute.target);
+      llvm::Type* elem_type = arr_type->getArrayElementType();
+
+      llvm::Value* aggregate = llvm::UndefValue::get(arr_type);
+      for (size_t i = 0; i < compute.value.operands.size(); ++i) {
+        llvm::Value* elem = LowerOperandAsStorage(
+            context, compute.value.operands[i], elem_type);
+        aggregate = builder.CreateInsertValue(
+            aggregate, elem, {static_cast<unsigned>(i)});
+      }
+      builder.CreateStore(aggregate, target_ptr);
+      return;
+    }
+  }
 
   PlaceTypeInfo type_info = ValidateAndGetTypeInfo(context, compute.target);
 

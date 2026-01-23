@@ -19,7 +19,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -85,15 +84,16 @@ void InitializeDesignState(
   auto* zero = llvm::ConstantAggregateZero::get(design_type);
   builder.CreateStore(zero, design_state);
 
-  // Overwrite 4-state slots with X encoding
+  // Overwrite 4-state slots with X encoding (scalar packed types only)
   for (const auto& slot : slots) {
-    if (!IsFourStateType(slot.type_id, types)) {
+    const Type& type = types[slot.type_id];
+    if (!IsPacked(type) || !IsPackedFourState(type, types)) {
       continue;
     }
     uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
     auto* field_type = design_type->getElementType(field_index);
     auto* struct_type = llvm::cast<llvm::StructType>(field_type);
-    uint32_t semantic_width = PackedBitWidth(types[slot.type_id], types);
+    uint32_t semantic_width = PackedBitWidth(type, types);
     auto* slot_ptr =
         builder.CreateStructGEP(design_type, design_state, field_index);
     StoreFourStateX(builder, slot_ptr, struct_type, semantic_width);
@@ -108,7 +108,6 @@ void InitializeProcessState(
   auto* state_type = context.GetProcessStateType();
   auto* header_type = context.GetHeaderType();
   const auto& types = context.GetTypeArena();
-  const auto& arena = context.GetMirArena();
 
   // Use aggregate zero for the entire state
   auto* zero = llvm::ConstantAggregateZero::get(state_type);
@@ -125,17 +124,17 @@ void InitializeProcessState(
   const auto& frame_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()].frame;
 
-  for (mir::PlaceId place_id : frame_layout.places) {
-    const auto& place = arena[place_id];
-    if (!IsFourStateType(place.root.type, types)) {
+  for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
+    TypeId type_id = frame_layout.root_types[i];
+    const Type& type = types[type_id];
+    // Only scalar packed types get X initialization; aggregates use zero
+    if (!IsPacked(type) || !IsPackedFourState(type, types)) {
       continue;
     }
-    uint32_t field_index = context.GetFrameFieldIndex(place_id);
-    auto* field_type = frame_type->getElementType(field_index);
+    auto* field_type = frame_type->getElementType(i);
     auto* struct_type = llvm::cast<llvm::StructType>(field_type);
-    uint32_t semantic_width = PackedBitWidth(types[place.root.type], types);
-    auto* field_ptr =
-        builder.CreateStructGEP(frame_type, frame_ptr, field_index);
+    uint32_t semantic_width = PackedBitWidth(type, types);
+    auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
     StoreFourStateX(builder, field_ptr, struct_type, semantic_width);
   }
 }

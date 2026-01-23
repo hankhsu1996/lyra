@@ -465,9 +465,11 @@ auto Context::GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t {
 }
 
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
+  const auto& place = arena_[place_id];
+  PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
   const auto& frame = layout_.processes[current_process_index_].frame;
-  auto it = frame.place_to_field.find(place_id);
-  if (it == frame.place_to_field.end()) {
+  auto it = frame.root_to_field.find(key);
+  if (it == frame.root_to_field.end()) {
     throw std::runtime_error("frame place not found in layout");
   }
   return it->second;
@@ -586,6 +588,10 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
       return GetFourStateStructType(*llvm_context_, width);
     }
     return GetLlvmStorageType(*llvm_context_, width);
+  }
+
+  if (type.Kind() == TypeKind::kUnpackedArray) {
+    return GetLlvmTypeForTypeId(*llvm_context_, type_id, types_);
   }
 
   throw common::UnsupportedErrorException(

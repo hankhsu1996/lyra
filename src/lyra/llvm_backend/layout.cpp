@@ -216,22 +216,38 @@ auto CollectProcessPlaces(const mir::Process& process)
   return places;
 }
 
-// Collect kLocal/kTemp places for a specific process, sorted by PlaceId
-auto CollectFramePlaces(const mir::Process& process, const mir::Arena& arena)
-    -> std::vector<mir::PlaceId> {
+struct RootInfo {
+  PlaceRootKey key;
+  TypeId type;
+};
+
+// Collect unique roots for frame layout, de-duplicating projected places
+auto CollectFrameRoots(const mir::Process& process, const mir::Arena& arena)
+    -> std::vector<RootInfo> {
   auto all_places = CollectProcessPlaces(process);
 
-  std::vector<mir::PlaceId> result;
+  std::unordered_map<PlaceRootKey, TypeId, PlaceRootKeyHash> seen;
   for (mir::PlaceId place_id : all_places) {
     const auto& place = arena[place_id];
-    if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
-      result.push_back(place_id);
+    if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+      continue;
     }
+    PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
+    seen.emplace(key, place.root.type);
   }
 
-  // Sort by PlaceId value for deterministic ordering
-  std::ranges::sort(
-      result, [](mir::PlaceId a, mir::PlaceId b) { return a.value < b.value; });
+  // Sort by (kind, id) for deterministic ordering
+  std::vector<RootInfo> result;
+  result.reserve(seen.size());
+  for (const auto& [key, type] : seen) {
+    result.push_back(RootInfo{.key = key, .type = type});
+  }
+  std::ranges::sort(result, [](const RootInfo& a, const RootInfo& b) {
+    if (a.key.kind != b.key.kind) {
+      return a.key.kind < b.key.kind;
+    }
+    return a.key.id < b.key.id;
+  });
   return result;
 }
 
@@ -284,22 +300,19 @@ auto BuildDesignLayout(
   return layout;
 }
 
-// Build FrameLayout for a process
+// Build FrameLayout from de-duplicated roots
 auto BuildFrameLayout(
-    const std::vector<mir::PlaceId>& frame_places, const mir::Arena& arena,
-    const TypeArena& types, llvm::LLVMContext& ctx, size_t process_index)
-    -> FrameLayout {
+    const std::vector<RootInfo>& roots, const TypeArena& types,
+    llvm::LLVMContext& ctx, size_t process_index) -> FrameLayout {
   FrameLayout layout;
 
   std::vector<llvm::Type*> field_types;
 
-  for (size_t i = 0; i < frame_places.size(); ++i) {
-    mir::PlaceId place_id = frame_places[i];
-    layout.places.push_back(place_id);
-    layout.place_to_field[place_id] = static_cast<uint32_t>(i);
-
-    const auto& place = arena[place_id];
-    field_types.push_back(GetLlvmTypeForTypeId(ctx, place.root.type, types));
+  for (size_t i = 0; i < roots.size(); ++i) {
+    const auto& root = roots[i];
+    layout.root_types.push_back(root.type);
+    layout.root_to_field[root.key] = static_cast<uint32_t>(i);
+    field_types.push_back(GetLlvmTypeForTypeId(ctx, root.type, types));
   }
 
   std::string name = std::format("ProcessFrame{}", process_index);
@@ -360,11 +373,11 @@ auto BuildLayout(
     ProcessLayout proc_layout;
     proc_layout.process_index = i;
 
-    // Collect frame places
-    auto frame_places = CollectFramePlaces(process, arena);
+    // Collect frame roots (de-duplicated by root identity)
+    auto frame_roots = CollectFrameRoots(process, arena);
 
     // Build frame layout
-    proc_layout.frame = BuildFrameLayout(frame_places, arena, types, ctx, i);
+    proc_layout.frame = BuildFrameLayout(frame_roots, types, ctx, i);
 
     // Build process state type
     proc_layout.state_type = BuildProcessStateType(

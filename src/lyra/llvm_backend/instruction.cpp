@@ -219,6 +219,13 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
+  // Unpacked array: load source aggregate and store
+  if (type.Kind() == TypeKind::kUnpackedArray) {
+    llvm::Value* val = LowerOperandRaw(context, assign.source);
+    builder.CreateStore(val, target_ptr);
+    return;
+  }
+
   // 4-state target: construct {value, unknown=0} struct
   if (storage_type->isStructTy()) {
     auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
