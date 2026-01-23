@@ -27,9 +27,14 @@ suites:
       - datatypes/unpacked_arrays.yaml
       - datatypes/unpacked_array_constants.yaml
       - datatypes/arbitrary_width.yaml
+      - datatypes/enum.yaml
+      - datatypes/variables.yaml
+      - datatypes/typedef.yaml
+      - datatypes/wide_integral/packed_2d.yaml
       - processes/initial.yaml
       - processes/delay.yaml
       - processes/wait_event.yaml
+      - processes/event_triggers.yaml
 
   mir_dev:
     backend: mir
