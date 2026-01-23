@@ -70,9 +70,9 @@ The `run`, `check`, and `dump` commands accept these options:
 | Option                    | Description                                  |
 | ------------------------- | -------------------------------------------- |
 | `--top <module>`          | Top module name                              |
-| `-I, --include-directory` | Add include search path                      |
-| `-D,--define-macro`       | Define preprocessor macro (e.g., `-DDEBUG`)  |
-| `-W<warning>`             | Warning control (e.g., `-Wno-unused`)        |
+| `-I, --include-directory` | Add include search path (repeatable)         |
+| `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)  |
+| `-W <warn>`               | Warning control (e.g., `-Wno-unused`)        |
 | `-f <file>`               | Command file (paths relative to CWD)         |
 | `-F <file>`               | Command file (paths relative to file itself) |
 | `<files...>`              | Source files (positional)                    |

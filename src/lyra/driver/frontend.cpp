@@ -66,9 +66,10 @@ auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
     diag_client->showColors(true);
     diag_engine.addClient(diag_client);
 
-    if (!input.warnings.empty()) {
-      diag_engine.setWarningOptions(input.warnings);
-    }
+    auto warnings = input.warnings;
+    // Warnings that produce invalid AST nodes must be errors
+    warnings.emplace_back("error=finish-num");
+    diag_engine.setWarningOptions(warnings);
 
     for (const auto& diag : diagnostics) {
       diag_engine.issue(diag);

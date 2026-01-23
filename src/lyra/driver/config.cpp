@@ -116,6 +116,17 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
     }
   }
 
+  // [diagnostics] section (optional)
+  if (auto diagnostics = tbl["diagnostics"]) {
+    if (auto* arr = diagnostics["warnings"].as_array()) {
+      for (const auto& elem : *arr) {
+        if (auto str = elem.value<std::string>()) {
+          config.warnings.push_back(*str);
+        }
+      }
+    }
+  }
+
   // [build] section (optional)
   if (auto build = tbl["build"]) {
     if (auto out_dir = build["out_dir"].value<std::string>()) {

@@ -103,8 +103,12 @@ auto ParseCommandFile(const fs::path& path, bool relative_to_file)
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
   cmd.add_argument("--top").help("Top module name");
-  cmd.add_argument("-I").append().help("Include search path (repeatable)");
-  cmd.add_argument("-D").append().help("Preprocessor define (repeatable)");
+  cmd.add_argument("-I", "--include-directory")
+      .append()
+      .help("Include search path (repeatable)");
+  cmd.add_argument("-D", "--define-macro")
+      .append()
+      .help("Preprocessor define (repeatable)");
   cmd.add_argument("-W").append().help("Warning flag (repeatable)");
   cmd.add_argument("-f").append().help("Command file (paths relative to CWD)");
   cmd.add_argument("-F").append().help(
@@ -181,6 +185,7 @@ auto BuildInput(
   if (config) {
     input.incdir = config->incdir;
     input.defines = config->defines;
+    input.warnings = config->warnings;
   }
   input.incdir.insert(
       input.incdir.end(), cmdfile_incdirs.begin(), cmdfile_incdirs.end());
@@ -193,7 +198,7 @@ auto BuildInput(
     input.defines.insert(input.defines.end(), vals->begin(), vals->end());
   }
   if (auto vals = cmd.present<std::vector<std::string>>("-W")) {
-    input.warnings = *vals;
+    input.warnings.insert(input.warnings.end(), vals->begin(), vals->end());
   }
 
   return input;

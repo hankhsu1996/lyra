@@ -13,6 +13,7 @@ struct ProjectConfig {
   std::vector<std::string> files;
   std::vector<std::string> incdir;
   std::vector<std::string> defines;
+  std::vector<std::string> warnings;
   std::string out_dir = "out";
 
   // Directory where lyra.toml was found
