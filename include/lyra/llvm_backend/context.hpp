@@ -75,6 +75,9 @@ class Context {
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRunSimulationMulti() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDesignStoreAndNotify() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDesignStoreStringAndNotify() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
 
@@ -116,6 +119,10 @@ class Context {
   // frame_ptr: GEP to state->frame, points to this process's ProcessFrameN
   void SetFramePointer(llvm::Value* frame_ptr);
   [[nodiscard]] auto GetFramePointer() -> llvm::Value*;
+
+  // engine_ptr: loaded from state->header.engine, points to shared Engine
+  void SetEnginePointer(llvm::Value* engine_ptr);
+  [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
   // Get pointer to suspend record via GEP: state->header.suspend
   [[nodiscard]] auto GetSuspendRecordPointer() -> llvm::Value*;
@@ -182,6 +189,9 @@ class Context {
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
+  llvm::Function* lyra_run_simulation_multi_ = nullptr;
+  llvm::Function* lyra_design_store_and_notify_ = nullptr;
+  llvm::Function* lyra_design_store_string_and_notify_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
 
@@ -195,6 +205,7 @@ class Context {
   llvm::Value* state_ptr_ = nullptr;
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
+  llvm::Value* engine_ptr_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

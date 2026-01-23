@@ -1,6 +1,14 @@
 #include "lyra/lowering/ast_to_hir/statement.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <format>
+#include <iterator>
+#include <optional>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -15,10 +23,17 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/integral_constant.hpp"
+#include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_function.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/operator.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
@@ -1127,70 +1142,184 @@ auto LowerStatement(
       const auto& timed = stmt.as<slang::ast::TimedStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      if (timed.timing.kind != slang::ast::TimingControlKind::Delay) {
-        ctx->sink->Error(
-            span, std::format(
-                      "'{}' timing control not yet supported",
-                      toString(timed.timing.kind)));
-        return hir::kInvalidStatementId;
-      }
+      if (timed.timing.kind == slang::ast::TimingControlKind::Delay) {
+        const auto& delay_ctrl = timed.timing.as<slang::ast::DelayControl>();
 
-      const auto& delay_ctrl = timed.timing.as<slang::ast::DelayControl>();
-
-      // Extract delay value - must be a constant integer literal
-      const slang::ast::Expression& delay_expr = delay_ctrl.expr;
-      if (delay_expr.kind != slang::ast::ExpressionKind::IntegerLiteral) {
-        ctx->sink->Error(span, "only constant integer delays are supported");
-        return hir::kInvalidStatementId;
-      }
-
-      const auto& literal = delay_expr.as<slang::ast::IntegerLiteral>();
-      auto val = literal.getValue();
-      if (val.hasUnknown()) {
-        ctx->sink->Error(span, "delay value cannot contain X or Z");
-        return hir::kInvalidStatementId;
-      }
-
-      // Check for negative delay values
-      if (val.isSigned() && val.isNegative()) {
-        ctx->sink->Error(span, "delay value cannot be negative");
-        return hir::kInvalidStatementId;
-      }
-
-      auto ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
-
-      // Create delay statement
-      hir::StatementId delay_stmt = ctx->hir_arena->AddStatement(
-          hir::Statement{
-              .kind = hir::StatementKind::kDelay,
-              .span = span,
-              .data = hir::DelayStatementData{.ticks = ticks},
-          });
-
-      // If there's a body statement (e.g., #5 a = 1), lower it and wrap
-      // in a block with the delay
-      if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
-        auto body_result = LowerStatement(timed.stmt, registrar, ctx);
-        if (!body_result.has_value()) {
-          // Body is empty, just return delay
-          return delay_stmt;
-        }
-        if (!*body_result) {
+        // Extract delay value - must be a constant integer literal
+        const slang::ast::Expression& delay_expr = delay_ctrl.expr;
+        if (delay_expr.kind != slang::ast::ExpressionKind::IntegerLiteral) {
+          ctx->sink->Error(span, "only constant integer delays are supported");
           return hir::kInvalidStatementId;
         }
 
-        // Create block containing delay + body
-        return ctx->hir_arena->AddStatement(
+        const auto& literal = delay_expr.as<slang::ast::IntegerLiteral>();
+        auto val = literal.getValue();
+        if (val.hasUnknown()) {
+          ctx->sink->Error(span, "delay value cannot contain X or Z");
+          return hir::kInvalidStatementId;
+        }
+
+        if (val.isSigned() && val.isNegative()) {
+          ctx->sink->Error(span, "delay value cannot be negative");
+          return hir::kInvalidStatementId;
+        }
+
+        auto ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
+
+        hir::StatementId delay_stmt = ctx->hir_arena->AddStatement(
             hir::Statement{
-                .kind = hir::StatementKind::kBlock,
+                .kind = hir::StatementKind::kDelay,
                 .span = span,
-                .data =
-                    hir::BlockStatementData{
-                        .statements = {delay_stmt, *body_result}},
+                .data = hir::DelayStatementData{.ticks = ticks},
             });
+
+        if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
+          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          if (!body_result.has_value()) {
+            return delay_stmt;
+          }
+          if (!*body_result) {
+            return hir::kInvalidStatementId;
+          }
+          return ctx->hir_arena->AddStatement(
+              hir::Statement{
+                  .kind = hir::StatementKind::kBlock,
+                  .span = span,
+                  .data =
+                      hir::BlockStatementData{
+                          .statements = {delay_stmt, *body_result}},
+              });
+        }
+        return delay_stmt;
       }
 
-      return delay_stmt;
+      if (timed.timing.kind == slang::ast::TimingControlKind::SignalEvent) {
+        const auto& sig_event =
+            timed.timing.as<slang::ast::SignalEventControl>();
+
+        hir::ExpressionId signal_expr =
+            LowerExpression(sig_event.expr, registrar, ctx);
+        if (!signal_expr) {
+          return hir::kInvalidStatementId;
+        }
+
+        hir::EventEdgeKind edge = hir::EventEdgeKind::kNone;
+        switch (sig_event.edge) {
+          case slang::ast::EdgeKind::None:
+            edge = hir::EventEdgeKind::kNone;
+            break;
+          case slang::ast::EdgeKind::PosEdge:
+            edge = hir::EventEdgeKind::kPosedge;
+            break;
+          case slang::ast::EdgeKind::NegEdge:
+            edge = hir::EventEdgeKind::kNegedge;
+            break;
+          case slang::ast::EdgeKind::BothEdges:
+            edge = hir::EventEdgeKind::kBothEdges;
+            break;
+        }
+
+        std::vector<hir::EventTrigger> triggers;
+        triggers.push_back({.signal = signal_expr, .edge = edge});
+
+        hir::StatementId wait_stmt = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kEventWait,
+                .span = span,
+                .data =
+                    hir::EventWaitStatementData{
+                        .triggers = std::move(triggers)},
+            });
+
+        if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
+          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          if (!body_result.has_value()) {
+            return wait_stmt;
+          }
+          if (!*body_result) {
+            return hir::kInvalidStatementId;
+          }
+          return ctx->hir_arena->AddStatement(
+              hir::Statement{
+                  .kind = hir::StatementKind::kBlock,
+                  .span = span,
+                  .data =
+                      hir::BlockStatementData{
+                          .statements = {wait_stmt, *body_result}},
+              });
+        }
+        return wait_stmt;
+      }
+
+      if (timed.timing.kind == slang::ast::TimingControlKind::EventList) {
+        const auto& event_list =
+            timed.timing.as<slang::ast::EventListControl>();
+
+        std::vector<hir::EventTrigger> triggers;
+        for (const slang::ast::TimingControl* event : event_list.events) {
+          if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
+            ctx->sink->Error(
+                span, "only signal events are supported in event lists");
+            return hir::kInvalidStatementId;
+          }
+          const auto& sig_event = event->as<slang::ast::SignalEventControl>();
+
+          hir::ExpressionId signal_expr =
+              LowerExpression(sig_event.expr, registrar, ctx);
+          if (!signal_expr) {
+            return hir::kInvalidStatementId;
+          }
+
+          hir::EventEdgeKind edge = hir::EventEdgeKind::kNone;
+          switch (sig_event.edge) {
+            case slang::ast::EdgeKind::None:
+              edge = hir::EventEdgeKind::kNone;
+              break;
+            case slang::ast::EdgeKind::PosEdge:
+              edge = hir::EventEdgeKind::kPosedge;
+              break;
+            case slang::ast::EdgeKind::NegEdge:
+              edge = hir::EventEdgeKind::kNegedge;
+              break;
+            case slang::ast::EdgeKind::BothEdges:
+              edge = hir::EventEdgeKind::kBothEdges;
+              break;
+          }
+          triggers.push_back({.signal = signal_expr, .edge = edge});
+        }
+
+        hir::StatementId wait_stmt = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kEventWait,
+                .span = span,
+                .data =
+                    hir::EventWaitStatementData{
+                        .triggers = std::move(triggers)},
+            });
+
+        if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
+          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          if (!body_result.has_value()) {
+            return wait_stmt;
+          }
+          if (!*body_result) {
+            return hir::kInvalidStatementId;
+          }
+          return ctx->hir_arena->AddStatement(
+              hir::Statement{
+                  .kind = hir::StatementKind::kBlock,
+                  .span = span,
+                  .data =
+                      hir::BlockStatementData{
+                          .statements = {wait_stmt, *body_result}},
+              });
+        }
+        return wait_stmt;
+      }
+
+      ctx->sink->Error(
+          span, "unsupported timing control kind (only #N and @ supported)");
+      return hir::kInvalidStatementId;
     }
 
     default:

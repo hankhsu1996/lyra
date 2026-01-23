@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/hir/routine.hpp"
@@ -13,6 +14,8 @@
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/sensitivity.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -70,6 +73,30 @@ auto LowerProcess(
   }
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
+
+  // For always_comb/always_latch: replace the Repeat terminator with
+  // Wait(sensitivity_triggers, resume=entry). This makes the process
+  // re-execute when any read design variable changes.
+  if (process.kind == hir::ProcessKind::kAlwaysComb ||
+      process.kind == hir::ProcessKind::kAlwaysLatch) {
+    mir::Process temp_process{
+        .kind = mir_kind,
+        .entry = mir::BasicBlockId{entry_idx.value},
+        .blocks = blocks,
+    };
+    auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
+
+    // Find the block with Repeat terminator and replace
+    for (auto& block : blocks) {
+      if (std::holds_alternative<mir::Repeat>(block.terminator.data)) {
+        block.terminator.data = mir::Wait{
+            .triggers = std::move(triggers),
+            .resume = mir::BasicBlockId{entry_idx.value},
+        };
+        break;
+      }
+    }
+  }
 
   mir::Process mir_process{
       .kind = mir_kind,

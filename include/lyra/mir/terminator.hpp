@@ -4,6 +4,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -63,8 +64,17 @@ struct Delay {
   BasicBlockId resume = {};  // Block to resume after delay
 };
 
+// A single trigger in a Wait terminator.
+struct WaitTrigger {
+  SlotId signal;
+  runtime::EdgeKind edge = runtime::EdgeKind::kAnyChange;
+};
+
 // Event wait suspension (requires scheduler).
-struct Wait {};
+struct Wait {
+  std::vector<WaitTrigger> triggers;  // OR semantics
+  BasicBlockId resume = {};           // Block to resume after trigger fires
+};
 
 // Return from function.
 struct Return {};

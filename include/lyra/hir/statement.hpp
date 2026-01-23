@@ -27,6 +27,7 @@ enum class StatementKind {
   kTerminate,
   kReturn,
   kDelay,
+  kEventWait,
 };
 
 // unique/unique0/priority qualifier for if and case statements
@@ -164,13 +165,34 @@ struct DelayStatementData {
   auto operator==(const DelayStatementData&) const -> bool = default;
 };
 
+// Edge kind for event triggers (LRM 9.4.2)
+enum class EventEdgeKind : uint8_t {
+  kNone,       // @(signal) — any change
+  kPosedge,    // @(posedge signal)
+  kNegedge,    // @(negedge signal)
+  kBothEdges,  // @(edge signal)
+};
+
+struct EventTrigger {
+  ExpressionId signal;
+  EventEdgeKind edge = EventEdgeKind::kNone;
+
+  auto operator==(const EventTrigger&) const -> bool = default;
+};
+
+struct EventWaitStatementData {
+  std::vector<EventTrigger> triggers;  // OR semantics
+
+  auto operator==(const EventWaitStatementData&) const -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
     ContinueStatementData, TerminateStatementData, ReturnStatementData,
-    DelayStatementData>;
+    DelayStatementData, EventWaitStatementData>;
 
 struct Statement {
   StatementKind kind;

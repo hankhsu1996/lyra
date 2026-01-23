@@ -1,19 +1,66 @@
 #include "lyra/llvm_backend/instruction.hpp"
 
+#include <cstdint>
+#include <variant>
+
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Support/Casting.h"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute.hpp"
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
+
+// Check if a target place is a design slot (needs notify on write)
+auto IsDesignPlace(Context& context, mir::PlaceId place_id) -> bool {
+  const auto& place = context.GetMirArena()[place_id];
+  return place.root.kind == mir::PlaceRoot::Kind::kDesign;
+}
+
+// Get the signal_id for a design place (slot index)
+auto GetSignalId(Context& context, mir::PlaceId place_id) -> uint32_t {
+  const auto& place = context.GetMirArena()[place_id];
+  return static_cast<uint32_t>(place.root.id);
+}
+
+// Store a non-string value to a design slot with change notification.
+// new_value: the LLVM value to store (integer or 4-state struct)
+// target_ptr: pointer to the design slot
+// storage_type: LLVM type of the stored value
+void StoreDesignWithNotify(
+    Context& context, llvm::Value* new_value, llvm::Value* target_ptr,
+    llvm::Type* storage_type, mir::PlaceId target_place) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  // Compute byte size from storage type
+  auto byte_size = static_cast<uint32_t>(
+      context.GetModule().getDataLayout().getTypeAllocSize(storage_type));
+  auto signal_id = GetSignalId(context, target_place);
+
+  // Store new value to a temp alloca (notify helper reads from pointer)
+  auto* temp = builder.CreateAlloca(storage_type, nullptr, "notify_tmp");
+  builder.CreateStore(new_value, temp);
+
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  builder.CreateCall(
+      context.GetLyraDesignStoreAndNotify(),
+      {context.GetEnginePointer(), target_ptr, temp,
+       llvm::ConstantInt::get(i32_ty, byte_size),
+       llvm::ConstantInt::get(i32_ty, signal_id)});
+}
 
 // Read-modify-write for BitRangeProjection assignment.
 // Clears the target bit range in the base value, then OR's in the new value.
@@ -77,11 +124,15 @@ void StoreBitRange(
     auto* result_unk =
         builder.CreateOr(cleared_unk, new_unk_shifted, "rmw.unk");
 
-    // Pack and store
+    // Pack and store (with notify if design place)
     llvm::Value* packed = llvm::UndefValue::get(base_struct);
     packed = builder.CreateInsertValue(packed, result_val, 0);
     packed = builder.CreateInsertValue(packed, result_unk, 1);
-    builder.CreateStore(packed, ptr);
+    if (IsDesignPlace(context, target)) {
+      StoreDesignWithNotify(context, packed, ptr, base_type, target);
+    } else {
+      builder.CreateStore(packed, ptr);
+    }
     return;
   }
 
@@ -109,7 +160,11 @@ void StoreBitRange(
   src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
   auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
   auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  builder.CreateStore(result, ptr);
+  if (IsDesignPlace(context, target)) {
+    StoreDesignWithNotify(context, result, ptr, base_type, target);
+  } else {
+    builder.CreateStore(result, ptr);
+  }
 }
 
 void LowerAssign(Context& context, const mir::Assign& assign) {
@@ -134,21 +189,33 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
 
   // Handle string assignment with reference counting
   if (type.Kind() == TypeKind::kString) {
-    // 1. Release old value in slot
-    auto* old_val = builder.CreateLoad(storage_type, target_ptr);
-    builder.CreateCall(context.GetLyraStringRelease(), {old_val});
-
-    // 2. Get new value
+    // 1. Get new value
     llvm::Value* new_val = LowerOperand(context, assign.source);
 
-    // 3. If source is a place reference (borrowed), retain to get owned
+    // 2. If source is a place reference (borrowed), retain to get owned
     if (std::holds_alternative<mir::PlaceId>(assign.source.payload)) {
       new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
     }
-    // else: source is literal, already owned +1 from LyraStringFromLiteral
 
-    // 4. Store owned value (slot now owns)
-    builder.CreateStore(new_val, target_ptr);
+    if (IsDesignPlace(context, assign.target)) {
+      // 3. Load old value before helper overwrites it
+      auto* old_val = builder.CreateLoad(storage_type, target_ptr);
+      // 4. Store + notify via helper
+      auto signal_id = GetSignalId(context, assign.target);
+      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+      builder.CreateCall(
+          context.GetLyraDesignStoreStringAndNotify(),
+          {context.GetEnginePointer(), target_ptr, new_val,
+           llvm::ConstantInt::get(i32_ty, signal_id)});
+      // 5. Release old value
+      builder.CreateCall(context.GetLyraStringRelease(), {old_val});
+    } else {
+      // 3. Release old value in slot
+      auto* old_val = builder.CreateLoad(storage_type, target_ptr);
+      builder.CreateCall(context.GetLyraStringRelease(), {old_val});
+      // 4. Store owned value (slot now owns)
+      builder.CreateStore(new_val, target_ptr);
+    }
     return;
   }
 
@@ -179,7 +246,12 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     llvm::Value* packed = llvm::UndefValue::get(struct_type);
     packed = builder.CreateInsertValue(packed, val, 0);
     packed = builder.CreateInsertValue(packed, unk, 1);
-    builder.CreateStore(packed, target_ptr);
+    if (IsDesignPlace(context, assign.target)) {
+      StoreDesignWithNotify(
+          context, packed, target_ptr, storage_type, assign.target);
+    } else {
+      builder.CreateStore(packed, target_ptr);
+    }
     return;
   }
 
@@ -196,8 +268,13 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     }
   }
 
-  // Store to the place
-  builder.CreateStore(source_value, target_ptr);
+  // Store to the place (with notify if design)
+  if (IsDesignPlace(context, assign.target)) {
+    StoreDesignWithNotify(
+        context, source_value, target_ptr, storage_type, assign.target);
+  } else {
+    builder.CreateStore(source_value, target_ptr);
+  }
 }
 
 void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
@@ -251,7 +328,12 @@ void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
       llvm::Value* packed = llvm::UndefValue::get(struct_type);
       packed = builder.CreateInsertValue(packed, val, 0);
       packed = builder.CreateInsertValue(packed, unk, 1);
-      builder.CreateStore(packed, target_ptr);
+      if (IsDesignPlace(context, guarded.target)) {
+        StoreDesignWithNotify(
+            context, packed, target_ptr, storage_type, guarded.target);
+      } else {
+        builder.CreateStore(packed, target_ptr);
+      }
     } else {
       // 2-state target
       llvm::Value* src = source_raw;
@@ -265,7 +347,12 @@ void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
           storage_type->isIntegerTy()) {
         src = builder.CreateZExtOrTrunc(src, storage_type, "ga.fit");
       }
-      builder.CreateStore(src, target_ptr);
+      if (IsDesignPlace(context, guarded.target)) {
+        StoreDesignWithNotify(
+            context, src, target_ptr, storage_type, guarded.target);
+      } else {
+        builder.CreateStore(src, target_ptr);
+      }
     }
   }
   builder.CreateBr(skip_bb);

@@ -6,6 +6,8 @@
 #include <queue>
 #include <vector>
 
+#include "lyra/common/edge_kind.hpp"
+
 namespace lyra::runtime {
 
 // Simulation time in ticks (timescale-independent).
@@ -25,13 +27,6 @@ struct ProcessHandle {
 struct ResumePoint {
   uint32_t block_index = 0;
   uint32_t instruction_index = 0;
-};
-
-// Edge types for event-driven scheduling (@posedge, @negedge, @*).
-enum class EdgeKind : uint8_t {
-  kPosedge,
-  kNegedge,
-  kAnyChange,
 };
 
 // Signal identifier for trigger subscription.
@@ -92,9 +87,14 @@ class Engine {
   void Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal, EdgeKind edge);
 
+  // Schedule process to resume in the next delta cycle (same time).
+  // Used for kRepeat terminator.
+  void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
+
   // Notify that a signal changed (called after stores).
-  // Wakes up any processes subscribed to this signal.
-  void NotifyChange(SignalId signal, bool old_lsb, bool new_lsb);
+  // Wakes up subscribed processes into the next delta cycle.
+  void NotifyChange(
+      SignalId signal, bool old_lsb, bool new_lsb, bool value_changed);
 
   // Run simulation until completion or time limit.
   // Returns final simulation time.
@@ -118,6 +118,9 @@ class Engine {
   // Region queues for current time slot
   std::vector<ScheduledEvent> active_queue_;
   std::queue<ScheduledEvent> inactive_queue_;
+
+  // Next-delta queue: events scheduled for the next delta cycle
+  std::vector<ScheduledEvent> pending_queue_;
 
   // Trigger subscriptions: signal → waiting processes
   struct Waiter {

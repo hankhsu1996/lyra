@@ -2,10 +2,31 @@
 
 #include <cassert>
 #include <format>
+#include <ostream>
+#include <string>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/severity.hpp"
+#include "lyra/common/symbol_table.hpp"
+#include "lyra/common/symbol_types.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/hir/arena.hpp"
+#include "lyra/hir/design.hpp"
+#include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/module.hpp"
+#include "lyra/hir/operator.hpp"
+#include "lyra/hir/package.hpp"
+#include "lyra/hir/routine.hpp"
+#include "lyra/hir/statement.hpp"
+#include "lyra/hir/system_call.hpp"
 
 namespace lyra::hir {
 
@@ -389,6 +410,11 @@ void Dumper::Dump(StatementId id) {
     case StatementKind::kDelay: {
       const auto& data = std::get<DelayStatementData>(stmt.data);
       *out_ << std::format("#{};\n", data.ticks);
+      break;
+    }
+
+    case StatementKind::kEventWait: {
+      *out_ << "@(...);\n";
       break;
     }
   }

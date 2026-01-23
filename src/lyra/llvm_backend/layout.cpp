@@ -1,17 +1,29 @@
 #include "lyra/llvm_backend/layout.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <unordered_set>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -222,22 +234,35 @@ auto CollectFramePlaces(const mir::Process& process, const mir::Arena& arena)
   return result;
 }
 
-// Build SuspendRecord struct type
-auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+// Build WaitTriggerRecord struct type: {i32 signal_id, i8 edge, [3 x i8] pad}
+auto BuildWaitTriggerRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   return llvm::StructType::create(
       ctx,
-      {llvm::Type::getInt8Ty(ctx),    // tag
-       llvm::Type::getInt64Ty(ctx),   // delay_ticks
-       llvm::Type::getInt32Ty(ctx)},  // resume_block
+      {llvm::Type::getInt32Ty(ctx),                           // signal_id
+       llvm::Type::getInt8Ty(ctx),                            // edge
+       llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 3)},  // padding
+      "WaitTriggerRecord");
+}
+
+// Build SuspendRecord struct type
+auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* trigger_type = BuildWaitTriggerRecordType(ctx);
+  return llvm::StructType::create(
+      ctx,
+      {llvm::Type::getInt8Ty(ctx),              // 0: tag
+       llvm::Type::getInt64Ty(ctx),             // 1: delay_ticks
+       llvm::Type::getInt32Ty(ctx),             // 2: resume_block
+       llvm::Type::getInt32Ty(ctx),             // 3: num_triggers
+       llvm::ArrayType::get(trigger_type, 4)},  // 4: triggers[4]
       "SuspendRecord");
 }
 
-// Build ProcessStateHeader struct type: {SuspendRecord, DesignState*}
+// Build ProcessStateHeader: {SuspendRecord, DesignState*, Engine*}
 auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
     -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   return llvm::StructType::create(
-      ctx, {suspend_type, ptr_ty}, "ProcessStateHeader");
+      ctx, {suspend_type, ptr_ty, ptr_ty}, "ProcessStateHeader");
 }
 
 // Build DesignLayout from slot info
@@ -329,7 +354,7 @@ auto BuildLayout(
     const auto& mir_module = std::get<mir::Module>(element);
     for (mir::ProcessId proc_id : mir_module.processes) {
       const auto& process = arena[proc_id];
-      if (process.kind == mir::ProcessKind::kOnce) {
+      if (process.kind != mir::ProcessKind::kFinal) {
         layout.process_ids.push_back(proc_id);
       }
     }

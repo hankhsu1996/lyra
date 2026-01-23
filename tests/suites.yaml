@@ -23,6 +23,7 @@ suites:
       - datatypes/wide_integral/conversions.yaml
       - processes/initial.yaml
       - processes/delay.yaml
+      - processes/wait_event.yaml
 
   mir_dev:
     backend: mir
