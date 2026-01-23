@@ -3,7 +3,6 @@
 #include <expected>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_manager.hpp"
@@ -30,7 +29,9 @@ struct CompilationError {
   void Print() const;
 };
 
-auto CompileToMir(const std::vector<std::string>& files)
+struct CompilationInput;
+
+auto CompileToMir(const CompilationInput& input)
     -> std::expected<CompilationResult, CompilationError>;
 
 }  // namespace lyra::driver

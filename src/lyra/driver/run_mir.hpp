@@ -1,10 +1,9 @@
 #pragma once
 
-#include <string>
-#include <vector>
-
 namespace lyra::driver {
 
-auto RunMir(const std::vector<std::string>& files) -> int;
+struct CompilationInput;
+
+auto RunMir(const CompilationInput& input) -> int;
 
 }  // namespace lyra::driver

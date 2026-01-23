@@ -2,14 +2,15 @@
 
 #include <iostream>
 
+#include "frontend.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
 namespace lyra::driver {
 
-auto RunMir(const std::vector<std::string>& files) -> int {
-  auto compilation = CompileToMir(files);
+auto RunMir(const CompilationInput& input) -> int {
+  auto compilation = CompileToMir(input);
   if (!compilation) {
     compilation.error().Print();
     return 1;

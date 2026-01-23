@@ -4,9 +4,9 @@
 
 namespace lyra::driver {
 
-auto CompileToMir(const std::vector<std::string>& files)
+auto CompileToMir(const CompilationInput& input)
     -> std::expected<CompilationResult, CompilationError> {
-  auto parse_result = LoadFiles(files);
+  auto parse_result = LoadFiles(input);
   if (!parse_result) {
     return std::unexpected(
         CompilationError::Simple("failed to parse input files"));
