@@ -15,7 +15,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                        |
 | `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API  |
 | `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
-| `docs/cpp-codegen.md`              | SV to C++ mapping, coroutine model                   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
 | `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands          |
@@ -62,11 +61,13 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
 ## Lyra CLI
 
 ```bash
-lyra run [files...]              # Run simulation (MIR backend, default)
-lyra run --backend=llvm [files]  # Run via LLVM lli (experimental)
-lyra dump hir <file.sv>          # Dump HIR representation
-lyra dump mir <file.sv>          # Dump MIR representation
-lyra dump llvm <file.sv>         # Dump LLVM IR
+lyra init [name]                 # Create a new project
+lyra run [files...]              # Run simulation (LLVM backend, default)
+lyra run --backend=mir [files]   # Run via MIR interpreter
+lyra check [files...]            # Check source files for errors
+lyra dump hir [files...]         # Dump HIR representation
+lyra dump mir [files...]         # Dump MIR representation
+lyra dump llvm [files...]        # Dump LLVM IR
 ```
 
 ## SystemVerilog Version

@@ -15,9 +15,6 @@ cd my_project
 
 # Run simulation
 lyra run
-
-# Or build without running
-lyra build
 ```
 
 ### Project Structure
@@ -25,10 +22,7 @@ lyra build
 ```
 my_project/
 ├── lyra.toml       # Project configuration
-├── my_project.sv   # SystemVerilog source
-└── out/            # Generated C++ project (after build)
-    ├── build/sim   # Compiled binary
-    └── ...
+└── my_project.sv   # SystemVerilog source
 ```
 
 ## Configuration (`lyra.toml`)
@@ -43,22 +37,21 @@ files = ["src/top.sv"]          # Required: source files
 incdir = ["include/"]           # Optional: include directories
 defines = ["DEBUG", "WIDTH=32"] # Optional: preprocessor defines
 
-[build]
-out_dir = "out"                # Optional: default "out"
-
 [diagnostics]
 warnings = ["no-unused"]       # Optional: warning control
 ```
 
 ## Commands
 
-| Command                   | Description                           |
-| ------------------------- | ------------------------------------- |
-| `lyra run [files]`        | Run simulation (MIR backend, default) |
-| `lyra run --backend=llvm` | Run simulation via LLVM lli           |
-| `lyra dump hir <file>`    | Dump HIR representation               |
-| `lyra dump mir <file>`    | Dump MIR representation               |
-| `lyra dump llvm <file>`   | Dump LLVM IR                          |
+| Command                  | Description                            |
+| ------------------------ | -------------------------------------- |
+| `lyra init [name]`       | Create a new project                   |
+| `lyra run [files]`       | Run simulation (LLVM backend, default) |
+| `lyra run --backend=mir` | Run simulation via MIR interpreter     |
+| `lyra check [files]`     | Check source files for errors          |
+| `lyra dump hir [files]`  | Dump HIR representation                |
+| `lyra dump mir [files]`  | Dump MIR representation                |
+| `lyra dump llvm [files]` | Dump LLVM IR                           |
 
 Commands can use either `lyra.toml` or CLI arguments (or both).
 
@@ -72,7 +65,7 @@ Example: `lyra -C path/to/project run`
 
 ### Project Command Options
 
-The `run`, `build`, `emit`, and `check` commands accept these options:
+The `run`, `check`, and `dump` commands accept these options:
 
 | Option                    | Description                                  |
 | ------------------------- | -------------------------------------------- |
@@ -92,8 +85,8 @@ Commands work without `lyra.toml` when source files are provided:
 # Check syntax without lyra.toml
 lyra check --top Top file.sv
 
-# Run simulation with interpreter
-lyra run -i --top Testbench pkg.sv dut.sv tb.sv
+# Run simulation with MIR interpreter
+lyra run --backend=mir --top Testbench pkg.sv dut.sv tb.sv
 
 # Include directories
 lyra check --top Top -I include/ src/*.sv
@@ -144,28 +137,6 @@ When both `lyra.toml` and CLI arguments are provided:
 | `-W`      | CLI merges with lyra.toml (additive) |
 | `<files>` | CLI replaces lyra.toml files         |
 
-### Output Structure (`lyra emit` -> `out/`)
-
-```
-out/
-├── CMakeLists.txt        # Build configuration
-├── CMakePresets.json     # Uses clang by default
-├── main.cpp              # Entry point
-├── include/
-│   ├── design/
-│   │   └── <module>.hpp  # Generated simulation code
-│   └── lyra/sdk/         # SDK headers (copied)
-```
-
-Build the generated project manually:
-
-```bash
-cd out
-cmake --preset default
-cmake --build build
-./build/sim
-```
-
 ### Dump Command
 
 Debug command to inspect internal representations:
@@ -176,59 +147,21 @@ lyra dump mir file.sv   # MIR (mid-level IR, execution semantics)
 lyra dump llvm file.sv  # LLVM IR (for LLVM backend)
 ```
 
-This is the only command that accepts file arguments directly.
+Like `run`, accepts `--top`, `-I`, `-D`, `-W`, and positional files.
 
 ## Backends
 
 Two execution backends:
 
-| Backend       | Path                        | Use Case              |
-| ------------- | --------------------------- | --------------------- |
-| MIR (default) | AST -> HIR -> MIR -> Interp | Full feature support  |
-| LLVM          | AST -> HIR -> MIR -> LLVM   | Experimental, limited |
+| Backend        | Path                        | Use Case                      |
+| -------------- | --------------------------- | ----------------------------- |
+| LLVM (default) | AST -> HIR -> MIR -> LLVM   | Production path               |
+| MIR            | AST -> HIR -> MIR -> Interp | Development, full feature set |
 
-The MIR interpreter is the default backend and supports the full feature set.
-The LLVM backend (`--backend=llvm`) is experimental and has limited feature support.
-It requires `lli` (LLVM interpreter) to be installed.
-
-## Internal Architecture
-
-### Library Structure
-
-```
-include/lyra/
-├── config/                # Project configuration
-│   └── project_config.hpp # lyra.toml parsing
-│
-├── interpreter/           # Interpreter backend
-│   └── interpreter.hpp    # Entry point
-│
-├── compiler/              # Compiler backend
-│   ├── compiler.hpp       # Entry point (codegen + compile + run)
-│   └── codegen.hpp        # Generates C++ from MIR
-│
-└── sdk/                   # Runtime for generated code
-    ├── sdk.hpp            # Umbrella header
-    ├── module.hpp         # Base class for modules
-    ├── scheduler.hpp      # Coroutine scheduler
-    └── ...
-```
-
-### Key Classes
-
-| Class           | Location       | Role                                 |
-| --------------- | -------------- | ------------------------------------ |
-| `ProjectConfig` | `config/`      | lyra.toml parsing                    |
-| `Interpreter`   | `interpreter/` | MIR -> LIR -> run                    |
-| `Compiler`      | `compiler/`    | MIR -> C++ -> compile -> run         |
-| `Codegen`       | `compiler/`    | Generates C++ source from MIR        |
-| `Module`        | `sdk/`         | Base class for generated modules     |
-| `Scheduler`     | `sdk/`         | Coroutine-based simulation scheduler |
+The LLVM backend is the default. The MIR interpreter (`--backend=mir`) supports the full feature set and is useful for development and testing.
 
 ## Design Decisions
 
-- **Default backend**: Codegen (production path)
-- **C++ standard**: C++23 (for coroutines, `<print>`)
-- **Preferred compiler**: Clang (better C++23 support than GCC)
-- **Build system for output**: CMake with presets
 - **Dual mode**: Commands work with lyra.toml, CLI arguments, or both
+- **Default backend**: LLVM (production path)
+- **MIR backend**: Full feature support, accessed via `--backend=mir`
