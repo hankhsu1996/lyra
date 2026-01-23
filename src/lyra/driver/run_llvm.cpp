@@ -18,7 +18,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/statement.hpp"
-#include "lyra/lowering/mir_to_llvm/lower.hpp"
+#include "lyra/llvm_backend/lower.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 

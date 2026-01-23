@@ -113,11 +113,11 @@ Check these before proceeding:
 
 **Files to modify:**
 
-| File                                  | Purpose                 |
-| ------------------------------------- | ----------------------- |
-| `src/lyra/lowering/mir_to_llvm/*.cpp` | Lowering logic          |
-| `include/lyra/runtime/*.hpp`          | Runtime API (if needed) |
-| `src/lyra/runtime/*.cpp`              | Runtime implementation  |
+| File                          | Purpose                 |
+| ----------------------------- | ----------------------- |
+| `src/lyra/llvm_backend/*.cpp` | Lowering logic          |
+| `include/lyra/runtime/*.hpp`  | Runtime API (if needed) |
+| `src/lyra/runtime/*.cpp`      | Runtime implementation  |
 
 **Test strategy:**
 
@@ -162,7 +162,7 @@ A brief specification covering:
 
 ### Implementation
 
-- Lowering: `src/lyra/lowering/mir_to_llvm/`
+- Lowering: `src/lyra/llvm_backend/`
 - Runtime: <if needed>
 
 ### Tests

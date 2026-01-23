@@ -1,4 +1,4 @@
-#include "lyra/lowering/mir_to_llvm/execution.hpp"
+#include "lyra/llvm_backend/execution.hpp"
 
 #include <iostream>
 

@@ -20,9 +20,9 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/lowering/mir_to_llvm/lower.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 

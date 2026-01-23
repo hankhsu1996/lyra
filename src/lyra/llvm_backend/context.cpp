@@ -1,11 +1,11 @@
-#include "lyra/lowering/mir_to_llvm/context.hpp"
+#include "lyra/llvm_backend/context.hpp"
 
 #include <format>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/lowering/mir_to_llvm/operand.hpp"
+#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 

@@ -1,4 +1,4 @@
-#include "lyra/lowering/mir_to_llvm/layout.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 
 #include <algorithm>
 #include <format>

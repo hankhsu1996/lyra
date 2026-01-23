@@ -1,10 +1,10 @@
-#include "lyra/lowering/mir_to_llvm/instruction_display.hpp"
+#include "lyra/llvm_backend/instruction_display.hpp"
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
-#include "lyra/lowering/mir_to_llvm/operand.hpp"
+#include "lyra/llvm_backend/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

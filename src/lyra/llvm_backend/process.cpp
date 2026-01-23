@@ -1,4 +1,4 @@
-#include "lyra/lowering/mir_to_llvm/process.hpp"
+#include "lyra/llvm_backend/process.hpp"
 
 #include <format>
 
@@ -6,7 +6,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/unsupported_error.hpp"
-#include "lyra/lowering/mir_to_llvm/instruction.hpp"
+#include "lyra/llvm_backend/instruction.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::mir_to_llvm {

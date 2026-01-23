@@ -1,7 +1,7 @@
 #pragma once
 
 #include "llvm/IR/Value.h"
-#include "lyra/lowering/mir_to_llvm/context.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
