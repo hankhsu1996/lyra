@@ -31,6 +31,7 @@ suites:
       - datatypes/variables.yaml
       - datatypes/typedef.yaml
       - datatypes/wide_integral/packed_2d.yaml
+      - datatypes/packed_2d.yaml
       - processes/initial.yaml
       - processes/delay.yaml
       - processes/wait_event.yaml
