@@ -183,6 +183,9 @@ class Interpreter {
   void ExecSeverityEffect(
       const ProcessState& state, const SeverityEffect& severity);
 
+  // Execute MemIOEffect ($readmemh/$readmemb/$writememh/$writememb)
+  void ExecMemIOEffect(ProcessState& state, const MemIOEffect& mem_io);
+
   // Execute instruction
   void ExecInstruction(ProcessState& state, const Instruction& inst);
 

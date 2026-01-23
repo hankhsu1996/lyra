@@ -215,6 +215,34 @@ void LowerSFormatEffect(
   builder.EmitAssign(target.place, mir::Operand::Use(tmp));
 }
 
+void LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder) {
+  Context& ctx = builder.GetContext();
+
+  mir::Operand filename = LowerExpression(data.filename, builder);
+  LvalueResult target = LowerLvalue(data.target, builder);
+  const hir::Expression& target_expr = (*ctx.hir_arena)[data.target];
+
+  std::optional<mir::Operand> start_addr;
+  std::optional<mir::Operand> end_addr;
+  if (data.start_addr) {
+    start_addr = LowerExpression(*data.start_addr, builder);
+  }
+  if (data.end_addr) {
+    end_addr = LowerExpression(*data.end_addr, builder);
+  }
+
+  mir::MemIOEffect effect{
+      .is_read = data.is_read,
+      .is_hex = data.is_hex,
+      .target = target.place,
+      .target_type = target_expr.type,
+      .filename = std::move(filename),
+      .start_addr = std::move(start_addr),
+      .end_addr = std::move(end_addr),
+  };
+  builder.EmitEffect(std::move(effect));
+}
+
 void LowerExpressionStatement(
     const hir::ExpressionStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
@@ -237,6 +265,8 @@ void LowerExpressionStatement(
               std::is_same_v<T, hir::ValuePlusargsData>) {
             // Plusargs always produce a value; evaluate and discard
             LowerExpression(data.expression, builder);
+          } else if constexpr (std::is_same_v<T, hir::MemIOData>) {
+            LowerMemIOEffect(call_data, builder);
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");

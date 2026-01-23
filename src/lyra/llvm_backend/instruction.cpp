@@ -283,6 +283,9 @@ void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
           [](const mir::SeverityEffect& /*severity*/) {
             // TODO(hankhsu): Handle severity effects
           },
+          [](const mir::MemIOEffect& /*mem_io*/) {
+            // TODO(hankhsu): Handle mem IO effects
+          },
       },
       effect_op);
 }

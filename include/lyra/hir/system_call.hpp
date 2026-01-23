@@ -58,8 +58,19 @@ struct ValuePlusargsData {
   auto operator==(const ValuePlusargsData&) const -> bool = default;
 };
 
+struct MemIOData {
+  bool is_read = false;  // readmem vs writemem
+  bool is_hex = false;   // hex vs binary
+  ExpressionId filename;
+  ExpressionId target;  // The memory array lvalue
+  std::optional<ExpressionId> start_addr;
+  std::optional<ExpressionId> end_addr;
+
+  auto operator==(const MemIOData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
-    TestPlusargsData, ValuePlusargsData>;
+    TestPlusargsData, ValuePlusargsData, MemIOData>;
 
 }  // namespace lyra::hir

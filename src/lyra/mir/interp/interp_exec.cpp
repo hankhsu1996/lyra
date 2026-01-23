@@ -1,5 +1,7 @@
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -12,9 +14,11 @@
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/mem_io.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -168,6 +172,7 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
       Overloaded{
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
           [&](const SeverityEffect& op) { ExecSeverityEffect(state, op); },
+          [&](const MemIOEffect& op) { ExecMemIOEffect(state, op); },
       },
       effect.op);
 }
@@ -224,6 +229,150 @@ void Interpreter::ExecSeverityEffect(
   std::string message = FormatMessage(typed_args, 'd', *types_, ctx);
 
   out << message << "\n";
+}
+
+void Interpreter::ExecMemIOEffect(
+    ProcessState& state, const MemIOEffect& mem_io) {
+  // Evaluate filename
+  RuntimeValue filename_val = EvalOperand(state, mem_io.filename);
+  if (!IsString(filename_val)) {
+    throw std::runtime_error("$readmem/$writemem: filename must be a string");
+  }
+  const std::string& filename = AsString(filename_val).value;
+
+  // Get array type info
+  const Type& arr_type = (*types_)[mem_io.target_type];
+  if (arr_type.Kind() != TypeKind::kUnpackedArray) {
+    throw std::runtime_error(
+        "$readmem/$writemem: target must be an unpacked array");
+  }
+  const auto& arr_info = arr_type.AsUnpackedArray();
+  const Type& elem_type = (*types_)[arr_info.element_type];
+  if (!IsPacked(elem_type)) {
+    throw std::runtime_error(
+        "$readmem/$writemem: array element must be a packed type");
+  }
+  uint32_t elem_width = PackedBitWidth(elem_type, *types_);
+  auto elem_count = static_cast<int64_t>(arr_info.range.Size());
+  int64_t min_addr = arr_info.range.Lower();
+  int64_t max_addr = min_addr + elem_count - 1;
+
+  // Evaluate optional start/end address
+  int64_t start_addr = min_addr;
+  int64_t end_addr = max_addr;
+  if (mem_io.start_addr) {
+    RuntimeValue addr_val = EvalOperand(state, *mem_io.start_addr);
+    if (!IsIntegral(addr_val)) {
+      throw std::runtime_error("$readmem/$writemem: address must be integral");
+    }
+    const auto& addr_int = AsIntegral(addr_val);
+    if (!addr_int.IsKnown()) {
+      throw std::runtime_error("$readmem/$writemem: address contains X/Z bits");
+    }
+    start_addr = static_cast<int64_t>(addr_int.value[0]);
+  }
+  if (mem_io.end_addr) {
+    RuntimeValue addr_val = EvalOperand(state, *mem_io.end_addr);
+    if (!IsIntegral(addr_val)) {
+      throw std::runtime_error("$readmem/$writemem: address must be integral");
+    }
+    const auto& addr_int = AsIntegral(addr_val);
+    if (!addr_int.IsKnown()) {
+      throw std::runtime_error("$readmem/$writemem: address contains X/Z bits");
+    }
+    end_addr = static_cast<int64_t>(addr_int.value[0]);
+  }
+
+  auto resolved_path = common::mem_io::ResolveMemPath(filename);
+  auto get_task_name = [&]() -> std::string_view {
+    if (mem_io.is_read) {
+      return mem_io.is_hex ? "$readmemh" : "$readmemb";
+    }
+    return mem_io.is_hex ? "$writememh" : "$writememb";
+  };
+  std::string_view task_name = get_task_name();
+
+  if (mem_io.is_read) {
+    // Read the file
+    std::ifstream file(resolved_path);
+    if (!file.is_open()) {
+      throw std::runtime_error(
+          std::format("{}: cannot open file '{}'", task_name, filename));
+    }
+    std::string content(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>());
+
+    // Read current array value
+    RuntimeValue arr_val = ReadPlace(state, mem_io.target);
+    if (!IsArray(arr_val)) {
+      throw std::runtime_error(
+          std::format("{}: target is not an array", task_name));
+    }
+    auto& arr = AsArray(arr_val);
+
+    int64_t current_addr = start_addr;
+    auto result = common::mem_io::ParseMemFile(
+        content, mem_io.is_hex, min_addr, max_addr, current_addr, end_addr,
+        task_name, [&](std::string_view token, int64_t addr) {
+          auto words_result = common::mem_io::ParseMemTokenToWords(
+              token, elem_width, mem_io.is_hex);
+          if (!words_result) {
+            throw std::runtime_error(
+                std::format("{}: {}", task_name, words_result.error()));
+          }
+          // Convert words to RuntimeIntegral
+          IntegralConstant ic;
+          ic.value = std::move(*words_result);
+          ic.unknown.resize(ic.value.size(), 0);
+          RuntimeValue elem_val = MakeIntegralFromConstant(ic, elem_width);
+
+          // Store to array element
+          auto index = static_cast<size_t>(addr - min_addr);
+          if (index < arr.elements.size()) {
+            arr.elements[index] = std::move(elem_val);
+          }
+        });
+
+    if (!result.success) {
+      throw std::runtime_error(std::format("{}: {}", task_name, result.error));
+    }
+
+    // Write back the modified array
+    StoreToPlace(state, mem_io.target, std::move(arr_val));
+  } else {
+    // Write mode: read array and write to file
+    RuntimeValue arr_val = ReadPlace(state, mem_io.target);
+    if (!IsArray(arr_val)) {
+      throw std::runtime_error(
+          std::format("{}: target is not an array", task_name));
+    }
+    const auto& arr = AsArray(arr_val);
+
+    std::ofstream file(resolved_path);
+    if (!file.is_open()) {
+      throw std::runtime_error(
+          std::format(
+              "{}: cannot open file '{}' for writing", task_name, filename));
+    }
+
+    for (int64_t addr = start_addr; addr <= end_addr; ++addr) {
+      auto index = static_cast<size_t>(addr - min_addr);
+      if (index >= arr.elements.size()) {
+        break;
+      }
+      const auto& elem = arr.elements[index];
+      if (!IsIntegral(elem)) {
+        continue;
+      }
+      const auto& integral = AsIntegral(elem);
+      std::vector<uint64_t> words = integral.value;
+      words.resize((elem_width + 63) / 64, 0);
+      std::string formatted =
+          common::mem_io::FormatMemWords(words, elem_width, mem_io.is_hex);
+      file << formatted << "\n";
+    }
+  }
 }
 
 void Interpreter::ExecGuardedAssign(
