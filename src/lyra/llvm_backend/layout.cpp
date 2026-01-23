@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -305,7 +306,6 @@ auto BuildFrameLayout(
     const std::vector<RootInfo>& roots, const TypeArena& types,
     llvm::LLVMContext& ctx, size_t process_index) -> FrameLayout {
   FrameLayout layout;
-
   std::vector<llvm::Type*> field_types;
 
   for (size_t i = 0; i < roots.size(); ++i) {
@@ -316,8 +316,6 @@ auto BuildFrameLayout(
   }
 
   std::string name = std::format("ProcessFrame{}", process_index);
-
-  // Empty struct needs sentinel for valid LLVM struct
   if (field_types.empty()) {
     layout.llvm_type =
         llvm::StructType::create(ctx, {llvm::Type::getInt8Ty(ctx)}, name);
