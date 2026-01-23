@@ -8,11 +8,7 @@ suites:
   llvm_dev:
     backend: llvm
     include_regex:
-      - operators/binary_integral.yaml
-      - operators/binary_string.yaml
-      - operators/unary.yaml
-      - operators/shift_overflow.yaml
-      - operators/concat.yaml
+      - operators/
       - control_flow/conditional.yaml
       - control_flow/while.yaml
       - control_flow/do_while.yaml
