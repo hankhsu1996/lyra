@@ -235,11 +235,11 @@ auto Context::GetLyraStringRelease() -> llvm::Function* {
 
 auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
-    // void LyraRunSimulation(LyraProcessFunc process, void* state)
-    // where LyraProcessFunc = void (*)(void* state, uint32_t resume_block)
+    // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
         llvm_module_.get());
@@ -247,50 +247,79 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
   return lyra_run_simulation_;
 }
 
-auto Context::GetLyraRunSimulationMulti() -> llvm::Function* {
-  if (lyra_run_simulation_multi_ == nullptr) {
-    // void LyraRunSimulationMulti(ptr* processes, ptr* states, uint32_t num)
+auto Context::GetLyraSuspendDelay() -> llvm::Function* {
+  if (lyra_suspend_delay_ == nullptr) {
+    // void LyraSuspendDelay(ptr state, i64 ticks, i32 resume_block)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i64_ty, i32_ty}, false);
+    lyra_suspend_delay_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSuspendDelay",
+        llvm_module_.get());
+  }
+  return lyra_suspend_delay_;
+}
+
+auto Context::GetLyraSuspendWait() -> llvm::Function* {
+  if (lyra_suspend_wait_ == nullptr) {
+    // void LyraSuspendWait(ptr state, i32 resume_block, ptr triggers,
+    //                      i32 num_triggers)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
-    lyra_run_simulation_multi_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulationMulti",
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, ptr_ty, i32_ty},
+        false);
+    lyra_suspend_wait_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSuspendWait",
         llvm_module_.get());
   }
-  return lyra_run_simulation_multi_;
+  return lyra_suspend_wait_;
 }
 
-auto Context::GetLyraDesignStoreAndNotify() -> llvm::Function* {
-  if (lyra_design_store_and_notify_ == nullptr) {
-    // void LyraDesignStoreAndNotify(ptr engine, ptr slot, ptr new_value,
-    //                               i32 byte_size, i32 signal_id)
+auto Context::GetLyraSuspendRepeat() -> llvm::Function* {
+  if (lyra_suspend_repeat_ == nullptr) {
+    // void LyraSuspendRepeat(ptr state)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_suspend_repeat_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSuspendRepeat",
+        llvm_module_.get());
+  }
+  return lyra_suspend_repeat_;
+}
+
+auto Context::GetLyraStorePacked() -> llvm::Function* {
+  if (lyra_store_packed_ == nullptr) {
+    // void LyraStorePacked(ptr engine, ptr slot, ptr new_value,
+    //                      i32 byte_size, i32 signal_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
-    lyra_design_store_and_notify_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraDesignStoreAndNotify",
+    lyra_store_packed_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStorePacked",
         llvm_module_.get());
   }
-  return lyra_design_store_and_notify_;
+  return lyra_store_packed_;
 }
 
-auto Context::GetLyraDesignStoreStringAndNotify() -> llvm::Function* {
-  if (lyra_design_store_string_and_notify_ == nullptr) {
-    // void LyraDesignStoreStringAndNotify(ptr engine, ptr slot, ptr new_str,
-    //                                     i32 signal_id)
+auto Context::GetLyraStoreString() -> llvm::Function* {
+  if (lyra_store_string_ == nullptr) {
+    // void LyraStoreString(ptr engine, ptr slot, ptr new_str, i32 signal_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty, i32_ty},
         false);
-    lyra_design_store_string_and_notify_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage,
-        "LyraDesignStoreStringAndNotify", llvm_module_.get());
+    lyra_store_string_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStoreString",
+        llvm_module_.get());
   }
-  return lyra_design_store_string_and_notify_;
+  return lyra_store_string_;
 }
 
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
@@ -313,10 +342,6 @@ auto Context::GetLyraReportTime() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_report_time_;
-}
-
-auto Context::GetSuspendRecordType() const -> llvm::StructType* {
-  return layout_.suspend_record_type;
 }
 
 auto Context::GetHeaderType() const -> llvm::StructType* {
@@ -466,17 +491,6 @@ void Context::SetStatePointer(llvm::Value* state_ptr) {
 
 auto Context::GetStatePointer() -> llvm::Value* {
   return state_ptr_;
-}
-
-auto Context::GetSuspendRecordPointer() -> llvm::Value* {
-  if (state_ptr_ == nullptr) {
-    throw std::runtime_error("state pointer not set");
-  }
-  // SuspendRecord is at: state->header(field 0)->suspend(field 0)
-  auto* header_ptr = builder_.CreateStructGEP(
-      GetProcessStateType(), state_ptr_, 0, "header_ptr");
-  return builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, 0, "suspend_ptr");
 }
 
 void Context::SetDesignPointer(llvm::Value* design_ptr) {

@@ -75,14 +75,15 @@ class Context {
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraRunSimulationMulti() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraDesignStoreAndNotify() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraDesignStoreStringAndNotify() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSuspendDelay() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSuspendWait() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
 
   // Type accessors from layout
-  [[nodiscard]] auto GetSuspendRecordType() const -> llvm::StructType*;
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
   [[nodiscard]] auto GetDesignStateType() const -> llvm::StructType*;
   [[nodiscard]] auto GetProcessFrameType() const -> llvm::StructType*;
@@ -123,9 +124,6 @@ class Context {
   // engine_ptr: loaded from state->header.engine, points to shared Engine
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
-
-  // Get pointer to suspend record via GEP: state->header.suspend
-  [[nodiscard]] auto GetSuspendRecordPointer() -> llvm::Value*;
 
   // Get pointer to a place's storage via GEP into design or frame.
   // For places with BitRangeProjection, returns pointer to the base
@@ -189,9 +187,11 @@ class Context {
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
-  llvm::Function* lyra_run_simulation_multi_ = nullptr;
-  llvm::Function* lyra_design_store_and_notify_ = nullptr;
-  llvm::Function* lyra_design_store_string_and_notify_ = nullptr;
+  llvm::Function* lyra_suspend_delay_ = nullptr;
+  llvm::Function* lyra_suspend_wait_ = nullptr;
+  llvm::Function* lyra_suspend_repeat_ = nullptr;
+  llvm::Function* lyra_store_packed_ = nullptr;
+  llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
 

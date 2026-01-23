@@ -304,7 +304,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
 
   // Call multi-process scheduler
   builder.CreateCall(
-      context.GetLyraRunSimulationMulti(),
+      context.GetLyraRunSimulation(),
       {funcs_array, states_array,
        llvm::ConstantInt::get(i32_ty, num_processes)});
 

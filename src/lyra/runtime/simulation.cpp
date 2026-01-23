@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <print>
 #include <span>
@@ -56,28 +57,42 @@ void HandleSuspendRecord(
   }
 }
 
-}  // namespace
-
-extern "C" void LyraRunSimulation(LyraProcessFunc process, void* state) {
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
   suspend->tag = lyra::runtime::SuspendTag::kFinished;
-
-  lyra::runtime::Engine engine([&](lyra::runtime::Engine& eng,
-                                   lyra::runtime::ProcessHandle handle,
-                                   lyra::runtime::ResumePoint resume) {
-    suspend->tag = lyra::runtime::SuspendTag::kFinished;
-    process(state, resume.block_index);
-    HandleSuspendRecord(eng, handle, suspend);
-  });
-
-  engine.ScheduleInitial(
-      lyra::runtime::ProcessHandle{.process_id = 0, .instance_id = 0});
-
-  auto final_time = engine.Run();
-  FinalTime() = std::max(FinalTime(), final_time);
 }
 
-extern "C" void LyraRunSimulationMulti(
+}  // namespace
+
+extern "C" void LyraSuspendDelay(
+    void* state, uint64_t ticks, uint32_t resume_block) {
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  suspend->tag = lyra::runtime::SuspendTag::kDelay;
+  suspend->delay_ticks = ticks;
+  suspend->resume_block = resume_block;
+}
+
+extern "C" void LyraSuspendWait(
+    void* state, uint32_t resume_block, const void* triggers,
+    uint32_t num_triggers) {
+  if (num_triggers > lyra::runtime::kMaxInlineTriggers) {
+    std::abort();
+  }
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  suspend->tag = lyra::runtime::SuspendTag::kWait;
+  suspend->resume_block = resume_block;
+  suspend->num_triggers = num_triggers;
+  std::memcpy(
+      suspend->triggers.data(), triggers,
+      num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
+}
+
+extern "C" void LyraSuspendRepeat(void* state) {
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  suspend->tag = lyra::runtime::SuspendTag::kRepeat;
+  suspend->resume_block = 0;
+}
+
+extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
@@ -88,7 +103,7 @@ extern "C" void LyraRunSimulationMulti(
     uint32_t proc_idx = handle.process_id;
     void* state = states[proc_idx];
     auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-    suspend->tag = lyra::runtime::SuspendTag::kFinished;
+    SuspendReset(suspend);
 
     procs[proc_idx](state, resume.block_index);
     HandleSuspendRecord(eng, handle, suspend);
@@ -109,7 +124,7 @@ extern "C" void LyraRunSimulationMulti(
   FinalTime() = std::max(FinalTime(), final_time);
 }
 
-extern "C" void LyraDesignStoreAndNotify(
+extern "C" void LyraStorePacked(
     void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
     uint32_t byte_size, uint32_t signal_id) {
   auto* slot_bytes = static_cast<uint8_t*>(slot_ptr);
@@ -126,7 +141,7 @@ extern "C" void LyraDesignStoreAndNotify(
   }
 }
 
-extern "C" void LyraDesignStoreStringAndNotify(
+extern "C" void LyraStoreString(
     void* engine_ptr, void* slot_ptr, void* new_str, uint32_t signal_id) {
   auto** str_slot = static_cast<void**>(slot_ptr);
   void* old_str = *str_slot;

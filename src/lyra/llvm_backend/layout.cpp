@@ -26,6 +26,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -234,27 +235,17 @@ auto CollectFramePlaces(const mir::Process& process, const mir::Arena& arena)
   return result;
 }
 
-// Build WaitTriggerRecord struct type: {i32 signal_id, i8 edge, [3 x i8] pad}
-auto BuildWaitTriggerRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
-  return llvm::StructType::create(
-      ctx,
-      {llvm::Type::getInt32Ty(ctx),                           // signal_id
-       llvm::Type::getInt8Ty(ctx),                            // edge
-       llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 3)},  // padding
-      "WaitTriggerRecord");
-}
-
-// Build SuspendRecord struct type
+// Build SuspendRecord as opaque blob — suspend helpers own the layout.
 auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
-  auto* trigger_type = BuildWaitTriggerRecordType(ctx);
-  return llvm::StructType::create(
-      ctx,
-      {llvm::Type::getInt8Ty(ctx),              // 0: tag
-       llvm::Type::getInt64Ty(ctx),             // 1: delay_ticks
-       llvm::Type::getInt32Ty(ctx),             // 2: resume_block
-       llvm::Type::getInt32Ty(ctx),             // 3: num_triggers
-       llvm::ArrayType::get(trigger_type, 4)},  // 4: triggers[4]
-      "SuspendRecord");
+  static_assert(
+      alignof(lyra::runtime::SuspendRecord) >= 8,
+      "SuspendRecord must be at least 8-byte aligned for i64 blob");
+  static_assert(
+      sizeof(lyra::runtime::SuspendRecord) % 8 == 0,
+      "SuspendRecord size must be multiple of 8 for i64 blob");
+  auto* payload = llvm::ArrayType::get(
+      llvm::Type::getInt64Ty(ctx), sizeof(lyra::runtime::SuspendRecord) / 8);
+  return llvm::StructType::create(ctx, {payload}, "SuspendRecord");
 }
 
 // Build ProcessStateHeader: {SuspendRecord, DesignState*, Engine*}

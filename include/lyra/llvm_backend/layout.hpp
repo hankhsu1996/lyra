@@ -65,7 +65,7 @@ struct Layout {
   std::vector<mir::ProcessId> process_ids;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
-  // SuspendRecord type: {tag: i8, delay_ticks: i64, resume_block: i32}
+  // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
 };
 

@@ -20,7 +20,7 @@ struct WaitTriggerRecord {
   std::array<uint8_t, 3> padding = {};
 };
 
-static constexpr uint32_t kMaxInlineTriggers = 4;
+static constexpr uint32_t kMaxInlineTriggers = 8;
 
 // C ABI layout for suspend record - used by both interpreter and LLVM.
 // Process writes this before returning; runtime reads it after return.
@@ -29,8 +29,8 @@ static constexpr uint32_t kMaxInlineTriggers = 4;
 //   - tag (1 byte) + padding (7 bytes) = 8
 //   - delay_ticks (8 bytes) = 8
 //   - resume_block (4 bytes) + num_triggers (4 bytes) = 8
-//   - triggers[4] (8 bytes each) = 32
-// Total: 56 bytes
+//   - triggers[8] (8 bytes each) = 64
+// Total: 88 bytes
 struct SuspendRecord {
   SuspendTag tag = SuspendTag::kFinished;
   uint64_t delay_ticks = 0;   // For kDelay
@@ -39,7 +39,7 @@ struct SuspendRecord {
   std::array<WaitTriggerRecord, kMaxInlineTriggers> triggers = {};
 };
 
-static_assert(sizeof(SuspendRecord) == 56, "SuspendRecord layout mismatch");
+static_assert(sizeof(SuspendRecord) == 88, "SuspendRecord layout mismatch");
 static_assert(alignof(SuspendRecord) == 8, "SuspendRecord alignment mismatch");
 
 }  // namespace lyra::runtime

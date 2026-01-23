@@ -56,7 +56,7 @@ void StoreDesignWithNotify(
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   builder.CreateCall(
-      context.GetLyraDesignStoreAndNotify(),
+      context.GetLyraStorePacked(),
       {context.GetEnginePointer(), target_ptr, temp,
        llvm::ConstantInt::get(i32_ty, byte_size),
        llvm::ConstantInt::get(i32_ty, signal_id)});
@@ -204,7 +204,7 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
       auto signal_id = GetSignalId(context, assign.target);
       auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
       builder.CreateCall(
-          context.GetLyraDesignStoreStringAndNotify(),
+          context.GetLyraStoreString(),
           {context.GetEnginePointer(), target_ptr, new_val,
            llvm::ConstantInt::get(i32_ty, signal_id)});
       // 5. Release old value
