@@ -82,6 +82,23 @@ class Context {
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayNew() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayNewCopy() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArraySize() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayElementPtr() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayClone() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayDelete() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayRelease() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
+
+  struct ElemOpsInfo {
+    int32_t elem_size;
+    llvm::Constant* clone_fn;
+    llvm::Constant* destroy_fn;
+  };
+  auto GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo;
 
   // Type accessors from layout
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
@@ -194,6 +211,16 @@ class Context {
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
+  llvm::Function* lyra_dynarray_new_ = nullptr;
+  llvm::Function* lyra_dynarray_new_copy_ = nullptr;
+  llvm::Function* lyra_dynarray_size_ = nullptr;
+  llvm::Function* lyra_dynarray_element_ptr_ = nullptr;
+  llvm::Function* lyra_dynarray_clone_ = nullptr;
+  llvm::Function* lyra_dynarray_delete_ = nullptr;
+  llvm::Function* lyra_dynarray_release_ = nullptr;
+  llvm::Function* lyra_store_dynarray_ = nullptr;
+  llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
+  llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;

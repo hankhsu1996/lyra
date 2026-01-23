@@ -96,11 +96,13 @@ auto GetLlvmTypeForTypeId(
       return llvm::ArrayType::get(elem, info.range.Size());
     }
 
+    case TypeKind::kDynamicArray:
+      return llvm::PointerType::getUnqual(ctx);
+
     case TypeKind::kVoid:
     case TypeKind::kShortReal:
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedUnion:
-    case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
@@ -226,14 +228,19 @@ struct RootInfo {
 };
 
 // Collect unique roots for frame layout, de-duplicating projected places
-auto CollectFrameRoots(const mir::Process& process, const mir::Arena& arena)
-    -> std::vector<RootInfo> {
+auto CollectFrameRoots(
+    const mir::Process& process, const mir::Arena& arena,
+    const TypeArena& types) -> std::vector<RootInfo> {
   auto all_places = CollectProcessPlaces(process);
 
   std::unordered_map<PlaceRootKey, TypeId, PlaceRootKeyHash> seen;
   for (mir::PlaceId place_id : all_places) {
     const auto& place = arena[place_id];
     if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+      continue;
+    }
+    // Void-typed places (e.g. targets of .delete()) never need storage
+    if (types[place.root.type].Kind() == TypeKind::kVoid) {
       continue;
     }
     PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
@@ -375,7 +382,7 @@ auto BuildLayout(
     proc_layout.process_index = i;
 
     // Collect frame roots (de-duplicated by root identity)
-    auto frame_roots = CollectFrameRoots(process, arena);
+    auto frame_roots = CollectFrameRoots(process, arena, types);
 
     // Build frame layout
     proc_layout.frame = BuildFrameLayout(frame_roots, types, ctx, i);
