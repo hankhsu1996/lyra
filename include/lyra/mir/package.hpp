@@ -1,9 +1,13 @@
 #pragma once
 
+#include <vector>
+
+#include "lyra/mir/handle.hpp"
+
 namespace lyra::mir {
 
 struct Package {
-  // Package contents - to be expanded as needed
+  std::vector<FunctionId> functions;
 };
 
 }  // namespace lyra::mir

@@ -1,5 +1,10 @@
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 
+#include <algorithm>
+#include <climits>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -7,17 +12,22 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/operator.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/mir/builtin.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/place.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -681,6 +691,13 @@ auto LowerCall(
   mir::FunctionId callee = ctx.LookupFunction(data.callee);
   if (!callee) {
     throw common::InternalError("LowerCall", "function not found in map");
+  }
+
+  // Validate against the frozen signature
+  const mir::FunctionSignature& sig = builder.GetArena()[callee].signature;
+  if (data.arguments.size() != sig.params.size()) {
+    throw common::InternalError(
+        "LowerCall", "argument count mismatch with frozen signature");
   }
 
   // Lower arguments

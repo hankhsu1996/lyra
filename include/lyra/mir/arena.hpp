@@ -49,15 +49,20 @@ class Arena final {
     return id;
   }
 
-  // Reserve a FunctionId for later filling (pre-allocation for recursion)
-  auto ReserveFunction() -> FunctionId {
+  // Reserve a FunctionId with a frozen signature (pre-allocation for
+  // recursion). The signature is immutable after this point.
+  auto ReserveFunction(FunctionSignature signature) -> FunctionId {
     FunctionId id{static_cast<uint32_t>(functions_.size())};
-    functions_.emplace_back();  // Placeholder
+    Function placeholder;
+    placeholder.signature = std::move(signature);
+    functions_.push_back(std::move(placeholder));
     return id;
   }
 
-  // Fill in a previously reserved function
-  void SetFunction(FunctionId id, Function func) {
+  // Fill in a previously reserved function's body. Preserves the frozen
+  // signature from ReserveFunction.
+  void SetFunctionBody(FunctionId id, Function func) {
+    func.signature = std::move(functions_[id.value].signature);
     functions_[id.value] = std::move(func);
   }
 

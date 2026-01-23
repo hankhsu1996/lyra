@@ -3,129 +3,40 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/lowering/hir_to_mir/builder.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/module.hpp"
+#include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/process.hpp"
-#include "lyra/lowering/hir_to_mir/statement.hpp"
-#include "lyra/mir/place.hpp"
+#include "lyra/lowering/hir_to_mir/routine.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/module.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-auto LowerFunctionBody(
-    const hir::Function& function, const LoweringInput& input,
-    mir::Arena& mir_arena, const PlaceMap& design_places,
-    const SymbolToMirFunctionMap& symbol_to_mir_function, OriginMap* origin_map)
-    -> mir::Function {
-  Context ctx{
-      .mir_arena = &mir_arena,
-      .hir_arena = input.hir_arena,
-      .type_arena = input.type_arena,
-      .constant_arena = input.constant_arena,
-      .symbol_table = input.symbol_table,
-      .module_places = &design_places,
-      .local_places = {},
-      .next_local_id = 0,
-      .next_temp_id = 0,
-      .builtin_types = input.builtin_types,
-      .symbol_to_mir_function = &symbol_to_mir_function,
-      .return_place = mir::kInvalidPlaceId,
-  };
-
-  MirBuilder builder(&mir_arena, &ctx, origin_map);
-  BlockIndex entry_idx = builder.CreateBlock();
-  builder.SetCurrentBlock(entry_idx);
-
-  // Reserve local 0 for return value (non-void only)
-  const Type& ret_type = (*input.type_arena)[function.return_type];
-  if (ret_type.Kind() != TypeKind::kVoid) {
-    ctx.return_place = ctx.AllocLocal(function.symbol, function.return_type);
-  }
-
-  // Allocate parameters as locals
-  for (SymbolId param : function.parameters) {
-    const Symbol& sym = (*input.symbol_table)[param];
-    ctx.AllocLocal(param, sym.type);
-  }
-
-  // Lower function body
-  LowerStatement(function.body, builder);
-
-  // Implicit return at end
-  builder.EmitReturn();
-
-  std::vector<mir::BasicBlock> blocks = builder.Finish();
-
-  // Collect storage types for interpreter
-  std::vector<TypeId> local_types(static_cast<size_t>(ctx.next_local_id));
-  std::vector<TypeId> temp_types(static_cast<size_t>(ctx.next_temp_id));
-
-  // Fill in types from local_places
-  for (const auto& [sym, place_id] : ctx.local_places) {
-    const auto& place = mir_arena[place_id];
-    if (place.root.kind == mir::PlaceRoot::Kind::kLocal) {
-      auto idx = static_cast<size_t>(place.root.id);
-      if (idx < local_types.size()) {
-        local_types[idx] = place.root.type;
-      }
-    }
-  }
-
-  // Fill in temps from blocks (temps don't have symbols)
-  for (const mir::BasicBlock& block : blocks) {
-    for (const auto& inst : block.instructions) {
-      std::visit(
-          [&](const auto& i) {
-            using T = std::decay_t<decltype(i)>;
-            if constexpr (std::is_same_v<T, mir::Assign>) {
-              const auto& place = mir_arena[i.target];
-              if (place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-                auto idx = static_cast<size_t>(place.root.id);
-                if (idx < temp_types.size()) {
-                  temp_types[idx] = place.root.type;
-                }
-              }
-            } else if constexpr (std::is_same_v<T, mir::Compute>) {
-              const auto& place = mir_arena[i.target];
-              if (place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-                auto idx = static_cast<size_t>(place.root.id);
-                if (idx < temp_types.size()) {
-                  temp_types[idx] = place.root.type;
-                }
-              }
-            }
-          },
-          inst.data);
-    }
-  }
-
-  return mir::Function{
-      .entry = mir::BasicBlockId{entry_idx.value},  // Local index
-      .blocks = std::move(blocks),
-      .local_types = std::move(local_types),
-      .temp_types = std::move(temp_types),
-  };
-}
-
-}  // namespace
-
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places)
-    -> mir::Module {
+    mir::Arena& mir_arena, OriginMap* origin_map, const PlaceMap& design_places,
+    const SymbolToMirFunctionMap& design_functions) -> mir::Module {
   mir::Module result;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
-  SymbolToMirFunctionMap symbol_to_mir_function;
+  // Start with design-wide functions (package functions) so module code can
+  // call them.
+  SymbolToMirFunctionMap symbol_to_mir_function = design_functions;
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
   for (hir::FunctionId hir_func_id : module.functions) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
-    // Reserve the mir::FunctionId
-    mir::FunctionId mir_func_id = mir_arena.ReserveFunction();
+    // Reserve the mir::FunctionId with frozen signature
+    mir::FunctionSignature sig =
+        BuildFunctionSignature(hir_func, *input.symbol_table);
+    mir::FunctionId mir_func_id = mir_arena.ReserveFunction(std::move(sig));
     symbol_to_mir_function[hir_func.symbol] = mir_func_id;
     function_pairs.emplace_back(hir_func_id, mir_func_id);
     result.functions.push_back(mir_func_id);
@@ -139,7 +50,7 @@ auto LowerModule(
         hir_func, input, mir_arena, design_places, symbol_to_mir_function,
         origin_map);
 
-    mir_arena.SetFunction(mir_func_id, std::move(mir_func));
+    mir_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
   // Phase 3: Lower module processes (can reference functions)

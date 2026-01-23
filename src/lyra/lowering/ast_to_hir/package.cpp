@@ -1,14 +1,22 @@
 #include "lyra/lowering/ast_to_hir/package.hpp"
 
 #include <utility>
+#include <vector>
 
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol_types.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
@@ -25,17 +33,66 @@ auto LowerPackage(
 
   std::vector<SymbolId> variables;
   std::vector<std::pair<SymbolId, const slang::ast::Expression*>> var_init_refs;
+  std::vector<const slang::ast::SubroutineSymbol*> function_refs;
 
-  for (const slang::ast::VariableSymbol& var :
-       package.membersOfType<slang::ast::VariableSymbol>()) {
-    TypeId type = LowerType(var.getType(), span, ctx);
-    if (type) {
-      SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
-      variables.push_back(sym);
-
-      if (const auto* init = var.getInitializer()) {
-        var_init_refs.emplace_back(sym, init);
+  // Phase 1: Register variables and function symbols
+  namespace sk = slang::ast;
+  for (const auto& member : package.members()) {
+    switch (member.kind) {
+      case sk::SymbolKind::Variable: {
+        const auto& var = member.as<slang::ast::VariableSymbol>();
+        TypeId type = LowerType(var.getType(), span, ctx);
+        if (type) {
+          SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
+          variables.push_back(sym);
+          if (const auto* init = var.getInitializer()) {
+            var_init_refs.emplace_back(sym, init);
+          }
+        }
+        break;
       }
+      case sk::SymbolKind::Subroutine: {
+        const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+        if (sub.subroutineKind == slang::ast::SubroutineKind::Task) {
+          ctx->ErrorFmt(
+              span, "package task '{}' not yet supported", member.name);
+          break;
+        }
+        const auto& ret_type = sub.getReturnType();
+        if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+          ctx->sink->Error(
+              span, "only integral or void return types supported");
+          break;
+        }
+        TypeId return_type = LowerType(ret_type, span, ctx);
+        if (!return_type) {
+          break;
+        }
+        registrar.Register(sub, SymbolKind::kFunction, return_type);
+        function_refs.push_back(&sub);
+        break;
+      }
+      case sk::SymbolKind::Parameter:
+      case sk::SymbolKind::TypeParameter:
+      case sk::SymbolKind::TransparentMember:
+      case sk::SymbolKind::EmptyMember:
+      case sk::SymbolKind::ExplicitImport:
+      case sk::SymbolKind::WildcardImport:
+        break;
+      default:
+        if (!member.isType()) {
+          ctx->ErrorFmt(span, "unsupported package member '{}'", member.name);
+        }
+        break;
+    }
+  }
+
+  // Phase 2: Lower function bodies (symbols are registered, recursion works)
+  std::vector<hir::FunctionId> functions;
+  for (const slang::ast::SubroutineSymbol* sub : function_refs) {
+    hir::FunctionId id = LowerFunction(*sub, registrar, ctx);
+    if (id) {
+      functions.push_back(id);
     }
   }
 
@@ -95,6 +152,7 @@ auto LowerPackage(
       .symbol = symbol,
       .span = span,
       .variables = std::move(variables),
+      .functions = std::move(functions),
       .init_process = init_process,
   };
 }

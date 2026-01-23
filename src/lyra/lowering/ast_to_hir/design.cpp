@@ -1,5 +1,9 @@
 #include "lyra/lowering/ast_to_hir/design.hpp"
 
+#include <utility>
+#include <vector>
+
+#include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
@@ -14,8 +18,11 @@ auto LowerDesign(
 
   std::vector<hir::DesignElement> elements;
 
-  // Lower packages first (modules may reference them)
+  // Lower user-defined packages first (modules may reference them)
   for (const slang::ast::PackageSymbol* pkg : compilation.getPackages()) {
+    if (pkg->name == "std") {
+      continue;
+    }
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 

@@ -12,6 +12,7 @@ struct Package {
   SymbolId symbol;
   SourceSpan span;
   std::vector<SymbolId> variables;
+  std::vector<FunctionId> functions;
   ProcessId init_process = kInvalidProcessId;
 };
 
