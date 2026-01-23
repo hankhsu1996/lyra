@@ -682,6 +682,125 @@ auto LowerConcatRvalue(
   return acc;
 }
 
+struct FourStateValue {
+  llvm::Value* a;  // value/Z bits
+  llvm::Value* b;  // state bits (0 = known)
+};
+
+// Extract (a, b) from a loaded struct value
+auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
+    -> FourStateValue {
+  auto* a = builder.CreateExtractValue(struct_val, 0, "fs.a");
+  auto* b = builder.CreateExtractValue(struct_val, 1, "fs.b");
+  return {.a = a, .b = b};
+}
+
+// Pack (a, b) into a struct for storing
+auto PackFourState(
+    llvm::IRBuilderBase& builder, llvm::StructType* struct_type, llvm::Value* a,
+    llvm::Value* b) -> llvm::Value* {
+  llvm::Value* result = llvm::UndefValue::get(struct_type);
+  result = builder.CreateInsertValue(result, a, 0, "fs.pack.a");
+  result = builder.CreateInsertValue(result, b, 1, "fs.pack.b");
+  return result;
+}
+
+// Check if an operand is 4-state (TypeId-driven)
+auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+
+  return std::visit(
+      Overloaded{
+          [&](const Constant& c) {
+            return IsPackedFourState(types[c.type], types);
+          },
+          [&](mir::PlaceId place_id) {
+            const auto& place = arena[place_id];
+            return IsPackedFourState(types[place.root.type], types);
+          },
+      },
+      operand.payload);
+}
+
+// Load an operand as FourStateValue.
+// For 4-state operands: extracts (a, b) from struct via raw load.
+// For 2-state operands: a = loaded value, b = zero constant.
+auto LowerOperandFourState(
+    Context& context, const mir::Operand& operand, llvm::Type* elem_type)
+    -> FourStateValue {
+  auto& builder = context.GetBuilder();
+
+  if (IsOperandFourState(context, operand)) {
+    // Load raw struct value (bypass 2-state coercion)
+    llvm::Value* loaded = LowerOperandRaw(context, operand);
+    return ExtractFourState(builder, loaded);
+  }
+
+  // 2-state: use LowerOperand (returns integer), coerce to elem_type
+  llvm::Value* val = LowerOperand(context, operand);
+  auto* a = builder.CreateZExtOrTrunc(val, elem_type, "fs2.a");
+  auto* b = llvm::ConstantInt::get(elem_type, 0);
+  return {.a = a, .b = b};
+}
+
+// 4-state concat: same shift+OR algorithm as 2-state, applied to both a and b
+auto LowerConcatRvalue4State(
+    Context& context, const mir::ConcatRvalueInfo& /*info*/,
+    const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
+    -> FourStateValue {
+  auto& builder = context.GetBuilder();
+
+  if (operands.empty()) {
+    throw common::InternalError(
+        "LowerConcatRvalue4State", "concat must have at least one operand");
+  }
+
+  // First operand (MSB)
+  uint32_t first_width = GetOperandBitWidth(context, operands[0]);
+  auto first = LowerOperandFourState(context, operands[0], elem_type);
+
+  // Trunc to semantic width, then zext to result type
+  auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
+  auto* a_first = builder.CreateZExtOrTrunc(first.a, first_ty, "cat4.a.trunc");
+  auto* b_first = builder.CreateZExtOrTrunc(first.b, first_ty, "cat4.b.trunc");
+  auto* acc_a = builder.CreateZExt(a_first, elem_type, "cat4.a.ext");
+  auto* acc_b = builder.CreateZExt(b_first, elem_type, "cat4.b.ext");
+
+  // Rolling append: acc = (acc << w_next) | zext(trunc(next))
+  for (size_t i = 1; i < operands.size(); ++i) {
+    uint32_t op_width = GetOperandBitWidth(context, operands[i]);
+    auto op = LowerOperandFourState(context, operands[i], elem_type);
+
+    auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
+    auto* a_op = builder.CreateZExtOrTrunc(op.a, op_ty, "cat4.a.trunc");
+    auto* b_op = builder.CreateZExtOrTrunc(op.b, op_ty, "cat4.b.trunc");
+    a_op = builder.CreateZExt(a_op, elem_type, "cat4.a.ext");
+    b_op = builder.CreateZExt(b_op, elem_type, "cat4.b.ext");
+
+    auto* shift_amount = llvm::ConstantInt::get(elem_type, op_width);
+    acc_a = builder.CreateShl(acc_a, shift_amount, "cat4.a.shl");
+    acc_a = builder.CreateOr(acc_a, a_op, "cat4.a.or");
+    acc_b = builder.CreateShl(acc_b, shift_amount, "cat4.b.shl");
+    acc_b = builder.CreateOr(acc_b, b_op, "cat4.b.or");
+  }
+
+  return {.a = acc_a, .b = acc_b};
+}
+
+// 4-state cast (pure width-adjust): zext/trunc both a and b
+auto LowerCastRvalue4State(
+    Context& context, const mir::CastRvalueInfo& /*info*/,
+    const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
+    -> FourStateValue {
+  auto& builder = context.GetBuilder();
+  auto src = LowerOperandFourState(context, operands[0], elem_type);
+  return {
+      .a = builder.CreateZExtOrTrunc(src.a, elem_type, "cast4.a"),
+      .b = builder.CreateZExtOrTrunc(src.b, elem_type, "cast4.b"),
+  };
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -689,16 +808,46 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
 
   PlaceTypeInfo type_info = ValidateAndGetTypeInfo(context, compute.target);
 
-  // 2-state contract: The LLVM backend does not model X/Z propagation. All
-  // storage is zeroinit'd. Operations on 4-state-typed values produce correct
-  // results when those values are known 2-state at runtime (which is always
-  // true under this contract). The is_four_state annotation is irrelevant for
-  // computation correctness here.
-
   // Get storage for target place
   llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
   llvm::Type* storage_type = context.GetPlaceLlvmType(compute.target);
 
+  if (type_info.is_four_state) {
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+    auto* elem_type = struct_type->getElementType(0);
+
+    FourStateValue result = std::visit(
+        Overloaded{
+            [&](const mir::ConcatRvalueInfo& info) {
+              return LowerConcatRvalue4State(
+                  context, info, compute.value.operands, elem_type);
+            },
+            [&](const mir::CastRvalueInfo& info) {
+              return LowerCastRvalue4State(
+                  context, info, compute.value.operands, elem_type);
+            },
+            [&](const auto& /*info*/) -> FourStateValue {
+              throw common::UnsupportedErrorException(
+                  common::UnsupportedLayer::kMirToLlvm,
+                  common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+                  std::format(
+                      "4-state rvalue kind not yet supported: {}",
+                      mir::GetRvalueKind(compute.value.info)));
+            },
+        },
+        compute.value.info);
+
+    // INVARIANT: semantic mask on both components
+    result.a = ApplyWidthMask(context, result.a, type_info.bit_width);
+    result.b = ApplyWidthMask(context, result.b, type_info.bit_width);
+
+    llvm::Value* packed =
+        PackFourState(builder, struct_type, result.a, result.b);
+    builder.CreateStore(packed, target_ptr);
+    return;
+  }
+
+  // 2-state path (unchanged)
   llvm::Value* result = std::visit(
       Overloaded{
           [&](const mir::UnaryRvalueInfo& info) {

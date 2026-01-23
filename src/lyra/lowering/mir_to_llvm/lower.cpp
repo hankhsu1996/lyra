@@ -5,8 +5,11 @@
 #include <vector>
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/raw_ostream.h"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/lowering/mir_to_llvm/context.hpp"
 #include "lyra/lowering/mir_to_llvm/layout.hpp"
 #include "lyra/lowering/mir_to_llvm/process.hpp"
@@ -42,22 +45,59 @@ auto BuildSlotInfoList(
   return slots;
 }
 
-// Initialize DesignState with aggregate zero
-void InitializeDesignState(Context& context, llvm::Value* design_state) {
-  auto& builder = context.GetBuilder();
-  auto* design_type = context.GetDesignStateType();
+// Store X-encoded value ({a=0, b=semantic_mask}) to a 4-state pointer
+void StoreFourStateX(
+    llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::StructType* struct_type,
+    uint32_t semantic_width) {
+  auto* elem_type = struct_type->getElementType(0);
+  auto* zero = llvm::ConstantInt::get(elem_type, 0);
+  uint32_t storage_width = elem_type->getIntegerBitWidth();
+  auto b_mask = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
+  auto* b_val = llvm::ConstantInt::get(elem_type, b_mask);
 
-  // Use aggregate zero for simple initialization
-  auto* zero = llvm::ConstantAggregateZero::get(design_type);
-  builder.CreateStore(zero, design_state);
+  // Build {a=0, b=semantic_mask}
+  llvm::Value* init = llvm::UndefValue::get(struct_type);
+  init = builder.CreateInsertValue(init, zero, 0);
+  init = builder.CreateInsertValue(init, b_val, 1);
+  builder.CreateStore(init, ptr);
 }
 
-// Initialize ProcessStateN: zero everything, then set design pointer
+// Initialize DesignState: zero everything, then overwrite 4-state slots with X
+void InitializeDesignState(
+    Context& context, llvm::Value* design_state,
+    const std::vector<SlotInfo>& slots) {
+  auto& builder = context.GetBuilder();
+  auto* design_type = context.GetDesignStateType();
+  const auto& types = context.GetTypeArena();
+
+  // Use aggregate zero for simple initialization (covers 2-state fields)
+  auto* zero = llvm::ConstantAggregateZero::get(design_type);
+  builder.CreateStore(zero, design_state);
+
+  // Overwrite 4-state slots with X encoding
+  for (const auto& slot : slots) {
+    if (!IsFourStateType(slot.type_id, types)) {
+      continue;
+    }
+    uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
+    auto* field_type = design_type->getElementType(field_index);
+    auto* struct_type = llvm::cast<llvm::StructType>(field_type);
+    uint32_t semantic_width = PackedBitWidth(types[slot.type_id], types);
+    auto* slot_ptr =
+        builder.CreateStructGEP(design_type, design_state, field_index);
+    StoreFourStateX(builder, slot_ptr, struct_type, semantic_width);
+  }
+}
+
+// Initialize ProcessStateN: zero everything, set design pointer, then
+// overwrite 4-state frame places with X encoding
 void InitializeProcessState(
     Context& context, llvm::Value* process_state, llvm::Value* design_state) {
   auto& builder = context.GetBuilder();
   auto* state_type = context.GetProcessStateType();
   auto* header_type = context.GetHeaderType();
+  const auto& types = context.GetTypeArena();
+  const auto& arena = context.GetMirArena();
 
   // Use aggregate zero for the entire state
   auto* zero = llvm::ConstantAggregateZero::get(state_type);
@@ -67,6 +107,26 @@ void InitializeProcessState(
   auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
   auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
   builder.CreateStore(design_state, design_ptr_ptr);
+
+  // Overwrite 4-state frame places with X encoding
+  auto* frame_type = context.GetProcessFrameType();
+  auto* frame_ptr = builder.CreateStructGEP(state_type, process_state, 1);
+  const auto& frame_layout =
+      context.GetLayout().processes[context.GetCurrentProcessIndex()].frame;
+
+  for (mir::PlaceId place_id : frame_layout.places) {
+    const auto& place = arena[place_id];
+    if (!IsFourStateType(place.root.type, types)) {
+      continue;
+    }
+    uint32_t field_index = context.GetFrameFieldIndex(place_id);
+    auto* field_type = frame_type->getElementType(field_index);
+    auto* struct_type = llvm::cast<llvm::StructType>(field_type);
+    uint32_t semantic_width = PackedBitWidth(types[place.root.type], types);
+    auto* field_ptr =
+        builder.CreateStructGEP(frame_type, frame_ptr, field_index);
+    StoreFourStateX(builder, field_ptr, struct_type, semantic_width);
+  }
 }
 
 // Register tracked variables with runtime and emit snapshot call.
@@ -191,8 +251,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   auto* design_state = builder.CreateAlloca(
       context.GetDesignStateType(), nullptr, "design_state");
 
-  // Initialize DesignState with aggregate zero
-  InitializeDesignState(context, design_state);
+  // Initialize DesignState (zero + 4-state X init)
+  InitializeDesignState(context, design_state, slot_info);
 
   // Run each process through the scheduler
   for (size_t i = 0; i < process_funcs.size(); ++i) {

@@ -1,7 +1,9 @@
 #include "lyra/lowering/mir_to_llvm/instruction.hpp"
 
+#include "llvm/IR/DerivedTypes.h"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/mir_to_llvm/instruction_compute.hpp"
 #include "lyra/lowering/mir_to_llvm/instruction_display.hpp"
 #include "lyra/lowering/mir_to_llvm/operand.hpp"
@@ -46,7 +48,38 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
-  // Lower the source operand
+  // 4-state target: construct {a=value, b=0} struct
+  if (storage_type->isStructTy()) {
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+    auto* elem_type = struct_type->getElementType(0);
+
+    // Load source as raw value (struct if 4-state, integer if 2-state)
+    llvm::Value* raw = LowerOperandRaw(context, assign.source);
+
+    llvm::Value* a = nullptr;
+    llvm::Value* b = nullptr;
+    if (raw->getType()->isStructTy()) {
+      // Source is 4-state: pass through
+      a = builder.CreateExtractValue(raw, 0, "assign.a");
+      b = builder.CreateExtractValue(raw, 1, "assign.b");
+    } else {
+      // Source is 2-state: wrap as {a=value, b=0}
+      a = builder.CreateZExtOrTrunc(raw, elem_type, "assign.a");
+      b = llvm::ConstantInt::get(elem_type, 0);
+    }
+
+    // Coerce a to elem_type if width differs
+    a = builder.CreateZExtOrTrunc(a, elem_type, "assign.a.fit");
+    b = builder.CreateZExtOrTrunc(b, elem_type, "assign.b.fit");
+
+    llvm::Value* packed = llvm::UndefValue::get(struct_type);
+    packed = builder.CreateInsertValue(packed, a, 0);
+    packed = builder.CreateInsertValue(packed, b, 1);
+    builder.CreateStore(packed, target_ptr);
+    return;
+  }
+
+  // 2-state target: lower source (coerces 4-state to integer)
   llvm::Value* source_value = LowerOperand(context, assign.source);
 
   // Adjust the value to match storage type if needed (only for integrals)
