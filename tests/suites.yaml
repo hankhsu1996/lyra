@@ -73,6 +73,7 @@ suites:
       - datatypes/wide_integral/packed_2d.yaml
       - datatypes/string_concat.yaml
       - datatypes/math.yaml
+      - constants/parameters.yaml
       - system_functions/conversions.yaml
       - system_tasks/display.yaml
       - system_tasks/severity.yaml
