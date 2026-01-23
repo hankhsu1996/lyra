@@ -1127,9 +1127,11 @@ auto LowerStatement(
       const auto& timed = stmt.as<slang::ast::TimedStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      // Only support DelayControl timing
       if (timed.timing.kind != slang::ast::TimingControlKind::Delay) {
-        ctx->sink->Error(span, "only delay timing control (#N) is supported");
+        ctx->sink->Error(
+            span, std::format(
+                      "'{}' timing control not yet supported",
+                      toString(timed.timing.kind)));
         return hir::kInvalidStatementId;
       }
 

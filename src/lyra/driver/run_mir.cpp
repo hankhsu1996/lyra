@@ -11,7 +11,7 @@ namespace lyra::driver {
 auto RunMir(const std::vector<std::string>& files) -> int {
   auto compilation = CompileToMir(files);
   if (!compilation) {
-    PrintError(compilation.error());
+    compilation.error().Print();
     return 1;
   }
 
