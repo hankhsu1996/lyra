@@ -39,6 +39,7 @@ enum class ExpressionKind {
   kRangeSelect,        // x[a:b] constant range
   kIndexedPartSelect,  // x[i +: w] or x[i -: w]
   kConcat,             // {a, b, c} packed concatenation
+  kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
 };
 
 struct ConstantExpressionData {
@@ -225,6 +226,12 @@ struct ConcatExpressionData {
   auto operator==(const ConcatExpressionData&) const -> bool = default;
 };
 
+struct HierarchicalRefExpressionData {
+  SymbolId target;  // Resolved variable in elaborated instance body
+
+  auto operator==(const HierarchicalRefExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, BitCastExpressionData,
@@ -236,7 +243,7 @@ using ExpressionData = std::variant<
     BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
     PackedFieldAccessExpressionData, BitSelectExpressionData,
     RangeSelectExpressionData, IndexedPartSelectExpressionData,
-    ConcatExpressionData>;
+    ConcatExpressionData, HierarchicalRefExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

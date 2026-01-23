@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "lyra/common/internal_error.hpp"
+
 namespace lyra::lowering::ast_to_hir {
 
 SymbolRegistrar::SymbolRegistrar(Context* ctx) : ctx_(ctx) {
@@ -13,6 +15,15 @@ auto SymbolRegistrar::Register(
   auto it = slang_to_id_.find(&slang_sym);
   if (it != slang_to_id_.end()) {
     return it->second;
+  }
+
+  if (lookup_only_) {
+    throw common::InternalError(
+        "SymbolRegistrar::Register",
+        std::format(
+            "symbol '{}' not pre-registered (creation forbidden "
+            "during lowering phase)",
+            slang_sym.name));
   }
 
   SymbolId id = ctx_->symbol_table->Add(

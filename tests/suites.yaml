@@ -47,3 +47,4 @@ suites:
       - system_tf/effect/fopen.yaml
       - functions/
       - packages/
+      - hierarchy/refs/

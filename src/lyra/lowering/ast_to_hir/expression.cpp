@@ -815,6 +815,37 @@ auto LowerExpression(
     case ExpressionKind::Concatenation:
       return LowerConcatenationExpression(expr, registrar, ctx);
 
+    case ExpressionKind::HierarchicalValue: {
+      const auto& hier = expr.as<slang::ast::HierarchicalValueExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId type = LowerType(*expr.type, span, ctx);
+      if (!type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      SymbolId target = registrar.Lookup(hier.symbol);
+      if (!target) {
+        throw common::InternalError(
+            "LowerExpression",
+            std::format(
+                "hierarchical ref target '{}' (path: {}) not "
+                "pre-registered — either unsupported symbol kind or "
+                "Phase 0 gap",
+                hier.symbol.name, hier.symbol.getHierarchicalPath()));
+      }
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kHierarchicalRef,
+              .type = type,
+              .span = span,
+              .data = hir::HierarchicalRefExpressionData{.target = target},
+          });
+    }
+
     default:
       ctx->ErrorFmt(
           ctx->SpanOf(expr.sourceRange), "unsupported expression kind '{}'",
