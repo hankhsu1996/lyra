@@ -427,13 +427,16 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
         GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
   }
 
-  // Apply projections (index into arrays)
+  // Apply projections (index into arrays, stop at BitRange)
   TypeId current_type = place.root.type;
   for (const auto& proj : place.projections) {
+    if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
+      break;
+    }
     const auto* idx = std::get_if<mir::IndexProjection>(&proj.info);
     if (idx == nullptr) {
-      throw std::runtime_error(
-          "only index projections supported in LLVM backend");
+      throw common::InternalError(
+          "GetPlacePointer", "unsupported projection kind in LLVM backend");
     }
     llvm::Type* array_type =
         GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
@@ -481,6 +484,39 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
 
 auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
   return GetFourStateStructType(*llvm_context_, bit_width);
+}
+
+auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {
+  const auto& place = arena_[place_id];
+  return !place.projections.empty() &&
+         std::holds_alternative<mir::BitRangeProjection>(
+             place.projections.back().info);
+}
+
+auto Context::GetBitRangeProjection(mir::PlaceId place_id) const
+    -> const mir::BitRangeProjection& {
+  const auto& place = arena_[place_id];
+  return std::get<mir::BitRangeProjection>(place.projections.back().info);
+}
+
+auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
+  const auto& place = arena_[place_id];
+
+  // The base type is root.type after applying all non-BitRange projections.
+  // BitRange is always the last projection, so just use root.type for the
+  // common case (no intermediate projections before the BitRange).
+  TypeId base_type_id = place.root.type;
+  for (const auto& proj : place.projections) {
+    if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
+      break;
+    }
+    const Type& t = types_[base_type_id];
+    if (t.Kind() == TypeKind::kUnpackedArray) {
+      base_type_id = t.AsUnpackedArray().element_type;
+    }
+  }
+
+  return GetLlvmTypeForTypeId(*llvm_context_, base_type_id, types_);
 }
 
 auto Context::TakeOwnership() -> std::pair<

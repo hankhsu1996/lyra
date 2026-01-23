@@ -118,11 +118,19 @@ class Context {
   // Get pointer to suspend record via GEP: state->header.suspend
   [[nodiscard]] auto GetSuspendRecordPointer() -> llvm::Value*;
 
-  // Get pointer to a place's storage via GEP into design or frame
+  // Get pointer to a place's storage via GEP into design or frame.
+  // For places with BitRangeProjection, returns pointer to the base
+  // (pre-shift).
   [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id) -> llvm::Value*;
 
   // Get the LLVM type for a place's storage
   [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type*;
+
+  // BitRangeProjection helpers
+  [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto GetBitRangeProjection(mir::PlaceId place_id) const
+      -> const mir::BitRangeProjection&;
+  [[nodiscard]] auto GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type*;
 
   // Get the 4-state struct type for a given semantic bit width
   [[nodiscard]] auto GetPlaceLlvmType4State(uint32_t bit_width)
