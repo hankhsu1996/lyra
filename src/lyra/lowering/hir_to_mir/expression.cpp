@@ -3,8 +3,10 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/expression.hpp"
@@ -507,12 +509,59 @@ auto LowerBitCast(
 }
 
 auto LowerSystemCall(
-    const hir::SystemCallExpressionData& /*data*/,
-    const hir::Expression& /*expr*/, MirBuilder& /*builder*/) -> mir::Operand {
-  // Effect system calls ($display, etc.) are handled in statement.cpp
-  // as Effect instructions. If we get here, it's because a system call
-  // was used in an expression context where a value is expected.
-  // Currently all supported system calls are effects, so this is an error.
+    const hir::SystemCallExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  // Handle SFormatSystemCallData in expression context ($sformatf)
+  if (const auto* sformat = std::get_if<hir::SFormatSystemCallData>(&data)) {
+    Context& ctx = builder.GetContext();
+
+    // Build SFormat rvalue (same logic as statement.cpp's BuildSFormatRvalue)
+    mir::SFormatRvalueInfo info;
+    info.default_format = sformat->default_format;
+
+    mir::Rvalue rvalue;
+    if (!sformat->ops.empty()) {
+      // Compile-time path
+      info.ops.reserve(sformat->ops.size());
+      for (const auto& hir_op : sformat->ops) {
+        if (hir_op.kind == FormatKind::kLiteral) {
+          info.ops.push_back(
+              mir::FormatOp{
+                  .kind = FormatKind::kLiteral,
+                  .value = std::nullopt,
+                  .literal = hir_op.literal,
+                  .type = TypeId{},
+                  .mods = {}});
+        } else {
+          mir::Operand operand = LowerExpression(*hir_op.value, builder);
+          const hir::Expression& val_expr = (*ctx.hir_arena)[*hir_op.value];
+          info.ops.push_back(
+              mir::FormatOp{
+                  .kind = hir_op.kind,
+                  .value = std::move(operand),
+                  .literal = {},
+                  .type = val_expr.type,
+                  .mods = hir_op.mods});
+        }
+      }
+      rvalue = mir::Rvalue{.operands = {}, .info = std::move(info)};
+    } else {
+      // Runtime path
+      info.has_runtime_format = !sformat->args.empty();
+      std::vector<mir::Operand> operands;
+      operands.reserve(sformat->args.size());
+      for (hir::ExpressionId arg_id : sformat->args) {
+        operands.push_back(LowerExpression(arg_id, builder));
+      }
+      rvalue =
+          mir::Rvalue{.operands = std::move(operands), .info = std::move(info)};
+    }
+
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
+  // Effect system calls ($display, etc.) are handled in statement.cpp.
   throw common::InternalError(
       "LowerSystemCall",
       "system call used in value context (only effect calls supported)");

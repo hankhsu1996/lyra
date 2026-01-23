@@ -453,6 +453,12 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [this](const ConcatRvalueInfo& info) {
             return std::format("concat<{}>", FormatType(info.result_type));
           },
+          [](const SFormatRvalueInfo& info) {
+            return std::format(
+                "sformat(fmt='{}', runtime={})",
+                FormatKindToSpecChar(info.default_format),
+                info.has_runtime_format);
+          },
       },
       rv.info);
 
