@@ -10,6 +10,72 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+namespace {
+
+// Load a place with BitRangeProjection: load base, lshr by offset, trunc.
+auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  const auto& bitrange = context.GetBitRangeProjection(place_id);
+
+  // Load the full base value
+  llvm::Value* ptr = context.GetPlacePointer(place_id);
+  llvm::Type* base_type = context.GetPlaceBaseType(place_id);
+  llvm::Value* base = builder.CreateLoad(base_type, ptr, "base");
+
+  // Lower the bit offset and coerce to base integer width
+  llvm::Value* offset = LowerOperand(context, bitrange.bit_offset);
+
+  // Get the element LLVM type for the result
+  llvm::Type* elem_type = context.GetPlaceLlvmType(place_id);
+
+  if (base_type->isStructTy()) {
+    // 4-state base: shift+trunc both planes
+    auto* base_struct = llvm::cast<llvm::StructType>(base_type);
+    auto* plane_type = base_struct->getElementType(0);
+
+    llvm::Value* val = builder.CreateExtractValue(base, 0, "br.val");
+    llvm::Value* unk = builder.CreateExtractValue(base, 1, "br.unk");
+
+    auto* shift_amt =
+        builder.CreateZExtOrTrunc(offset, plane_type, "br.offset");
+    val = builder.CreateLShr(val, shift_amt, "br.val.shr");
+    unk = builder.CreateLShr(unk, shift_amt, "br.unk.shr");
+
+    if (elem_type->isStructTy()) {
+      // 4-state result
+      auto* result_struct = llvm::cast<llvm::StructType>(elem_type);
+      auto* result_elem = result_struct->getElementType(0);
+      if (result_elem != plane_type) {
+        val = builder.CreateTrunc(val, result_elem, "br.val.trunc");
+        unk = builder.CreateTrunc(unk, result_elem, "br.unk.trunc");
+      }
+
+      llvm::Value* result = llvm::UndefValue::get(result_struct);
+      result = builder.CreateInsertValue(result, val, 0);
+      result = builder.CreateInsertValue(result, unk, 1);
+      return result;
+    }
+
+    // 2-state result from 4-state base: trunc to element width, mask unknown
+    if (elem_type != plane_type) {
+      val = builder.CreateTrunc(val, elem_type, "br.val.trunc");
+      unk = builder.CreateTrunc(unk, elem_type, "br.unk.trunc");
+    }
+    auto* not_unk = builder.CreateNot(unk, "br.notunk");
+    return builder.CreateAnd(val, not_unk, "br.known");
+  }
+
+  // 2-state base: shift + trunc
+  auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "br.offset");
+  llvm::Value* shifted = builder.CreateLShr(base, shift_amt, "br.shr");
+  if (elem_type == base_type) {
+    return shifted;
+  }
+  return builder.CreateTrunc(shifted, elem_type, "br.trunc");
+}
+
+}  // namespace
+
 auto LowerOperandRaw(Context& context, const mir::Operand& operand)
     -> llvm::Value* {
   return std::visit(
@@ -18,7 +84,9 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
             return LowerConstant(context, constant);
           },
           [&context](mir::PlaceId place_id) -> llvm::Value* {
-            // Get pointer to place storage and load value
+            if (context.HasBitRangeProjection(place_id)) {
+              return LoadBitRange(context, place_id);
+            }
             llvm::Value* ptr = context.GetPlacePointer(place_id);
             llvm::Type* type = context.GetPlaceLlvmType(place_id);
             return context.GetBuilder().CreateLoad(type, ptr, "load");

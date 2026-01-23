@@ -1170,6 +1170,12 @@ auto LowerRangeSelect(
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
+  if (bit_offset < 0 || static_cast<uint32_t>(bit_offset) + width >
+                            PackedBitWidth(base_type, *ctx.type_arena)) {
+    throw common::InternalError(
+        "LowerRangeSelect", "bit_offset + width exceeds base bit width");
+  }
+
   // Create BitRangeProjection (address-only)
   mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
       base_place, mir::Projection{
@@ -1349,6 +1355,14 @@ auto LowerPackedFieldAccess(
   // Get base as Place
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
+
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+  if (data.bit_offset + data.bit_width >
+      PackedBitWidth(base_type, *ctx.type_arena)) {
+    throw common::InternalError(
+        "LowerPackedFieldAccess",
+        "bit_offset + bit_width exceeds base bit width");
+  }
 
   // Create BitRangeProjection (address-only)
   mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(

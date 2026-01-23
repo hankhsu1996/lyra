@@ -804,6 +804,137 @@ auto LowerCastRvalue4State(
   };
 }
 
+auto LowerIndexValidity(
+    Context& context, const mir::IndexValidityRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  // Lower the index operand
+  llvm::Value* index = LowerOperand(context, operands[0]);
+  auto* idx_type = index->getType();
+
+  // lower_bound <= index (signed)
+  auto* lower = llvm::ConstantInt::get(idx_type, info.lower_bound, true);
+  auto* ge_lower = builder.CreateICmpSGE(index, lower, "idx.ge_lower");
+
+  // index <= upper_bound (signed)
+  auto* upper = llvm::ConstantInt::get(idx_type, info.upper_bound, true);
+  auto* le_upper = builder.CreateICmpSLE(index, upper, "idx.le_upper");
+
+  llvm::Value* valid = builder.CreateAnd(ge_lower, le_upper, "idx.valid");
+
+  // For 4-state indices: also check unknown bits are zero
+  if (info.check_known) {
+    llvm::Value* raw = LowerOperandRaw(context, operands[0]);
+    if (raw->getType()->isStructTy()) {
+      auto* unk = builder.CreateExtractValue(raw, 1, "idx.unk");
+      auto* zero = llvm::ConstantInt::get(unk->getType(), 0);
+      auto* is_known = builder.CreateICmpEQ(unk, zero, "idx.is_known");
+      valid = builder.CreateAnd(valid, is_known, "idx.valid_known");
+    }
+  }
+
+  return builder.CreateZExt(valid, storage_type, "idx.ext");
+}
+
+auto LowerGuardedUse(
+    Context& context, const mir::GuardedUseRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  // Lower validity predicate to i1
+  llvm::Value* valid = LowerOperand(context, operands[0]);
+  if (valid->getType()->getIntegerBitWidth() > 1) {
+    auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
+    valid = builder.CreateICmpNE(valid, zero, "gu.tobool");
+  }
+
+  // Create branch structure: valid → read, invalid → OOB default
+  auto* func = builder.GetInsertBlock()->getParent();
+  auto* do_read_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu.read", func);
+  auto* oob_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu.oob", func);
+  auto* merge_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu.merge", func);
+
+  builder.CreateCondBr(valid, do_read_bb, oob_bb);
+
+  // Valid path: read from place (may involve BitRangeProjection shift+trunc)
+  builder.SetInsertPoint(do_read_bb);
+  auto place_operand = mir::Operand::Use(info.place);
+  llvm::Value* read_val = LowerOperand(context, place_operand);
+  read_val = builder.CreateZExtOrTrunc(read_val, storage_type, "gu.fit");
+  auto* do_read_end_bb = builder.GetInsertBlock();
+  builder.CreateBr(merge_bb);
+
+  // OOB path: 2-state default is 0
+  builder.SetInsertPoint(oob_bb);
+  llvm::Value* oob_val = llvm::ConstantInt::get(storage_type, 0);
+  builder.CreateBr(merge_bb);
+
+  // Merge
+  builder.SetInsertPoint(merge_bb);
+  auto* phi = builder.CreatePHI(storage_type, 2, "gu.result");
+  phi->addIncoming(read_val, do_read_end_bb);
+  phi->addIncoming(oob_val, oob_bb);
+  return phi;
+}
+
+auto LowerGuardedUse4State(
+    Context& context, const mir::GuardedUseRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
+    uint32_t semantic_width) -> FourStateValue {
+  auto& builder = context.GetBuilder();
+
+  // Lower validity predicate to i1
+  llvm::Value* valid = LowerOperand(context, operands[0]);
+  if (valid->getType()->getIntegerBitWidth() > 1) {
+    auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
+    valid = builder.CreateICmpNE(valid, zero, "gu4.tobool");
+  }
+
+  // Create branch structure
+  auto* func = builder.GetInsertBlock()->getParent();
+  auto* do_read_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu4.read", func);
+  auto* oob_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu4.oob", func);
+  auto* merge_bb =
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gu4.merge", func);
+
+  builder.CreateCondBr(valid, do_read_bb, oob_bb);
+
+  // Valid path: load as 4-state
+  builder.SetInsertPoint(do_read_bb);
+  auto place_operand = mir::Operand::Use(info.place);
+  auto read_fs = LowerOperandFourState(context, place_operand, elem_type);
+  auto* do_read_end_bb = builder.GetInsertBlock();
+  builder.CreateBr(merge_bb);
+
+  // OOB path: {value=0, unknown=semantic_mask} (X for semantic bits)
+  builder.SetInsertPoint(oob_bb);
+  auto* oob_val = llvm::ConstantInt::get(elem_type, 0);
+  uint32_t storage_width = elem_type->getIntegerBitWidth();
+  auto oob_unk_ap = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
+  auto* oob_unk = llvm::ConstantInt::get(elem_type, oob_unk_ap);
+  builder.CreateBr(merge_bb);
+
+  // Merge with PHI nodes for both planes
+  builder.SetInsertPoint(merge_bb);
+  auto* phi_val = builder.CreatePHI(elem_type, 2, "gu4.val");
+  phi_val->addIncoming(read_fs.value, do_read_end_bb);
+  phi_val->addIncoming(oob_val, oob_bb);
+
+  auto* phi_unk = builder.CreatePHI(elem_type, 2, "gu4.unk");
+  phi_unk->addIncoming(read_fs.unknown, do_read_end_bb);
+  phi_unk->addIncoming(oob_unk, oob_bb);
+
+  return {.value = phi_val, .unknown = phi_unk};
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -828,6 +959,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             [&](const mir::CastRvalueInfo& info) {
               return LowerCastRvalue4State(
                   context, info, compute.value.operands, elem_type);
+            },
+            [&](const mir::GuardedUseRvalueInfo& info) {
+              return LowerGuardedUse4State(
+                  context, info, compute.value.operands, elem_type,
+                  type_info.bit_width);
             },
             [&](const auto& /*info*/) -> FourStateValue {
               throw common::UnsupportedErrorException(
@@ -872,6 +1008,14 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           },
           [&](const mir::ConcatRvalueInfo& info) {
             return LowerConcatRvalue(
+                context, info, compute.value.operands, storage_type);
+          },
+          [&](const mir::IndexValidityRvalueInfo& info) {
+            return LowerIndexValidity(
+                context, info, compute.value.operands, storage_type);
+          },
+          [&](const mir::GuardedUseRvalueInfo& info) {
+            return LowerGuardedUse(
                 context, info, compute.value.operands, storage_type);
           },
           [&](const auto& /*info*/) -> llvm::Value* {
