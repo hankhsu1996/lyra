@@ -1,18 +1,37 @@
 #include "lyra/mir/dumper.hpp"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <format>
+#include <ostream>
+#include <string>
 #include <type_traits>
 #include <variant>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/builtin.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/package.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {
 
@@ -469,6 +488,7 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::format("plusargs.{}", kind_str);
           },
+          [](const FopenRvalueInfo&) { return std::string("fopen"); },
       },
       rv.info);
 
@@ -564,6 +584,9 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
                 std::format(" end={}", FormatOperand(*effect_op.end_addr));
           }
           return result;
+        } else if constexpr (std::is_same_v<T, FcloseEffect>) {
+          return std::format(
+              "$fclose({})", FormatOperand(effect_op.descriptor));
         } else {
           return "unknown_effect";
         }

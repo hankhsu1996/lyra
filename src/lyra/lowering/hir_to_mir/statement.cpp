@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -9,9 +10,11 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
@@ -267,6 +270,13 @@ void LowerExpressionStatement(
             LowerExpression(data.expression, builder);
           } else if constexpr (std::is_same_v<T, hir::MemIOData>) {
             LowerMemIOEffect(call_data, builder);
+          } else if constexpr (std::is_same_v<T, hir::FopenData>) {
+            // $fopen as statement - evaluate for side effect, discard result
+            LowerExpression(data.expression, builder);
+          } else if constexpr (std::is_same_v<T, hir::FcloseData>) {
+            mir::Operand desc_op =
+                LowerExpression(call_data.descriptor, builder);
+            builder.EmitEffect(mir::FcloseEffect{.descriptor = desc_op});
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");

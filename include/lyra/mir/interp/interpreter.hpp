@@ -13,6 +13,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/interp/file_manager.hpp"
 #include "lyra/mir/interp/frame.hpp"
 #include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -137,6 +138,10 @@ class Interpreter {
   auto EvalIndexValidity(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalSFormat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalPlusargs(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalFopen(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+
+  // Execute FcloseEffect
+  void ExecFcloseEffect(ProcessState& state, const FcloseEffect& effect);
 
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)
   static auto ResolveRoot(const ProcessState& state, const PlaceRoot& root)
@@ -198,6 +203,7 @@ class Interpreter {
   const TypeArena* types_;
   std::ostream* output_ = nullptr;
   std::vector<std::string> plusargs_;
+  FileManager file_manager_;
 };
 
 // Helper: Create ProcessState for a given process.

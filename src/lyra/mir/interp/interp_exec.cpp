@@ -173,6 +173,7 @@ void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
           [&](const SeverityEffect& op) { ExecSeverityEffect(state, op); },
           [&](const MemIOEffect& op) { ExecMemIOEffect(state, op); },
+          [&](const FcloseEffect& op) { ExecFcloseEffect(state, op); },
       },
       effect.op);
 }
@@ -373,6 +374,18 @@ void Interpreter::ExecMemIOEffect(
       file << formatted << "\n";
     }
   }
+}
+
+void Interpreter::ExecFcloseEffect(
+    ProcessState& state, const FcloseEffect& effect) {
+  RuntimeValue desc_val = EvalOperand(state, effect.descriptor);
+  if (!IsIntegral(desc_val)) {
+    return;  // Invalid descriptor: no-op
+  }
+  const auto& desc_int = AsIntegral(desc_val);
+  auto descriptor =
+      static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+  file_manager_.Fclose(descriptor);
 }
 
 void Interpreter::ExecGuardedAssign(

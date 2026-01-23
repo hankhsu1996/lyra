@@ -35,5 +35,6 @@ suites:
       - system_tf/effect/severity.yaml
       - system_tf/effect/plusargs.yaml
       - system_tf/effect/readmem.yaml
+      - system_tf/effect/fopen.yaml
       - functions/
       - packages/

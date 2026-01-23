@@ -156,6 +156,9 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(*m.end_addr, places);
             }
           },
+          [&](const mir::FcloseEffect& f) {
+            CollectPlaceFromOperand(f.descriptor, places);
+          },
       },
       effect);
 }

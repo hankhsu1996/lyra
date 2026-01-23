@@ -299,6 +299,9 @@ auto Interpreter::EvalRvalue(
           [&](const PlusargsRvalueInfo&) -> RuntimeValue {
             return EvalPlusargs(state, rv);
           },
+          [&](const FopenRvalueInfo&) -> RuntimeValue {
+            return EvalFopen(state, rv);
+          },
       },
       rv.info);
 }
@@ -907,6 +910,31 @@ auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
 
   // No match found
   return MakeIntegralSigned(0, 32);
+}
+
+auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
+    -> RuntimeValue {
+  RuntimeValue filename_val = EvalOperand(state, rv.operands[0]);
+  if (!IsString(filename_val)) {
+    throw common::InternalError(
+        "EvalFopen", "filename operand is not a string");
+  }
+  const std::string& filename = AsString(filename_val).value;
+
+  int32_t result = 0;
+  if (rv.operands.size() == 2) {
+    // FD mode: $fopen(filename, mode)
+    RuntimeValue mode_val = EvalOperand(state, rv.operands[1]);
+    if (!IsString(mode_val)) {
+      throw common::InternalError("EvalFopen", "mode operand is not a string");
+    }
+    result = file_manager_.FopenFd(filename, AsString(mode_val).value);
+  } else {
+    // MCD mode: $fopen(filename)
+    result = file_manager_.FopenMcd(filename);
+  }
+
+  return MakeIntegralSigned(result, 32);
 }
 
 }  // namespace lyra::mir::interp

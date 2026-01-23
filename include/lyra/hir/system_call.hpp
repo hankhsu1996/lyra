@@ -69,8 +69,21 @@ struct MemIOData {
   auto operator==(const MemIOData&) const -> bool = default;
 };
 
+struct FopenData {
+  ExpressionId filename;
+  std::optional<ExpressionId> mode;  // nullopt = MCD mode, present = FD mode
+
+  auto operator==(const FopenData&) const -> bool = default;
+};
+
+struct FcloseData {
+  ExpressionId descriptor;
+
+  auto operator==(const FcloseData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
-    TestPlusargsData, ValuePlusargsData, MemIOData>;
+    TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData>;
 
 }  // namespace lyra::hir

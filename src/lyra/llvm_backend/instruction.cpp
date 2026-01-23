@@ -286,6 +286,9 @@ void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
           [](const mir::MemIOEffect& /*mem_io*/) {
             // TODO(hankhsu): Handle mem IO effects
           },
+          [](const mir::FcloseEffect& /*fclose*/) {
+            // TODO(hankhsu): Handle fclose effects
+          },
       },
       effect_op);
 }
