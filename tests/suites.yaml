@@ -19,6 +19,7 @@ suites:
       - control_flow/ternary.yaml
       - control_flow/unique_priority_if.yaml
       - control_flow/unique_priority_case.yaml
+      - control_flow/foreach_2d.yaml
       - datatypes/wide_integral/
       - datatypes/unpacked_arrays.yaml
       - datatypes/unpacked_array_constants.yaml
