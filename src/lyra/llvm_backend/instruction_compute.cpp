@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <variant>
@@ -7,15 +8,23 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -190,6 +199,8 @@ auto ReturnsI1(mir::BinaryOp op) -> bool {
     case mir::BinaryOp::kGreaterThanEqualSigned:
     case mir::BinaryOp::kLogicalAnd:
     case mir::BinaryOp::kLogicalOr:
+    case mir::BinaryOp::kCaseZMatch:
+    case mir::BinaryOp::kCaseXMatch:
       return true;
     default:
       return false;
@@ -230,6 +241,10 @@ auto IsShiftOp(mir::BinaryOp op) -> bool {
 
 auto IsLogicalOp(mir::BinaryOp op) -> bool {
   return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr;
+}
+
+auto IsCaseMatchOp(mir::BinaryOp op) -> bool {
+  return op == mir::BinaryOp::kCaseZMatch || op == mir::BinaryOp::kCaseXMatch;
 }
 
 // Check if the unary op is a reduction (needs original operand type)
@@ -460,6 +475,11 @@ auto LowerStringBinaryOp(
   return builder.CreateZExt(bool_result, result_type, "str.cmp.ext");
 }
 
+auto LowerCaseMatchOp(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value*;
+
 auto LowerBinaryRvalue(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type,
@@ -467,6 +487,12 @@ auto LowerBinaryRvalue(
   // Dispatch to string lowering if operands are strings
   if (IsStringOperand(context, operands[0])) {
     return LowerStringBinaryOp(context, info, operands, storage_type);
+  }
+
+  // Case match ops need 4-state operands (must dispatch before LowerOperand
+  // coerces to 2-state)
+  if (IsCaseMatchOp(info.op)) {
+    return LowerCaseMatchOp(context, info, operands, storage_type);
   }
 
   auto& builder = context.GetBuilder();
@@ -763,6 +789,54 @@ auto LowerOperandFourState(
   auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "fs2.val");
   auto* unk = llvm::ConstantInt::get(elem_type, 0);
   return {.value = val, .unknown = unk};
+}
+
+auto LowerCaseMatchOp(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+
+  uint32_t operand_width = GetOperandBitWidth(context, operands[0]);
+  auto* elem_type =
+      llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
+
+  auto lhs = LowerOperandFourState(context, operands[0], elem_type);
+  auto rhs = LowerOperandFourState(context, operands[1], elem_type);
+
+  lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "cm.lhs.val");
+  lhs.unknown = builder.CreateZExtOrTrunc(lhs.unknown, elem_type, "cm.lhs.unk");
+  rhs.value = builder.CreateZExtOrTrunc(rhs.value, elem_type, "cm.rhs.val");
+  rhs.unknown = builder.CreateZExtOrTrunc(rhs.unknown, elem_type, "cm.rhs.unk");
+
+  // Compute wildcard mask
+  llvm::Value* wildcard = nullptr;
+  if (info.op == mir::BinaryOp::kCaseXMatch) {
+    wildcard = builder.CreateOr(lhs.unknown, rhs.unknown, "cx.wc");
+  } else {
+    auto* lhs_z = builder.CreateAnd(lhs.value, lhs.unknown, "cz.lhs.z");
+    auto* rhs_z = builder.CreateAnd(rhs.value, rhs.unknown, "cz.rhs.z");
+    wildcard = builder.CreateOr(lhs_z, rhs_z, "cz.wc");
+  }
+
+  // Compare non-wildcard bits
+  auto* not_wildcard = builder.CreateNot(wildcard, "cm.not.wc");
+  auto sem_mask = llvm::APInt::getLowBitsSet(
+      elem_type->getIntegerBitWidth(), operand_width);
+  auto* mask = builder.CreateAnd(
+      not_wildcard, llvm::ConstantInt::get(elem_type, sem_mask), "cm.mask");
+  auto* lhs_masked = builder.CreateAnd(lhs.value, mask, "cm.lv");
+  auto* rhs_masked = builder.CreateAnd(rhs.value, mask, "cm.rv");
+  llvm::Value* result = builder.CreateICmpEQ(lhs_masked, rhs_masked, "cm.veq");
+
+  if (info.op == mir::BinaryOp::kCaseZMatch) {
+    auto* lhs_unk_m = builder.CreateAnd(lhs.unknown, mask, "cz.lu");
+    auto* rhs_unk_m = builder.CreateAnd(rhs.unknown, mask, "cz.ru");
+    auto* unk_eq = builder.CreateICmpEQ(lhs_unk_m, rhs_unk_m, "cz.ueq");
+    result = builder.CreateAnd(result, unk_eq, "cz.match");
+  }
+
+  return builder.CreateZExt(result, storage_type, "cm.ext");
 }
 
 // 4-state concat: same shift+OR algorithm as 2-state, applied to both planes

@@ -9,6 +9,7 @@ suites:
     backend: llvm
     include_regex:
       - operators/
+      - control_flow/case.yaml
       - control_flow/conditional.yaml
       - control_flow/while.yaml
       - control_flow/do_while.yaml
