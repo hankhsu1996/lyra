@@ -23,7 +23,6 @@ suites:
       - datatypes/packed/packed_union.yaml
       - datatypes/real/
       - datatypes/string/
-      - datatypes/unpacked/dynamic_arrays.yaml
       - datatypes/unpacked/queues.yaml
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml

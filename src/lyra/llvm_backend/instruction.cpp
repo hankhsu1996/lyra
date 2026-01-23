@@ -10,6 +10,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute.hpp"
 #include "lyra/llvm_backend/instruction_display.hpp"
@@ -219,10 +220,71 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
-  // Unpacked array: load source aggregate and store
+  // Dynamic array: clone/move semantics with ownership tracking
+  if (type.Kind() == TypeKind::kDynamicArray) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+    llvm::Value* new_handle = LowerOperand(context, assign.source);
+
+    // Determine clone vs move based on source kind.
+    // MIR invariant: temps are single-owner; Use(temp) is a consuming move
+    // and the temp will not be read again in this statement.
+    if (std::holds_alternative<mir::PlaceId>(assign.source.payload)) {
+      auto src_place_id = std::get<mir::PlaceId>(assign.source.payload);
+      const auto& src_place = arena[src_place_id];
+      if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+        // Move: null-out the temp to transfer ownership
+        auto* src_ptr = context.GetPlacePointer(src_place_id);
+        auto* null_val = llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_ty));
+        builder.CreateStore(null_val, src_ptr);
+      } else {
+        // Clone: persistent place, need independent copy
+        new_handle = builder.CreateCall(
+            context.GetLyraDynArrayClone(), {new_handle}, "da.clone");
+      }
+    }
+    // else: source is a Const (nullptr literal) — use as-is
+
+    // Load old handle before store overwrites it
+    auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.old");
+
+    // Store new handle (with design notify if needed)
+    if (IsDesignPlace(context, assign.target)) {
+      auto signal_id = GetSignalId(context, assign.target);
+      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+      builder.CreateCall(
+          context.GetLyraStoreDynArray(),
+          {context.GetEnginePointer(), target_ptr, new_handle,
+           llvm::ConstantInt::get(i32_ty, signal_id)});
+    } else {
+      builder.CreateStore(new_handle, target_ptr);
+    }
+
+    // Release old handle after store
+    builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+    return;
+  }
+
+  // Unpacked array: aggregate store (only valid for POD element types)
   if (type.Kind() == TypeKind::kUnpackedArray) {
+    const auto& arr_info = type.AsUnpackedArray();
+    const Type& elem_type = types[arr_info.element_type];
+    if (elem_type.Kind() == TypeKind::kDynamicArray ||
+        elem_type.Kind() == TypeKind::kString) {
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm,
+          common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+          "unpacked array assignment with owned-handle elements "
+          "(dynamic array or string) not yet supported");
+    }
+
     llvm::Value* val = LowerOperandRaw(context, assign.source);
-    builder.CreateStore(val, target_ptr);
+    if (IsDesignPlace(context, assign.target)) {
+      StoreDesignWithNotify(
+          context, val, target_ptr, storage_type, assign.target);
+    } else {
+      builder.CreateStore(val, target_ptr);
+    }
     return;
   }
 
@@ -315,7 +377,32 @@ void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
     llvm::Value* target_ptr = context.GetPlacePointer(guarded.target);
     llvm::Type* storage_type = context.GetPlaceLlvmType(guarded.target);
 
-    if (storage_type->isStructTy()) {
+    const auto& types = context.GetTypeArena();
+    const auto& ga_place = context.GetMirArena()[guarded.target];
+    const Type& ga_type = types[mir::TypeOfPlace(types, ga_place)];
+
+    if (ga_type.Kind() == TypeKind::kDynamicArray) {
+      // Dynamic array: clone source, store new, release old
+      llvm::Value* new_handle = source_raw;
+      new_handle = builder.CreateCall(
+          context.GetLyraDynArrayClone(), {new_handle}, "ga.da.clone");
+
+      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+      auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "ga.da.old");
+
+      if (IsDesignPlace(context, guarded.target)) {
+        auto signal_id = GetSignalId(context, guarded.target);
+        auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+        builder.CreateCall(
+            context.GetLyraStoreDynArray(),
+            {context.GetEnginePointer(), target_ptr, new_handle,
+             llvm::ConstantInt::get(i32_ty, signal_id)});
+      } else {
+        builder.CreateStore(new_handle, target_ptr);
+      }
+
+      builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+    } else if (storage_type->isStructTy()) {
       // 4-state target
       auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
       auto* elem_type = struct_type->getElementType(0);

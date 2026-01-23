@@ -81,6 +81,9 @@ auto GetLlvmTypeForTypeId(
     llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
     return llvm::ArrayType::get(elem, info.range.Size());
   }
+  if (type.Kind() == TypeKind::kDynamicArray) {
+    return llvm::PointerType::getUnqual(ctx);
+  }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types);
     if (IsPackedFourState(type, types)) {
@@ -344,6 +347,173 @@ auto Context::GetLyraReportTime() -> llvm::Function* {
   return lyra_report_time_;
 }
 
+auto Context::GetLyraDynArrayNew() -> llvm::Function* {
+  if (lyra_dynarray_new_ == nullptr) {
+    // ptr LyraDynArrayNew(i64 size, i32 elem_size, ptr clone_fn, ptr
+    // destroy_fn)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        ptr_ty, {i64_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_dynarray_new_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayNew",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_new_;
+}
+
+auto Context::GetLyraDynArrayNewCopy() -> llvm::Function* {
+  if (lyra_dynarray_new_copy_ == nullptr) {
+    // ptr LyraDynArrayNewCopy(i64 size, i32 elem_size, ptr clone_fn,
+    //                         ptr destroy_fn, ptr src)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        ptr_ty, {i64_ty, i32_ty, ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_dynarray_new_copy_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayNewCopy",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_new_copy_;
+}
+
+auto Context::GetLyraDynArraySize() -> llvm::Function* {
+  if (lyra_dynarray_size_ == nullptr) {
+    // i64 LyraDynArraySize(ptr arr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i64_ty, {ptr_ty}, false);
+    lyra_dynarray_size_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArraySize",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_size_;
+}
+
+auto Context::GetLyraDynArrayElementPtr() -> llvm::Function* {
+  if (lyra_dynarray_element_ptr_ == nullptr) {
+    // ptr LyraDynArrayElementPtr(ptr arr, i64 index)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i64_ty}, false);
+    lyra_dynarray_element_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayElementPtr",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_element_ptr_;
+}
+
+auto Context::GetLyraDynArrayClone() -> llvm::Function* {
+  if (lyra_dynarray_clone_ == nullptr) {
+    // ptr LyraDynArrayClone(ptr src)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_dynarray_clone_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayClone",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_clone_;
+}
+
+auto Context::GetLyraDynArrayDelete() -> llvm::Function* {
+  if (lyra_dynarray_delete_ == nullptr) {
+    // void LyraDynArrayDelete(ptr arr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_dynarray_delete_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayDelete",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_delete_;
+}
+
+auto Context::GetLyraDynArrayRelease() -> llvm::Function* {
+  if (lyra_dynarray_release_ == nullptr) {
+    // void LyraDynArrayRelease(ptr arr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_dynarray_release_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayRelease",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_release_;
+}
+
+auto Context::GetLyraStoreDynArray() -> llvm::Function* {
+  if (lyra_store_dynarray_ == nullptr) {
+    // void LyraStoreDynArray(ptr engine, ptr slot, ptr new_handle,
+    //                        i32 signal_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty, i32_ty},
+        false);
+    lyra_store_dynarray_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStoreDynArray",
+        llvm_module_.get());
+  }
+  return lyra_store_dynarray_;
+}
+
+auto Context::GetLyraDynArrayCloneElem() -> llvm::Function* {
+  if (lyra_dynarray_clone_elem_ == nullptr) {
+    // void LyraDynArrayCloneElem(ptr dst, ptr src)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_dynarray_clone_elem_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayCloneElem",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_clone_elem_;
+}
+
+auto Context::GetLyraDynArrayDestroyElem() -> llvm::Function* {
+  if (lyra_dynarray_destroy_elem_ == nullptr) {
+    // void LyraDynArrayDestroyElem(ptr elem)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_dynarray_destroy_elem_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDynArrayDestroyElem",
+        llvm_module_.get());
+  }
+  return lyra_dynarray_destroy_elem_;
+}
+
+auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
+  const Type& type = types_[elem_type];
+  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  if (type.Kind() == TypeKind::kDynamicArray) {
+    // Nested dynamic array: element is a pointer
+    auto ptr_size =
+        static_cast<int32_t>(llvm_module_->getDataLayout().getPointerSize());
+    return ElemOpsInfo{
+        .elem_size = ptr_size,
+        .clone_fn = GetLyraDynArrayCloneElem(),
+        .destroy_fn = GetLyraDynArrayDestroyElem(),
+    };
+  }
+
+  // POD types: compute size from DataLayout, no clone/destroy needed
+  llvm::Type* llvm_type =
+      GetLlvmTypeForTypeId(*llvm_context_, elem_type, types_);
+  auto byte_size = static_cast<int32_t>(
+      llvm_module_->getDataLayout().getTypeAllocSize(llvm_type));
+  return ElemOpsInfo{
+      .elem_size = byte_size,
+      .clone_fn = null_ptr,
+      .destroy_fn = null_ptr,
+  };
+}
+
 auto Context::GetHeaderType() const -> llvm::StructType* {
   return layout_.header_type;
 }
@@ -420,7 +590,9 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     }
   } else if (type.Kind() == TypeKind::kReal) {
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
-  } else if (type.Kind() == TypeKind::kString) {
+  } else if (
+      type.Kind() == TypeKind::kString ||
+      type.Kind() == TypeKind::kDynamicArray) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
@@ -449,6 +621,14 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
 
   // Create the alloca using the dedicated alloca builder (entry block)
   auto* alloca = alloca_builder_->CreateAlloca(llvm_type, nullptr, "place");
+
+  // Initialize pointer-typed places to nullptr (dynamic arrays and strings)
+  if (type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kString) {
+    auto* null_val = llvm::ConstantPointerNull::get(
+        llvm::PointerType::getUnqual(*llvm_context_));
+    alloca_builder_->CreateStore(null_val, alloca);
+  }
 
   // Store in the map
   place_storage_[place_id] = alloca;
@@ -552,12 +732,27 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
       throw common::InternalError(
           "GetPlacePointer", "unsupported projection kind in LLVM backend");
     }
-    llvm::Type* array_type =
-        GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
-    llvm::Value* index = LowerOperand(*this, idx->index);
-    ptr = builder_.CreateGEP(
-        array_type, ptr, {builder_.getInt32(0), index}, "array_elem_ptr");
-    current_type = types_[current_type].AsUnpackedArray().element_type;
+
+    const Type& cur_type = types_[current_type];
+    if (cur_type.Kind() == TypeKind::kDynamicArray) {
+      // Load the handle, call ElementPtr
+      auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+      llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
+      llvm::Value* index = LowerOperand(*this, idx->index);
+      index = builder_.CreateSExtOrTrunc(
+          index, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
+      ptr = builder_.CreateCall(
+          GetLyraDynArrayElementPtr(), {handle, index}, "da.elem_ptr");
+      current_type = cur_type.AsDynamicArray().element_type;
+    } else {
+      // Unpacked array: GEP into fixed array
+      llvm::Type* array_type =
+          GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
+      llvm::Value* index = LowerOperand(*this, idx->index);
+      ptr = builder_.CreateGEP(
+          array_type, ptr, {builder_.getInt32(0), index}, "array_elem_ptr");
+      current_type = cur_type.AsUnpackedArray().element_type;
+    }
   }
 
   return ptr;
@@ -579,7 +774,8 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(*llvm_context_);
   }
-  if (type.Kind() == TypeKind::kString) {
+  if (type.Kind() == TypeKind::kString ||
+      type.Kind() == TypeKind::kDynamicArray) {
     return llvm::PointerType::getUnqual(*llvm_context_);
   }
   if (IsPacked(type)) {
@@ -631,6 +827,8 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
     const Type& t = types_[base_type_id];
     if (t.Kind() == TypeKind::kUnpackedArray) {
       base_type_id = t.AsUnpackedArray().element_type;
+    } else if (t.Kind() == TypeKind::kDynamicArray) {
+      base_type_id = t.AsDynamicArray().element_type;
     }
   }
 
