@@ -228,6 +228,10 @@ auto IsShiftOp(mir::BinaryOp op) -> bool {
   }
 }
 
+auto IsLogicalOp(mir::BinaryOp op) -> bool {
+  return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr;
+}
+
 // Check if the unary op is a reduction (needs original operand type)
 auto IsReductionOp(mir::UnaryOp op) -> bool {
   switch (op) {
@@ -290,6 +294,23 @@ auto LowerShiftOp(
   }
 
   return builder.CreateSelect(in_range, shifted, fallback, "shift.result");
+}
+
+// Unknown plane is a bitmask: right shifts are always logical (LSHR),
+// never arithmetic. ASHR would sign-extend the mask (wrong taint geometry).
+auto LowerShiftOpUnknown(
+    Context& context, mir::BinaryOp op, llvm::Value* unk,
+    llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
+  mir::BinaryOp unk_op = mir::BinaryOp::kLogicalShiftRight;
+  switch (op) {
+    case mir::BinaryOp::kLogicalShiftLeft:
+    case mir::BinaryOp::kArithmeticShiftLeft:
+      unk_op = mir::BinaryOp::kLogicalShiftLeft;
+      break;
+    default:
+      break;
+  }
+  return LowerShiftOp(context, unk_op, unk, shift_amount, semantic_width);
 }
 
 // Dispatch to LLVM icmp for comparison operators
@@ -935,6 +956,61 @@ auto LowerGuardedUse4State(
   return {.value = phi_val, .unknown = phi_unk};
 }
 
+auto LowerBinaryRvalue4State(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
+    uint32_t semantic_width) -> FourStateValue {
+  auto& builder = context.GetBuilder();
+  auto* zero = llvm::ConstantInt::get(elem_type, 0);
+
+  auto lhs = LowerOperandFourState(context, operands[0], elem_type);
+  auto rhs = LowerOperandFourState(context, operands[1], elem_type);
+
+  lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "bin4.lhs.val");
+  rhs.value = builder.CreateZExtOrTrunc(rhs.value, elem_type, "bin4.rhs.val");
+  lhs.unknown =
+      builder.CreateZExtOrTrunc(lhs.unknown, elem_type, "bin4.lhs.unk");
+  rhs.unknown =
+      builder.CreateZExtOrTrunc(rhs.unknown, elem_type, "bin4.rhs.unk");
+
+  auto* combined_unk = builder.CreateOr(lhs.unknown, rhs.unknown, "bin4.unk");
+
+  if (IsComparisonOp(info.op)) {
+    auto* cmp = LowerBinaryComparison(context, info.op, lhs.value, rhs.value);
+    auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
+    return {
+        .value = builder.CreateZExt(cmp, elem_type, "bin4.cmp.val"),
+        .unknown = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk"),
+    };
+  }
+
+  if (IsLogicalOp(info.op)) {
+    auto* val = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
+    auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
+    return {
+        .value = builder.CreateZExt(val, elem_type, "bin4.log.val"),
+        .unknown = builder.CreateZExt(taint, elem_type, "bin4.log.unk"),
+    };
+  }
+
+  if (IsShiftOp(info.op)) {
+    auto* val =
+        LowerShiftOp(context, info.op, lhs.value, rhs.value, semantic_width);
+    auto* unk = LowerShiftOpUnknown(
+        context, info.op, lhs.unknown, rhs.value, semantic_width);
+    return {.value = val, .unknown = unk};
+  }
+
+  // Arithmetic/bitwise — propagate combined taint
+  if (ReturnsI1(info.op)) {
+    throw common::InternalError(
+        "LowerBinaryRvalue4State",
+        "i1-producing op must be handled as comparison or logical");
+  }
+  auto* val = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
+  return {.value = val, .unknown = combined_unk};
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -959,6 +1035,11 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
             [&](const mir::CastRvalueInfo& info) {
               return LowerCastRvalue4State(
                   context, info, compute.value.operands, elem_type);
+            },
+            [&](const mir::BinaryRvalueInfo& info) {
+              return LowerBinaryRvalue4State(
+                  context, info, compute.value.operands, elem_type,
+                  type_info.bit_width);
             },
             [&](const mir::GuardedUseRvalueInfo& info) {
               return LowerGuardedUse4State(
