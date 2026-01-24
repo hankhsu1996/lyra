@@ -69,13 +69,10 @@ void StoreDesignWithNotify(
 void StoreBitRange(
     Context& context, mir::PlaceId target, llvm::Value* source_raw) {
   auto& builder = context.GetBuilder();
-  const auto& bitrange = context.GetBitRangeProjection(target);
+  auto [offset, width] = context.ComposeBitRange(target);
 
   llvm::Value* ptr = context.GetPlacePointer(target);
   llvm::Type* base_type = context.GetPlaceBaseType(target);
-
-  // Lower the bit offset
-  llvm::Value* offset = LowerOperand(context, bitrange.bit_offset);
 
   if (base_type->isStructTy()) {
     // 4-state base: RMW both planes independently
@@ -92,8 +89,7 @@ void StoreBitRange(
     auto* shift_amt =
         builder.CreateZExtOrTrunc(offset, plane_type, "rmw.offset");
 
-    // Build mask: getLowBitsSet(plane_width, bitrange.width), shifted
-    auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, bitrange.width);
+    auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, width);
     auto* mask = llvm::ConstantInt::get(plane_type, mask_ap);
     auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
     auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
@@ -142,7 +138,7 @@ void StoreBitRange(
   uint32_t base_width = base_type->getIntegerBitWidth();
   auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "rmw.offset");
 
-  auto mask_ap = llvm::APInt::getLowBitsSet(base_width, bitrange.width);
+  auto mask_ap = llvm::APInt::getLowBitsSet(base_width, width);
   auto* mask = llvm::ConstantInt::get(base_type, mask_ap);
   auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
   auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
@@ -506,7 +502,7 @@ void LowerNonBlockingAssign(
 
   // Case 1: BitRangeProjection — shifted value and mask
   if (context.HasBitRangeProjection(nba.target)) {
-    const auto& bitrange = context.GetBitRangeProjection(nba.target);
+    auto [offset, width] = context.ComposeBitRange(nba.target);
     llvm::Value* ptr = context.GetPlacePointer(nba.target);
     llvm::Type* base_type = context.GetPlaceBaseType(nba.target);
     llvm::Value* notify_base_ptr = ptr;  // BitRange shares root pointer
@@ -519,8 +515,6 @@ void LowerNonBlockingAssign(
       }
     }
 
-    llvm::Value* offset = LowerOperand(context, bitrange.bit_offset);
-
     if (base_type->isStructTy()) {
       // 4-state base: mask both planes
       auto* base_struct = llvm::cast<llvm::StructType>(base_type);
@@ -529,7 +523,7 @@ void LowerNonBlockingAssign(
 
       auto* shift_amt =
           builder.CreateZExtOrTrunc(offset, plane_type, "nba.offset");
-      auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, bitrange.width);
+      auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, width);
       auto* mask_val = llvm::ConstantInt::get(plane_type, mask_ap);
       auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
 
@@ -569,7 +563,7 @@ void LowerNonBlockingAssign(
       auto* shift_amt =
           builder.CreateZExtOrTrunc(offset, base_type, "nba.offset");
 
-      auto mask_ap = llvm::APInt::getLowBitsSet(base_width, bitrange.width);
+      auto mask_ap = llvm::APInt::getLowBitsSet(base_width, width);
       auto* mask_val = llvm::ConstantInt::get(base_type, mask_ap);
       auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
 
@@ -606,8 +600,7 @@ void LowerNonBlockingAssign(
     }
 
     const Type& arr_type = types[parent_type];
-    auto arr_size =
-        static_cast<uint32_t>(arr_type.AsUnpackedArray().range.Size());
+    auto arr_size = arr_type.AsUnpackedArray().range.Size();
 
     // Compute bounds check
     llvm::Value* index = LowerOperand(context, idx_proj->index);
