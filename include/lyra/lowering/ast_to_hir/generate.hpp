@@ -7,6 +7,7 @@ class Scope;
 class VariableSymbol;
 class SubroutineSymbol;
 class ProceduralBlockSymbol;
+class ContinuousAssignSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -18,6 +19,7 @@ struct CollectedMembers {
   std::vector<const slang::ast::SubroutineSymbol*> functions;
   std::vector<const slang::ast::SubroutineSymbol*> tasks;
   std::vector<const slang::ast::ProceduralBlockSymbol*> processes;
+  std::vector<const slang::ast::ContinuousAssignSymbol*> continuous_assigns;
 };
 
 // Recursively collect module members from a scope, walking into

@@ -5,6 +5,7 @@
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -34,6 +35,11 @@ void CollectScopeMembers(
       case slang::ast::SymbolKind::ProceduralBlock: {
         const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
         out.processes.push_back(&proc);
+        break;
+      }
+      case slang::ast::SymbolKind::ContinuousAssign: {
+        const auto& ca = member.as<slang::ast::ContinuousAssignSymbol>();
+        out.continuous_assigns.push_back(&ca);
         break;
       }
       case slang::ast::SymbolKind::GenerateBlock: {

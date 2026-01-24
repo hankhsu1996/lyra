@@ -42,6 +42,24 @@ enum class ExpressionKind {
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
 };
 
+// Returns true if the expression kind can appear as an assignment target.
+inline auto IsPlaceExpressionKind(ExpressionKind kind) -> bool {
+  switch (kind) {
+    case ExpressionKind::kNameRef:
+    case ExpressionKind::kElementAccess:
+    case ExpressionKind::kMemberAccess:
+    case ExpressionKind::kPackedElementSelect:
+    case ExpressionKind::kPackedFieldAccess:
+    case ExpressionKind::kBitSelect:
+    case ExpressionKind::kRangeSelect:
+    case ExpressionKind::kIndexedPartSelect:
+    case ExpressionKind::kHierarchicalRef:
+      return true;
+    default:
+      return false;
+  }
+}
+
 struct ConstantExpressionData {
   ConstId constant;
 
