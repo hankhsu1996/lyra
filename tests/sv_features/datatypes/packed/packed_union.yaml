@@ -20,8 +20,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43707  # 0xAABB
-        result_bits: 43707  # 0xAABB (same value, different view)
+        result_word: 43707 # 0xAABB
+        result_bits: 43707 # 0xAABB (same value, different view)
 
   - name: hard_union_type_punning
     description: Hard packed union - write one member, read another
@@ -40,7 +40,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 57005  # 0xDEAD
+        result: 57005 # 0xDEAD
 
   - name: hard_union_signed_unsigned
     description: Hard packed union - same bits, different signedness interpretation
@@ -81,7 +81,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 22136  # 0x5678 - view2 overwrote view1
+        result: 22136 # 0x5678 - view2 overwrote view1
 
   - name: hard_union_arithmetic
     description: Hard packed union used in arithmetic expression
@@ -125,9 +125,9 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43981  # 0xABCD
-        result_high: 171    # 0xAB
-        result_low: 205     # 0xCD
+        result_word: 43981 # 0xABCD
+        result_high: 171 # 0xAB
+        result_low: 205 # 0xCD
 
   - name: hard_union_copy
     description: Hard packed union - copy one union to another
@@ -147,7 +147,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 48879  # 0xBEEF
+        result: 48879 # 0xBEEF
 
   - name: hard_union_comparison
     description: Hard packed union equality comparison
@@ -185,7 +185,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 51966  # 0xCAFE
+        result: 51966 # 0xCAFE
 
   - name: hard_union_bitwise_ops
     description: Hard packed union - bitwise operations
@@ -224,8 +224,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43707  # 0xAABB
-        result_byte: 187    # 0xBB (low 8 bits)
+        result_word: 43707 # 0xAABB
+        result_byte: 187 # 0xBB (low 8 bits)
 
   - name: soft_union_write_narrow_read_wide
     description: Soft packed union - write narrow member preserves MSBs
@@ -245,7 +245,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 65451  # 0xFFAB - MSBs preserved, LSBs overwritten
+        result: 65451 # 0xFFAB - MSBs preserved, LSBs overwritten
 
   - name: union_bit_select
     description: Bit select directly on packed union value

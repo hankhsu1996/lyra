@@ -20,8 +20,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_a: 170  # 0xAA
-        result_b: 187  # 0xBB
+        result_a: 170 # 0xAA
+        result_b: 187 # 0xBB
 
   - name: struct_field_write
     description: Write individual struct fields
@@ -42,7 +42,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 43707  # 0xAABB
+        result: 43707 # 0xAABB
 
   - name: struct_literal_positional
     description: Struct literal with positional values
@@ -61,7 +61,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 52445  # 0xCCDD
+        result: 52445 # 0xCCDD
 
   - name: struct_literal_named
     description: Struct literal with named fields
@@ -80,7 +80,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 61183  # 0xEEFF
+        result: 61183 # 0xEEFF
 
   - name: struct_literal_named_reverse_order
     description: Named fields can be in any order
@@ -99,7 +99,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 8721  # 0x2211 - a is MSB
+        result: 8721 # 0x2211 - a is MSB
 
   - name: struct_three_fields
     description: Struct with three fields
@@ -122,10 +122,10 @@ cases:
       endmodule
     expect:
       variables:
-        result_x: 18   # 0x12
-        result_y: 52   # 0x34
-        result_z: 86   # 0x56
-        result_total: 1193046  # 0x123456
+        result_x: 18 # 0x12
+        result_y: 52 # 0x34
+        result_z: 86 # 0x56
+        result_total: 1193046 # 0x123456
 
   - name: struct_single_bit_field
     description: Struct with single-bit field
@@ -146,9 +146,9 @@ cases:
       endmodule
     expect:
       variables:
-        result_data: 85  # 0x55
+        result_data: 85 # 0x55
         result_flag: 1
-        result_total: 171  # 0xAB = (0x55 << 1) | 1
+        result_total: 171 # 0xAB = (0x55 << 1) | 1
 
   - name: struct_field_modify
     description: Modify one field without affecting others
@@ -168,7 +168,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 255  # 0x00FF
+        result: 255 # 0x00FF
 
   - name: struct_field_arithmetic
     description: Arithmetic with struct fields
@@ -207,7 +207,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 70  # 0x12 + 0x34
+        result: 70 # 0x12 + 0x34
 
   - name: struct_inline_declaration
     description: Struct without typedef
@@ -225,7 +225,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 43707  # 0xAABB
+        result: 43707 # 0xAABB
 
   - name: struct_bit_select_from_field
     description: Bit selection from struct field
@@ -244,7 +244,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 2  # 1 + 0 + 0 + 1
+        result: 2 # 1 + 0 + 0 + 1
 
   - name: struct_part_select_from_field
     description: Part select from struct field
@@ -262,7 +262,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 10  # 0xA
+        result: 10 # 0xA
 
   - name: struct_wide_field
     description: Struct with wide field (>32 bits)
@@ -283,8 +283,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_high: 305419896   # 0x12345678
-        result_low: -1412567296  # 0xABCDEF00 as signed
+        result_high: 305419896 # 0x12345678
+        result_low: -1412567296 # 0xABCDEF00 as signed
 
   - name: struct_copy
     description: Copy one struct to another
@@ -304,7 +304,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 43707  # 0xAABB
+        result: 43707 # 0xAABB
 
   - name: struct_comparison
     description: Struct equality comparison
@@ -415,4 +415,3 @@ cases:
       variables:
         result_low: 205
         result_high: 171
-
