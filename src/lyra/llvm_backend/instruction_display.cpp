@@ -30,6 +30,13 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
       // Call LyraPrintLiteral(str)
       auto* str_const = builder.CreateGlobalStringPtr(op.literal);
       builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
+    } else if (op.kind == FormatKind::kString) {
+      // String: pass the handle to LyraPrintString (layout stays private to
+      // runtime)
+      if (op.value.has_value()) {
+        llvm::Value* handle = LowerOperand(context, *op.value);
+        builder.CreateCall(context.GetLyraPrintString(), {handle});
+      }
     } else {
       // Get type info for width and signedness
       int32_t width = 32;
@@ -58,10 +65,7 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
       if (op.value.has_value()) {
         llvm::Value* value = LowerOperand(context, *op.value);
 
-        if (op.kind == FormatKind::kString) {
-          // For strings, value is already a pointer (i8*) - pass directly
-          data_ptr = value;
-        } else if (is_real) {
+        if (is_real) {
           // For real types, allocate matching float type and store
           auto* alloca = builder.CreateAlloca(value->getType());
           builder.CreateStore(value, alloca);

@@ -14,4 +14,8 @@ void LowerQueueBuiltin(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info);
 
+void LowerEnumBuiltin(
+    Context& context, const mir::Compute& compute,
+    const mir::BuiltinCallRvalueInfo& info);
+
 }  // namespace lyra::lowering::mir_to_llvm

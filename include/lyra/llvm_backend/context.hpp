@@ -67,6 +67,7 @@ class Context {
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRegisterVar() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSnapshotVars() -> llvm::Function*;
@@ -109,6 +110,11 @@ class Context {
     bool needs_clone = false;
   };
   auto GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo;
+
+  // Get or create a global constant array of enum member values for the given
+  // enum type. Returns a [N x iW] global, where N = member count and W = base
+  // type bit width. Cached per TypeId.
+  auto GetOrCreateEnumValuesGlobal(TypeId enum_type) -> llvm::GlobalVariable*;
 
   // Type accessors from layout
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
@@ -218,6 +224,7 @@ class Context {
 
   llvm::Function* lyra_print_literal_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;
+  llvm::Function* lyra_print_string_ = nullptr;
   llvm::Function* lyra_print_end_ = nullptr;
   llvm::Function* lyra_register_var_ = nullptr;
   llvm::Function* lyra_snapshot_vars_ = nullptr;
@@ -254,6 +261,9 @@ class Context {
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
+
+  // Cached enum member values globals (per enum TypeId)
+  absl::flat_hash_map<TypeId, llvm::GlobalVariable*> enum_values_globals_;
 
   // Current process index (set before generating each process)
   size_t current_process_index_ = 0;

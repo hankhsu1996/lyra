@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/context.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -148,6 +149,19 @@ auto Context::GetLyraPrintValue() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_print_value_;
+}
+
+auto Context::GetLyraPrintString() -> llvm::Function* {
+  if (lyra_print_string_ == nullptr) {
+    // void LyraPrintString(void* handle)
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {llvm::PointerType::getUnqual(*llvm_context_)}, false);
+    lyra_print_string_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPrintString",
+        llvm_module_.get());
+  }
+  return lyra_print_string_;
 }
 
 auto Context::GetLyraPrintEnd() -> llvm::Function* {
@@ -640,6 +654,43 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
       .clone_fn = null_ptr,
       .destroy_fn = null_ptr,
   };
+}
+
+auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
+    -> llvm::GlobalVariable* {
+  auto it = enum_values_globals_.find(enum_type);
+  if (it != enum_values_globals_.end()) {
+    return it->second;
+  }
+
+  const Type& type = types_[enum_type];
+  const auto& enum_info = type.AsEnum();
+  uint32_t bit_width = PackedBitWidth(type, types_);
+  uint32_t storage_bits =
+      GetLlvmStorageType(*llvm_context_, bit_width)->getIntegerBitWidth();
+  auto* elem_type = llvm::Type::getIntNTy(*llvm_context_, storage_bits);
+
+  std::vector<llvm::Constant*> values;
+  values.reserve(enum_info.members.size());
+  for (const auto& member : enum_info.members) {
+    auto build_width = static_cast<uint32_t>(std::max(
+        static_cast<size_t>(storage_bits), member.value.value.size() * 64));
+    llvm::APInt ap_val(build_width, 0);
+    for (size_t w = 0; w < member.value.value.size(); ++w) {
+      ap_val.insertBits(llvm::APInt(64, member.value.value[w]), w * 64);
+    }
+    ap_val = ap_val.trunc(storage_bits);
+    values.push_back(llvm::ConstantInt::get(elem_type, ap_val));
+  }
+
+  auto* arr_type = llvm::ArrayType::get(elem_type, enum_info.members.size());
+  auto* initializer = llvm::ConstantArray::get(arr_type, values);
+  auto* global = new llvm::GlobalVariable(
+      *llvm_module_, arr_type, true, llvm::GlobalValue::InternalLinkage,
+      initializer, "enum.values");
+
+  enum_values_globals_[enum_type] = global;
+  return global;
 }
 
 auto Context::GetHeaderType() const -> llvm::StructType* {

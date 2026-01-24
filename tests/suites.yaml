@@ -14,7 +14,6 @@ suites:
       - processes/
       - scheduling/
     exclude_regex:
-      - datatypes/enum/enum_methods.yaml
       - datatypes/packed/nested_aggregates.yaml
       - datatypes/packed/packed_struct.yaml
       - datatypes/packed/packed_union.yaml
