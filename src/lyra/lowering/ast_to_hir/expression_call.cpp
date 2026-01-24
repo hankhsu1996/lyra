@@ -8,6 +8,8 @@
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
@@ -26,6 +28,7 @@
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/system_function_desugar.hpp"
+#include "lyra/lowering/ast_to_hir/timescale.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -83,6 +86,14 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
       return FormatKind::kHex;
   }
   return FormatKind::kDecimal;
+}
+
+auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
+  if (expr.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
+    return false;
+  }
+  return expr.as<slang::ast::ArbitrarySymbolExpression>().symbol->kind ==
+         slang::ast::SymbolKind::Root;
 }
 
 }  // namespace
@@ -486,6 +497,72 @@ auto LowerCallExpression(
               .span = span,
               .data = hir::SystemCallExpressionData{
                   hir::FcloseData{.descriptor = descriptor}}});
+    }
+    if (name == "$printtimescale") {
+      if (call.arguments().size() > 1) {
+        ctx->ErrorFmt(span, "$printtimescale takes at most one argument");
+        return hir::kInvalidExpressionId;
+      }
+
+      const auto& sys_info =
+          std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+
+      std::string scope_name;
+      int unit_power = kDefaultTimeScalePower;
+      int prec_power = kDefaultTimeScalePower;
+
+      if (call.arguments().empty()) {
+        const auto* body = sys_info.scope->getContainingInstance();
+        if (body == nullptr) {
+          ctx->ErrorFmt(
+              span, "$printtimescale must be called from module scope");
+          return hir::kInvalidExpressionId;
+        }
+        scope_name = body->getDefinition().name;
+        auto ts = body->getTimeScale();
+        if (ts) {
+          unit_power = TimeScaleValueToPower(ts->base);
+          prec_power = TimeScaleValueToPower(ts->precision);
+        }
+      } else {
+        const auto* arg_expr = call.arguments()[0];
+        if (!IsRootExpression(*arg_expr)) {
+          ctx->ErrorFmt(
+              span,
+              "$printtimescale argument must be $root "
+              "(hierarchical paths not supported)");
+          return hir::kInvalidExpressionId;
+        }
+        scope_name = "$root";
+        if (!ctx->cached_global_precision) {
+          ctx->cached_global_precision =
+              ComputeGlobalPrecision(sys_info.scope->getCompilation());
+        }
+        unit_power = *ctx->cached_global_precision;
+        prec_power = *ctx->cached_global_precision;
+      }
+
+      std::string message = FormatTimescale(scope_name, unit_power, prec_power);
+
+      std::vector<hir::FormatOp> ops;
+      ops.push_back(
+          hir::FormatOp{
+              .kind = FormatKind::kLiteral,
+              .value = std::nullopt,
+              .literal = message,
+              .mods = {}});
+
+      TypeId void_type =
+          ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = void_type,
+              .span = span,
+              .data = hir::DisplaySystemCallData{
+                  .print_kind = PrintKind::kDisplay,
+                  .ops = std::move(ops),
+                  .descriptor = std::nullopt}});
     }
     if (auto fdisp_info = ClassifyFdisplay(name)) {
       // $fdisplay/$fwrite family: first arg is descriptor, rest are display

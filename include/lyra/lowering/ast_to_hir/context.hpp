@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -28,6 +29,9 @@ struct Context {
 
   // Counter for generating unique synthetic variable names
   uint32_t temp_counter = 0;
+
+  // Cached global precision (avoids repeated hierarchy walks)
+  std::optional<int> cached_global_precision;
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {
     return source_mapper->SpanOf(range);
