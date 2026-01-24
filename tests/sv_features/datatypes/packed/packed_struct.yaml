@@ -415,3 +415,41 @@ cases:
       variables:
         result_low: 205
         result_high: 171
+
+  - name: packed_struct_literal_default
+    description: Default setter zeros all fields in packed struct
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [3:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{default: '0};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: packed_struct_literal_default_with_override
+    description: Default setter with member override in packed struct
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [3:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          s = '{default: '1, a: 4'hF};
+          result = s;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4095

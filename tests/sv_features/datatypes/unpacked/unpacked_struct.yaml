@@ -391,3 +391,93 @@ cases:
     expect:
       variables:
         result: 10
+
+  - name: struct_literal_default_all
+    description: Default setter fills all struct fields
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{default: 0};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 0
+        result_b: 0
+
+  - name: struct_literal_default_with_override
+    description: Member setter overrides default
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{default: '0, a: 42};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 42
+        result_b: 0
+
+  - name: struct_literal_default_mixed_widths
+    description: Default setter with different field widths
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          shortint b;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b;
+        initial begin
+          s = '{default: '0};
+          result_a = s.a;
+          result_b = s.b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 0
+        result_b: 0
+
+  - name: struct_literal_type_setter_with_default
+    description: Type setter selects by type, default as fallback
+    sv: |
+      module Test;
+        typedef struct {
+          int a;
+          int b;
+          shortint c;
+          byte d;
+        } my_struct_t;
+        my_struct_t s;
+        int result_a, result_b, result_c, result_d;
+        initial begin
+          s = '{int: 99, shortint: 10, default: 0};
+          result_a = s.a;
+          result_b = s.b;
+          result_c = s.c;
+          result_d = s.d;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: 99
+        result_b: 99
+        result_c: 10
+        result_d: 0
