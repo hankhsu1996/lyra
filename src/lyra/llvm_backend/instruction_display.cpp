@@ -44,6 +44,9 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
         } else if (ty.Kind() == TypeKind::kReal) {
           is_real = true;
           width = 64;  // double is 64 bits
+        } else if (ty.Kind() == TypeKind::kShortReal) {
+          is_real = true;
+          width = 32;  // float is 32 bits
         } else if (IsPacked(ty)) {
           width = static_cast<int32_t>(PackedBitWidth(ty, types));
           is_signed = IsPackedSigned(ty, types);
@@ -59,9 +62,8 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
           // For strings, value is already a pointer (i8*) - pass directly
           data_ptr = value;
         } else if (is_real) {
-          // For real types, allocate a double and store
-          auto* double_ty = llvm::Type::getDoubleTy(llvm_ctx);
-          auto* alloca = builder.CreateAlloca(double_ty);
+          // For real types, allocate matching float type and store
+          auto* alloca = builder.CreateAlloca(value->getType());
           builder.CreateStore(value, alloca);
           data_ptr = alloca;
         } else {

@@ -100,8 +100,10 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kQueue:
       return llvm::PointerType::getUnqual(ctx);
 
-    case TypeKind::kVoid:
     case TypeKind::kShortReal:
+      return llvm::Type::getFloatTy(ctx);
+
+    case TypeKind::kVoid:
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedUnion:
       throw common::InternalError(

@@ -41,10 +41,15 @@ auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
     cond_val = builder.CreateAnd(a, not_b, "cond.known");
   }
 
-  // Truncate to i1
+  // Convert to i1
   if (!cond_val->getType()->isIntegerTy(1)) {
-    auto* zero = llvm::ConstantInt::get(cond_val->getType(), 0);
-    cond_val = builder.CreateICmpNE(cond_val, zero, "cond.bool");
+    if (cond_val->getType()->isFloatingPointTy()) {
+      auto* zero = llvm::ConstantFP::get(cond_val->getType(), 0.0);
+      cond_val = builder.CreateFCmpUNE(cond_val, zero, "cond.bool");
+    } else {
+      auto* zero = llvm::ConstantInt::get(cond_val->getType(), 0);
+      cond_val = builder.CreateICmpNE(cond_val, zero, "cond.bool");
+    }
   }
   return cond_val;
 }

@@ -77,6 +77,9 @@ auto GetLlvmTypeForTypeId(
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(ctx);
   }
+  if (type.Kind() == TypeKind::kShortReal) {
+    return llvm::Type::getFloatTy(ctx);
+  }
   if (type.Kind() == TypeKind::kUnpackedArray) {
     const auto& info = type.AsUnpackedArray();
     llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
@@ -715,6 +718,8 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     }
   } else if (type.Kind() == TypeKind::kReal) {
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
+  } else if (type.Kind() == TypeKind::kShortReal) {
+    llvm_type = llvm::Type::getFloatTy(*llvm_context_);
   } else if (
       type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
@@ -903,6 +908,9 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
   }
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(*llvm_context_);
+  }
+  if (type.Kind() == TypeKind::kShortReal) {
+    return llvm::Type::getFloatTy(*llvm_context_);
   }
   if (type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
