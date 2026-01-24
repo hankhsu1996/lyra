@@ -968,6 +968,48 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
   return GetLlvmTypeForTypeId(*llvm_context_, base_type_id, types_);
 }
 
+auto Context::ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange {
+  const auto& place = arena_[place_id];
+
+  // Invariant: BitRangeProjections must form a contiguous suffix.
+  // Once we see a BitRange, no non-BitRange projections may follow.
+  bool seen_bitrange = false;
+  for (const auto& proj : place.projections) {
+    bool is_bitrange =
+        std::holds_alternative<mir::BitRangeProjection>(proj.info);
+    if (seen_bitrange && !is_bitrange) {
+      throw common::InternalError(
+          "ComposeBitRange",
+          "non-BitRange projection after BitRange violates suffix invariant");
+    }
+    seen_bitrange = seen_bitrange || is_bitrange;
+  }
+
+  // Canonicalize all offsets to i32 (MIR bit offsets are always i32).
+  auto* offset_ty = llvm::Type::getInt32Ty(*llvm_context_);
+  llvm::Value* total_offset = nullptr;
+  uint32_t width = 0;
+  for (const auto& proj : place.projections) {
+    if (!std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
+      continue;
+    }
+    const auto& br = std::get<mir::BitRangeProjection>(proj.info);
+    llvm::Value* br_offset = LowerOperand(*this, br.bit_offset);
+    br_offset = builder_.CreateZExtOrTrunc(br_offset, offset_ty);
+    if (total_offset == nullptr) {
+      total_offset = br_offset;
+    } else {
+      total_offset = builder_.CreateAdd(total_offset, br_offset);
+    }
+    width = br.width;
+  }
+  if (total_offset == nullptr) {
+    throw common::InternalError(
+        "ComposeBitRange", "called on place with no BitRangeProjection");
+  }
+  return {.offset = total_offset, .width = width};
+}
+
 auto Context::TakeOwnership() -> std::pair<
     std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>> {
   return {std::move(llvm_context_), std::move(llvm_module_)};

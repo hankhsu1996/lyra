@@ -152,9 +152,10 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
-  // Get pointer to a place's storage via GEP into design or frame.
-  // For places with BitRangeProjection, returns pointer to the base
-  // (pre-shift).
+  // Get pointer to a place's base storage via GEP into design or frame.
+  // Applies all non-BitRange projections (IndexProjection, etc.) and stops
+  // at the first BitRangeProjection. For bitrange reads/writes, use
+  // ComposeBitRange() to get the composed offset within this base.
   [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id) -> llvm::Value*;
 
   // Get the LLVM type for a place's storage
@@ -164,7 +165,18 @@ class Context {
   [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
   [[nodiscard]] auto GetBitRangeProjection(mir::PlaceId place_id) const
       -> const mir::BitRangeProjection&;
+  // LLVM type of the base value that GetPlacePointer() points to.
+  // Traverses non-BitRange projections only (same boundary as GetPlacePointer).
   [[nodiscard]] auto GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type*;
+
+  struct ComposedBitRange {
+    llvm::Value* offset;
+    uint32_t width;
+  };
+  // Compose all chained BitRangeProjections into a single offset+width.
+  // Sums all bitrange offsets (emitting LLVM add instructions) and returns
+  // the last projection's width. Validates the contiguous-suffix invariant.
+  [[nodiscard]] auto ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange;
 
   // Get the 4-state struct type for a given semantic bit width
   [[nodiscard]] auto GetPlaceLlvmType4State(uint32_t bit_width)

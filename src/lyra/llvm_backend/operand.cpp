@@ -22,15 +22,12 @@ namespace {
 // GuardedUse/IndexValidity which branches to OOB default before reaching here).
 auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
   auto& builder = context.GetBuilder();
-  const auto& bitrange = context.GetBitRangeProjection(place_id);
+  auto [offset, width] = context.ComposeBitRange(place_id);
 
   // Load the full base value
   llvm::Value* ptr = context.GetPlacePointer(place_id);
   llvm::Type* base_type = context.GetPlaceBaseType(place_id);
   llvm::Value* base = builder.CreateLoad(base_type, ptr, "base");
-
-  // Lower the bit offset and coerce to base integer width
-  llvm::Value* offset = LowerOperand(context, bitrange.bit_offset);
 
   // Get the element LLVM type for the result
   llvm::Type* elem_type = context.GetPlaceLlvmType(place_id);
@@ -59,8 +56,8 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
 
       // Mask to semantic width (storage type may be wider due to rounding)
       uint32_t result_width = result_elem->getIntegerBitWidth();
-      if (bitrange.width < result_width) {
-        auto mask = llvm::APInt::getLowBitsSet(result_width, bitrange.width);
+      if (width < result_width) {
+        auto mask = llvm::APInt::getLowBitsSet(result_width, width);
         auto* mask_val = llvm::ConstantInt::get(result_elem, mask);
         val = builder.CreateAnd(val, mask_val, "br.val.mask");
         unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
@@ -78,8 +75,8 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
       unk = builder.CreateTrunc(unk, elem_type, "br.unk.trunc");
     }
     uint32_t elem_width = elem_type->getIntegerBitWidth();
-    if (bitrange.width < elem_width) {
-      auto mask = llvm::APInt::getLowBitsSet(elem_width, bitrange.width);
+    if (width < elem_width) {
+      auto mask = llvm::APInt::getLowBitsSet(elem_width, width);
       auto* mask_val = llvm::ConstantInt::get(elem_type, mask);
       val = builder.CreateAnd(val, mask_val, "br.val.mask");
       unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
@@ -92,8 +89,8 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
   auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "br.offset");
   llvm::Value* shifted = builder.CreateLShr(base, shift_amt, "br.shr");
   uint32_t base_width = base_type->getIntegerBitWidth();
-  if (bitrange.width < base_width) {
-    auto mask = llvm::APInt::getLowBitsSet(base_width, bitrange.width);
+  if (width < base_width) {
+    auto mask = llvm::APInt::getLowBitsSet(base_width, width);
     shifted = builder.CreateAnd(
         shifted, llvm::ConstantInt::get(base_type, mask), "br.mask");
   }
