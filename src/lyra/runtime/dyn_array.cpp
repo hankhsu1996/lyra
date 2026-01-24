@@ -5,17 +5,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
 
-namespace {
+using LyraDynArrayData = lyra::runtime::DynArrayData;
 
-struct LyraDynArrayData {
-  void* data;
-  int64_t size;
-  int32_t elem_size;
-  void (*clone_fn)(void*, const void*);
-  void (*destroy_fn)(void*);
-};
+namespace {
 
 void DestroyElements(LyraDynArrayData* arr) {
   assert(
@@ -68,7 +63,9 @@ extern "C" auto LyraDynArrayNew(
     auto alloc_size = static_cast<size_t>(size) * elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);
-    assert(arr->data != nullptr && "malloc failed");
+    if (arr->data == nullptr) {
+      std::abort();
+    }
     std::memset(arr->data, 0, alloc_size);
   } else {
     arr->data = nullptr;
@@ -97,7 +94,9 @@ extern "C" auto LyraDynArrayNewCopy(
     auto alloc_size = static_cast<size_t>(size) * elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);
-    assert(arr->data != nullptr && "malloc failed");
+    if (arr->data == nullptr) {
+      std::abort();
+    }
     std::memset(arr->data, 0, alloc_size);
 
     if (src != nullptr) {
@@ -157,7 +156,9 @@ extern "C" auto LyraDynArrayClone(LyraDynArrayHandle src)
     auto alloc_size = static_cast<size_t>(s->size) * s->elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);
-    assert(arr->data != nullptr && "malloc failed");
+    if (arr->data == nullptr) {
+      std::abort();
+    }
     CloneElements(arr->data, s->data, s->size, s->elem_size, s->clone_fn);
   } else {
     arr->data = nullptr;

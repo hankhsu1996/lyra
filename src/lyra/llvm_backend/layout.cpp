@@ -97,13 +97,13 @@ auto GetLlvmTypeForTypeId(
     }
 
     case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
       return llvm::PointerType::getUnqual(ctx);
 
     case TypeKind::kVoid:
     case TypeKind::kShortReal:
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedUnion:
-    case TypeKind::kQueue:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
           std::format(
