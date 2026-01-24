@@ -1,0 +1,19 @@
+feature: zero_delay_time
+description: "Tests for #0 delays with $time (requires $time system function)"
+
+cases:
+  - name: zero_delay_executes_same_timeslot
+    sv: |
+      module Test;
+        int t1, t2;
+        initial begin
+          t1 = $time;
+          #0;
+          t2 = $time;
+        end
+      endmodule
+    expect:
+      variables:
+        t1: 0
+        t2: 0
+      time: 0

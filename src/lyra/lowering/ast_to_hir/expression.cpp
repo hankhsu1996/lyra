@@ -791,7 +791,9 @@ auto LowerExpression(
               .span = span,
               .data =
                   hir::AssignmentExpressionData{
-                      .target = target, .value = value},
+                      .target = target,
+                      .value = value,
+                      .is_non_blocking = assign.isNonBlocking()},
           });
     }
 

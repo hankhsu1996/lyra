@@ -157,6 +157,21 @@ extern "C" void LyraStoreString(
   }
 }
 
+extern "C" void LyraScheduleNba(
+    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
+    const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
+    uint32_t notify_slot_id) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->ScheduleNba(
+      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
+      notify_slot_id);
+}
+
+extern "C" void LyraFinishSimulation(void* engine_ptr) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->Finish();
+}
+
 extern "C" void LyraInitRuntime() {
   FinalTime() = 0;
 }

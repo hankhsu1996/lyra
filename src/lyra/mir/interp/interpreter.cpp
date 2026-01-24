@@ -175,6 +175,10 @@ struct StorageCollector {
                   },
                   i.op);
             },
+            [&](const NonBlockingAssign& i) {
+              Visit(arena[i.target], arena);
+              Visit(i.source, arena);
+            },
         },
         inst.data);
   }

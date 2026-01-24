@@ -108,6 +108,9 @@ void CollectFromInstruction(
             CollectFromOperand(ga.validity, arena, seen);
           },
           [](const Effect&) {},
+          [&](const NonBlockingAssign& nba) {
+            CollectFromOperand(nba.source, arena, seen);
+          },
       },
       instr.data);
 }

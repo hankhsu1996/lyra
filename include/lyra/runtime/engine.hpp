@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
@@ -29,8 +30,8 @@ struct ResumePoint {
   uint32_t instruction_index = 0;
 };
 
-// Signal identifier for trigger subscription.
-// Maps to design storage slot ID.
+// Waitable signal identifier. This IS the design storage slot ID —
+// NotifyChange, Subscribe, and NBA commit all use the same ID space.
 using SignalId = uint32_t;
 
 // IEEE 1800 simulation regions (simplified).
@@ -45,6 +46,15 @@ enum class Region : uint8_t {
 struct ScheduledEvent {
   ProcessHandle handle;
   ResumePoint resume;
+};
+
+// NBA queue entry: deferred write with byte-level masking.
+struct NbaEntry {
+  void* write_ptr;             // Exact write address
+  uint32_t byte_size;          // Size of write region at write_ptr
+  uint32_t notify_slot_id;     // Slot ID for trigger lookup
+  std::vector<uint8_t> value;  // New value bytes (storage layout)
+  std::vector<uint8_t> mask;   // Byte mask (0 = preserve, 0xFF = overwrite)
 };
 
 // Forward declaration for callback
@@ -91,6 +101,11 @@ class Engine {
   // Used for kRepeat terminator.
   void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
 
+  // Enqueue a non-blocking assignment for later commit in the NBA region.
+  void ScheduleNba(
+      void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
+      const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
+
   // Notify that a signal changed (called after stores).
   // Wakes up subscribed processes into the next delta cycle.
   void NotifyChange(
@@ -99,6 +114,11 @@ class Engine {
   // Run simulation until completion or time limit.
   // Returns final simulation time.
   auto Run(SimTime max_time = 1'000'000) -> SimTime;
+
+  // Stop the simulation ($finish semantics).
+  void Finish() {
+    finished_ = true;
+  }
 
   // Get current simulation time.
   [[nodiscard]] auto CurrentTime() const -> SimTime {
@@ -111,6 +131,7 @@ class Engine {
 
   ProcessRunner runner_;
   SimTime current_time_ = 0;
+  bool finished_ = false;
 
   // Time-based scheduling: time → events
   std::map<SimTime, std::vector<ScheduledEvent>> delay_queue_;
@@ -121,6 +142,13 @@ class Engine {
 
   // Next-delta queue: events scheduled for the next delta cycle
   std::vector<ScheduledEvent> pending_queue_;
+
+  // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
+  std::vector<NbaEntry> nba_queue_;
+
+  // Slot ID → base pointer registry (populated lazily via ScheduleNba).
+  // Pointers are read-only (used for bit0 snapshot in NBA commit).
+  std::unordered_map<uint32_t, const void*> slot_base_ptrs_;
 
   // Trigger subscriptions: signal → waiting processes
   struct Waiter {

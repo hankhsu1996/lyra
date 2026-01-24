@@ -209,6 +209,24 @@ void MirBuilder::EmitGuardedAssign(
           .origin = current_origin_});
 }
 
+void MirBuilder::EmitNonBlockingAssign(
+    mir::PlaceId target, mir::Operand source) {
+  if (finished_) {
+    throw common::InternalError(
+        "MirBuilder", "EmitNonBlockingAssign called after Finish()");
+  }
+  if (current_block_ == kInvalidBlockIndex) {
+    throw common::InternalError(
+        "MirBuilder", "EmitNonBlockingAssign: no current block");
+  }
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{
+          .data =
+              mir::NonBlockingAssign{
+                  .target = target, .source = std::move(source)},
+          .origin = current_origin_});
+}
+
 void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
   if (finished_) {
     throw common::InternalError(
@@ -320,15 +338,10 @@ void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
     SealCurrentBlock(
         mir::Terminator{.data = *std::move(info), .origin = current_origin_});
   } else {
+    // Implicit process termination: use Return (don't stop simulation).
+    // Only explicit $finish/$stop/$fatal should use Finish terminator.
     SealCurrentBlock(
-        mir::Terminator{
-            .data =
-                mir::Finish{
-                    .kind = mir::TerminationKind::kFinish,
-                    .level = 0,
-                    .message_args = {},
-                },
-            .origin = current_origin_});
+        mir::Terminator{.data = mir::Return{}, .origin = current_origin_});
   }
 }
 

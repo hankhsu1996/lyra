@@ -12,6 +12,7 @@ suites:
       - control_flow/
       - datatypes/
       - processes/
+      - scheduling/
     exclude_regex:
       - datatypes/enum/enum_methods.yaml
       - datatypes/integral/unbased_unsized_literal.yaml
@@ -23,8 +24,8 @@ suites:
       - datatypes/string/
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml
-      - processes/non_blocking.yaml
       - processes/continuous_assign.yaml
+      - scheduling/zero_delay_time.yaml
 
   mir_dev:
     backend: mir

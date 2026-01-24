@@ -1,9 +1,13 @@
 #include "lyra/runtime/engine.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/internal_error.hpp"
 
 namespace lyra::runtime {
 
@@ -47,6 +51,37 @@ void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
       ScheduledEvent{
           .handle = handle,
           .resume = resume,
+      });
+}
+
+void Engine::ScheduleNba(
+    void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
+    const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id) {
+  if (write_ptr == nullptr || notify_base_ptr == nullptr ||
+      value_ptr == nullptr || mask_ptr == nullptr || byte_size == 0) {
+    throw common::InternalError(
+        "Engine::ScheduleNba", "null pointer or zero byte_size");
+  }
+
+  // Register slot base pointer (lazily, first call per slot teaches the engine)
+  auto [it, inserted] =
+      slot_base_ptrs_.emplace(notify_slot_id, notify_base_ptr);
+  if (!inserted && it->second != notify_base_ptr) {
+    throw common::InternalError(
+        "Engine::ScheduleNba",
+        "slot_id mapped to different base_ptr (codegen bug)");
+  }
+
+  // Copy value and mask bytes into a new NbaEntry
+  auto val_span = std::span(static_cast<const uint8_t*>(value_ptr), byte_size);
+  auto mask_span = std::span(static_cast<const uint8_t*>(mask_ptr), byte_size);
+  nba_queue_.push_back(
+      NbaEntry{
+          .write_ptr = write_ptr,
+          .byte_size = byte_size,
+          .notify_slot_id = notify_slot_id,
+          .value = std::vector<uint8_t>(val_span.begin(), val_span.end()),
+          .mask = std::vector<uint8_t>(mask_span.begin(), mask_span.end()),
       });
 }
 
@@ -98,11 +133,13 @@ void Engine::ExecuteRegion(Region region) {
   switch (region) {
     case Region::kActive: {
       // Execute all active events (may add to inactive/nba queues)
-      while (!active_queue_.empty()) {
+      while (!finished_ && !active_queue_.empty()) {
         auto events = std::move(active_queue_);
         active_queue_.clear();
         for (const auto& event : events) {
-          // Run process until it suspends
+          if (finished_) {
+            break;
+          }
           runner_(*this, event.handle, event.resume);
         }
       }
@@ -117,42 +154,109 @@ void Engine::ExecuteRegion(Region region) {
       break;
     }
     case Region::kNBA: {
-      // TODO(hankhsu): NBA updates will be handled here
-      // For now, nothing to do
+      if (nba_queue_.empty()) {
+        break;
+      }
+
+      // Phase 1: Gather unique slot IDs, snapshot bit0
+      std::vector<uint32_t> unique_slots;
+      unique_slots.reserve(nba_queue_.size());
+      for (const auto& entry : nba_queue_) {
+        unique_slots.push_back(entry.notify_slot_id);
+      }
+      std::ranges::sort(unique_slots);
+      auto [erase_begin, erase_end] = std::ranges::unique(unique_slots);
+      unique_slots.erase(erase_begin, erase_end);
+
+      std::vector<uint8_t> old_bit0(unique_slots.size());
+      for (size_t i = 0; i < unique_slots.size(); ++i) {
+        const auto* base =
+            static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
+        old_bit0[i] = (*base & 1) != 0 ? 1 : 0;
+      }
+
+      // Phase 2: Apply all masked writes, track which slots changed
+      std::vector<uint8_t> slot_changed(unique_slots.size(), 0);
+      for (const auto& entry : nba_queue_) {
+        if (entry.value.size() != entry.byte_size ||
+            entry.mask.size() != entry.byte_size) {
+          throw common::InternalError(
+              "Engine::ExecuteRegion(kNBA)",
+              "value/mask size mismatch with byte_size");
+        }
+        auto target_span =
+            std::span(static_cast<uint8_t*>(entry.write_ptr), entry.byte_size);
+        bool changed = false;
+        for (uint32_t i = 0; i < entry.byte_size; ++i) {
+          uint8_t old_byte = target_span[i];
+          uint8_t new_byte =
+              (old_byte & ~entry.mask[i]) | (entry.value[i] & entry.mask[i]);
+          if (old_byte != new_byte) {
+            changed = true;
+          }
+          target_span[i] = new_byte;
+        }
+        if (changed) {
+          auto slot_it =
+              std::ranges::lower_bound(unique_slots, entry.notify_slot_id);
+          if (slot_it == unique_slots.end() ||
+              *slot_it != entry.notify_slot_id) {
+            throw common::InternalError(
+                "Engine::ExecuteRegion(kNBA)",
+                "notify_slot_id not found in unique_slots");
+          }
+          slot_changed[slot_it - unique_slots.begin()] = 1;
+        }
+      }
+      nba_queue_.clear();
+
+      // Phase 3: Notify changed slots
+      for (size_t i = 0; i < unique_slots.size(); ++i) {
+        if (slot_changed[i] == 0) {
+          continue;
+        }
+        const auto* base =
+            static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
+        bool new_bit0 = (*base & 1) != 0;
+        NotifyChange(unique_slots[i], old_bit0[i] != 0, new_bit0, true);
+      }
       break;
     }
   }
 }
 
 void Engine::ExecuteTimeSlot() {
-  // IEEE 1800 stratified event scheduler with delta cycle support.
+  // IEEE 1800 stratified event scheduler: Active → Inactive → NBA per delta.
   // Each iteration of the outer loop is one delta cycle.
-  while (!active_queue_.empty() || !inactive_queue_.empty() ||
-         !pending_queue_.empty()) {
-    // Execute current delta cycle
-    while (!active_queue_.empty() || !inactive_queue_.empty()) {
+  while (true) {
+    // Active + Inactive loop (repeat until both drained or $finish called)
+    while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
       ExecuteRegion(Region::kActive);
-
       if (!inactive_queue_.empty()) {
         ExecuteRegion(Region::kInactive);
-        continue;
       }
-
-      ExecuteRegion(Region::kNBA);
     }
 
-    // Advance to next delta: pending → active
-    if (!pending_queue_.empty()) {
-      active_queue_ = std::move(pending_queue_);
-      pending_queue_.clear();
+    // Commit any already-enqueued NBAs even if finished_ is set.
+    ExecuteRegion(Region::kNBA);
+
+    // Stop after this delta if $finish was called or no more work
+    if (finished_ || pending_queue_.empty()) {
+      break;
     }
+    active_queue_ = std::move(pending_queue_);
+    pending_queue_.clear();
   }
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
-  while (current_time_ <= max_time) {
+  while (!finished_ && current_time_ <= max_time) {
     // Execute current time slot
     ExecuteTimeSlot();
+
+    if (finished_) {
+      break;
+    }
 
     // Advance to next scheduled time
     if (delay_queue_.empty()) {

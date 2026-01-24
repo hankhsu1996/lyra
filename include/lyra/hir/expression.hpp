@@ -93,6 +93,7 @@ struct ConditionalExpressionData {
 struct AssignmentExpressionData {
   ExpressionId target;
   ExpressionId value;
+  bool is_non_blocking = false;
 
   auto operator==(const AssignmentExpressionData&) const -> bool = default;
 };
