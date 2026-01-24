@@ -1,13 +1,13 @@
 feature: nested_aggregates
-description: Nested struct/union field assignment (struct in struct, union in struct, etc.)
+description: Nested unpacked struct/union field assignment (struct in struct, union in struct, etc.)
 
 cases:
   - name: struct_in_struct_write_read
     description: Write and read nested struct field
     sv: |
       module Test;
-        typedef struct packed { int x; int y; } Inner;
-        typedef struct packed { Inner inner; int z; } Outer;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; int z; } Outer;
         Outer s;
         int result;
         initial begin
@@ -23,8 +23,8 @@ cases:
     description: Write and read multiple nested struct fields
     sv: |
       module Test;
-        typedef struct packed { int x; int y; } Inner;
-        typedef struct packed { Inner inner; int z; } Outer;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; int z; } Outer;
         Outer s;
         int result_x, result_y, result_z;
         initial begin
@@ -46,8 +46,8 @@ cases:
     description: Struct containing union - write and read union field
     sv: |
       module Test;
-        typedef union packed { int i; bit [31:0] f; } MyUnion;
-        typedef struct packed { MyUnion u; int tag; } Tagged;
+        typedef union { int i; real f; } MyUnion;
+        typedef struct { MyUnion u; int tag; } Tagged;
         Tagged t;
         int result_i, result_tag;
         initial begin
@@ -66,8 +66,8 @@ cases:
     description: Union containing struct - write and read struct field
     sv: |
       module Test;
-        typedef struct packed { int x; int y; } Point;
-        typedef union packed { Point p; bit [63:0] raw; } MyUnion;
+        typedef struct { int x; int y; } Point;
+        typedef union { Point p; int raw; } MyUnion;
         MyUnion u;
         int result_x, result_y;
         initial begin
@@ -86,8 +86,8 @@ cases:
     description: Nested struct fields are independent
     sv: |
       module Test;
-        typedef struct packed { int a; int b; } Inner;
-        typedef struct packed { Inner first; Inner second; } Outer;
+        typedef struct { int a; int b; } Inner;
+        typedef struct { Inner first; Inner second; } Outer;
         Outer s;
         int r1, r2, r3, r4;
         initial begin
@@ -112,8 +112,8 @@ cases:
     description: Nested field in arithmetic expression
     sv: |
       module Test;
-        typedef struct packed { int x; int y; } Point;
-        typedef struct packed { Point p; } Wrapper;
+        typedef struct { int x; int y; } Point;
+        typedef struct { Point p; } Wrapper;
         Wrapper w;
         int result;
         initial begin
@@ -130,8 +130,8 @@ cases:
     description: Copy nested struct value
     sv: |
       module Test;
-        typedef struct packed { int x; int y; } Inner;
-        typedef struct packed { Inner inner; } Outer;
+        typedef struct { int x; int y; } Inner;
+        typedef struct { Inner inner; } Outer;
         Outer s1, s2;
         int r1, r2;
         initial begin

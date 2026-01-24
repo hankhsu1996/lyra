@@ -47,17 +47,6 @@ struct PlaceTypeInfo {
   bool is_four_state;
 };
 
-auto ContainsPackedStruct(const Type& type, const TypeArena& types) -> bool {
-  if (type.Kind() == TypeKind::kPackedStruct) {
-    return true;
-  }
-  if (type.Kind() == TypeKind::kPackedArray) {
-    return ContainsPackedStruct(
-        types[type.AsPackedArray().element_type], types);
-  }
-  return false;
-}
-
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
     -> PlaceTypeInfo {
   const auto& arena = context.GetMirArena();
@@ -78,11 +67,6 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
         context.GetCurrentOrigin(),
         std::format("non-packed type not supported: {}", ToString(type)));
-  }
-  if (ContainsPackedStruct(type, types)) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
-        context.GetCurrentOrigin(), "packed structs not yet supported");
   }
   return PlaceTypeInfo{
       .kind = PlaceKind::kIntegral,
