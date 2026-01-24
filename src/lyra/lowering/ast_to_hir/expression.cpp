@@ -544,8 +544,17 @@ auto LowerExpression(
           return LowerConstantValueExpression(*cv, *expr.type, span, ctx);
         }
 
+        if (cv->isString()) {
+          if (expr.type == nullptr) {
+            return hir::kInvalidExpressionId;
+          }
+          return LowerConstantValueExpression(*cv, *expr.type, span, ctx);
+        }
+
         // Unsupported constant value type
-        ctx->ErrorFmt(span, "unsupported constant type for '{}'", name);
+        ctx->ErrorFmt(
+            span, "unsupported constant type '{}' for '{}'",
+            expr.type != nullptr ? expr.type->toString() : "unknown", name);
         return hir::kInvalidExpressionId;
       }
 
