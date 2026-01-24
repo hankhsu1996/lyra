@@ -25,6 +25,7 @@ suites:
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml
       - processes/continuous_assign.yaml
+      - processes/generate.yaml
       - scheduling/zero_delay_time.yaml
 
   mir_dev:
@@ -38,7 +39,6 @@ suites:
       - functions/
       - packages/
       - hierarchy/refs/
-      - generate/
     exclude_regex:
       - system_tf/pure/timeunit.yaml
       - system_tf/effect/printtimescale.yaml
