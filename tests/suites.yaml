@@ -18,7 +18,6 @@ suites:
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml
       - processes/generate.yaml
-      - scheduling/zero_delay_time.yaml
 
   mir_dev:
     backend: mir

@@ -387,6 +387,19 @@ auto Context::GetLyraFinishSimulation() -> llvm::Function* {
   return lyra_finish_simulation_;
 }
 
+auto Context::GetLyraGetTime() -> llvm::Function* {
+  if (lyra_get_time_ == nullptr) {
+    // uint64_t LyraGetTime(ptr engine)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getInt64Ty(*llvm_context_), {ptr_ty}, false);
+    lyra_get_time_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraGetTime",
+        llvm_module_.get());
+  }
+  return lyra_get_time_;
+}
+
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
     auto* fn_type =

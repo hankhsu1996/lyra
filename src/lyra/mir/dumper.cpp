@@ -492,6 +492,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             return std::format("plusargs.{}", kind_str);
           },
           [](const FopenRvalueInfo&) { return std::string("fopen"); },
+          [](const RuntimeQueryRvalueInfo&) {
+            return std::string("runtime_query");
+          },
       },
       rv.info);
 

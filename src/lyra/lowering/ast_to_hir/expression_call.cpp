@@ -498,6 +498,16 @@ auto LowerCallExpression(
               .data = hir::SystemCallExpressionData{
                   hir::FcloseData{.descriptor = descriptor}}});
     }
+    if (name == "$time") {
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = result_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{
+                  hir::RuntimeQueryData{.kind = RuntimeQueryKind::kTime}}});
+    }
     if (name == "$printtimescale") {
       if (call.arguments().size() > 1) {
         ctx->ErrorFmt(span, "$printtimescale takes at most one argument");

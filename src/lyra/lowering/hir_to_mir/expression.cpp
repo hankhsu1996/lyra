@@ -689,6 +689,16 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
+  // $time etc. -> RuntimeQueryRvalueInfo
+  if (const auto* query = std::get_if<hir::RuntimeQueryData>(&data)) {
+    mir::Rvalue rvalue{
+        .operands = {},
+        .info = mir::RuntimeQueryRvalueInfo{.kind = query->kind},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
   // Effect system calls ($display, etc.) are handled in statement.cpp.
   throw common::InternalError(
       "LowerSystemCall",

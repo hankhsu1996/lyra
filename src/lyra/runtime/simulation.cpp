@@ -172,6 +172,11 @@ extern "C" void LyraFinishSimulation(void* engine_ptr) {
   engine->Finish();
 }
 
+extern "C" auto LyraGetTime(void* engine_ptr) -> uint64_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->CurrentTime();
+}
+
 extern "C" void LyraInitRuntime() {
   FinalTime() = 0;
 }
