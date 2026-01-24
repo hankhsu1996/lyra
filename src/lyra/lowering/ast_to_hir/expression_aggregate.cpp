@@ -172,19 +172,6 @@ auto LowerAssignmentPatternExpression(
     return hir::kInvalidExpressionId;
   }
 
-  // Gate: reject default/type setters (check before size to give clearer
-  // error)
-  if (expr.kind == ExpressionKind::StructuredAssignmentPattern) {
-    const auto& structured =
-        expr.as<slang::ast::StructuredAssignmentPatternExpression>();
-    if (structured.defaultSetter != nullptr ||
-        !structured.typeSetters.empty()) {
-      ctx->sink->Error(
-          span, "default/type setters not supported in struct literals");
-      return hir::kInvalidExpressionId;
-    }
-  }
-
   auto elements = get_elements();
 
   // Gate: full literal only (all fields must be specified)
@@ -201,7 +188,11 @@ auto LowerAssignmentPatternExpression(
     }
   }
   if (elements.size() != field_count) {
-    ctx->sink->Error(span, "all struct fields must be explicitly specified");
+    ctx->sink->Error(
+        span, std::format(
+                  "struct assignment pattern did not resolve all fields "
+                  "(got {}, expected {})",
+                  elements.size(), field_count));
     return hir::kInvalidExpressionId;
   }
 
