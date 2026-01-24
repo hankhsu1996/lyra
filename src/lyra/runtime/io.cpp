@@ -166,7 +166,12 @@ extern "C" void LyraPrintValue(
   // Marshal data to RuntimeValue and format
   lyra::semantic::RuntimeValue value;
   if (kind == lyra::FormatKind::kReal) {
-    value = lyra::semantic::MakeReal(*static_cast<const double*>(data));
+    if (width == 32) {  // shortreal (float)
+      value = lyra::semantic::MakeReal(
+          static_cast<double>(*static_cast<const float*>(data)));
+    } else {
+      value = lyra::semantic::MakeReal(*static_cast<const double*>(data));
+    }
   } else {
     value = MarshalIntegral(data, width);
   }

@@ -236,6 +236,12 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
                 context.GetLyraStringFromLiteral(), {data, len}, "str.handle");
           },
           [&](const RealConstant& real) -> llvm::Value* {
+            const Type& type = context.GetTypeArena()[constant.type];
+            if (type.Kind() == TypeKind::kShortReal) {
+              return llvm::ConstantFP::get(
+                  llvm::Type::getFloatTy(llvm_ctx),
+                  static_cast<float>(real.value));
+            }
             return llvm::ConstantFP::get(
                 llvm::Type::getDoubleTy(llvm_ctx), real.value);
           },
