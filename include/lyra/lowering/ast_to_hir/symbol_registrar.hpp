@@ -25,7 +25,7 @@ class SymbolRegistrar {
   [[nodiscard]] auto Lookup(const slang::ast::Symbol& slang_sym) const
       -> SymbolId;
 
-  void PushScope(ScopeKind kind);
+  void PushScope(ScopeKind kind, std::string name = {});
   void PopScope();
 
   [[nodiscard]] auto CurrentScope() const -> ScopeId {
@@ -43,9 +43,9 @@ class SymbolRegistrar {
 // RAII scope guard for SymbolRegistrar - ensures PopScope on all exit paths.
 class ScopeGuard {
  public:
-  ScopeGuard(SymbolRegistrar& registrar, ScopeKind kind)
+  ScopeGuard(SymbolRegistrar& registrar, ScopeKind kind, std::string name = {})
       : registrar_(registrar) {
-    registrar_.PushScope(kind);
+    registrar_.PushScope(kind, std::move(name));
   }
   ~ScopeGuard() {
     registrar_.PopScope();

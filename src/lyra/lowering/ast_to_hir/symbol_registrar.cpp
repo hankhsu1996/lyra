@@ -57,11 +57,12 @@ auto SymbolRegistrar::Lookup(const slang::ast::Symbol& slang_sym) const
   return kInvalidSymbolId;
 }
 
-void SymbolRegistrar::PushScope(ScopeKind kind) {
+void SymbolRegistrar::PushScope(ScopeKind kind, std::string name) {
   ScopeId new_scope = ctx_->scope_table->Add(
       Scope{
           .kind = kind,
           .parent = current_scope_,
+          .name = std::move(name),
       });
   current_scope_ = new_scope;
 }
