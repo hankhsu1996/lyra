@@ -36,5 +36,3 @@ suites:
       - packages/
       - hierarchy/refs/
       - generate/
-    exclude_regex:
-      - system_tf/effect/printtimescale.yaml
