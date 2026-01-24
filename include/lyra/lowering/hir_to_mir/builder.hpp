@@ -80,6 +80,9 @@ class MirBuilder {
   void EmitGuardedAssign(
       mir::PlaceId target, mir::Operand source, mir::Operand validity);
 
+  // Emit NonBlockingAssign instruction: schedule target <= source for NBA.
+  void EmitNonBlockingAssign(mir::PlaceId target, mir::Operand source);
+
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitQualifiedDispatch(

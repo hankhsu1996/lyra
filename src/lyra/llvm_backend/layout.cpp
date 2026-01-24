@@ -207,6 +207,10 @@ auto CollectProcessPlaces(const mir::Process& process)
               [&](const mir::Effect& e) {
                 CollectPlacesFromEffectOp(e.op, places);
               },
+              [&](const mir::NonBlockingAssign& nba) {
+                places.insert(nba.target);
+                CollectPlaceFromOperand(nba.source, places);
+              },
           },
           instr.data);
     }

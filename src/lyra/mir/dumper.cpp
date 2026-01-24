@@ -233,6 +233,9 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                 FormatOperand(i.source), FormatOperand(i.validity));
           } else if constexpr (std::is_same_v<T, Effect>) {
             *out_ << FormatEffect(i.op) << "\n";
+          } else if constexpr (std::is_same_v<T, NonBlockingAssign>) {
+            *out_ << std::format(
+                "{} <= {}\n", FormatPlace(i.target), FormatOperand(i.source));
           }
         },
         instr.data);

@@ -458,6 +458,15 @@ void Interpreter::ExecInstruction(
           ExecGuardedAssign(state, i);
         } else if constexpr (std::is_same_v<T, Effect>) {
           ExecEffect(state, i);
+        } else {
+          throw common::UnsupportedErrorException(
+              common::UnsupportedError{
+                  .layer = common::UnsupportedLayer::kExecution,
+                  .kind = common::UnsupportedKind::kFeature,
+                  .origin = inst.origin,
+                  .detail = "non-blocking assignments require the LLVM backend "
+                            "(use --backend=llvm)",
+              });
         }
       },
       inst.data);

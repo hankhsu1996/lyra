@@ -327,6 +327,36 @@ auto Context::GetLyraStoreString() -> llvm::Function* {
   return lyra_store_string_;
 }
 
+auto Context::GetLyraScheduleNba() -> llvm::Function* {
+  if (lyra_schedule_nba_ == nullptr) {
+    // void LyraScheduleNba(ptr engine, ptr write_ptr, ptr notify_base_ptr,
+    //                      ptr value_ptr, ptr mask_ptr,
+    //                      i32 byte_size, i32 notify_slot_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
+    lyra_schedule_nba_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraScheduleNba",
+        llvm_module_.get());
+  }
+  return lyra_schedule_nba_;
+}
+
+auto Context::GetLyraFinishSimulation() -> llvm::Function* {
+  if (lyra_finish_simulation_ == nullptr) {
+    // void LyraFinishSimulation(ptr engine)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_finish_simulation_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFinishSimulation",
+        llvm_module_.get());
+  }
+  return lyra_finish_simulation_;
+}
+
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
     auto* fn_type =

@@ -459,6 +459,277 @@ void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
   builder.SetInsertPoint(skip_bb);
 }
 
+// Get the root design slot pointer (before any projections).
+auto GetDesignRootPointer(Context& context, mir::PlaceId place_id)
+    -> llvm::Value* {
+  const auto& place = context.GetMirArena()[place_id];
+  auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+  uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+  return context.GetBuilder().CreateStructGEP(
+      context.GetDesignStateType(), context.GetDesignPointer(), field_index,
+      "nba.base");
+}
+
+// Emit the LyraScheduleNba call with value/mask stored in allocas.
+void EmitScheduleNbaCall(
+    Context& context, llvm::Value* write_ptr, llvm::Value* notify_base_ptr,
+    llvm::Value* value, llvm::Value* mask, llvm::Type* storage_type,
+    uint32_t signal_id) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  auto byte_size = static_cast<uint32_t>(
+      context.GetModule().getDataLayout().getTypeAllocSize(storage_type));
+
+  auto* val_alloca = builder.CreateAlloca(storage_type, nullptr, "nba.val");
+  builder.CreateStore(value, val_alloca);
+  auto* mask_alloca = builder.CreateAlloca(storage_type, nullptr, "nba.mask");
+  builder.CreateStore(mask, mask_alloca);
+
+  builder.CreateCall(
+      context.GetLyraScheduleNba(),
+      {context.GetEnginePointer(), write_ptr, notify_base_ptr, val_alloca,
+       mask_alloca, llvm::ConstantInt::get(i32_ty, byte_size),
+       llvm::ConstantInt::get(i32_ty, signal_id)});
+}
+
+void LowerNonBlockingAssign(
+    Context& context, const mir::NonBlockingAssign& nba) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  const auto& place = arena[nba.target];
+
+  uint32_t signal_id = GetSignalId(context, nba.target);
+
+  // Case 1: BitRangeProjection — shifted value and mask
+  if (context.HasBitRangeProjection(nba.target)) {
+    const auto& bitrange = context.GetBitRangeProjection(nba.target);
+    llvm::Value* ptr = context.GetPlacePointer(nba.target);
+    llvm::Type* base_type = context.GetPlaceBaseType(nba.target);
+    llvm::Value* notify_base_ptr = ptr;  // BitRange shares root pointer
+
+    // If there's an IndexProjection before the BitRange, notify_base is root
+    for (const auto& proj : place.projections) {
+      if (std::holds_alternative<mir::IndexProjection>(proj.info)) {
+        notify_base_ptr = GetDesignRootPointer(context, nba.target);
+        break;
+      }
+    }
+
+    llvm::Value* offset = LowerOperand(context, bitrange.bit_offset);
+
+    if (base_type->isStructTy()) {
+      // 4-state base: mask both planes
+      auto* base_struct = llvm::cast<llvm::StructType>(base_type);
+      auto* plane_type = base_struct->getElementType(0);
+      uint32_t plane_width = plane_type->getIntegerBitWidth();
+
+      auto* shift_amt =
+          builder.CreateZExtOrTrunc(offset, plane_type, "nba.offset");
+      auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, bitrange.width);
+      auto* mask_val = llvm::ConstantInt::get(plane_type, mask_ap);
+      auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
+
+      // Evaluate source
+      llvm::Value* source_raw = LowerOperandRaw(context, nba.source);
+      llvm::Value* src_val = nullptr;
+      llvm::Value* src_unk = nullptr;
+      if (source_raw->getType()->isStructTy()) {
+        src_val = builder.CreateExtractValue(source_raw, 0, "nba.src.val");
+        src_unk = builder.CreateExtractValue(source_raw, 1, "nba.src.unk");
+      } else {
+        src_val = source_raw;
+        src_unk = llvm::ConstantInt::get(plane_type, 0);
+      }
+      src_val =
+          builder.CreateZExtOrTrunc(src_val, plane_type, "nba.src.val.ext");
+      src_unk =
+          builder.CreateZExtOrTrunc(src_unk, plane_type, "nba.src.unk.ext");
+      auto* val_shifted = builder.CreateShl(src_val, shift_amt, "nba.val.shl");
+      auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "nba.unk.shl");
+
+      // Pack into struct for value and mask
+      llvm::Value* packed_val = llvm::UndefValue::get(base_struct);
+      packed_val = builder.CreateInsertValue(packed_val, val_shifted, 0);
+      packed_val = builder.CreateInsertValue(packed_val, unk_shifted, 1);
+
+      llvm::Value* packed_mask = llvm::UndefValue::get(base_struct);
+      packed_mask = builder.CreateInsertValue(packed_mask, mask_shifted, 0);
+      packed_mask = builder.CreateInsertValue(packed_mask, mask_shifted, 1);
+
+      EmitScheduleNbaCall(
+          context, ptr, notify_base_ptr, packed_val, packed_mask, base_type,
+          signal_id);
+    } else {
+      // 2-state base
+      uint32_t base_width = base_type->getIntegerBitWidth();
+      auto* shift_amt =
+          builder.CreateZExtOrTrunc(offset, base_type, "nba.offset");
+
+      auto mask_ap = llvm::APInt::getLowBitsSet(base_width, bitrange.width);
+      auto* mask_val = llvm::ConstantInt::get(base_type, mask_ap);
+      auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
+
+      // Evaluate source, coerce to base width, shift into position
+      llvm::Value* src = LowerOperand(context, nba.source);
+      src = builder.CreateZExtOrTrunc(src, base_type, "nba.src.ext");
+      auto* val_shifted = builder.CreateShl(src, shift_amt, "nba.val.shl");
+
+      EmitScheduleNbaCall(
+          context, ptr, notify_base_ptr, val_shifted, mask_shifted, base_type,
+          signal_id);
+    }
+    return;
+  }
+
+  // Case 2: IndexProjection — array element write with OOB guard
+  bool has_index_projection = false;
+  for (const auto& proj : place.projections) {
+    if (std::holds_alternative<mir::IndexProjection>(proj.info)) {
+      has_index_projection = true;
+      break;
+    }
+  }
+
+  if (has_index_projection) {
+    // Get the index operand and array bounds for OOB check
+    const mir::IndexProjection* idx_proj = nullptr;
+    TypeId parent_type = place.root.type;
+    for (const auto& proj : place.projections) {
+      if (const auto* idx = std::get_if<mir::IndexProjection>(&proj.info)) {
+        idx_proj = idx;
+        break;
+      }
+    }
+
+    const Type& arr_type = types[parent_type];
+    auto arr_size =
+        static_cast<uint32_t>(arr_type.AsUnpackedArray().range.Size());
+
+    // Compute bounds check
+    llvm::Value* index = LowerOperand(context, idx_proj->index);
+    auto* arr_size_val = llvm::ConstantInt::get(index->getType(), arr_size);
+    auto* in_bounds =
+        builder.CreateICmpULT(index, arr_size_val, "nba.inbounds");
+
+    // Create conditional branch
+    auto* func = builder.GetInsertBlock()->getParent();
+    auto* schedule_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "nba.schedule", func);
+    auto* skip_bb = llvm::BasicBlock::Create(llvm_ctx, "nba.skip", func);
+    builder.CreateCondBr(in_bounds, schedule_bb, skip_bb);
+
+    // Schedule block: compute pointers, value, mask, call
+    builder.SetInsertPoint(schedule_bb);
+    llvm::Value* write_ptr = context.GetPlacePointer(nba.target);
+    llvm::Value* notify_base_ptr = GetDesignRootPointer(context, nba.target);
+    llvm::Type* storage_type = context.GetPlaceLlvmType(nba.target);
+
+    // Evaluate source and coerce to storage type
+    llvm::Value* source_value = nullptr;
+    llvm::Value* mask_value = nullptr;
+    if (storage_type->isStructTy()) {
+      // 4-state element
+      auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+      auto* elem_type = struct_type->getElementType(0);
+      llvm::Value* raw = LowerOperandRaw(context, nba.source);
+      llvm::Value* val = nullptr;
+      llvm::Value* unk = nullptr;
+      if (raw->getType()->isStructTy()) {
+        val = builder.CreateExtractValue(raw, 0);
+        unk = builder.CreateExtractValue(raw, 1);
+      } else {
+        val = builder.CreateZExtOrTrunc(raw, elem_type);
+        unk = llvm::ConstantInt::get(elem_type, 0);
+      }
+      val = builder.CreateZExtOrTrunc(val, elem_type);
+      unk = builder.CreateZExtOrTrunc(unk, elem_type);
+      source_value = llvm::UndefValue::get(struct_type);
+      source_value = builder.CreateInsertValue(source_value, val, 0);
+      source_value = builder.CreateInsertValue(source_value, unk, 1);
+      // Mask: all-ones for both planes
+      auto* all_ones = llvm::ConstantInt::get(
+          elem_type, llvm::APInt::getAllOnes(elem_type->getIntegerBitWidth()));
+      mask_value = llvm::UndefValue::get(struct_type);
+      mask_value = builder.CreateInsertValue(mask_value, all_ones, 0);
+      mask_value = builder.CreateInsertValue(mask_value, all_ones, 1);
+    } else {
+      // 2-state element
+      source_value = LowerOperand(context, nba.source);
+      if (source_value->getType() != storage_type) {
+        source_value = builder.CreateZExtOrTrunc(source_value, storage_type);
+      }
+      mask_value = llvm::ConstantInt::get(
+          storage_type,
+          llvm::APInt::getAllOnes(storage_type->getIntegerBitWidth()));
+    }
+
+    EmitScheduleNbaCall(
+        context, write_ptr, notify_base_ptr, source_value, mask_value,
+        storage_type, signal_id);
+    builder.CreateBr(skip_bb);
+
+    builder.SetInsertPoint(skip_bb);
+    return;
+  }
+
+  // Case 3: Simple full-width write (no projections)
+  llvm::Value* write_ptr = context.GetPlacePointer(nba.target);
+  llvm::Value* notify_base_ptr = write_ptr;
+  llvm::Type* storage_type = context.GetPlaceLlvmType(nba.target);
+
+  llvm::Value* source_value = nullptr;
+  llvm::Value* mask_value = nullptr;
+  if (storage_type->isStructTy()) {
+    // 4-state target
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+    auto* elem_type = struct_type->getElementType(0);
+    llvm::Value* raw = LowerOperandRaw(context, nba.source);
+    llvm::Value* val = nullptr;
+    llvm::Value* unk = nullptr;
+    if (raw->getType()->isStructTy()) {
+      val = builder.CreateExtractValue(raw, 0, "nba.val");
+      unk = builder.CreateExtractValue(raw, 1, "nba.unk");
+    } else {
+      val = builder.CreateZExtOrTrunc(raw, elem_type, "nba.val");
+      unk = llvm::ConstantInt::get(elem_type, 0);
+    }
+    val = builder.CreateZExtOrTrunc(val, elem_type, "nba.val.fit");
+    unk = builder.CreateZExtOrTrunc(unk, elem_type, "nba.unk.fit");
+    source_value = llvm::UndefValue::get(struct_type);
+    source_value = builder.CreateInsertValue(source_value, val, 0);
+    source_value = builder.CreateInsertValue(source_value, unk, 1);
+    // Mask: all-ones for both planes
+    auto* all_ones = llvm::ConstantInt::get(
+        elem_type, llvm::APInt::getAllOnes(elem_type->getIntegerBitWidth()));
+    mask_value = llvm::UndefValue::get(struct_type);
+    mask_value = builder.CreateInsertValue(mask_value, all_ones, 0);
+    mask_value = builder.CreateInsertValue(mask_value, all_ones, 1);
+  } else {
+    // 2-state target
+    const Type& type = types[mir::TypeOfPlace(types, place)];
+    source_value = LowerOperand(context, nba.source);
+    if (source_value->getType() != storage_type &&
+        source_value->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
+      if (type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_signed) {
+        source_value = builder.CreateSExtOrTrunc(source_value, storage_type);
+      } else {
+        source_value = builder.CreateZExtOrTrunc(source_value, storage_type);
+      }
+    }
+    mask_value = llvm::ConstantInt::get(
+        storage_type,
+        llvm::APInt::getAllOnes(storage_type->getIntegerBitWidth()));
+  }
+
+  EmitScheduleNbaCall(
+      context, write_ptr, notify_base_ptr, source_value, mask_value,
+      storage_type, signal_id);
+}
+
 void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
   std::visit(
       Overloaded{
@@ -500,6 +771,9 @@ void LowerInstruction(Context& context, const mir::Instruction& instruction) {
           },
           [&context](const mir::Effect& effect) {
             LowerEffectOp(context, effect.op);
+          },
+          [&context](const mir::NonBlockingAssign& nba) {
+            LowerNonBlockingAssign(context, nba);
           },
       },
       instruction.data);

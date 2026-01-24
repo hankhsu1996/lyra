@@ -636,7 +636,10 @@ auto LowerAssignment(
   // Lower value as rvalue
   mir::Operand value = LowerExpression(data.value, builder);
 
-  if (target.IsAlwaysValid()) {
+  if (data.is_non_blocking) {
+    // Non-blocking: schedule for NBA region (validity handled in LLVM backend)
+    builder.EmitNonBlockingAssign(target.place, value);
+  } else if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, value);
   } else {
     // Guarded store: only write if validity is true (OOB/X/Z = no-op)

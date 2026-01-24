@@ -37,8 +37,16 @@ struct Effect {
   EffectOp op;
 };
 
+// NonBlockingAssign: deferred data movement (NBA region).
+// Semantics: schedule target <= source for commit in the NBA region.
+struct NonBlockingAssign {
+  PlaceId target;
+  Operand source;
+};
+
 // Instruction data variant.
-using InstructionData = std::variant<Assign, Compute, GuardedAssign, Effect>;
+using InstructionData =
+    std::variant<Assign, Compute, GuardedAssign, Effect, NonBlockingAssign>;
 
 // An instruction that does not affect control flow.
 // - Assign, Compute, and GuardedAssign write to a Place

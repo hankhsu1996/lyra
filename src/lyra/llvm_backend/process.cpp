@@ -69,9 +69,10 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
 }
 
 void LowerFinish(Context& context, llvm::BasicBlock* exit_block) {
-  // $finish must return control to main()'s exit block — never call
-  // exit()/abort(). The exit block runs LyraSnapshotVars + LyraReportTime for
-  // test harness output.
+  // $finish stops the simulation engine, then returns to the exit block which
+  // runs LyraSnapshotVars + LyraReportTime for test harness output.
+  context.GetBuilder().CreateCall(
+      context.GetLyraFinishSimulation(), {context.GetEnginePointer()});
   context.GetBuilder().CreateBr(exit_block);
 }
 
