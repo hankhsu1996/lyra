@@ -69,6 +69,40 @@ extern "C" auto LyraStringRetain(LyraStringHandle handle) -> LyraStringHandle {
   return handle;
 }
 
+extern "C" auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
+    -> LyraStringHandle {
+  assert(count >= 0 && "concat count must be non-negative");
+
+  // Sum total length
+  uint64_t total_len = 0;
+  for (int64_t i = 0; i < count; ++i) {
+    auto* elem = static_cast<LyraStringData*>(elems[i]);
+    if (elem != nullptr) {
+      total_len += elem->len;
+    }
+  }
+
+  // Allocate result
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto* result = new LyraStringData();
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  result->data = new char[total_len];
+  result->len = total_len;
+  result->refcount = 1;
+
+  // Copy each element's data sequentially
+  uint64_t offset = 0;
+  for (int64_t i = 0; i < count; ++i) {
+    auto* elem = static_cast<LyraStringData*>(elems[i]);
+    if (elem != nullptr && elem->len > 0) {
+      std::memcpy(result->data + offset, elem->data, elem->len);
+      offset += elem->len;
+    }
+  }
+
+  return result;
+}
+
 extern "C" void LyraStringRelease(LyraStringHandle handle) {
   if (handle == nullptr) {
     return;

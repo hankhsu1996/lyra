@@ -244,6 +244,15 @@ auto LowerCastRvalue(
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
+  const Type& src = types[info.source_type];
+  const Type& tgt = types[info.target_type];
+  if (tgt.Kind() == TypeKind::kString || src.Kind() == TypeKind::kString) {
+    throw common::InternalError(
+        "LowerCastRvalue", std::format(
+                               "unsupported cast: {} -> {}",
+                               ToString(src.Kind()), ToString(tgt.Kind())));
+  }
+
   llvm::Value* source = LowerOperand(context, operands[0]);
 
   const Type& source_type = types[info.source_type];
@@ -397,6 +406,48 @@ auto LowerGuardedUse(
   return phi;
 }
 
+void LowerStringConcat(
+    Context& context, const mir::ConcatRvalueInfo& /*info*/,
+    const std::vector<mir::Operand>& operands, mir::PlaceId target_place) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+  auto count = static_cast<int64_t>(operands.size());
+
+  // Lower each operand → string handle
+  std::vector<llvm::Value*> handles;
+  handles.reserve(operands.size());
+  for (const auto& operand : operands) {
+    llvm::Value* handle = LowerOperand(context, operand);
+    handles.push_back(handle);
+
+    // Register constant operands for release at statement end
+    if (std::holds_alternative<Constant>(operand.payload)) {
+      context.RegisterOwnedTemp(handle);
+    }
+  }
+
+  // Build array on stack: alloca [N x ptr]
+  auto* array_alloca =
+      builder.CreateAlloca(ptr_ty, llvm::ConstantInt::get(i64_ty, count));
+  for (size_t i = 0; i < handles.size(); ++i) {
+    auto* slot = builder.CreateGEP(
+        ptr_ty, array_alloca, {llvm::ConstantInt::get(i64_ty, i)});
+    builder.CreateStore(handles[i], slot);
+  }
+
+  // Call LyraStringConcat
+  llvm::Value* result = builder.CreateCall(
+      context.GetLyraStringConcat(),
+      {array_alloca, llvm::ConstantInt::get(i64_ty, count)}, "str.concat");
+
+  // Store result into target place (NOT registered as owned temp)
+  llvm::Value* target_ptr = context.GetPlacePointer(target_place);
+  builder.CreateStore(result, target_ptr);
+}
+
 }  // namespace
 
 void LowerCompute(Context& context, const mir::Compute& compute) {
@@ -495,6 +546,17 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       auto* old = builder.CreateLoad(ptr_ty, target_ptr, "q.lit.old");
       builder.CreateCall(context.GetLyraDynArrayRelease(), {old});
       builder.CreateStore(handle, target_ptr);
+      return;
+    }
+  }
+
+  // String concatenation: early-exit before ValidateAndGetTypeInfo
+  if (const auto* concat_info =
+          std::get_if<mir::ConcatRvalueInfo>(&compute.value.info)) {
+    const Type& result_type = types[concat_info->result_type];
+    if (result_type.Kind() == TypeKind::kString) {
+      LowerStringConcat(
+          context, *concat_info, compute.value.operands, compute.target);
       return;
     }
   }
