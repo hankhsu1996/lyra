@@ -13,6 +13,7 @@
 #include "llvm/Support/Casting.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
@@ -388,6 +389,22 @@ void LowerCompute4State(
           [&](const mir::GuardedUseRvalueInfo& info) {
             return LowerGuardedUse4State(
                 context, info, compute.value.operands, elem_type, bit_width);
+          },
+          [&](const mir::RuntimeQueryRvalueInfo& info) -> FourStateValue {
+            switch (info.kind) {
+              case RuntimeQueryKind::kTime: {
+                auto& builder = context.GetBuilder();
+                auto* raw = builder.CreateCall(
+                    context.GetLyraGetTime(), {context.GetEnginePointer()});
+                llvm::Value* val = raw;
+                if (raw->getType() != elem_type) {
+                  val = builder.CreateZExtOrTrunc(raw, elem_type, "time.fit");
+                }
+                auto* zero = llvm::ConstantInt::get(elem_type, 0);
+                return {.value = val, .unknown = zero};
+              }
+            }
+            llvm_unreachable("unhandled RuntimeQueryKind");
           },
           [&](const auto& /*info*/) -> FourStateValue {
             throw common::UnsupportedErrorException(

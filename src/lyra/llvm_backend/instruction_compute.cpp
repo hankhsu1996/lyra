@@ -15,6 +15,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/unsupported_error.hpp"
@@ -591,6 +592,20 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           [&](const mir::GuardedUseRvalueInfo& info) {
             return LowerGuardedUse(
                 context, info, compute.value.operands, storage_type);
+          },
+          [&](const mir::RuntimeQueryRvalueInfo& info) -> llvm::Value* {
+            switch (info.kind) {
+              case RuntimeQueryKind::kTime: {
+                auto& builder = context.GetBuilder();
+                auto* raw = builder.CreateCall(
+                    context.GetLyraGetTime(), {context.GetEnginePointer()});
+                if (raw->getType() == storage_type) {
+                  return raw;
+                }
+                return builder.CreateZExtOrTrunc(raw, storage_type, "time.fit");
+              }
+            }
+            llvm_unreachable("unhandled RuntimeQueryKind");
           },
           [&](const auto& /*info*/) -> llvm::Value* {
             throw common::UnsupportedErrorException(

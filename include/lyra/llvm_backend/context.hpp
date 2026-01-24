@@ -84,6 +84,7 @@ class Context {
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFinishSimulation() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayNew() -> llvm::Function*;
@@ -242,6 +243,7 @@ class Context {
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;
   llvm::Function* lyra_finish_simulation_ = nullptr;
+  llvm::Function* lyra_get_time_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
   llvm::Function* lyra_dynarray_new_ = nullptr;

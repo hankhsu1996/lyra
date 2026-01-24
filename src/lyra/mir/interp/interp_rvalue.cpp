@@ -20,6 +20,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
@@ -301,6 +302,14 @@ auto Interpreter::EvalRvalue(
           },
           [&](const FopenRvalueInfo&) -> RuntimeValue {
             return EvalFopen(state, rv);
+          },
+          [&](const RuntimeQueryRvalueInfo&) -> RuntimeValue {
+            throw common::UnsupportedErrorException(
+                common::UnsupportedLayer::kExecution,
+                common::UnsupportedKind::kFeature, {},
+                std::format(
+                    "rvalue kind '{}' requires runtime backend",
+                    GetRvalueKind(rv.info)));
           },
       },
       rv.info);

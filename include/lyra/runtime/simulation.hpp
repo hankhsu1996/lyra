@@ -62,6 +62,10 @@ void LyraScheduleNba(
 // Sets Engine::finished_ flag so the event loop terminates.
 void LyraFinishSimulation(void* engine_ptr);
 
+// Get current simulation time ($time semantics).
+// Returns raw tick count from the Engine.
+auto LyraGetTime(void* engine_ptr) -> uint64_t;
+
 // Reset runtime state (call before running processes).
 void LyraInitRuntime();
 

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/hir/fwd.hpp"
 
@@ -83,8 +84,15 @@ struct FcloseData {
   auto operator==(const FcloseData&) const -> bool = default;
 };
 
+struct RuntimeQueryData {
+  RuntimeQueryKind kind;
+
+  auto operator==(const RuntimeQueryData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
-    TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData>;
+    TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
+    RuntimeQueryData>;
 
 }  // namespace lyra::hir

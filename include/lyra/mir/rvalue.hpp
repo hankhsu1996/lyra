@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
@@ -115,12 +116,19 @@ struct PlusargsRvalueInfo {
 // operands[1] = mode string (FD mode only, absent for MCD)
 struct FopenRvalueInfo {};
 
+// Engine-state queries ($time, $stime, $realtime).
+// No operands — reads from engine pointer at runtime.
+struct RuntimeQueryRvalueInfo {
+  RuntimeQueryKind kind;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
     BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
-    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo, FopenRvalueInfo>;
+    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo, FopenRvalueInfo,
+    RuntimeQueryRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -160,6 +168,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "plusargs";
         } else if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
           return "fopen";
+        } else if constexpr (std::is_same_v<T, RuntimeQueryRvalueInfo>) {
+          return "runtime_query";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }
