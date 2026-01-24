@@ -19,10 +19,10 @@ cases:
       endmodule
     expect:
       variables:
-        r0: 239   # 0xEF
-        r1: 190   # 0xBE
-        r2: 173   # 0xAD
-        r3: 222   # 0xDE
+        r0: 239 # 0xEF
+        r1: 190 # 0xBE
+        r2: 173 # 0xAD
+        r3: 222 # 0xDE
 
   # Triple index (bit select from 3D element)
   - name: 3d_packed_triple_index
@@ -129,8 +129,8 @@ cases:
       endmodule
     expect:
       variables:
-        r0: 205  # 0xCD
-        r1: 171  # 0xAB
+        r0: 205 # 0xCD
+        r1: 171 # 0xAB
 
   # Whole plane access in 3D
   - name: 3d_packed_plane_read
@@ -146,8 +146,8 @@ cases:
       endmodule
     expect:
       variables:
-        plane0: 48879  # 0xBEEF
-        plane1: 57005  # 0xDEAD
+        plane0: 48879 # 0xBEEF
+        plane1: 57005 # 0xDEAD
 
   # Chained element assignment (N-dimensional)
   - name: nd_element_assign_3d
@@ -163,7 +163,7 @@ cases:
       endmodule
     expect:
       variables:
-        r: 171  # 0xAB
+        r: 171 # 0xAB
 
   - name: nd_element_assign_variable_indices
     sv: |
@@ -201,7 +201,7 @@ cases:
       endmodule
     expect:
       variables:
-        r0: 17   # 0x11
-        r1: 34   # 0x22
-        r2: 51   # 0x33
-        r3: 68   # 0x44
+        r0: 17 # 0x11
+        r1: 34 # 0x22
+        r2: 51 # 0x33
+        r3: 68 # 0x44

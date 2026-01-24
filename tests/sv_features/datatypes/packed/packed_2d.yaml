@@ -14,7 +14,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -559038737  # 0xDEADBEEF as signed int
+        result: -559038737 # 0xDEADBEEF as signed int
 
   - name: 2d_packed_element_read
     sv: |
@@ -57,7 +57,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 43776  # 0x0000AB00
+        result: 43776 # 0x0000AB00
 
   - name: 2d_packed_element_write_high
     sv: |
@@ -72,7 +72,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -16777216  # 0xFF000000 as signed
+        result: -16777216 # 0xFF000000 as signed
 
   - name: 2d_packed_multiple_writes
     sv: |
@@ -90,7 +90,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 1144201745  # 0x44332211
+        result: 1144201745 # 0x44332211
 
   - name: 2d_packed_read_write
     sv: |
@@ -105,7 +105,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -889275650  # 0xCAFEBAFE
+        result: -889275650 # 0xCAFEBAFE
 
   - name: 2d_packed_nonzero_lower
     sv: |
@@ -120,7 +120,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 21760  # 0x00005500
+        result: 21760 # 0x00005500
 
   - name: 2d_packed_variable_index
     sv: |
@@ -136,7 +136,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 173  # Element 2 = 0xAD
+        result: 173 # Element 2 = 0xAD
 
   - name: 2d_packed_bit_select
     sv: |
@@ -150,7 +150,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 1  # Element 1 = 0xBE = 0b10111110, bit 4 = 1
+        result: 1 # Element 1 = 0xBE = 0b10111110, bit 4 = 1
 
   - name: 2d_packed_range_select
     sv: |
@@ -164,7 +164,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 10  # Element 2 = 0xAD, upper nibble = 0xA = 10
+        result: 10 # Element 2 = 0xAD, upper nibble = 0xA = 10
 
   # 64-bit boundary tests - exactly 64 bits per element (narrow path boundary)
   - name: 2d_packed_64bit_element_boundary
@@ -227,7 +227,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -1091581186  # 0xBEEFCAFE as signed int
+        result: -1091581186 # 0xBEEFCAFE as signed int
 
   - name: 2d_packed_nonzero_both_dims
     sv: |
@@ -260,7 +260,7 @@ cases:
       endmodule
     expect:
       variables:
-        elem5: 10   # 0xA
-        elem2: 13   # 0xD
-        bit9: 1     # MSB of 0xA
-        bit6: 0     # LSB of 0xA
+        elem5: 10 # 0xA
+        elem2: 13 # 0xD
+        bit9: 1 # MSB of 0xA
+        bit6: 0 # LSB of 0xA

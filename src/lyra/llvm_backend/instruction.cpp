@@ -190,9 +190,21 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     // 1. Get new value
     llvm::Value* new_val = LowerOperand(context, assign.source);
 
-    // 2. If source is a place reference (borrowed), retain to get owned
+    // 2. Determine ownership: move from temp, retain from persistent
     if (std::holds_alternative<mir::PlaceId>(assign.source.payload)) {
-      new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
+      auto src_place_id = std::get<mir::PlaceId>(assign.source.payload);
+      const auto& src_place = arena[src_place_id];
+      if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+        // Move: temp is single-owner, null it out to transfer ownership
+        auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+        auto* src_ptr = context.GetPlacePointer(src_place_id);
+        auto* null_val = llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_ty));
+        builder.CreateStore(null_val, src_ptr);
+      } else {
+        // Clone: persistent place, retain for shared ownership
+        new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
+      }
     }
 
     if (IsDesignPlace(context, assign.target)) {

@@ -474,11 +474,79 @@ auto LowerCast(
     throw common::InternalError("LowerCast", "expected kCast expression kind");
   }
 
+  // Pattern-match: Cast(string ← bit[N]){ Concat{ all string literals } }
+  // Slang types all-literal string concat as bit[N], wraps in Conversion.
+  // Rewrite directly to Concat(string) to avoid the LLVM backend's packed path.
+  // Handles both direct string constants and single-element concats wrapping
+  // string constants (produced by replication expansion).
+  const Context& ctx = builder.GetContext();
+  const Type& target_ty = (*ctx.type_arena)[expr.type];
+  if (target_ty.Kind() == TypeKind::kString) {
+    const hir::Expression& inner = (*ctx.hir_arena)[data.operand];
+    const auto* concat_data =
+        std::get_if<hir::ConcatExpressionData>(&inner.data);
+    if (concat_data != nullptr) {
+      // Try to extract StringConstant from a concat operand expression.
+      // Handles: direct ConstantExpr, or single-element ConcatExpr wrapping
+      // one.
+      auto try_get_string =
+          [&](hir::ExpressionId eid) -> const StringConstant* {
+        const hir::Expression& e = (*ctx.hir_arena)[eid];
+        // Direct constant?
+        if (const auto* cd =
+                std::get_if<hir::ConstantExpressionData>(&e.data)) {
+          const Constant& c = (*ctx.constant_arena)[cd->constant];
+          return std::get_if<StringConstant>(&c.value);
+        }
+        // Single-element concat wrapping a constant? (replication expansion)
+        if (const auto* nested =
+                std::get_if<hir::ConcatExpressionData>(&e.data)) {
+          if (nested->operands.size() == 1) {
+            const hir::Expression& inner_e =
+                (*ctx.hir_arena)[nested->operands[0]];
+            if (const auto* cd =
+                    std::get_if<hir::ConstantExpressionData>(&inner_e.data)) {
+              const Constant& c = (*ctx.constant_arena)[cd->constant];
+              return std::get_if<StringConstant>(&c.value);
+            }
+          }
+        }
+        return nullptr;
+      };
+
+      // Check all operands resolve to string literals
+      bool all_string_literals = true;
+      for (hir::ExpressionId op_id : concat_data->operands) {
+        if (try_get_string(op_id) == nullptr) {
+          all_string_literals = false;
+          break;
+        }
+      }
+
+      if (all_string_literals) {
+        // Rewrite: emit Concat(string) with string-typed operands
+        std::vector<mir::Operand> operands;
+        operands.reserve(concat_data->operands.size());
+        for (hir::ExpressionId op_id : concat_data->operands) {
+          const auto* str = try_get_string(op_id);
+          Constant string_const{.type = expr.type, .value = *str};
+          operands.push_back(mir::Operand::Const(string_const));
+        }
+
+        mir::Rvalue rvalue{
+            .operands = std::move(operands),
+            .info = mir::ConcatRvalueInfo{.result_type = expr.type},
+        };
+        return mir::Operand::Use(
+            builder.EmitTemp(expr.type, std::move(rvalue)));
+      }
+    }
+  }
+
   // Lower operand first. Note: current lowering is structure-preserving (no
   // rewriting), so we can safely read source type from HIR after lowering.
   mir::Operand operand = LowerExpression(data.operand, builder);
 
-  const Context& ctx = builder.GetContext();
   const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
   TypeId source_type = operand_expr.type;
   TypeId target_type = expr.type;

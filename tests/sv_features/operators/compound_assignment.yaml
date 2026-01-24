@@ -78,7 +78,7 @@ cases:
       endmodule
     expect:
       variables:
-        x: 160  # 0b10100000 = 160
+        x: 160 # 0b10100000 = 160
 
   - name: or_assign
     sv: |
@@ -198,10 +198,10 @@ cases:
       endmodule
     expect:
       variables:
-        r0: 100  # arr[0] unchanged
-        r1: 210  # arr[1] = 200 + 10
-        r2: 300  # arr[2] unchanged
-        i: 2     # i incremented once
+        r0: 100 # arr[0] unchanged
+        r1: 210 # arr[1] = 200 + 10
+        r2: 300 # arr[2] unchanged
+        i: 2 # i incremented once
 
   - name: side_effect_index_preinc
     description: Verifies index with pre-increment (++i) is evaluated only once
@@ -223,7 +223,7 @@ cases:
       endmodule
     expect:
       variables:
-        r0: 100  # arr[0] unchanged
-        r1: 250  # arr[1] = 200 + 50
-        r2: 300  # arr[2] unchanged
-        i: 1     # i incremented once
+        r0: 100 # arr[0] unchanged
+        r1: 250 # arr[1] = 200 + 50
+        r2: 300 # arr[2] unchanged
+        i: 1 # i incremented once

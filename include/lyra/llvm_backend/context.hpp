@@ -75,6 +75,7 @@ class Context {
   [[nodiscard]] auto GetLyraStringCmp() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringConcat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendDelay() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendWait() -> llvm::Function*;
@@ -232,6 +233,7 @@ class Context {
   llvm::Function* lyra_string_cmp_ = nullptr;
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
+  llvm::Function* lyra_string_concat_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
   llvm::Function* lyra_suspend_delay_ = nullptr;
   llvm::Function* lyra_suspend_wait_ = nullptr;

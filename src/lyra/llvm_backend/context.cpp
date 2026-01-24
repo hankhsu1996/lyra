@@ -255,6 +255,19 @@ auto Context::GetLyraStringRelease() -> llvm::Function* {
   return lyra_string_release_;
 }
 
+auto Context::GetLyraStringConcat() -> llvm::Function* {
+  if (lyra_string_concat_ == nullptr) {
+    // ptr LyraStringConcat(ptr elems, i64 count)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i64_ty}, false);
+    lyra_string_concat_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringConcat",
+        llvm_module_.get());
+  }
+  return lyra_string_concat_;
+}
+
 auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
     // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num)

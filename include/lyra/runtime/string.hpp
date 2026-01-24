@@ -15,6 +15,11 @@ auto LyraStringCmp(LyraStringHandle a, LyraStringHandle b) -> int32_t;
 // Increment refcount. No-op for null. Returns the same handle.
 auto LyraStringRetain(LyraStringHandle handle) -> LyraStringHandle;
 
+// Concatenates N strings. Returns owned handle (+1 refcount). count==0 → empty
+// string.
+auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
+    -> LyraStringHandle;
+
 // Decrement refcount, free if 0. No-op for null.
 void LyraStringRelease(LyraStringHandle handle);
 }

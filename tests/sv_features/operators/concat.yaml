@@ -243,7 +243,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -2401053089206453570  # 0xDEADBEEFCAFEBABE as signed
+        result: -2401053089206453570 # 0xDEADBEEFCAFEBABE as signed
 
   - name: concat_single_operand
     description: Degenerate case - single operand concat (commonly used to force unsigned)
@@ -278,7 +278,7 @@ cases:
     expect:
       variables:
         lo: 0x0123456789ABCDEF
-        hi: -81985529216486896  # 0xFEDCBA9876543210 as signed
+        hi: -81985529216486896 # 0xFEDCBA9876543210 as signed
 
   - name: concat_x_propagation
     description: X bits in operands are preserved through concatenation
@@ -294,7 +294,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: ""  # Just verify no crash; X value assertion not yet supported
+      stdout: "" # Just verify no crash; X value assertion not yet supported
 
   - name: concat_z_propagation
     description: Z bits in operands are preserved through concatenation
@@ -310,7 +310,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: ""  # Just verify no crash; Z value assertion not yet supported
+      stdout: "" # Just verify no crash; Z value assertion not yet supported
 
   - name: concat_mixed_xz
     description: Mixed X and Z bits are preserved through concatenation
@@ -326,4 +326,4 @@ cases:
         end
       endmodule
     expect:
-      stdout: ""  # Just verify no crash; mixed X/Z assertion not yet supported
+      stdout: "" # Just verify no crash; mixed X/Z assertion not yet supported
