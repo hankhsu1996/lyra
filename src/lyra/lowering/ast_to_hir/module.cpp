@@ -12,6 +12,7 @@
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -40,17 +41,19 @@ auto LowerModule(
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 
+    CollectedMembers members;
+    CollectScopeMembers(body, registrar, members);
+
     // Phase 1: Register module-level variables (before processes that use them)
     // Store initializer references for deferred lowering
-    for (const slang::ast::VariableSymbol& var :
-         body.membersOfType<slang::ast::VariableSymbol>()) {
-      TypeId type = LowerType(var.getType(), span, ctx);
+    for (const auto* var : members.variables) {
+      TypeId type = LowerType(var->getType(), span, ctx);
       if (type) {
-        SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
+        SymbolId sym = registrar.Register(*var, SymbolKind::kVariable, type);
         variables.push_back(sym);
 
         // Store reference to initializer (lowered after function registration)
-        if (const auto* init = var.getInitializer()) {
+        if (const auto* init = var->getInitializer()) {
           var_init_refs.emplace_back(sym, init);
         }
       }
@@ -58,40 +61,33 @@ auto LowerModule(
 
     // Phase 2: Register function symbols (before processes that call them)
     // Store references to lower their bodies later
-    std::vector<const slang::ast::SubroutineSymbol*> function_refs;
-    std::vector<const slang::ast::SubroutineSymbol*> task_refs;
-    for (const slang::ast::SubroutineSymbol& sub :
-         body.membersOfType<slang::ast::SubroutineSymbol>()) {
-      if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
-        // Register function symbol only (return type, not body yet)
-        const auto& ret_type = sub.getReturnType();
-        if (!ret_type.isIntegral() && !ret_type.isVoid()) {
-          ctx->sink->Error(
-              span, "only integral or void return types supported");
-          continue;
-        }
-        TypeId return_type = LowerType(ret_type, span, ctx);
-        if (!return_type) {
-          continue;
-        }
-        registrar.Register(sub, SymbolKind::kFunction, return_type);
-        function_refs.push_back(&sub);
-      } else {
-        task_refs.push_back(&sub);
+    for (const auto* sub : members.functions) {
+      const auto& ret_type = sub->getReturnType();
+      if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+        ctx->sink->Error(span, "only integral or void return types supported");
+        continue;
       }
+      TypeId return_type = LowerType(ret_type, span, ctx);
+      if (!return_type) {
+        continue;
+      }
+      registrar.Register(*sub, SymbolKind::kFunction, return_type);
     }
 
     // Phase 3: Lower processes (can now reference function symbols)
-    for (const slang::ast::ProceduralBlockSymbol& proc :
-         body.membersOfType<slang::ast::ProceduralBlockSymbol>()) {
-      hir::ProcessId id = LowerProcess(proc, registrar, ctx);
+    for (const auto* proc : members.processes) {
+      hir::ProcessId id = LowerProcess(*proc, registrar, ctx);
       if (id) {
         processes.push_back(id);
       }
     }
 
     // Phase 4: Lower function bodies
-    for (const slang::ast::SubroutineSymbol* sub : function_refs) {
+    for (const auto* sub : members.functions) {
+      const auto& ret_type = sub->getReturnType();
+      if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+        continue;
+      }
       hir::FunctionId id = LowerFunction(*sub, registrar, ctx);
       if (id) {
         functions.push_back(id);
@@ -99,7 +95,7 @@ auto LowerModule(
     }
 
     // Phase 5: Lower tasks
-    for (const slang::ast::SubroutineSymbol* sub : task_refs) {
+    for (const auto* sub : members.tasks) {
       hir::TaskId id = LowerTask(*sub, registrar, ctx);
       if (id) {
         tasks.push_back(id);

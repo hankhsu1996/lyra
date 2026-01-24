@@ -11,6 +11,7 @@
 
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
@@ -33,25 +34,24 @@ void RegisterModuleDeclarations(
 
   ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 
-  for (const slang::ast::VariableSymbol& var :
-       body.membersOfType<slang::ast::VariableSymbol>()) {
-    TypeId type = LowerType(var.getType(), span, ctx);
+  CollectedMembers members;
+  CollectScopeMembers(body, registrar, members);
+
+  for (const auto* var : members.variables) {
+    TypeId type = LowerType(var->getType(), span, ctx);
     if (type) {
-      registrar.Register(var, SymbolKind::kVariable, type);
+      registrar.Register(*var, SymbolKind::kVariable, type);
     }
   }
 
-  for (const slang::ast::SubroutineSymbol& sub :
-       body.membersOfType<slang::ast::SubroutineSymbol>()) {
-    if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
-      const auto& ret_type = sub.getReturnType();
-      if (!ret_type.isIntegral() && !ret_type.isVoid()) {
-        continue;
-      }
-      TypeId return_type = LowerType(ret_type, span, ctx);
-      if (return_type) {
-        registrar.Register(sub, SymbolKind::kFunction, return_type);
-      }
+  for (const auto* sub : members.functions) {
+    const auto& ret_type = sub->getReturnType();
+    if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+      continue;
+    }
+    TypeId return_type = LowerType(ret_type, span, ctx);
+    if (return_type) {
+      registrar.Register(*sub, SymbolKind::kFunction, return_type);
     }
   }
 }

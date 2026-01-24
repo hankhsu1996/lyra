@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <utility>
 
 namespace lyra {
@@ -35,6 +36,7 @@ enum class ScopeKind {
 struct Scope {
   ScopeKind kind = ScopeKind::kBlock;
   ScopeId parent = kInvalidScopeId;
+  std::string name;
 };
 
 }  // namespace lyra
