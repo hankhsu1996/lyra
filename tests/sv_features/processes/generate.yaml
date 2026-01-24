@@ -1,0 +1,243 @@
+feature: generate_processes
+description: Tests reactive processes (continuous assign, always_comb, submodules) inside generate constructs
+
+cases:
+  - name: if_generate_continuous_assign
+    description: if-generate selecting continuous assignment based on parameter
+    sv: |
+      module Test;
+        parameter int MODE = 1;
+        int a, b, c;
+        if (MODE == 1) begin : gen_add
+          assign c = a + b;
+        end else begin : gen_sub
+          assign c = a - b;
+        end
+        initial begin
+          a = 5; b = 3;
+          #1;
+          $display("c=%0d", c);
+        end
+      endmodule
+    expect:
+      stdout: "c=8\n"
+
+  - name: if_generate_always_comb
+    description: if-generate selecting always_comb block
+    sv: |
+      module Test;
+        parameter int MODE = 0;
+        int x, y;
+        if (MODE == 0) begin : gen_double
+          always_comb y = x * 2;
+        end else begin : gen_triple
+          always_comb y = x * 3;
+        end
+        initial begin
+          x = 10;
+          #1;
+          $display("y=%0d", y);
+        end
+      endmodule
+    expect:
+      stdout: "y=20\n"
+
+  - name: if_generate_false_branch
+    description: Condition is false, else branch with continuous assign taken
+    sv: |
+      module Test;
+        parameter int USE_ADD = 0;
+        int a, b, result;
+        if (USE_ADD) begin : gen_add
+          assign result = a + b;
+        end else begin : gen_mul
+          assign result = a * b;
+        end
+        initial begin
+          a = 3; b = 4;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=12\n"
+
+  - name: nested_if_generate_continuous_assign
+    description: Nested if-generate with continuous assignment
+    sv: |
+      module Test;
+        parameter int A = 1;
+        parameter int B = 1;
+        int x, result;
+        if (A) begin : gen_a
+          if (B) begin : gen_b
+            assign result = x + 11;
+          end else begin : gen_not_b
+            assign result = x + 10;
+          end
+        end else begin : gen_not_a
+          assign result = x;
+        end
+        initial begin
+          x = 0;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=11\n"
+
+  - name: if_generate_submodule
+    description: Module instance inside if-generate block
+    sv: |
+      module Adder(input int a, input int b, output int sum);
+        always_comb sum = a + b;
+      endmodule
+
+      module Multiplier(input int a, input int b, output int prod);
+        always_comb prod = a * b;
+      endmodule
+
+      module Test;
+        parameter int USE_ADDER = 1;
+        int x, y, result;
+        if (USE_ADDER) begin : gen_adder
+          Adder op(.a(x), .b(y), .sum(result));
+        end else begin : gen_mult
+          Multiplier op(.a(x), .b(y), .prod(result));
+        end
+        initial begin
+          x = 3; y = 7;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=10\n"
+
+  - name: for_generate_always_comb
+    description: always_comb inside for-generate loop
+    sv: |
+      module Test;
+        int x, y0, y1, y2;
+        genvar i;
+        for (i = 0; i < 3; i = i + 1) begin : blk
+          if (i == 0) always_comb y0 = x + i;
+          if (i == 1) always_comb y1 = x + i;
+          if (i == 2) always_comb y2 = x + i;
+        end
+        initial begin
+          x = 10;
+          #1;
+          $display("y0=%0d y1=%0d y2=%0d", y0, y1, y2);
+        end
+      endmodule
+    expect:
+      stdout: "y0=10 y1=11 y2=12\n"
+
+  - name: for_generate_submodule
+    description: Module instance inside for-generate loop
+    sv: |
+      module Doubler(input int x, output int y);
+        always_comb y = x * 2;
+      endmodule
+
+      module Test;
+        int in0, in1, out0, out1;
+        genvar i;
+        for (i = 0; i < 2; i = i + 1) begin : dbl
+          if (i == 0) Doubler d0(.x(in0), .y(out0));
+          if (i == 1) Doubler d1(.x(in1), .y(out1));
+        end
+        initial begin
+          in0 = 3;
+          in1 = 5;
+          #1;
+          $display("out0=%0d out1=%0d", out0, out1);
+        end
+      endmodule
+    expect:
+      stdout: "out0=6 out1=10\n"
+
+  - name: case_generate_continuous_assign
+    description: case-generate selecting continuous assignment
+    sv: |
+      module Test;
+        parameter int MODE = 1;
+        int x, y;
+        case (MODE)
+          0: begin : gen
+            assign y = x;
+          end
+          1: begin : gen
+            assign y = x * 2;
+          end
+          2: begin : gen
+            assign y = x * 3;
+          end
+        endcase
+        initial begin
+          x = 10;
+          #1;
+          $display("y=%0d", y);
+        end
+      endmodule
+    expect:
+      stdout: "y=20\n"
+
+  - name: case_generate_always_comb
+    description: case-generate selecting always_comb block
+    sv: |
+      module Test;
+        parameter int OP = 2;
+        int a, b, result;
+        case (OP)
+          0: begin : gen
+            always_comb result = a + b;
+          end
+          1: begin : gen
+            always_comb result = a - b;
+          end
+          2: begin : gen
+            always_comb result = a * b;
+          end
+        endcase
+        initial begin
+          a = 3; b = 4;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=12\n"
+
+  - name: case_generate_submodule
+    description: Module instance inside case-generate block
+    sv: |
+      module Adder(input int a, input int b, output int c);
+        always_comb c = a + b;
+      endmodule
+
+      module Multiplier(input int a, input int b, output int c);
+        always_comb c = a * b;
+      endmodule
+
+      module Test;
+        parameter int USE_MUL = 1;
+        int x, y, result;
+        case (USE_MUL)
+          0: begin : gen
+            Adder op(.a(x), .b(y), .c(result));
+          end
+          1: begin : gen
+            Multiplier op(.a(x), .b(y), .c(result));
+          end
+        endcase
+        initial begin
+          x = 3; y = 7;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=21\n"
