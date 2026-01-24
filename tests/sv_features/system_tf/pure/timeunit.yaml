@@ -208,3 +208,200 @@ cases:
       stdout:
         contains:
           - "root unit=-9, root prec=-9"
+
+  # $unit argument tests - returns compilation unit's timescale.
+  # NOTE: Must use explicit timeunit/timeprecision declarations (not `timescale
+  # directive). The `timescale directive only sets MODULE definitions' timescale,
+  # not the CompilationUnitSymbol::timeScale member (IEEE 1800-2023 §3.14.2.3).
+
+  - name: timeunit_unit
+    description: $timeunit($unit) returns compilation unit's time unit
+    sv: |
+      timeunit 1ns;
+      timeprecision 1ps;
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit($unit);
+        end
+      endmodule
+    expect:
+      variables:
+        u: -9
+
+  - name: timeprecision_unit
+    description: $timeprecision($unit) returns compilation unit's precision
+    sv: |
+      timeunit 1ns;
+      timeprecision 1ps;
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision($unit);
+        end
+      endmodule
+    expect:
+      variables:
+        p: -12
+
+  - name: timeunit_unit_us
+    description: $timeunit($unit) returns -6 for 1us compilation unit
+    sv: |
+      timeunit 1us;
+      timeprecision 1ns;
+      module Test;
+        int u;
+        int p;
+        initial begin
+          u = $timeunit($unit);
+          p = $timeprecision($unit);
+        end
+      endmodule
+    expect:
+      variables:
+        u: -6
+        p: -9
+
+  # Additional magnitude tests
+
+  - name: timeunit_100ns
+    description: $timeunit returns -7 for 100ns time unit
+    sv: |
+      `timescale 100ns / 1ns
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -7
+
+  - name: timeunit_10us
+    description: $timeunit returns -5 for 10us time unit
+    sv: |
+      `timescale 10us / 1ns
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -5
+
+  - name: timeunit_100ps
+    description: $timeunit returns -10 for 100ps time unit
+    sv: |
+      `timescale 100ps / 1ps
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -10
+
+  - name: timeunit_1s
+    description: $timeunit returns 0 for 1s time unit
+    sv: |
+      `timescale 1s / 1ms
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: 0
+
+  - name: timeunit_1ms
+    description: $timeunit returns -3 for 1ms time unit
+    sv: |
+      `timescale 1ms / 1us
+      module Test;
+        int u;
+        initial begin
+          u = $timeunit;
+        end
+      endmodule
+    expect:
+      variables:
+        u: -3
+
+  - name: timeprecision_10ps
+    description: $timeprecision returns -11 for 10ps precision
+    sv: |
+      `timescale 1ns / 10ps
+      module Test;
+        int p;
+        initial begin
+          p = $timeprecision;
+        end
+      endmodule
+    expect:
+      variables:
+        p: -11
+
+  # Nested instance tests - $root finds finest precision in the full hierarchy
+
+  - name: root_nested_finer_precision
+    description: $root finds finest precision from nested instance
+    sv: |
+      `timescale 1ns / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        initial begin
+          $display("prec=%0d", $timeprecision($root));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "prec=-12"
+
+  - name: root_nested_display
+    description: $root precision traverses full instance tree
+    sv: |
+      `timescale 100ps / 10ps
+      module Deep;
+      endmodule
+
+      `timescale 1ns / 1ns
+      module Mid;
+        Deep deep_inst();
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Mid mid_inst();
+        initial begin
+          $display("root_prec=%0d", $timeprecision($root));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "root_prec=-11"
+
+  - name: root_no_timescale
+    description: $root returns default -12 when no module has explicit timescale
+    sv: |
+      module Test;
+        initial begin
+          $display("unit=%0d, prec=%0d", $timeunit($root), $timeprecision($root));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "unit=-12, prec=-12"

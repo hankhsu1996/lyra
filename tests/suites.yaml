@@ -37,5 +37,4 @@ suites:
       - hierarchy/refs/
       - generate/
     exclude_regex:
-      - system_tf/pure/timeunit.yaml
       - system_tf/effect/printtimescale.yaml

@@ -33,8 +33,14 @@ struct BinaryOpSysFn {
   hir::BinaryOp op;
 };
 
-using PureSysFnClassification =
-    std::variant<ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn>;
+// Category 3: Timescale query -> constant
+enum class TimeScaleSysFnKind {
+  kTimeunit,
+  kTimeprecision,
+};
+
+using PureSysFnClassification = std::variant<
+    ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn, TimeScaleSysFnKind>;
 
 // Classify a system call as a pure function that should be desugared.
 // Returns nullopt if the call is not a pure system function.
