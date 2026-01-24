@@ -2,7 +2,9 @@
 
 #include <utility>
 
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -80,6 +82,60 @@ auto LowerModule(
       if (id) {
         processes.push_back(id);
       }
+    }
+
+    // Phase 3b: Desugar continuous assignments into synthetic always_comb
+    // Lyra variable-only model; multiple writers use last-writer-wins;
+    // no resolution.
+    for (const auto* ca : members.continuous_assigns) {
+      SourceSpan ca_span = ctx->SpanOf(GetSourceRange(*ca));
+
+      if (const auto* delay = ca->getDelay()) {
+        ctx->sink->Error(
+            ctx->SpanOf(delay->sourceRange),
+            "continuous assignment delays not supported");
+        continue;
+      }
+
+      const auto& assign_expr = ca->getAssignment();
+      const auto& assign = assign_expr.as<slang::ast::AssignmentExpression>();
+
+      hir::ExpressionId target = LowerExpression(assign.left(), registrar, ctx);
+      if (!target) {
+        continue;
+      }
+
+      const auto& target_data = (*ctx->hir_arena)[target];
+      if (!hir::IsPlaceExpressionKind(target_data.kind)) {
+        ctx->sink->Error(
+            target_data.span,
+            "continuous assignment target is not a simple place expression");
+        continue;
+      }
+
+      hir::ExpressionId value = LowerExpression(assign.right(), registrar, ctx);
+      if (!value) {
+        continue;
+      }
+
+      hir::StatementId stmt = ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kAssignment,
+              .span = ca_span,
+              .data =
+                  hir::AssignmentStatementData{
+                      .target = target,
+                      .value = value,
+                  },
+          });
+
+      hir::ProcessId proc = ctx->hir_arena->AddProcess(
+          hir::Process{
+              .kind = hir::ProcessKind::kAlwaysComb,
+              .span = ca_span,
+              .body = stmt,
+          });
+      processes.push_back(proc);
     }
 
     // Phase 4: Lower function bodies
