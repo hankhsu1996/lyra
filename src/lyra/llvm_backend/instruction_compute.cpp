@@ -423,6 +423,12 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       LowerQueueBuiltin(context, compute, *builtin);
       return;
     }
+    if (builtin->method == mir::BuiltinMethod::kEnumNext ||
+        builtin->method == mir::BuiltinMethod::kEnumPrev ||
+        builtin->method == mir::BuiltinMethod::kEnumName) {
+      LowerEnumBuiltin(context, compute, *builtin);
+      return;
+    }
   }
 
   // Unpacked array aggregate construction: early-exit before

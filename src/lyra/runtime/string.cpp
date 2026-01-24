@@ -4,6 +4,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <print>
+#include <string_view>
 
 namespace {
 
@@ -79,4 +81,12 @@ extern "C" void LyraStringRelease(LyraStringHandle handle) {
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     delete str;
   }
+}
+
+extern "C" void LyraPrintString(LyraStringHandle handle) {
+  if (handle == nullptr) {
+    return;
+  }
+  auto* str = static_cast<LyraStringData*>(handle);
+  std::print("{}", std::string_view(str->data, str->len));
 }
