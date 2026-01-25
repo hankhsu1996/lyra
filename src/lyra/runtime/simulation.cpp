@@ -45,7 +45,7 @@ void HandleSuspendRecord(
       for (const auto& trigger : triggers) {
         eng.Subscribe(
             handle, resume, trigger.signal_id,
-            static_cast<lyra::runtime::EdgeKind>(trigger.edge));
+            static_cast<lyra::common::EdgeKind>(trigger.edge));
       }
       break;
     }

@@ -86,7 +86,7 @@ struct StorageCollector {
     // temps/locals that aren't in the instruction operand list)
     for (const auto& proj : place.projections) {
       std::visit(
-          Overloaded{
+          common::Overloaded{
               [](const FieldProjection&) {},
               [&](const IndexProjection& p) { Visit(p.index, arena); },
               [&](const SliceProjection& p) { Visit(p.start, arena); },
@@ -127,7 +127,7 @@ struct StorageCollector {
   // type will cause a compile error until handled here.
   void Visit(const Instruction& inst, const Arena& arena) {
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const Assign& i) {
               Visit(arena[i.target], arena);
               Visit(i.source, arena);
@@ -143,7 +143,7 @@ struct StorageCollector {
             },
             [&](const Effect& i) {
               std::visit(
-                  Overloaded{
+                  common::Overloaded{
                       [&](const DisplayEffect& d) -> void {
                         if (d.descriptor) {
                           Visit(*d.descriptor, arena);
@@ -343,7 +343,7 @@ auto RunSimulation(
     auto reason = interp.RunUntilSuspend(state);
 
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [](const SuspendFinished&) {},
             [&](const SuspendDelay& d) {
               eng.Delay(

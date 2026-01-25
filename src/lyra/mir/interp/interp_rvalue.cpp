@@ -217,7 +217,7 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
 auto Interpreter::EvalRvalue(
     ProcessState& state, const Rvalue& rv, TypeId result_type) -> RuntimeValue {
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const UnaryRvalueInfo& info) -> RuntimeValue {
             if (rv.operands.size() != 1) {
               throw common::InternalError(

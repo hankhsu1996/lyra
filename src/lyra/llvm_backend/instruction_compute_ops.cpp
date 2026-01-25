@@ -160,7 +160,7 @@ auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
   const auto& types = context.GetTypeArena();
 
   TypeId type_id = std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) -> TypeId { return c.type; },
           [&](mir::PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];

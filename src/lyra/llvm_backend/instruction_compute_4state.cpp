@@ -56,7 +56,7 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) {
             const Type& type = types[c.type];
             return IsPacked(type) && IsPackedFourState(type, types);
@@ -357,7 +357,7 @@ void LowerCompute4State(
   auto* elem_type = struct_type->getElementType(0);
 
   FourStateValue result = std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::ConcatRvalueInfo& info) {
             return LowerConcatRvalue4State(
                 context, info, compute.value.operands, elem_type);

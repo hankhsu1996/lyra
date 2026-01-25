@@ -38,7 +38,7 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) -> TypeId { return c.type; },
           [&](mir::PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];
@@ -67,7 +67,7 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) {
             const Type& type = types[c.type];
             return IsPacked(type) && IsPackedFourState(type, types);

@@ -16,7 +16,7 @@ enum class SuspendTag : uint8_t {
 
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
-  uint8_t edge = 0;  // runtime::EdgeKind
+  uint8_t edge = 0;  // common::EdgeKind
   std::array<uint8_t, 3> padding = {};
 };
 

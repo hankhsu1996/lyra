@@ -17,7 +17,7 @@ auto TypeAfterProjection(
   const Type& type = types[base_type];
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const IndexProjection& /*p*/) -> TypeId {
             if (type.Kind() == TypeKind::kUnpackedArray) {
               return type.AsUnpackedArray().element_type;

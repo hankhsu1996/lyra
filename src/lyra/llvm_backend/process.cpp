@@ -281,7 +281,7 @@ void LowerTerminator(
   context.SetCurrentOrigin(term.origin);
 
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::Jump& t) { LowerJump(context, t, blocks); },
           [&](const mir::Branch& t) { LowerBranch(context, t, blocks); },
           [&](const mir::Return&) { LowerReturn(context, exit_block); },
@@ -588,7 +588,7 @@ void DefineUserFunction(
     // Lower terminator
     context.SetCurrentOrigin(block.terminator.origin);
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const mir::Jump& t) { LowerJump(context, t, llvm_blocks); },
             [&](const mir::Branch& t) { LowerBranch(context, t, llvm_blocks); },
             [&](const mir::Return& t) {

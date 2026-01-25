@@ -20,7 +20,7 @@ void VerifyLoweredMir(
     const TypeArena& type_arena) {
   for (const auto& element : design.elements) {
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const mir::Module& mod) {
               for (mir::FunctionId fid : mod.functions) {
                 mir::VerifyFunction(arena[fid], arena, type_arena);

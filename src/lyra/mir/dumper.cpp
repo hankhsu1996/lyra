@@ -285,7 +285,7 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
 
 auto Dumper::FormatProjection(const Projection& proj) const -> std::string {
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [](const FieldProjection& f) {
             return std::format(".{}", f.field_index);
           },
@@ -388,7 +388,7 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
 
 auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
   std::string result = std::visit(
-      Overloaded{
+      common::Overloaded{
           [](const UnaryRvalueInfo& info) {
             return std::format("unary({})", ToString(info.op));
           },

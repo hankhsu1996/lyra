@@ -1,6 +1,6 @@
 #pragma once
 
-namespace lyra {
+namespace lyra::common {
 
 // Visitor helper for std::visit with multiple lambdas.
 //
@@ -22,4 +22,4 @@ struct Overloaded : Ts... {
 template <class... Ts>
 Overloaded(Ts...) -> Overloaded<Ts...>;
 
-}  // namespace lyra
+}  // namespace lyra::common

@@ -68,7 +68,7 @@ struct Delay {
 // A single trigger in a Wait terminator.
 struct WaitTrigger {
   SlotId signal;
-  runtime::EdgeKind edge = runtime::EdgeKind::kAnyChange;
+  common::EdgeKind edge = common::EdgeKind::kAnyChange;
 };
 
 // Event wait suspension (requires scheduler).

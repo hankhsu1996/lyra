@@ -558,7 +558,7 @@ void LowerNonBlockingAssign(
 
 void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&context](const mir::DisplayEffect& display) {
             LowerDisplayEffect(context, display);
           },
@@ -585,7 +585,7 @@ void LowerInstruction(Context& context, const mir::Instruction& instruction) {
   StatementScope scope(context);
 
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&context](const mir::Assign& assign) {
             LowerAssign(context, assign);
           },

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace lyra::runtime {
+namespace lyra::common {
 
 // Edge types for event-driven scheduling (@posedge, @negedge, @*).
 enum class EdgeKind : uint8_t {
@@ -11,4 +11,4 @@ enum class EdgeKind : uint8_t {
   kAnyChange,
 };
 
-}  // namespace lyra::runtime
+}  // namespace lyra::common
