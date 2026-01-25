@@ -14,11 +14,9 @@ suites:
       - system_tf/pure/
       - processes/
       - scheduling/
-      - hierarchy/refs/hierarchical_refs.yaml
+      - hierarchy/refs/
       - hierarchy/ports/
     exclude_regex:
-      - datatypes/unpacked/nested_aggregates.yaml
-      - datatypes/unpacked/unpacked_union.yaml
       - system_tf/pure/conversions.yaml
       - system_tf/pure/sformat.yaml
       - processes/generate.yaml

@@ -87,7 +87,7 @@ void AssignStructFieldByField(
 
   // Get LLVM struct type for GEP operations
   llvm::Type* llvm_struct_type =
-      BuildLlvmTypeForTypeId(context.GetLlvmContext(), struct_type_id, types);
+      BuildLlvmTypeForTypeId(context, struct_type_id);
   auto* llvm_struct = llvm::cast<llvm::StructType>(llvm_struct_type);
 
   for (size_t i = 0; i < struct_info.fields.size(); ++i) {

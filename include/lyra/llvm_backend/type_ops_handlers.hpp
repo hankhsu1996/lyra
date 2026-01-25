@@ -7,6 +7,7 @@
 
 namespace llvm {
 class StructType;
+class Value;
 }  // namespace llvm
 
 namespace lyra::lowering::mir_to_llvm {
@@ -41,5 +42,13 @@ void AssignFourState(
 void AssignTwoState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
     TypeId type_id);
+
+// Union handlers (type_ops_union.cpp)
+void AssignUnion(
+    Context& context, mir::PlaceId target, const mir::Operand& source,
+    TypeId union_type_id);
+
+void ConstructDefaultUnion(
+    Context& context, llvm::Value* ptr, TypeId union_type_id);
 
 }  // namespace lyra::lowering::mir_to_llvm
