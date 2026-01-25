@@ -22,8 +22,6 @@ suites:
     exclude_regex:
       # directives - timescale not supported
       - directives/timescale.yaml
-      # hierarchy - implicit named connections not supported
-      - hierarchy/instantiation/instantiation.yaml
       # processes - generate not supported
       - processes/generate.yaml
       # system_tf/effect - various unsupported features
