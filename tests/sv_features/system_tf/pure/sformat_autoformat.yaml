@@ -1,0 +1,19 @@
+feature: sformat_autoformat
+description: Tests for $swrite auto-format path (no format string, values only)
+
+cases:
+  - name: swrite_empty
+    description: $swrite with just output var writes empty string
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string s = "initial";
+              $swrite(s);
+              $display("'%s'", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        ''

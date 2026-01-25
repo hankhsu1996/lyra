@@ -103,6 +103,11 @@ class Context {
   [[nodiscard]] auto GetLyraQueuePopFront() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueueInsert() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueueDeleteAt() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFormatStart() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFormatLiteral() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFormatValue() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFormatString() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFormatFinish() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -281,6 +286,11 @@ class Context {
   llvm::Function* lyra_queue_pop_front_ = nullptr;
   llvm::Function* lyra_queue_insert_ = nullptr;
   llvm::Function* lyra_queue_delete_at_ = nullptr;
+  llvm::Function* lyra_string_format_start_ = nullptr;
+  llvm::Function* lyra_string_format_literal_ = nullptr;
+  llvm::Function* lyra_string_format_value_ = nullptr;
+  llvm::Function* lyra_string_format_string_ = nullptr;
+  llvm::Function* lyra_string_format_finish_ = nullptr;
 
   // Maps PlaceId to its LLVM alloca storage
   absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;

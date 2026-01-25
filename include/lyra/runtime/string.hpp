@@ -22,4 +22,29 @@ auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
 
 // Decrement refcount, free if 0. No-op for null.
 void LyraStringRelease(LyraStringHandle handle);
+
+// Opaque buffer handle for string formatting (C ABI)
+struct LyraStringFormatBuffer;
+
+// Start a format buffer. Caller MUST call Finish to avoid leak.
+auto LyraStringFormatStart() -> LyraStringFormatBuffer*;
+
+// Append literal text (ptr+len, NOT NUL-terminated - supports embedded \0)
+void LyraStringFormatLiteral(
+    LyraStringFormatBuffer* buf, const char* str, int64_t len);
+
+// Append formatted value (mirrors LyraPrintValue signature exactly)
+// Note: x_mask/z_mask for future 4-state support (currently expected null)
+void LyraStringFormatValue(
+    LyraStringFormatBuffer* buf, int32_t format, const void* data,
+    int32_t width, bool is_signed, int32_t output_width, int32_t precision,
+    bool zero_pad, bool left_align, const void* x_mask, const void* z_mask);
+
+// Append string handle contents (FormatKind::kString path)
+// Does NOT retain - reads immediately; handle must be valid for call duration
+void LyraStringFormatString(
+    LyraStringFormatBuffer* buf, LyraStringHandle handle);
+
+// Finish and return new string handle (refcount=1). CONSUMES buffer.
+auto LyraStringFormatFinish(LyraStringFormatBuffer* buf) -> LyraStringHandle;
 }

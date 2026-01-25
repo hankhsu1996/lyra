@@ -17,8 +17,8 @@ suites:
       - hierarchy/refs/
       - hierarchy/ports/
     exclude_regex:
-      - system_tf/pure/conversions.yaml
-      - system_tf/pure/sformat.yaml
+      - system_tf/pure/sformat_runtime.yaml
+      - system_tf/pure/sformat_autoformat.yaml
       - processes/generate.yaml
 
   mir_dev:

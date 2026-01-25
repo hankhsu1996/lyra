@@ -112,22 +112,6 @@ cases:
       stdout: |
         102030
 
-  - name: swrite_empty
-    description: $swrite with just output var writes empty string
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            initial begin
-              string s = "initial";
-              $swrite(s);
-              $display("'%s'", s);
-            end
-          endmodule
-    expect:
-      stdout: |
-        ''
-
   - name: swrite_prefix_no_format
     description: String literal without format specifiers acts as prefix
     files:
@@ -267,20 +251,3 @@ cases:
     expect:
       stdout: |
         Result: 42
-
-  - name: sformat_runtime_format_string
-    description: Runtime format string works in interpreter
-    files:
-      - name: test.sv
-        content: |
-          module Test;
-            initial begin
-              string fmt = "x=%0d";
-              string s;
-              $sformat(s, fmt, 42);
-              $display("%s", s);
-            end
-          endmodule
-    expect:
-      stdout: |
-        x=42
