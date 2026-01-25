@@ -7,9 +7,10 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -60,162 +61,6 @@ auto GetOperandFloatType(Context& context, const mir::Operand& operand)
     return llvm::Type::getFloatTy(context.GetLlvmContext());
   }
   return llvm::Type::getDoubleTy(context.GetLlvmContext());
-}
-
-auto LowerRealMathUnary(
-    Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* float_ty) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& module = context.GetModule();
-
-  // Intrinsic-backed ops
-  llvm::Intrinsic::ID intrinsic_id = llvm::Intrinsic::not_intrinsic;
-  switch (op) {
-    case mir::UnaryOp::kLn:
-      intrinsic_id = llvm::Intrinsic::log;
-      break;
-    case mir::UnaryOp::kLog10:
-      intrinsic_id = llvm::Intrinsic::log10;
-      break;
-    case mir::UnaryOp::kExp:
-      intrinsic_id = llvm::Intrinsic::exp;
-      break;
-    case mir::UnaryOp::kSqrt:
-      intrinsic_id = llvm::Intrinsic::sqrt;
-      break;
-    case mir::UnaryOp::kFloor:
-      intrinsic_id = llvm::Intrinsic::floor;
-      break;
-    case mir::UnaryOp::kCeil:
-      intrinsic_id = llvm::Intrinsic::ceil;
-      break;
-    case mir::UnaryOp::kSin:
-      intrinsic_id = llvm::Intrinsic::sin;
-      break;
-    case mir::UnaryOp::kCos:
-      intrinsic_id = llvm::Intrinsic::cos;
-      break;
-    default:
-      break;
-  }
-
-  if (intrinsic_id != llvm::Intrinsic::not_intrinsic) {
-    auto* decl =
-        llvm::Intrinsic::getDeclaration(&module, intrinsic_id, {float_ty});
-    return builder.CreateCall(decl, {operand}, "math");
-  }
-
-  // Libc-backed ops
-  const char* name = nullptr;
-  bool is_double = float_ty->isDoubleTy();
-  switch (op) {
-    case mir::UnaryOp::kTan:
-      name = is_double ? "tan" : "tanf";
-      break;
-    case mir::UnaryOp::kAsin:
-      name = is_double ? "asin" : "asinf";
-      break;
-    case mir::UnaryOp::kAcos:
-      name = is_double ? "acos" : "acosf";
-      break;
-    case mir::UnaryOp::kAtan:
-      name = is_double ? "atan" : "atanf";
-      break;
-    case mir::UnaryOp::kSinh:
-      name = is_double ? "sinh" : "sinhf";
-      break;
-    case mir::UnaryOp::kCosh:
-      name = is_double ? "cosh" : "coshf";
-      break;
-    case mir::UnaryOp::kTanh:
-      name = is_double ? "tanh" : "tanhf";
-      break;
-    case mir::UnaryOp::kAsinh:
-      name = is_double ? "asinh" : "asinhf";
-      break;
-    case mir::UnaryOp::kAcosh:
-      name = is_double ? "acosh" : "acoshf";
-      break;
-    case mir::UnaryOp::kAtanh:
-      name = is_double ? "atanh" : "atanhf";
-      break;
-    default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format("unsupported real math unary op: {}", mir::ToString(op)));
-  }
-
-  auto* func_ty = llvm::FunctionType::get(float_ty, {float_ty}, false);
-  auto func = module.getOrInsertFunction(name, func_ty);
-  if (auto* f = llvm::dyn_cast<llvm::Function>(func.getCallee())) {
-    f->setDoesNotThrow();
-  }
-  return builder.CreateCall(func, {operand}, "math");
-}
-
-auto LowerRealMathBinary(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
-    llvm::Type* float_ty) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& module = context.GetModule();
-
-  if (op == mir::BinaryOp::kPower) {
-    auto* decl = llvm::Intrinsic::getDeclaration(
-        &module, llvm::Intrinsic::pow, {float_ty});
-    return builder.CreateCall(decl, {lhs, rhs}, "pow");
-  }
-
-  const char* name = nullptr;
-  bool is_double = float_ty->isDoubleTy();
-  switch (op) {
-    case mir::BinaryOp::kAtan2:
-      name = is_double ? "atan2" : "atan2f";
-      break;
-    case mir::BinaryOp::kHypot:
-      name = is_double ? "hypot" : "hypotf";
-      break;
-    default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format(
-              "unsupported real math binary op: {}", mir::ToString(op)));
-  }
-
-  auto* func_ty =
-      llvm::FunctionType::get(float_ty, {float_ty, float_ty}, false);
-  auto func = module.getOrInsertFunction(name, func_ty);
-  if (auto* f = llvm::dyn_cast<llvm::Function>(func.getCallee())) {
-    f->setDoesNotThrow();
-  }
-  return builder.CreateCall(func, {lhs, rhs}, "math");
-}
-
-auto IsMathUnaryOp(mir::UnaryOp op) -> bool {
-  switch (op) {
-    case mir::UnaryOp::kLn:
-    case mir::UnaryOp::kLog10:
-    case mir::UnaryOp::kExp:
-    case mir::UnaryOp::kSqrt:
-    case mir::UnaryOp::kFloor:
-    case mir::UnaryOp::kCeil:
-    case mir::UnaryOp::kSin:
-    case mir::UnaryOp::kCos:
-    case mir::UnaryOp::kTan:
-    case mir::UnaryOp::kAsin:
-    case mir::UnaryOp::kAcos:
-    case mir::UnaryOp::kAtan:
-    case mir::UnaryOp::kSinh:
-    case mir::UnaryOp::kCosh:
-    case mir::UnaryOp::kTanh:
-    case mir::UnaryOp::kAsinh:
-    case mir::UnaryOp::kAcosh:
-    case mir::UnaryOp::kAtanh:
-      return true;
-    default:
-      return false;
-  }
 }
 
 auto IsRealComparisonOp(mir::BinaryOp op) -> bool {
@@ -271,8 +116,6 @@ void LowerRealUnary(
     auto* not_val = builder.CreateNot(nonzero, "lnot");
     llvm::Type* target_type = context.GetPlaceLlvmType(target);
     result = builder.CreateZExtOrTrunc(not_val, target_type, "lnot.ext");
-  } else if (IsMathUnaryOp(info.op)) {
-    result = LowerRealMathUnary(context, info.op, operand, float_ty);
   } else {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm,
@@ -356,11 +199,13 @@ void LowerRealBinary(
     case mir::BinaryOp::kDivideSigned:
       result = builder.CreateFDiv(lhs, rhs, "fdiv");
       break;
-    case mir::BinaryOp::kPower:
-    case mir::BinaryOp::kAtan2:
-    case mir::BinaryOp::kHypot:
-      result = LowerRealMathBinary(context, info.op, lhs, rhs, float_ty);
+    case mir::BinaryOp::kPower: {
+      auto& module = context.GetModule();
+      auto* decl = llvm::Intrinsic::getDeclaration(
+          &module, llvm::Intrinsic::pow, {float_ty});
+      result = builder.CreateCall(decl, {lhs, rhs}, "pow");
       break;
+    }
     default:
       throw common::UnsupportedErrorException(
           common::UnsupportedLayer::kMirToLlvm,

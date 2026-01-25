@@ -11,6 +11,7 @@ suites:
       - operators/
       - control_flow/
       - datatypes/
+      - system_tf/pure/
       - processes/
       - scheduling/
       - hierarchy/refs/hierarchical_refs.yaml
@@ -18,6 +19,8 @@ suites:
       - datatypes/unpacked/nested_aggregates.yaml
       - datatypes/unpacked/unpacked_struct.yaml
       - datatypes/unpacked/unpacked_union.yaml
+      - system_tf/pure/conversions.yaml
+      - system_tf/pure/sformat.yaml
       - processes/generate.yaml
 
   mir_dev:

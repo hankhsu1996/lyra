@@ -311,6 +311,9 @@ auto Interpreter::EvalRvalue(
                     "rvalue kind '{}' requires runtime backend",
                     GetRvalueKind(rv.info)));
           },
+          [&](const MathCallRvalueInfo& info) -> RuntimeValue {
+            return EvalMathCall(state, rv, info);
+          },
       },
       rv.info);
 }
@@ -944,6 +947,20 @@ auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
   }
 
   return MakeIntegralSigned(result, 32);
+}
+
+auto Interpreter::EvalMathCall(
+    ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
+    -> RuntimeValue {
+  // Evaluate all operands
+  std::vector<RuntimeValue> args;
+  args.reserve(rv.operands.size());
+  for (const auto& operand : rv.operands) {
+    args.push_back(EvalOperand(state, operand));
+  }
+
+  // Delegate to the single math call entry point (handles arity validation)
+  return mir::interp::EvalMathCall(info.fn, args, *types_);
 }
 
 }  // namespace lyra::mir::interp

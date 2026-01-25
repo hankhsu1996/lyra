@@ -350,6 +350,88 @@ cases:
     expect:
       stdout: "11\n"
 
+  - name: clog2_boundary_values
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = $clog2(3);
+          $display("%0d", x);
+          x = $clog2(4);
+          $display("%0d", x);
+          x = $clog2(5);
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      stdout: |
+        2
+        2
+        3
+
+  - name: clog2_powers_plus_one
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = $clog2(9);
+          $display("%0d", x);
+          x = $clog2(17);
+          $display("%0d", x);
+          x = $clog2(33);
+          $display("%0d", x);
+          x = $clog2(65);
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      stdout: |
+        4
+        5
+        6
+        7
+
+  - name: clog2_runtime_value
+    sv: |
+      module Test;
+        int n, x;
+        initial begin
+          n = 16;
+          x = $clog2(n);
+          $display("%0d", x);
+          n = 15;
+          x = $clog2(n);
+          $display("%0d", x);
+          n = 0;
+          x = $clog2(n);
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      stdout: |
+        4
+        4
+        0
+
+  - name: clog2_byte_width
+    sv: |
+      module Test;
+        byte b;
+        int x;
+        initial begin
+          b = 8'd128;
+          x = $clog2(b);
+          $display("%0d", x);
+          b = 8'd255;
+          x = $clog2(b);
+          $display("%0d", x);
+        end
+      endmodule
+    expect:
+      stdout: |
+        7
+        8
+
   - name: sqrt_chain
     sv: |
       module Test;

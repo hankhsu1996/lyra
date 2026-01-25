@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -33,5 +36,12 @@ auto EvalCast(
 auto EvalBitCast(
     const RuntimeValue& operand, TypeId source_type, TypeId target_type,
     const TypeArena& arena) -> RuntimeValue;
+
+// Evaluate a math function call (IEEE 1800 §20.8).
+// Operands must match the arity of the function (GetMathFnArity(fn)).
+// Operand types: real/shortreal for most functions, integral for $clog2.
+auto EvalMathCall(
+    MathFn fn, std::span<const RuntimeValue> args, const TypeArena& types)
+    -> RuntimeValue;
 
 }  // namespace lyra::mir::interp

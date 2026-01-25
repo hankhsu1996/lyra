@@ -18,6 +18,7 @@
 #include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::mir::interp {
 
@@ -139,6 +140,9 @@ class Interpreter {
   auto EvalSFormat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalPlusargs(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
   auto EvalFopen(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalMathCall(
+      ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
+      -> RuntimeValue;
 
   // Execute FcloseEffect
   void ExecFcloseEffect(ProcessState& state, const FcloseEffect& effect);

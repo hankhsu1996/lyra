@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_builtin.hpp"
+#include "lyra/llvm_backend/instruction_compute_math.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/instruction_compute_real.hpp"
 #include "lyra/llvm_backend/operand.hpp"
@@ -544,6 +545,12 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           context, *concat_info, compute.value.operands, compute.target);
       return;
     }
+  }
+
+  // Math functions (IEEE 1800 §20.8): dispatch by semantic category, not type
+  if (IsMathCompute(context, compute)) {
+    LowerMathCompute(context, compute);
+    return;
   }
 
   // Real/shortreal operations: dispatch based on operand type

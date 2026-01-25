@@ -495,6 +495,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
           },
+          [](const MathCallRvalueInfo& info) {
+            return std::format("math_call({})", ToString(info.fn));
+          },
       },
       rv.info);
 

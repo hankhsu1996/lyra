@@ -5,6 +5,7 @@
 
 #include <slang/ast/expressions/CallExpression.h>
 
+#include "lyra/common/math_fn.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
 
@@ -39,8 +40,14 @@ enum class TimeScaleSysFnKind {
   kTimeprecision,
 };
 
+// Category 4: Math functions (IEEE 1800 §20.8)
+struct MathSysFn {
+  MathFn fn;
+};
+
 using PureSysFnClassification = std::variant<
-    ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn, TimeScaleSysFnKind>;
+    ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn, TimeScaleSysFnKind,
+    MathSysFn>;
 
 // Classify a system call as a pure function that should be desugared.
 // Returns nullopt if the call is not a pure system function.
