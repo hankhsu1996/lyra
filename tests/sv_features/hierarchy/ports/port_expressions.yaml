@@ -1,98 +1,101 @@
 feature: hierarchy_port_expressions
-description: Tests port connections with expressions
+description: Tests input port connections with expressions
 
 # Port expressions (like `.a(x + y)`) are handled via implicit always_comb
 # processes that drive the child port using hierarchical assignment.
 # Both codegen and interpreter support this via AssignStatement with
 # hierarchical targets (e.g., `child.a = x + y`).
+#
+# These tests only verify INPUT port connections. Output port connections
+# are tested separately in output_ports.yaml.
 
 cases:
   - name: input_port_expression_addition
     description: Input port connected to addition expression
     sv: |
-      module Adder(input int a, output int out);
-        always_comb out = a + 1;
+      module Child(input int a);
+        int doubled;
+        always_comb doubled = a * 2;
       endmodule
 
       module Top;
-        int x, y, result;
-        Adder add(.a(x + y), .out(result));
+        int x, y;
+        Child c(.a(x + y));
 
         initial begin
           x = 3;
           y = 5;
           #1;
+          $display("doubled=%0d", c.doubled);
         end
       endmodule
     expect:
-      variables:
-        result: 9
-      time: 1
+      stdout: "doubled=16\n"
 
   - name: input_port_expression_multiply
     description: Input port connected to multiplication expression
     sv: |
-      module Doubler(input int val, output int doubled);
+      module Child(input int val);
+        int doubled;
         always_comb doubled = val * 2;
       endmodule
 
       module Top;
-        int a, b, result;
-        Doubler d(.val(a + b), .doubled(result));
+        int a, b;
+        Child c(.val(a + b));
 
         initial begin
           a = 4;
           b = 3;
           #1;
+          $display("doubled=%0d", c.doubled);
         end
       endmodule
     expect:
-      variables:
-        result: 14
-      time: 1
+      stdout: "doubled=14\n"
 
   - name: input_port_expression_ternary
     description: Input port connected to ternary expression
     sv: |
-      module Passthrough(input int val, output int out);
-        always_comb out = val;
+      module Child(input int val);
+        int stored;
+        always_comb stored = val;
       endmodule
 
       module Top;
-        int sel, a, b, result;
-        Passthrough p(.val(sel ? a : b), .out(result));
+        int sel, a, b;
+        Child c(.val(sel ? a : b));
 
         initial begin
           sel = 1;
           a = 42;
           b = 0;
           #1;
+          $display("stored=%0d", c.stored);
         end
       endmodule
     expect:
-      variables:
-        result: 42
-      time: 1
+      stdout: "stored=42\n"
 
   - name: multiple_input_expressions
     description: Module with multiple input port expressions
     sv: |
-      module TwoInputs(input int x, input int y, output int sum);
+      module TwoInputs(input int x, input int y);
+        int sum;
         always_comb sum = x + y;
       endmodule
 
       module Top;
-        int a, b, c, result;
-        TwoInputs ti(.x(a + 1), .y(b + c), .sum(result));
+        int a, b, c;
+        TwoInputs ti(.x(a + 1), .y(b + c));
 
         initial begin
           a = 5;
           b = 3;
           c = 2;
           #1;
+          $display("sum=%0d", ti.sum);
         end
       endmodule
     expect:
-      variables:
-        result: 11
-      time: 1
+      stdout: "sum=11\n"

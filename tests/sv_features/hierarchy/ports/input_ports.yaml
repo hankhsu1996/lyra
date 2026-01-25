@@ -1,0 +1,133 @@
+feature: hierarchy_input_ports
+description: Input port connections driving child module variables
+
+# Input port connections are semantically equivalent to continuous assignments:
+# when the parent's connected expression changes, the child's input port
+# variable updates. This is implemented via synthetic always_comb processes
+# in the parent module that drive the child's port backing variable.
+
+cases:
+  - name: two_instances_isolation
+    description: Verify SymbolId/slot uniqueness - no cross-talk between instances
+    sv: |
+      module Child(input int x);
+        int y;
+        always_comb y = x;
+      endmodule
+
+      module Top;
+        int a, b;
+        Child c1(.x(a));
+        Child c2(.x(b));
+        initial begin
+          a = 1;
+          b = 2;
+          #1;
+          $display("c1.y=%0d c2.y=%0d", c1.y, c2.y);
+        end
+      endmodule
+    expect:
+      stdout: "c1.y=1 c2.y=2\n"
+
+  - name: simple_place_connection
+    description: Basic .in(a) place connection
+    sv: |
+      module Child(input int x);
+        int doubled;
+        always_comb doubled = x * 2;
+      endmodule
+
+      module Top;
+        int a = 5;
+        Child c(.x(a));
+        initial begin
+          #1;
+          $display("doubled=%0d", c.doubled);
+        end
+      endmodule
+    expect:
+      stdout: "doubled=10\n"
+
+  - name: expression_connection
+    description: .in(a + b) expression connection
+    sv: |
+      module Child(input int x);
+      endmodule
+
+      module Top;
+        int a = 3, b = 4;
+        Child c(.x(a + b));
+        initial begin
+          #1;
+          $display("x=%0d", c.x);
+        end
+      endmodule
+    expect:
+      stdout: "x=7\n"
+
+  - name: sensitivity_on_change
+    description: Port updates when parent source changes
+    sv: |
+      module Child(input int x);
+        int doubled;
+        always_comb doubled = x * 2;
+      endmodule
+
+      module Top;
+        int src;
+        Child c(.x(src));
+        initial begin
+          src = 5;
+          #1;
+          $display("doubled=%0d", c.doubled);
+          src = 10;
+          #1;
+          $display("doubled=%0d", c.doubled);
+        end
+      endmodule
+    expect:
+      stdout: |
+        doubled=10
+        doubled=20
+
+  - name: multiple_inputs
+    description: Module with multiple input ports
+    sv: |
+      module Adder(input int a, input int b);
+        int sum;
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        int x = 3, y = 5;
+        Adder add(.a(x), .b(y));
+        initial begin
+          #1;
+          $display("sum=%0d", add.sum);
+        end
+      endmodule
+    expect:
+      stdout: "sum=8\n"
+
+  - name: deep_hierarchy
+    description: top->u1->u2 input chaining
+    sv: |
+      module Level2(input int val);
+        int out;
+        always_comb out = val + 100;
+      endmodule
+
+      module Level1(input int val);
+        Level2 u2(.val(val));
+      endmodule
+
+      module Top;
+        int src = 5;
+        Level1 u1(.val(src));
+        initial begin
+          #1;
+          $display("out=%0d", u1.u2.out);
+        end
+      endmodule
+    expect:
+      stdout: "out=105\n"
