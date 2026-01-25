@@ -15,12 +15,14 @@ suites:
       - processes/
       - scheduling/
       - hierarchy/refs/hierarchical_refs.yaml
+      - hierarchy/ports/
     exclude_regex:
       - datatypes/unpacked/nested_aggregates.yaml
       - datatypes/unpacked/unpacked_union.yaml
       - system_tf/pure/conversions.yaml
       - system_tf/pure/sformat.yaml
       - processes/generate.yaml
+      - hierarchy/ports/output_ports.yaml
 
   mir_dev:
     backend: mir

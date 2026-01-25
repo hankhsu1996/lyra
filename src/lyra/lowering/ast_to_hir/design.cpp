@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <format>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -14,6 +17,7 @@
 #include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
+#include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
@@ -65,13 +69,85 @@ auto LowerDesign(
   std::vector<hir::DesignElement> elements;
 
   // Enumerate all instances (BFS — no ordering semantics)
+  // Collect input port bindings during traversal.
   std::vector<const slang::ast::InstanceSymbol*> all_instances;
+  TransientPortBindingPlan port_bindings;
+
   for (const auto* inst : root.topInstances) {
     all_instances.push_back(inst);
   }
   for (size_t i = 0; i < all_instances.size(); ++i) {
+    const auto* parent = all_instances[i];
+
     for (const auto& child :
-         all_instances[i]->body.membersOfType<slang::ast::InstanceSymbol>()) {
+         parent->body.membersOfType<slang::ast::InstanceSymbol>()) {
+      // Collect input port bindings for this parent->child edge
+      for (const auto* port_sym : child.body.getPortList()) {
+        // Skip non-Port symbols (e.g., InterfacePortSymbol)
+        if (port_sym->kind != slang::ast::SymbolKind::Port) {
+          continue;
+        }
+
+        const auto& port = port_sym->as<slang::ast::PortSymbol>();
+
+        // Phase 1: Only handle input ports
+        if (port.direction != slang::ast::ArgumentDirection::In) {
+          continue;
+        }
+
+        // Fail loudly for null ports (no backing variable)
+        slang::SourceRange port_range{port.location, port.location};
+        if (port.internalSymbol == nullptr) {
+          ctx->sink->Error(
+              ctx->SpanOf(port_range),
+              std::format(
+                  "input port '{}' has no backing variable (null port)",
+                  port.name));
+          continue;
+        }
+
+        // Fail loudly for non-Variable backing (net, interface, etc.)
+        if (port.internalSymbol->kind != slang::ast::SymbolKind::Variable) {
+          ctx->sink->Error(
+              ctx->SpanOf(port_range),
+              std::format(
+                  "input port '{}' backed by {} not supported (only variable "
+                  "ports)",
+                  port.name, toString(port.internalSymbol->kind)));
+          continue;
+        }
+
+        // Get connection for this port
+        const auto* conn = child.getPortConnection(port);
+        if (conn == nullptr) {
+          ctx->sink->Error(
+              ctx->SpanOf(port_range),
+              std::format(
+                  "unconnected input port '{}' without default value",
+                  port.name));
+          continue;
+        }
+
+        const auto* expr = conn->getExpression();
+        if (expr == nullptr) {
+          // May be implicit named connection or default value
+          ctx->sink->Error(
+              ctx->SpanOf(port_range), std::format(
+                                           "input port '{}': implicit named "
+                                           "connections not yet supported",
+                                           port.name));
+          continue;
+        }
+
+        port_bindings[parent].push_back(
+            InputPortBinding{
+                .target_var =
+                    &port.internalSymbol->as<slang::ast::VariableSymbol>(),
+                .value_expr = expr,
+                .connection_range = expr->sourceRange,
+            });
+      }
+
       all_instances.push_back(&child);
     }
   }
@@ -100,7 +176,13 @@ auto LowerDesign(
   // Hierarchical refs use Lookup (fail-fast if Phase 0 missed a target).
   // Local symbols (function params, loop vars) are still created here.
   for (const auto* instance : all_instances) {
-    elements.emplace_back(LowerModule(*instance, registrar, ctx));
+    auto it = port_bindings.find(instance);
+    std::span<const InputPortBinding> bindings =
+        (it != port_bindings.end())
+            ? std::span<const InputPortBinding>(it->second)
+            : std::span<const InputPortBinding>{};
+
+    elements.emplace_back(LowerModule(*instance, registrar, ctx, bindings));
   }
 
   return hir::Design{

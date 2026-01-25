@@ -1,5 +1,7 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 
+#include <format>
+#include <span>
 #include <utility>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -15,6 +17,7 @@
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
+#include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -24,7 +27,8 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerModule(
     const slang::ast::InstanceSymbol& instance, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::Module {
+    Context* ctx, std::span<const InputPortBinding> port_bindings)
+    -> hir::Module {
   const slang::ast::InstanceBodySymbol& body = instance.body;
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
@@ -136,6 +140,75 @@ auto LowerModule(
               .body = stmt,
           });
       processes.push_back(proc);
+    }
+
+    // Phase 3c: Input port bindings -> synthetic always_comb drivers
+    // These drive child port variables from parent-scope expressions.
+    // Scheduling is slot-global: any slot write wakes all waiters for that
+    // slot.
+    for (const auto& binding : port_bindings) {
+      SourceSpan binding_span = ctx->SpanOf(binding.connection_range);
+
+      // Look up target variable's SymbolId
+      // IMPORTANT: This relies on Phase 0 having registered the child's vars.
+      SymbolId target_sym = registrar.Lookup(*binding.target_var);
+      if (!target_sym) {
+        ctx->sink->Error(
+            binding_span, std::format(
+                              "port binding target '{}' not registered - "
+                              "port backing variable may not be a scope member",
+                              binding.target_var->name));
+        continue;
+      }
+
+      // Get target type FROM THE REGISTERED SYMBOL (not re-lowering slang type)
+      // This avoids divergence from Phase 0 registration (params,
+      // specialization)
+      TypeId target_type = (*ctx->symbol_table)[target_sym].type;
+      if (!target_type) {
+        ctx->sink->Error(binding_span, "port binding target has invalid type");
+        continue;
+      }
+
+      // Create hierarchical ref for target (child's port variable)
+      // NOTE: kHierarchicalRef lowering uses LookupPlace(sym_id) which is a
+      // global map lookup, NOT scope-relative. This ensures correct slot
+      // resolution even with multiple instances of the same module definition.
+      hir::ExpressionId target_expr = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kHierarchicalRef,
+              .type = target_type,
+              .span = binding_span,
+              .data = hir::HierarchicalRefExpressionData{.target = target_sym},
+          });
+
+      // Lower connection expression (parent scope)
+      hir::ExpressionId value_expr =
+          LowerExpression(*binding.value_expr, registrar, ctx);
+      if (!value_expr) {
+        continue;
+      }
+
+      // Create assignment statement: child.port_var = parent_expr
+      hir::StatementId stmt = ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kAssignment,
+              .span = binding_span,
+              .data =
+                  hir::AssignmentStatementData{
+                      .target = target_expr,
+                      .value = value_expr,
+                  },
+          });
+
+      // Wrap in always_comb process (same pattern as continuous assignments)
+      hir::ProcessId port_proc = ctx->hir_arena->AddProcess(
+          hir::Process{
+              .kind = hir::ProcessKind::kAlwaysComb,
+              .span = binding_span,
+              .body = stmt,
+          });
+      processes.push_back(port_proc);
     }
 
     // Phase 4: Lower function bodies
