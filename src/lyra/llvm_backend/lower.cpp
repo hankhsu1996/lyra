@@ -265,6 +265,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Initialize runtime state (reset time tracker)
   builder.CreateCall(context.GetLyraInitRuntime());
 
+  // Hook: after design state and runtime are initialized
+  if (input.hooks != nullptr) {
+    input.hooks->OnAfterInitializeDesignState(context, slot_info, design_state);
+  }
+
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
 
@@ -283,6 +288,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     // (entry block number is encapsulated in LyraRunProcessSync)
     builder.CreateCall(
         context.GetLyraRunProcessSync(), {process_funcs[i], process_state});
+  }
+
+  // Hook: after init processes, before module simulation
+  if (input.hooks != nullptr) {
+    input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
   }
 
   // Phase 2: Module processes through scheduler
@@ -337,9 +347,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Release all string locals to prevent memory leaks
   ReleaseStringSlots(context, slot_info, design_state);
 
-  // Call instrumentation hooks (e.g., variable inspection, timing)
+  // Hook: after simulation completes
   if (input.hooks != nullptr) {
-    input.hooks->EmitEpilogue(context, slot_info, design_state);
+    input.hooks->OnAfterRunSimulation(context, slot_info, design_state);
   }
 
   builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));

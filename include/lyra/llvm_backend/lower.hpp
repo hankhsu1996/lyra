@@ -23,8 +23,17 @@ struct VariableInfo {
 };
 
 // Abstract interface for simulation instrumentation hooks.
-// Allows external code (e.g., test framework) to inject epilogue code
-// without lower.cpp knowing the specifics.
+// Provides milestone-based hooks that map to the simulation pipeline:
+//   1. InitializeDesignState + LyraInitRuntime
+//   2. OnAfterInitializeDesignState hook
+//   3. Run init processes (package variable initialization)
+//   4. OnBeforeRunSimulation hook
+//   5. LyraRunSimulation (module processes)
+//   6. String cleanup
+//   7. OnAfterRunSimulation hook
+//   8. Return from main
+//
+// All hooks have empty default implementations - override only what you need.
 class SimulationHooks {
  public:
   SimulationHooks() = default;
@@ -34,16 +43,26 @@ class SimulationHooks {
   SimulationHooks(SimulationHooks&&) = default;
   auto operator=(SimulationHooks&&) -> SimulationHooks& = default;
 
-  // Emit code at end of simulation (before main returns).
-  // Called after all processes complete and string cleanup.
-  //
-  // Parameters:
-  //   context: LLVM code generation context
-  //   slots: Design slot information (for variable metadata)
-  //   design_state: LLVM value pointing to DesignState struct
-  virtual void EmitEpilogue(
-      Context& context, const std::vector<SlotInfo>& slots,
-      llvm::Value* design_state) = 0;
+  // Called after DesignState is initialized (before any processes run).
+  // Use for: pre-simulation setup, initial state inspection.
+  virtual void OnAfterInitializeDesignState(
+      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
+      llvm::Value* /*design_state*/) {
+  }
+
+  // Called after init processes complete, before module processes start.
+  // Use for: inspecting state after package initialization.
+  virtual void OnBeforeRunSimulation(
+      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
+      llvm::Value* /*design_state*/) {
+  }
+
+  // Called after simulation completes (before main returns).
+  // Use for: final variable inspection, timing reports, test assertions.
+  virtual void OnAfterRunSimulation(
+      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
+      llvm::Value* /*design_state*/) {
+  }
 };
 
 struct LoweringInput {

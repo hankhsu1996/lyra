@@ -51,7 +51,7 @@ class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
       : variables_(std::move(variables)), emit_time_report_(emit_time_report) {
   }
 
-  void EmitEpilogue(
+  void OnAfterRunSimulation(
       lowering::mir_to_llvm::Context& context,
       const std::vector<lowering::mir_to_llvm::SlotInfo>& slots,
       llvm::Value* design_state) override {
