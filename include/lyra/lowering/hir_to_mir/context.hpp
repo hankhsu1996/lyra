@@ -44,11 +44,16 @@ using SymbolToMirFunctionMap =
 //   - functions is complete for all package functions
 //   - All mir::FunctionIds in the map have frozen signatures in the arena
 //     (written by ReserveFunction at pre-allocation time)
+//   - slot_table.size() == num_design_slots
 //   - No later phase may mutate any of the above
 struct DesignDeclarations {
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
   size_t num_design_slots = 0;
+  // Slot table: indexed by design slot ID, contains TypeId for each slot.
+  // Ordering is ABI: packages first (in element order), then all module
+  // instances (in BFS elaboration order).
+  std::vector<TypeId> slot_table;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers

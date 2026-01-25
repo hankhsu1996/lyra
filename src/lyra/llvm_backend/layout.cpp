@@ -352,6 +352,57 @@ auto BuildProcessStateType(
 
 }  // namespace
 
+auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
+    -> std::vector<SlotInfo> {
+  std::vector<SlotInfo> slots;
+  slots.reserve(design.slot_table.size());
+
+  for (size_t i = 0; i < design.slot_table.size(); ++i) {
+    TypeId type_id = design.slot_table[i];
+    const Type& type = types[type_id];
+
+    SlotTypeInfo type_info{};
+    if (type.Kind() == TypeKind::kReal) {
+      type_info = {
+          .kind = VarTypeKind::kReal,
+          .width = 64,
+          .is_signed = true,
+      };
+    } else if (type.Kind() == TypeKind::kString) {
+      type_info = {
+          .kind = VarTypeKind::kString,
+          .width = 0,
+          .is_signed = false,
+      };
+    } else if (IsPacked(type)) {
+      uint32_t width = PackedBitWidth(type, types);
+      bool is_signed = IsPackedSigned(type, types);
+      type_info = {
+          .kind = VarTypeKind::kIntegral,
+          .width = width > 0 ? width : 32,
+          .is_signed = is_signed,
+      };
+    } else {
+      // Unsupported type - use placeholder for SlotTypeInfo
+      // The actual TypeId is preserved for LLVM type derivation
+      type_info = {
+          .kind = VarTypeKind::kIntegral,
+          .width = 32,
+          .is_signed = false,
+      };
+    }
+
+    slots.push_back(
+        SlotInfo{
+            .slot_id = mir::SlotId{static_cast<uint32_t>(i)},
+            .type_id = type_id,
+            .type_info = type_info,
+        });
+  }
+
+  return slots;
+}
+
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx) -> Layout {

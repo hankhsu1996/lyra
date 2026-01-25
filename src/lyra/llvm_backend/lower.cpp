@@ -16,7 +16,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -27,33 +26,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-// Build SlotInfo list from LoweringInput
-auto BuildSlotInfoList(
-    const std::vector<SlotTypeInfo>& slot_types,
-    const std::vector<TypeId>& type_ids) -> std::vector<SlotInfo> {
-  if (slot_types.size() != type_ids.size()) {
-    throw common::InternalError(
-        "BuildSlotInfoList",
-        std::format(
-            "slot_types.size() ({}) != slot_type_ids.size() ({})",
-            slot_types.size(), type_ids.size()));
-  }
-
-  std::vector<SlotInfo> slots;
-  slots.reserve(slot_types.size());
-
-  for (size_t i = 0; i < slot_types.size(); ++i) {
-    slots.push_back(
-        SlotInfo{
-            .slot_id = mir::SlotId{static_cast<uint32_t>(i)},
-            .type_id = type_ids[i],
-            .type_info = slot_types[i],
-        });
-  }
-
-  return slots;
-}
 
 // Store X-encoded value ({value=0, unknown=semantic_mask}) to a 4-state pointer
 void StoreFourStateX(
@@ -143,7 +115,7 @@ void InitializeProcessState(
 // O(N) complexity using pre-built SlotId -> field_index map from layout.
 void RegisterAndSnapshotVariables(
     Context& context, const std::vector<VariableInfo>& variables,
-    const std::vector<SlotTypeInfo>& slot_types, llvm::Value* design_state) {
+    const std::vector<SlotInfo>& slots, llvm::Value* design_state) {
   if (variables.empty()) {
     return;
   }
@@ -155,7 +127,7 @@ void RegisterAndSnapshotVariables(
   auto* design_type = context.GetDesignStateType();
 
   for (const auto& var : variables) {
-    if (var.slot_id >= slot_types.size()) {
+    if (var.slot_id >= slots.size()) {
       continue;
     }
 
@@ -169,7 +141,7 @@ void RegisterAndSnapshotVariables(
     auto* slot_ptr = builder.CreateStructGEP(
         design_type, design_state, field_index, "var_ptr");
 
-    const auto& type_info = slot_types[var.slot_id];
+    const auto& type_info = slots[var.slot_id].type_info;
 
     auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
     auto* kind_val =
@@ -187,20 +159,19 @@ void RegisterAndSnapshotVariables(
 
 // Release all string slots to prevent memory leaks
 void ReleaseStringSlots(
-    Context& context, const std::vector<SlotTypeInfo>& slot_types,
+    Context& context, const std::vector<SlotInfo>& slots,
     llvm::Value* design_state) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* design_type = context.GetDesignStateType();
 
-  for (size_t slot_id = 0; slot_id < slot_types.size(); ++slot_id) {
-    if (slot_types[slot_id].kind != VarTypeKind::kString) {
+  for (const auto& slot : slots) {
+    if (slot.type_info.kind != VarTypeKind::kString) {
       continue;
     }
 
-    auto mir_slot_id = mir::SlotId{static_cast<uint32_t>(slot_id)};
-    uint32_t field_index = context.GetDesignFieldIndex(mir_slot_id);
+    uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
     auto* slot_ptr =
         builder.CreateStructGEP(design_type, design_state, field_index);
     auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
@@ -215,8 +186,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
 
-  // Build slot info list from input (includes TypeIds for LLVM type derivation)
-  auto slot_info = BuildSlotInfoList(input.slot_types, input.slot_type_ids);
+  // Build slot info from design's slot_table (MIR is single source of truth)
+  auto slot_info = BuildSlotInfoFromDesign(*input.design, *input.type_arena);
 
   // Build layout first (pure analysis, no LLVM IR emission)
   Layout layout = BuildLayout(
@@ -314,11 +285,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   builder.SetInsertPoint(exit_block);
 
   // Release all string locals to prevent memory leaks
-  ReleaseStringSlots(context, input.slot_types, design_state);
+  ReleaseStringSlots(context, slot_info, design_state);
 
   // Register and snapshot tracked variables for test framework inspection
   RegisterAndSnapshotVariables(
-      context, input.variables, input.slot_types, design_state);
+      context, input.variables, slot_info, design_state);
 
   // Report final simulation time for test harness
   if (input.emit_time_report) {
