@@ -30,7 +30,8 @@ struct Context {
   // Counter for generating unique synthetic variable names
   uint32_t temp_counter = 0;
 
-  // Cached global precision (avoids repeated hierarchy walks)
+  // Cached global precision (avoids repeated hierarchy walks).
+  // Computed once per compilation, used by all ModuleLowerer instances.
   std::optional<int> cached_global_precision;
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {

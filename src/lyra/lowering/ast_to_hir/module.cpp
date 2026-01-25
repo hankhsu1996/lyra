@@ -16,6 +16,7 @@
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -26,6 +27,9 @@ namespace lyra::lowering::ast_to_hir {
 auto LowerModule(
     const slang::ast::InstanceSymbol& instance, SymbolRegistrar& registrar,
     Context* ctx) -> hir::Module {
+  // Create per-module lowerer (owns timescale state)
+  ModuleLowerer lowerer(*ctx, registrar, instance);
+
   const slang::ast::InstanceBodySymbol& body = instance.body;
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
@@ -79,7 +83,7 @@ auto LowerModule(
 
     // Phase 3: Lower processes (can now reference function symbols)
     for (const auto* proc : members.processes) {
-      hir::ProcessId id = LowerProcess(*proc, registrar, ctx);
+      hir::ProcessId id = LowerProcess(*proc, lowerer);
       if (id) {
         processes.push_back(id);
       }
@@ -147,7 +151,7 @@ auto LowerModule(
       if (!ret_type.isIntegral() && !ret_type.isVoid()) {
         continue;
       }
-      hir::FunctionId id = LowerFunction(*sub, registrar, ctx);
+      hir::FunctionId id = LowerFunction(*sub, lowerer);
       if (id) {
         functions.push_back(id);
       }
@@ -155,7 +159,7 @@ auto LowerModule(
 
     // Phase 5: Lower tasks
     for (const auto* sub : members.tasks) {
-      hir::TaskId id = LowerTask(*sub, registrar, ctx);
+      hir::TaskId id = LowerTask(*sub, lowerer);
       if (id) {
         tasks.push_back(id);
       }

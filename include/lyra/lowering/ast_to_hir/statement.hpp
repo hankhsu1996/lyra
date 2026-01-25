@@ -8,16 +8,14 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-struct Context;
-class SymbolRegistrar;
+class ScopeLowerer;
 
 // Lowers a slang statement to HIR.
 // Returns:
 //   - std::nullopt: empty statement (caller should skip)
 //   - StatementId with !id: lowering failed (error was reported)
 //   - StatementId with id: success
-auto LowerStatement(
-    const slang::ast::Statement& stmt, SymbolRegistrar& registrar, Context* ctx)
+auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
     -> std::optional<hir::StatementId>;
 
 }  // namespace lyra::lowering::ast_to_hir

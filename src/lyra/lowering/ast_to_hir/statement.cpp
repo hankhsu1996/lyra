@@ -37,6 +37,7 @@
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
@@ -134,9 +135,12 @@ auto BuildForLoop(
 
 }  // namespace
 
-auto LowerStatement(
-    const slang::ast::Statement& stmt, SymbolRegistrar& registrar, Context* ctx)
+auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
     -> std::optional<hir::StatementId> {
+  // Alias for convenience - minimizes changes to existing code
+  auto& registrar = lowerer.Registrar();
+  auto* ctx = &lowerer.Ctx();
+
   using slang::ast::StatementKind;
 
   switch (stmt.kind) {
@@ -153,7 +157,7 @@ auto LowerStatement(
       std::vector<hir::StatementId> children;
       children.reserve(list.list.size());
       for (const slang::ast::Statement* child : list.list) {
-        auto result = LowerStatement(*child, registrar, ctx);
+        auto result = LowerStatement(*child, lowerer);
         if (!result.has_value()) {
           continue;  // Empty statement, skip
         }
@@ -173,7 +177,7 @@ auto LowerStatement(
 
     case StatementKind::Block: {
       const auto& block = stmt.as<slang::ast::BlockStatement>();
-      return LowerStatement(block.body, registrar, ctx);
+      return LowerStatement(block.body, lowerer);
     }
 
     case StatementKind::VariableDeclaration: {
@@ -382,7 +386,7 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
-      auto then_result = LowerStatement(cond_stmt.ifTrue, registrar, ctx);
+      auto then_result = LowerStatement(cond_stmt.ifTrue, lowerer);
       if (!then_result.has_value()) {
         ctx->sink->Error(span, "if-true branch cannot be empty");
         return hir::kInvalidStatementId;
@@ -394,7 +398,7 @@ auto LowerStatement(
 
       std::optional<hir::StatementId> else_branch;
       if (cond_stmt.ifFalse != nullptr) {
-        auto else_result = LowerStatement(*cond_stmt.ifFalse, registrar, ctx);
+        auto else_result = LowerStatement(*cond_stmt.ifFalse, lowerer);
         if (!else_result.has_value()) {
           ctx->sink->Error(span, "if-false branch cannot be empty");
           return hir::kInvalidStatementId;
@@ -470,7 +474,7 @@ auto LowerStatement(
           }
           expressions.push_back(e);
         }
-        auto body_result = LowerStatement(*group.stmt, registrar, ctx);
+        auto body_result = LowerStatement(*group.stmt, lowerer);
         if (!body_result.has_value()) {
           ctx->sink->Error(span, "case item body cannot be empty");
           return hir::kInvalidStatementId;
@@ -484,8 +488,7 @@ auto LowerStatement(
 
       std::optional<hir::StatementId> default_statement;
       if (case_stmt.defaultCase != nullptr) {
-        auto default_result =
-            LowerStatement(*case_stmt.defaultCase, registrar, ctx);
+        auto default_result = LowerStatement(*case_stmt.defaultCase, lowerer);
         // nullopt means empty statement (e.g., "default: ;") - valid, just no
         // action
         if (default_result.has_value()) {
@@ -579,7 +582,7 @@ auto LowerStatement(
         steps.push_back(expr);
       }
 
-      auto body_result = LowerStatement(for_stmt.body, registrar, ctx);
+      auto body_result = LowerStatement(for_stmt.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "for loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -613,7 +616,7 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
-      auto body_result = LowerStatement(while_stmt.body, registrar, ctx);
+      auto body_result = LowerStatement(while_stmt.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "while loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -642,7 +645,7 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
-      auto body_result = LowerStatement(dowhile_stmt.body, registrar, ctx);
+      auto body_result = LowerStatement(dowhile_stmt.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "do-while loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -684,7 +687,7 @@ auto LowerStatement(
               .data = hir::ConstantExpressionData{.constant = const_id},
           });
 
-      auto body_result = LowerStatement(forever_stmt.body, registrar, ctx);
+      auto body_result = LowerStatement(forever_stmt.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "forever loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -713,7 +716,7 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
-      auto body_result = LowerStatement(repeat_stmt.body, registrar, ctx);
+      auto body_result = LowerStatement(repeat_stmt.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "repeat loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -803,7 +806,7 @@ auto LowerStatement(
                 .data = hir::ExpressionStatementData{.expression = array_expr},
             });
 
-        auto body_result = LowerStatement(fs.body, registrar, ctx);
+        auto body_result = LowerStatement(fs.body, lowerer);
         if (!body_result.has_value()) {
           // Empty body - just return the array evaluation
           return array_eval;
@@ -979,7 +982,7 @@ auto LowerStatement(
       }
 
       // Lower body
-      auto body_result = LowerStatement(fs.body, registrar, ctx);
+      auto body_result = LowerStatement(fs.body, lowerer);
       if (!body_result.has_value()) {
         ctx->sink->Error(span, "foreach loop body cannot be empty");
         return hir::kInvalidStatementId;
@@ -1167,7 +1170,10 @@ auto LowerStatement(
           return hir::kInvalidStatementId;
         }
 
-        auto ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
+        auto literal_ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
+
+        // Scale delay from module timeunit to global precision
+        uint64_t ticks = lowerer.ScaleDelayTicks(literal_ticks);
 
         hir::StatementId delay_stmt = ctx->hir_arena->AddStatement(
             hir::Statement{
@@ -1177,7 +1183,7 @@ auto LowerStatement(
             });
 
         if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
-          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          auto body_result = LowerStatement(timed.stmt, lowerer);
           if (!body_result.has_value()) {
             return delay_stmt;
           }
@@ -1235,7 +1241,7 @@ auto LowerStatement(
             });
 
         if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
-          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          auto body_result = LowerStatement(timed.stmt, lowerer);
           if (!body_result.has_value()) {
             return wait_stmt;
           }
@@ -1301,7 +1307,7 @@ auto LowerStatement(
             });
 
         if (timed.stmt.kind != slang::ast::StatementKind::Empty) {
-          auto body_result = LowerStatement(timed.stmt, registrar, ctx);
+          auto body_result = LowerStatement(timed.stmt, lowerer);
           if (!body_result.has_value()) {
             return wait_stmt;
           }

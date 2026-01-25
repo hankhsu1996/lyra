@@ -8,6 +8,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -43,15 +44,18 @@ auto ConvertProcessKind(slang::ast::ProceduralBlockKind kind)
 }  // namespace
 
 auto LowerProcess(
-    const slang::ast::ProceduralBlockSymbol& proc, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ProcessId {
+    const slang::ast::ProceduralBlockSymbol& proc, ScopeLowerer& lowerer)
+    -> hir::ProcessId {
+  auto& registrar = lowerer.Registrar();
+  auto* ctx = &lowerer.Ctx();
+
   SourceSpan span = ctx->SpanOf(GetSourceRange(proc));
   hir::ProcessKind kind = ConvertProcessKind(proc.procedureKind);
 
   std::optional<hir::StatementId> body_result;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
-    body_result = LowerStatement(proc.getBody(), registrar, ctx);
+    body_result = LowerStatement(proc.getBody(), lowerer);
   }
 
   hir::StatementId body;
@@ -78,8 +82,11 @@ auto LowerProcess(
 }
 
 auto LowerFunction(
-    const slang::ast::SubroutineSymbol& func, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::FunctionId {
+    const slang::ast::SubroutineSymbol& func, ScopeLowerer& lowerer)
+    -> hir::FunctionId {
+  auto& registrar = lowerer.Registrar();
+  auto* ctx = &lowerer.Ctx();
+
   SourceSpan span = ctx->SpanOf(GetSourceRange(func));
 
   // Reject non-integral/void return types
@@ -123,7 +130,7 @@ auto LowerFunction(
       parameters.push_back(arg_sym);
     }
 
-    body_result = LowerStatement(func.getBody(), registrar, ctx);
+    body_result = LowerStatement(func.getBody(), lowerer);
   }
 
   hir::StatementId body;
@@ -151,9 +158,11 @@ auto LowerFunction(
       });
 }
 
-auto LowerTask(
-    const slang::ast::SubroutineSymbol& task, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::TaskId {
+auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
+    -> hir::TaskId {
+  auto& registrar = lowerer.Registrar();
+  auto* ctx = &lowerer.Ctx();
+
   SourceSpan span = ctx->SpanOf(GetSourceRange(task));
 
   SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
@@ -173,7 +182,7 @@ auto LowerTask(
       parameters.push_back(arg_sym);
     }
 
-    body_result = LowerStatement(task.getBody(), registrar, ctx);
+    body_result = LowerStatement(task.getBody(), lowerer);
   }
 
   hir::StatementId body;
