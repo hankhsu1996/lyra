@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <type_traits>
@@ -63,11 +62,11 @@ void LowerVariableDeclaration(
     const hir::VariableDeclarationStatementData& data, MirBuilder& builder) {
   Context& ctx = builder.GetContext();
   const Symbol& sym = (*ctx.symbol_table)[data.symbol];
-  mir::PlaceId place_id = ctx.AllocLocal(data.symbol, sym.type);
+  auto alloc = ctx.AllocLocal(data.symbol, sym.type);
 
   if (data.init != hir::kInvalidExpressionId) {
     mir::Operand value = LowerExpression(data.init, builder);
-    builder.EmitAssign(place_id, std::move(value));
+    builder.EmitAssign(alloc.place, std::move(value));
   }
 }
 
@@ -379,29 +378,13 @@ void LowerConditionalNone(
   mir::PlaceId cond_place = MaterializeCondition(data.condition, builder);
   mir::Operand cond = mir::Operand::Use(cond_place);
 
-  BlockIndex then_bb = builder.CreateBlock();
-  BlockIndex merge_bb = builder.CreateBlock();
-
   if (data.else_branch.has_value()) {
-    BlockIndex else_bb = builder.CreateBlock();
-    builder.EmitBranch(cond, then_bb, else_bb);
-
-    builder.SetCurrentBlock(then_bb);
-    LowerStatement(data.then_branch, builder);
-    builder.EmitJump(merge_bb);
-
-    builder.SetCurrentBlock(else_bb);
-    LowerStatement(*data.else_branch, builder);
-    builder.EmitJump(merge_bb);
+    builder.EmitIfElse(
+        cond, [&] { LowerStatement(data.then_branch, builder); },
+        [&] { LowerStatement(*data.else_branch, builder); });
   } else {
-    builder.EmitBranch(cond, then_bb, merge_bb);
-
-    builder.SetCurrentBlock(then_bb);
-    LowerStatement(data.then_branch, builder);
-    builder.EmitJump(merge_bb);
+    builder.EmitIf(cond, [&] { LowerStatement(data.then_branch, builder); });
   }
-
-  builder.SetCurrentBlock(merge_bb);
 }
 
 // Priority if: branch cascade + warning at end if no else.
@@ -414,58 +397,43 @@ void LowerConditionalPriority(
       data, *ctx.hir_arena, hir::UniquePriorityCheck::kPriority);
   const auto& pairs = flat.pairs;
 
-  BlockIndex merge_bb = builder.CreateBlock();
-
-  // Create body blocks for each condition
-  std::vector<BlockIndex> body_blocks;
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    body_blocks.push_back(builder.CreateBlock());
+  // Build condition callbacks (each evaluates and materializes a condition)
+  std::vector<std::function<mir::Operand()>> conditions;
+  for (const auto& pair : pairs) {
+    conditions.emplace_back([&builder, cond_id = pair.condition]() {
+      return mir::Operand::Use(MaterializeCondition(cond_id, builder));
+    });
   }
 
-  // Else block (if exists) or warning block (if no else)
-  BlockIndex else_target = builder.CreateBlock();
+  // Build body callbacks
+  std::vector<std::function<void()>> bodies;
+  for (const auto& pair : pairs) {
+    bodies.emplace_back([&builder, body_id = pair.body]() {
+      LowerStatement(body_id, builder);
+    });
+  }
 
-  // Generate branch cascade
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    mir::PlaceId cond_place = MaterializeCondition(pairs[i].condition, builder);
-    BlockIndex next_check =
-        (i + 1 < pairs.size()) ? builder.CreateBlock() : else_target;
-    builder.EmitBranch(
-        mir::Operand::Use(cond_place), body_blocks[i], next_check);
-
-    if (i + 1 < pairs.size()) {
-      builder.SetCurrentBlock(next_check);
+  // Build else callback
+  auto else_callback = [&]() {
+    if (flat.else_body.has_value()) {
+      LowerStatement(*flat.else_body, builder);
+    } else {
+      // No else clause: emit warning
+      mir::DisplayEffect display{
+          .print_kind = PrintKind::kDisplay,
+          .ops = {mir::FormatOp{
+              .kind = FormatKind::kLiteral,
+              .value = std::nullopt,
+              .literal = "warning: no condition matched in priority if",
+              .type = TypeId{},
+              .mods = {}}},
+          .descriptor = std::nullopt,
+      };
+      builder.EmitEffect(std::move(display));
     }
-  }
+  };
 
-  // Emit body blocks
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    builder.SetCurrentBlock(body_blocks[i]);
-    LowerStatement(pairs[i].body, builder);
-    builder.EmitJump(merge_bb);
-  }
-
-  // Handle else or warning (else_target serves both purposes)
-  builder.SetCurrentBlock(else_target);
-  if (flat.else_body.has_value()) {
-    LowerStatement(*flat.else_body, builder);
-  } else {
-    // No else clause: emit warning
-    mir::DisplayEffect display{
-        .print_kind = PrintKind::kDisplay,
-        .ops = {mir::FormatOp{
-            .kind = FormatKind::kLiteral,
-            .value = std::nullopt,
-            .literal = "warning: no condition matched in priority if",
-            .type = TypeId{},
-            .mods = {}}},
-        .descriptor = std::nullopt,
-    };
-    builder.EmitEffect(std::move(display));
-  }
-  builder.EmitJump(merge_bb);
-
-  builder.SetCurrentBlock(merge_bb);
+  builder.EmitPriorityChain(conditions, bodies, else_callback);
 }
 
 // Unique/Unique0 if: eval all conditions, emit QualifiedDispatch.
@@ -485,17 +453,13 @@ void LowerConditionalUnique(
     condition_places.push_back(MaterializeCondition(pair.condition, builder));
   }
 
-  // Create blocks: one per body + optional else + merge
-  BlockIndex merge_bb = builder.CreateBlock();
-  std::vector<BlockIndex> body_blocks;
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    body_blocks.push_back(builder.CreateBlock());
+  // Build body callbacks
+  std::vector<std::function<void()>> bodies;
+  for (const auto& pair : pairs) {
+    bodies.emplace_back([&builder, body_id = pair.body]() {
+      LowerStatement(body_id, builder);
+    });
   }
-  BlockIndex else_bb = builder.CreateBlock();
-
-  // Build targets: [body0, body1, ..., bodyN, else]
-  std::vector<BlockIndex> targets = body_blocks;
-  targets.push_back(else_bb);
 
   // Determine qualifier
   mir::DispatchQualifier qualifier =
@@ -503,25 +467,14 @@ void LowerConditionalUnique(
           ? mir::DispatchQualifier::kUnique
           : mir::DispatchQualifier::kUnique0;
 
-  builder.EmitQualifiedDispatch(
-      qualifier, mir::DispatchStatementKind::kIf, condition_places, targets,
+  builder.EmitUniqueDispatch(
+      qualifier, mir::DispatchStatementKind::kIf, condition_places, bodies,
+      [&]() {
+        if (flat.else_body.has_value()) {
+          LowerStatement(*flat.else_body, builder);
+        }
+      },
       has_else);
-
-  // Emit body blocks
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    builder.SetCurrentBlock(body_blocks[i]);
-    LowerStatement(pairs[i].body, builder);
-    builder.EmitJump(merge_bb);
-  }
-
-  // Emit else block
-  builder.SetCurrentBlock(else_bb);
-  if (flat.else_body.has_value()) {
-    LowerStatement(*flat.else_body, builder);
-  }
-  builder.EmitJump(merge_bb);
-
-  builder.SetCurrentBlock(merge_bb);
 }
 
 void LowerConditional(
@@ -569,150 +522,68 @@ auto MaterializeSelector(hir::ExpressionId selector_id, MirBuilder& builder)
 
 // Standard case lowering without qualifiers.
 void LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder) {
-  Context& ctx = builder.GetContext();
   mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
   mir::PlaceId sel_place = MaterializeSelector(data.selector, builder);
 
-  BlockIndex merge_bb = builder.CreateBlock();
-  BlockIndex default_bb = builder.CreateBlock();
-
-  std::vector<BlockIndex> item_body_blocks;
-  std::vector<BlockIndex> item_first_check_blocks;
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    item_body_blocks.push_back(builder.CreateBlock());
-    item_first_check_blocks.push_back(builder.CreateBlock());
-  }
-
-  if (!data.items.empty()) {
-    builder.EmitJump(item_first_check_blocks[0]);
-  } else {
-    builder.EmitJump(default_bb);
-  }
-
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    const hir::CaseItem& item = data.items[i];
-    BlockIndex body_bb = item_body_blocks[i];
-    BlockIndex next_item_bb = (i + 1 < data.items.size())
-                                  ? item_first_check_blocks[i + 1]
-                                  : default_bb;
-
-    builder.SetCurrentBlock(item_first_check_blocks[i]);
-
-    for (size_t j = 0; j < item.expressions.size(); ++j) {
-      mir::Operand val = LowerExpression(item.expressions[j], builder);
-      TypeId cmp_type = ctx.GetBitType();
-      mir::Rvalue cmp_rvalue{
-          .operands = {mir::Operand::Use(sel_place), std::move(val)},
-          .info = mir::BinaryRvalueInfo{.op = cmp_op},
-      };
-      mir::PlaceId cmp_result =
-          builder.EmitTemp(cmp_type, std::move(cmp_rvalue));
-
-      bool is_last_expr = (j + 1 == item.expressions.size());
-      BlockIndex nomatch_bb =
-          is_last_expr ? next_item_bb : builder.CreateBlock();
-
-      builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, nomatch_bb);
-
-      if (!is_last_expr) {
-        builder.SetCurrentBlock(nomatch_bb);
-      }
+  // Build case items
+  std::vector<MirBuilder::CaseItem> items;
+  for (const auto& item : data.items) {
+    MirBuilder::CaseItem case_item;
+    for (auto expr_id : item.expressions) {
+      case_item.expressions.emplace_back(
+          [&builder, expr_id]() { return LowerExpression(expr_id, builder); });
     }
-
-    builder.SetCurrentBlock(body_bb);
-    LowerStatement(item.statement, builder);
-    builder.EmitJump(merge_bb);
+    case_item.body = [&builder, stmt_id = item.statement]() {
+      LowerStatement(stmt_id, builder);
+    };
+    items.push_back(std::move(case_item));
   }
 
-  builder.SetCurrentBlock(default_bb);
-  if (data.default_statement.has_value()) {
-    LowerStatement(*data.default_statement, builder);
-  }
-  builder.EmitJump(merge_bb);
-
-  builder.SetCurrentBlock(merge_bb);
+  builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
+    if (data.default_statement.has_value()) {
+      LowerStatement(*data.default_statement, builder);
+    }
+  });
 }
 
 // Priority case: comparison cascade + warning at end if no default.
 void LowerCasePriority(
     const hir::CaseStatementData& data, MirBuilder& builder) {
-  Context& ctx = builder.GetContext();
   mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
   mir::PlaceId sel_place = MaterializeSelector(data.selector, builder);
   bool has_default = data.default_statement.has_value();
 
-  BlockIndex merge_bb = builder.CreateBlock();
-  // fallthrough_bb serves as default block (if has_default) or warning block
-  BlockIndex fallthrough_bb = builder.CreateBlock();
-
-  std::vector<BlockIndex> item_body_blocks;
-  std::vector<BlockIndex> item_first_check_blocks;
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    item_body_blocks.push_back(builder.CreateBlock());
-    item_first_check_blocks.push_back(builder.CreateBlock());
-  }
-
-  if (!data.items.empty()) {
-    builder.EmitJump(item_first_check_blocks[0]);
-  } else {
-    builder.EmitJump(fallthrough_bb);
-  }
-
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    const hir::CaseItem& item = data.items[i];
-    BlockIndex body_bb = item_body_blocks[i];
-    BlockIndex next_item_bb = (i + 1 < data.items.size())
-                                  ? item_first_check_blocks[i + 1]
-                                  : fallthrough_bb;
-
-    builder.SetCurrentBlock(item_first_check_blocks[i]);
-
-    for (size_t j = 0; j < item.expressions.size(); ++j) {
-      mir::Operand val = LowerExpression(item.expressions[j], builder);
-      TypeId cmp_type = ctx.GetBitType();
-      mir::Rvalue cmp_rvalue{
-          .operands = {mir::Operand::Use(sel_place), std::move(val)},
-          .info = mir::BinaryRvalueInfo{.op = cmp_op},
-      };
-      mir::PlaceId cmp_result =
-          builder.EmitTemp(cmp_type, std::move(cmp_rvalue));
-
-      bool is_last_expr = (j + 1 == item.expressions.size());
-      BlockIndex nomatch_bb =
-          is_last_expr ? next_item_bb : builder.CreateBlock();
-
-      builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, nomatch_bb);
-
-      if (!is_last_expr) {
-        builder.SetCurrentBlock(nomatch_bb);
-      }
+  // Build case items
+  std::vector<MirBuilder::CaseItem> items;
+  for (const auto& item : data.items) {
+    MirBuilder::CaseItem case_item;
+    for (auto expr_id : item.expressions) {
+      case_item.expressions.emplace_back(
+          [&builder, expr_id]() { return LowerExpression(expr_id, builder); });
     }
-
-    builder.SetCurrentBlock(body_bb);
-    LowerStatement(item.statement, builder);
-    builder.EmitJump(merge_bb);
-  }
-
-  // Handle default or warning (fallthrough_bb serves both purposes)
-  builder.SetCurrentBlock(fallthrough_bb);
-  if (has_default) {
-    LowerStatement(*data.default_statement, builder);
-  } else {
-    mir::DisplayEffect display{
-        .print_kind = PrintKind::kDisplay,
-        .ops = {mir::FormatOp{
-            .kind = FormatKind::kLiteral,
-            .value = std::nullopt,
-            .literal = "warning: no matching case item in priority case",
-            .type = TypeId{},
-            .mods = {}}},
-        .descriptor = std::nullopt,
+    case_item.body = [&builder, stmt_id = item.statement]() {
+      LowerStatement(stmt_id, builder);
     };
-    builder.EmitEffect(std::move(display));
+    items.push_back(std::move(case_item));
   }
-  builder.EmitJump(merge_bb);
 
-  builder.SetCurrentBlock(merge_bb);
+  builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
+    if (has_default) {
+      LowerStatement(*data.default_statement, builder);
+    } else {
+      mir::DisplayEffect display{
+          .print_kind = PrintKind::kDisplay,
+          .ops = {mir::FormatOp{
+              .kind = FormatKind::kLiteral,
+              .value = std::nullopt,
+              .literal = "warning: no matching case item in priority case",
+              .type = TypeId{},
+              .mods = {}}},
+          .descriptor = std::nullopt,
+      };
+      builder.EmitEffect(std::move(display));
+    }
+  });
 }
 
 // Unique/Unique0 case: eval all matches, emit QualifiedDispatch.
@@ -755,42 +626,27 @@ void LowerCaseUnique(
     item_conditions.push_back(item_match);
   }
 
-  // Create blocks
-  BlockIndex merge_bb = builder.CreateBlock();
-  std::vector<BlockIndex> body_blocks;
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    body_blocks.push_back(builder.CreateBlock());
+  // Build body callbacks
+  std::vector<std::function<void()>> bodies;
+  for (const auto& item : data.items) {
+    bodies.emplace_back([&builder, stmt_id = item.statement]() {
+      LowerStatement(stmt_id, builder);
+    });
   }
-  BlockIndex default_bb = builder.CreateBlock();
-
-  // Build targets: [body0, body1, ..., bodyN, default]
-  std::vector<BlockIndex> targets = body_blocks;
-  targets.push_back(default_bb);
 
   mir::DispatchQualifier qualifier =
       (check == hir::UniquePriorityCheck::kUnique)
           ? mir::DispatchQualifier::kUnique
           : mir::DispatchQualifier::kUnique0;
 
-  builder.EmitQualifiedDispatch(
-      qualifier, mir::DispatchStatementKind::kCase, item_conditions, targets,
+  builder.EmitUniqueDispatch(
+      qualifier, mir::DispatchStatementKind::kCase, item_conditions, bodies,
+      [&]() {
+        if (has_default) {
+          LowerStatement(*data.default_statement, builder);
+        }
+      },
       has_default);
-
-  // Emit body blocks
-  for (size_t i = 0; i < data.items.size(); ++i) {
-    builder.SetCurrentBlock(body_blocks[i]);
-    LowerStatement(data.items[i].statement, builder);
-    builder.EmitJump(merge_bb);
-  }
-
-  // Default block
-  builder.SetCurrentBlock(default_bb);
-  if (has_default) {
-    LowerStatement(*data.default_statement, builder);
-  }
-  builder.EmitJump(merge_bb);
-
-  builder.SetCurrentBlock(merge_bb);
 }
 
 void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
@@ -1100,9 +956,7 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
                 "LowerStatement", "break statement outside loop");
           }
           builder.EmitJump(loop->exit_block);
-          // Create unreachable block for any code after break
-          BlockIndex dead_bb = builder.CreateBlock();
-          builder.SetCurrentBlock(dead_bb);
+          // After emitting a terminator, subsequent code is unreachable (no-op)
         } else if constexpr (std::is_same_v<T, hir::ContinueStatementData>) {
           const auto* loop = builder.CurrentLoop();
           if (loop == nullptr) {
@@ -1110,9 +964,7 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
                 "LowerStatement", "continue statement outside loop");
           }
           builder.EmitJump(loop->continue_block);
-          // Create unreachable block for any code after continue
-          BlockIndex dead_bb = builder.CreateBlock();
-          builder.SetCurrentBlock(dead_bb);
+          // After emitting a terminator, subsequent code is unreachable (no-op)
         } else if constexpr (std::is_same_v<T, hir::TerminateStatementData>) {
           // Map HIR TerminationKind to MIR TerminationKind
           mir::TerminationKind mir_kind = mir::TerminationKind::kFinish;
@@ -1143,25 +995,20 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
                   .kind = mir_kind,
                   .level = data.level,
                   .message_args = std::move(message_operands)});
-          // Create unreachable block for any code after terminate
-          BlockIndex dead_bb = builder.CreateBlock();
-          builder.SetCurrentBlock(dead_bb);
+          // After emitting a terminator, subsequent code is unreachable (no-op)
         } else if constexpr (std::is_same_v<T, hir::ReturnStatementData>) {
-          Context& ctx = builder.GetContext();
-
-          // If there's a return value, assign to local 0 (return place)
+          // Purely structural return lowering:
+          // - `return expr;` → Return(value)
+          // - `return;` → Return(nullopt)
+          // Invariants (void vs non-void) are enforced by MIR verifier.
+          // After emitting a terminator, IsReachable() returns false and
+          // subsequent Emit* calls are no-ops.
           if (data.value != hir::kInvalidExpressionId) {
             mir::Operand value = LowerExpression(data.value, builder);
-            if (ctx.return_place != mir::kInvalidPlaceId) {
-              builder.EmitAssign(ctx.return_place, std::move(value));
-            }
+            builder.EmitReturn(std::move(value));
+          } else {
+            builder.EmitTerminate(std::nullopt);
           }
-
-          builder.EmitReturn();
-
-          // Create dead block for unreachable code after return
-          BlockIndex dead_bb = builder.CreateBlock();
-          builder.SetCurrentBlock(dead_bb);
         } else if constexpr (std::is_same_v<T, hir::DelayStatementData>) {
           // Create resume block for code after delay
           BlockIndex resume_bb = builder.CreateBlock();

@@ -101,19 +101,11 @@ auto Interpreter::RunFunction(
         type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
   }
 
-  // Copy arguments to parameter locals
-  // For non-void functions: local 0 = return value, parameters start at local 1
-  // For void functions: parameters start at local 0
-  // We detect this by checking if there are more locals than args
-  size_t param_start = 0;
-  if (local_types.size() > args.size()) {
-    param_start = 1;  // local 0 is return place
-  }
-
+  // Copy arguments to parameter locals using explicit slot mapping
   for (size_t i = 0; i < args.size(); ++i) {
-    size_t local_idx = param_start + i;
-    if (local_idx < locals.size()) {
-      locals[local_idx] = Clone(args[i]);
+    uint32_t local_slot = func.param_local_slots[i];
+    if (local_slot < locals.size()) {
+      locals[local_slot] = Clone(args[i]);
     }
   }
 
@@ -126,6 +118,7 @@ auto Interpreter::RunFunction(
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .pending_suspend = std::nullopt,
+      .function_return_value = std::nullopt,
   };
 
   // Execute function (look up blocks from func directly)
@@ -147,12 +140,12 @@ auto Interpreter::RunFunction(
     func_state.instruction_index = 0;
   }
 
-  // Return value is in local 0 (for non-void functions)
-  if (param_start == 1 && func_state.frame.NumLocals() > 0) {
-    return Clone(func_state.frame.GetLocal(0));
+  // Return value comes from the Return terminator
+  if (func_state.function_return_value.has_value()) {
+    return std::move(*func_state.function_return_value);
   }
 
-  // Void function - return monostate
+  // Void function or process - return monostate
   return std::monostate{};
 }
 
@@ -603,7 +596,11 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                 "ExecTerminator", "wait terminator requires runtime/scheduler");
           },
 
-          [](const Return& /*t*/) -> std::optional<BasicBlockId> {
+          [&](const Return& t) -> std::optional<BasicBlockId> {
+            // If return has a value (function return), evaluate and store it
+            if (t.value.has_value()) {
+              state.function_return_value = Clone(EvalOperand(state, *t.value));
+            }
             return std::nullopt;
           },
 

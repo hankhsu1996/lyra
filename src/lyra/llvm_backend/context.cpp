@@ -1041,12 +1041,19 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
     ptr = builder_.CreateStructGEP(
         GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
   } else {
-    if (frame_ptr_ == nullptr) {
-      throw std::runtime_error("frame pointer not set");
+    // Local/Temp places: check place_storage_ first (user functions)
+    // If not found and frame_ptr_ is set, use frame (processes)
+    auto it = place_storage_.find(place_id);
+    if (it != place_storage_.end()) {
+      ptr = it->second;
+    } else if (frame_ptr_ != nullptr) {
+      uint32_t field_index = GetFrameFieldIndex(place_id);
+      ptr = builder_.CreateStructGEP(
+          GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
+    } else {
+      // User function: create alloca lazily
+      ptr = GetOrCreatePlaceStorage(place_id);
     }
-    uint32_t field_index = GetFrameFieldIndex(place_id);
-    ptr = builder_.CreateStructGEP(
-        GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
   }
 
   // Apply projections (index into arrays, stop at BitRange)
@@ -1303,6 +1310,104 @@ void Context::ReleaseOwnedTemps() {
     builder_.CreateCall(GetLyraStringRelease(), {temp});
   }
   owned_temps_.clear();
+}
+
+void Context::RegisterUserFunction(
+    mir::FunctionId func_id, llvm::Function* llvm_func) {
+  user_functions_[func_id] = llvm_func;
+}
+
+auto Context::GetUserFunction(mir::FunctionId func_id) const
+    -> llvm::Function* {
+  auto it = user_functions_.find(func_id);
+  if (it == user_functions_.end()) {
+    throw common::InternalError(
+        "GetUserFunction",
+        std::format("user function {} not found", func_id.value));
+  }
+  return it->second;
+}
+
+auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
+  return user_functions_.contains(func_id);
+}
+
+auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
+    -> llvm::FunctionType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+
+  // First two parameters are DesignState* and Engine*
+  // DesignState* is for accessing design variables
+  // Engine* is for write notification when modifying design state
+  std::vector<llvm::Type*> param_types;
+  param_types.push_back(ptr_ty);  // DesignState*
+  param_types.push_back(ptr_ty);  // Engine*
+
+  // Add parameter types from signature
+  for (const auto& param : sig.params) {
+    const Type& type = types_[param.type];
+    llvm::Type* param_ty = nullptr;
+
+    if (type.Kind() == TypeKind::kVoid) {
+      throw common::InternalError(
+          "BuildUserFunctionType", "void parameter type not allowed");
+    }
+
+    if (type.Kind() == TypeKind::kString ||
+        type.Kind() == TypeKind::kDynamicArray ||
+        type.Kind() == TypeKind::kQueue) {
+      param_ty = ptr_ty;
+    } else if (type.Kind() == TypeKind::kReal) {
+      param_ty = llvm::Type::getDoubleTy(*llvm_context_);
+    } else if (type.Kind() == TypeKind::kShortReal) {
+      param_ty = llvm::Type::getFloatTy(*llvm_context_);
+    } else if (IsPacked(type)) {
+      auto width = PackedBitWidth(type, types_);
+      if (IsPackedFourState(type, types_)) {
+        param_ty = GetFourStateStructType(*llvm_context_, width);
+      } else {
+        param_ty = GetLlvmStorageType(*llvm_context_, width);
+      }
+    } else {
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+          current_origin_,
+          std::format("unsupported parameter type: {}", ToString(type.Kind())));
+    }
+
+    param_types.push_back(param_ty);
+  }
+
+  // Return type from signature
+  const Type& ret_type = types_[sig.return_type];
+  llvm::Type* llvm_ret_type = nullptr;
+
+  if (ret_type.Kind() == TypeKind::kVoid) {
+    llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
+  } else if (
+      ret_type.Kind() == TypeKind::kString ||
+      ret_type.Kind() == TypeKind::kDynamicArray ||
+      ret_type.Kind() == TypeKind::kQueue) {
+    llvm_ret_type = ptr_ty;
+  } else if (ret_type.Kind() == TypeKind::kReal) {
+    llvm_ret_type = llvm::Type::getDoubleTy(*llvm_context_);
+  } else if (ret_type.Kind() == TypeKind::kShortReal) {
+    llvm_ret_type = llvm::Type::getFloatTy(*llvm_context_);
+  } else if (IsPacked(ret_type)) {
+    auto width = PackedBitWidth(ret_type, types_);
+    if (IsPackedFourState(ret_type, types_)) {
+      llvm_ret_type = GetFourStateStructType(*llvm_context_, width);
+    } else {
+      llvm_ret_type = GetLlvmStorageType(*llvm_context_, width);
+    }
+  } else {
+    throw common::UnsupportedErrorException(
+        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+        current_origin_,
+        std::format("unsupported return type: {}", ToString(ret_type.Kind())));
+  }
+
+  return llvm::FunctionType::get(llvm_ret_type, param_types, false);
 }
 
 StatementScope::StatementScope(Context& ctx) : ctx_(ctx) {

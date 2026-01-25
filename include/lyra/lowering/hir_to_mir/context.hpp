@@ -64,6 +64,14 @@ struct DeclView {
   const SymbolToMirFunctionMap* functions;
 };
 
+// Result of AllocLocal - provides both the PlaceId and the local slot index.
+// This makes the param_local_slots mapping explicit and avoids peeking at
+// internal counters.
+struct LocalAllocation {
+  mir::PlaceId place;
+  uint32_t local_slot;
+};
+
 // Context for lowering within a process or function activation.
 struct Context {
   mir::Arena* mir_arena;
@@ -81,15 +89,17 @@ struct Context {
   int next_local_id = 0;
   int next_temp_id = 0;
 
+  // Storage type tables - populated during allocation, not post-collection.
+  // These grow as locals/temps are allocated.
+  std::vector<TypeId> local_types;
+  std::vector<TypeId> temp_types;
+
   BuiltinTypes builtin_types;
 
   // Function-specific: map symbols to MIR function IDs (for call lowering)
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
 
-  // Function-specific: local 0 for non-void return value
-  mir::PlaceId return_place = mir::kInvalidPlaceId;
-
-  auto AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId;
+  auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
 
   // Throws InternalError if symbol not found (compiler bug, not user error).

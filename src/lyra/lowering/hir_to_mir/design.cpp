@@ -57,9 +57,10 @@ auto CreateDriveProcess(
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = &decls.functions,
-      .return_place = mir::kInvalidPlaceId,
   };
 
   MirBuilder builder(&mir_arena, &ctx);
@@ -184,9 +185,10 @@ void ApplyBindings(
         .local_places = {},
         .next_local_id = 0,
         .next_temp_id = 0,
+        .local_types = {},
+        .temp_types = {},
         .builtin_types = input.builtin_types,
         .symbol_to_mir_function = &decls.functions,
-        .return_place = mir::kInvalidPlaceId,
     };
 
     MirBuilder builder(&mir_arena, &ctx);

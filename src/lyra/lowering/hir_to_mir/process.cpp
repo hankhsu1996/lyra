@@ -52,9 +52,10 @@ auto LowerProcess(
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
-      .return_place = mir::kInvalidPlaceId,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);
@@ -65,12 +66,7 @@ auto LowerProcess(
   LowerStatement(process.body, builder);
 
   mir::ProcessKind mir_kind = ConvertProcessKind(process.kind);
-  if (mir_kind == mir::ProcessKind::kLooping) {
-    builder.EmitRepeat();
-  } else {
-    // kOnce (initial) and kFinal both terminate after running
-    builder.EmitTerminate();
-  }
+  builder.EmitProcessEpilogue(mir_kind);
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
 
