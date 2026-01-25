@@ -128,6 +128,7 @@ auto RunMirInterpreter(
       .constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
+      .binding_plan = &hir_result.binding_plan,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 

@@ -10,8 +10,8 @@ SymbolRegistrar::SymbolRegistrar(Context* ctx) : ctx_(ctx) {
 }
 
 auto SymbolRegistrar::Register(
-    const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type)
-    -> SymbolId {
+    const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type,
+    StorageClass storage_class) -> SymbolId {
   auto it = slang_to_id_.find(&slang_sym);
   if (it != slang_to_id_.end()) {
     return it->second;
@@ -32,19 +32,22 @@ auto SymbolRegistrar::Register(
           .name = std::string(slang_sym.name),
           .type = type,
           .scope = current_scope_,
+          .storage_class = storage_class,
       });
   slang_to_id_.emplace(&slang_sym, id);
   return id;
 }
 
 auto SymbolRegistrar::RegisterSynthetic(
-    std::string name, SymbolKind kind, TypeId type) -> SymbolId {
+    std::string name, SymbolKind kind, TypeId type, StorageClass storage_class)
+    -> SymbolId {
   return ctx_->symbol_table->Add(
       Symbol{
           .kind = kind,
           .name = std::move(name),
           .type = type,
           .scope = current_scope_,
+          .storage_class = storage_class,
       });
 }
 

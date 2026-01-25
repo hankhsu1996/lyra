@@ -6,6 +6,7 @@
 #include <format>
 #include <memory>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -890,8 +891,72 @@ auto Context::GetEnginePointer() -> llvm::Value* {
   return engine_ptr_;
 }
 
+auto Context::ResolveAliases(mir::PlaceId place_id) -> mir::Place {
+  const mir::Place& original = arena_[place_id];
+
+  // Only kDesign roots can be aliased
+  if (original.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    return original;
+  }
+
+  mir::SlotId slot{static_cast<uint32_t>(original.root.id)};
+  auto alias_it = design_.alias_map.find(slot);
+  if (alias_it == design_.alias_map.end()) {
+    return original;  // Not aliased
+  }
+
+  // Flatten alias chain with cycle detection
+  std::unordered_set<mir::SlotId> visited;
+  visited.insert(slot);
+  mir::SlotId start_slot = slot;  // For error reporting
+
+  mir::Place resolved = original;
+  std::vector<mir::Projection> accumulated_projections = original.projections;
+
+  while (alias_it != design_.alias_map.end()) {
+    mir::PlaceId target_place_id = alias_it->second;
+    const mir::Place& target = arena_[target_place_id];
+
+    // Invariant: alias_map only maps to kDesign roots
+    if (target.root.kind != mir::PlaceRoot::Kind::kDesign) {
+      throw common::InternalError(
+          "ResolveAliases",
+          std::format(
+              "alias target for slot {} is not a design slot", slot.value));
+    }
+
+    // Prepend target's projections (target.proj comes before our accumulated)
+    std::vector<mir::Projection> new_projections = target.projections;
+    new_projections.insert(
+        new_projections.end(), accumulated_projections.begin(),
+        accumulated_projections.end());
+    accumulated_projections = std::move(new_projections);
+
+    // Update resolved root
+    resolved.root = target.root;
+
+    mir::SlotId target_slot{static_cast<uint32_t>(target.root.id)};
+
+    // Cycle detection
+    if (visited.contains(target_slot)) {
+      throw common::InternalError(
+          "ResolveAliases",
+          std::format(
+              "alias cycle detected: slot {} -> ... -> slot {}",
+              start_slot.value, target_slot.value));
+    }
+    visited.insert(target_slot);
+
+    alias_it = design_.alias_map.find(target_slot);
+  }
+
+  resolved.projections = std::move(accumulated_projections);
+  return resolved;
+}
+
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
-  const auto& place = arena_[place_id];
+  // Resolve aliases first (handles output/inout ports)
+  mir::Place place = ResolveAliases(place_id);
 
   // Get base pointer from root
   llvm::Value* ptr = nullptr;

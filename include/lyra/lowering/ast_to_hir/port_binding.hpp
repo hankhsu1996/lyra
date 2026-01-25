@@ -8,6 +8,10 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/text/SourceLocation.h>
 
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol_types.hpp"
+#include "lyra/hir/fwd.hpp"
+
 namespace lyra::lowering::ast_to_hir {
 
 // Transient descriptor for one input port binding.
@@ -28,5 +32,31 @@ struct InputPortBinding {
 // LIFETIME: Built and consumed within single LowerDesign call.
 using TransientPortBindingPlan = std::unordered_map<
     const slang::ast::InstanceSymbol*, std::vector<InputPortBinding>>;
+
+// Input port: parent rvalue expression drives child port variable.
+// These are applied at HIR->MIR as synthetic always_comb processes.
+struct DriveBinding {
+  SymbolId child_port_sym;   // Child's port backing variable
+  hir::ExpressionId rvalue;  // Parent's rvalue expression
+  SourceSpan span;
+  SymbolId
+      parent_instance_sym;  // Parent module's instance symbol (stable identity)
+};
+
+// Output/inout port: child port aliases parent's lvalue place.
+// These are applied at HIR->MIR as alias_map entries.
+struct AliasBinding {
+  SymbolId child_port_sym;   // Child's port backing variable
+  hir::ExpressionId lvalue;  // Parent's lvalue expression (must be a place)
+  SourceSpan span;
+};
+
+// Design-level binding plan (persists beyond AST->HIR).
+// Expressions stored here reference only design symbols (no module locals)
+// and live in the shared HIR arena.
+struct DesignBindingPlan {
+  std::vector<DriveBinding> drives;
+  std::vector<AliasBinding> aliases;
+};
 
 }  // namespace lyra::lowering::ast_to_hir

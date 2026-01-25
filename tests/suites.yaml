@@ -20,7 +20,6 @@ suites:
       - system_tf/pure/conversions.yaml
       - system_tf/pure/sformat.yaml
       - processes/generate.yaml
-      - hierarchy/ports/output_ports.yaml
 
   mir_dev:
     backend: mir
