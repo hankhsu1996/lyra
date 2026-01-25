@@ -603,7 +603,14 @@ auto BuildLayout(
   // Build design layout (use actual TypeIds for type derivation)
   layout.design = BuildDesignLayout(slots, types, ctx);
 
-  // Collect all initial processes (single source of truth for ordering)
+  // Phase 1: Collect init processes (package variable initialization)
+  // These run synchronously before scheduling, in design.init_processes order
+  for (mir::ProcessId proc_id : design.init_processes) {
+    layout.process_ids.push_back(proc_id);
+  }
+  layout.num_init_processes = layout.process_ids.size();
+
+  // Phase 2: Collect module processes (run through scheduler)
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
       continue;

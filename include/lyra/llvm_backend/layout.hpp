@@ -82,7 +82,11 @@ struct Layout {
   DesignLayout design;
   std::vector<ProcessLayout> processes;
   // Canonical list of process IDs (single source of truth for ordering)
+  // Layout: init processes first (indices 0..num_init_processes-1),
+  //         then module processes (indices num_init_processes..)
   std::vector<mir::ProcessId> process_ids;
+  // Boundary marker: number of init processes at start of process_ids
+  size_t num_init_processes = 0;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)

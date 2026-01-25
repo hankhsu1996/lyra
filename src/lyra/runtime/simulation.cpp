@@ -92,6 +92,25 @@ extern "C" void LyraSuspendRepeat(void* state) {
   suspend->resume_block = 0;
 }
 
+extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
+  // Entry block is always block 0 (ABI contract with process generation)
+  constexpr uint32_t kEntryBlock = 0;
+
+  // Reset suspend record before execution
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  suspend->tag = lyra::runtime::SuspendTag::kFinished;
+
+  process(state, kEntryBlock);
+
+  // Init processes must not suspend - they run to completion
+  if (suspend->tag != lyra::runtime::SuspendTag::kFinished) {
+    std::println(
+        stderr, "error: init process suspended (tag={}), aborting",
+        static_cast<int>(suspend->tag));
+    std::abort();
+  }
+}
+
 extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes) {
   auto states = std::span(states_raw, num_processes);

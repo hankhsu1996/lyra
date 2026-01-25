@@ -183,7 +183,6 @@ auto RunLlvm(const CompilationInput& input) -> int {
       .design = &compilation->mir.design,
       .mir_arena = compilation->mir.mir_arena.get(),
       .type_arena = compilation->hir.type_arena.get(),
-      .variables = {},  // No inspection for CLI
   };
 
   lowering::mir_to_llvm::LoweringResult llvm_result;

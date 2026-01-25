@@ -10,6 +10,11 @@ using LyraProcessFunc = void (*)(void* state, uint32_t resume_block);
 
 extern "C" {
 
+// Run a process synchronously to completion (for init processes).
+// The process must not suspend; if it does, this aborts.
+// Encapsulates the entry block number (ABI detail).
+void LyraRunProcessSync(LyraProcessFunc process, void* state);
+
 // Run simulation with multiple processes sharing a single engine.
 // All processes are scheduled at time=0, delta=0.
 // - processes: array of process function pointers

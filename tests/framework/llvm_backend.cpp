@@ -32,6 +32,7 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -40,6 +41,31 @@
 
 namespace lyra::test {
 namespace {
+
+// Test framework hooks for variable inspection and timing.
+class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
+ public:
+  TestSimulationHooks(
+      std::vector<lowering::mir_to_llvm::VariableInfo> variables,
+      bool emit_time_report)
+      : variables_(std::move(variables)), emit_time_report_(emit_time_report) {
+  }
+
+  void OnAfterRunSimulation(
+      lowering::mir_to_llvm::Context& context,
+      const std::vector<lowering::mir_to_llvm::SlotInfo>& slots,
+      llvm::Value* design_state) override {
+    lowering::mir_to_llvm::EmitVariableInspection(
+        context, variables_, slots, design_state);
+    if (emit_time_report_) {
+      lowering::mir_to_llvm::EmitTimeReport(context);
+    }
+  }
+
+ private:
+  std::vector<lowering::mir_to_llvm::VariableInfo> variables_;
+  bool emit_time_report_;
+};
 
 // Find the runtime library for LLVM backend
 auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
@@ -351,13 +377,15 @@ auto RunLlvmBackend(
   auto tracked_variables =
       BuildTrackedVariables(top_module, mir_input, hir_result, base_slot_id);
 
+  // Create test hooks for variable inspection and timing
+  TestSimulationHooks hooks(std::move(tracked_variables), true);
+
   // Lower MIR to LLVM IR
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result.design,
       .mir_arena = mir_result.mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
-      .variables = std::move(tracked_variables),
-      .emit_time_report = true,
+      .hooks = &hooks,
   };
 
   lowering::mir_to_llvm::LoweringResult llvm_result;

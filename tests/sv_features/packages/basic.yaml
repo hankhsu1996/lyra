@@ -272,3 +272,16 @@ cases:
       endmodule
     expect:
       stdout: "42\n"
+
+  - name: package_variable_init_order
+    sv: |
+      package Pkg;
+        int a = 10;
+        int b = a + 5;  // depends on a being initialized first
+      endpackage
+      module Test;
+        import Pkg::*;
+        initial $display("%0d %0d", a, b);
+      endmodule
+    expect:
+      stdout: "10 15\n"
