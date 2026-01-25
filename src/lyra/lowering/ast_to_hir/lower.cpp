@@ -38,14 +38,14 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
 
   SymbolRegistrar registrar(&ctx);
 
-  hir::Design design;
+  DesignLoweringResult design_result;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kRoot);
-    design = LowerDesign(compilation, registrar, &ctx);
+    design_result = LowerDesign(compilation, registrar, &ctx);
   }
 
   return LoweringResult{
-      .design = std::move(design),
+      .design = std::move(design_result.design),
       .hir_arena = std::move(hir_arena),
       .type_arena = std::move(type_arena),
       .constant_arena = std::move(constant_arena),
@@ -53,6 +53,7 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
       .scope_table = std::move(scope_table),
       .source_manager = std::move(source_manager),
       .source_mapper = std::move(source_mapper),
+      .binding_plan = std::move(design_result.binding_plan),
   };
 }
 

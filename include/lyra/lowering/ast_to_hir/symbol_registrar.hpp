@@ -15,12 +15,13 @@ class SymbolRegistrar {
   explicit SymbolRegistrar(Context* ctx);
 
   auto Register(
-      const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type)
-      -> SymbolId;
+      const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type,
+      StorageClass storage_class = StorageClass::kDesignStorage) -> SymbolId;
 
   // Register a synthetic (compiler-generated) symbol with no slang backing
-  auto RegisterSynthetic(std::string name, SymbolKind kind, TypeId type)
-      -> SymbolId;
+  auto RegisterSynthetic(
+      std::string name, SymbolKind kind, TypeId type,
+      StorageClass storage_class = StorageClass::kDesignStorage) -> SymbolId;
 
   [[nodiscard]] auto Lookup(const slang::ast::Symbol& slang_sym) const
       -> SymbolId;

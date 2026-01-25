@@ -186,7 +186,8 @@ auto LowerStatement(
         return hir::kInvalidStatementId;
       }
 
-      SymbolId sym = registrar.Register(var_sym, SymbolKind::kVariable, type);
+      SymbolId sym = registrar.Register(
+          var_sym, SymbolKind::kVariable, type, StorageClass::kLocalStorage);
 
       hir::ExpressionId init = hir::kInvalidExpressionId;
       if (const slang::ast::Expression* init_expr = var_sym.getInitializer()) {
@@ -525,8 +526,9 @@ auto LowerStatement(
             return hir::kInvalidStatementId;
           }
 
-          SymbolId sym =
-              registrar.Register(*var_sym, SymbolKind::kVariable, type);
+          SymbolId sym = registrar.Register(
+              *var_sym, SymbolKind::kVariable, type,
+              StorageClass::kLocalStorage);
 
           hir::ExpressionId init = hir::kInvalidExpressionId;
           if (const slang::ast::Expression* init_expr =
@@ -836,8 +838,9 @@ auto LowerStatement(
           return hir::kInvalidStatementId;
         }
 
-        SymbolId sym =
-            registrar.Register(*dim.loopVar, SymbolKind::kVariable, var_type);
+        SymbolId sym = registrar.Register(
+            *dim.loopVar, SymbolKind::kVariable, var_type,
+            StorageClass::kLocalStorage);
 
         hir::StatementId var_decl = ctx->hir_arena->AddStatement(
             hir::Statement{

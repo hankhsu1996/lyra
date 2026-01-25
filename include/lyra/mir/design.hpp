@@ -4,6 +4,7 @@
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -22,6 +23,12 @@ struct Design {
   // num_design_slots.
   std::vector<TypeId> slot_table;
   std::vector<ProcessId> init_processes;
+
+  // Alias map for output/inout ports.
+  // Key: child port's SlotId (must be kDesign root with no projections)
+  // Value: parent's PlaceId (may have projections, must resolve to kDesign)
+  // Currently consumed by LLVM backend only; MIR interpreter does not resolve.
+  absl::flat_hash_map<SlotId, PlaceId> alias_map;
 };
 
 }  // namespace lyra::mir

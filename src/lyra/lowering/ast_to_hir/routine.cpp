@@ -118,8 +118,8 @@ auto LowerFunction(
       if (!arg_type) {
         return hir::kInvalidFunctionId;
       }
-      SymbolId arg_sym =
-          registrar.Register(*arg, SymbolKind::kParameter, arg_type);
+      SymbolId arg_sym = registrar.Register(
+          *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
       parameters.push_back(arg_sym);
     }
 
@@ -168,8 +168,8 @@ auto LowerTask(
       if (!arg_type) {
         return hir::kInvalidTaskId;
       }
-      SymbolId arg_sym =
-          registrar.Register(*arg, SymbolKind::kParameter, arg_type);
+      SymbolId arg_sym = registrar.Register(
+          *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
       parameters.push_back(arg_sym);
     }
 

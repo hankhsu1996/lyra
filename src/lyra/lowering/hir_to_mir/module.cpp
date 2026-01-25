@@ -23,6 +23,7 @@ auto LowerModule(
     mir::Arena& mir_arena, OriginMap* origin_map,
     const DesignDeclarations& decls) -> mir::Module {
   mir::Module result;
+  result.instance_sym = module.symbol;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
   // Start with design-wide functions (package functions) so module code can

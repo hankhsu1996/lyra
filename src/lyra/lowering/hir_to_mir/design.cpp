@@ -5,14 +5,20 @@
 #include <utility>
 #include <variant>
 
+#include "absl/container/flat_hash_map.h"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/lowering/ast_to_hir/port_binding.hpp"
+#include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/module.hpp"
 #include "lyra/lowering/hir_to_mir/package.hpp"
 #include "lyra/lowering/hir_to_mir/process.hpp"
@@ -23,12 +29,193 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/sensitivity.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 template <class>
 inline constexpr bool kAlwaysFalse = false;
+
+// Create a synthetic always_comb process for a port drive binding.
+// This implements input port semantics: parent expression drives child
+// variable.
+auto CreateDriveProcess(
+    const ast_to_hir::DriveBinding& binding, const DesignDeclarations& decls,
+    const LoweringInput& input, mir::Arena& mir_arena) -> mir::ProcessId {
+  // Set up context for lowering the rvalue expression.
+  // Port bindings only reference design-level symbols, so module_places
+  // points to design_places.
+  Context ctx{
+      .mir_arena = &mir_arena,
+      .hir_arena = input.hir_arena,
+      .type_arena = input.type_arena,
+      .constant_arena = input.constant_arena,
+      .symbol_table = input.symbol_table,
+      .module_places = &decls.design_places,
+      .local_places = {},
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .builtin_types = input.builtin_types,
+      .symbol_to_mir_function = &decls.functions,
+      .return_place = mir::kInvalidPlaceId,
+  };
+
+  MirBuilder builder(&mir_arena, &ctx);
+
+  BlockIndex entry_idx = builder.CreateBlock();
+  builder.SetCurrentBlock(entry_idx);
+
+  // Lower the rvalue expression to MIR operand
+  mir::Operand source = LowerExpression(binding.rvalue, builder);
+
+  // Get the target place (child port variable)
+  mir::PlaceId target = decls.design_places.at(binding.child_port_sym);
+
+  // Emit assignment: child_port = rvalue
+  builder.EmitAssign(target, source);
+
+  // Emit Repeat terminator (will be replaced with Wait)
+  builder.EmitRepeat();
+
+  std::vector<mir::BasicBlock> blocks = builder.Finish();
+
+  // Build temp process to collect sensitivity
+  mir::Process temp_process{
+      .kind = mir::ProcessKind::kLooping,
+      .entry = mir::BasicBlockId{entry_idx.value},
+      .blocks = blocks,
+  };
+  auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
+
+  // Replace Repeat terminator with Wait (same as always_comb in process.cpp)
+  for (auto& block : blocks) {
+    if (std::holds_alternative<mir::Repeat>(block.terminator.data)) {
+      block.terminator.data = mir::Wait{
+          .triggers = std::move(triggers),
+          .resume = mir::BasicBlockId{entry_idx.value},
+      };
+      break;
+    }
+  }
+
+  mir::Process mir_process{
+      .kind = mir::ProcessKind::kLooping,
+      .entry = mir::BasicBlockId{entry_idx.value},
+      .blocks = std::move(blocks),
+  };
+
+  return mir_arena.AddProcess(std::move(mir_process));
+}
+
+// Apply port bindings: drives become synthetic processes, aliases become
+// entries in the alias_map.
+void ApplyBindings(
+    const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
+    const LoweringInput& input, mir::Arena& mir_arena, mir::Design& design) {
+  if (plan.drives.empty() && plan.aliases.empty()) {
+    return;
+  }
+
+  // Build map from instance_sym -> element index for finding parent modules
+  absl::flat_hash_map<SymbolId, size_t> instance_to_elem;
+  for (size_t i = 0; i < design.elements.size(); ++i) {
+    if (auto* mod = std::get_if<mir::Module>(&design.elements[i])) {
+      instance_to_elem[mod->instance_sym] = i;
+    }
+  }
+
+  // Create drive processes and attach to parent modules
+  for (const auto& drive : plan.drives) {
+    auto parent_it = instance_to_elem.find(drive.parent_instance_sym);
+    if (parent_it == instance_to_elem.end()) {
+      const Symbol& sym = (*input.symbol_table)[drive.parent_instance_sym];
+      throw common::InternalError(
+          "ApplyBindings",
+          std::format(
+              "parent instance '{}' not found in design elements", sym.name));
+    }
+    size_t parent_idx = parent_it->second;
+
+    mir::ProcessId proc_id = CreateDriveProcess(drive, decls, input, mir_arena);
+
+    // Attach process to parent module
+    auto& module = std::get<mir::Module>(design.elements[parent_idx]);
+    module.processes.push_back(proc_id);
+  }
+
+  // Process alias bindings (output/inout ports)
+  for (const auto& alias : plan.aliases) {
+    // Get the child port's place
+    auto child_it = decls.design_places.find(alias.child_port_sym);
+    if (child_it == decls.design_places.end()) {
+      const Symbol& sym = (*input.symbol_table)[alias.child_port_sym];
+      throw common::InternalError(
+          "ApplyBindings",
+          std::format("child port '{}' not found in design places", sym.name));
+    }
+    mir::PlaceId child_place_id = child_it->second;
+
+    // Validate child place is a simple design slot (no projections)
+    const mir::Place& child_place = mir_arena[child_place_id];
+    if (child_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+      throw common::InternalError(
+          "ApplyBindings", "alias child port must be a design slot");
+    }
+    if (!child_place.projections.empty()) {
+      throw common::InternalError(
+          "ApplyBindings", "alias child port must have no projections");
+    }
+
+    mir::SlotId child_slot{static_cast<uint32_t>(child_place.root.id)};
+
+    // Lower the parent lvalue expression to get the target PlaceId.
+    // Note: We use a fresh Context with no current block, so any lvalue
+    // that requires emitting instructions will fail. This is intentional:
+    // alias targets must be pure places (no runtime computation).
+    Context ctx{
+        .mir_arena = &mir_arena,
+        .hir_arena = input.hir_arena,
+        .type_arena = input.type_arena,
+        .constant_arena = input.constant_arena,
+        .symbol_table = input.symbol_table,
+        .module_places = &decls.design_places,
+        .local_places = {},
+        .next_local_id = 0,
+        .next_temp_id = 0,
+        .builtin_types = input.builtin_types,
+        .symbol_to_mir_function = &decls.functions,
+        .return_place = mir::kInvalidPlaceId,
+    };
+
+    MirBuilder builder(&mir_arena, &ctx);
+    LvalueResult parent_lvalue = LowerLvalue(alias.lvalue, builder);
+
+    // Validate parent place resolves to kDesign (may have projections)
+    const mir::Place& parent_place = mir_arena[parent_lvalue.place];
+    if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+      throw common::InternalError(
+          "ApplyBindings", "alias target must be a design slot");
+    }
+
+    // V1 invariant: alias targets must NOT contain BitRange projections.
+    // This keeps alias composition trivial: child accesses just use the
+    // resolved target place. If target had BitRange, composing with child's
+    // own projections would be complex/invalid.
+    for (const auto& proj : parent_place.projections) {
+      if (mir::IsBitRange(proj)) {
+        throw common::InternalError(
+            "ApplyBindings",
+            "alias target must not contain bit-range projections");
+      }
+    }
+
+    // Record alias: child_slot -> parent_place
+    design.alias_map[child_slot] = parent_lvalue.place;
+  }
+}
+
 }  // namespace
 
 auto CollectDeclarations(
@@ -135,6 +322,11 @@ auto LowerDesign(
           }
         },
         element);
+  }
+
+  // Apply port drive bindings (creates synthetic always_comb processes)
+  if (input.binding_plan != nullptr) {
+    ApplyBindings(*input.binding_plan, decls, input, mir_arena, result);
   }
 
   return result;

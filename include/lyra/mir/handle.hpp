@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <utility>
 
 namespace lyra::mir {
@@ -93,3 +94,11 @@ struct SlotId {
 constexpr SlotId kInvalidSlotId{UINT32_MAX};
 
 }  // namespace lyra::mir
+
+// std::hash specialization for SlotId (enables std::unordered_set/map)
+template <>
+struct std::hash<lyra::mir::SlotId> {
+  auto operator()(lyra::mir::SlotId s) const noexcept -> size_t {
+    return std::hash<uint32_t>{}(s.value);
+  }
+};

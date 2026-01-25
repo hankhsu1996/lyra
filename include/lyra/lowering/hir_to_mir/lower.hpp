@@ -7,6 +7,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
@@ -21,6 +22,7 @@ struct LoweringInput {
   const ConstantArena* constant_arena = nullptr;
   const SymbolTable* symbol_table = nullptr;
   BuiltinTypes builtin_types;
+  const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;
 };
 
 struct LoweringResult {

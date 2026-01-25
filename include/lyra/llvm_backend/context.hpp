@@ -173,10 +173,16 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
+  // Resolve alias chains for a place. If the place's root is an aliased design
+  // slot, returns the resolved place (with target root + composed projections).
+  // Handles chained aliases with cycle detection.
+  [[nodiscard]] auto ResolveAliases(mir::PlaceId place_id) -> mir::Place;
+
   // Get pointer to a place's base storage via GEP into design or frame.
   // Applies all non-BitRange projections (IndexProjection, etc.) and stops
   // at the first BitRangeProjection. For bitrange reads/writes, use
   // ComposeBitRange() to get the composed offset within this base.
+  // Note: Automatically resolves aliases for output/inout ports.
   [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id) -> llvm::Value*;
 
   // Get the LLVM type for a place's storage

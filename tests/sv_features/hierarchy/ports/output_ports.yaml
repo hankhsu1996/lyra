@@ -1,6 +1,10 @@
 feature: hierarchy_output_ports
 description: Tests output port binding from child to parent
 
+# Output/inout ports use storage aliasing - the child port aliases
+# the parent's variable. This means reads/writes to the child port
+# directly access the parent's storage.
+
 cases:
   - name: output_port_updates_parent
     description: Child output port updates parent signal
@@ -65,3 +69,24 @@ cases:
         out1: 11
         out2: 12
       time: 1
+
+  # Note: inout ports require net types in SystemVerilog, not variables.
+  # Tests for inout will be added when net type support is implemented.
+
+  - name: output_display
+    description: Child output displayed by parent
+    sv: |
+      module Child(output int result);
+        initial result = 42;
+      endmodule
+
+      module Top;
+        int out;
+        Child c(.result(out));
+        initial begin
+          #1;
+          $display("out=%0d", out);
+        end
+      endmodule
+    expect:
+      stdout: "out=42\n"

@@ -29,6 +29,7 @@ auto CompileToMir(const CompilationInput& input)
       .constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
+      .binding_plan = &hir_result.binding_plan,
   };
 
   lowering::hir_to_mir::LoweringResult mir_result;
