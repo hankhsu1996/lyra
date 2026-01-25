@@ -485,14 +485,14 @@ auto LowerStatement(
       if (case_stmt.defaultCase != nullptr) {
         auto default_result =
             LowerStatement(*case_stmt.defaultCase, registrar, ctx);
-        if (!default_result.has_value()) {
-          ctx->sink->Error(span, "default case body cannot be empty");
-          return hir::kInvalidStatementId;
+        // nullopt means empty statement (e.g., "default: ;") - valid, just no
+        // action
+        if (default_result.has_value()) {
+          if (!*default_result) {
+            return hir::kInvalidStatementId;
+          }
+          default_statement = *default_result;
         }
-        if (!*default_result) {
-          return hir::kInvalidStatementId;
-        }
-        default_statement = *default_result;
       }
 
       return ctx->hir_arena->AddStatement(
