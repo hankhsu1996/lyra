@@ -8,28 +8,52 @@ suites:
   llvm_dev:
     backend: llvm
     include_regex:
-      - operators/
       - control_flow/
       - datatypes/
-      - system_tf/pure/
+      - generate/
+      - hierarchy/
+      - operators/
+      - packages/
       - processes/
       - scheduling/
-      - hierarchy/refs/
-      - hierarchy/ports/
+      - system_tf/
     exclude_regex:
-      - system_tf/pure/sformat_runtime.yaml
-      - system_tf/pure/sformat_autoformat.yaml
+      # generate - function calls not supported
+      - generate/generate.yaml
+      # hierarchy - implicit named connections not supported
+      - hierarchy/instantiation/instantiation.yaml
+      # packages - function calls and package variables not supported
+      - packages/basic.yaml
+      - packages/functions.yaml
+      # processes - generate not supported
       - processes/generate.yaml
+      # system_tf/effect - various unsupported features
+      - system_tf/effect/display.yaml
+      - system_tf/effect/fdisplay.yaml
+      - system_tf/effect/fopen.yaml
+      - system_tf/effect/plusargs.yaml
+      - system_tf/effect/readmem.yaml
+      - system_tf/effect/severity.yaml
+      # system_tf/pure - various unsupported features
+      - system_tf/pure/sformat_autoformat.yaml
+      - system_tf/pure/sformat_runtime.yaml
+      # system_tf/state - various unsupported features
+      - system_tf/state/finish.yaml
+      - system_tf/state/fstrobe.yaml
+      - system_tf/state/monitor.yaml
+      - system_tf/state/strobe.yaml
+      - system_tf/state/time.yaml
+      - system_tf/state/timeformat.yaml
 
   mir_dev:
     backend: mir
     include_regex:
-      - operators/
       - control_flow/
       - datatypes/
-      - system_tf/pure/
-      - system_tf/effect/
       - functions/
-      - packages/
-      - hierarchy/refs/
       - generate/
+      - hierarchy/refs/
+      - operators/
+      - packages/
+      - system_tf/effect/
+      - system_tf/pure/
