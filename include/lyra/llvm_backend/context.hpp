@@ -12,6 +12,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -229,6 +230,17 @@ class Context {
   // Release all registered owned temps (called by StatementScope destructor)
   void ReleaseOwnedTemps();
 
+  // User function registry for function calls
+  void RegisterUserFunction(mir::FunctionId func_id, llvm::Function* llvm_func);
+  [[nodiscard]] auto GetUserFunction(mir::FunctionId func_id) const
+      -> llvm::Function*;
+  [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
+
+  // Build LLVM function type from MIR function signature.
+  // All user functions receive (DesignState*, Engine*, args...).
+  [[nodiscard]] auto BuildUserFunctionType(const mir::FunctionSignature& sig)
+      -> llvm::FunctionType*;
+
  private:
   const mir::Design& design_;
   const mir::Arena& arena_;
@@ -305,6 +317,9 @@ class Context {
 
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;
+
+  // User function registry: FunctionId -> llvm::Function*
+  absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

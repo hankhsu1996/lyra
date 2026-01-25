@@ -28,23 +28,29 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
   };
 }
 
-auto Context::AllocLocal(SymbolId sym, TypeId type) -> mir::PlaceId {
+auto Context::AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation {
   assert(
       (module_places == nullptr || !module_places->contains(sym)) &&
       "AllocLocal called for symbol that already has a module place");
+
+  auto local_slot = static_cast<uint32_t>(next_local_id++);
 
   mir::Place place{
       .root =
           mir::PlaceRoot{
               .kind = mir::PlaceRoot::Kind::kLocal,
-              .id = next_local_id++,
+              .id = static_cast<int>(local_slot),
               .type = type,
           },
       .projections = {},
   };
   mir::PlaceId place_id = mir_arena->AddPlace(std::move(place));
   local_places[sym] = place_id;
-  return place_id;
+
+  // Populate type table during allocation, not post-collection
+  local_types.push_back(type);
+
+  return LocalAllocation{.place = place_id, .local_slot = local_slot};
 }
 
 auto Context::AllocTemp(TypeId type) -> mir::PlaceId {
@@ -57,6 +63,8 @@ auto Context::AllocTemp(TypeId type) -> mir::PlaceId {
           },
       .projections = {},
   };
+  // Populate type table during allocation, not post-collection
+  temp_types.push_back(type);
   return mir_arena->AddPlace(std::move(place));
 }
 

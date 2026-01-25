@@ -394,6 +394,40 @@ void LowerCompute4State(
             }
             llvm_unreachable("unhandled RuntimeQueryKind");
           },
+          [&](const mir::UserCallRvalueInfo& info) -> FourStateValue {
+            auto& builder = context.GetBuilder();
+
+            // Get the LLVM function for this MIR function
+            llvm::Function* callee = context.GetUserFunction(info.callee);
+
+            // Build argument list: design pointer, engine pointer, then user
+            // args
+            std::vector<llvm::Value*> args;
+            args.push_back(context.GetDesignPointer());
+            args.push_back(context.GetEnginePointer());
+
+            // Add user arguments (lower as 4-state if needed)
+            for (const auto& operand : compute.value.operands) {
+              args.push_back(LowerOperandRaw(context, operand));
+            }
+
+            // Call the function
+            llvm::Value* result = builder.CreateCall(callee, args, "user_call");
+
+            // Unpack 4-state result
+            llvm::Value* val =
+                builder.CreateExtractValue(result, 0, "call.val");
+            llvm::Value* unk =
+                builder.CreateExtractValue(result, 1, "call.unk");
+
+            // Coerce to expected element type if needed
+            if (val->getType() != elem_type) {
+              val = builder.CreateZExtOrTrunc(val, elem_type, "call.val.fit");
+              unk = builder.CreateZExtOrTrunc(unk, elem_type, "call.unk.fit");
+            }
+
+            return {.value = val, .unknown = unk};
+          },
           [&](const auto& /*info*/) -> FourStateValue {
             throw common::UnsupportedErrorException(
                 common::UnsupportedLayer::kMirToLlvm,

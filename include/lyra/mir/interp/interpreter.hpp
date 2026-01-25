@@ -83,6 +83,9 @@ struct ProcessState {
   // Set by ExecTerminator when process suspends (Delay, Wait, Repeat).
   // RunUntilSuspend checks this before returning.
   std::optional<SuspendReason> pending_suspend;
+  // Set by ExecTerminator when handling Return with a value (function calls).
+  // RunFunction reads this after execution completes.
+  std::optional<RuntimeValue> function_return_value;
 };
 
 // MIR Interpreter: executes a single process to completion.

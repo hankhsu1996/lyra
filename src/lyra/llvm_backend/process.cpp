@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <format>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -14,10 +16,14 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
+#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -394,6 +400,235 @@ auto GenerateProcessFunction(
   context.SetEnginePointer(nullptr);
 
   return func;
+}
+
+auto DeclareUserFunction(
+    Context& context, mir::FunctionId func_id, const std::string& name)
+    -> llvm::Function* {
+  auto& module = context.GetModule();
+  const auto& arena = context.GetMirArena();
+  const auto& func = arena[func_id];
+
+  // Build LLVM function type from MIR signature
+  llvm::FunctionType* fn_type = context.BuildUserFunctionType(func.signature);
+
+  // Create function declaration
+  auto* llvm_func = llvm::Function::Create(
+      fn_type, llvm::Function::InternalLinkage, name, &module);
+
+  // Register in context for call resolution
+  context.RegisterUserFunction(func_id, llvm_func);
+
+  return llvm_func;
+}
+
+namespace {
+
+// Collect all unique PlaceIds that are Local or Temp root places from a
+// function Map from local/temp id -> PlaceId for later lookup
+struct PlaceCollector {
+  absl::flat_hash_map<int, mir::PlaceId> locals;
+  absl::flat_hash_map<int, mir::PlaceId> temps;
+
+  void CollectFromPlace(mir::PlaceId place_id, const mir::Arena& arena) {
+    const auto& place = arena[place_id];
+    if (place.root.kind == mir::PlaceRoot::Kind::kLocal) {
+      if (!locals.contains(place.root.id)) {
+        locals[place.root.id] = place_id;
+      }
+    } else if (place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+      if (!temps.contains(place.root.id)) {
+        temps[place.root.id] = place_id;
+      }
+    }
+  }
+
+  void CollectFromOperand(const mir::Operand& op, const mir::Arena& arena) {
+    if (op.kind == mir::Operand::Kind::kUse) {
+      CollectFromPlace(std::get<mir::PlaceId>(op.payload), arena);
+    }
+  }
+
+  void CollectFromFunction(const mir::Function& func, const mir::Arena& arena) {
+    for (const auto& block : func.blocks) {
+      for (const auto& inst : block.instructions) {
+        std::visit(
+            [&](const auto& data) {
+              using T = std::decay_t<decltype(data)>;
+              if constexpr (std::is_same_v<T, mir::Assign>) {
+                CollectFromPlace(data.target, arena);
+                CollectFromOperand(data.source, arena);
+              } else if constexpr (std::is_same_v<T, mir::Compute>) {
+                CollectFromPlace(data.target, arena);
+                for (const auto& op : data.value.operands) {
+                  CollectFromOperand(op, arena);
+                }
+              } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
+                CollectFromPlace(data.target, arena);
+                CollectFromOperand(data.source, arena);
+                CollectFromOperand(data.validity, arena);
+              } else if constexpr (std::is_same_v<T, mir::Effect>) {
+                // Effects may have operands too
+                std::visit(
+                    [&](const auto& eff) {
+                      if constexpr (requires { eff.operands; }) {
+                        for (const auto& eop : eff.operands) {
+                          CollectFromOperand(eop, arena);
+                        }
+                      }
+                    },
+                    data.op);
+              } else if constexpr (std::is_same_v<T, mir::NonBlockingAssign>) {
+                CollectFromPlace(data.target, arena);
+                CollectFromOperand(data.source, arena);
+              }
+            },
+            inst.data);
+      }
+      // Collect from terminator operands
+      std::visit(
+          [&](const auto& term) {
+            using T = std::decay_t<decltype(term)>;
+            if constexpr (std::is_same_v<T, mir::Branch>) {
+              CollectFromPlace(term.condition, arena);
+            } else if constexpr (std::is_same_v<T, mir::Return>) {
+              if (term.value.has_value()) {
+                CollectFromOperand(*term.value, arena);
+              }
+            } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
+              for (auto cond : term.conditions) {
+                CollectFromPlace(cond, arena);
+              }
+            }
+          },
+          block.terminator.data);
+    }
+  }
+};
+
+}  // namespace
+
+void DefineUserFunction(
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func) {
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& builder = context.GetBuilder();
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  const auto& func = arena[func_id];
+
+  // Create blocks
+  auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
+  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", llvm_func);
+
+  // Create all MIR basic blocks upfront
+  std::vector<llvm::BasicBlock*> llvm_blocks;
+  llvm_blocks.reserve(func.blocks.size());
+  for (size_t i = 0; i < func.blocks.size(); ++i) {
+    auto* bb =
+        llvm::BasicBlock::Create(llvm_ctx, std::format("bb{}", i), llvm_func);
+    llvm_blocks.push_back(bb);
+  }
+
+  // Entry block setup
+  builder.SetInsertPoint(entry_block);
+  context.BeginFunction(*llvm_func);
+
+  // First argument is DesignState*, second is Engine*
+  auto* design_arg = llvm_func->getArg(0);
+  design_arg->setName("design");
+  context.SetDesignPointer(design_arg);
+
+  auto* engine_arg = llvm_func->getArg(1);
+  engine_arg->setName("engine");
+  context.SetEnginePointer(engine_arg);
+
+  // Collect all local/temp places referenced in the function
+  PlaceCollector collector;
+  collector.CollectFromFunction(func, arena);
+
+  // Variable to hold return value (for non-void functions)
+  // Must be allocated before any branches
+  llvm::Value* return_value_ptr = nullptr;
+  const Type& ret_type = types[func.signature.return_type];
+  if (ret_type.Kind() != TypeKind::kVoid) {
+    llvm::Type* ret_llvm_type = llvm_func->getReturnType();
+    return_value_ptr = builder.CreateAlloca(ret_llvm_type, nullptr, "retval");
+  }
+
+  // Pre-allocate storage for parameter locals and store arg values.
+  // Use explicit param_local_slots mapping - do NOT assume param i = local i.
+  // Arguments start at index 2 (after design and engine pointers).
+  for (size_t i = 0; i < func.signature.params.size(); ++i) {
+    uint32_t local_slot = func.param_local_slots[i];
+    auto it = collector.locals.find(static_cast<int>(local_slot));
+    if (it != collector.locals.end()) {
+      // Create alloca for this parameter local
+      llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(it->second);
+
+      // Store argument value into the alloca (offset by 2 for design+engine)
+      llvm::Value* arg_val = llvm_func->getArg(static_cast<unsigned>(i + 2));
+      arg_val->setName(std::format("arg{}", i));
+      builder.CreateStore(arg_val, alloca);
+    }
+  }
+
+  // Jump to first MIR block
+  builder.CreateBr(llvm_blocks[func.entry.value]);
+
+  // Lower each MIR block
+  for (size_t i = 0; i < func.blocks.size(); ++i) {
+    const auto& block = func.blocks[i];
+    builder.SetInsertPoint(llvm_blocks[i]);
+
+    // Lower all instructions
+    for (const auto& instruction : block.instructions) {
+      LowerInstruction(context, instruction);
+    }
+
+    // Lower terminator
+    context.SetCurrentOrigin(block.terminator.origin);
+    std::visit(
+        Overloaded{
+            [&](const mir::Jump& t) { LowerJump(context, t, llvm_blocks); },
+            [&](const mir::Branch& t) { LowerBranch(context, t, llvm_blocks); },
+            [&](const mir::Return& t) {
+              // Store return value if present and non-void
+              if (t.value.has_value() && return_value_ptr != nullptr) {
+                llvm::Value* val = LowerOperandRaw(context, *t.value);
+                builder.CreateStore(val, return_value_ptr);
+              }
+              builder.CreateBr(exit_block);
+            },
+            [&](const mir::Finish&) {
+              // $finish in a function - just return (shouldn't happen normally)
+              builder.CreateBr(exit_block);
+            },
+            [&](const mir::QualifiedDispatch& d) {
+              LowerQualifiedDispatch(context, d, llvm_blocks);
+            },
+            [&](const auto&) {
+              throw common::UnsupportedErrorException(
+                  common::UnsupportedLayer::kMirToLlvm,
+                  common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+                  "terminator not yet supported in user function");
+            },
+        },
+        block.terminator.data);
+  }
+
+  // Exit block: return the value
+  builder.SetInsertPoint(exit_block);
+  if (ret_type.Kind() == TypeKind::kVoid) {
+    builder.CreateRetVoid();
+  } else {
+    llvm::Value* ret_val =
+        builder.CreateLoad(llvm_func->getReturnType(), return_value_ptr, "ret");
+    builder.CreateRet(ret_val);
+  }
+
+  // Clean up function scope
+  context.EndFunction();
+  context.SetDesignPointer(nullptr);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

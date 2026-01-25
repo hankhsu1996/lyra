@@ -202,6 +202,34 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
 
+  // Two-pass user function generation for mutual recursion support
+  // Collect all function IDs from modules and packages
+  std::vector<mir::FunctionId> all_func_ids;
+  for (const auto& element : input.design->elements) {
+    std::visit(
+        [&](const auto& elem) {
+          for (mir::FunctionId func_id : elem.functions) {
+            all_func_ids.push_back(func_id);
+          }
+        },
+        element);
+  }
+
+  // Pass 1: Declare all user functions (builds function types, registers them)
+  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
+  declared_funcs.reserve(all_func_ids.size());
+  for (size_t i = 0; i < all_func_ids.size(); ++i) {
+    mir::FunctionId func_id = all_func_ids[i];
+    auto* llvm_func =
+        DeclareUserFunction(context, func_id, std::format("user_func_{}", i));
+    declared_funcs.emplace_back(func_id, llvm_func);
+  }
+
+  // Pass 2: Define all user functions (emits bodies, can reference other funcs)
+  for (const auto& [func_id, llvm_func] : declared_funcs) {
+    DefineUserFunction(context, func_id, llvm_func);
+  }
+
   // Generate process functions (use process_ids from layout for single source
   // of truth)
   std::vector<llvm::Function*> process_funcs;

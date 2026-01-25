@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -33,7 +32,9 @@ MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
       origin_map_(origin_map),
       current_block_(kInvalidBlockIndex),
       blocks_{} {
-  assert(arena_ && ctx_);
+  if (arena_ == nullptr || ctx_ == nullptr) {
+    throw common::InternalError("MirBuilder", "arena and ctx must not be null");
+  }
 }
 
 void MirBuilder::RecordStatementOrigin(hir::StatementId stmt_id) {
@@ -48,6 +49,55 @@ void MirBuilder::RecordStatementOrigin(hir::StatementId stmt_id) {
   common::OriginId origin =
       origin_map_->Record(MirNodeKind::kInstruction, 0, stmt_id);
   current_origin_ = origin;
+}
+
+auto MirBuilder::IsReachable() const -> bool {
+  if (current_block_ == kInvalidBlockIndex) {
+    return false;
+  }
+  return !blocks_[current_block_.value].terminator.has_value();
+}
+
+void MirBuilder::ClearInsertionPoint() {
+  current_block_ = kInvalidBlockIndex;
+}
+
+// Instruction emission: permissive for dead code.
+// - No insertion point → no-op (after ClearInsertionPoint from control flow)
+// - Block sealed → no-op (dead code after terminator, frontend should catch)
+template <class InstT>
+void MirBuilder::EmitInst(InstT inst) {
+  if (finished_) {
+    throw common::InternalError("MirBuilder", "Emit after Finish()");
+  }
+  if (current_block_ == kInvalidBlockIndex) {
+    return;
+  }
+  if (blocks_[current_block_.value].terminator.has_value()) {
+    return;
+  }
+  blocks_[current_block_.value].instructions.push_back(
+      mir::Instruction{.data = std::move(inst), .origin = current_origin_});
+}
+
+// Terminator emission: strict for CFG correctness.
+// - No insertion point → no-op (after ClearInsertionPoint from control flow)
+// - Block already sealed → THROW (double-terminator is a CFG bug)
+// Use EmitProcessEpilogue/EmitImplicitReturn for conditional termination.
+template <class TermT>
+void MirBuilder::EmitTerm(TermT term) {
+  if (finished_) {
+    throw common::InternalError("MirBuilder", "EmitTerm after Finish()");
+  }
+  if (current_block_ == kInvalidBlockIndex) {
+    return;
+  }
+  auto& block = blocks_[current_block_.value];
+  if (block.terminator.has_value()) {
+    throw common::InternalError("MirBuilder", "block already has terminator");
+  }
+  block.terminator =
+      mir::Terminator{.data = std::move(term), .origin = current_origin_};
 }
 
 auto MirBuilder::CreateBlock() -> BlockIndex {
@@ -70,6 +120,7 @@ void MirBuilder::SetCurrentBlock(BlockIndex block) {
         "MirBuilder", "SetCurrentBlock: invalid block index");
   }
   current_block_ = block;
+  // Reachability is now derived on-demand via IsReachable()
 }
 
 auto MirBuilder::CurrentBlock() const -> BlockIndex {
@@ -77,44 +128,15 @@ auto MirBuilder::CurrentBlock() const -> BlockIndex {
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "EmitAssign called after Finish()");
-  }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError("MirBuilder", "EmitAssign: no current block");
-  }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{
-          .data = mir::Assign{.target = target, .source = std::move(source)},
-          .origin = current_origin_});
+  EmitInst(mir::Assign{.target = target, .source = std::move(source)});
 }
 
 void MirBuilder::EmitCompute(mir::PlaceId target, mir::Rvalue value) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "EmitCompute called after Finish()");
-  }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError("MirBuilder", "EmitCompute: no current block");
-  }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{
-          .data = mir::Compute{.target = target, .value = std::move(value)},
-          .origin = current_origin_});
+  EmitInst(mir::Compute{.target = target, .value = std::move(value)});
 }
 
 void MirBuilder::EmitEffect(mir::EffectOp op) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "EmitEffect called after Finish()");
-  }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError("MirBuilder", "EmitEffect: no current block");
-  }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{
-          .data = mir::Effect{.op = std::move(op)}, .origin = current_origin_});
+  EmitInst(mir::Effect{.op = std::move(op)});
 }
 
 auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
@@ -191,64 +213,264 @@ auto MirBuilder::EmitGuardedUse(
 
 void MirBuilder::EmitGuardedAssign(
     mir::PlaceId target, mir::Operand source, mir::Operand validity) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "EmitGuardedAssign called after Finish()");
-  }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError(
-        "MirBuilder", "EmitGuardedAssign: no current block");
-  }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{
-          .data =
-              mir::GuardedAssign{
-                  .target = target,
-                  .source = std::move(source),
-                  .validity = std::move(validity)},
-          .origin = current_origin_});
+  EmitInst(
+      mir::GuardedAssign{
+          .target = target,
+          .source = std::move(source),
+          .validity = std::move(validity)});
 }
 
 void MirBuilder::EmitNonBlockingAssign(
     mir::PlaceId target, mir::Operand source) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "EmitNonBlockingAssign called after Finish()");
-  }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError(
-        "MirBuilder", "EmitNonBlockingAssign: no current block");
-  }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{
-          .data =
-              mir::NonBlockingAssign{
-                  .target = target, .source = std::move(source)},
-          .origin = current_origin_});
+  EmitInst(
+      mir::NonBlockingAssign{.target = target, .source = std::move(source)});
 }
 
-void MirBuilder::SealCurrentBlock(mir::Terminator terminator) {
-  if (finished_) {
-    throw common::InternalError(
-        "MirBuilder", "SealCurrentBlock called after Finish()");
+void MirBuilder::EmitIf(
+    mir::Operand condition, std::function<void()> then_body) {
+  // For if-then (no else), merge is always reachable via the false branch.
+  BlockIndex then_bb = CreateBlock();
+  BlockIndex merge_bb = CreateBlock();
+
+  EmitBranch(condition, then_bb, merge_bb);
+
+  SetCurrentBlock(then_bb);
+  then_body();
+  if (IsReachable()) {
+    EmitJump(merge_bb);
   }
-  if (current_block_ == kInvalidBlockIndex) {
-    throw common::InternalError(
-        "MirBuilder", "SealCurrentBlock: no current block");
+
+  SetCurrentBlock(merge_bb);
+  // Merge is always reachable because the else branch (false) goes here
+}
+
+void MirBuilder::EmitIfElse(
+    mir::Operand condition, std::function<void()> then_body,
+    std::function<void()> else_body) {
+  BlockIndex then_bb = CreateBlock();
+  BlockIndex else_bb = CreateBlock();
+
+  EmitBranch(condition, then_bb, else_bb);
+
+  // Execute then branch
+  SetCurrentBlock(then_bb);
+  then_body();
+  bool then_falls_through = IsReachable();
+  BlockIndex then_end_bb = CurrentBlock();
+
+  // Execute else branch
+  SetCurrentBlock(else_bb);
+  else_body();
+  bool else_falls_through = IsReachable();
+  BlockIndex else_end_bb = CurrentBlock();
+
+  // Structural join: only create merge block if needed
+  if (then_falls_through || else_falls_through) {
+    BlockIndex merge_bb = CreateBlock();
+    if (then_falls_through) {
+      SetCurrentBlock(then_end_bb);
+      EmitJump(merge_bb);
+    }
+    if (else_falls_through) {
+      SetCurrentBlock(else_end_bb);
+      EmitJump(merge_bb);
+    }
+    SetCurrentBlock(merge_bb);
+  } else {
+    // Both branches terminate - no insertion point
+    ClearInsertionPoint();
   }
-  auto& block = blocks_[current_block_.value];
-  if (block.terminator.has_value()) {
+}
+
+void MirBuilder::EmitPriorityChain(
+    const std::vector<std::function<mir::Operand()>>& conditions,
+    const std::vector<std::function<void()>>& bodies,
+    std::function<void()> else_body) {
+  if (conditions.size() != bodies.size()) {
     throw common::InternalError(
-        "MirBuilder", "SealCurrentBlock: block already has terminator");
+        "EmitPriorityChain", "conditions.size() != bodies.size()");
   }
-  block.terminator = std::move(terminator);
+
+  // Create body blocks for each condition
+  std::vector<BlockIndex> body_blocks;
+  for (size_t i = 0; i < conditions.size(); ++i) {
+    body_blocks.push_back(CreateBlock());
+  }
+
+  // Else block
+  BlockIndex else_bb = CreateBlock();
+
+  // Generate branch cascade: condition[i] ? body[i] : next_check
+  for (size_t i = 0; i < conditions.size(); ++i) {
+    mir::Operand cond = conditions[i]();
+    BlockIndex next_check =
+        (i + 1 < conditions.size()) ? CreateBlock() : else_bb;
+    EmitBranch(cond, body_blocks[i], next_check);
+
+    if (i + 1 < conditions.size()) {
+      SetCurrentBlock(next_check);
+    }
+  }
+
+  // Execute body blocks and track which fall through
+  std::vector<BlockIndex> fallthrough_blocks;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    SetCurrentBlock(body_blocks[i]);
+    bodies[i]();
+    if (IsReachable()) {
+      fallthrough_blocks.push_back(CurrentBlock());
+    }
+  }
+
+  // Execute else block
+  SetCurrentBlock(else_bb);
+  else_body();
+  if (IsReachable()) {
+    fallthrough_blocks.push_back(CurrentBlock());
+  }
+
+  // Structural join: only create merge block if needed
+  if (!fallthrough_blocks.empty()) {
+    BlockIndex merge_bb = CreateBlock();
+    for (BlockIndex fb : fallthrough_blocks) {
+      SetCurrentBlock(fb);
+      EmitJump(merge_bb);
+    }
+    SetCurrentBlock(merge_bb);
+  } else {
+    ClearInsertionPoint();
+  }
+}
+
+void MirBuilder::EmitUniqueDispatch(
+    mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
+    const std::vector<mir::PlaceId>& conditions,
+    const std::vector<std::function<void()>>& bodies,
+    std::function<void()> else_body, bool has_else) {
+  // Create body blocks + else block
+  std::vector<BlockIndex> body_blocks;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    body_blocks.push_back(CreateBlock());
+  }
+  BlockIndex else_bb = CreateBlock();
+
+  // Build targets: [body0, body1, ..., bodyN, else]
+  std::vector<BlockIndex> targets = body_blocks;
+  targets.push_back(else_bb);
+
+  EmitQualifiedDispatch(
+      qualifier, statement_kind, conditions, targets, has_else);
+
+  // Execute body blocks and track which fall through
+  std::vector<BlockIndex> fallthrough_blocks;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    SetCurrentBlock(body_blocks[i]);
+    bodies[i]();
+    if (IsReachable()) {
+      fallthrough_blocks.push_back(CurrentBlock());
+    }
+  }
+
+  // Execute else block
+  SetCurrentBlock(else_bb);
+  else_body();
+  if (IsReachable()) {
+    fallthrough_blocks.push_back(CurrentBlock());
+  }
+
+  // Structural join: only create merge block if needed
+  if (!fallthrough_blocks.empty()) {
+    BlockIndex merge_bb = CreateBlock();
+    for (BlockIndex fb : fallthrough_blocks) {
+      SetCurrentBlock(fb);
+      EmitJump(merge_bb);
+    }
+    SetCurrentBlock(merge_bb);
+  } else {
+    ClearInsertionPoint();
+  }
+}
+
+void MirBuilder::EmitCaseCascade(
+    mir::PlaceId selector, mir::BinaryOp comparison_op,
+    const std::vector<CaseItem>& items, std::function<void()> default_body) {
+  BlockIndex default_bb = CreateBlock();
+
+  // Create body blocks and first-check blocks for each item
+  std::vector<BlockIndex> item_body_blocks;
+  std::vector<BlockIndex> item_first_check_blocks;
+  for (size_t i = 0; i < items.size(); ++i) {
+    item_body_blocks.push_back(CreateBlock());
+    item_first_check_blocks.push_back(CreateBlock());
+  }
+
+  // Jump to first check or default
+  if (!items.empty()) {
+    EmitJump(item_first_check_blocks[0]);
+  } else {
+    EmitJump(default_bb);
+  }
+
+  // Emit check cascade and body blocks, tracking fallthrough
+  std::vector<BlockIndex> fallthrough_blocks;
+  for (size_t i = 0; i < items.size(); ++i) {
+    const CaseItem& item = items[i];
+    BlockIndex body_bb = item_body_blocks[i];
+    BlockIndex next_item_bb =
+        (i + 1 < items.size()) ? item_first_check_blocks[i + 1] : default_bb;
+
+    SetCurrentBlock(item_first_check_blocks[i]);
+
+    // Emit OR'd expression checks: any match -> body
+    for (size_t j = 0; j < item.expressions.size(); ++j) {
+      mir::Operand val = item.expressions[j]();
+      mir::Rvalue cmp_rvalue{
+          .operands = {mir::Operand::Use(selector), std::move(val)},
+          .info = mir::BinaryRvalueInfo{.op = comparison_op},
+      };
+      mir::PlaceId cmp_result =
+          EmitTemp(ctx_->GetBitType(), std::move(cmp_rvalue));
+
+      bool is_last_expr = (j + 1 == item.expressions.size());
+      BlockIndex nomatch_bb = is_last_expr ? next_item_bb : CreateBlock();
+
+      EmitBranch(mir::Operand::Use(cmp_result), body_bb, nomatch_bb);
+
+      if (!is_last_expr) {
+        SetCurrentBlock(nomatch_bb);
+      }
+    }
+
+    // Execute body
+    SetCurrentBlock(body_bb);
+    item.body();
+    if (IsReachable()) {
+      fallthrough_blocks.push_back(CurrentBlock());
+    }
+  }
+
+  // Execute default block
+  SetCurrentBlock(default_bb);
+  default_body();
+  if (IsReachable()) {
+    fallthrough_blocks.push_back(CurrentBlock());
+  }
+
+  // Structural join: only create merge block if needed
+  if (!fallthrough_blocks.empty()) {
+    BlockIndex merge_bb = CreateBlock();
+    for (BlockIndex fb : fallthrough_blocks) {
+      SetCurrentBlock(fb);
+      EmitJump(merge_bb);
+    }
+    SetCurrentBlock(merge_bb);
+  } else {
+    ClearInsertionPoint();
+  }
 }
 
 void MirBuilder::EmitJump(BlockIndex target) {
-  SealCurrentBlock(
-      mir::Terminator{
-          .data = mir::Jump{.target = mir::BasicBlockId{target.value}},
-          .origin = current_origin_});
+  EmitTerm(mir::Jump{.target = mir::BasicBlockId{target.value}});
 }
 
 void MirBuilder::EmitBranch(
@@ -258,16 +480,12 @@ void MirBuilder::EmitBranch(
         "EmitBranch", "branch condition must be a Use operand");
   }
   auto cond_place = std::get<mir::PlaceId>(cond.payload);
-
-  SealCurrentBlock(
-      mir::Terminator{
-          .data =
-              mir::Branch{
-                  .condition = cond_place,
-                  .then_target = mir::BasicBlockId{then_bb.value},
-                  .else_target = mir::BasicBlockId{else_bb.value},
-              },
-          .origin = current_origin_});
+  EmitTerm(
+      mir::Branch{
+          .condition = cond_place,
+          .then_target = mir::BasicBlockId{then_bb.value},
+          .else_target = mir::BasicBlockId{else_bb.value},
+      });
 }
 
 void MirBuilder::EmitQualifiedDispatch(
@@ -287,95 +505,113 @@ void MirBuilder::EmitQualifiedDispatch(
     bb_targets.push_back(mir::BasicBlockId{target.value});
   }
 
-  SealCurrentBlock(
-      mir::Terminator{
-          .data =
-              mir::QualifiedDispatch{
-                  .qualifier = qualifier,
-                  .statement_kind = statement_kind,
-                  .conditions = conditions,
-                  .targets = std::move(bb_targets),
-                  .has_else = has_else,
-              },
-          .origin = current_origin_});
+  EmitTerm(
+      mir::QualifiedDispatch{
+          .qualifier = qualifier,
+          .statement_kind = statement_kind,
+          .conditions = conditions,
+          .targets = std::move(bb_targets),
+          .has_else = has_else,
+      });
 }
 
-void MirBuilder::EmitReturn() {
-  SealCurrentBlock(
-      mir::Terminator{.data = mir::Return{}, .origin = current_origin_});
+void MirBuilder::EmitReturn(mir::Operand value) {
+  EmitTerm(mir::Return{.value = std::make_optional(std::move(value))});
 }
 
 void MirBuilder::EmitRepeat() {
-  SealCurrentBlock(
-      mir::Terminator{.data = mir::Repeat{}, .origin = current_origin_});
+  EmitTerm(mir::Repeat{});
 }
 
 void MirBuilder::EmitDelay(uint64_t ticks, BlockIndex resume) {
-  SealCurrentBlock(
-      mir::Terminator{
-          .data =
-              mir::Delay{
-                  .ticks = ticks,
-                  .resume = mir::BasicBlockId{resume.value},
-              },
-          .origin = current_origin_});
+  EmitTerm(
+      mir::Delay{
+          .ticks = ticks,
+          .resume = mir::BasicBlockId{resume.value},
+      });
 }
 
 void MirBuilder::EmitWait(
     std::vector<mir::WaitTrigger> triggers, BlockIndex resume) {
-  SealCurrentBlock(
-      mir::Terminator{
-          .data =
-              mir::Wait{
-                  .triggers = std::move(triggers),
-                  .resume = mir::BasicBlockId{resume.value},
-              },
-          .origin = current_origin_});
+  EmitTerm(
+      mir::Wait{
+          .triggers = std::move(triggers),
+          .resume = mir::BasicBlockId{resume.value},
+      });
 }
 
 void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
   if (info) {
-    SealCurrentBlock(
-        mir::Terminator{.data = *std::move(info), .origin = current_origin_});
+    EmitTerm(*std::move(info));
   } else {
-    // Implicit process termination: use Return (don't stop simulation).
+    // Implicit process termination: use Return without value.
     // Only explicit $finish/$stop/$fatal should use Finish terminator.
-    SealCurrentBlock(
-        mir::Terminator{.data = mir::Return{}, .origin = current_origin_});
+    EmitTerm(mir::Return{.value = std::nullopt});
+  }
+}
+
+void MirBuilder::EmitImplicitReturn(TypeId return_type) {
+  if (!IsReachable()) {
+    return;  // All paths explicitly returned
+  }
+
+  const Type& ret_type = (*ctx_->type_arena)[return_type];
+  if (ret_type.Kind() != TypeKind::kVoid) {
+    throw common::InternalError(
+        "MirBuilder::EmitImplicitReturn",
+        "non-void function fell through without return");
+  }
+  EmitTerminate(std::nullopt);
+}
+
+void MirBuilder::EmitProcessEpilogue(mir::ProcessKind kind) {
+  if (!IsReachable()) {
+    return;  // Body explicitly terminated (e.g., $finish)
+  }
+
+  if (kind == mir::ProcessKind::kLooping) {
+    EmitRepeat();
+  } else {
+    EmitTerminate(std::nullopt);
   }
 }
 
 namespace {
 
-// Helper to validate terminator targets are in-range.
-void ValidateTerminatorTargets(const mir::Terminator& term, size_t num_blocks) {
-  auto check_target = [num_blocks](mir::BasicBlockId target) {
-    if (target.value >= num_blocks) {
-      throw common::InternalError(
-          "MirBuilder", "terminator target out of bounds");
-    }
-  };
+// Remap a single block target using the provided mapping.
+// Throws if the target maps to a filtered-out block.
+void RemapTarget(mir::BasicBlockId& target, const std::vector<int>& block_map) {
+  int mapped = block_map[target.value];
+  if (mapped < 0) {
+    throw common::InternalError(
+        "MirBuilder", "terminator targets filtered-out block");
+  }
+  target.value = static_cast<uint32_t>(mapped);
+}
 
+// Remap all block targets in a terminator after filtering blocks.
+void RemapTerminatorTargets(
+    mir::Terminator& term, const std::vector<int>& block_map) {
   std::visit(
-      [&](const auto& t) {
+      [&](auto& t) {
         using T = std::decay_t<decltype(t)>;
         if constexpr (std::is_same_v<T, mir::Jump>) {
-          check_target(t.target);
+          RemapTarget(t.target, block_map);
         } else if constexpr (std::is_same_v<T, mir::Branch>) {
-          check_target(t.then_target);
-          check_target(t.else_target);
+          RemapTarget(t.then_target, block_map);
+          RemapTarget(t.else_target, block_map);
         } else if constexpr (std::is_same_v<T, mir::Switch>) {
-          for (const auto& target : t.targets) {
-            check_target(target);
+          for (auto& target : t.targets) {
+            RemapTarget(target, block_map);
           }
         } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
-          for (const auto& target : t.targets) {
-            check_target(target);
+          for (auto& target : t.targets) {
+            RemapTarget(target, block_map);
           }
         } else if constexpr (std::is_same_v<T, mir::Delay>) {
-          check_target(t.resume);
+          RemapTarget(t.resume, block_map);
         } else if constexpr (std::is_same_v<T, mir::Wait>) {
-          check_target(t.resume);
+          RemapTarget(t.resume, block_map);
         }
         // Return, Finish, Repeat have no targets
       },
@@ -388,27 +624,37 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
   if (finished_) {
     throw common::InternalError("MirBuilder", "Finish called twice");
   }
-
-  // Verify all blocks are sealed and terminator targets are in-range
-  for (const auto& bb : blocks_) {
-    if (!bb.terminator.has_value()) {
-      throw common::InternalError("MirBuilder", "block has no terminator");
-    }
-    ValidateTerminatorTargets(*bb.terminator, blocks_.size());
-  }
-
   finished_ = true;
 
-  // Build result - terminator targets are already local indices
+  // Build block mapping: old index -> new index (or -1 if filtered out).
+  // Blocks with no terminator AND no instructions are dead/unreachable.
+  std::vector<int> block_map(blocks_.size(), -1);
   std::vector<mir::BasicBlock> result;
   result.reserve(blocks_.size());
-  for (auto& bb : blocks_) {
+
+  for (size_t i = 0; i < blocks_.size(); ++i) {
+    auto& bb = blocks_[i];
+    if (!bb.terminator.has_value()) {
+      if (!bb.instructions.empty()) {
+        throw common::InternalError(
+            "MirBuilder", "block has instructions but no terminator");
+      }
+      // Empty block with no terminator - dead/unreachable, skip
+      continue;
+    }
+    block_map[i] = static_cast<int>(result.size());
     result.push_back(
         mir::BasicBlock{
             .instructions = std::move(bb.instructions),
             .terminator = std::move(*bb.terminator),
         });
   }
+
+  // Remap terminator targets to new indices
+  for (auto& bb : result) {
+    RemapTerminatorTargets(bb.terminator, block_map);
+  }
+
   return result;
 }
 

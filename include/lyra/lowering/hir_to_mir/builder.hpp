@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -40,10 +42,7 @@ class MirBuilder {
  public:
   MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map = nullptr);
 
-  auto CreateBlock() -> BlockIndex;
-  void SetCurrentBlock(BlockIndex block);
-  [[nodiscard]] auto CurrentBlock() const -> BlockIndex;
-
+  // Instruction emission.
   void EmitAssign(mir::PlaceId target, mir::Operand source);
   void EmitCompute(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
@@ -83,6 +82,64 @@ class MirBuilder {
   // Emit NonBlockingAssign instruction: schedule target <= source for NBA.
   void EmitNonBlockingAssign(mir::PlaceId target, mir::Operand source);
 
+  // High-level control flow primitives.
+  // These own all CFG mechanics: block creation, branches, reachability joins.
+  // Statement lowering should use these instead of raw CFG operations.
+  //
+  // Callback contract: each body callback must either:
+  //   (a) terminate its block (emit a terminator), or
+  //   (b) leave a valid insertion point representing the fallthrough end block.
+  // The builder captures CurrentBlock() after each callback to determine where
+  // the fallthrough jump should go. Callbacks may create new blocks internally.
+
+  // Emit if-then: condition ? then_body : (fall through)
+  // After return, insertion point is at merge block (always reachable via
+  // else).
+  void EmitIf(mir::Operand condition, std::function<void()> then_body);
+
+  // Emit if-then-else: condition ? then_body : else_body
+  // After return, insertion point is at merge block if any branch fell through,
+  // otherwise cleared (no insertion point).
+  void EmitIfElse(
+      mir::Operand condition, std::function<void()> then_body,
+      std::function<void()> else_body);
+
+  // Emit priority if chain: cascade of condition checks with short-circuit.
+  // Each condition is evaluated lazily; on match, corresponding body executes.
+  // After return, insertion point is at merge if any branch fell through.
+  void EmitPriorityChain(
+      const std::vector<std::function<mir::Operand()>>& conditions,
+      const std::vector<std::function<void()>>& bodies,
+      std::function<void()> else_body);
+
+  // Emit unique dispatch: all conditions evaluated upfront, QualifiedDispatch.
+  // After return, insertion point is at merge if any branch fell through.
+  void EmitUniqueDispatch(
+      mir::DispatchQualifier qualifier,
+      mir::DispatchStatementKind statement_kind,
+      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<std::function<void()>>& bodies,
+      std::function<void()> else_body, bool has_else);
+
+  // Case item for EmitCaseCascade: expressions (OR'd together) + body.
+  struct CaseItem {
+    std::vector<std::function<mir::Operand()>> expressions;
+    std::function<void()> body;
+  };
+
+  // Emit case cascade: selector compared against each item's expressions.
+  // For each item, expressions are OR'd (any match -> body executes).
+  // After return, insertion point is at merge if any branch fell through.
+  void EmitCaseCascade(
+      mir::PlaceId selector, mir::BinaryOp comparison_op,
+      const std::vector<CaseItem>& items, std::function<void()> default_body);
+
+  // Low-level CFG primitives (for special cases like loops, delays, waits).
+  // Prefer high-level primitives when possible.
+  auto CreateBlock() -> BlockIndex;
+  void SetCurrentBlock(BlockIndex block);
+  [[nodiscard]] auto CurrentBlock() const -> BlockIndex;
+
   void EmitJump(BlockIndex target);
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitQualifiedDispatch(
@@ -90,11 +147,23 @@ class MirBuilder {
       mir::DispatchStatementKind statement_kind,
       const std::vector<mir::PlaceId>& conditions,
       const std::vector<BlockIndex>& targets, bool has_else);
-  void EmitReturn();
+  void EmitReturn(mir::Operand value);
   void EmitRepeat();
   void EmitDelay(uint64_t ticks, BlockIndex resume);
   void EmitWait(std::vector<mir::WaitTrigger> triggers, BlockIndex resume);
   void EmitTerminate(std::optional<mir::Finish> info = std::nullopt);
+
+  // Emit implicit return for function epilogue.
+  // If unreachable: no-op (all paths explicitly returned).
+  // If reachable + void return type: emit Terminate.
+  // If reachable + non-void return type: throws InternalError.
+  void EmitImplicitReturn(TypeId return_type);
+
+  // Emit process epilogue based on kind.
+  // If unreachable: no-op (body explicitly terminated, e.g., $finish).
+  // If reachable + kLooping: emit Repeat.
+  // If reachable + kOnce/kFinal: emit Terminate.
+  void EmitProcessEpilogue(mir::ProcessKind kind);
 
   // Materialize all blocks. Returns blocks in the same order as they were
   // created. BasicBlockId targets in terminators are local indices.
@@ -125,12 +194,29 @@ class MirBuilder {
   }
 
  private:
+  // Returns true if there is a valid insertion point (current block exists
+  // and has no terminator yet). Used internally by control flow primitives.
+  [[nodiscard]] auto IsReachable() const -> bool;
+
+  // Clear the insertion point, making subsequent emissions no-ops.
+  // Used structurally when all branches of a control flow construct terminate.
+  void ClearInsertionPoint();
+
   struct BlockBuilder {
     std::vector<mir::Instruction> instructions;
     std::optional<mir::Terminator> terminator;
   };
 
-  void SealCurrentBlock(mir::Terminator terminator);
+  // Centralized instruction emission - all EmitX instructions delegate here.
+  // Handles finished/reachability checks in one place.
+  template <class InstT>
+  void EmitInst(InstT inst);
+
+  // Centralized terminator emission - all terminator emitters delegate here.
+  // Handles finished/reachability checks. After sealing, IsReachable() is
+  // false.
+  template <class TermT>
+  void EmitTerm(TermT term);
 
   mir::Arena* arena_;
   Context* ctx_;

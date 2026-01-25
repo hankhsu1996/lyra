@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -76,8 +77,12 @@ struct Wait {
   BasicBlockId resume = {};           // Block to resume after trigger fires
 };
 
-// Return from function.
-struct Return {};
+// Return terminator - ends execution of a function or process.
+// For functions: value must be present (functions always return a value).
+// For processes: value is empty (processes don't return values).
+struct Return {
+  std::optional<Operand> value;
+};
 
 // Kind of simulation termination.
 enum class TerminationKind : uint8_t {

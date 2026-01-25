@@ -229,6 +229,26 @@ throw common::InternalError("context", "some error");
 throw std::runtime_error("some error");
 ```
 
+## Verification Functions
+
+For internal IR validation (e.g., MIR invariant checks), verification functions throw
+`InternalError` directly on failure. This is the simplest pattern for compiler-internal
+checks where failure always indicates a bug.
+
+```cpp
+// verify.hpp - Throws InternalError on failure
+void VerifyFunction(const Function& func, const Arena& arena, const TypeArena& types);
+
+// Caller just invokes - no error handling needed
+mir::VerifyFunction(func, arena, type_arena);  // throws on invalid MIR
+```
+
+**Rules:**
+
+- Verification functions return `void` and throw `InternalError` on failure
+- Caller does not catch or handle - failure propagates as compiler bug
+- Use for internal invariant checks, not user-facing validation
+
 ## assert() vs InternalError
 
 | Mechanism       | Debug Only? | Recovery? | When to Use                                 |

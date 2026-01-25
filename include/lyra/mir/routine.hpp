@@ -54,6 +54,11 @@ struct Function {
   // Storage metadata (for interpreter frame allocation)
   std::vector<TypeId> local_types;  // Types for each local slot
   std::vector<TypeId> temp_types;   // Types for each temp slot
+
+  // Explicit parameter-to-local mapping.
+  // param_local_slots[i] = local slot index for parameter i.
+  // Size must equal signature.params.size().
+  std::vector<uint32_t> param_local_slots;
 };
 
 }  // namespace lyra::mir

@@ -375,6 +375,27 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
+  // Void function calls: call for side effects only, no result to store
+  if (const auto* user_call =
+          std::get_if<mir::UserCallRvalueInfo>(&compute.value.info)) {
+    llvm::Function* callee = context.GetUserFunction(user_call->callee);
+    if (callee->getReturnType()->isVoidTy()) {
+      // Build argument list: design pointer, engine pointer, then user args
+      std::vector<llvm::Value*> args;
+      args.push_back(context.GetDesignPointer());
+      args.push_back(context.GetEnginePointer());
+
+      // Add user arguments
+      for (const auto& operand : compute.value.operands) {
+        args.push_back(LowerOperand(context, operand));
+      }
+
+      // Call void function for side effects only
+      builder.CreateCall(callee, args);
+      return;
+    }
+  }
+
   // Dynamic array builtins: early-exit before ValidateAndGetTypeInfo
   if (const auto* builtin =
           std::get_if<mir::BuiltinCallRvalueInfo>(&compute.value.info)) {
@@ -586,6 +607,46 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
               }
             }
             llvm_unreachable("unhandled RuntimeQueryKind");
+          },
+          [&](const mir::UserCallRvalueInfo& info) -> llvm::Value* {
+            auto& builder = context.GetBuilder();
+
+            // Get the LLVM function for this MIR function
+            llvm::Function* callee = context.GetUserFunction(info.callee);
+
+            // Build argument list: design pointer, engine pointer, then user
+            // args
+            std::vector<llvm::Value*> args;
+            args.push_back(context.GetDesignPointer());
+            args.push_back(context.GetEnginePointer());
+
+            // Add user arguments
+            for (const auto& operand : compute.value.operands) {
+              args.push_back(LowerOperand(context, operand));
+            }
+
+            // Check if this is a void function call
+            bool is_void = callee->getReturnType()->isVoidTy();
+            if (is_void) {
+              // Void function call - no result to store
+              builder.CreateCall(callee, args);
+              // Return poison value since we can't return void
+              // The caller shouldn't use this value for void functions
+              return llvm::PoisonValue::get(storage_type);
+            }
+
+            // Call the function
+            llvm::Value* result = builder.CreateCall(callee, args, "user_call");
+
+            // Coerce result to storage type if needed
+            if (result->getType() != storage_type &&
+                result->getType()->isIntegerTy() &&
+                storage_type->isIntegerTy()) {
+              result =
+                  builder.CreateZExtOrTrunc(result, storage_type, "call.fit");
+            }
+
+            return result;
           },
           [&](const auto& /*info*/) -> llvm::Value* {
             throw common::UnsupportedErrorException(
