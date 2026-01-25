@@ -489,6 +489,33 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
       builder.CreateStore(aggregate, target_ptr);
       return;
     }
+    if (target_type.Kind() == TypeKind::kUnpackedStruct) {
+      const auto& struct_info = target_type.AsUnpackedStruct();
+
+      // Safety check: operand count must match field count
+      if (compute.value.operands.size() != struct_info.fields.size()) {
+        throw common::InternalError(
+            "LowerCompute",
+            std::format(
+                "struct aggregate operand count {} != field count {}",
+                compute.value.operands.size(), struct_info.fields.size()));
+      }
+
+      llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+      llvm::Type* struct_type = context.GetPlaceLlvmType(compute.target);
+
+      llvm::Value* aggregate = llvm::UndefValue::get(struct_type);
+      for (size_t i = 0; i < compute.value.operands.size(); ++i) {
+        llvm::Type* field_type = llvm::cast<llvm::StructType>(struct_type)
+                                     ->getElementType(static_cast<unsigned>(i));
+        llvm::Value* field_val = LowerOperandAsStorage(
+            context, compute.value.operands[i], field_type);
+        aggregate = builder.CreateInsertValue(
+            aggregate, field_val, {static_cast<unsigned>(i)});
+      }
+      builder.CreateStore(aggregate, target_ptr);
+      return;
+    }
     if (target_type.Kind() == TypeKind::kQueue) {
       auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
       auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
