@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <format>
+#include <variant>
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Constants.h"
@@ -10,6 +11,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"

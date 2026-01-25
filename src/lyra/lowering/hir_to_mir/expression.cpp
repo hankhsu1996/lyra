@@ -14,6 +14,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -87,44 +88,6 @@ auto MapUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
       return mir::UnaryOp::kReductionXor;
     case hir::UnaryOp::kReductionXnor:
       return mir::UnaryOp::kReductionXnor;
-    case hir::UnaryOp::kLn:
-      return mir::UnaryOp::kLn;
-    case hir::UnaryOp::kLog10:
-      return mir::UnaryOp::kLog10;
-    case hir::UnaryOp::kExp:
-      return mir::UnaryOp::kExp;
-    case hir::UnaryOp::kSqrt:
-      return mir::UnaryOp::kSqrt;
-    case hir::UnaryOp::kFloor:
-      return mir::UnaryOp::kFloor;
-    case hir::UnaryOp::kCeil:
-      return mir::UnaryOp::kCeil;
-    case hir::UnaryOp::kSin:
-      return mir::UnaryOp::kSin;
-    case hir::UnaryOp::kCos:
-      return mir::UnaryOp::kCos;
-    case hir::UnaryOp::kTan:
-      return mir::UnaryOp::kTan;
-    case hir::UnaryOp::kAsin:
-      return mir::UnaryOp::kAsin;
-    case hir::UnaryOp::kAcos:
-      return mir::UnaryOp::kAcos;
-    case hir::UnaryOp::kAtan:
-      return mir::UnaryOp::kAtan;
-    case hir::UnaryOp::kSinh:
-      return mir::UnaryOp::kSinh;
-    case hir::UnaryOp::kCosh:
-      return mir::UnaryOp::kCosh;
-    case hir::UnaryOp::kTanh:
-      return mir::UnaryOp::kTanh;
-    case hir::UnaryOp::kAsinh:
-      return mir::UnaryOp::kAsinh;
-    case hir::UnaryOp::kAcosh:
-      return mir::UnaryOp::kAcosh;
-    case hir::UnaryOp::kAtanh:
-      return mir::UnaryOp::kAtanh;
-    case hir::UnaryOp::kClog2:
-      return mir::UnaryOp::kClog2;
   }
   throw common::InternalError("MapUnaryOp", "unknown unary op");
 }
@@ -187,10 +150,6 @@ auto MapBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kArithmeticShiftLeft;
     case hir::BinaryOp::kArithmeticShiftRight:
       return mir::BinaryOp::kArithmeticShiftRight;
-    case hir::BinaryOp::kAtan2:
-      return mir::BinaryOp::kAtan2;
-    case hir::BinaryOp::kHypot:
-      return mir::BinaryOp::kHypot;
   }
   throw common::InternalError("MapBinaryOp", "unknown binary op");
 }
@@ -1522,6 +1481,31 @@ auto LowerConcat(
   return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
 }
 
+auto LowerMathCall(
+    const hir::MathCallExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> mir::Operand {
+  int expected_arity = GetMathFnArity(data.fn);
+  if (static_cast<int>(data.args.size()) != expected_arity) {
+    throw common::InternalError(
+        "LowerMathCall",
+        std::format(
+            "arity mismatch for {}: expected {}, got {}", ToString(data.fn),
+            expected_arity, data.args.size()));
+  }
+
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.args.size());
+  for (hir::ExpressionId arg_id : data.args) {
+    operands.push_back(LowerExpression(arg_id, builder));
+  }
+
+  mir::Rvalue rvalue{
+      .operands = std::move(operands),
+      .info = mir::MathCallRvalueInfo{.fn = data.fn},
+  };
+  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+}
+
 auto LowerElementAccessRvalue(
     const hir::ElementAccessExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
@@ -1648,6 +1632,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
                                  T, hir::HierarchicalRefExpressionData>) {
           mir::PlaceId place_id = builder.GetContext().LookupPlace(data.target);
           return mir::Operand::Use(place_id);
+        } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
+          return LowerMathCall(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

@@ -55,74 +55,72 @@ auto ClassifyPureSystemFunction(const slang::ast::CallExpression& call)
     return ConversionSysFnKind::kBitsToShortReal;
   }
 
-  // Math unary functions -> UnaryOpSysFn
+  // Math functions -> MathSysFn
   if (name == "$ln") {
-    return UnaryOpSysFn{hir::UnaryOp::kLn};
+    return MathSysFn{MathFn::kLn};
   }
   if (name == "$log10") {
-    return UnaryOpSysFn{hir::UnaryOp::kLog10};
+    return MathSysFn{MathFn::kLog10};
   }
   if (name == "$exp") {
-    return UnaryOpSysFn{hir::UnaryOp::kExp};
+    return MathSysFn{MathFn::kExp};
   }
   if (name == "$sqrt") {
-    return UnaryOpSysFn{hir::UnaryOp::kSqrt};
+    return MathSysFn{MathFn::kSqrt};
   }
   if (name == "$floor") {
-    return UnaryOpSysFn{hir::UnaryOp::kFloor};
+    return MathSysFn{MathFn::kFloor};
   }
   if (name == "$ceil") {
-    return UnaryOpSysFn{hir::UnaryOp::kCeil};
+    return MathSysFn{MathFn::kCeil};
   }
   if (name == "$sin") {
-    return UnaryOpSysFn{hir::UnaryOp::kSin};
+    return MathSysFn{MathFn::kSin};
   }
   if (name == "$cos") {
-    return UnaryOpSysFn{hir::UnaryOp::kCos};
+    return MathSysFn{MathFn::kCos};
   }
   if (name == "$tan") {
-    return UnaryOpSysFn{hir::UnaryOp::kTan};
+    return MathSysFn{MathFn::kTan};
   }
   if (name == "$asin") {
-    return UnaryOpSysFn{hir::UnaryOp::kAsin};
+    return MathSysFn{MathFn::kAsin};
   }
   if (name == "$acos") {
-    return UnaryOpSysFn{hir::UnaryOp::kAcos};
+    return MathSysFn{MathFn::kAcos};
   }
   if (name == "$atan") {
-    return UnaryOpSysFn{hir::UnaryOp::kAtan};
+    return MathSysFn{MathFn::kAtan};
   }
   if (name == "$sinh") {
-    return UnaryOpSysFn{hir::UnaryOp::kSinh};
+    return MathSysFn{MathFn::kSinh};
   }
   if (name == "$cosh") {
-    return UnaryOpSysFn{hir::UnaryOp::kCosh};
+    return MathSysFn{MathFn::kCosh};
   }
   if (name == "$tanh") {
-    return UnaryOpSysFn{hir::UnaryOp::kTanh};
+    return MathSysFn{MathFn::kTanh};
   }
   if (name == "$asinh") {
-    return UnaryOpSysFn{hir::UnaryOp::kAsinh};
+    return MathSysFn{MathFn::kAsinh};
   }
   if (name == "$acosh") {
-    return UnaryOpSysFn{hir::UnaryOp::kAcosh};
+    return MathSysFn{MathFn::kAcosh};
   }
   if (name == "$atanh") {
-    return UnaryOpSysFn{hir::UnaryOp::kAtanh};
+    return MathSysFn{MathFn::kAtanh};
   }
   if (name == "$clog2") {
-    return UnaryOpSysFn{hir::UnaryOp::kClog2};
+    return MathSysFn{MathFn::kClog2};
   }
-
-  // Math binary functions -> BinaryOpSysFn
   if (name == "$pow") {
-    return BinaryOpSysFn{hir::BinaryOp::kPower};
+    return MathSysFn{MathFn::kPow};
   }
   if (name == "$atan2") {
-    return BinaryOpSysFn{hir::BinaryOp::kAtan2};
+    return MathSysFn{MathFn::kAtan2};
   }
   if (name == "$hypot") {
-    return BinaryOpSysFn{hir::BinaryOp::kHypot};
+    return MathSysFn{MathFn::kHypot};
   }
 
   // Timescale query functions -> constant
@@ -393,6 +391,33 @@ auto LowerPureSystemFunction(
             }
 
             return MakeIntConstant(power, span, ctx);
+          },
+          [&](MathSysFn fn) -> hir::ExpressionId {
+            int expected_arity = GetMathFnArity(fn.fn);
+            if (static_cast<int>(call.arguments().size()) != expected_arity) {
+              ctx->ErrorFmt(
+                  span, "{}() requires exactly {} argument(s)",
+                  call.getSubroutineName(), expected_arity);
+              return hir::kInvalidExpressionId;
+            }
+            std::vector<hir::ExpressionId> args;
+            args.reserve(static_cast<size_t>(expected_arity));
+            for (int i = 0; i < expected_arity; ++i) {
+              hir::ExpressionId arg =
+                  LowerExpression(*call.arguments()[i], registrar, ctx);
+              if (!arg) {
+                return hir::kInvalidExpressionId;
+              }
+              args.push_back(arg);
+            }
+            TypeId result_type = LowerType(*call.type, span, ctx);
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kMathCall,
+                    .type = result_type,
+                    .span = span,
+                    .data = hir::MathCallExpressionData{
+                        .fn = fn.fn, .args = std::move(args)}});
           }},
       classification);
 }

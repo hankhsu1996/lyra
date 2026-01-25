@@ -89,6 +89,7 @@ void CollectFromRvalue(
           [](const PlusargsRvalueInfo&) {},
           [](const FopenRvalueInfo&) {},
           [](const RuntimeQueryRvalueInfo&) {},
+          [](const MathCallRvalueInfo&) {},
       },
       rvalue.info);
 }

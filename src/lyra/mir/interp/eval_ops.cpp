@@ -94,13 +94,9 @@ auto EvalRealBinary(BinaryOp op, const RuntimeReal& lhs, const RuntimeReal& rhs)
     case BinaryOp::kLogicalOr:
       return RealLogicalOr(lhs, rhs);
 
-    // Power and math binary
+    // Power
     case BinaryOp::kPower:
       return MakeReal(RealPower(lhs, rhs).value);
-    case BinaryOp::kAtan2:
-      return MakeReal(RealAtan2(lhs, rhs).value);
-    case BinaryOp::kHypot:
-      return MakeReal(RealHypot(lhs, rhs).value);
 
     // Not supported for reals
     case BinaryOp::kMod:
@@ -194,8 +190,6 @@ auto EvalShortRealBinary(
     case BinaryOp::kLogicalShiftRight:
     case BinaryOp::kArithmeticShiftLeft:
     case BinaryOp::kArithmeticShiftRight:
-    case BinaryOp::kAtan2:
-    case BinaryOp::kHypot:
       throw common::InternalError(
           "EvalShortRealBinary",
           std::format(
@@ -279,8 +273,6 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       return IntegralMod(lhs_int, rhs_int, arith_width, true);
 
     case BinaryOp::kPower:
-    case BinaryOp::kAtan2:
-    case BinaryOp::kHypot:
       throw common::InternalError(
           "EvalBinary",
           std::format(
@@ -389,8 +381,9 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
 }
 
 auto EvalUnary(
-    UnaryOp op, const RuntimeValue& operand, TypeId result_type,
-    const TypeArena& types) -> RuntimeValue {
+    UnaryOp op, const RuntimeValue& operand,
+    [[maybe_unused]] TypeId result_type,
+    [[maybe_unused]] const TypeArena& types) -> RuntimeValue {
   // Real operands
   if (IsReal(operand)) {
     const auto& op_real = AsReal(operand);
@@ -401,42 +394,6 @@ auto EvalUnary(
         return MakeReal(RealNeg(op_real).value);
       case UnaryOp::kLogicalNot:
         return RealLogicalNot(op_real);
-      case UnaryOp::kLn:
-        return MakeReal(RealLn(op_real).value);
-      case UnaryOp::kLog10:
-        return MakeReal(RealLog10(op_real).value);
-      case UnaryOp::kExp:
-        return MakeReal(RealExp(op_real).value);
-      case UnaryOp::kSqrt:
-        return MakeReal(RealSqrt(op_real).value);
-      case UnaryOp::kFloor:
-        return MakeReal(RealFloor(op_real).value);
-      case UnaryOp::kCeil:
-        return MakeReal(RealCeil(op_real).value);
-      case UnaryOp::kSin:
-        return MakeReal(RealSin(op_real).value);
-      case UnaryOp::kCos:
-        return MakeReal(RealCos(op_real).value);
-      case UnaryOp::kTan:
-        return MakeReal(RealTan(op_real).value);
-      case UnaryOp::kAsin:
-        return MakeReal(RealAsin(op_real).value);
-      case UnaryOp::kAcos:
-        return MakeReal(RealAcos(op_real).value);
-      case UnaryOp::kAtan:
-        return MakeReal(RealAtan(op_real).value);
-      case UnaryOp::kSinh:
-        return MakeReal(RealSinh(op_real).value);
-      case UnaryOp::kCosh:
-        return MakeReal(RealCosh(op_real).value);
-      case UnaryOp::kTanh:
-        return MakeReal(RealTanh(op_real).value);
-      case UnaryOp::kAsinh:
-        return MakeReal(RealAsinh(op_real).value);
-      case UnaryOp::kAcosh:
-        return MakeReal(RealAcosh(op_real).value);
-      case UnaryOp::kAtanh:
-        return MakeReal(RealAtanh(op_real).value);
       default:
         throw common::InternalError(
             "EvalUnary",
@@ -549,52 +506,6 @@ auto EvalUnary(
 
     case UnaryOp::kIsKnown:
       return MakeIntegral(op_int.IsKnown() ? 1 : 0, 1);
-
-    case UnaryOp::kClog2: {
-      uint32_t result_width = PackedBitWidth(types[result_type], types);
-      if (!op_int.IsKnown()) {
-        return MakeUnknownIntegral(result_width);
-      }
-      if (op_int.IsZero()) {
-        return MakeIntegral(0, result_width);
-      }
-      auto one = std::get<RuntimeIntegral>(MakeIntegral(1, op_int.bit_width));
-      auto n_minus_1 = IntegralSub(op_int, one, op_int.bit_width);
-      if (n_minus_1.IsZero()) {
-        return MakeIntegral(0, result_width);
-      }
-      int highest_bit = -1;
-      for (int i = static_cast<int>(n_minus_1.value.size()) - 1; i >= 0; --i) {
-        if (n_minus_1.value[i] != 0) {
-          highest_bit = i * 64 + (63 - std::countl_zero(n_minus_1.value[i]));
-          break;
-        }
-      }
-      return MakeIntegral(highest_bit + 1, result_width);
-    }
-
-    case UnaryOp::kLn:
-    case UnaryOp::kLog10:
-    case UnaryOp::kExp:
-    case UnaryOp::kSqrt:
-    case UnaryOp::kFloor:
-    case UnaryOp::kCeil:
-    case UnaryOp::kSin:
-    case UnaryOp::kCos:
-    case UnaryOp::kTan:
-    case UnaryOp::kAsin:
-    case UnaryOp::kAcos:
-    case UnaryOp::kAtan:
-    case UnaryOp::kSinh:
-    case UnaryOp::kCosh:
-    case UnaryOp::kTanh:
-    case UnaryOp::kAsinh:
-    case UnaryOp::kAcosh:
-    case UnaryOp::kAtanh:
-      throw common::InternalError(
-          "EvalUnary",
-          std::format(
-              "operator {} requires real operand, got integral", ToString(op)));
   }
 
   throw common::InternalError(
@@ -817,6 +728,147 @@ auto EvalBitCast(
   throw common::InternalError(
       "EvalBitCast",
       std::format("invalid bitcast: {} -> {}", ToString(src), ToString(tgt)));
+}
+
+auto EvalMathCall(
+    MathFn fn, std::span<const RuntimeValue> args,
+    [[maybe_unused]] const TypeArena& types) -> RuntimeValue {
+  // Validate arity
+  int expected_arity = GetMathFnArity(fn);
+  if (static_cast<int>(args.size()) != expected_arity) {
+    throw common::InternalError(
+        "EvalMathCall", std::format(
+                            "arity mismatch for {}: expected {}, got {}",
+                            ToString(fn), expected_arity, args.size()));
+  }
+
+  // Dispatch by function identity
+  switch (fn) {
+    // Real unary functions
+    case MathFn::kLn: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealLn(op).value);
+    }
+    case MathFn::kLog10: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealLog10(op).value);
+    }
+    case MathFn::kExp: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealExp(op).value);
+    }
+    case MathFn::kSqrt: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealSqrt(op).value);
+    }
+    case MathFn::kFloor: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealFloor(op).value);
+    }
+    case MathFn::kCeil: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealCeil(op).value);
+    }
+    case MathFn::kSin: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealSin(op).value);
+    }
+    case MathFn::kCos: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealCos(op).value);
+    }
+    case MathFn::kTan: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealTan(op).value);
+    }
+    case MathFn::kAsin: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAsin(op).value);
+    }
+    case MathFn::kAcos: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAcos(op).value);
+    }
+    case MathFn::kAtan: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAtan(op).value);
+    }
+    case MathFn::kSinh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealSinh(op).value);
+    }
+    case MathFn::kCosh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealCosh(op).value);
+    }
+    case MathFn::kTanh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealTanh(op).value);
+    }
+    case MathFn::kAsinh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAsinh(op).value);
+    }
+    case MathFn::kAcosh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAcosh(op).value);
+    }
+    case MathFn::kAtanh: {
+      const auto& op = AsReal(args[0]);
+      return MakeReal(RealAtanh(op).value);
+    }
+
+    // Integral unary function
+    case MathFn::kClog2: {
+      const auto& op = AsIntegral(args[0]);
+      uint32_t result_width = op.bit_width;
+      if (!op.IsKnown()) {
+        return MakeUnknownIntegral(result_width);
+      }
+      if (op.IsZero()) {
+        return MakeIntegral(0, result_width);
+      }
+      auto one = std::get<RuntimeIntegral>(MakeIntegral(1, op.bit_width));
+      auto n_minus_1 = IntegralSub(op, one, op.bit_width);
+      if (n_minus_1.IsZero()) {
+        return MakeIntegral(0, result_width);
+      }
+      int highest_bit = -1;
+      for (int i = static_cast<int>(n_minus_1.value.size()) - 1; i >= 0; --i) {
+        if (n_minus_1.value[i] != 0) {
+          highest_bit = i * 64 + (63 - std::countl_zero(n_minus_1.value[i]));
+          break;
+        }
+      }
+      return MakeIntegral(highest_bit + 1, result_width);
+    }
+
+    // Real binary functions
+    case MathFn::kPow: {
+      if (IsReal(args[0]) && IsReal(args[1])) {
+        return MakeReal(RealPower(AsReal(args[0]), AsReal(args[1])).value);
+      }
+      if (IsShortReal(args[0]) && IsShortReal(args[1])) {
+        return MakeShortReal(
+            ShortRealPower(AsShortReal(args[0]), AsShortReal(args[1])).value);
+      }
+      throw common::InternalError(
+          "EvalMathCall", "$pow requires matching real/shortreal operands");
+    }
+    case MathFn::kAtan2: {
+      const auto& lhs = AsReal(args[0]);
+      const auto& rhs = AsReal(args[1]);
+      return MakeReal(RealAtan2(lhs, rhs).value);
+    }
+    case MathFn::kHypot: {
+      const auto& lhs = AsReal(args[0]);
+      const auto& rhs = AsReal(args[1]);
+      return MakeReal(RealHypot(lhs, rhs).value);
+    }
+  }
+
+  throw common::InternalError(
+      "EvalMathCall", std::format("unhandled math function: {}", ToString(fn)));
 }
 
 }  // namespace lyra::mir::interp

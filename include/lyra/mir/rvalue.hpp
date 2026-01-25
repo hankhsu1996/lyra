@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -122,13 +123,19 @@ struct RuntimeQueryRvalueInfo {
   RuntimeQueryKind kind;
 };
 
+// MathCallRvalueInfo: IEEE 1800 §20.8 math function call.
+// Operands from Rvalue::operands (validated: size == GetMathFnArity(fn)).
+struct MathCallRvalueInfo {
+  MathFn fn;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
     BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
     ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo, FopenRvalueInfo,
-    RuntimeQueryRvalueInfo>;
+    RuntimeQueryRvalueInfo, MathCallRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -170,6 +177,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "fopen";
         } else if constexpr (std::is_same_v<T, RuntimeQueryRvalueInfo>) {
           return "runtime_query";
+        } else if constexpr (std::is_same_v<T, MathCallRvalueInfo>) {
+          return "math_call";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

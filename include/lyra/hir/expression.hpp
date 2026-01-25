@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
@@ -40,6 +41,7 @@ enum class ExpressionKind {
   kIndexedPartSelect,  // x[i +: w] or x[i -: w]
   kConcat,             // {a, b, c} packed concatenation
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
+  kMathCall,         // IEEE 1800 §20.8 math function call
 };
 
 // Returns true if the expression kind can appear as an assignment target.
@@ -251,6 +253,13 @@ struct HierarchicalRefExpressionData {
   auto operator==(const HierarchicalRefExpressionData&) const -> bool = default;
 };
 
+struct MathCallExpressionData {
+  MathFn fn;
+  std::vector<ExpressionId> args;
+
+  auto operator==(const MathCallExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, BitCastExpressionData,
@@ -262,7 +271,8 @@ using ExpressionData = std::variant<
     BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
     PackedFieldAccessExpressionData, BitSelectExpressionData,
     RangeSelectExpressionData, IndexedPartSelectExpressionData,
-    ConcatExpressionData, HierarchicalRefExpressionData>;
+    ConcatExpressionData, HierarchicalRefExpressionData,
+    MathCallExpressionData>;
 
 struct Expression {
   ExpressionKind kind;
