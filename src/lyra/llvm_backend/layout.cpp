@@ -16,6 +16,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -56,6 +57,23 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType* {
   auto* elem = GetLlvmStorageType(ctx, bit_width);
   return llvm::StructType::get(ctx, {elem, elem});
+}
+
+// Forward declaration for recursive call in BuildUnpackedStructType
+auto GetLlvmTypeForTypeId(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type*;
+
+// Build LLVM struct type for an unpacked struct TypeId
+auto BuildUnpackedStructType(
+    llvm::LLVMContext& ctx, const UnpackedStructInfo& info,
+    const TypeArena& types) -> llvm::Type* {
+  std::vector<llvm::Type*> field_types;
+  field_types.reserve(info.fields.size());
+  for (const auto& field : info.fields) {
+    field_types.push_back(GetLlvmTypeForTypeId(ctx, field.type, types));
+  }
+  return llvm::StructType::get(ctx, field_types);
 }
 
 // Get the LLVM type for a TypeId - exhaustive switch for fail-fast on
@@ -103,9 +121,15 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kShortReal:
       return llvm::Type::getFloatTy(ctx);
 
-    case TypeKind::kVoid:
     case TypeKind::kUnpackedStruct:
+      return BuildUnpackedStructType(ctx, type.AsUnpackedStruct(), types);
+
     case TypeKind::kUnpackedUnion:
+      throw common::UnsupportedErrorException(
+          common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+          common::OriginId::Invalid(), "unpacked union not yet supported");
+
+    case TypeKind::kVoid:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
           std::format(

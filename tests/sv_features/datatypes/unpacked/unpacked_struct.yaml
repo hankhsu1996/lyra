@@ -481,3 +481,124 @@ cases:
         result_b: 99
         result_c: 10
         result_d: 0
+
+  - name: struct_packed_field_bitrange
+    description: Access bit range of packed field in struct
+    sv: |
+      module Test;
+        typedef struct { logic [7:0] data; int count; } Packet;
+        Packet p;
+        logic [3:0] nibble;
+        initial begin
+          p.data = 8'hAB;
+          nibble = p.data[3:0];
+        end
+      endmodule
+    expect:
+      variables:
+        nibble: 11
+
+  - name: struct_with_string_assign
+    description: Struct with string field - basic assignment
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+          int val;
+        } str_struct_t;
+        initial begin
+          automatic str_struct_t a, b;
+          a.s = "hello";
+          a.val = 42;
+          b = a;
+          $display("%s %0d", b.s, b.val);
+        end
+      endmodule
+    expect:
+      stdout: "hello 42\n"
+
+  - name: struct_with_string_copy_independence
+    description: Copied struct with string has independent copy
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+          int val;
+        } str_struct_t;
+        initial begin
+          automatic str_struct_t a, b;
+          a.s = "first";
+          a.val = 1;
+          b = a;
+          a.s = "second";
+          $display("%s %s", a.s, b.s);
+        end
+      endmodule
+    expect:
+      stdout: "second first\n"
+
+  - name: struct_with_string_overwrite
+    description: Struct assignment overwrites existing string (releases old)
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+          int val;
+        } str_struct_t;
+        initial begin
+          automatic str_struct_t a, b;
+          b.s = "old_value";
+          b.val = 100;
+          a.s = "new_value";
+          a.val = 200;
+          b = a;
+          $display("%s %0d", b.s, b.val);
+        end
+      endmodule
+    expect:
+      stdout: "new_value 200\n"
+
+  - name: struct_nested_with_string
+    description: Nested struct containing string field
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int id;
+        } inner_t;
+        typedef struct {
+          inner_t data;
+          int count;
+        } outer_t;
+        initial begin
+          automatic outer_t a, b;
+          a.data.name = "test";
+          a.data.id = 123;
+          a.count = 5;
+          b = a;
+          $display("%s %0d %0d", b.data.name, b.data.id, b.count);
+        end
+      endmodule
+    expect:
+      stdout: "test 123 5\n"
+
+  - name: struct_multiple_strings
+    description: Struct with multiple string fields
+    sv: |
+      module Test;
+        typedef struct {
+          string first;
+          string second;
+          int val;
+        } multi_str_t;
+        initial begin
+          automatic multi_str_t a, b;
+          a.first = "one";
+          a.second = "two";
+          a.val = 99;
+          b = a;
+          $display("%s %s %0d", b.first, b.second, b.val);
+        end
+      endmodule
+    expect:
+      stdout: "one two 99\n"

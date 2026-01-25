@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -86,7 +87,8 @@ auto GetLlvmTypeForTypeId(
     llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
     return llvm::ArrayType::get(elem, info.range.Size());
   }
-  if (type.Kind() == TypeKind::kDynamicArray ||
+  if (type.Kind() == TypeKind::kString ||
+      type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue) {
     return llvm::PointerType::getUnqual(ctx);
   }
@@ -97,9 +99,18 @@ auto GetLlvmTypeForTypeId(
     }
     return GetLlvmStorageType(ctx, width);
   }
+  if (type.Kind() == TypeKind::kUnpackedStruct) {
+    const auto& info = type.AsUnpackedStruct();
+    std::vector<llvm::Type*> field_types;
+    field_types.reserve(info.fields.size());
+    for (const auto& field : info.fields) {
+      field_types.push_back(GetLlvmTypeForTypeId(ctx, field.type, types));
+    }
+    return llvm::StructType::get(ctx, field_types);
+  }
   throw common::InternalError(
       "GetLlvmTypeForTypeId",
-      std::format("unsupported type kind: {}", static_cast<int>(type.Kind())));
+      std::format("unsupported type: {}", ToString(type)));
 }
 
 }  // namespace
@@ -936,6 +947,36 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
     if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
       break;
     }
+
+    // FieldProjection: struct field access
+    if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
+      const Type& cur_type = types_[current_type];
+      if (cur_type.Kind() != TypeKind::kUnpackedStruct) {
+        throw common::InternalError(
+            "GetPlacePointer", std::format(
+                                   "FieldProjection on non-struct type: {}",
+                                   static_cast<int>(cur_type.Kind())));
+      }
+      const auto& struct_info = cur_type.AsUnpackedStruct();
+
+      auto field_idx = static_cast<size_t>(field->field_index);
+      if (field_idx >= struct_info.fields.size()) {
+        throw common::InternalError(
+            "GetPlacePointer",
+            std::format(
+                "field index {} out of bounds (struct has {} fields)",
+                field_idx, struct_info.fields.size()));
+      }
+
+      llvm::Type* struct_type =
+          GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
+      ptr = builder_.CreateStructGEP(
+          struct_type, ptr, static_cast<unsigned>(field->field_index),
+          "struct_field_ptr");
+      current_type = struct_info.fields[field_idx].type;
+      continue;
+    }
+
     const auto* idx = std::get_if<mir::IndexProjection>(&proj.info);
     if (idx == nullptr) {
       throw common::InternalError(
@@ -1006,6 +1047,10 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
     return GetLlvmTypeForTypeId(*llvm_context_, type_id, types_);
   }
 
+  if (type.Kind() == TypeKind::kUnpackedStruct) {
+    return GetLlvmTypeForTypeId(*llvm_context_, type_id, types_);
+  }
+
   throw common::UnsupportedErrorException(
       common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
       current_origin_,
@@ -1047,6 +1092,13 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
       base_type_id = t.AsDynamicArray().element_type;
     } else if (t.Kind() == TypeKind::kQueue) {
       base_type_id = t.AsQueue().element_type;
+    } else if (t.Kind() == TypeKind::kUnpackedStruct) {
+      const auto* field = std::get_if<mir::FieldProjection>(&proj.info);
+      if (field != nullptr) {
+        base_type_id = t.AsUnpackedStruct()
+                           .fields[static_cast<size_t>(field->field_index)]
+                           .type;
+      }
     }
   }
 

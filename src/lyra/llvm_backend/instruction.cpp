@@ -10,11 +10,11 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute.hpp"
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/type_ops.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -166,10 +166,6 @@ void StoreBitRange(
 }
 
 void LowerAssign(Context& context, const mir::Assign& assign) {
-  auto& builder = context.GetBuilder();
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
   // BitRangeProjection targets use read-modify-write
   if (context.HasBitRangeProjection(assign.target)) {
     llvm::Value* source_raw = LowerOperandRaw(context, assign.source);
@@ -177,184 +173,9 @@ void LowerAssign(Context& context, const mir::Assign& assign) {
     return;
   }
 
-  // Get pointer to target place storage
-  llvm::Value* target_ptr = context.GetPlacePointer(assign.target);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(assign.target);
-
-  // Get the effective type (element type if projected, root type otherwise)
-  const auto& place = arena[assign.target];
-  const Type& type = types[mir::TypeOfPlace(types, place)];
-
-  // Handle string assignment with reference counting
-  if (type.Kind() == TypeKind::kString) {
-    // 1. Get new value
-    llvm::Value* new_val = LowerOperand(context, assign.source);
-
-    // 2. Determine ownership: move from temp, retain from persistent
-    if (std::holds_alternative<mir::PlaceId>(assign.source.payload)) {
-      auto src_place_id = std::get<mir::PlaceId>(assign.source.payload);
-      const auto& src_place = arena[src_place_id];
-      if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-        // Move: temp is single-owner, null it out to transfer ownership
-        auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-        auto* src_ptr = context.GetPlacePointer(src_place_id);
-        auto* null_val = llvm::ConstantPointerNull::get(
-            llvm::cast<llvm::PointerType>(ptr_ty));
-        builder.CreateStore(null_val, src_ptr);
-      } else {
-        // Clone: persistent place, retain for shared ownership
-        new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
-      }
-    }
-
-    if (IsDesignPlace(context, assign.target)) {
-      // 3. Load old value before helper overwrites it
-      auto* old_val = builder.CreateLoad(storage_type, target_ptr);
-      // 4. Store + notify via helper
-      auto signal_id = GetSignalId(context, assign.target);
-      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-      builder.CreateCall(
-          context.GetLyraStoreString(),
-          {context.GetEnginePointer(), target_ptr, new_val,
-           llvm::ConstantInt::get(i32_ty, signal_id)});
-      // 5. Release old value
-      builder.CreateCall(context.GetLyraStringRelease(), {old_val});
-    } else {
-      // 3. Release old value in slot
-      auto* old_val = builder.CreateLoad(storage_type, target_ptr);
-      builder.CreateCall(context.GetLyraStringRelease(), {old_val});
-      // 4. Store owned value (slot now owns)
-      builder.CreateStore(new_val, target_ptr);
-    }
-    return;
-  }
-
-  // Dynamic array / queue: clone/move semantics with ownership tracking
-  if (type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-    llvm::Value* new_handle = LowerOperand(context, assign.source);
-
-    // Determine clone vs move based on source kind.
-    // MIR invariant: temps are single-owner; Use(temp) is a consuming move
-    // and the temp will not be read again in this statement.
-    if (std::holds_alternative<mir::PlaceId>(assign.source.payload)) {
-      auto src_place_id = std::get<mir::PlaceId>(assign.source.payload);
-      const auto& src_place = arena[src_place_id];
-      if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-        // Move: null-out the temp to transfer ownership
-        auto* src_ptr = context.GetPlacePointer(src_place_id);
-        auto* null_val = llvm::ConstantPointerNull::get(
-            llvm::cast<llvm::PointerType>(ptr_ty));
-        builder.CreateStore(null_val, src_ptr);
-      } else {
-        // Clone: persistent place, need independent copy
-        new_handle = builder.CreateCall(
-            context.GetLyraDynArrayClone(), {new_handle}, "da.clone");
-      }
-    }
-    // else: source is a Const (nullptr literal) — use as-is
-
-    // Load old handle before store overwrites it
-    auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.old");
-
-    // Store new handle (with design notify if needed)
-    if (IsDesignPlace(context, assign.target)) {
-      auto signal_id = GetSignalId(context, assign.target);
-      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-      builder.CreateCall(
-          context.GetLyraStoreDynArray(),
-          {context.GetEnginePointer(), target_ptr, new_handle,
-           llvm::ConstantInt::get(i32_ty, signal_id)});
-    } else {
-      builder.CreateStore(new_handle, target_ptr);
-    }
-
-    // Release old handle after store
-    builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
-    return;
-  }
-
-  // Unpacked array: aggregate store (only valid for POD element types)
-  if (type.Kind() == TypeKind::kUnpackedArray) {
-    const auto& arr_info = type.AsUnpackedArray();
-    const Type& elem_type = types[arr_info.element_type];
-    if (elem_type.Kind() == TypeKind::kDynamicArray ||
-        elem_type.Kind() == TypeKind::kQueue ||
-        elem_type.Kind() == TypeKind::kString) {
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-          "unpacked array assignment with owned-handle elements "
-          "(dynamic array or string) not yet supported");
-    }
-
-    llvm::Value* val = LowerOperandRaw(context, assign.source);
-    if (IsDesignPlace(context, assign.target)) {
-      StoreDesignWithNotify(
-          context, val, target_ptr, storage_type, assign.target);
-    } else {
-      builder.CreateStore(val, target_ptr);
-    }
-    return;
-  }
-
-  // 4-state target: construct {value, unknown=0} struct
-  if (storage_type->isStructTy()) {
-    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
-    auto* elem_type = struct_type->getElementType(0);
-
-    // Load source as raw value (struct if 4-state, integer if 2-state)
-    llvm::Value* raw = LowerOperandRaw(context, assign.source);
-
-    llvm::Value* val = nullptr;
-    llvm::Value* unk = nullptr;
-    if (raw->getType()->isStructTy()) {
-      // Source is 4-state: pass through
-      val = builder.CreateExtractValue(raw, 0, "assign.val");
-      unk = builder.CreateExtractValue(raw, 1, "assign.unk");
-    } else {
-      // Source is 2-state: wrap as {value, unknown=0}
-      val = builder.CreateZExtOrTrunc(raw, elem_type, "assign.val");
-      unk = llvm::ConstantInt::get(elem_type, 0);
-    }
-
-    // Coerce to elem_type if width differs
-    val = builder.CreateZExtOrTrunc(val, elem_type, "assign.val.fit");
-    unk = builder.CreateZExtOrTrunc(unk, elem_type, "assign.unk.fit");
-
-    llvm::Value* packed = llvm::UndefValue::get(struct_type);
-    packed = builder.CreateInsertValue(packed, val, 0);
-    packed = builder.CreateInsertValue(packed, unk, 1);
-    if (IsDesignPlace(context, assign.target)) {
-      StoreDesignWithNotify(
-          context, packed, target_ptr, storage_type, assign.target);
-    } else {
-      builder.CreateStore(packed, target_ptr);
-    }
-    return;
-  }
-
-  // 2-state target: lower source (coerces 4-state to integer)
-  llvm::Value* source_value = LowerOperand(context, assign.source);
-
-  // Adjust the value to match storage type if needed (only for integrals)
-  if (source_value->getType() != storage_type &&
-      source_value->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
-    if (type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_signed) {
-      source_value = builder.CreateSExtOrTrunc(source_value, storage_type);
-    } else {
-      source_value = builder.CreateZExtOrTrunc(source_value, storage_type);
-    }
-  }
-
-  // Store to the place (with notify if design)
-  if (IsDesignPlace(context, assign.target)) {
-    StoreDesignWithNotify(
-        context, source_value, target_ptr, storage_type, assign.target);
-  } else {
-    builder.CreateStore(source_value, target_ptr);
-  }
+  // Delegate all value semantics (ownership, refcounting, field recursion)
+  // to the TypeOps layer
+  AssignPlace(context, assign.target, assign.source);
 }
 
 void LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded) {
