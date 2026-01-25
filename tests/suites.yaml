@@ -24,8 +24,6 @@ suites:
       - directives/timescale.yaml
       # hierarchy - implicit named connections not supported
       - hierarchy/instantiation/instantiation.yaml
-      # packages - package variables not supported
-      - packages/basic.yaml
       # processes - generate not supported
       - processes/generate.yaml
       # system_tf/effect - various unsupported features
