@@ -37,6 +37,11 @@ auto CollectDeclarations(
   DesignDeclarations decls;
   int next_slot = 0;
 
+  // Ordering contract: packages first (in element order), then all module
+  // instances (in BFS elaboration order from LowerDesign). This order is ABI —
+  // do not change without updating all consumers (LLVM layout, MIR interpreter,
+  // dump).
+
   // Allocate package variable design places + pre-allocate function IDs
   for (const auto& element : design.elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
@@ -52,6 +57,7 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
+        decls.slot_table.push_back(sym.type);
       }
 
       // Pre-allocate MIR function IDs with frozen signatures
@@ -80,6 +86,7 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
+        decls.slot_table.push_back(sym.type);
       }
     }
   }
@@ -96,6 +103,7 @@ auto LowerDesign(
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
+  result.slot_table = decls.slot_table;
 
   // Lower package init processes
   DeclView init_view{

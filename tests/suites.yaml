@@ -13,6 +13,7 @@ suites:
       - datatypes/
       - processes/
       - scheduling/
+      - hierarchy/refs/hierarchical_refs.yaml
     exclude_regex:
       - datatypes/unpacked/nested_aggregates.yaml
       - datatypes/unpacked/unpacked_struct.yaml

@@ -110,6 +110,12 @@ struct SlotInfo {
   SlotTypeInfo type_info{};  // For variable registration (width, signedness)
 };
 
+// Build SlotInfo list from design's slot_table.
+// This derives type metadata (kind, width, signedness) for
+// runtime/initialization.
+auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
+    -> std::vector<SlotInfo>;
+
 // Build complete layout from MIR design.
 // This is a pure analysis pass that creates LLVM types but does NOT emit IR.
 //

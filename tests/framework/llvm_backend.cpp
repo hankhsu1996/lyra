@@ -30,8 +30,8 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/package.hpp"
 #include "lyra/hir/statement.hpp"
-#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -67,84 +67,50 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
   return std::nullopt;
 }
 
-// Result from building LLVM lowering info
-struct LlvmLoweringInfo {
-  std::vector<lowering::mir_to_llvm::SlotTypeInfo> slot_types;
-  std::vector<TypeId> slot_type_ids;
-  std::vector<lowering::mir_to_llvm::VariableInfo> variables;
-};
-
-// Build slot types (for ALL variables) and tracked variables (for inspection)
-auto BuildLlvmLoweringInfo(
+// Build tracked variables for inspection (maps variable names to slot IDs)
+// Note: slot_id is the index into the module's variables list, which
+// corresponds to the design slot ID (after any package variables).
+auto BuildTrackedVariables(
     const hir::Module* hir_module,
     const lowering::hir_to_mir::LoweringInput& mir_input,
-    const lowering::ast_to_hir::LoweringResult& hir_result)
-    -> LlvmLoweringInfo {
-  LlvmLoweringInfo info;
+    const lowering::ast_to_hir::LoweringResult& hir_result, size_t base_slot_id)
+    -> std::vector<lowering::mir_to_llvm::VariableInfo> {
+  std::vector<lowering::mir_to_llvm::VariableInfo> variables;
   if (hir_module == nullptr) {
-    return info;
+    return variables;
   }
-
-  info.slot_types.reserve(hir_module->variables.size());
-  info.slot_type_ids.reserve(hir_module->variables.size());
 
   for (size_t i = 0; i < hir_module->variables.size(); ++i) {
     const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
     const Type& type = (*hir_result.type_arena)[sym.type];
 
-    // Always store the TypeId for LLVM type derivation
-    info.slot_type_ids.push_back(sym.type);
-
     // Handle real types
     if (type.Kind() == TypeKind::kReal) {
-      info.slot_types.push_back({
-          .kind = lowering::mir_to_llvm::VarTypeKind::kReal,
-          .width = 64,
-          .is_signed = true,
-      });
-      info.variables.push_back({.name = sym.name, .slot_id = i});
+      variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
       continue;
     }
 
     // Handle string types (no variable inspection yet)
     if (type.Kind() == TypeKind::kString) {
-      info.slot_types.push_back({
-          .kind = lowering::mir_to_llvm::VarTypeKind::kString,
-          .width = 0,
-          .is_signed = false,
-      });
       continue;
     }
 
     // Handle packed integral types
     if (!IsPacked(type)) {
-      // Unsupported type - use placeholder for slot_types, skip for variables
-      info.slot_types.push_back({
-          .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
-          .width = 32,
-          .is_signed = false,
-      });
       continue;
     }
 
     uint32_t width = PackedBitWidth(type, *hir_result.type_arena);
     bool is_signed = IsPackedSigned(type, *hir_result.type_arena);
 
-    // Add to slot_types for initialization (all supported packed types)
-    info.slot_types.push_back({
-        .kind = lowering::mir_to_llvm::VarTypeKind::kIntegral,
-        .width = width > 0 ? width : 32,
-        .is_signed = is_signed,
-    });
-
     // Add to variables for inspection (only types we can parse back)
     // Skip: width 0, or unsigned 64-bit (would overflow int64_t)
     // >64-bit uses 'h:' hex format, ≤64-bit uses 'i:' decimal format
     if (width > 64 || (width > 0 && width <= 64 && (width < 64 || is_signed))) {
-      info.variables.push_back({.name = sym.name, .slot_id = i});
+      variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
     }
   }
-  return info;
+  return variables;
 }
 
 // Parse a single __LYRA_VAR entry and extract variable value.
@@ -362,23 +328,34 @@ auto RunLlvmBackend(
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
 
-  // Find the HIR module and build lowering info
-  const hir::Module* hir_module = nullptr;
+  // Find the top module (first module in elaboration order) and calculate base
+  // slot ID. Slot ordering: packages first, then all modules' variables in
+  // element order.
+  const hir::Module* top_module = nullptr;
   for (const auto& element : mir_input.design->elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      hir_module = mod;
+      top_module = mod;
+      break;  // First module is the top module
     }
   }
-  auto lowering_info = BuildLlvmLoweringInfo(hir_module, mir_input, hir_result);
+
+  // Count package slots before module variables (packages come first)
+  size_t base_slot_id = 0;
+  for (const auto& element : mir_input.design->elements) {
+    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+      base_slot_id += pkg->variables.size();
+    }
+  }
+  // Top module is first, so its variables start right after packages
+  auto tracked_variables =
+      BuildTrackedVariables(top_module, mir_input, hir_result, base_slot_id);
 
   // Lower MIR to LLVM IR
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result.design,
       .mir_arena = mir_result.mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
-      .slot_types = std::move(lowering_info.slot_types),
-      .slot_type_ids = std::move(lowering_info.slot_type_ids),
-      .variables = std::move(lowering_info.variables),
+      .variables = std::move(tracked_variables),
       .emit_time_report = true,
   };
 
