@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_builtin.hpp"
+#include "lyra/llvm_backend/instruction_compute_cast.hpp"
 #include "lyra/llvm_backend/instruction_compute_math.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/instruction_compute_real.hpp"
@@ -221,72 +222,6 @@ auto LowerUnaryRvalue(
 
   return LowerUnaryOp(
       context, info.op, operand, storage_type, operand_bit_width);
-}
-
-auto LowerCastRvalue(
-    Context& context, const mir::CastRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
-
-  const Type& src = types[info.source_type];
-  const Type& tgt = types[info.target_type];
-  if (tgt.Kind() == TypeKind::kString || src.Kind() == TypeKind::kString) {
-    throw common::InternalError(
-        "LowerCastRvalue", std::format(
-                               "unsupported cast: {} -> {}",
-                               ToString(src.Kind()), ToString(tgt.Kind())));
-  }
-
-  llvm::Value* source = LowerOperand(context, operands[0]);
-
-  const Type& source_type = types[info.source_type];
-  bool is_signed = IsPacked(source_type) && IsPackedSigned(source_type, types);
-
-  if (is_signed) {
-    return builder.CreateSExtOrTrunc(source, storage_type, "cast");
-  }
-  return builder.CreateZExtOrTrunc(source, storage_type, "cast");
-}
-
-auto IsPackedIntegral(const Type& type) -> bool {
-  return type.Kind() == TypeKind::kIntegral ||
-         type.Kind() == TypeKind::kPackedArray;
-}
-
-auto LowerBitCastRvalue(
-    Context& context, const mir::BitCastRvalueInfo& info,
-    const std::vector<mir::Operand>& operands) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
-
-  llvm::Value* src = LowerOperand(context, operands[0]);
-  const Type& src_type = types[info.source_type];
-  const Type& tgt_type = types[info.target_type];
-
-  if (src_type.Kind() == TypeKind::kReal && IsPackedIntegral(tgt_type)) {
-    return builder.CreateBitCast(
-        src, llvm::Type::getInt64Ty(llvm_ctx), "bitcast");
-  }
-
-  if (IsPackedIntegral(src_type) && tgt_type.Kind() == TypeKind::kReal) {
-    return builder.CreateBitCast(
-        src, llvm::Type::getDoubleTy(llvm_ctx), "bitcast");
-  }
-
-  if (src_type.Kind() == TypeKind::kShortReal && IsPackedIntegral(tgt_type)) {
-    return builder.CreateBitCast(
-        src, llvm::Type::getInt32Ty(llvm_ctx), "bitcast");
-  }
-
-  if (IsPackedIntegral(src_type) && tgt_type.Kind() == TypeKind::kShortReal) {
-    return builder.CreateBitCast(
-        src, llvm::Type::getFloatTy(llvm_ctx), "bitcast");
-  }
-
-  llvm_unreachable("invalid bitcast types");
 }
 
 auto LowerConcatRvalue(
@@ -574,6 +509,16 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
     }
   }
 
+  // Unified cast dispatch: all casts go through dedicated handlers
+  if (std::holds_alternative<mir::CastRvalueInfo>(compute.value.info)) {
+    LowerCastUnified(context, compute);
+    return;
+  }
+  if (std::holds_alternative<mir::BitCastRvalueInfo>(compute.value.info)) {
+    LowerBitCastUnified(context, compute);
+    return;
+  }
+
   // Math functions (IEEE 1800 §20.8): dispatch by semantic category, not type
   if (IsMathCompute(context, compute)) {
     LowerMathCompute(context, compute);
@@ -581,7 +526,7 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
   }
 
   // Real/shortreal operations: dispatch based on operand type
-  if (IsRealTypedRvalue(context, compute)) {
+  if (IsRealMathCompute(context, compute)) {
     LowerRealCompute(context, compute);
     return;
   }
@@ -608,12 +553,13 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
                 context, info, compute.value.operands, storage_type,
                 type_info.bit_width);
           },
-          [&](const mir::CastRvalueInfo& info) {
-            return LowerCastRvalue(
-                context, info, compute.value.operands, storage_type);
+          [&](const mir::CastRvalueInfo&) -> llvm::Value* {
+            throw common::InternalError(
+                "LowerCompute", "casts use LowerCastUnified");
           },
-          [&](const mir::BitCastRvalueInfo& info) {
-            return LowerBitCastRvalue(context, info, compute.value.operands);
+          [&](const mir::BitCastRvalueInfo&) -> llvm::Value* {
+            throw common::InternalError(
+                "LowerCompute", "bitcasts use LowerBitCastUnified");
           },
           [&](const mir::ConcatRvalueInfo& info) {
             return LowerConcatRvalue(

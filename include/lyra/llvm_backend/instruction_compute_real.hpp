@@ -5,7 +5,9 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto IsRealTypedRvalue(Context& context, const mir::Compute& compute) -> bool;
+// Check if compute is a real-typed math operation (unary or binary).
+// Does NOT match casts — casts are handled by LowerCastUnified.
+auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool;
 void LowerRealCompute(Context& context, const mir::Compute& compute);
 
 }  // namespace lyra::lowering::mir_to_llvm

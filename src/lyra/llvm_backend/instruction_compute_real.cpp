@@ -217,74 +217,9 @@ void LowerRealBinary(
   builder.CreateStore(result, target_ptr);
 }
 
-void LowerRealCast(
-    Context& context, const mir::CastRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target) {
-  auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
-
-  llvm::Value* source = LowerOperand(context, operands[0]);
-  const Type& src_type = types[info.source_type];
-  const Type& tgt_type = types[info.target_type];
-
-  llvm::Value* result = nullptr;
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
-
-  // integral → real/shortreal
-  if (IsPacked(src_type) && IsRealKind(tgt_type.Kind())) {
-    llvm::Type* float_ty =
-        (tgt_type.Kind() == TypeKind::kReal)
-            ? llvm::Type::getDoubleTy(context.GetLlvmContext())
-            : llvm::Type::getFloatTy(context.GetLlvmContext());
-    bool is_signed = IsPackedSigned(src_type, types);
-    if (is_signed) {
-      result = builder.CreateSIToFP(source, float_ty, "sitofp");
-    } else {
-      result = builder.CreateUIToFP(source, float_ty, "uitofp");
-    }
-    builder.CreateStore(result, target_ptr);
-    return;
-  }
-
-  // real/shortreal → integral
-  if (IsRealKind(src_type.Kind()) && IsPacked(tgt_type)) {
-    llvm::Type* target_type = context.GetPlaceLlvmType(target);
-    bool is_signed = IsPackedSigned(tgt_type, types);
-    if (is_signed) {
-      result = builder.CreateFPToSI(source, target_type, "fptosi");
-    } else {
-      result = builder.CreateFPToUI(source, target_type, "fptoui");
-    }
-    builder.CreateStore(result, target_ptr);
-    return;
-  }
-
-  // real → shortreal (fptrunc)
-  if (src_type.Kind() == TypeKind::kReal &&
-      tgt_type.Kind() == TypeKind::kShortReal) {
-    result = builder.CreateFPTrunc(
-        source, llvm::Type::getFloatTy(context.GetLlvmContext()), "fptrunc");
-    builder.CreateStore(result, target_ptr);
-    return;
-  }
-
-  // shortreal → real (fpext)
-  if (src_type.Kind() == TypeKind::kShortReal &&
-      tgt_type.Kind() == TypeKind::kReal) {
-    result = builder.CreateFPExt(
-        source, llvm::Type::getDoubleTy(context.GetLlvmContext()), "fpext");
-    builder.CreateStore(result, target_ptr);
-    return;
-  }
-
-  throw common::UnsupportedErrorException(
-      common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-      context.GetCurrentOrigin(), "unsupported real cast combination");
-}
-
 }  // namespace
 
-auto IsRealTypedRvalue(Context& context, const mir::Compute& compute) -> bool {
+auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
@@ -297,10 +232,7 @@ auto IsRealTypedRvalue(Context& context, const mir::Compute& compute) -> bool {
             TypeId tid = GetOperandTypeId(context, compute.value.operands[0]);
             return IsRealKind(types[tid].Kind());
           },
-          [&](const mir::CastRvalueInfo& info) {
-            return IsRealKind(types[info.source_type].Kind()) ||
-                   IsRealKind(types[info.target_type].Kind());
-          },
+          // Casts are handled by LowerCastUnified, not here
           [](const auto&) { return false; },
       },
       compute.value.info);
@@ -317,9 +249,9 @@ void LowerRealCompute(Context& context, const mir::Compute& compute) {
             LowerRealBinary(
                 context, info, compute.value.operands, compute.target);
           },
-          [&](const mir::CastRvalueInfo& info) {
-            LowerRealCast(
-                context, info, compute.value.operands, compute.target);
+          [&](const mir::CastRvalueInfo&) {
+            throw common::InternalError(
+                "LowerRealCompute", "casts use LowerCastUnified");
           },
           [&](const auto&) {
             throw common::UnsupportedErrorException(

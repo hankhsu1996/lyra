@@ -130,18 +130,6 @@ auto LowerConcatRvalue4State(
   return {.value = acc_val, .unknown = acc_unk};
 }
 
-auto LowerCastRvalue4State(
-    Context& context, const mir::CastRvalueInfo& /*info*/,
-    const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
-    -> FourStateValue {
-  auto& builder = context.GetBuilder();
-  auto src = LowerOperandFourState(context, operands[0], elem_type);
-  return {
-      .value = builder.CreateZExtOrTrunc(src.value, elem_type, "cast4.val"),
-      .unknown = builder.CreateZExtOrTrunc(src.unknown, elem_type, "cast4.unk"),
-  };
-}
-
 auto LowerUnaryRvalue4State(
     Context& context, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
@@ -374,9 +362,9 @@ void LowerCompute4State(
             return LowerConcatRvalue4State(
                 context, info, compute.value.operands, elem_type);
           },
-          [&](const mir::CastRvalueInfo& info) {
-            return LowerCastRvalue4State(
-                context, info, compute.value.operands, elem_type);
+          [&](const mir::CastRvalueInfo&) -> FourStateValue {
+            throw common::InternalError(
+                "LowerCompute4State", "casts use LowerCastUnified");
           },
           [&](const mir::UnaryRvalueInfo& info) {
             return LowerUnaryRvalue4State(
