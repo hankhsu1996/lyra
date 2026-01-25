@@ -232,11 +232,7 @@ void CollectPendingPortBindings(
 
     const auto* expr = conn->getExpression();
     if (expr == nullptr) {
-      ctx->sink->Error(
-          ctx->SpanOf(port_range),
-          std::format(
-              "port '{}': implicit named connections not yet supported",
-              port.name));
+      // Unconnected port - skip binding, port uses default value (e.g., 0)
       continue;
     }
 
