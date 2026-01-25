@@ -27,9 +27,6 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Entry point resume block for process functions (always 0, first block)
-constexpr uint32_t kEntryResumeBlock = 0;
-
 // Store X-encoded value ({value=0, unknown=semantic_mask}) to a 4-state pointer
 void StoreFourStateX(
     llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::StructType* struct_type,
@@ -76,11 +73,14 @@ void InitializeDesignState(
 }
 
 // Initialize ProcessStateN: zero everything, set design pointer, then
-// overwrite 4-state frame places with X encoding
+// overwrite 4-state frame places with X encoding.
+// Takes ProcessLayout explicitly to avoid implicit dependency on
+// Context::SetCurrentProcess.
 void InitializeProcessState(
-    Context& context, llvm::Value* process_state, llvm::Value* design_state) {
+    Context& context, llvm::Value* process_state, llvm::Value* design_state,
+    const ProcessLayout& proc_layout) {
   auto& builder = context.GetBuilder();
-  auto* state_type = context.GetProcessStateType();
+  auto* state_type = proc_layout.state_type;
   auto* header_type = context.GetHeaderType();
   const auto& types = context.GetTypeArena();
 
@@ -94,10 +94,9 @@ void InitializeProcessState(
   builder.CreateStore(design_state, design_ptr_ptr);
 
   // Overwrite 4-state frame places with X encoding
-  auto* frame_type = context.GetProcessFrameType();
+  auto* frame_type = proc_layout.frame.llvm_type;
   auto* frame_ptr = builder.CreateStructGEP(state_type, process_state, 1);
-  const auto& frame_layout =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()].frame;
+  const auto& frame_layout = proc_layout.frame;
 
   for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
     TypeId type_id = frame_layout.root_types[i];
@@ -112,52 +111,6 @@ void InitializeProcessState(
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
     StoreFourStateX(builder, field_ptr, struct_type, semantic_width);
   }
-}
-
-// Register tracked variables with runtime and emit snapshot call.
-// O(N) complexity using pre-built SlotId -> field_index map from layout.
-void RegisterAndSnapshotVariables(
-    Context& context, const std::vector<VariableInfo>& variables,
-    const std::vector<SlotInfo>& slots, llvm::Value* design_state) {
-  if (variables.empty()) {
-    return;
-  }
-
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
-  auto* design_type = context.GetDesignStateType();
-
-  for (const auto& var : variables) {
-    if (var.slot_id >= slots.size()) {
-      continue;
-    }
-
-    // Direct lookup using SlotId - no O(N) search needed
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
-
-    // Check if this slot exists in the layout
-    // Use GetDesignFieldIndex which throws if slot is missing (catches
-    // mismatches)
-    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
-    auto* slot_ptr = builder.CreateStructGEP(
-        design_type, design_state, field_index, "var_ptr");
-
-    const auto& type_info = slots[var.slot_id].type_info;
-
-    auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
-    auto* kind_val =
-        llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
-    auto* width_val = llvm::ConstantInt::get(i32_ty, type_info.width);
-    auto* signed_val =
-        llvm::ConstantInt::get(i1_ty, type_info.is_signed ? 1 : 0);
-    builder.CreateCall(
-        context.GetLyraRegisterVar(),
-        {name_ptr, slot_ptr, kind_val, width_val, signed_val});
-  }
-
-  builder.CreateCall(context.GetLyraSnapshotVars());
 }
 
 // Release all string slots to prevent memory leaks
@@ -183,6 +136,49 @@ void ReleaseStringSlots(
 }
 
 }  // namespace
+
+void EmitVariableInspection(
+    Context& context, const std::vector<VariableInfo>& variables,
+    const std::vector<SlotInfo>& slots, llvm::Value* design_state) {
+  if (variables.empty()) {
+    return;
+  }
+
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+  auto* design_type = context.GetDesignStateType();
+
+  for (const auto& var : variables) {
+    if (var.slot_id >= slots.size()) {
+      continue;
+    }
+
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
+    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+    auto* slot_ptr = builder.CreateStructGEP(
+        design_type, design_state, field_index, "var_ptr");
+
+    const auto& type_info = slots[var.slot_id].type_info;
+
+    auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
+    auto* kind_val =
+        llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
+    auto* width_val = llvm::ConstantInt::get(i32_ty, type_info.width);
+    auto* signed_val =
+        llvm::ConstantInt::get(i1_ty, type_info.is_signed ? 1 : 0);
+    builder.CreateCall(
+        context.GetLyraRegisterVar(),
+        {name_ptr, slot_ptr, kind_val, width_val, signed_val});
+  }
+
+  builder.CreateCall(context.GetLyraSnapshotVars());
+}
+
+void EmitTimeReport(Context& context) {
+  context.GetBuilder().CreateCall(context.GetLyraReportTime());
+}
 
 auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Create LLVM context and module
@@ -276,18 +272,17 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Run synchronously before scheduler, matching MIR interpreter behavior
   size_t num_init = layout.num_init_processes;
   for (size_t i = 0; i < num_init; ++i) {
-    context.SetCurrentProcess(i);
+    const auto& proc_layout = layout.processes[i];
 
     auto* process_state = builder.CreateAlloca(
-        context.GetProcessStateType(), nullptr,
-        std::format("init_state_{}", i));
+        proc_layout.state_type, nullptr, std::format("init_state_{}", i));
 
-    InitializeProcessState(context, process_state, design_state);
+    InitializeProcessState(context, process_state, design_state, proc_layout);
 
-    // Call directly with entry block (synchronous, run to completion)
+    // Run synchronously to completion via runtime API
+    // (entry block number is encapsulated in LyraRunProcessSync)
     builder.CreateCall(
-        process_funcs[i],
-        {process_state, llvm::ConstantInt::get(i32_ty, kEntryResumeBlock)});
+        context.GetLyraRunProcessSync(), {process_funcs[i], process_state});
   }
 
   // Phase 2: Module processes through scheduler
@@ -299,13 +294,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     module_states.reserve(num_module_processes);
 
     for (size_t i = num_init; i < process_funcs.size(); ++i) {
-      context.SetCurrentProcess(i);
+      const auto& proc_layout = layout.processes[i];
 
       auto* process_state = builder.CreateAlloca(
-          context.GetProcessStateType(), nullptr,
-          std::format("process_state_{}", i));
+          proc_layout.state_type, nullptr, std::format("process_state_{}", i));
 
-      InitializeProcessState(context, process_state, design_state);
+      InitializeProcessState(context, process_state, design_state, proc_layout);
       module_states.push_back(process_state);
     }
 
@@ -337,19 +331,15 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Branch to exit block
   builder.CreateBr(exit_block);
 
-  // Exit block: release strings, register/snapshot variables (if any), return 0
+  // Exit block: release strings, run hooks (if any), return 0
   builder.SetInsertPoint(exit_block);
 
   // Release all string locals to prevent memory leaks
   ReleaseStringSlots(context, slot_info, design_state);
 
-  // Register and snapshot tracked variables for test framework inspection
-  RegisterAndSnapshotVariables(
-      context, input.variables, slot_info, design_state);
-
-  // Report final simulation time for test harness
-  if (input.emit_time_report) {
-    builder.CreateCall(context.GetLyraReportTime());
+  // Call instrumentation hooks (e.g., variable inspection, timing)
+  if (input.hooks != nullptr) {
+    input.hooks->EmitEpilogue(context, slot_info, design_state);
   }
 
   builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));

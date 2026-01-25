@@ -99,7 +99,6 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .design = &mir_result.design,
       .mir_arena = mir_result.mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
-      .variables = {},
   };
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
 
