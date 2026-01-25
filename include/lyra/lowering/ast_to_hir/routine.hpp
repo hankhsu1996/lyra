@@ -7,19 +7,17 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-struct Context;
-class SymbolRegistrar;
+class ScopeLowerer;
 
 auto LowerProcess(
-    const slang::ast::ProceduralBlockSymbol& proc, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ProcessId;
+    const slang::ast::ProceduralBlockSymbol& proc, ScopeLowerer& lowerer)
+    -> hir::ProcessId;
 
 auto LowerFunction(
-    const slang::ast::SubroutineSymbol& func, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::FunctionId;
+    const slang::ast::SubroutineSymbol& func, ScopeLowerer& lowerer)
+    -> hir::FunctionId;
 
-auto LowerTask(
-    const slang::ast::SubroutineSymbol& task, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::TaskId;
+auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
+    -> hir::TaskId;
 
 }  // namespace lyra::lowering::ast_to_hir

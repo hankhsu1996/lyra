@@ -34,6 +34,8 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
       .symbol_table = symbol_table.get(),
       .scope_table = scope_table.get(),
       .source_mapper = source_mapper.get(),
+      .temp_counter = 0,
+      .cached_global_precision = std::nullopt,
   };
 
   SymbolRegistrar registrar(&ctx);

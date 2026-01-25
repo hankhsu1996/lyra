@@ -16,6 +16,7 @@
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -26,6 +27,9 @@ namespace lyra::lowering::ast_to_hir {
 auto LowerPackage(
     const slang::ast::PackageSymbol& package, SymbolRegistrar& registrar,
     Context* ctx) -> hir::Package {
+  // Create per-package lowerer (owns timescale state)
+  ScopeLowerer lowerer(*ctx, registrar, package);
+
   SourceSpan span = ctx->SpanOf(GetSourceRange(package));
 
   SymbolId symbol =
@@ -90,7 +94,7 @@ auto LowerPackage(
   // Phase 2: Lower function bodies (symbols are registered, recursion works)
   std::vector<hir::FunctionId> functions;
   for (const slang::ast::SubroutineSymbol* sub : function_refs) {
-    hir::FunctionId id = LowerFunction(*sub, registrar, ctx);
+    hir::FunctionId id = LowerFunction(*sub, lowerer);
     if (id) {
       functions.push_back(id);
     }

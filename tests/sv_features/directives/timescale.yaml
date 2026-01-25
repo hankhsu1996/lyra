@@ -176,3 +176,30 @@ cases:
       endmodule
     expect:
       time: 25
+
+  # Multi-module with different timescales
+  - name: multi_module_different_timescales
+    description: Child module with finer timescale completes first
+    sv: |
+      `timescale 1ns / 1ps
+      module Child;
+        initial begin
+          #5;  // 5ns = 5000ps in global precision
+          $display("child_done");
+        end
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Child child();
+        initial begin
+          #1;  // 1us = 1000000ps in global precision
+          $display("parent_done");
+        end
+      endmodule
+    expect:
+      time: 1000000
+      stdout:
+        contains:
+          - "child_done"
+          - "parent_done"

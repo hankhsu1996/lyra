@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <limits>
+#include <optional>
+
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -8,6 +12,22 @@
 #include "lyra/common/timescale_format.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+/// Compute 10^exponent with overflow checking.
+/// Returns std::nullopt on overflow or negative exponent.
+inline auto IntegerPow10(int exponent) -> std::optional<uint64_t> {
+  if (exponent < 0) {
+    return std::nullopt;
+  }
+  uint64_t result = 1;
+  for (int i = 0; i < exponent; ++i) {
+    if (result > std::numeric_limits<uint64_t>::max() / 10) {
+      return std::nullopt;
+    }
+    result *= 10;
+  }
+  return result;
+}
 
 /// Convert a slang TimeScaleValue to a power-of-10 integer.
 inline auto TimeScaleValueToPower(const slang::TimeScaleValue& tsv) -> int {
