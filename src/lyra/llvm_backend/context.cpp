@@ -613,6 +613,78 @@ auto Context::GetLyraQueueDeleteAt() -> llvm::Function* {
   return lyra_queue_delete_at_;
 }
 
+auto Context::GetLyraStringFormatStart() -> llvm::Function* {
+  if (lyra_string_format_start_ == nullptr) {
+    // ptr LyraStringFormatStart()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {}, false);
+    lyra_string_format_start_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatStart",
+        llvm_module_.get());
+  }
+  return lyra_string_format_start_;
+}
+
+auto Context::GetLyraStringFormatLiteral() -> llvm::Function* {
+  if (lyra_string_format_literal_ == nullptr) {
+    // void LyraStringFormatLiteral(ptr buf, ptr str, i64 len)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i64_ty}, false);
+    lyra_string_format_literal_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatLiteral",
+        llvm_module_.get());
+  }
+  return lyra_string_format_literal_;
+}
+
+auto Context::GetLyraStringFormatValue() -> llvm::Function* {
+  if (lyra_string_format_value_ == nullptr) {
+    // void LyraStringFormatValue(ptr buf, i32 format, ptr data, i32 width,
+    //                            i1 is_signed, i32 output_width,
+    //                            i32 precision, i1 zero_pad, i1 left_align,
+    //                            ptr x_mask, ptr z_mask)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty,
+         ptr_ty, ptr_ty},
+        false);
+    lyra_string_format_value_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatValue",
+        llvm_module_.get());
+  }
+  return lyra_string_format_value_;
+}
+
+auto Context::GetLyraStringFormatString() -> llvm::Function* {
+  if (lyra_string_format_string_ == nullptr) {
+    // void LyraStringFormatString(ptr buf, ptr handle)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_string_format_string_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatString",
+        llvm_module_.get());
+  }
+  return lyra_string_format_string_;
+}
+
+auto Context::GetLyraStringFormatFinish() -> llvm::Function* {
+  if (lyra_string_format_finish_ == nullptr) {
+    // ptr LyraStringFormatFinish(ptr buf)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_string_format_finish_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatFinish",
+        llvm_module_.get());
+  }
+  return lyra_string_format_finish_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

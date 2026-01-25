@@ -1,0 +1,20 @@
+feature: sformat_runtime
+description: Tests for $sformat with runtime format strings (requires dynamic format parsing)
+
+cases:
+  - name: sformat_runtime_format_string
+    description: Runtime format string works in interpreter
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            initial begin
+              string fmt = "x=%0d";
+              string s;
+              $sformat(s, fmt, 42);
+              $display("%s", s);
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=42

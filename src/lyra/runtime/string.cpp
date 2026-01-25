@@ -2,10 +2,16 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <print>
+#include <span>
+#include <string>
 #include <string_view>
+
+#include "lyra/common/format.hpp"
+#include "lyra/runtime/marshal.hpp"
 
 namespace {
 
@@ -73,32 +79,25 @@ extern "C" auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
     -> LyraStringHandle {
   assert(count >= 0 && "concat count must be non-negative");
 
-  // Sum total length
-  uint64_t total_len = 0;
-  for (int64_t i = 0; i < count; ++i) {
-    auto* elem = static_cast<LyraStringData*>(elems[i]);
-    if (elem != nullptr) {
-      total_len += elem->len;
+  std::span<const LyraStringHandle> handles(elems, static_cast<size_t>(count));
+
+  // Build concatenated string
+  std::string buffer;
+  for (LyraStringHandle handle : handles) {
+    auto* elem = static_cast<LyraStringData*>(handle);
+    if (elem != nullptr && elem->len > 0) {
+      buffer.append(elem->data, elem->len);
     }
   }
 
-  // Allocate result
+  // Allocate result and copy from buffer
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* result = new LyraStringData();
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  result->data = new char[total_len];
-  result->len = total_len;
+  result->data = new char[buffer.size()];
+  std::memcpy(result->data, buffer.data(), buffer.size());
+  result->len = buffer.size();
   result->refcount = 1;
-
-  // Copy each element's data sequentially
-  uint64_t offset = 0;
-  for (int64_t i = 0; i < count; ++i) {
-    auto* elem = static_cast<LyraStringData*>(elems[i]);
-    if (elem != nullptr && elem->len > 0) {
-      std::memcpy(result->data + offset, elem->data, elem->len);
-      offset += elem->len;
-    }
-  }
 
   return result;
 }
@@ -123,4 +122,49 @@ extern "C" void LyraPrintString(LyraStringHandle handle) {
   }
   auto* str = static_cast<LyraStringData*>(handle);
   std::print("{}", std::string_view(str->data, str->len));
+}
+
+// Internal buffer for string formatting
+struct LyraStringFormatBuffer {
+  std::string data;
+};
+
+extern "C" auto LyraStringFormatStart() -> LyraStringFormatBuffer* {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto* buf = new LyraStringFormatBuffer();
+  buf->data.reserve(64);  // Reduce realloc churn for typical format strings
+  return buf;
+}
+
+extern "C" void LyraStringFormatLiteral(
+    LyraStringFormatBuffer* buf, const char* str, int64_t len) {
+  buf->data.append(str, static_cast<size_t>(len));
+}
+
+extern "C" void LyraStringFormatValue(
+    LyraStringFormatBuffer* buf, int32_t format, const void* data,
+    int32_t width, bool is_signed, int32_t output_width, int32_t precision,
+    bool zero_pad, bool left_align, const void* /*x_mask*/,
+    const void* /*z_mask*/) {
+  buf->data += lyra::runtime::FormatRuntimeValue(
+      static_cast<lyra::FormatKind>(format), data, width, is_signed,
+      output_width, precision, zero_pad, left_align);
+}
+
+extern "C" void LyraStringFormatString(
+    LyraStringFormatBuffer* buf, LyraStringHandle handle) {
+  if (handle == nullptr) {
+    return;
+  }
+  auto* str = static_cast<LyraStringData*>(handle);
+  buf->data.append(str->data, str->len);
+}
+
+extern "C" auto LyraStringFormatFinish(LyraStringFormatBuffer* buf)
+    -> LyraStringHandle {
+  LyraStringHandle result = LyraStringFromLiteral(
+      buf->data.data(), static_cast<int64_t>(buf->data.size()));
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  delete buf;  // Consume buffer
+  return result;
 }

@@ -2,15 +2,14 @@
 
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <limits>
-#include <optional>
 #include <print>
 #include <string>
 #include <vector>
 
 #include "lyra/common/format.hpp"
-#include "lyra/semantic/format.hpp"
-#include "lyra/semantic/value.hpp"
+#include "lyra/runtime/marshal.hpp"
 
 namespace {
 
@@ -102,40 +101,6 @@ void SnapshotReal(const VarEntry& var) {
       std::numeric_limits<double>::max_digits10);
 }
 
-// Marshal raw data to RuntimeValue for integral types.
-// For now, only handles 2-state values (x_mask and z_mask are null).
-auto MarshalIntegral(const void* data, int32_t width)
-    -> lyra::semantic::RuntimeValue {
-  uint64_t value = 0;
-  if (width <= 8) {
-    value = *static_cast<const uint8_t*>(data);
-  } else if (width <= 16) {
-    value = *static_cast<const uint16_t*>(data);
-  } else if (width <= 32) {
-    value = *static_cast<const uint32_t*>(data);
-  } else {
-    value = *static_cast<const uint64_t*>(data);
-  }
-
-  // Mask to actual width
-  if (width < 64) {
-    value &= (1ULL << width) - 1;
-  }
-
-  return lyra::semantic::MakeIntegral(value, static_cast<uint32_t>(width));
-}
-
-// Convert output_width parameter to FormatSpec width.
-// LLVM backend uses: -1 = auto-size, 0 = minimal, >0 = explicit width
-auto ConvertWidth(int32_t output_width) -> std::optional<int> {
-  if (output_width < 0) {
-    // Auto-size: nullopt means semantic layer applies auto-sizing
-    return std::nullopt;
-  }
-  // Minimal (0) or explicit width (>0)
-  return output_width;
-}
-
 }  // namespace
 
 extern "C" void LyraPrintLiteral(const char* str) {
@@ -146,37 +111,9 @@ extern "C" void LyraPrintValue(
     int32_t format, const void* data, int32_t width, bool is_signed,
     int32_t output_width, int32_t precision, bool zero_pad, bool left_align,
     const void* /*x_mask*/, const void* /*z_mask*/) {
-  auto kind = static_cast<lyra::FormatKind>(format);
-
-  // Handle string specially - data IS the string pointer
-  if (kind == lyra::FormatKind::kString) {
-    std::print("{}", static_cast<const char*>(data));
-    return;
-  }
-
-  // Build FormatSpec from parameters
-  lyra::semantic::FormatSpec spec{
-      .kind = kind,
-      .width = ConvertWidth(output_width),
-      .precision = precision >= 0 ? std::optional(precision) : std::nullopt,
-      .zero_pad = zero_pad,
-      .left_align = left_align,
-  };
-
-  // Marshal data to RuntimeValue and format
-  lyra::semantic::RuntimeValue value;
-  if (kind == lyra::FormatKind::kReal) {
-    if (width == 32) {  // shortreal (float)
-      value = lyra::semantic::MakeReal(
-          static_cast<double>(*static_cast<const float*>(data)));
-    } else {
-      value = lyra::semantic::MakeReal(*static_cast<const double*>(data));
-    }
-  } else {
-    value = MarshalIntegral(data, width);
-  }
-
-  std::string formatted = lyra::semantic::FormatValue(value, spec, is_signed);
+  std::string formatted = lyra::runtime::FormatRuntimeValue(
+      static_cast<lyra::FormatKind>(format), data, width, is_signed,
+      output_width, precision, zero_pad, left_align);
   std::print("{}", formatted);
 }
 
