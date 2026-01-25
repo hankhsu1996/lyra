@@ -27,6 +27,9 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Entry point resume block for process functions (always 0, first block)
+constexpr uint32_t kEntryResumeBlock = 0;
+
 // Store X-encoded value ({value=0, unknown=semantic_mask}) to a 4-state pointer
 void StoreFourStateX(
     llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::StructType* struct_type,
@@ -266,45 +269,70 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Initialize runtime state (reset time tracker)
   builder.CreateCall(context.GetLyraInitRuntime());
 
-  // Allocate and initialize all process states
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto num_processes = static_cast<uint32_t>(process_funcs.size());
-  std::vector<llvm::Value*> process_states;
-  process_states.reserve(num_processes);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
 
-  for (size_t i = 0; i < process_funcs.size(); ++i) {
+  // Phase 1: Init processes (package variable initialization)
+  // Run synchronously before scheduler, matching MIR interpreter behavior
+  size_t num_init = layout.num_init_processes;
+  for (size_t i = 0; i < num_init; ++i) {
     context.SetCurrentProcess(i);
 
     auto* process_state = builder.CreateAlloca(
         context.GetProcessStateType(), nullptr,
-        std::format("process_state_{}", i));
+        std::format("init_state_{}", i));
 
     InitializeProcessState(context, process_state, design_state);
-    process_states.push_back(process_state);
+
+    // Call directly with entry block (synchronous, run to completion)
+    builder.CreateCall(
+        process_funcs[i],
+        {process_state, llvm::ConstantInt::get(i32_ty, kEntryResumeBlock)});
   }
 
-  // Build function pointer and state pointer arrays for multi-process call
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* funcs_array = builder.CreateAlloca(
-      ptr_ty, llvm::ConstantInt::get(i32_ty, num_processes), "funcs_array");
-  auto* states_array = builder.CreateAlloca(
-      ptr_ty, llvm::ConstantInt::get(i32_ty, num_processes), "states_array");
+  // Phase 2: Module processes through scheduler
+  auto num_module_processes =
+      static_cast<uint32_t>(process_funcs.size() - num_init);
 
-  for (uint32_t i = 0; i < num_processes; ++i) {
-    auto* func_slot =
-        builder.CreateGEP(ptr_ty, funcs_array, {builder.getInt32(i)});
-    builder.CreateStore(process_funcs[i], func_slot);
+  if (num_module_processes > 0) {
+    std::vector<llvm::Value*> module_states;
+    module_states.reserve(num_module_processes);
 
-    auto* state_slot =
-        builder.CreateGEP(ptr_ty, states_array, {builder.getInt32(i)});
-    builder.CreateStore(process_states[i], state_slot);
+    for (size_t i = num_init; i < process_funcs.size(); ++i) {
+      context.SetCurrentProcess(i);
+
+      auto* process_state = builder.CreateAlloca(
+          context.GetProcessStateType(), nullptr,
+          std::format("process_state_{}", i));
+
+      InitializeProcessState(context, process_state, design_state);
+      module_states.push_back(process_state);
+    }
+
+    // Build function pointer and state pointer arrays for scheduler
+    auto* funcs_array = builder.CreateAlloca(
+        ptr_ty, llvm::ConstantInt::get(i32_ty, num_module_processes),
+        "funcs_array");
+    auto* states_array = builder.CreateAlloca(
+        ptr_ty, llvm::ConstantInt::get(i32_ty, num_module_processes),
+        "states_array");
+
+    for (uint32_t i = 0; i < num_module_processes; ++i) {
+      auto* func_slot =
+          builder.CreateGEP(ptr_ty, funcs_array, {builder.getInt32(i)});
+      builder.CreateStore(process_funcs[num_init + i], func_slot);
+
+      auto* state_slot =
+          builder.CreateGEP(ptr_ty, states_array, {builder.getInt32(i)});
+      builder.CreateStore(module_states[i], state_slot);
+    }
+
+    // Call multi-process scheduler
+    builder.CreateCall(
+        context.GetLyraRunSimulation(),
+        {funcs_array, states_array,
+         llvm::ConstantInt::get(i32_ty, num_module_processes)});
   }
-
-  // Call multi-process scheduler
-  builder.CreateCall(
-      context.GetLyraRunSimulation(),
-      {funcs_array, states_array,
-       llvm::ConstantInt::get(i32_ty, num_processes)});
 
   // Branch to exit block
   builder.CreateBr(exit_block);
