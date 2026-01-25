@@ -827,9 +827,11 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
   const auto& place = arena_[place_id];
 
   if (!place.projections.empty()) {
+    const char* desc = mir::DescribeProjection(place.projections[0].info);
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
-        current_origin_, "places with projections not yet supported");
+        current_origin_,
+        std::format("{} as assignment target not yet supported", desc));
   }
 
   TypeId type_id = place.root.type;

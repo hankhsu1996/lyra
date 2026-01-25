@@ -162,7 +162,7 @@ void Interpreter::ExecCompute(ProcessState& state, const Compute& compute) {
 
 void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
           [&](const SeverityEffect& op) { ExecSeverityEffect(state, op); },
           [&](const MemIOEffect& op) { ExecMemIOEffect(state, op); },
@@ -468,7 +468,7 @@ void Interpreter::ExecInstruction(
 auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
     -> std::optional<BasicBlockId> {
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [](const Jump& t) -> std::optional<BasicBlockId> { return t.target; },
 
           [&](const Branch& t) -> std::optional<BasicBlockId> {

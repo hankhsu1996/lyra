@@ -14,8 +14,9 @@
 #include <fmt/core.h>
 
 #include "frontend.hpp"
-#include "lyra/common/source_span.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/unsupported_error.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "pipeline.hpp"
@@ -153,15 +154,20 @@ auto ResolveErrorLocation(
     return "";
   }
 
-  // For now, we only handle statement origins
-  if (!std::holds_alternative<hir::StatementId>(entry->hir_source)) {
-    return "";
-  }
-
-  auto stmt_id = std::get<hir::StatementId>(entry->hir_source);
-  const hir::Statement& stmt = (*compilation.hir.hir_arena)[stmt_id];
-
-  return FormatSourceLocation(stmt.span, *compilation.hir.source_manager);
+  return std::visit(
+      common::Overloaded{
+          [&](hir::StatementId stmt_id) {
+            const hir::Statement& stmt = (*compilation.hir.hir_arena)[stmt_id];
+            return FormatSourceLocation(
+                stmt.span, *compilation.hir.source_manager);
+          },
+          [&](hir::ExpressionId expr_id) {
+            const hir::Expression& expr = (*compilation.hir.hir_arena)[expr_id];
+            return FormatSourceLocation(
+                expr.span, *compilation.hir.source_manager);
+          },
+      },
+      entry->hir_source);
 }
 
 }  // namespace

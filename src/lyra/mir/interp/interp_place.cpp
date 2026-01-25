@@ -107,7 +107,7 @@ auto Interpreter::ApplyProjectionsForRead(
 
   for (const auto& proj : place.projections) {
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const FieldProjection& fp) {
               if (loc.bit_slice) {
                 throw common::InternalError(
@@ -265,7 +265,7 @@ auto Interpreter::ApplyProjectionsForWrite(
 
   for (const auto& proj : place.projections) {
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const FieldProjection& fp) {
               if (loc.bit_slice) {
                 throw common::InternalError(

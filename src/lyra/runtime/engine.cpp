@@ -37,7 +37,8 @@ void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
 }
 
 void Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalId signal, EdgeKind edge) {
+    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    common::EdgeKind edge) {
   waiters_[signal].push_back(
       Waiter{
           .handle = handle,
@@ -100,13 +101,13 @@ void Engine::NotifyChange(
   for (const auto& waiter : it->second) {
     bool triggered = false;
     switch (waiter.edge) {
-      case EdgeKind::kPosedge:
+      case common::EdgeKind::kPosedge:
         triggered = !old_lsb && new_lsb;
         break;
-      case EdgeKind::kNegedge:
+      case common::EdgeKind::kNegedge:
         triggered = old_lsb && !new_lsb;
         break;
-      case EdgeKind::kAnyChange:
+      case common::EdgeKind::kAnyChange:
         triggered = true;
         break;
     }

@@ -84,7 +84,7 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) -> TypeId { return c.type; },
           [&](mir::PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];
@@ -772,7 +772,7 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
   llvm::Type* storage_type = context.GetPlaceLlvmType(compute.target);
 
   llvm::Value* result = std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::UnaryRvalueInfo& info) {
             return LowerUnaryRvalue(
                 context, info, compute.value.operands, storage_type);

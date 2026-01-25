@@ -339,7 +339,7 @@ void CollectPlacesFromEffectOp(
     const mir::EffectOp& effect,
     std::unordered_set<mir::PlaceId, PlaceIdHash>& places) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::DisplayEffect& d) {
             if (d.descriptor) {
               CollectPlaceFromOperand(*d.descriptor, places);
@@ -380,7 +380,7 @@ auto CollectProcessPlaces(const mir::Process& process)
   for (const auto& block : process.blocks) {
     for (const auto& instr : block.instructions) {
       std::visit(
-          Overloaded{
+          common::Overloaded{
               [&](const mir::Assign& a) {
                 places.insert(a.target);
                 CollectPlaceFromOperand(a.source, places);
@@ -406,7 +406,7 @@ auto CollectProcessPlaces(const mir::Process& process)
     }
 
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const mir::Branch& b) { places.insert(b.condition); },
             [](const auto&) {},
         },

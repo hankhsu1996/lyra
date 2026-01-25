@@ -34,7 +34,7 @@ void CollectFromPlace(
 
   for (const auto& proj : place.projections) {
     std::visit(
-        Overloaded{
+        common::Overloaded{
             [&](const IndexProjection& idx) {
               CollectFromOperand(idx.index, arena, seen);
             },
@@ -67,7 +67,7 @@ void CollectFromRvalue(
   }
 
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const GuardedUseRvalueInfo& info) {
             CollectFromPlace(arena[info.place], arena, seen);
           },
@@ -98,7 +98,7 @@ void CollectFromInstruction(
     const Instruction& instr, const Arena& arena,
     std::unordered_set<uint32_t>& seen) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Assign& assign) {
             CollectFromOperand(assign.source, arena, seen);
           },
@@ -121,7 +121,7 @@ void CollectFromTerminator(
     const Terminator& term, const Arena& arena,
     std::unordered_set<uint32_t>& seen) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Branch& branch) {
             CollectFromPlace(arena[branch.condition], arena, seen);
           },
@@ -154,7 +154,7 @@ auto CollectSensitivity(const Process& process, const Arena& arena)
   triggers.reserve(seen.size());
   for (uint32_t slot : seen) {
     triggers.push_back(
-        {.signal = SlotId{slot}, .edge = runtime::EdgeKind::kAnyChange});
+        {.signal = SlotId{slot}, .edge = common::EdgeKind::kAnyChange});
   }
   return triggers;
 }

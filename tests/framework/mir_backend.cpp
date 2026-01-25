@@ -264,7 +264,7 @@ auto RunMirInterpreter(
       auto reason = interpreter.RunUntilSuspend(state);
 
       std::visit(
-          Overloaded{
+          common::Overloaded{
               [](const mir::interp::SuspendFinished&) {},
               [&](const mir::interp::SuspendDelay& d) {
                 eng.Delay(

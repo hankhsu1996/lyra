@@ -39,7 +39,7 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const Constant& c) -> TypeId { return c.type; },
           [&](mir::PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];
@@ -223,7 +223,7 @@ auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::UnaryRvalueInfo&) {
             TypeId tid = GetOperandTypeId(context, compute.value.operands[0]);
             return IsRealKind(types[tid].Kind());
@@ -240,7 +240,7 @@ auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
 
 void LowerRealCompute(Context& context, const mir::Compute& compute) {
   std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const mir::UnaryRvalueInfo& info) {
             LowerRealUnary(
                 context, info, compute.value.operands, compute.target);

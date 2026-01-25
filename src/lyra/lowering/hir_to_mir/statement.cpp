@@ -829,20 +829,20 @@ void LowerEventWait(
 
     if (hir_trigger.edge == hir::EventEdgeKind::kBothEdges) {
       triggers.push_back(
-          {.signal = slot_id, .edge = runtime::EdgeKind::kPosedge});
+          {.signal = slot_id, .edge = common::EdgeKind::kPosedge});
       triggers.push_back(
-          {.signal = slot_id, .edge = runtime::EdgeKind::kNegedge});
+          {.signal = slot_id, .edge = common::EdgeKind::kNegedge});
     } else {
-      runtime::EdgeKind edge = runtime::EdgeKind::kAnyChange;
+      common::EdgeKind edge = common::EdgeKind::kAnyChange;
       switch (hir_trigger.edge) {
         case hir::EventEdgeKind::kNone:
-          edge = runtime::EdgeKind::kAnyChange;
+          edge = common::EdgeKind::kAnyChange;
           break;
         case hir::EventEdgeKind::kPosedge:
-          edge = runtime::EdgeKind::kPosedge;
+          edge = common::EdgeKind::kPosedge;
           break;
         case hir::EventEdgeKind::kNegedge:
-          edge = runtime::EdgeKind::kNegedge;
+          edge = common::EdgeKind::kNegedge;
           break;
         case hir::EventEdgeKind::kBothEdges:
           break;  // Already handled above

@@ -102,7 +102,7 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
 auto LowerOperandRaw(Context& context, const mir::Operand& operand)
     -> llvm::Value* {
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&context](const Constant& constant) {
             return LowerConstant(context, constant);
           },
@@ -186,7 +186,7 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
   auto& llvm_ctx = context.GetLlvmContext();
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](const IntegralConstant& integral) -> llvm::Value* {
             // Get semantic bit width from type
             const Type& type = context.GetTypeArena()[constant.type];

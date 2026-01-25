@@ -73,4 +73,26 @@ inline auto IsBitRange(const Projection& proj) -> bool {
   return std::holds_alternative<BitRangeProjection>(proj.info);
 }
 
+// User-facing description of a projection kind
+inline auto DescribeProjection(const ProjectionInfo& info) -> const char* {
+  return std::visit(
+      [](const auto& p) -> const char* {
+        using T = std::decay_t<decltype(p)>;
+        if constexpr (std::is_same_v<T, FieldProjection>) {
+          return "struct field access";
+        } else if constexpr (std::is_same_v<T, IndexProjection>) {
+          return "array indexing";
+        } else if constexpr (std::is_same_v<T, SliceProjection>) {
+          return "bit slice";
+        } else if constexpr (std::is_same_v<T, DerefProjection>) {
+          return "pointer dereference";
+        } else if constexpr (std::is_same_v<T, BitRangeProjection>) {
+          return "part-select";
+        } else if constexpr (std::is_same_v<T, UnionMemberProjection>) {
+          return "union member access";
+        }
+      },
+      info);
+}
+
 }  // namespace lyra::mir

@@ -268,7 +268,7 @@ auto LowerPureSystemFunction(
   SourceSpan span = ctx->SpanOf(call.sourceRange);
 
   return std::visit(
-      Overloaded{
+      common::Overloaded{
           [&](ConversionSysFnKind kind) -> hir::ExpressionId {
             if (call.arguments().size() != 1) {
               ctx->ErrorFmt(

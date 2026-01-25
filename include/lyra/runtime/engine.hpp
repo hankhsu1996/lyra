@@ -95,7 +95,8 @@ class Engine {
   // Subscribe to signal edge. Process resumes when signal changes.
   // Called by interpreter/codegen when process hits a Wait terminator.
   void Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalId signal, EdgeKind edge);
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      common::EdgeKind edge);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -154,7 +155,7 @@ class Engine {
   struct Waiter {
     ProcessHandle handle;
     ResumePoint resume;
-    EdgeKind edge = EdgeKind::kAnyChange;
+    common::EdgeKind edge = common::EdgeKind::kAnyChange;
   };
   std::map<SignalId, std::vector<Waiter>> waiters_;
 };
