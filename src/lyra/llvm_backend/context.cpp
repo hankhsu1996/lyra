@@ -27,6 +27,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -37,8 +38,8 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Get the LLVM type for storage of an integral type
-auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+// Get the LLVM type for storage of an integral type (local helper)
+auto GetIntegralStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type* {
   // Round up to the next power-of-2 storage size for efficient access
   if (bit_width <= 8) {
@@ -60,57 +61,8 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
 // Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
 auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType* {
-  auto* elem = GetLlvmStorageType(ctx, bit_width);
+  auto* elem = GetIntegralStorageType(ctx, bit_width);
   return llvm::StructType::get(ctx, {elem, elem});
-}
-
-// Convert a TypeId to its LLVM type representation (for GEP type operands)
-auto GetLlvmTypeForTypeId(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type* {
-  const Type& type = types[type_id];
-  if (type.Kind() == TypeKind::kIntegral) {
-    uint32_t bit_width = type.AsIntegral().bit_width;
-    if (type.AsIntegral().is_four_state) {
-      return GetFourStateStructType(ctx, bit_width);
-    }
-    return GetLlvmStorageType(ctx, bit_width);
-  }
-  if (type.Kind() == TypeKind::kReal) {
-    return llvm::Type::getDoubleTy(ctx);
-  }
-  if (type.Kind() == TypeKind::kShortReal) {
-    return llvm::Type::getFloatTy(ctx);
-  }
-  if (type.Kind() == TypeKind::kUnpackedArray) {
-    const auto& info = type.AsUnpackedArray();
-    llvm::Type* elem = GetLlvmTypeForTypeId(ctx, info.element_type, types);
-    return llvm::ArrayType::get(elem, info.range.Size());
-  }
-  if (type.Kind() == TypeKind::kString ||
-      type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
-    return llvm::PointerType::getUnqual(ctx);
-  }
-  if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types);
-    if (IsPackedFourState(type, types)) {
-      return GetFourStateStructType(ctx, width);
-    }
-    return GetLlvmStorageType(ctx, width);
-  }
-  if (type.Kind() == TypeKind::kUnpackedStruct) {
-    const auto& info = type.AsUnpackedStruct();
-    std::vector<llvm::Type*> field_types;
-    field_types.reserve(info.fields.size());
-    for (const auto& field : info.fields) {
-      field_types.push_back(GetLlvmTypeForTypeId(ctx, field.type, types));
-    }
-    return llvm::StructType::get(ctx, field_types);
-  }
-  throw common::InternalError(
-      "GetLlvmTypeForTypeId",
-      std::format("unsupported type: {}", ToString(type)));
 }
 
 }  // namespace
@@ -681,8 +633,7 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
   }
 
   // POD types: compute size from DataLayout, no clone/destroy needed
-  llvm::Type* llvm_type =
-      GetLlvmTypeForTypeId(*llvm_context_, elem_type, types_);
+  llvm::Type* llvm_type = BuildLlvmTypeForTypeId(*this, elem_type);
   auto byte_size = static_cast<int32_t>(
       llvm_module_->getDataLayout().getTypeAllocSize(llvm_type));
   return ElemOpsInfo{
@@ -691,6 +642,21 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
       .clone_fn = null_ptr,
       .destroy_fn = null_ptr,
   };
+}
+
+auto Context::GetOrCreateUnionStorageInfo(
+    TypeId union_type, CachedUnionInfo info) -> CachedUnionInfo {
+  auto [it, inserted] = union_storage_cache_.emplace(union_type, info);
+  return it->second;
+}
+
+auto Context::GetCachedUnionStorageInfo(TypeId union_type) const
+    -> const CachedUnionInfo* {
+  auto it = union_storage_cache_.find(union_type);
+  if (it != union_storage_cache_.end()) {
+    return &it->second;
+  }
+  return nullptr;
 }
 
 auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
@@ -704,7 +670,7 @@ auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
   const auto& enum_info = type.AsEnum();
   uint32_t bit_width = PackedBitWidth(type, types_);
   uint32_t storage_bits =
-      GetLlvmStorageType(*llvm_context_, bit_width)->getIntegerBitWidth();
+      GetIntegralStorageType(*llvm_context_, bit_width)->getIntegerBitWidth();
   auto* elem_type = llvm::Type::getIntNTy(*llvm_context_, storage_bits);
 
   std::vector<llvm::Constant*> values;
@@ -802,7 +768,7 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     if (type.AsIntegral().is_four_state) {
       llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
     } else {
-      llvm_type = GetLlvmStorageType(*llvm_context_, bit_width);
+      llvm_type = GetIntegralStorageType(*llvm_context_, bit_width);
     }
   } else if (type.Kind() == TypeKind::kReal) {
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
@@ -818,8 +784,13 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     if (IsPackedFourState(type, types_)) {
       llvm_type = GetFourStateStructType(*llvm_context_, width);
     } else {
-      llvm_type = GetLlvmStorageType(*llvm_context_, width);
+      llvm_type = GetIntegralStorageType(*llvm_context_, width);
     }
+  } else if (
+      type.Kind() == TypeKind::kUnpackedStruct ||
+      type.Kind() == TypeKind::kUnpackedArray ||
+      type.Kind() == TypeKind::kUnpackedUnion) {
+    llvm_type = BuildLlvmTypeForTypeId(*this, type_id);
   } else {
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
@@ -968,12 +939,40 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
                 field_idx, struct_info.fields.size()));
       }
 
-      llvm::Type* struct_type =
-          GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
+      llvm::Type* struct_type = BuildLlvmTypeForTypeId(*this, current_type);
       ptr = builder_.CreateStructGEP(
           struct_type, ptr, static_cast<unsigned>(field->field_index),
           "struct_field_ptr");
       current_type = struct_info.fields[field_idx].type;
+      continue;
+    }
+
+    // UnionMemberProjection: union member access (offset is always 0, type view
+    // changes)
+    if (const auto* umem =
+            std::get_if<mir::UnionMemberProjection>(&proj.info)) {
+      const Type& cur_type = types_[current_type];
+      if (cur_type.Kind() != TypeKind::kUnpackedUnion) {
+        throw common::InternalError(
+            "GetPlacePointer",
+            std::format(
+                "UnionMemberProjection on non-union type: {}",
+                static_cast<int>(cur_type.Kind())));
+      }
+      const auto& union_info = cur_type.AsUnpackedUnion();
+
+      if (umem->member_index >= union_info.members.size()) {
+        throw common::InternalError(
+            "GetPlacePointer",
+            std::format(
+                "union member index {} out of bounds (union has {} members)",
+                umem->member_index, union_info.members.size()));
+      }
+
+      // Update the type to the member type. The pointer remains unchanged
+      // (offset is always 0), but subsequent operations will interpret it
+      // as the member type.
+      current_type = union_info.members[umem->member_index].type;
       continue;
     }
 
@@ -999,8 +998,7 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
                          : cur_type.AsDynamicArray().element_type;
     } else {
       // Unpacked array: GEP into fixed array
-      llvm::Type* array_type =
-          GetLlvmTypeForTypeId(*llvm_context_, current_type, types_);
+      llvm::Type* array_type = BuildLlvmTypeForTypeId(*this, current_type);
       llvm::Value* index = LowerOperand(*this, idx->index);
       ptr = builder_.CreateGEP(
           array_type, ptr, {builder_.getInt32(0), index}, "array_elem_ptr");
@@ -1022,7 +1020,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
     if (type.AsIntegral().is_four_state) {
       return GetFourStateStructType(*llvm_context_, bit_width);
     }
-    return GetLlvmStorageType(*llvm_context_, bit_width);
+    return GetIntegralStorageType(*llvm_context_, bit_width);
   }
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(*llvm_context_);
@@ -1040,15 +1038,13 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
     if (IsPackedFourState(type, types_)) {
       return GetFourStateStructType(*llvm_context_, width);
     }
-    return GetLlvmStorageType(*llvm_context_, width);
+    return GetIntegralStorageType(*llvm_context_, width);
   }
 
-  if (type.Kind() == TypeKind::kUnpackedArray) {
-    return GetLlvmTypeForTypeId(*llvm_context_, type_id, types_);
-  }
-
-  if (type.Kind() == TypeKind::kUnpackedStruct) {
-    return GetLlvmTypeForTypeId(*llvm_context_, type_id, types_);
+  if (type.Kind() == TypeKind::kUnpackedArray ||
+      type.Kind() == TypeKind::kUnpackedStruct ||
+      type.Kind() == TypeKind::kUnpackedUnion) {
+    return BuildLlvmTypeForTypeId(*this, type_id);
   }
 
   throw common::UnsupportedErrorException(
@@ -1099,10 +1095,15 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
                            .fields[static_cast<size_t>(field->field_index)]
                            .type;
       }
+    } else if (t.Kind() == TypeKind::kUnpackedUnion) {
+      const auto* umem = std::get_if<mir::UnionMemberProjection>(&proj.info);
+      if (umem != nullptr) {
+        base_type_id = t.AsUnpackedUnion().members[umem->member_index].type;
+      }
     }
   }
 
-  return GetLlvmTypeForTypeId(*llvm_context_, base_type_id, types_);
+  return BuildLlvmTypeForTypeId(*this, base_type_id);
 }
 
 auto Context::ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange {

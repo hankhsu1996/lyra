@@ -113,10 +113,23 @@ class Context {
   };
   auto GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo;
 
+  // Cached union storage info
+  struct CachedUnionInfo {
+    uint32_t size;
+    uint32_t align;
+    llvm::Type* storage_type;
+  };
+
   // Get or create a global constant array of enum member values for the given
   // enum type. Returns a [N x iW] global, where N = member count and W = base
   // type bit width. Cached per TypeId.
   auto GetOrCreateEnumValuesGlobal(TypeId enum_type) -> llvm::GlobalVariable*;
+
+  // Get or create cached union storage info
+  auto GetOrCreateUnionStorageInfo(TypeId union_type, CachedUnionInfo info)
+      -> CachedUnionInfo;
+  [[nodiscard]] auto GetCachedUnionStorageInfo(TypeId union_type) const
+      -> const CachedUnionInfo*;
 
   // Type accessors from layout
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
@@ -268,6 +281,9 @@ class Context {
 
   // Cached enum member values globals (per enum TypeId)
   absl::flat_hash_map<TypeId, llvm::GlobalVariable*> enum_values_globals_;
+
+  // Cached union storage info (per union TypeId)
+  absl::flat_hash_map<TypeId, CachedUnionInfo> union_storage_cache_;
 
   // Current process index (set before generating each process)
   size_t current_process_index_ = 0;

@@ -16,7 +16,6 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -63,6 +62,173 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type*;
+
+// Compute allocation size for a type in bytes (for union storage calculation)
+auto ComputeAllocSize(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types) -> uint32_t;
+
+// Compute alignment for a type in bytes (for union storage calculation)
+auto ComputeAlignment(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> uint32_t {
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kIntegral: {
+      uint32_t bits = type.AsIntegral().bit_width;
+      // Round to power-of-2 storage, alignment = storage size (up to 8 bytes)
+      if (bits <= 8) {
+        return 1;
+      }
+      if (bits <= 16) {
+        return 2;
+      }
+      if (bits <= 32) {
+        return 4;
+      }
+      return 8;  // i64 and larger use 8-byte alignment
+    }
+    case TypeKind::kReal:
+      return 8;  // double
+    case TypeKind::kShortReal:
+      return 4;  // float
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum: {
+      uint32_t bits = PackedBitWidth(type, types);
+      if (bits <= 8) {
+        return 1;
+      }
+      if (bits <= 16) {
+        return 2;
+      }
+      if (bits <= 32) {
+        return 4;
+      }
+      return 8;
+    }
+    case TypeKind::kUnpackedStruct: {
+      // Struct alignment = max alignment of fields
+      const auto& info = type.AsUnpackedStruct();
+      uint32_t max_align = 1;
+      for (const auto& field : info.fields) {
+        max_align =
+            std::max(max_align, ComputeAlignment(ctx, field.type, types));
+      }
+      return max_align;
+    }
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      return ComputeAlignment(ctx, info.element_type, types);
+    }
+    case TypeKind::kUnpackedUnion: {
+      const auto& info = type.AsUnpackedUnion();
+      uint32_t max_align = 1;
+      for (const auto& member : info.members) {
+        max_align =
+            std::max(max_align, ComputeAlignment(ctx, member.type, types));
+      }
+      return max_align;
+    }
+    default:
+      return 1;
+  }
+}
+
+auto ComputeAllocSize(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> uint32_t {
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kIntegral: {
+      uint32_t bits = type.AsIntegral().bit_width;
+      // Round to power-of-2 storage
+      if (bits <= 8) {
+        return 1;
+      }
+      if (bits <= 16) {
+        return 2;
+      }
+      if (bits <= 32) {
+        return 4;
+      }
+      if (bits <= 64) {
+        return 8;
+      }
+      // Larger integrals: round up to bytes
+      return (bits + 7) / 8;
+    }
+    case TypeKind::kReal:
+      return 8;  // double
+    case TypeKind::kShortReal:
+      return 4;  // float
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum: {
+      uint32_t bits = PackedBitWidth(type, types);
+      if (bits <= 8) {
+        return 1;
+      }
+      if (bits <= 16) {
+        return 2;
+      }
+      if (bits <= 32) {
+        return 4;
+      }
+      if (bits <= 64) {
+        return 8;
+      }
+      return (bits + 7) / 8;
+    }
+    case TypeKind::kUnpackedStruct: {
+      // Sum of field sizes with alignment padding
+      const auto& info = type.AsUnpackedStruct();
+      uint32_t offset = 0;
+      uint32_t max_align = 1;
+      for (const auto& field : info.fields) {
+        uint32_t field_align = ComputeAlignment(ctx, field.type, types);
+        uint32_t field_size = ComputeAllocSize(ctx, field.type, types);
+        max_align = std::max(max_align, field_align);
+        // Align offset
+        offset = (offset + field_align - 1) / field_align * field_align;
+        offset += field_size;
+      }
+      // Pad to struct alignment
+      return (offset + max_align - 1) / max_align * max_align;
+    }
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      uint32_t elem_size = ComputeAllocSize(ctx, info.element_type, types);
+      return elem_size * info.range.Size();
+    }
+    case TypeKind::kUnpackedUnion: {
+      const auto& info = type.AsUnpackedUnion();
+      uint32_t max_size = 0;
+      uint32_t max_align = 1;
+      for (const auto& member : info.members) {
+        max_size =
+            std::max(max_size, ComputeAllocSize(ctx, member.type, types));
+        max_align =
+            std::max(max_align, ComputeAlignment(ctx, member.type, types));
+      }
+      // Round up to alignment
+      return (max_size + max_align - 1) / max_align * max_align;
+    }
+    default:
+      throw common::InternalError(
+          "ComputeAllocSize",
+          std::format(
+              "unsupported type kind: {}", static_cast<int>(type.Kind())));
+  }
+}
+
+// Build LLVM byte array type for an unpacked union
+auto BuildUnpackedUnionType(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type* {
+  uint32_t size = ComputeAllocSize(ctx, type_id, types);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  return llvm::ArrayType::get(i8_ty, size);
+}
 
 // Build LLVM struct type for an unpacked struct TypeId
 auto BuildUnpackedStructType(
@@ -125,9 +291,7 @@ auto GetLlvmTypeForTypeId(
       return BuildUnpackedStructType(ctx, type.AsUnpackedStruct(), types);
 
     case TypeKind::kUnpackedUnion:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-          common::OriginId::Invalid(), "unpacked union not yet supported");
+      return BuildUnpackedUnionType(ctx, type_id, types);
 
     case TypeKind::kVoid:
       throw common::InternalError(

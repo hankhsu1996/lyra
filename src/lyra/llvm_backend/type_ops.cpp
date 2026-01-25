@@ -68,6 +68,9 @@ void AssignPlace(
     case TypeKind::kUnpackedArray:
       AssignArray(context, target, source, type_id);
       return;
+    case TypeKind::kUnpackedUnion:
+      AssignUnion(context, target, source, type_id);
+      return;
     default:
       break;
   }
