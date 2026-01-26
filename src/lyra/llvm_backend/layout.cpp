@@ -366,11 +366,13 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(*m.end_addr, places);
             }
           },
-          [&](const mir::FcloseEffect& f) {
-            CollectPlaceFromOperand(f.descriptor, places);
-          },
           [&](const mir::TimeFormatEffect&) {
             // TimeFormatEffect has no operands - all constants
+          },
+          [&](const mir::SystemTfEffect& s) {
+            for (const auto& arg : s.args) {
+              CollectPlaceFromOperand(arg, places);
+            }
           },
       },
       effect);

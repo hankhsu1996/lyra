@@ -8,6 +8,7 @@
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/severity.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -52,9 +53,12 @@ struct MemIOEffect {
   std::optional<Operand> end_addr;
 };
 
-// $fclose: closes a file descriptor (FD or MCD).
-struct FcloseEffect {
-  Operand descriptor;
+// SystemTfEffect: Generic effect-only system TFs.
+// Covers simple system TFs where payload is just opcode + operands.
+// Operands are stored here (Effect pattern).
+struct SystemTfEffect {
+  SystemTfOpcode opcode;
+  std::vector<Operand> args;
 };
 
 // $timeformat: sets global time format for %t.
@@ -70,6 +74,7 @@ struct TimeFormatEffect {
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
-    DisplayEffect, SeverityEffect, MemIOEffect, FcloseEffect, TimeFormatEffect>;
+    DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
+    SystemTfEffect>;
 
 }  // namespace lyra::mir

@@ -167,8 +167,8 @@ class Interpreter {
       ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
       -> Result<RuntimeValue>;
 
-  // Execute FcloseEffect
-  auto ExecFcloseEffect(ProcessState& state, const FcloseEffect& effect)
+  // Execute SystemTfEffect
+  auto ExecSystemTfEffect(ProcessState& state, const SystemTfEffect& effect)
       -> Result<void>;
 
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)

@@ -270,10 +270,6 @@ auto Interpreter::EvalRvalue(
             return EvalBitCast(
                 *operand_result, info.source_type, info.target_type, *types_);
           },
-          [&](const SystemCallRvalueInfo&) -> Result<RuntimeValue> {
-            throw common::InternalError(
-                "EvalRvalue", "pure system calls not yet supported");
-          },
           [&](const UserCallRvalueInfo& info) -> Result<RuntimeValue> {
             std::vector<RuntimeValue> args;
             args.reserve(rv.operands.size());
@@ -324,8 +320,16 @@ auto Interpreter::EvalRvalue(
           [&](const PlusargsRvalueInfo&) -> Result<RuntimeValue> {
             return EvalPlusargs(state, rv);
           },
-          [&](const FopenRvalueInfo&) -> Result<RuntimeValue> {
-            return EvalFopen(state, rv);
+          [&](const SystemTfRvalueInfo& info) -> Result<RuntimeValue> {
+            switch (info.opcode) {
+              case SystemTfOpcode::kFopen:
+                return EvalFopen(state, rv);
+              case SystemTfOpcode::kFclose:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf", "$fclose is an effect, not rvalue");
+            }
+            throw common::InternalError(
+                "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");
           },
           [&](const RuntimeQueryRvalueInfo&) -> Result<RuntimeValue> {
             // Runtime queries (e.g., $time) require the LLVM backend runtime.

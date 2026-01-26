@@ -362,7 +362,10 @@ auto LowerExpressionStatement(
             if (!desc_result) {
               result = std::unexpected(desc_result.error());
             } else {
-              builder.EmitEffect(mir::FcloseEffect{.descriptor = *desc_result});
+              builder.EmitEffect(
+                  mir::SystemTfEffect{
+                      .opcode = SystemTfOpcode::kFclose,
+                      .args = {*desc_result}});
               result = {};
             }
           } else if constexpr (std::is_same_v<T, hir::TimeFormatData>) {

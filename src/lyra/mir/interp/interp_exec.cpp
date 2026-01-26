@@ -221,17 +221,17 @@ auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
               error = std::move(result).error();
             }
           },
-          [&](const FcloseEffect& op) {
+          [&](const TimeFormatEffect&) {
+            // $timeformat not supported in MIR interpreter (debug-only backend)
+          },
+          [&](const SystemTfEffect& op) {
             if (error) {
               return;
             }
-            auto result = ExecFcloseEffect(state, op);
+            auto result = ExecSystemTfEffect(state, op);
             if (!result) {
               error = std::move(result).error();
             }
-          },
-          [&](const TimeFormatEffect&) {
-            // $timeformat not supported in MIR interpreter (debug-only backend)
           },
       },
       effect.op);
@@ -537,21 +537,34 @@ auto Interpreter::ExecMemIOEffect(
   return {};
 }
 
-auto Interpreter::ExecFcloseEffect(
-    ProcessState& state, const FcloseEffect& effect) -> Result<void> {
-  auto desc_val_result = EvalOperand(state, effect.descriptor);
-  if (!desc_val_result) {
-    return std::unexpected(std::move(desc_val_result).error());
+auto Interpreter::ExecSystemTfEffect(
+    ProcessState& state, const SystemTfEffect& effect) -> Result<void> {
+  switch (effect.opcode) {
+    case SystemTfOpcode::kFclose: {
+      if (effect.args.size() != 1) {
+        throw common::InternalError(
+            "ExecSystemTfEffect:kFclose",
+            std::format("expected 1 arg, got {}", effect.args.size()));
+      }
+      auto desc_val_result = EvalOperand(state, effect.args[0]);
+      if (!desc_val_result) {
+        return std::unexpected(std::move(desc_val_result).error());
+      }
+      auto& desc_val = *desc_val_result;
+      if (!IsIntegral(desc_val)) {
+        return {};  // Invalid descriptor: no-op
+      }
+      const auto& desc_int = AsIntegral(desc_val);
+      auto descriptor =
+          static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+      file_manager_.Fclose(descriptor);
+      return {};
+    }
+    case SystemTfOpcode::kFopen:
+      throw common::InternalError(
+          "ExecSystemTfEffect", "$fopen is an rvalue, not an effect");
   }
-  auto& desc_val = *desc_val_result;
-  if (!IsIntegral(desc_val)) {
-    return {};  // Invalid descriptor: no-op
-  }
-  const auto& desc_int = AsIntegral(desc_val);
-  auto descriptor =
-      static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
-  file_manager_.Fclose(descriptor);
-  return {};
+  throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
 }
 
 auto Interpreter::ExecGuardedAssign(
