@@ -18,7 +18,8 @@ auto RunMir(const CompilationInput& input) -> int {
 
   auto result = mir::interp::RunSimulation(
       compilation->mir.design, *compilation->mir.mir_arena,
-      *compilation->hir.type_arena, &std::cout, {}, input.fs_base_dir);
+      *compilation->hir.type_arena, &std::cout, input.plusargs,
+      input.fs_base_dir);
 
   if (!result.error_message.empty()) {
     PrintError(result.error_message);

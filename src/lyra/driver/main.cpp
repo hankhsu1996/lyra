@@ -1,5 +1,6 @@
 #include <argparse/argparse.hpp>
 #include <cstddef>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <format>
@@ -18,9 +19,35 @@
 #include "run_llvm.hpp"
 #include "run_mir.hpp"
 
+namespace {
+
+// Find the first "--" separator in argv.
+// Returns index of "--" or argv.size() if not found.
+// argv[0..result) = main args, argv[result+1..end) = plusargs
+auto FindPlusargsSeparator(std::span<char*> argv) -> size_t {
+  for (size_t i = 1; i < argv.size(); ++i) {
+    if (std::strcmp(argv[i], "--") == 0) {
+      return i;
+    }
+  }
+  return argv.size();
+}
+
+}  // namespace
+
 auto main(int argc, char* argv[]) -> int {
-  auto args = lyra::driver::PreprocessArgs(
-      std::span<char*>(argv, static_cast<size_t>(argc)));
+  // Split on first "--": everything before goes to argparse, after is plusargs
+  std::span<char*> all_args(argv, static_cast<size_t>(argc));
+  size_t sep_idx = FindPlusargsSeparator(all_args);
+
+  // Main args: all_args[0..sep_idx)
+  auto args = lyra::driver::PreprocessArgs(all_args.subspan(0, sep_idx));
+
+  // Plusargs: all_args[sep_idx+1..end) - collect verbatim
+  std::vector<std::string> plusargs;
+  for (size_t i = sep_idx + 1; i < all_args.size(); ++i) {
+    plusargs.emplace_back(all_args[i]);
+  }
 
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("A modern SystemVerilog simulation toolchain");
@@ -109,6 +136,8 @@ auto main(int argc, char* argv[]) -> int {
       }
       auto input = prepare(run_cmd);
       if (!input) return 1;
+
+      input->plusargs = std::move(plusargs);
 
       return *backend == lyra::driver::Backend::kLlvm
                  ? lyra::driver::RunLlvm(*input)

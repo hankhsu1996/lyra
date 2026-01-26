@@ -18,6 +18,7 @@ struct CompilationInput {
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
   std::filesystem::path fs_base_dir;  // Base directory for runtime file I/O
+  std::vector<std::string> plusargs;  // Runtime plusargs for $plusargs
 };
 
 struct ParseResult {

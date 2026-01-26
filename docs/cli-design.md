@@ -101,6 +101,16 @@ lyra run --top Top -f sources.f
 lyra run --top Top -F lib/sources.f
 ```
 
+### Plusargs
+
+Runtime plusargs for `$test$plusargs` and `$value$plusargs` are passed after `--`:
+
+```bash
+lyra run [options] [files...] -- +FOO +BAR=1
+```
+
+Plusargs are passed verbatim to the simulation runtime. The `--` separator distinguishes Lyra CLI options from simulation plusargs.
+
 ### Command File Format
 
 Command files (`.f` files) list source files and compilation options:
