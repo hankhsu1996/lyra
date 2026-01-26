@@ -723,9 +723,7 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
 
   // POD types: compute size from DataLayout, no clone/destroy needed
   auto llvm_type = BuildLlvmTypeForTypeId(*this, elem_type);
-  if (!llvm_type) {
-    return std::unexpected(llvm_type.error());
-  }
+  if (!llvm_type) return std::unexpected(llvm_type.error());
   auto byte_size = static_cast<int32_t>(
       llvm_module_->getDataLayout().getTypeAllocSize(*llvm_type));
   return ElemOpsInfo{
@@ -879,9 +877,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       type.Kind() == TypeKind::kUnpackedArray ||
       type.Kind() == TypeKind::kUnpackedUnion) {
     auto llvm_type_result = BuildLlvmTypeForTypeId(*this, type_id);
-    if (!llvm_type_result) {
-      return std::unexpected(llvm_type_result.error());
-    }
+    if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
     llvm_type = *llvm_type_result;
   } else {
     return std::unexpected(
@@ -1078,9 +1074,7 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
     } else {
       // User function: create alloca lazily for the root
       auto alloca_or_err = GetOrCreatePlaceStorage(place.root);
-      if (!alloca_or_err) {
-        return std::unexpected(alloca_or_err.error());
-      }
+      if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
       ptr = *alloca_or_err;
     }
   }
@@ -1113,9 +1107,8 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
       }
 
       auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
-      if (!struct_type_result) {
+      if (!struct_type_result)
         return std::unexpected(struct_type_result.error());
-      }
       llvm::Type* struct_type = *struct_type_result;
       ptr = builder_.CreateStructGEP(
           struct_type, ptr, static_cast<unsigned>(field->field_index),
@@ -1166,9 +1159,7 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
       auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
       llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
       auto index_result = LowerOperand(*this, idx->index);
-      if (!index_result) {
-        return std::unexpected(index_result.error());
-      }
+      if (!index_result) return std::unexpected(index_result.error());
       llvm::Value* index = builder_.CreateSExtOrTrunc(
           *index_result, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
       ptr = builder_.CreateCall(
@@ -1179,14 +1170,10 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
     } else {
       // Unpacked array: GEP into fixed array
       auto array_type_result = BuildLlvmTypeForTypeId(*this, current_type);
-      if (!array_type_result) {
-        return std::unexpected(array_type_result.error());
-      }
+      if (!array_type_result) return std::unexpected(array_type_result.error());
       llvm::Type* array_type = *array_type_result;
       auto index_result = LowerOperand(*this, idx->index);
-      if (!index_result) {
-        return std::unexpected(index_result.error());
-      }
+      if (!index_result) return std::unexpected(index_result.error());
       ptr = builder_.CreateGEP(
           array_type, ptr, {builder_.getInt32(0), *index_result},
           "array_elem_ptr");
@@ -1323,9 +1310,7 @@ auto Context::ComposeBitRange(mir::PlaceId place_id)
     }
     const auto& br = std::get<mir::BitRangeProjection>(proj.info);
     auto br_offset_result = LowerOperand(*this, br.bit_offset);
-    if (!br_offset_result) {
-      return std::unexpected(br_offset_result.error());
-    }
+    if (!br_offset_result) return std::unexpected(br_offset_result.error());
     llvm::Value* br_offset =
         builder_.CreateZExtOrTrunc(*br_offset_result, offset_ty);
     if (total_offset == nullptr) {

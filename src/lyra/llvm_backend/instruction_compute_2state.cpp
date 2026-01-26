@@ -70,13 +70,9 @@ auto LowerBinaryRvalue(
   auto& builder = context.GetBuilder();
 
   auto lhs_or_err = LowerOperand(context, operands[0]);
-  if (!lhs_or_err) {
-    return std::unexpected(lhs_or_err.error());
-  }
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto rhs_or_err = LowerOperand(context, operands[1]);
-  if (!rhs_or_err) {
-    return std::unexpected(rhs_or_err.error());
-  }
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
   llvm::Value* rhs = *rhs_or_err;
 
@@ -90,9 +86,7 @@ auto LowerBinaryRvalue(
       rhs = SignExtendToStorage(builder, rhs, op_width);
     }
     auto cmp_or_err = LowerBinaryComparison(context, info.op, lhs, rhs);
-    if (!cmp_or_err) {
-      return std::unexpected(cmp_or_err.error());
-    }
+    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
     return builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
   }
 
@@ -101,9 +95,7 @@ auto LowerBinaryRvalue(
   }
 
   auto result_or_err = LowerBinaryArith(context, info.op, lhs, rhs);
-  if (!result_or_err) {
-    return std::unexpected(result_or_err.error());
-  }
+  if (!result_or_err) return std::unexpected(result_or_err.error());
 
   if (ReturnsI1(info.op)) {
     return builder.CreateZExt(*result_or_err, storage_type, "bool.ext");
@@ -121,9 +113,7 @@ auto LowerUnaryRvalue(
   uint32_t operand_bit_width = GetOperandPackedWidth(context, operands[0]);
 
   auto operand_or_err = LowerOperand(context, operands[0]);
-  if (!operand_or_err) {
-    return std::unexpected(operand_or_err.error());
-  }
+  if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
 
   if (!IsReductionOp(info.op)) {
@@ -147,9 +137,7 @@ auto LowerConcatRvalue(
 
   uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
   auto first_or_err = LowerOperand(context, operands[0]);
-  if (!first_or_err) {
-    return std::unexpected(first_or_err.error());
-  }
+  if (!first_or_err) return std::unexpected(first_or_err.error());
   llvm::Value* first = *first_or_err;
   auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
   first = builder.CreateZExtOrTrunc(first, first_ty, "concat.trunc");
@@ -158,9 +146,7 @@ auto LowerConcatRvalue(
   for (size_t i = 1; i < operands.size(); ++i) {
     uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
     auto op_or_err = LowerOperand(context, operands[i]);
-    if (!op_or_err) {
-      return std::unexpected(op_or_err.error());
-    }
+    if (!op_or_err) return std::unexpected(op_or_err.error());
     llvm::Value* op = *op_or_err;
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
@@ -182,9 +168,7 @@ auto LowerIndexValidity(
   auto& builder = context.GetBuilder();
 
   auto index_or_err = LowerOperand(context, operands[0]);
-  if (!index_or_err) {
-    return std::unexpected(index_or_err.error());
-  }
+  if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
   auto* idx_type = index->getType();
 
@@ -198,9 +182,7 @@ auto LowerIndexValidity(
 
   if (info.check_known) {
     auto raw_or_err = LowerOperandRaw(context, operands[0]);
-    if (!raw_or_err) {
-      return std::unexpected(raw_or_err.error());
-    }
+    if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     if (raw->getType()->isStructTy()) {
       auto* unk = builder.CreateExtractValue(raw, 1, "idx.unk");
@@ -220,9 +202,7 @@ auto LowerGuardedUse(
   auto& builder = context.GetBuilder();
 
   auto valid_or_err = LowerOperand(context, operands[0]);
-  if (!valid_or_err) {
-    return std::unexpected(valid_or_err.error());
-  }
+  if (!valid_or_err) return std::unexpected(valid_or_err.error());
   llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
     auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
@@ -242,9 +222,7 @@ auto LowerGuardedUse(
   builder.SetInsertPoint(do_read_bb);
   auto place_operand = mir::Operand::Use(info.place);
   auto read_val_or_err = LowerOperand(context, place_operand);
-  if (!read_val_or_err) {
-    return std::unexpected(read_val_or_err.error());
-  }
+  if (!read_val_or_err) return std::unexpected(read_val_or_err.error());
   llvm::Value* read_val = *read_val_or_err;
   read_val = builder.CreateZExtOrTrunc(read_val, storage_type, "gu.fit");
   auto* do_read_end_bb = builder.GetInsertBlock();
@@ -267,14 +245,10 @@ auto LowerCompute2State(
   auto& builder = context.GetBuilder();
 
   auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
   auto storage_type_or_err = context.GetPlaceLlvmType(compute.target);
-  if (!storage_type_or_err) {
-    return std::unexpected(storage_type_or_err.error());
-  }
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
   auto result_or_err = std::visit(
@@ -322,9 +296,7 @@ auto LowerCompute2State(
 
             for (const auto& operand : compute.value.operands) {
               auto arg_or_err = LowerOperand(context, operand);
-              if (!arg_or_err) {
-                return std::unexpected(arg_or_err.error());
-              }
+              if (!arg_or_err) return std::unexpected(arg_or_err.error());
               args.push_back(*arg_or_err);
             }
 
@@ -352,9 +324,7 @@ auto LowerCompute2State(
       },
       compute.value.info);
 
-  if (!result_or_err) {
-    return std::unexpected(result_or_err.error());
-  }
+  if (!result_or_err) return std::unexpected(result_or_err.error());
 
   llvm::Value* result = ApplyWidthMask(context, *result_or_err, bit_width);
 

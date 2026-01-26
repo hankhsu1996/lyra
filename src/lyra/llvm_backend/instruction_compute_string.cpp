@@ -58,14 +58,10 @@ auto LowerStringBinaryOp(
   }
 
   auto lhs_or_err = LowerOperand(context, operands[0]);
-  if (!lhs_or_err) {
-    return std::unexpected(lhs_or_err.error());
-  }
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
   auto rhs_or_err = LowerOperand(context, operands[1]);
-  if (!rhs_or_err) {
-    return std::unexpected(rhs_or_err.error());
-  }
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
   if (std::holds_alternative<Constant>(operands[0].payload)) {
@@ -131,9 +127,7 @@ auto LowerStringConcat(
   handles.reserve(operands.size());
   for (const auto& operand : operands) {
     auto handle_or_err = LowerOperand(context, operand);
-    if (!handle_or_err) {
-      return std::unexpected(handle_or_err.error());
-    }
+    if (!handle_or_err) return std::unexpected(handle_or_err.error());
     llvm::Value* handle = *handle_or_err;
     handles.push_back(handle);
 
@@ -159,9 +153,7 @@ auto LowerStringConcat(
 
   // Store result into target place (NOT registered as owned temp)
   auto target_ptr_or_err = context.GetPlacePointer(target_place);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
   return {};
@@ -186,9 +178,7 @@ auto LowerSFormatRvalue(
       // No values to format - return empty string constant
       llvm::Value* result = CreateEmptyString(context);
       auto target_ptr_or_err = context.GetPlacePointer(target_place);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
       context.GetBuilder().CreateStore(result, target_ptr);
       return {};
@@ -283,9 +273,7 @@ auto LowerSFormatRvalue(
       // Append string handle contents
       if (op.value.has_value()) {
         auto handle_or_err = LowerOperand(context, *op.value);
-        if (!handle_or_err) {
-          return std::unexpected(handle_or_err.error());
-        }
+        if (!handle_or_err) return std::unexpected(handle_or_err.error());
         llvm::Value* handle = *handle_or_err;
         builder.CreateCall(context.GetLyraStringFormatString(), {buf, handle});
       }
@@ -316,9 +304,7 @@ auto LowerSFormatRvalue(
       llvm::Value* data_ptr = nullptr;
       if (op.value.has_value()) {
         auto value_or_err = LowerOperand(context, *op.value);
-        if (!value_or_err) {
-          return std::unexpected(value_or_err.error());
-        }
+        if (!value_or_err) return std::unexpected(value_or_err.error());
         llvm::Value* value = *value_or_err;
 
         if (is_real) {
@@ -384,9 +370,7 @@ auto LowerSFormatRvalue(
       context.GetLyraStringFormatFinish(), {buf}, "sformat.result");
 
   auto target_ptr_or_err = context.GetPlacePointer(target_place);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
   return {};

@@ -40,9 +40,7 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
       // runtime)
       if (op.value.has_value()) {
         auto handle_or_err = LowerOperand(context, *op.value);
-        if (!handle_or_err) {
-          return std::unexpected(handle_or_err.error());
-        }
+        if (!handle_or_err) return std::unexpected(handle_or_err.error());
         llvm::Value* handle = *handle_or_err;
         builder.CreateCall(context.GetLyraPrintString(), {handle});
       }
@@ -73,9 +71,7 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
       llvm::Value* data_ptr = nullptr;
       if (op.value.has_value()) {
         auto value_or_err = LowerOperand(context, *op.value);
-        if (!value_or_err) {
-          return std::unexpected(value_or_err.error());
-        }
+        if (!value_or_err) return std::unexpected(value_or_err.error());
         llvm::Value* value = *value_or_err;
 
         if (is_real) {

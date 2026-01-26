@@ -50,9 +50,7 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
 
   auto design_result =
       LowerDesign(*input.design, full_input, *mir_arena, &origin_map);
-  if (!design_result) {
-    return std::unexpected(design_result.error());
-  }
+  if (!design_result) return std::unexpected(design_result.error());
   mir::Design design = std::move(*design_result);
 
   // Single verification gate at the end of lowering

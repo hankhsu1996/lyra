@@ -85,9 +85,7 @@ auto LoadFourStateOperand(
 
   if (is_four_state) {
     auto loaded_or_err = LowerOperandRaw(context, operand);
-    if (!loaded_or_err) {
-      return std::unexpected(loaded_or_err.error());
-    }
+    if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
     llvm::Value* loaded = *loaded_or_err;
     auto fs = ExtractFourState(builder, loaded);
     return FourStateValue{
@@ -99,9 +97,7 @@ auto LoadFourStateOperand(
 
   // 2-state operand -> extend to 4-state element type, unknown = 0
   auto loaded_val_or_err = LowerOperand(context, operand);
-  if (!loaded_val_or_err) {
-    return std::unexpected(loaded_val_or_err.error());
-  }
+  if (!loaded_val_or_err) return std::unexpected(loaded_val_or_err.error());
   llvm::Value* loaded_val = *loaded_val_or_err;
   auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "cast2to4.val");
   auto* unk = llvm::ConstantInt::get(elem_type, 0);
@@ -116,15 +112,11 @@ auto LowerCast2sTo2s(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   auto target_type_or_err = context.GetPlaceLlvmType(target);
-  if (!target_type_or_err) {
-    return std::unexpected(target_type_or_err.error());
-  }
+  if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
   llvm::Type* target_type = *target_type_or_err;
 
   bool is_signed = IsSignedIntegral(types, info.source_type);
@@ -136,9 +128,7 @@ auto LowerCast2sTo2s(
   result = ApplyWidthMask(context, result, bit_width);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -153,15 +143,11 @@ auto LowerCast2sTo4s(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   auto storage_type_or_err = context.GetPlaceLlvmType(target);
-  if (!storage_type_or_err) {
-    return std::unexpected(storage_type_or_err.error());
-  }
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
@@ -177,9 +163,7 @@ auto LowerCast2sTo4s(
   llvm::Value* result = MakeKnown(builder, struct_type, val);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -194,17 +178,13 @@ auto LowerCast4sTo2s(
   const auto& types = context.GetTypeArena();
 
   auto source_raw_or_err = LowerOperandRaw(context, source_operand);
-  if (!source_raw_or_err) {
-    return std::unexpected(source_raw_or_err.error());
-  }
+  if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
   llvm::Value* source_raw = *source_raw_or_err;
 
   auto fs = ExtractFourState(builder, source_raw);
 
   auto target_type_or_err = context.GetPlaceLlvmType(target);
-  if (!target_type_or_err) {
-    return std::unexpected(target_type_or_err.error());
-  }
+  if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
   llvm::Type* target_type = *target_type_or_err;
 
   bool is_signed = IsSignedIntegral(types, info.source_type);
@@ -215,9 +195,7 @@ auto LowerCast4sTo2s(
   result = ApplyWidthMask(context, result, bit_width);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -231,18 +209,14 @@ auto LowerCast4sTo4s(
   auto& builder = context.GetBuilder();
 
   auto storage_type_or_err = context.GetPlaceLlvmType(target);
-  if (!storage_type_or_err) {
-    return std::unexpected(storage_type_or_err.error());
-  }
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = GetFourStateElemIntType(struct_type);
 
   auto fs_or_err = LoadFourStateOperand(context, source_operand, elem_type);
-  if (!fs_or_err) {
-    return std::unexpected(fs_or_err.error());
-  }
+  if (!fs_or_err) return std::unexpected(fs_or_err.error());
   auto fs = *fs_or_err;
 
   // Apply width mask to both planes
@@ -254,9 +228,7 @@ auto LowerCast4sTo4s(
       PackFourState(builder, struct_type, fs.value, fs.unknown);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -271,9 +243,7 @@ auto LowerCastIntToFloat(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   const Type& tgt_type = types[info.target_type];
@@ -291,9 +261,7 @@ auto LowerCastIntToFloat(
   }
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -308,15 +276,11 @@ auto LowerCastFloatTo2sInt(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   auto target_type_or_err = context.GetPlaceLlvmType(target);
-  if (!target_type_or_err) {
-    return std::unexpected(target_type_or_err.error());
-  }
+  if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
   llvm::Type* target_type = *target_type_or_err;
 
   bool is_signed = IsSignedIntegral(types, info.target_type);
@@ -332,9 +296,7 @@ auto LowerCastFloatTo2sInt(
   result = ApplyWidthMask(context, result, bit_width);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -351,15 +313,11 @@ auto LowerCastFloatTo4sInt(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   auto storage_type_or_err = context.GetPlaceLlvmType(target);
-  if (!storage_type_or_err) {
-    return std::unexpected(storage_type_or_err.error());
-  }
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
@@ -380,9 +338,7 @@ auto LowerCastFloatTo4sInt(
   llvm::Value* result = MakeKnown(builder, struct_type, int_val);
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -397,18 +353,14 @@ auto LowerCastFloatToFloat(
   const auto& types = context.GetTypeArena();
 
   auto source_or_err = LowerOperand(context, source_operand);
-  if (!source_or_err) {
-    return std::unexpected(source_or_err.error());
-  }
+  if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
 
   const Type& src_type = types[info.source_type];
   const Type& tgt_type = types[info.target_type];
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   llvm::Value* result = nullptr;
@@ -502,9 +454,7 @@ auto LowerBitCastUnified(Context& context, const mir::Compute& compute)
   const auto& info = std::get<mir::BitCastRvalueInfo>(compute.value.info);
 
   auto src_or_err = LowerOperand(context, compute.value.operands[0]);
-  if (!src_or_err) {
-    return std::unexpected(src_or_err.error());
-  }
+  if (!src_or_err) return std::unexpected(src_or_err.error());
   llvm::Value* src = *src_or_err;
 
   const Type& src_type = types[info.source_type];
@@ -537,9 +487,7 @@ auto LowerBitCastUnified(Context& context, const mir::Compute& compute)
   }
 
   auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);

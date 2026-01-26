@@ -223,9 +223,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     mir::FunctionId func_id = all_func_ids[i];
     auto llvm_func_or_err =
         DeclareUserFunction(context, func_id, std::format("user_func_{}", i));
-    if (!llvm_func_or_err) {
-      return std::unexpected(llvm_func_or_err.error());
-    }
+    if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     llvm::Function* llvm_func = *llvm_func_or_err;
     declared_funcs.emplace_back(func_id, llvm_func);
   }
@@ -233,9 +231,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Pass 2: Define all user functions (emits bodies, can reference other funcs)
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineUserFunction(context, func_id, llvm_func);
-    if (!result) {
-      return std::unexpected(result.error());
-    }
+    if (!result) return std::unexpected(result.error());
   }
 
   // Generate process functions (use process_ids from layout for single source
@@ -252,9 +248,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
     auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
-    if (!func_result) {
-      return std::unexpected(func_result.error());
-    }
+    if (!func_result) return std::unexpected(func_result.error());
     process_funcs.push_back(*func_result);
   }
 

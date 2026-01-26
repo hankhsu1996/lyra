@@ -106,9 +106,7 @@ auto LowerRealUnary(
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
   auto operand_or_err = LowerOperand(context, operands[0]);
-  if (!operand_or_err) {
-    return std::unexpected(operand_or_err.error());
-  }
+  if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
 
   llvm::Value* result = nullptr;
@@ -122,9 +120,7 @@ auto LowerRealUnary(
     auto* nonzero = builder.CreateFCmpUNE(operand, zero, "nonzero");
     auto* not_val = builder.CreateNot(nonzero, "lnot");
     auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) {
-      return std::unexpected(target_type_or_err.error());
-    }
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
     llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(not_val, target_type, "lnot.ext");
   } else {
@@ -135,9 +131,7 @@ auto LowerRealUnary(
   }
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
   return {};
@@ -151,14 +145,10 @@ auto LowerRealBinary(
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
   auto lhs_or_err = LowerOperand(context, operands[0]);
-  if (!lhs_or_err) {
-    return std::unexpected(lhs_or_err.error());
-  }
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
   auto rhs_or_err = LowerOperand(context, operands[1]);
-  if (!rhs_or_err) {
-    return std::unexpected(rhs_or_err.error());
-  }
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
   if (!lhs->getType()->isFloatingPointTy() ||
@@ -181,18 +171,14 @@ auto LowerRealBinary(
 
   llvm::Value* result = nullptr;
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   if (IsRealComparisonOp(info.op)) {
     auto pred = MapToFcmpPredicate(info.op);
     auto* cmp = builder.CreateFCmp(pred, lhs, rhs, "fcmp");
     auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) {
-      return std::unexpected(target_type_or_err.error());
-    }
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
     llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(cmp, target_type, "fcmp.ext");
     builder.CreateStore(result, target_ptr);
@@ -212,9 +198,7 @@ auto LowerRealBinary(
       logic_result = builder.CreateOr(lhs_true, rhs_true, "flor");
     }
     auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) {
-      return std::unexpected(target_type_or_err.error());
-    }
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
     llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(logic_result, target_type, "flog.ext");
     builder.CreateStore(result, target_ptr);

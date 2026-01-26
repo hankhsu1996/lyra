@@ -34,9 +34,7 @@ namespace {
 auto LowerIntegral(Context& context, const mir::Compute& compute)
     -> Result<void> {
   auto type_info_or_err = ValidateAndGetTypeInfo(context, compute.target);
-  if (!type_info_or_err) {
-    return std::unexpected(type_info_or_err.error());
-  }
+  if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;
   if (type_info.is_four_state) {
     return LowerCompute4State(context, compute, type_info.bit_width);
@@ -56,9 +54,7 @@ auto LowerVoidUserCall(
   args.push_back(context.GetEnginePointer());
   for (const auto& operand : compute.value.operands) {
     auto val_result = LowerOperand(context, operand);
-    if (!val_result) {
-      return std::unexpected(val_result.error());
-    }
+    if (!val_result) return std::unexpected(val_result.error());
     args.push_back(*val_result);
   }
   builder.CreateCall(callee, args);

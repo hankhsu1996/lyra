@@ -40,15 +40,11 @@ auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
   auto& builder = context.GetBuilder();
 
   auto cond_ptr_or_err = context.GetPlacePointer(place_id);
-  if (!cond_ptr_or_err) {
-    return std::unexpected(cond_ptr_or_err.error());
-  }
+  if (!cond_ptr_or_err) return std::unexpected(cond_ptr_or_err.error());
   llvm::Value* cond_ptr = *cond_ptr_or_err;
 
   auto cond_type_or_err = context.GetPlaceLlvmType(place_id);
-  if (!cond_type_or_err) {
-    return std::unexpected(cond_type_or_err.error());
-  }
+  if (!cond_type_or_err) return std::unexpected(cond_type_or_err.error());
   llvm::Type* cond_type = *cond_type_or_err;
 
   llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
@@ -84,9 +80,7 @@ auto LowerBranch(
     Context& context, const mir::Branch& branch,
     const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
   auto cond_or_err = LoadConditionAsI1(context, branch.condition);
-  if (!cond_or_err) {
-    return std::unexpected(cond_or_err.error());
-  }
+  if (!cond_or_err) return std::unexpected(cond_or_err.error());
   context.GetBuilder().CreateCondBr(
       *cond_or_err, blocks[branch.then_target.value],
       blocks[branch.else_target.value]);
@@ -225,9 +219,7 @@ auto LowerQualifiedDispatch(
   conds.reserve(dispatch.conditions.size());
   for (auto place_id : dispatch.conditions) {
     auto cond_or_err = LoadConditionAsI1(context, place_id);
-    if (!cond_or_err) {
-      return std::unexpected(cond_or_err.error());
-    }
+    if (!cond_or_err) return std::unexpected(cond_or_err.error());
     conds.push_back(*cond_or_err);
   }
 
@@ -464,9 +456,7 @@ auto DeclareUserFunction(
 
   // Build LLVM function type from MIR signature
   auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
-  if (!fn_type_or_err) {
-    return std::unexpected(fn_type_or_err.error());
-  }
+  if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
   llvm::FunctionType* fn_type = *fn_type_or_err;
 
   // Create function declaration
@@ -636,9 +626,7 @@ auto DefineUserFunction(
     if (it != collector.roots.end()) {
       // Create alloca for this parameter local
       auto alloca_or_err = context.GetOrCreatePlaceStorage(it->second);
-      if (!alloca_or_err) {
-        return std::unexpected(alloca_or_err.error());
-      }
+      if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
       llvm::AllocaInst* alloca = *alloca_or_err;
 
       // Store argument value into the alloca (offset by 2 for design+engine)
@@ -659,9 +647,7 @@ auto DefineUserFunction(
     // Lower all instructions
     for (const auto& instruction : block.instructions) {
       auto result = LowerInstruction(context, instruction);
-      if (!result) {
-        return std::unexpected(result.error());
-      }
+      if (!result) return std::unexpected(result.error());
     }
 
     // Lower terminator.
@@ -703,9 +689,7 @@ auto DefineUserFunction(
             },
         },
         block.terminator.data);
-    if (!term_result) {
-      return std::unexpected(term_result.error());
-    }
+    if (!term_result) return std::unexpected(term_result.error());
   }
 
   // Exit block: return the value

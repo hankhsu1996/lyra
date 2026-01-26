@@ -125,9 +125,7 @@ auto BuildInput(
   if (auto vals = cmd.present<std::vector<std::string>>("-f")) {
     for (const auto& f : *vals) {
       auto expanded = ParseCommandFile(f, false);
-      if (!expanded) {
-        return std::unexpected(expanded.error());
-      }
+      if (!expanded) return std::unexpected(expanded.error());
       cmdfile_files.insert(
           cmdfile_files.end(), expanded->files.begin(), expanded->files.end());
       cmdfile_incdirs.insert(
@@ -141,9 +139,7 @@ auto BuildInput(
   if (auto vals = cmd.present<std::vector<std::string>>("-F")) {
     for (const auto& f : *vals) {
       auto expanded = ParseCommandFile(f, true);
-      if (!expanded) {
-        return std::unexpected(expanded.error());
-      }
+      if (!expanded) return std::unexpected(expanded.error());
       cmdfile_files.insert(
           cmdfile_files.end(), expanded->files.begin(), expanded->files.end());
       cmdfile_incdirs.insert(
@@ -206,9 +202,7 @@ auto LoadOptionalConfig() -> lyra::Result<std::optional<ProjectConfig>> {
     return std::nullopt;
   }
   auto config = LoadConfig(*config_path);
-  if (!config) {
-    return std::unexpected(config.error());
-  }
+  if (!config) return std::unexpected(config.error());
   return *config;
 }
 

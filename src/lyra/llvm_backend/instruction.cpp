@@ -94,20 +94,14 @@ auto StoreBitRange(
 
   auto& builder = context.GetBuilder();
   auto br_result = context.ComposeBitRange(target);
-  if (!br_result) {
-    return std::unexpected(br_result.error());
-  }
+  if (!br_result) return std::unexpected(br_result.error());
   auto [offset, width] = *br_result;
 
   auto ptr_or_err = context.GetPlacePointer(target);
-  if (!ptr_or_err) {
-    return std::unexpected(ptr_or_err.error());
-  }
+  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
   llvm::Value* ptr = *ptr_or_err;
   auto base_type_result = context.GetPlaceBaseType(target);
-  if (!base_type_result) {
-    return std::unexpected(base_type_result.error());
-  }
+  if (!base_type_result) return std::unexpected(base_type_result.error());
   llvm::Type* base_type = *base_type_result;
 
   if (base_type->isStructTy()) {
@@ -206,9 +200,7 @@ auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
   // BitRangeProjection targets use read-modify-write
   if (context.HasBitRangeProjection(assign.target)) {
     auto source_raw_or_err = LowerOperandRaw(context, assign.source);
-    if (!source_raw_or_err) {
-      return std::unexpected(source_raw_or_err.error());
-    }
+    if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
     return StoreBitRange(context, assign.target, *source_raw_or_err);
   }
 
@@ -223,16 +215,12 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 
   // Source is always evaluated unconditionally (per spec)
   auto source_raw_or_err = LowerOperandRaw(context, guarded.source);
-  if (!source_raw_or_err) {
-    return std::unexpected(source_raw_or_err.error());
-  }
+  if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
   llvm::Value* source_raw = *source_raw_or_err;
 
   // Lower validity predicate to i1
   auto valid_or_err = LowerOperand(context, guarded.validity);
-  if (!valid_or_err) {
-    return std::unexpected(valid_or_err.error());
-  }
+  if (!valid_or_err) return std::unexpected(valid_or_err.error());
   llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
     auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
@@ -258,14 +246,11 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
   } else {
     // Direct store (same as LowerAssign but with pre-computed source_raw)
     auto target_ptr_or_err = context.GetPlacePointer(guarded.target);
-    if (!target_ptr_or_err) {
-      return std::unexpected(target_ptr_or_err.error());
-    }
+    if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
     llvm::Value* target_ptr = *target_ptr_or_err;
     auto storage_type_or_err = context.GetPlaceLlvmType(guarded.target);
-    if (!storage_type_or_err) {
+    if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());
-    }
     llvm::Type* storage_type = *storage_type_or_err;
 
     const auto& types = context.GetTypeArena();
@@ -396,19 +381,13 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   // Case 1: BitRangeProjection — shifted value and mask
   if (context.HasBitRangeProjection(nba.target)) {
     auto br_result = context.ComposeBitRange(nba.target);
-    if (!br_result) {
-      return std::unexpected(br_result.error());
-    }
+    if (!br_result) return std::unexpected(br_result.error());
     auto [offset, width] = *br_result;
     auto ptr_or_err = context.GetPlacePointer(nba.target);
-    if (!ptr_or_err) {
-      return std::unexpected(ptr_or_err.error());
-    }
+    if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
     llvm::Value* ptr = *ptr_or_err;
     auto base_type_result = context.GetPlaceBaseType(nba.target);
-    if (!base_type_result) {
-      return std::unexpected(base_type_result.error());
-    }
+    if (!base_type_result) return std::unexpected(base_type_result.error());
     llvm::Type* base_type = *base_type_result;
     llvm::Value* notify_base_ptr = ptr;  // BitRange shares root pointer
 
@@ -434,9 +413,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
 
       // Evaluate source
       auto source_raw_or_err = LowerOperandRaw(context, nba.source);
-      if (!source_raw_or_err) {
-        return std::unexpected(source_raw_or_err.error());
-      }
+      if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
       llvm::Value* source_raw = *source_raw_or_err;
       llvm::Value* src_val = nullptr;
       llvm::Value* src_unk = nullptr;
@@ -478,9 +455,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
 
       // Evaluate source, coerce to base width, shift into position
       auto src_or_err = LowerOperand(context, nba.source);
-      if (!src_or_err) {
-        return std::unexpected(src_or_err.error());
-      }
+      if (!src_or_err) return std::unexpected(src_or_err.error());
       llvm::Value* src = *src_or_err;
       src = builder.CreateZExtOrTrunc(src, base_type, "nba.src.ext");
       auto* val_shifted = builder.CreateShl(src, shift_amt, "nba.val.shl");
@@ -517,9 +492,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
 
     // Compute bounds check
     auto index_or_err = LowerOperand(context, idx_proj->index);
-    if (!index_or_err) {
-      return std::unexpected(index_or_err.error());
-    }
+    if (!index_or_err) return std::unexpected(index_or_err.error());
     llvm::Value* index = *index_or_err;
     auto* arr_size_val = llvm::ConstantInt::get(index->getType(), arr_size);
     auto* in_bounds =
@@ -535,15 +508,12 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     // Schedule block: compute pointers, value, mask, call
     builder.SetInsertPoint(schedule_bb);
     auto write_ptr_or_err = context.GetPlacePointer(nba.target);
-    if (!write_ptr_or_err) {
-      return std::unexpected(write_ptr_or_err.error());
-    }
+    if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
     llvm::Value* write_ptr = *write_ptr_or_err;
     llvm::Value* notify_base_ptr = GetDesignRootPointer(context, nba.target);
     auto storage_type_or_err = context.GetPlaceLlvmType(nba.target);
-    if (!storage_type_or_err) {
+    if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());
-    }
     llvm::Type* storage_type = *storage_type_or_err;
 
     // Evaluate source and coerce to storage type
@@ -554,9 +524,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
       auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
       auto* elem_type = struct_type->getElementType(0);
       auto raw_or_err = LowerOperandRaw(context, nba.source);
-      if (!raw_or_err) {
-        return std::unexpected(raw_or_err.error());
-      }
+      if (!raw_or_err) return std::unexpected(raw_or_err.error());
       llvm::Value* raw = *raw_or_err;
       llvm::Value* val = nullptr;
       llvm::Value* unk = nullptr;
@@ -581,9 +549,8 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     } else {
       // 2-state element
       auto source_value_or_err = LowerOperand(context, nba.source);
-      if (!source_value_or_err) {
+      if (!source_value_or_err)
         return std::unexpected(source_value_or_err.error());
-      }
       source_value = *source_value_or_err;
       if (source_value->getType() != storage_type) {
         source_value = builder.CreateZExtOrTrunc(source_value, storage_type);
@@ -604,15 +571,11 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
 
   // Case 3: Simple full-width write (no projections)
   auto write_ptr_or_err = context.GetPlacePointer(nba.target);
-  if (!write_ptr_or_err) {
-    return std::unexpected(write_ptr_or_err.error());
-  }
+  if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
   llvm::Value* notify_base_ptr = write_ptr;
   auto storage_type_or_err = context.GetPlaceLlvmType(nba.target);
-  if (!storage_type_or_err) {
-    return std::unexpected(storage_type_or_err.error());
-  }
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
   llvm::Value* source_value = nullptr;
@@ -622,9 +585,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
     auto* elem_type = struct_type->getElementType(0);
     auto raw_or_err = LowerOperandRaw(context, nba.source);
-    if (!raw_or_err) {
-      return std::unexpected(raw_or_err.error());
-    }
+    if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     llvm::Value* val = nullptr;
     llvm::Value* unk = nullptr;
@@ -650,9 +611,8 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     // 2-state target
     const Type& type = types[mir::TypeOfPlace(types, place)];
     auto source_value_or_err = LowerOperand(context, nba.source);
-    if (!source_value_or_err) {
+    if (!source_value_or_err)
       return std::unexpected(source_value_or_err.error());
-    }
     source_value = *source_value_or_err;
     if (source_value->getType() != storage_type &&
         source_value->getType()->isIntegerTy() && storage_type->isIntegerTy()) {

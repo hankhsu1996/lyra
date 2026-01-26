@@ -42,9 +42,7 @@ auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
   auto recv_ptr_or_err = context.GetPlacePointer(receiver);
-  if (!recv_ptr_or_err) {
-    return std::unexpected(recv_ptr_or_err.error());
-  }
+  if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
   llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.notify.h");
@@ -70,9 +68,7 @@ auto GetQueueTypeInfo(Context& context, mir::PlaceId receiver)
   const auto& queue_type = types[recv_type_id];
   TypeId elem_type_id = queue_type.AsQueue().element_type;
   auto elem_ops = context.GetElemOpsForType(elem_type_id);
-  if (!elem_ops) {
-    return std::unexpected(elem_ops.error());
-  }
+  if (!elem_ops) return std::unexpected(elem_ops.error());
   return QueueTypeInfo{
       .elem_type_id = elem_type_id,
       .max_bound = queue_type.AsQueue().max_bound,
@@ -100,16 +96,12 @@ auto LowerDynArrayBuiltin(
       }
       TypeId elem_type_id = da_type.AsDynamicArray().element_type;
       auto elem_ops_result = context.GetElemOpsForType(elem_type_id);
-      if (!elem_ops_result) {
-        return std::unexpected(elem_ops_result.error());
-      }
+      if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
       auto elem_ops = *elem_ops_result;
 
       // Operand 0 = size
       auto size_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!size_or_err) {
-        return std::unexpected(size_or_err.error());
-      }
+      if (!size_or_err) return std::unexpected(size_or_err.error());
       llvm::Value* size = *size_or_err;
       auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
       auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -121,9 +113,7 @@ auto LowerDynArrayBuiltin(
       if (compute.value.operands.size() >= 2) {
         // new[size](src): copy from existing array
         auto src_or_err = LowerOperand(context, compute.value.operands[1]);
-        if (!src_or_err) {
-          return std::unexpected(src_or_err.error());
-        }
+        if (!src_or_err) return std::unexpected(src_or_err.error());
         llvm::Value* src = *src_or_err;
         handle = builder.CreateCall(
             context.GetLyraDynArrayNewCopy(),
@@ -140,9 +130,7 @@ auto LowerDynArrayBuiltin(
       // Release old handle at target before storing new (prevents leak on
       // reassignment or loop iteration)
       auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
       auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.new.old");
@@ -154,9 +142,7 @@ auto LowerDynArrayBuiltin(
     case mir::BuiltinMethod::kArraySize: {
       // Operand 0 = array (Use of place, loaded as handle)
       auto handle_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!handle_or_err) {
-        return std::unexpected(handle_or_err.error());
-      }
+      if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
       llvm::Value* size = builder.CreateCall(
@@ -164,15 +150,12 @@ auto LowerDynArrayBuiltin(
 
       // Fit i64 result to target storage type
       auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err) {
+      if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
-      }
       llvm::Type* target_type = *target_type_or_err;
 
       size = builder.CreateZExtOrTrunc(size, target_type, "da.size.fit");
@@ -183,9 +166,7 @@ auto LowerDynArrayBuiltin(
     case mir::BuiltinMethod::kArrayDelete: {
       // Load handle from receiver
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "da.del.h");
@@ -227,24 +208,19 @@ auto LowerQueueBuiltin(
   switch (info.method) {
     case mir::BuiltinMethod::kQueueSize: {
       auto handle_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!handle_or_err) {
-        return std::unexpected(handle_or_err.error());
-      }
+      if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
       llvm::Value* size =
           builder.CreateCall(context.GetLyraDynArraySize(), {handle}, "q.size");
 
       auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err) {
+      if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
-      }
       llvm::Type* target_type = *target_type_or_err;
 
       size = builder.CreateZExtOrTrunc(size, target_type, "q.size.fit");
@@ -254,9 +230,7 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueueDelete: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.del.h");
@@ -267,17 +241,13 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueueDeleteAt: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.delat.h");
 
       auto index_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!index_or_err) {
-        return std::unexpected(index_or_err.error());
-      }
+      if (!index_or_err) return std::unexpected(index_or_err.error());
       llvm::Value* index = *index_or_err;
 
       index = builder.CreateSExtOrTrunc(index, i64_ty, "q.delat.idx");
@@ -287,22 +257,16 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueuePushBack: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) {
-        return std::unexpected(qi_result.error());
-      }
+      if (!qi_result) return std::unexpected(qi_result.error());
       auto qi = *qi_result;
 
       auto val_or_err = LowerOperandAsStorage(
           context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) {
-        return std::unexpected(val_or_err.error());
-      }
+      if (!val_or_err) return std::unexpected(val_or_err.error());
       llvm::Value* val = *val_or_err;
 
       auto* temp =
@@ -321,22 +285,16 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueuePushFront: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) {
-        return std::unexpected(qi_result.error());
-      }
+      if (!qi_result) return std::unexpected(qi_result.error());
       auto qi = *qi_result;
 
       auto val_or_err = LowerOperandAsStorage(
           context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) {
-        return std::unexpected(val_or_err.error());
-      }
+      if (!val_or_err) return std::unexpected(val_or_err.error());
       llvm::Value* val = *val_or_err;
 
       auto* temp =
@@ -355,24 +313,19 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueuePopBack: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popb.h");
 
       // Zero-init target (default if queue is empty)
       auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err) {
+      if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
-      }
       llvm::Type* target_type = *target_type_or_err;
 
       builder.CreateStore(
@@ -384,23 +337,18 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueuePopFront: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popf.h");
 
       auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) {
-        return std::unexpected(target_ptr_or_err.error());
-      }
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err) {
+      if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
-      }
       llvm::Type* target_type = *target_type_or_err;
 
       builder.CreateStore(
@@ -412,30 +360,22 @@ auto LowerQueueBuiltin(
 
     case mir::BuiltinMethod::kQueueInsert: {
       auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) {
-        return std::unexpected(recv_ptr_or_err.error());
-      }
+      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
       auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) {
-        return std::unexpected(qi_result.error());
-      }
+      if (!qi_result) return std::unexpected(qi_result.error());
       auto qi = *qi_result;
 
       // operand[0] = index, operand[1] = value
       auto index_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!index_or_err) {
-        return std::unexpected(index_or_err.error());
-      }
+      if (!index_or_err) return std::unexpected(index_or_err.error());
       llvm::Value* index = *index_or_err;
       index = builder.CreateSExtOrTrunc(index, i64_ty, "q.ins.idx");
 
       auto val_or_err = LowerOperandAsStorage(
           context, compute.value.operands[1], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) {
-        return std::unexpected(val_or_err.error());
-      }
+      if (!val_or_err) return std::unexpected(val_or_err.error());
       llvm::Value* val = *val_or_err;
 
       auto* temp = builder.CreateAlloca(
@@ -481,16 +421,12 @@ auto LowerEnumNextPrev(
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
   auto value_type_or_err = context.GetPlaceLlvmType(compute.target);
-  if (!value_type_or_err) {
-    return std::unexpected(value_type_or_err.error());
-  }
+  if (!value_type_or_err) return std::unexpected(value_type_or_err.error());
   llvm::Type* value_type = *value_type_or_err;
 
   // Load current enum value
   auto current_val_or_err = LowerOperand(context, compute.value.operands[0]);
-  if (!current_val_or_err) {
-    return std::unexpected(current_val_or_err.error());
-  }
+  if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val = builder.CreateZExtOrTrunc(current_val, value_type, "enum.val");
 
@@ -524,9 +460,7 @@ auto LowerEnumNextPrev(
   llvm::Value* step = nullptr;
   if (compute.value.operands.size() > 1) {
     auto step_or_err = LowerOperand(context, compute.value.operands[1]);
-    if (!step_or_err) {
-      return std::unexpected(step_or_err.error());
-    }
+    if (!step_or_err) return std::unexpected(step_or_err.error());
     step = *step_or_err;
     step = builder.CreateIntCast(step, i32_ty, false, "enum.step");
   } else {
@@ -566,9 +500,7 @@ auto LowerEnumNextPrev(
 
   // Store to target
   auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(result, target_ptr);
@@ -606,9 +538,7 @@ auto LowerEnumName(
 
   // Load current enum value
   auto current_val_or_err = LowerOperand(context, compute.value.operands[0]);
-  if (!current_val_or_err) {
-    return std::unexpected(current_val_or_err.error());
-  }
+  if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val =
       builder.CreateZExtOrTrunc(current_val, enum_val_type, "enum.name.val");
@@ -689,9 +619,7 @@ auto LowerEnumName(
 
   // String ownership: release old, store new (Pattern B)
   auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "enum.name.old");

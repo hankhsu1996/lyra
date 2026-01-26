@@ -29,15 +29,11 @@ auto LowerUnpackedArrayAggregate(Context& context, const mir::Compute& compute)
   auto& builder = context.GetBuilder();
 
   auto target_ptr_result = context.GetPlacePointer(compute.target);
-  if (!target_ptr_result) {
-    return std::unexpected(target_ptr_result.error());
-  }
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
   llvm::Value* target_ptr = *target_ptr_result;
 
   auto arr_type_result = context.GetPlaceLlvmType(compute.target);
-  if (!arr_type_result) {
-    return std::unexpected(arr_type_result.error());
-  }
+  if (!arr_type_result) return std::unexpected(arr_type_result.error());
   llvm::Type* arr_type = *arr_type_result;
   llvm::Type* elem_type = arr_type->getArrayElementType();
 
@@ -45,9 +41,7 @@ auto LowerUnpackedArrayAggregate(Context& context, const mir::Compute& compute)
   for (size_t i = 0; i < compute.value.operands.size(); ++i) {
     auto elem_result =
         LowerOperandAsStorage(context, compute.value.operands[i], elem_type);
-    if (!elem_result) {
-      return std::unexpected(elem_result.error());
-    }
+    if (!elem_result) return std::unexpected(elem_result.error());
     llvm::Value* elem = *elem_result;
     aggregate =
         builder.CreateInsertValue(aggregate, elem, {static_cast<unsigned>(i)});
@@ -71,15 +65,11 @@ auto LowerUnpackedStructAggregate(
   }
 
   auto target_ptr_result = context.GetPlacePointer(compute.target);
-  if (!target_ptr_result) {
-    return std::unexpected(target_ptr_result.error());
-  }
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
   llvm::Value* target_ptr = *target_ptr_result;
 
   auto struct_type_result = context.GetPlaceLlvmType(compute.target);
-  if (!struct_type_result) {
-    return std::unexpected(struct_type_result.error());
-  }
+  if (!struct_type_result) return std::unexpected(struct_type_result.error());
   llvm::Type* struct_type = *struct_type_result;
 
   llvm::Value* aggregate = llvm::UndefValue::get(struct_type);
@@ -88,9 +78,7 @@ auto LowerUnpackedStructAggregate(
                                  ->getElementType(static_cast<unsigned>(i));
     auto field_val_result =
         LowerOperandAsStorage(context, compute.value.operands[i], field_type);
-    if (!field_val_result) {
-      return std::unexpected(field_val_result.error());
-    }
+    if (!field_val_result) return std::unexpected(field_val_result.error());
     llvm::Value* field_val = *field_val_result;
     aggregate = builder.CreateInsertValue(
         aggregate, field_val, {static_cast<unsigned>(i)});
@@ -116,9 +104,7 @@ auto LowerQueueAggregate(
 
   TypeId elem_type_id = target_type.AsQueue().element_type;
   auto elem_ops_result = context.GetElemOpsForType(elem_type_id);
-  if (!elem_ops_result) {
-    return std::unexpected(elem_ops_result.error());
-  }
+  if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
   auto elem_ops = *elem_ops_result;
 
   llvm::Value* handle = builder.CreateCall(
@@ -134,9 +120,7 @@ auto LowerQueueAggregate(
         {handle, llvm::ConstantInt::get(i64_ty, i)}, "q.lit.ep");
     auto val_result = LowerOperandAsStorage(
         context, compute.value.operands[i], elem_ops.elem_llvm_type);
-    if (!val_result) {
-      return std::unexpected(val_result.error());
-    }
+    if (!val_result) return std::unexpected(val_result.error());
     llvm::Value* val = *val_result;
 
     if (elem_ops.needs_clone) {
@@ -151,9 +135,7 @@ auto LowerQueueAggregate(
   }
 
   auto target_ptr_result = context.GetPlacePointer(compute.target);
-  if (!target_ptr_result) {
-    return std::unexpected(target_ptr_result.error());
-  }
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
   llvm::Value* target_ptr = *target_ptr_result;
   auto* old = builder.CreateLoad(ptr_ty, target_ptr, "q.lit.old");
   builder.CreateCall(context.GetLyraDynArrayRelease(), {old});

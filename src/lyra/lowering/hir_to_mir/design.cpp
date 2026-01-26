@@ -71,9 +71,7 @@ auto CreateDriveProcess(
 
   // Lower the rvalue expression to MIR operand
   auto source_result = LowerExpression(binding.rvalue, builder);
-  if (!source_result) {
-    return std::unexpected(source_result.error());
-  }
+  if (!source_result) return std::unexpected(source_result.error());
   mir::Operand source = std::move(*source_result);
 
   // Get the target place (child port variable)
@@ -146,9 +144,7 @@ auto ApplyBindings(
     size_t parent_idx = parent_it->second;
 
     auto proc_result = CreateDriveProcess(drive, decls, input, mir_arena);
-    if (!proc_result) {
-      return std::unexpected(proc_result.error());
-    }
+    if (!proc_result) return std::unexpected(proc_result.error());
     mir::ProcessId proc_id = *proc_result;
 
     // Attach process to parent module
@@ -204,9 +200,8 @@ auto ApplyBindings(
     MirBuilder builder(&mir_arena, &ctx);
     Result<LvalueResult> parent_lvalue_result =
         LowerLvalue(alias.lvalue, builder);
-    if (!parent_lvalue_result) {
+    if (!parent_lvalue_result)
       return std::unexpected(parent_lvalue_result.error());
-    }
     LvalueResult parent_lvalue = *parent_lvalue_result;
 
     // Validate parent place resolves to kDesign (may have projections)
@@ -347,9 +342,7 @@ auto LowerDesign(
   if (input.binding_plan != nullptr) {
     auto binding_result =
         ApplyBindings(*input.binding_plan, decls, input, mir_arena, result);
-    if (!binding_result) {
-      return std::unexpected(binding_result.error());
-    }
+    if (!binding_result) return std::unexpected(binding_result.error());
   }
 
   return result;

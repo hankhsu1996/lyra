@@ -136,14 +136,10 @@ auto LowerElementAccessLvalue(
   Context& ctx = builder.GetContext();
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
   auto index_result = LowerExpression(data.index, builder);
-  if (!index_result) {
-    return std::unexpected(index_result.error());
-  }
+  if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
@@ -188,9 +184,7 @@ auto LowerMemberAccessLvalue(
   Context& ctx = builder.GetContext();
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
@@ -222,9 +216,7 @@ auto LowerUnionMemberAccessLvalue(
   Context& ctx = builder.GetContext();
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
@@ -259,14 +251,10 @@ auto LowerPackedElementSelectLvalue(
   Context& ctx = builder.GetContext();
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
   auto index_result = LowerExpression(data.index, builder);
-  if (!index_result) {
-    return std::unexpected(index_result.error());
-  }
+  if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
 
   // Get type info
@@ -414,16 +402,12 @@ auto LowerIndexedPartSelectLvalue(
 
   // Lower base as lvalue (recursive)
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
 
   // Lower index as expression
   auto index_result = LowerExpression(data.index, builder);
-  if (!index_result) {
-    return std::unexpected(index_result.error());
-  }
+  if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
 
   // Get type info
@@ -466,9 +450,7 @@ auto LowerPackedFieldAccessLvalue(
   Context& ctx = builder.GetContext();
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
-  if (!base_result) {
-    return std::unexpected(base_result.error());
-  }
+  if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = *base_result;
 
   // Create constant offset operand

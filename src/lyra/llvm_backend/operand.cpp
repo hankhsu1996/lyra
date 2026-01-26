@@ -26,29 +26,21 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   auto br_result = context.ComposeBitRange(place_id);
-  if (!br_result) {
-    return std::unexpected(br_result.error());
-  }
+  if (!br_result) return std::unexpected(br_result.error());
   auto [offset, width] = *br_result;
 
   // Load the full base value
   auto ptr_result = context.GetPlacePointer(place_id);
-  if (!ptr_result) {
-    return std::unexpected(ptr_result.error());
-  }
+  if (!ptr_result) return std::unexpected(ptr_result.error());
   llvm::Value* ptr = *ptr_result;
   auto base_type_result = context.GetPlaceBaseType(place_id);
-  if (!base_type_result) {
-    return std::unexpected(base_type_result.error());
-  }
+  if (!base_type_result) return std::unexpected(base_type_result.error());
   llvm::Type* base_type = *base_type_result;
   llvm::Value* base = builder.CreateLoad(base_type, ptr, "base");
 
   // Get the element LLVM type for the result
   auto elem_type_result = context.GetPlaceLlvmType(place_id);
-  if (!elem_type_result) {
-    return std::unexpected(elem_type_result.error());
-  }
+  if (!elem_type_result) return std::unexpected(elem_type_result.error());
   llvm::Type* elem_type = *elem_type_result;
 
   if (base_type->isStructTy()) {
@@ -130,13 +122,9 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
               return LoadBitRange(context, place_id);
             }
             auto ptr_result = context.GetPlacePointer(place_id);
-            if (!ptr_result) {
-              return std::unexpected(ptr_result.error());
-            }
+            if (!ptr_result) return std::unexpected(ptr_result.error());
             auto type_result = context.GetPlaceLlvmType(place_id);
-            if (!type_result) {
-              return std::unexpected(type_result.error());
-            }
+            if (!type_result) return std::unexpected(type_result.error());
             return context.GetBuilder().CreateLoad(
                 *type_result, *ptr_result, "load");
           },
@@ -147,9 +135,7 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
 auto LowerOperand(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*> {
   auto val_or_err = LowerOperandRaw(context, operand);
-  if (!val_or_err) {
-    return std::unexpected(val_or_err.error());
-  }
+  if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
   // Coerce 4-state struct to 2-state integer: value & ~unknown (known bits)
@@ -167,9 +153,7 @@ auto LowerOperandAsStorage(
     Context& context, const mir::Operand& operand, llvm::Type* target_type)
     -> Result<llvm::Value*> {
   auto val_or_err = LowerOperandRaw(context, operand);
-  if (!val_or_err) {
-    return std::unexpected(val_or_err.error());
-  }
+  if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
   if (val->getType() == target_type) {

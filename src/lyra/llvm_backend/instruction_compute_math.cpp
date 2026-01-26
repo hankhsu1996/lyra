@@ -113,9 +113,7 @@ auto LowerMathIntegralClog2(
   if (operand_is_four_state) {
     // Extract {value, unknown} from 4-state operand
     auto raw_or_err = LowerOperandRaw(context, operands[0]);
-    if (!raw_or_err) {
-      return std::unexpected(raw_or_err.error());
-    }
+    if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     operand_val = builder.CreateExtractValue(raw, 0, "clog2.op.val");
     operand_unk = builder.CreateExtractValue(raw, 1, "clog2.op.unk");
@@ -127,9 +125,7 @@ auto LowerMathIntegralClog2(
   } else {
     // 2-state operand
     auto operand_val_or_err = LowerOperand(context, operands[0]);
-    if (!operand_val_or_err) {
-      return std::unexpected(operand_val_or_err.error());
-    }
+    if (!operand_val_or_err) return std::unexpected(operand_val_or_err.error());
     operand_val = *operand_val_or_err;
     operand_val =
         builder.CreateZExtOrTrunc(operand_val, result_type, "clog2.coerce");
@@ -164,9 +160,7 @@ auto LowerMathIntegralClog2(
 
   // Store result
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   if (target_is_four_state) {
@@ -344,32 +338,22 @@ auto LowerMathCall(
 
   if (expected_arity == 1) {
     auto operand_or_err = LowerOperand(context, operands[0]);
-    if (!operand_or_err) {
-      return std::unexpected(operand_or_err.error());
-    }
+    if (!operand_or_err) return std::unexpected(operand_or_err.error());
     result_or_err =
         LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
   } else {
     auto lhs_or_err = LowerOperand(context, operands[0]);
-    if (!lhs_or_err) {
-      return std::unexpected(lhs_or_err.error());
-    }
+    if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
     auto rhs_or_err = LowerOperand(context, operands[1]);
-    if (!rhs_or_err) {
-      return std::unexpected(rhs_or_err.error());
-    }
+    if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
     result_or_err = LowerRealMathFnBinary(
         context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
   }
 
-  if (!result_or_err) {
-    return std::unexpected(result_or_err.error());
-  }
+  if (!result_or_err) return std::unexpected(result_or_err.error());
 
   auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    return std::unexpected(target_ptr_or_err.error());
-  }
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
   builder.CreateStore(*result_or_err, target_ptr);
