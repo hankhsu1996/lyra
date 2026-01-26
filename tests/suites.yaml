@@ -32,7 +32,6 @@ suites:
       - system_tf/effect/readmem.yaml
       - system_tf/effect/severity.yaml
       # system_tf/pure - various unsupported features
-      - system_tf/pure/sformat_autoformat.yaml
       - system_tf/pure/sformat_runtime.yaml
       # system_tf/state - various unsupported features
       - system_tf/state/finish.yaml

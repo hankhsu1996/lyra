@@ -40,6 +40,17 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Create an empty string handle via LyraStringFromLiteral("", 0).
+// Returns a newly-owned handle (refcount=1).
+auto CreateEmptyString(Context& context) -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
+  auto* empty_data = builder.CreateGlobalStringPtr("");
+  auto* empty_len = llvm::ConstantInt::get(i64_ty, 0);
+  return builder.CreateCall(
+      context.GetLyraStringFromLiteral(), {empty_data, empty_len}, "str.empty");
+}
+
 enum class PlaceKind {
   kIntegral,
   kString,
@@ -372,7 +383,7 @@ void LowerStringConcat(
 
 void LowerSFormatRvalue(
     Context& context, const mir::SFormatRvalueInfo& info,
-    mir::PlaceId target_place) {
+    const std::vector<mir::Operand>& operands, mir::PlaceId target_place) {
   // Check for unsupported paths
   if (info.has_runtime_format) {
     throw common::UnsupportedErrorException(
@@ -384,10 +395,17 @@ void LowerSFormatRvalue(
   if (info.ops.empty()) {
     // Auto-format path: $swrite/$swriteh/$swriteb/$swriteo without format
     // string
+    if (operands.empty()) {
+      // No values to format - return empty string constant
+      llvm::Value* result = CreateEmptyString(context);
+      llvm::Value* target_ptr = context.GetPlacePointer(target_place);
+      context.GetBuilder().CreateStore(result, target_ptr);
+      return;
+    }
     throw common::UnsupportedErrorException(
         common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
         context.GetCurrentOrigin(),
-        "$swrite/$swriteh/$swriteb/$swriteo auto-format (no format string) not "
+        "$swrite/$swriteh/$swriteb/$swriteo auto-format with values not "
         "supported in LLVM backend");
   }
 
@@ -734,7 +752,8 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
   // SFormat: early-exit before ValidateAndGetTypeInfo (result is string)
   if (const auto* sformat_info =
           std::get_if<mir::SFormatRvalueInfo>(&compute.value.info)) {
-    LowerSFormatRvalue(context, *sformat_info, compute.target);
+    LowerSFormatRvalue(
+        context, *sformat_info, compute.value.operands, compute.target);
     return;
   }
 
