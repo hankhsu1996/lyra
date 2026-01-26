@@ -1,10 +1,12 @@
 #include <argparse/argparse.hpp>
+#include <cstddef>
 #include <exception>
 #include <filesystem>
 #include <format>
 #include <iostream>
 #include <span>
 #include <string>
+#include <system_error>
 
 #include "commands.hpp"
 #include "input.hpp"

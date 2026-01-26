@@ -4,6 +4,8 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <format>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"

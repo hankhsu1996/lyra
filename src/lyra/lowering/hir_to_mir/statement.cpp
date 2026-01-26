@@ -1,6 +1,8 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
 #include <cstdint>
+#include <expected>
+#include <functional>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -8,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"

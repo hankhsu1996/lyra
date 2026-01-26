@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "llvm/IR/BasicBlock.h"

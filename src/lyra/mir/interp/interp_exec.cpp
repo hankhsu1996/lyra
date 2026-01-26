@@ -1,9 +1,12 @@
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -13,6 +16,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mem_io.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -23,6 +27,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
+#include "lyra/mir/interp/file_manager.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"

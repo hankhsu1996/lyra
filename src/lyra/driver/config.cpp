@@ -1,5 +1,6 @@
 #include "config.hpp"
 
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <optional>

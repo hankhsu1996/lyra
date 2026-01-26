@@ -4,8 +4,10 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 
+#include "argparse/argparse.hpp"
 #include "check.hpp"
 #include "dump.hpp"
 #include "input.hpp"

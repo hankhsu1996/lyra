@@ -5,10 +5,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+// POSIX headers
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <vector>
 
 #include <fmt/color.h>
 #include <fmt/core.h>

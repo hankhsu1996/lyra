@@ -1,7 +1,9 @@
 #include "lyra/llvm_backend/operand.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <utility>
+#include <variant>
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -10,10 +12,15 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/four_state.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

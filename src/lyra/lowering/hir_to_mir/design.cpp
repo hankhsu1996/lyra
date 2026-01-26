@@ -1,11 +1,16 @@
 #include "lyra/lowering/hir_to_mir/design.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <format>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/design.hpp"
@@ -25,8 +30,11 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/sensitivity.hpp"

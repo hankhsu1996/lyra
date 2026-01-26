@@ -1,12 +1,20 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 
+#include <climits>
+#include <cstdint>
+#include <expected>
 #include <format>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"

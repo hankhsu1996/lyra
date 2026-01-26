@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <format>
 #include <utility>
 #include <variant>
@@ -8,6 +9,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 

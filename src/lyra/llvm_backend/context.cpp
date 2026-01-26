@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <memory>
-#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -35,6 +35,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

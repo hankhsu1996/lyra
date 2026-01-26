@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
@@ -20,6 +21,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place_type.hpp"

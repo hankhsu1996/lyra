@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"

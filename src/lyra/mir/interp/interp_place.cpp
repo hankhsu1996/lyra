@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -19,6 +20,7 @@
 #include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::mir::interp {

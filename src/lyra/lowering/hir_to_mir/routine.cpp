@@ -1,8 +1,10 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 
+#include <cstdint>
 #include <utility>
 #include <vector>
 
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"

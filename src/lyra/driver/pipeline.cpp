@@ -1,7 +1,13 @@
 #include "pipeline.hpp"
 
+#include <expected>
+#include <utility>
+
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/hir_to_mir/lower.hpp"
 
 namespace lyra::driver {
 

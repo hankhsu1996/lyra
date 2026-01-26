@@ -1,11 +1,21 @@
 #include "print.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <variant>
 
 #include <fmt/color.h>
 #include <fmt/core.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/source_manager.hpp"
 #include "lyra/common/source_span.hpp"
 #include "pipeline.hpp"
 

@@ -1,13 +1,16 @@
 #include "lyra/llvm_backend/execution.hpp"
 
 #include <iostream>
+#include <memory>
+#include <string>
+#include <utility>
 
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
-#include "llvm/ExecutionEngine/MCJIT.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "lyra/llvm_backend/lower.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

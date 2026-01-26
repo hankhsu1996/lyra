@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/module.hpp"
 
+#include <cstdint>
 #include <utility>
 #include <vector>
 

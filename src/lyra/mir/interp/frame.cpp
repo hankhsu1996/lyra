@@ -2,8 +2,11 @@
 
 #include <cstddef>
 #include <format>
+#include <utility>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/mir/interp/runtime_value.hpp"
 
 namespace lyra::mir::interp {
 

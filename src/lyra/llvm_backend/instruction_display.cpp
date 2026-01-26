@@ -1,14 +1,21 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <format>
 
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/effect.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

@@ -1,10 +1,19 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 
+#include <expected>
+#include <memory>
+#include <utility>
 #include <variant>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/verify.hpp"

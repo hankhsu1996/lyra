@@ -9,6 +9,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"

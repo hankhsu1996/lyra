@@ -11,17 +11,20 @@
 #include <fstream>
 #include <map>
 #include <optional>
-#include <spawn.h>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <sys/wait.h>
 #include <type_traits>
-#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
 
+// POSIX headers
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "llvm/IR/Value.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_span.hpp"
@@ -30,6 +33,7 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
