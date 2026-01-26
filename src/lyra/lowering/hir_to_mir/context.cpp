@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 
-#include <cassert>
 #include <cstdint>
 #include <format>
 #include <utility>
@@ -32,9 +31,11 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
 }
 
 auto Context::AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation {
-  assert(
-      (module_places == nullptr || !module_places->contains(sym)) &&
-      "AllocLocal called for symbol that already has a module place");
+  if (module_places != nullptr && module_places->contains(sym)) {
+    throw common::InternalError(
+        "AllocLocal",
+        std::format("symbol {} already has a module place", sym.value));
+  }
 
   auto local_slot = static_cast<uint32_t>(next_local_id++);
 
