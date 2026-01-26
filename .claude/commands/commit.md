@@ -71,6 +71,8 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 - Use kebab-case: `aaa-bbb-ccc`
 - Keep short (~5 words max)
 
+**IMPORTANT: Name for the primary feature, not the recent task.** Look at the full diff and identify what the main deliverable is. Don't name the branch after the last thing you happened to work on in the conversation.
+
 **Examples:**
 
 - `feature/user-auth`
