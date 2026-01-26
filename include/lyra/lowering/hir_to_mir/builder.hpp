@@ -182,10 +182,13 @@ class MirBuilder {
   [[nodiscard]] auto CurrentLoop() const -> const LoopContext*;
 
   // Origin tracking for error reporting.
-  // RecordStatementOrigin records a statement origin in the OriginMap (if set)
-  // and sets it as the current origin for subsequent emit calls.
-  void RecordStatementOrigin(hir::StatementId stmt_id);
+  // SetCurrentHirSource sets the HIR source for subsequent instructions/
+  // terminators. Recording happens at emit time with proper MIR references.
+  void SetCurrentHirSource(hir::StatementId stmt_id);
+  void SetCurrentHirSource(hir::ExpressionId expr_id);
+  void ClearCurrentHirSource();
 
+  // Legacy API - sets current_origin_ directly (used for pre-recorded origins).
   void SetCurrentOrigin(common::OriginId origin) {
     current_origin_ = origin;
   }
@@ -218,6 +221,11 @@ class MirBuilder {
   template <class TermT>
   void EmitTerm(TermT term);
 
+  // HIR source for instructions/terminators (statement or expression only).
+  // FunctionId/ProcessId are recorded separately at the function/process level.
+  using InstructionHirSource =
+      std::variant<hir::StatementId, hir::ExpressionId>;
+
   mir::Arena* arena_;
   Context* ctx_;
   OriginMap* origin_map_;
@@ -225,6 +233,8 @@ class MirBuilder {
   std::vector<BlockBuilder> blocks_;
   std::vector<LoopContext> loop_stack_;
   common::OriginId current_origin_ = common::OriginId::Invalid();
+  std::optional<InstructionHirSource>
+      current_hir_source_;  // For deferred recording
   bool finished_ = false;
 };
 

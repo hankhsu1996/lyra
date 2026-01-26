@@ -7,23 +7,59 @@
 
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering {
 
-// What kind of MIR node this origin entry refers to.
-enum class MirNodeKind {
-  kInstruction,
-  kTerminator,
-  kBlock,
+// Reference to a MIR instruction (block + index within block).
+// Uses BasicBlockId for structural typing rather than raw indices.
+struct InstructionRef {
+  mir::BasicBlockId block;
+  uint32_t instruction_index;  // Index within block (unavoidable, no
+                               // InstructionId exists)
+
+  auto operator==(const InstructionRef&) const -> bool = default;
+};
+
+// Reference to a MIR terminator (one per block).
+struct TerminatorRef {
+  mir::BasicBlockId block;
+
+  auto operator==(const TerminatorRef&) const -> bool = default;
+};
+
+// Reference to a function prologue parameter operation.
+// Used for errors during parameter allocation/initialization in LLVM backend.
+struct PrologueParamRef {
+  mir::FunctionId func;
+  uint32_t param_index;
+
+  auto operator==(const PrologueParamRef&) const -> bool = default;
+};
+
+// The MIR node that an origin entry refers to.
+// Extensible: can add BasicBlockId later for block-level origins.
+using MirNode = std::variant<
+    mir::FunctionId, mir::ProcessId, InstructionRef, TerminatorRef,
+    PrologueParamRef>;
+
+// Reference to a function parameter in HIR (for prologue errors).
+// Resolves to the parameter's declaration span via function.parameters[index].
+struct FunctionParamRef {
+  hir::FunctionId func;
+  uint32_t param_index;
+
+  auto operator==(const FunctionParamRef&) const -> bool = default;
 };
 
 // The HIR source that generated a MIR node.
-using HirSource = std::variant<hir::StatementId, hir::ExpressionId>;
+using HirSource = std::variant<
+    hir::StatementId, hir::ExpressionId, hir::FunctionId, hir::ProcessId,
+    FunctionParamRef>;
 
 // Entry recording the mapping from a MIR node to its HIR source.
 struct OriginEntry {
-  MirNodeKind kind;
-  uint32_t mir_index;  // Meaning depends on kind (block-local for instructions)
+  MirNode mir_node;
   HirSource hir_source;
 };
 
@@ -33,9 +69,8 @@ class OriginMap {
  public:
   OriginMap() = default;
 
-  // Record a new origin entry and return its ID.
-  auto Record(MirNodeKind kind, uint32_t mir_index, HirSource hir_source)
-      -> common::OriginId;
+  // Core API (variant-based).
+  auto Record(MirNode mir_node, HirSource hir_source) -> common::OriginId;
 
   // Lookup an origin entry by ID. Returns nullopt for invalid IDs.
   [[nodiscard]] auto Resolve(common::OriginId id) const
@@ -44,6 +79,29 @@ class OriginMap {
   // Get the current size (for debugging/stats).
   [[nodiscard]] auto Size() const -> size_t {
     return entries_.size();
+  }
+
+  // Typed overloads - prevent cross-kind misuse at call sites.
+  auto Record(mir::FunctionId mir, hir::FunctionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(mir::ProcessId mir, hir::ProcessId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(InstructionRef mir, hir::StatementId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(InstructionRef mir, hir::ExpressionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(TerminatorRef mir, hir::StatementId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(TerminatorRef mir, hir::ExpressionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+  auto Record(PrologueParamRef mir, FunctionParamRef hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
 
  private:

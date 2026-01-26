@@ -43,6 +43,18 @@ class Arena final {
     return id;
   }
 
+  // Reserve a ProcessId for pre-allocation.
+  auto ReserveProcess() -> ProcessId {
+    ProcessId id{static_cast<uint32_t>(processes_.size())};
+    processes_.emplace_back();
+    return id;
+  }
+
+  // Fill in a previously reserved process's body.
+  void SetProcessBody(ProcessId id, Process proc) {
+    processes_[id.value] = std::move(proc);
+  }
+
   auto AddFunction(Function func) -> FunctionId {
     FunctionId id{static_cast<uint32_t>(functions_.size())};
     functions_.push_back(std::move(func));

@@ -300,9 +300,10 @@ auto LowerDesign(
   for (const auto& element : design.elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       if (pkg->init_process) {
-        const hir::Process& proc = (*input.hir_arena)[pkg->init_process];
-        mir::ProcessId mir_proc =
-            LowerProcess(proc, input, mir_arena, init_view, origin_map);
+        hir::ProcessId hir_proc_id = pkg->init_process;
+        const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
+        mir::ProcessId mir_proc = LowerProcess(
+            hir_proc_id, proc, input, mir_arena, init_view, origin_map);
         result.init_processes.push_back(mir_proc);
       }
     }

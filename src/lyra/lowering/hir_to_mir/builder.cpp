@@ -10,7 +10,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -37,18 +36,16 @@ MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
   }
 }
 
-void MirBuilder::RecordStatementOrigin(hir::StatementId stmt_id) {
-  if (origin_map_ == nullptr) {
-    return;  // No map, skip recording
-  }
+void MirBuilder::SetCurrentHirSource(hir::StatementId stmt_id) {
+  current_hir_source_.emplace(stmt_id);
+}
 
-  // Record this statement as the source for subsequent MIR nodes.
-  // We use kInstruction as the kind since most emitted MIR comes from stmt
-  // lowering. The mir_index is 0 since we're tracking at statement granularity,
-  // not per-instruction.
-  common::OriginId origin =
-      origin_map_->Record(MirNodeKind::kInstruction, 0, stmt_id);
-  current_origin_ = origin;
+void MirBuilder::SetCurrentHirSource(hir::ExpressionId expr_id) {
+  current_hir_source_.emplace(expr_id);
+}
+
+void MirBuilder::ClearCurrentHirSource() {
+  current_hir_source_.reset();
 }
 
 auto MirBuilder::IsReachable() const -> bool {
@@ -73,11 +70,27 @@ void MirBuilder::EmitInst(InstT inst) {
   if (current_block_ == kInvalidBlockIndex) {
     return;
   }
-  if (blocks_[current_block_.value].terminator.has_value()) {
+  auto& block = blocks_[current_block_.value];
+  if (block.terminator.has_value()) {
     return;
   }
-  blocks_[current_block_.value].instructions.push_back(
-      mir::Instruction{.data = std::move(inst), .origin = current_origin_});
+
+  // Record origin at emit time (ONLY place for instructions).
+  // Uses current_hir_source_ (deferred recording) if set.
+  common::OriginId origin = current_origin_;
+  if (origin_map_ != nullptr && current_hir_source_.has_value()) {
+    auto inst_index = static_cast<uint32_t>(block.instructions.size());
+    InstructionRef ref{
+        .block = mir::BasicBlockId{current_block_.value},
+        .instruction_index = inst_index,
+    };
+    origin = std::visit(
+        [&](auto id) { return origin_map_->Record(ref, id); },
+        *current_hir_source_);
+  }
+
+  block.instructions.push_back(
+      mir::Instruction{.data = std::move(inst), .origin = origin});
 }
 
 // Terminator emission: strict for CFG correctness.
@@ -96,8 +109,18 @@ void MirBuilder::EmitTerm(TermT term) {
   if (block.terminator.has_value()) {
     throw common::InternalError("MirBuilder", "block already has terminator");
   }
-  block.terminator =
-      mir::Terminator{.data = std::move(term), .origin = current_origin_};
+
+  // Record origin at emit time (ONLY place for terminators).
+  // Uses current_hir_source_ (deferred recording) if set.
+  common::OriginId origin = current_origin_;
+  if (origin_map_ != nullptr && current_hir_source_.has_value()) {
+    TerminatorRef ref{.block = mir::BasicBlockId{current_block_.value}};
+    origin = std::visit(
+        [&](auto id) { return origin_map_->Record(ref, id); },
+        *current_hir_source_);
+  }
+
+  block.terminator = mir::Terminator{.data = std::move(term), .origin = origin};
 }
 
 auto MirBuilder::CreateBlock() -> BlockIndex {

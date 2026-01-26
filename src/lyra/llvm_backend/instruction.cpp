@@ -578,8 +578,9 @@ void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
 }  // namespace
 
 void LowerInstruction(Context& context, const mir::Instruction& instruction) {
-  // Set origin for error reporting
-  context.SetCurrentOrigin(instruction.origin);
+  // Set origin for error reporting.
+  // OriginScope preserves outer origin if instruction.origin is Invalid.
+  OriginScope origin_scope(context, instruction.origin);
 
   // RAII guard for statement-scoped cleanup of owned string temps
   StatementScope scope(context);

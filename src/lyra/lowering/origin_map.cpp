@@ -1,12 +1,13 @@
 #include "lyra/lowering/origin_map.hpp"
 
+#include <utility>
+
 namespace lyra::lowering {
 
-auto OriginMap::Record(
-    MirNodeKind kind, uint32_t mir_index, HirSource hir_source)
+auto OriginMap::Record(MirNode mir_node, HirSource hir_source)
     -> common::OriginId {
   common::OriginId id{static_cast<uint32_t>(entries_.size())};
-  entries_.push_back({kind, mir_index, hir_source});
+  entries_.push_back({std::move(mir_node), std::move(hir_source)});
   return id;
 }
 

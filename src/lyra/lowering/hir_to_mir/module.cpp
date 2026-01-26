@@ -52,14 +52,27 @@ auto LowerModule(
     mir::Function mir_func =
         LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
 
+    // Record function and parameter origins (caller has both IDs)
+    if (origin_map != nullptr) {
+      mir_func.origin = origin_map->Record(mir_func_id, hir_func_id);
+
+      // Record per-parameter origins for prologue error reporting
+      mir_func.param_origins.reserve(hir_func.parameters.size());
+      for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
+        PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
+        FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
+        mir_func.param_origins.push_back(origin_map->Record(mir_ref, hir_ref));
+      }
+    }
+
     mir_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
   // Phase 3: Lower module processes (can reference functions)
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
-    mir::ProcessId mir_proc_id =
-        LowerProcess(hir_process, input, mir_arena, decl_view, origin_map);
+    mir::ProcessId mir_proc_id = LowerProcess(
+        proc_id, hir_process, input, mir_arena, decl_view, origin_map);
     result.processes.push_back(mir_proc_id);
   }
 

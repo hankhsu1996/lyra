@@ -17,8 +17,11 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/handle.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
@@ -165,6 +168,23 @@ auto ResolveErrorLocation(
             const hir::Expression& expr = (*compilation.hir.hir_arena)[expr_id];
             return FormatSourceLocation(
                 expr.span, *compilation.hir.source_manager);
+          },
+          [&](hir::FunctionId func_id) {
+            const hir::Function& func = (*compilation.hir.hir_arena)[func_id];
+            return FormatSourceLocation(
+                func.span, *compilation.hir.source_manager);
+          },
+          [&](hir::ProcessId proc_id) {
+            const hir::Process& proc = (*compilation.hir.hir_arena)[proc_id];
+            return FormatSourceLocation(
+                proc.span, *compilation.hir.source_manager);
+          },
+          [&](lowering::FunctionParamRef ref) {
+            // Use function span for parameter errors (parameters don't have
+            // individual spans in our representation yet).
+            const hir::Function& func = (*compilation.hir.hir_arena)[ref.func];
+            return FormatSourceLocation(
+                func.span, *compilation.hir.source_manager);
           },
       },
       entry->hir_source);

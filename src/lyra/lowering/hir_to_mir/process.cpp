@@ -39,9 +39,9 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 }  // namespace
 
 auto LowerProcess(
-    const hir::Process& process, const LoweringInput& input,
-    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
-    -> mir::ProcessId {
+    hir::ProcessId hir_proc_id, const hir::Process& process,
+    const LoweringInput& input, mir::Arena& mir_arena,
+    const DeclView& decl_view, OriginMap* origin_map) -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -94,13 +94,22 @@ auto LowerProcess(
     }
   }
 
+  // Pre-allocate the ProcessId so we can record origin before adding
+  mir::ProcessId mir_proc_id = mir_arena.ReserveProcess();
+
   mir::Process mir_process{
       .kind = mir_kind,
       .entry = mir::BasicBlockId{entry_idx.value},  // Local index
       .blocks = std::move(blocks),
   };
 
-  return mir_arena.AddProcess(std::move(mir_process));
+  // Record process origin before finalizing
+  if (origin_map != nullptr) {
+    mir_process.origin = origin_map->Record(mir_proc_id, hir_proc_id);
+  }
+
+  mir_arena.SetProcessBody(mir_proc_id, std::move(mir_process));
+  return mir_proc_id;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

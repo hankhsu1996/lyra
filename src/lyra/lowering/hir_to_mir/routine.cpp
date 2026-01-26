@@ -74,7 +74,8 @@ auto LowerFunctionBody(
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
 
-  // Signature is set by caller (SetFunctionBody); use empty placeholder here
+  // Signature and origins are set by caller (SetFunctionBody); placeholders
+  // here
   return mir::Function{
       .signature = {},
       .entry = mir::BasicBlockId{entry_idx.value},
@@ -82,6 +83,8 @@ auto LowerFunctionBody(
       .local_types = std::move(ctx.local_types),
       .temp_types = std::move(ctx.temp_types),
       .param_local_slots = std::move(param_local_slots),
+      .param_origins = {},
+      .origin = common::OriginId::Invalid(),
   };
 }
 

@@ -277,8 +277,10 @@ void LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks,
     llvm::BasicBlock* exit_block) {
-  // Set origin for error reporting
-  context.SetCurrentOrigin(term.origin);
+  // Set origin for error reporting.
+  // OriginScope preserves outer (function/process) origin if term.origin is
+  // Invalid.
+  OriginScope origin_scope(context, term.origin);
 
   std::visit(
       common::Overloaded{
@@ -307,6 +309,10 @@ void LowerTerminator(
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> llvm::Function* {
+  // Process-level origin scope for errors during code generation.
+  // If process.origin is Invalid, this is a no-op.
+  OriginScope proc_scope(context, process.origin);
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
@@ -516,6 +522,10 @@ void DefineUserFunction(
   const auto& types = context.GetTypeArena();
   const auto& func = arena[func_id];
 
+  // Function-level origin scope for prologue errors.
+  // If func.origin is Invalid, this is a no-op.
+  OriginScope func_scope(context, func.origin);
+
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", llvm_func);
@@ -559,6 +569,12 @@ void DefineUserFunction(
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
   // Arguments start at index 2 (after design and engine pointers).
   for (size_t i = 0; i < func.signature.params.size(); ++i) {
+    // Set parameter-specific origin for prologue errors
+    common::OriginId param_origin = (i < func.param_origins.size())
+                                        ? func.param_origins[i]
+                                        : common::OriginId::Invalid();
+    OriginScope param_scope(context, param_origin);
+
     uint32_t local_slot = func.param_local_slots[i];
     auto it = collector.locals.find(static_cast<int>(local_slot));
     if (it != collector.locals.end()) {
@@ -585,8 +601,9 @@ void DefineUserFunction(
       LowerInstruction(context, instruction);
     }
 
-    // Lower terminator
-    context.SetCurrentOrigin(block.terminator.origin);
+    // Lower terminator.
+    // OriginScope preserves func.origin if terminator.origin is Invalid.
+    OriginScope term_scope(context, block.terminator.origin);
     std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) { LowerJump(context, t, llvm_blocks); },
