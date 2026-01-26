@@ -8,9 +8,10 @@ extern "C" {
 void LyraPrintLiteral(const char* str);
 
 // Print a formatted value (all FormatKind except kLiteral)
-// - format: FormatKind cast to int32_t
+// - format: FormatKind cast to int32_t (how to render)
+// - value_kind: RuntimeValueKind cast to int32_t (how to interpret bytes)
 // - data: pointer to value bits
-// - width: bit width of the value
+// - width: bit width for integrals (must be <= 64 for kIntegral)
 // - is_signed: true for signed interpretation
 // - output_width: encodes FormatModifiers.width (optional<int>) as int32_t:
 //     -1 = nullopt (no width specified) → auto-size hex/binary/octal to
@@ -23,9 +24,9 @@ void LyraPrintLiteral(const char* str);
 // - x_mask: pointer to X bits (null for 2-state)
 // - z_mask: pointer to Z bits (null for 2-state)
 void LyraPrintValue(
-    int32_t format, const void* data, int32_t width, bool is_signed,
-    int32_t output_width, int32_t precision, bool zero_pad, bool left_align,
-    const void* x_mask, const void* z_mask);
+    int32_t format, int32_t value_kind, const void* data, int32_t width,
+    bool is_signed, int32_t output_width, int32_t precision, bool zero_pad,
+    bool left_align, const void* x_mask, const void* z_mask);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(int32_t kind);

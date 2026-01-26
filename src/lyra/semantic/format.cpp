@@ -1,6 +1,7 @@
 #include "lyra/semantic/format.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -248,6 +249,45 @@ auto AutoFormatIntegral(const RuntimeIntegral& val, bool is_signed)
   return ToDecimalString(val, is_signed);
 }
 
+// Check if a format kind is an integer format (requires real-to-int conversion)
+auto IsIntegerFormat(FormatKind kind) -> bool {
+  return kind == FormatKind::kDecimal || kind == FormatKind::kHex ||
+         kind == FormatKind::kBinary || kind == FormatKind::kOctal;
+}
+
+// Convert real to RuntimeIntegral for display formatting.
+// Uses truncation toward zero per LRM 21.2.1.2.
+auto RealToDisplayIntegral(double value) -> RuntimeIntegral {
+  constexpr uint32_t kBitWidth = 64;
+
+  // Truncate toward zero
+  double truncated = std::trunc(value);
+
+  // Handle special cases
+  if (std::isnan(truncated) || truncated == 0.0) {
+    return RuntimeIntegral{
+        .value = {0}, .unknown = {0}, .bit_width = kBitWidth};
+  }
+
+  // Clamp to int64 range for very large values
+  constexpr auto kInt64Max = static_cast<double>(INT64_MAX);
+  constexpr auto kInt64Min = static_cast<double>(INT64_MIN);
+
+  int64_t int_val = 0;
+  if (std::isinf(truncated) || truncated > kInt64Max) {
+    int_val = INT64_MAX;
+  } else if (truncated < kInt64Min) {
+    int_val = INT64_MIN;
+  } else {
+    int_val = static_cast<int64_t>(truncated);
+  }
+
+  return RuntimeIntegral{
+      .value = {static_cast<uint64_t>(int_val)},
+      .unknown = {0},
+      .bit_width = kBitWidth};
+}
+
 }  // namespace
 
 auto PackedToStringBytes(const RuntimeIntegral& val) -> std::string {
@@ -293,12 +333,23 @@ auto FormatValue(
   }
 
   if (IsReal(value)) {
+    // LRM 21.2.1.2: Real values displayed with integer formats are converted
+    // to integer first (truncation toward zero).
+    if (IsIntegerFormat(spec.kind)) {
+      auto integral = RealToDisplayIntegral(AsReal(value).value);
+      return FormatIntegral(integral, spec, true);
+    }
     return FormatReal(AsReal(value), spec);
   }
 
   if (IsShortReal(value)) {
-    // Format shortreal as double for display
-    RuntimeReal r{.value = static_cast<double>(AsShortReal(value).value)};
+    double dval = static_cast<double>(AsShortReal(value).value);
+    // Same conversion rule applies to shortreal
+    if (IsIntegerFormat(spec.kind)) {
+      auto integral = RealToDisplayIntegral(dval);
+      return FormatIntegral(integral, spec, true);
+    }
+    RuntimeReal r{.value = dval};
     return FormatReal(r, spec);
   }
 

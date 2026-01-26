@@ -101,8 +101,8 @@ auto Context::GetLyraPrintLiteral() -> llvm::Function* {
 
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
-    // void LyraPrintValue(int32_t format, const void* data, int32_t width,
-    //                     bool is_signed, int32_t output_width,
+    // void LyraPrintValue(int32_t format, int32_t value_kind, const void* data,
+    //                     int32_t width, bool is_signed, int32_t output_width,
     //                     int32_t precision, bool zero_pad, bool left_align,
     //                     const void* x_mask, const void* z_mask)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
@@ -110,8 +110,8 @@ auto Context::GetLyraPrintValue() -> llvm::Function* {
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty, ptr_ty,
-         ptr_ty},
+        {i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty,
+         ptr_ty, ptr_ty},
         false);
     lyra_print_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintValue",
@@ -659,17 +659,18 @@ auto Context::GetLyraStringFormatLiteral() -> llvm::Function* {
 
 auto Context::GetLyraStringFormatValue() -> llvm::Function* {
   if (lyra_string_format_value_ == nullptr) {
-    // void LyraStringFormatValue(ptr buf, i32 format, ptr data, i32 width,
-    //                            i1 is_signed, i32 output_width,
-    //                            i32 precision, i1 zero_pad, i1 left_align,
+    // void LyraStringFormatValue(ptr buf, i32 format, i32 value_kind,
+    //                            ptr data, i32 width, i1 is_signed,
+    //                            i32 output_width, i32 precision,
+    //                            i1 zero_pad, i1 left_align,
     //                            ptr x_mask, ptr z_mask)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty,
-         ptr_ty, ptr_ty},
+        {ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty,
+         i1_ty, ptr_ty, ptr_ty},
         false);
     lyra_string_format_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatValue",

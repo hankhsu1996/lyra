@@ -1,10 +1,10 @@
 feature: display_real_format
 description: Tests for $display with real values using integer format specifiers
 
+# LRM 21.2.1.2: When a real is displayed with an integer format specifier (%d, %h, etc.),
+# it should be converted to integer first (truncation toward zero), then formatted.
+
 cases:
-  # TODO(hankhsu): BUG - %d with real should convert to integer, not reinterpret bits
-  # LRM 21.2.1.2: When a real is displayed with %d, it should be truncated to integer.
-  # Currently outputs the raw IEEE-754 bits as integer instead.
   - name: display_real_as_decimal
     sv: |
       module Test;
@@ -16,3 +16,28 @@ cases:
       endmodule
     expect:
       stdout: "42\n"
+
+  - name: display_negative_real_as_decimal
+    sv: |
+      module Test;
+        real r;
+        initial begin
+          r = -3.9;
+          $display("%d", r);
+        end
+      endmodule
+    expect:
+      stdout: "-3\n"
+
+  - name: display_real_truncates_toward_zero
+    sv: |
+      module Test;
+        initial begin
+          $display("%d", 3.9);   // truncates to 3, not rounds to 4
+          $display("%d", -3.9);  // truncates to -3, not rounds to -4
+        end
+      endmodule
+    expect:
+      stdout: |
+        3
+        -3
