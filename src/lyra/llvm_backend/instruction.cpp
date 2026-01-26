@@ -6,6 +6,7 @@
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 
@@ -684,6 +685,49 @@ auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
   return {};
 }
 
+auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+
+  // Get the setup thunk function (already declared via DeclareUserFunction).
+  // The setup thunk handles: initial print, serialization, and registration.
+  llvm::Function* setup_fn = context.GetUserFunction(monitor.setup_thunk);
+  if (setup_fn == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(), "$monitor setup thunk function not found",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Get design and engine pointers
+  llvm::Value* design_ptr = context.GetDesignPointer();
+  llvm::Value* engine_ptr = context.GetEnginePointer();
+
+  // Call setup thunk - it handles initial print + serialization + registration
+  // Setup thunk signature: void (DesignState*, Engine*)
+  builder.CreateCall(setup_fn, {design_ptr, engine_ptr});
+
+  return {};
+}
+
+auto LowerMonitorControlEffect(
+    Context& context, const mir::MonitorControlEffect& control)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+
+  // Get engine pointer
+  llvm::Value* engine_ptr = context.GetEnginePointer();
+
+  // Call LyraMonitorSetEnabled(engine, enable)
+  auto& llvm_ctx = context.GetLlvmContext();
+  builder.CreateCall(
+      context.GetLyraMonitorSetEnabled(),
+      {engine_ptr,
+       llvm::ConstantInt::get(
+           llvm::Type::getInt1Ty(llvm_ctx), control.enable ? 1 : 0)});
+
+  return {};
+}
+
 auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
     -> Result<void> {
   return std::visit(
@@ -706,6 +750,12 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           },
           [&context](const mir::StrobeEffect& strobe) -> Result<void> {
             return LowerStrobeEffect(context, strobe);
+          },
+          [&context](const mir::MonitorEffect& monitor) -> Result<void> {
+            return LowerMonitorEffect(context, monitor);
+          },
+          [&context](const mir::MonitorControlEffect& control) -> Result<void> {
+            return LowerMonitorControlEffect(context, control);
           },
       },
       effect_op);

@@ -56,9 +56,20 @@ struct SFormatFunctionInfo {
 // $timeformat - sets global time format for %t
 struct TimeFormatFunctionInfo {};
 
+// $monitor/$monitorb/$monitoro/$monitorh - persistent change-triggered display
+struct MonitorFunctionInfo {
+  PrintRadix radix;
+};
+
+// $monitoron/$monitoroff - control monitor enabled state
+struct MonitorControlFunctionInfo {
+  bool enable;  // true=$monitoron, false=$monitoroff
+};
+
 using CategoryPayload = std::variant<
     DisplayFunctionInfo, TerminationFunctionInfo, SeverityFunctionInfo,
-    FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo>;
+    FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo,
+    MonitorFunctionInfo, MonitorControlFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -113,6 +124,14 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
 
   // Time formatting task
   {.name = "$timeformat", .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .payload = TimeFormatFunctionInfo{}},
+
+  // $monitor family (persistent change-triggered display)
+  {.name = "$monitor",    .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kDecimal}},
+  {.name = "$monitorb",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kBinary}},
+  {.name = "$monitoro",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kOctal}},
+  {.name = "$monitorh",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kHex}},
+  {.name = "$monitoron",  .min_args = 0, .max_args = 0,   .return_type = Ret::kVoid, .payload = MonitorControlFunctionInfo{.enable = true}},
+  {.name = "$monitoroff", .min_args = 0, .max_args = 0,   .return_type = Ret::kVoid, .payload = MonitorControlFunctionInfo{.enable = false}},
 });
 // clang-format on
 

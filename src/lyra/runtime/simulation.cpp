@@ -342,3 +342,15 @@ extern "C" void LyraReportTime() {
   std::print("__LYRA_TIME__={}\n", FinalTime());
   std::fflush(stdout);
 }
+
+extern "C" void LyraMonitorRegister(
+    void* engine_ptr, LyraMonitorCheckCallback check_thunk, void* design_state,
+    const void* initial_prev, uint32_t size) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->RegisterMonitor(check_thunk, design_state, initial_prev, size);
+}
+
+extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->SetMonitorEnabled(enabled);
+}

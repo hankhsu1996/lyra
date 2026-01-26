@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <queue>
 #include <span>
 #include <string>
@@ -70,6 +71,18 @@ class Engine;
 // Called at end of time slot to re-evaluate and print with final values.
 // Matches user function ABI: void (DesignState*, Engine*)
 using PostponedCallback = void (*)(void*, void*);
+
+// Monitor check callback: evaluates expressions, compares with prev buffer.
+// void check_thunk(DesignState*, Engine*, prev_buffer*)
+using MonitorCheckCallback = void (*)(void*, void*, void*);
+
+// State for active $monitor (only one can be active at a time per IEEE 1800).
+struct MonitorState {
+  bool enabled = true;
+  MonitorCheckCallback check_thunk = nullptr;
+  void* design_state = nullptr;
+  std::vector<uint8_t> prev_values;  // Runtime-owned prev buffer
+};
 
 // Postponed queue entry: callback + captured context.
 struct PostponedRecord {
@@ -195,6 +208,15 @@ class Engine {
   [[nodiscard]] auto ValuePlusargsString(
       std::string_view format, std::string* output) const -> int32_t;
 
+  // Register a new monitor, atomically replacing any existing one.
+  // Copies initial_prev to runtime-owned buffer.
+  void RegisterMonitor(
+      MonitorCheckCallback check_thunk, void* design_state,
+      const void* initial_prev, uint32_t size);
+
+  // Enable/disable the active monitor. No-op if no active monitor.
+  void SetMonitorEnabled(bool enabled);
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -240,6 +262,10 @@ class Engine {
 
   // Plusargs for $test$plusargs and $value$plusargs queries.
   std::vector<std::string> plusargs_;
+
+  // Active monitor state ($monitor). Only one can be active at a time.
+  // Checked after all strobe callbacks complete in ExecutePostponedRegion.
+  std::optional<MonitorState> active_monitor_;
 };
 
 }  // namespace lyra::runtime

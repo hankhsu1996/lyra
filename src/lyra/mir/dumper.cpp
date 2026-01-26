@@ -661,6 +661,13 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
           return result;
         } else if constexpr (std::is_same_v<T, StrobeEffect>) {
           return std::format("$strobe(thunk=func[{}])", effect_op.thunk.value);
+        } else if constexpr (std::is_same_v<T, MonitorEffect>) {
+          return std::format(
+              "$monitor(setup=func[{}], check=func[{}], buf_size={})",
+              effect_op.setup_thunk.value, effect_op.check_thunk.value,
+              effect_op.prev_buffer_size);
+        } else if constexpr (std::is_same_v<T, MonitorControlEffect>) {
+          return std::format("$monitor{}()", effect_op.enable ? "on" : "off");
         } else {
           return "unknown_effect";
         }
