@@ -20,8 +20,6 @@ suites:
       - scheduling/
       - system_tf/
     exclude_regex:
-      # processes - generate not supported
-      - processes/generate.yaml
       # system_tf/effect - various unsupported features
       - system_tf/effect/display.yaml
       - system_tf/effect/display_real_format.yaml

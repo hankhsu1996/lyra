@@ -5,6 +5,7 @@
 #include <optional>
 
 #include <slang/ast/Compilation.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/numeric/Time.h>
@@ -71,6 +72,10 @@ inline auto TimeScaleValueToPower(const slang::TimeScaleValue& tsv) -> int {
 
 namespace detail {
 
+// Forward declaration for mutual recursion
+inline void CollectMinPrecisionFromScope(
+    const slang::ast::Scope& scope, int& min_power, bool& found);
+
 inline void CollectMinPrecision(
     const slang::ast::InstanceSymbol& inst, int& min_power, bool& found) {
   auto ts = inst.body.getTimeScale();
@@ -81,9 +86,31 @@ inline void CollectMinPrecision(
       found = true;
     }
   }
-  for (const auto& child :
-       inst.body.membersOfType<slang::ast::InstanceSymbol>()) {
-    CollectMinPrecision(child, min_power, found);
+  CollectMinPrecisionFromScope(inst.body, min_power, found);
+}
+
+// Recursively collect min precision from a scope, walking into generate blocks.
+// Keep traversal structure identical to CollectInstancesFromScope in
+// design.cpp.
+inline void CollectMinPrecisionFromScope(
+    const slang::ast::Scope& scope, int& min_power, bool& found) {
+  for (const auto& member : scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      CollectMinPrecision(child, min_power, found);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (!block.isUninstantiated) {
+        CollectMinPrecisionFromScope(block, min_power, found);
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : array.entries) {
+        if (!entry->isUninstantiated) {
+          CollectMinPrecisionFromScope(*entry, min_power, found);
+        }
+      }
+    }
   }
 }
 
