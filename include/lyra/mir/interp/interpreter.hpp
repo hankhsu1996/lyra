@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -95,8 +96,10 @@ struct ProcessState {
 // Repeat) as these require a scheduler/runtime.
 class Interpreter {
  public:
-  Interpreter(const Arena* arena, const TypeArena* types)
-      : arena_(arena), types_(types) {
+  Interpreter(
+      const Arena* arena, const TypeArena* types,
+      const lowering::DiagnosticContext* diag_ctx = nullptr)
+      : arena_(arena), types_(types), diag_ctx_(diag_ctx) {
   }
 
   // Set output stream for $display (defaults to stdout if not set)
@@ -110,45 +113,54 @@ class Interpreter {
   }
 
   // Execute process to completion. Returns final status.
-  // Throws on suspension terminators (Delay, Wait, Repeat).
-  auto Run(ProcessState& state) -> ProcessStatus;
+  // Returns error on suspension terminators (Delay, Wait, Repeat).
+  auto Run(ProcessState& state) -> Result<ProcessStatus>;
 
   // Execute process until it suspends or finishes.
   // Returns the suspension reason for the engine to handle scheduling.
-  auto RunUntilSuspend(ProcessState& state) -> SuspendReason;
+  auto RunUntilSuspend(ProcessState& state) -> Result<SuspendReason>;
 
   // Execute a function call. Returns the return value (void for void
   // functions).
   auto RunFunction(
       FunctionId func_id, const std::vector<RuntimeValue>& args,
-      DesignState* design_state) -> RuntimeValue;
+      DesignState* design_state) -> Result<RuntimeValue>;
 
  private:
   // Evaluate Operand to RuntimeValue (always deep copy)
   auto EvalOperand(const ProcessState& state, const Operand& op)
-      -> RuntimeValue;
+      -> Result<RuntimeValue>;
 
   // Evaluate Rvalue to RuntimeValue (may mutate for pop methods)
   auto EvalRvalue(ProcessState& state, const Rvalue& rv, TypeId result_type)
-      -> RuntimeValue;
-
+      -> Result<RuntimeValue>;
   // Rvalue evaluation helpers (one per Rvalue info kind)
-  auto EvalBuiltinCall(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalNewArray(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalEnumNextPrev(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalEnumName(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalAggregate(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalConcat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalIndexValidity(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalSFormat(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalPlusargs(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
-  auto EvalFopen(ProcessState& state, const Rvalue& rv) -> RuntimeValue;
+  auto EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalNewArray(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalEnumName(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalAggregate(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalConcat(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalIndexValidity(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalSFormat(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalPlusargs(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
+  auto EvalFopen(ProcessState& state, const Rvalue& rv) -> Result<RuntimeValue>;
   auto EvalMathCall(
       ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
-      -> RuntimeValue;
+      -> Result<RuntimeValue>;
 
   // Execute FcloseEffect
-  void ExecFcloseEffect(ProcessState& state, const FcloseEffect& effect);
+  auto ExecFcloseEffect(ProcessState& state, const FcloseEffect& effect)
+      -> Result<void>;
 
   // Resolve PlaceRoot to storage (handles Local/Temp/Design)
   static auto ResolveRoot(const ProcessState& state, const PlaceRoot& root)
@@ -157,61 +169,72 @@ class Interpreter {
       -> RuntimeValue&;
 
   // Resolve Place for reading (returns copy)
-  auto ReadPlace(const ProcessState& state, PlaceId place_id) -> RuntimeValue;
+  auto ReadPlace(const ProcessState& state, PlaceId place_id)
+      -> Result<RuntimeValue>;
 
   // Resolve Place for writing (fails if place ends with BitRange)
-  auto WritePlace(ProcessState& state, PlaceId place_id) -> RuntimeValue&;
+  auto WritePlace(ProcessState& state, PlaceId place_id)
+      -> Result<std::reference_wrapper<RuntimeValue>>;
 
   // Store a value to a place (handles BitRange via read-modify-write)
-  void StoreToPlace(ProcessState& state, PlaceId place_id, RuntimeValue value);
+  auto StoreToPlace(ProcessState& state, PlaceId place_id, RuntimeValue value)
+      -> Result<void>;
 
   // Apply projections for read path (returns const location with optional bit
   // slice)
   auto ApplyProjectionsForRead(
       const ProcessState& state, const Place& place, const RuntimeValue& root)
-      -> ConstLocation;
+      -> Result<ConstLocation>;
 
   // Apply projections for write path (returns mutable location with optional
   // bit slice)
   auto ApplyProjectionsForWrite(
-      ProcessState& state, const Place& place, RuntimeValue& root) -> Location;
+      ProcessState& state, const Place& place, RuntimeValue& root)
+      -> Result<Location>;
 
   // Execute Assign instruction
-  void ExecAssign(ProcessState& state, const Assign& assign);
+  auto ExecAssign(ProcessState& state, const Assign& assign) -> Result<void>;
 
   // Execute Compute instruction
-  void ExecCompute(ProcessState& state, const Compute& compute);
+  auto ExecCompute(ProcessState& state, const Compute& compute) -> Result<void>;
 
   // Execute GuardedAssign instruction
-  void ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded);
+  auto ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded)
+      -> Result<void>;
 
   // Execute Effect instruction
-  void ExecEffect(ProcessState& state, const Effect& effect);
+  auto ExecEffect(ProcessState& state, const Effect& effect) -> Result<void>;
 
   // Format display ops to string (no newline appended).
   auto FormatDisplayOps(
-      const ProcessState& state, std::span<const FormatOp> ops) -> std::string;
+      const ProcessState& state, std::span<const FormatOp> ops)
+      -> Result<std::string>;
 
   // Execute DisplayEffect
-  void ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp);
+  auto ExecDisplayEffect(const ProcessState& state, const DisplayEffect& disp)
+      -> Result<void>;
 
   // Execute SeverityEffect
-  void ExecSeverityEffect(
-      const ProcessState& state, const SeverityEffect& severity);
+  auto ExecSeverityEffect(
+      const ProcessState& state, const SeverityEffect& severity)
+      -> Result<void>;
 
   // Execute MemIOEffect ($readmemh/$readmemb/$writememh/$writememb)
-  void ExecMemIOEffect(ProcessState& state, const MemIOEffect& mem_io);
+  auto ExecMemIOEffect(ProcessState& state, const MemIOEffect& mem_io)
+      -> Result<void>;
 
   // Execute instruction
-  void ExecInstruction(ProcessState& state, const Instruction& inst);
+  auto ExecInstruction(ProcessState& state, const Instruction& inst)
+      -> Result<void>;
 
   // Execute terminator, return next block or nullopt for completion.
-  // Throws on suspension terminators (Delay, Wait, Repeat).
+  // Returns error on suspension terminators (Delay, Wait, Repeat).
   auto ExecTerminator(ProcessState& state, const Terminator& term)
-      -> std::optional<BasicBlockId>;
+      -> Result<std::optional<BasicBlockId>>;
 
   const Arena* arena_;
   const TypeArena* types_;
+  const lowering::DiagnosticContext* diag_ctx_ = nullptr;
   std::ostream* output_ = nullptr;
   std::vector<std::string> plusargs_;
   FileManager file_manager_;
@@ -255,7 +278,7 @@ struct SimulationResult {
 // engine integration). Returns exit code (0 = success).
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
-    std::ostream* output = nullptr, std::span<const std::string> plusargs = {})
-    -> SimulationResult;
+    std::ostream* output = nullptr, std::span<const std::string> plusargs = {},
+    const lowering::DiagnosticContext* diag_ctx = nullptr) -> SimulationResult;
 
 }  // namespace lyra::mir::interp

@@ -1,10 +1,11 @@
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
-#include <stdexcept>
 #include <utility>
 #include <variant>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
@@ -39,13 +40,14 @@ auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
 // Evaluates an index operand to int64, handling sign extension and X/Z checks.
 auto ResolveIndex(
     const RuntimeValue& idx_val, const Operand& idx_operand, const Arena& arena,
-    const TypeArena& types) -> int64_t {
+    const TypeArena& types) -> Result<int64_t> {
   if (!IsIntegral(idx_val)) {
     throw common::InternalError("ResolveIndex", "index must be integral");
   }
   const auto& idx_int = AsIntegral(idx_val);
   if (!idx_int.IsKnown()) {
-    throw std::runtime_error("index is X/Z");
+    // TODO(hankhsu): SV semantics - should return X-filled value
+    return std::unexpected(Diagnostic::HostError("index is X/Z"));
   }
   uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
   TypeId type_id = TypeOfOperand(idx_operand, arena, types);
@@ -56,7 +58,7 @@ auto ResolveIndex(
 }
 
 // Evaluates a bit offset operand to uint64, checking for negative values.
-auto ResolveBitOffset(const RuntimeValue& offset_val) -> uint64_t {
+auto ResolveBitOffset(const RuntimeValue& offset_val) -> Result<uint64_t> {
   if (!IsIntegral(offset_val)) {
     throw common::InternalError(
         "ResolveBitOffset", "bit offset must be integral");
@@ -65,7 +67,8 @@ auto ResolveBitOffset(const RuntimeValue& offset_val) -> uint64_t {
   int64_t raw_offset =
       offset_int.value.empty() ? 0 : static_cast<int64_t>(offset_int.value[0]);
   if (raw_offset < 0) {
-    throw std::runtime_error("negative bit offset");
+    // TODO(hankhsu): SV semantics - should return X-filled value
+    return std::unexpected(Diagnostic::HostError("negative bit offset"));
   }
   return static_cast<uint64_t>(raw_offset);
 }
@@ -100,15 +103,21 @@ auto Interpreter::ResolveRootMut(ProcessState& state, const PlaceRoot& root)
 
 auto Interpreter::ApplyProjectionsForRead(
     const ProcessState& state, const Place& place, const RuntimeValue& root)
-    -> ConstLocation {
+    -> Result<ConstLocation> {
   ConstLocation loc{
       .base = &root, .bit_slice = std::nullopt, .blob_view = std::nullopt};
   TypeId current_type = place.root.type;
+
+  // Error to propagate from visitor
+  std::optional<Diagnostic> error;
 
   for (const auto& proj : place.projections) {
     std::visit(
         common::Overloaded{
             [&](const FieldProjection& fp) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForRead",
@@ -143,13 +152,26 @@ auto Interpreter::ApplyProjectionsForRead(
               current_type = struct_info.fields[idx].type;
             },
             [&](const IndexProjection& ip) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForRead",
                     "Index projection after BitRange");
               }
-              auto idx_val = EvalOperand(state, ip.index);
-              int64_t idx = ResolveIndex(idx_val, ip.index, *arena_, *types_);
+              auto idx_val_result = EvalOperand(state, ip.index);
+              if (!idx_val_result) {
+                error = std::move(idx_val_result).error();
+                return;
+              }
+              auto idx_result =
+                  ResolveIndex(*idx_val_result, ip.index, *arena_, *types_);
+              if (!idx_result) {
+                error = std::move(idx_result).error();
+                return;
+              }
+              int64_t idx = *idx_result;
 
               if (loc.blob_view) {
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
@@ -157,8 +179,9 @@ auto Interpreter::ApplyProjectionsForRead(
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
                     std::cmp_greater_equal(idx, arr_info.range.Size())) {
-                  throw std::runtime_error(
-                      "array index out of bounds in blob access");
+                  // TODO(hankhsu): SV semantics - should return X
+                  error = Diagnostic::HostError("array index out of bounds");
+                  return;
                 }
                 loc.blob_view->bit_offset +=
                     static_cast<uint32_t>(idx) * *layout.element_stride_bits;
@@ -172,7 +195,9 @@ auto Interpreter::ApplyProjectionsForRead(
               }
               const auto& arr = AsArray(*loc.base);
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
-                throw std::runtime_error("array index out of bounds");
+                // TODO(hankhsu): SV semantics - should return X
+                error = Diagnostic::HostError("array index out of bounds");
+                return;
               }
               loc.base = &arr.elements[static_cast<size_t>(idx)];
               const auto& type = (*types_)[current_type];
@@ -185,8 +210,20 @@ auto Interpreter::ApplyProjectionsForRead(
               }
             },
             [&](const BitRangeProjection& br) {
-              auto offset_val = EvalOperand(state, br.bit_offset);
-              uint64_t offset = ResolveBitOffset(offset_val);
+              if (error) {
+                return;
+              }
+              auto offset_val_result = EvalOperand(state, br.bit_offset);
+              if (!offset_val_result) {
+                error = std::move(offset_val_result).error();
+                return;
+              }
+              auto offset_result = ResolveBitOffset(*offset_val_result);
+              if (!offset_result) {
+                error = std::move(offset_result).error();
+                return;
+              }
+              uint64_t offset = *offset_result;
 
               if (loc.blob_view) {
                 loc.bit_slice = BitSlice{
@@ -216,6 +253,9 @@ auto Interpreter::ApplyProjectionsForRead(
               }
             },
             [&](const UnionMemberProjection& up) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForRead",
@@ -253,20 +293,31 @@ auto Interpreter::ApplyProjectionsForRead(
             },
         },
         proj.info);
+
+    if (error) {
+      return std::unexpected(std::move(*error));
+    }
   }
   return loc;
 }
 
 auto Interpreter::ApplyProjectionsForWrite(
-    ProcessState& state, const Place& place, RuntimeValue& root) -> Location {
+    ProcessState& state, const Place& place, RuntimeValue& root)
+    -> Result<Location> {
   Location loc{
       .base = &root, .bit_slice = std::nullopt, .blob_view = std::nullopt};
   TypeId current_type = place.root.type;
+
+  // Error to propagate from visitor
+  std::optional<Diagnostic> error;
 
   for (const auto& proj : place.projections) {
     std::visit(
         common::Overloaded{
             [&](const FieldProjection& fp) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
@@ -301,13 +352,26 @@ auto Interpreter::ApplyProjectionsForWrite(
               current_type = struct_info.fields[idx].type;
             },
             [&](const IndexProjection& ip) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
                     "Index projection after BitRange");
               }
-              auto idx_val = EvalOperand(state, ip.index);
-              int64_t idx = ResolveIndex(idx_val, ip.index, *arena_, *types_);
+              auto idx_val_result = EvalOperand(state, ip.index);
+              if (!idx_val_result) {
+                error = std::move(idx_val_result).error();
+                return;
+              }
+              auto idx_result =
+                  ResolveIndex(*idx_val_result, ip.index, *arena_, *types_);
+              if (!idx_result) {
+                error = std::move(idx_result).error();
+                return;
+              }
+              int64_t idx = *idx_result;
 
               if (loc.blob_view) {
                 Layout layout = LayoutOf(loc.blob_view->view_type, *types_);
@@ -315,8 +379,9 @@ auto Interpreter::ApplyProjectionsForWrite(
                     (*types_)[loc.blob_view->view_type].AsUnpackedArray();
                 if (idx < 0 ||
                     std::cmp_greater_equal(idx, arr_info.range.Size())) {
-                  throw std::runtime_error(
-                      "array index out of bounds in blob access");
+                  // TODO(hankhsu): SV semantics - should return X
+                  error = Diagnostic::HostError("array index out of bounds");
+                  return;
                 }
                 loc.blob_view->bit_offset +=
                     static_cast<uint32_t>(idx) * *layout.element_stride_bits;
@@ -331,7 +396,9 @@ auto Interpreter::ApplyProjectionsForWrite(
               }
               auto& arr = AsArray(*loc.base);
               if (idx < 0 || static_cast<size_t>(idx) >= arr.elements.size()) {
-                throw std::runtime_error("array index out of bounds");
+                // TODO(hankhsu): SV semantics - should return X
+                error = Diagnostic::HostError("array index out of bounds");
+                return;
               }
               loc.base = &arr.elements[static_cast<size_t>(idx)];
               const auto& type = (*types_)[current_type];
@@ -344,8 +411,20 @@ auto Interpreter::ApplyProjectionsForWrite(
               }
             },
             [&](const BitRangeProjection& br) {
-              auto offset_val = EvalOperand(state, br.bit_offset);
-              uint64_t offset = ResolveBitOffset(offset_val);
+              if (error) {
+                return;
+              }
+              auto offset_val_result = EvalOperand(state, br.bit_offset);
+              if (!offset_val_result) {
+                error = std::move(offset_val_result).error();
+                return;
+              }
+              auto offset_result = ResolveBitOffset(*offset_val_result);
+              if (!offset_result) {
+                error = std::move(offset_result).error();
+                return;
+              }
+              uint64_t offset = *offset_result;
 
               if (loc.blob_view) {
                 loc.bit_slice = BitSlice{
@@ -375,6 +454,9 @@ auto Interpreter::ApplyProjectionsForWrite(
               }
             },
             [&](const UnionMemberProjection& up) {
+              if (error) {
+                return;
+              }
               if (loc.bit_slice) {
                 throw common::InternalError(
                     "ApplyProjectionsForWrite",
@@ -413,12 +495,16 @@ auto Interpreter::ApplyProjectionsForWrite(
             },
         },
         proj.info);
+
+    if (error) {
+      return std::unexpected(std::move(*error));
+    }
   }
   return loc;
 }
 
 auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& place = (*arena_)[place_id];
   const auto& root_value = ResolveRoot(state, place.root);
 
@@ -426,13 +512,20 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
     return Clone(root_value);
   }
 
-  auto loc = ApplyProjectionsForRead(state, place, root_value);
+  auto loc_result = ApplyProjectionsForRead(state, place, root_value);
+  if (!loc_result) {
+    return std::unexpected(std::move(loc_result).error());
+  }
+  auto& loc = *loc_result;
+
   if (loc.bit_slice) {
     const auto& bs = *loc.bit_slice;
     const auto& container =
         loc.blob_view ? *loc.blob_view->storage : AsIntegral(*loc.base);
     if (bs.total_offset + bs.width > container.bit_width) {
-      throw std::runtime_error("bit slice exceeds container width");
+      // TODO(hankhsu): SV semantics - should return X-filled value
+      return std::unexpected(
+          Diagnostic::HostError("bit slice exceeds container width"));
     }
     return IntegralExtractSlice(
         container, static_cast<uint32_t>(bs.total_offset), bs.width);
@@ -446,15 +539,20 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
 }
 
 auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
-    -> RuntimeValue& {
+    -> Result<std::reference_wrapper<RuntimeValue>> {
   const auto& place = (*arena_)[place_id];
   auto& root_value = ResolveRootMut(state, place.root);
 
   if (place.projections.empty()) {
-    return root_value;
+    return std::ref(root_value);
   }
 
-  auto loc = ApplyProjectionsForWrite(state, place, root_value);
+  auto loc_result = ApplyProjectionsForWrite(state, place, root_value);
+  if (!loc_result) {
+    return std::unexpected(std::move(loc_result).error());
+  }
+  auto& loc = *loc_result;
+
   if (loc.bit_slice) {
     throw common::InternalError(
         "WritePlace", "BitRange requires StoreToPlace path");
@@ -463,26 +561,33 @@ auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
     throw common::InternalError(
         "WritePlace", "BlobView requires StoreToPlace path");
   }
-  return *loc.base;
+  return std::ref(*loc.base);
 }
 
-void Interpreter::StoreToPlace(
-    ProcessState& state, PlaceId place_id, RuntimeValue value) {
+auto Interpreter::StoreToPlace(
+    ProcessState& state, PlaceId place_id, RuntimeValue value) -> Result<void> {
   const auto& place = (*arena_)[place_id];
   auto& root_value = ResolveRootMut(state, place.root);
 
   if (place.projections.empty()) {
     root_value = std::move(value);
-    return;
+    return {};
   }
 
-  auto loc = ApplyProjectionsForWrite(state, place, root_value);
+  auto loc_result = ApplyProjectionsForWrite(state, place, root_value);
+  if (!loc_result) {
+    return std::unexpected(std::move(loc_result).error());
+  }
+  auto& loc = *loc_result;
+
   if (loc.bit_slice) {
     const auto& bs = *loc.bit_slice;
     auto& container =
         loc.blob_view ? *loc.blob_view->storage : AsIntegral(*loc.base);
     if (bs.total_offset + bs.width > container.bit_width) {
-      throw std::runtime_error("bit slice exceeds container width");
+      // TODO(hankhsu): SV semantics - should return X-filled value
+      return std::unexpected(
+          Diagnostic::HostError("bit slice exceeds container width"));
     }
     if (!IsIntegral(value)) {
       throw common::InternalError(
@@ -507,7 +612,8 @@ void Interpreter::StoreToPlace(
         (*types_)[loc.blob_view->root_union_type].AsUnpackedUnion();
     if (union_info.contains_float &&
         ValueContainsXZ(value, loc.blob_view->view_type, *types_)) {
-      throw std::runtime_error("X/Z write to float-containing union");
+      return std::unexpected(
+          Diagnostic::HostError("X/Z write to float-containing union"));
     }
     StoreToBlob(
         loc.blob_view->view_type, value, *loc.blob_view->storage,
@@ -515,6 +621,7 @@ void Interpreter::StoreToPlace(
   } else {
     *loc.base = std::move(value);
   }
+  return {};
 }
 
 }  // namespace lyra::mir::interp

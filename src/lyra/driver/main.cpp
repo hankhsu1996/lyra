@@ -8,6 +8,8 @@
 
 #include "commands.hpp"
 #include "input.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "print.hpp"
 
 auto main(int argc, char* argv[]) -> int {
@@ -72,17 +74,36 @@ auto main(int argc, char* argv[]) -> int {
     }
   }
 
-  if (program.is_subcommand_used("run")) {
-    return lyra::driver::RunCommand(run_cmd);
-  }
-  if (program.is_subcommand_used("check")) {
-    return lyra::driver::CheckCommand(check_cmd);
-  }
-  if (program.is_subcommand_used("dump")) {
-    return lyra::driver::DumpCommand(dump_cmd);
-  }
-  if (program.is_subcommand_used("init")) {
-    return lyra::driver::InitCommand(init_cmd);
+  // Safety net: catch any unexpected exceptions from subcommand execution.
+  // - InternalError: compiler bug, should not happen in normal operation
+  // - Other exceptions: truly unexpected failures from third-party/stdlib code
+  try {
+    if (program.is_subcommand_used("run")) {
+      return lyra::driver::RunCommand(run_cmd);
+    }
+    if (program.is_subcommand_used("check")) {
+      return lyra::driver::CheckCommand(check_cmd);
+    }
+    if (program.is_subcommand_used("dump")) {
+      return lyra::driver::DumpCommand(dump_cmd);
+    }
+    if (program.is_subcommand_used("init")) {
+      return lyra::driver::InitCommand(init_cmd);
+    }
+  } catch (const lyra::common::InternalError& e) {
+    std::cerr << "lyra: internal compiler error: " << e.what() << "\n";
+    std::cerr << "This is a bug. Please report it at "
+                 "https://github.com/lyra-lang/lyra/issues\n";
+    return 1;
+  } catch (const std::exception& e) {
+    lyra::driver::PrintDiagnostic(
+        lyra::Diagnostic::HostError(
+            std::format("unexpected error: {}", e.what())));
+    return 1;
+  } catch (...) {
+    lyra::driver::PrintDiagnostic(
+        lyra::Diagnostic::HostError("unexpected unknown error"));
+    return 1;
   }
 
   std::cout << program;

@@ -1,13 +1,12 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 
 #include <format>
-#include <type_traits>
 #include <variant>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
@@ -123,7 +122,7 @@ auto EmitPackedElementOffset(
 
 auto LowerNameRefLvalue(
     const hir::NameRefExpressionData& data, MirBuilder& builder)
-    -> LvalueResult {
+    -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
   return LvalueResult{
       .place = ctx.LookupPlace(data.symbol),
@@ -133,11 +132,19 @@ auto LowerNameRefLvalue(
 
 auto LowerElementAccessLvalue(
     const hir::ElementAccessExpressionData& data, hir::ExpressionId expr_id,
-    MirBuilder& builder) -> LvalueResult {
+    MirBuilder& builder) -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
-  LvalueResult base = LowerLvalue(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
+  auto index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = std::move(*index_result);
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
@@ -177,10 +184,14 @@ auto LowerElementAccessLvalue(
 
 auto LowerMemberAccessLvalue(
     const hir::MemberAccessExpressionData& data, hir::ExpressionId expr_id,
-    MirBuilder& builder) -> LvalueResult {
+    MirBuilder& builder) -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
-  LvalueResult base = LowerLvalue(data.base, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
@@ -207,10 +218,14 @@ auto LowerMemberAccessLvalue(
 
 auto LowerUnionMemberAccessLvalue(
     const hir::UnionMemberAccessExpressionData& data, hir::ExpressionId expr_id,
-    MirBuilder& builder) -> LvalueResult {
+    MirBuilder& builder) -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
-  LvalueResult base = LowerLvalue(data.base, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
@@ -240,11 +255,19 @@ auto LowerUnionMemberAccessLvalue(
 auto LowerPackedElementSelectLvalue(
     const hir::PackedElementSelectExpressionData& data,
     hir::ExpressionId expr_id, const hir::Expression& expr, MirBuilder& builder)
-    -> LvalueResult {
+    -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
-  LvalueResult base = LowerLvalue(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
+  auto index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = std::move(*index_result);
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -386,14 +409,22 @@ auto EmitIndexedPartSelectOffsetAndValidity(
 
 auto LowerIndexedPartSelectLvalue(
     const hir::IndexedPartSelectExpressionData& data, hir::ExpressionId expr_id,
-    const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
   // Lower base as lvalue (recursive)
-  LvalueResult base = LowerLvalue(data.base, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
 
   // Lower index as expression
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  auto index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = std::move(*index_result);
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -431,10 +462,14 @@ auto LowerIndexedPartSelectLvalue(
 
 auto LowerPackedFieldAccessLvalue(
     const hir::PackedFieldAccessExpressionData& data, hir::ExpressionId expr_id,
-    const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
 
-  LvalueResult base = LowerLvalue(data.base, builder);
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  LvalueResult base = *base_result;
 
   // Create constant offset operand
   TypeId offset_type = ctx.GetOffsetType();
@@ -504,12 +539,12 @@ auto NormalizeUnpackedIndex(
 }
 
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
-    -> LvalueResult {
+    -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
   const hir::Expression& expr = (*ctx.hir_arena)[expr_id];
 
   return std::visit(
-      [&](const auto& data) -> LvalueResult {
+      [&](const auto& data) -> Result<LvalueResult> {
         using T = std::decay_t<decltype(data)>;
         if constexpr (std::is_same_v<T, hir::NameRefExpressionData>) {
           return LowerNameRefLvalue(data, builder);
@@ -538,11 +573,11 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
               .validity = MakeAlwaysValid(builder),
           };
         } else {
-          common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
-          throw common::UnsupportedErrorException(
-              common::UnsupportedLayer::kHirToMir,
-              common::UnsupportedKind::kFeature, origin,
-              "unsupported lvalue expression");
+          // Use direct span from HIR expression for the diagnostic
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span, "unsupported lvalue expression",
+                  UnsupportedCategory::kFeature));
         }
       },
       expr.data);

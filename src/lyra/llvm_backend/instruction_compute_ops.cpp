@@ -1,6 +1,7 @@
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <variant>
 
@@ -12,12 +13,13 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -173,7 +175,7 @@ auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
 
 auto LowerBinaryArith(
     Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (op) {
@@ -218,16 +220,16 @@ auto LowerBinaryArith(
     }
 
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format("unsupported binary op: {}", mir::ToString(op)));
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          std::format("unsupported binary op: {}", mir::ToString(op)),
+          UnsupportedCategory::kOperation));
   }
 }
 
 auto LowerBinaryComparison(
     Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (op) {
@@ -252,10 +254,10 @@ auto LowerBinaryComparison(
     case mir::BinaryOp::kGreaterThanEqualSigned:
       return builder.CreateICmpSGE(lhs, rhs, "sge");
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format("unsupported comparison op: {}", mir::ToString(op)));
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          std::format("unsupported comparison op: {}", mir::ToString(op)),
+          UnsupportedCategory::kOperation));
   }
 }
 
@@ -318,7 +320,8 @@ auto LowerShiftOpUnknown(
 
 auto LowerUnaryOp(
     Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value* {
+    llvm::Type* storage_type, uint32_t operand_bit_width)
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (op) {
@@ -375,10 +378,10 @@ auto LowerUnaryOp(
       return builder.CreateZExt(result, storage_type, name);
     }
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format("unsupported unary op: {}", mir::ToString(op)));
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          std::format("unsupported unary op: {}", mir::ToString(op)),
+          UnsupportedCategory::kOperation));
   }
 }
 

@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
@@ -31,6 +32,6 @@ struct LoweringResult {
   OriginMap origin_map;
 };
 
-auto LowerHirToMir(const LoweringInput& input) -> LoweringResult;
+auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult>;
 
 }  // namespace lyra::lowering::hir_to_mir

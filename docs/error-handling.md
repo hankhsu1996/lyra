@@ -1,289 +1,335 @@
 # Error Handling
 
-This document describes error handling patterns in Lyra.
+This document defines the **one true** error-handling model in Lyra. The goals are:
+
+- **User-facing errors are never thrown** — they are returned as `std::expected`.
+- **Compiler bugs are the only exceptions** — `InternalError` only.
+- **No information loss** — spans, categories, and notes must survive across all stages.
+- **No internal handles leak** — `OriginId` never crosses a stage boundary; it must be resolved to `SourceSpan` at the point the `Diagnostic` is produced.
+- **Smallest responsible node** — diagnostics must point to the most precise syntax that caused the issue (projection/select/operator), with structured fallback only when precision is unavailable.
+
+---
+
+## Core Principles
+
+1. **`std::expected` for user-facing failures**
+   Every compilation stage returns `std::expected<Output, Diagnostic>`. User-facing errors include:
+   - Invalid SV (frontend semantics/type errors)
+   - Unsupported (valid SV but not implemented)
+   - Host failures (I/O, external input malformed, resource exhaustion)
+
+2. **Exceptions only for compiler bugs**
+   `common::InternalError` is the **only** exception type used in compiler stages. If an invariant violation occurs, throw `InternalError`.
+
+3. **Lossless propagation**
+   No stage may discard `Diagnostic` payload. Wrapping errors into `std::string` is forbidden.
+
+4. **Resolve before returning**
+   Any internal indirection (`OriginId`, `OriginMap`, HIR node IDs, etc.) must be resolved into a `SourceSpan` **before** a `Diagnostic` is returned across a stage boundary.
+
+5. **Smallest responsible node**
+   When producing a user-facing error, prefer the span of the exact responsible syntax node (e.g., `[31:20]` select expression / member access / operator token span if available). If not available, fall back structurally to an enclosing span.
+
+---
 
 ## Decision Tree
 
-Use this flowchart to pick the right error type:
-
 ```
-Where is the error?
+Is this user-facing? (invalid SV / unsupported / host failure)
 │
-├─ AST->HIR lowering (have source location from slang)
-│   ├─ Invalid SV code (type mismatch, unknown identifier)
-│   │   └─ DiagnosticException(source_range, "message")
-│   ├─ Valid SV, not yet implemented
-│   │   └─ UnsupportedError(layer=AstToHir, kind, origin, "detail")
-│   └─ Compiler bug (invariant violated)
-│       └─ InternalError("context", "message")
+├─ Yes → return std::unexpected(Diagnostic{...})
 │
-├─ HIR->MIR lowering
-│   ├─ Valid SV, not yet implemented
-│   │   └─ UnsupportedError(layer=HirToMir, kind, origin, "detail")
-│   └─ Compiler bug (invariant violated)
-│       └─ InternalError("context", "message")
-│
-├─ MIR->LLVM lowering
-│   ├─ Valid SV, not yet implemented
-│   │   └─ UnsupportedError(layer=MirToLlvm, kind, origin, "detail")
-│   └─ Compiler bug (invariant violated)
-│       └─ InternalError("context", "message")
-│
-├─ Interpreter runtime
-│   ├─ Valid SV, not yet implemented
-│   │   └─ UnsupportedError(layer=Execution, kind, origin, "detail")
-│   ├─ Host/runtime failure (I/O, malformed external input)
-│   │   └─ std::runtime_error("message")
-│   ├─ SV-defined runtime semantics (4-state edge cases)
-│   │   └─ No exception - produce LRM-defined value/update
-│   └─ Invariant violated (should never happen)
-│       └─ InternalError("context", "message")
-│
-├─ SDK runtime (generated C++ code)
-│   └─ std::runtime_error (cannot use Lyra types)
-│
-└─ Shared code (interpreter + SDK)
-    └─ std::expected<T, std::string> (caller decides policy)
+└─ No (compiler bug / invariant violated)
+    └─ throw common::InternalError("context", "message")
 ```
 
-## Error Types
+---
 
-### DiagnosticException (AST->HIR Only)
+## Diagnostic (User-Facing Errors)
 
-For **user errors** during frontend lowering where we have source location info.
+All user-facing errors are represented by a single type: `Diagnostic`.
+
+### Structure
 
 ```cpp
-#include "lyra/common/diagnostic.hpp"
+enum class DiagKind : uint8_t {
+  kError,        // invalid SV / semantic error
+  kUnsupported,  // valid SV, not implemented
+  kHostError,    // I/O, malformed external input, OOM, etc.
+  kWarning,      // optional (non-fatal)
+  kNote,         // auxiliary message (usually attached via notes)
+};
 
-// ONLY use when you have a valid source_range from slang
-throw DiagnosticException(
-    Diagnostic::Error(source_range, "unknown identifier 'foo'"));
+struct DiagItem {
+  DiagKind kind;
+  std::optional<SourceSpan> span;  // required for SV-attributable items
+  std::string message;
+};
+
+struct Diagnostic {
+  DiagItem primary;                 // required: exactly one primary per failure
+  std::vector<DiagItem> notes;      // optional: extra context (may have spans)
+};
 ```
 
-**Rules:**
+### Hard Rules
 
-- ONLY use in AST->HIR lowering
-- NEVER use with empty source location `{}`
-- If you don't have a source location, use a different error type
+- For `primary.kind in {kError, kUnsupported}` → `primary.span` **must be present**.
+- For `primary.kind == kHostError` → `primary.span` **may be absent**.
+- Notes:
+  - `notes[i].kind` should be `kNote` (or `kWarning` for warnings).
+  - `notes[i].span` is optional but recommended when applicable.
 
-CLI commands catch and print these via `PrintDiagnostic()`.
+- A stage must return **exactly one** fatal `Diagnostic` (one primary + notes).
+  (Multi-error reporting is handled by a separate sink; see "Multi-Diagnostic Policy".)
 
-### InternalError (Compiler Bugs)
+### Constructors / Helpers (Recommended)
 
-For situations that **should never happen** - indicates a bug in Lyra itself.
-Message includes "Please report this issue" prompt.
+```cpp
+struct Diagnostic {
+  static auto Error(SourceSpan span, std::string msg) -> Diagnostic;
+  static auto Unsupported(SourceSpan span, std::string msg) -> Diagnostic;
+  static auto HostError(std::string msg) -> Diagnostic;
+
+  auto WithNote(std::optional<SourceSpan> span, std::string msg) && -> Diagnostic;
+};
+```
+
+### Output Format (Clang-Style)
+
+- With location:
+
+  ```
+  file.sv:42:5: error: unknown identifier 'foo'
+  file.sv:10:3: unsupported: 4-state types not yet supported
+  file.sv:10:3: note: required by assignment here
+  ```
+
+- Without location (host-only):
+
+  ```
+  lyra: error: failed to open file: missing.txt
+  ```
+
+---
+
+## InternalError (Compiler Bugs Only)
+
+`InternalError` indicates a Lyra bug or violated invariant and is the only exception allowed.
 
 ```cpp
 #include "lyra/common/internal_error.hpp"
-
 throw common::InternalError("codegen", "unexpected expression kind");
 ```
 
-**Use when:**
+### Use When
 
-- Switch statement hits an "impossible" case
-- Invariant is violated
-- Code path should be unreachable
-- Any error in HIR->MIR or codegen (these stages should never fail)
+- Impossible `switch` cases
+- Corrupted IR invariants
+- Unreachable code paths (in release too)
 
-### UnsupportedError (Valid SV, Not Yet Implemented)
+### Never Use When
 
-For **valid SystemVerilog code** that Lyra doesn't support yet. Unlike `DiagnosticException`
-(invalid SV) and `InternalError` (compiler bug), this indicates a known limitation.
+- Invalid SV (return `Diagnostic::Error`)
+- Unsupported feature (return `Diagnostic::Unsupported`)
+- Host failure (return `Diagnostic::HostError`)
 
-```cpp
-#include "lyra/common/unsupported_error.hpp"
+---
 
-throw common::UnsupportedErrorException(
-    common::UnsupportedLayer::kMirToLlvm,
-    common::UnsupportedKind::kType,
-    context.GetCurrentOrigin(),
-    "4-state types not yet supported");
-```
+## Stage APIs (Canonical)
 
-**Fields:**
-
-- `layer`: Where the limitation was hit (kAstToHir, kHirToMir, kMirToLlvm, kExecution)
-- `kind`: Category of limitation (kType, kOperation, kFeature)
-- `origin`: Opaque ID for tracing back to source (can be invalid)
-- `detail`: Human-readable description
-
-**Use when:**
-
-- Wide integers (>64 bits) in LLVM backend
-- 4-state types in LLVM backend
-- Packed structs not yet implemented
-- Unsupported operators or expressions
-
-**Do NOT use for:**
-
-- Invalid SV code (use `DiagnosticException`)
-- Compiler bugs (use `InternalError`)
-- Runtime I/O failures (use `std::runtime_error`)
-
-**Origin Tracking:**
-
-The `origin` field enables tracing errors back to source code locations. During HIR-to-MIR lowering,
-the `OriginMap` records which HIR statement each MIR construct came from. When an error occurs in
-later stages (MIR-to-LLVM, execution), the origin can be resolved to a source file:line:col location.
-
-Error output follows clang style:
-
-- With location: `file:line:col: error: message`
-- Without location: `lyra: error: message`
-
-The driver resolves origins via `OriginMap::Resolve()` -> `hir::Statement::span` -> `FormatSourceLocation()`.
-
-### std::runtime_error (Host/Runtime Failures)
-
-For failures external to SV semantics during simulation (interpreter or SDK).
-These are host environment or input format issues, not SV language behavior.
+All compilation stages return `std::expected<Output, Diagnostic>`.
 
 ```cpp
-// Interpreter runtime
-throw std::runtime_error("failed to open memory file: " + path);
+// AST -> HIR
+auto LowerAstToHir(const slang::Compilation& compilation,
+                   DiagnosticSink& sink)
+    -> std::expected<HirResult, Diagnostic>;
 
-// SDK runtime (generated C++ code)
-throw std::runtime_error("invalid hex digit in $readmemh input");
+// HIR -> MIR
+auto LowerHirToMir(const LoweringInput& input,
+                   DiagnosticSink& sink)
+    -> std::expected<MirResult, Diagnostic>;
+
+// MIR -> LLVM
+auto LowerMirToLlvm(const MirInput& input,
+                    DiagnosticSink& sink)
+    -> std::expected<LlvmResult, Diagnostic>;
 ```
 
-**Use when:**
+### Invariant
 
-- File I/O failures ($readmemh cannot open file)
-- Malformed external input (bad hex digit in $readmemh data)
-- Resource exhaustion (OOM, allocation failure)
+If a stage can attribute an error to SV source, it must return a `Diagnostic` whose primary has a valid `SourceSpan`.
 
-**Do NOT use for SV semantic edge cases** (array OOB, invalid bit select, etc.) -
-those have LRM-defined behavior and should not throw.
+---
 
-### SV-Defined Runtime Semantics (No Exception)
+## Multi-Diagnostic Policy (Sink)
 
-Many "edge cases" in SystemVerilog are not errors - they have LRM-defined behavior
-that the interpreter must implement.
+Lyra supports optional **non-fatal** reporting (warnings, notes, additional context) via a sink. The **return value** remains a single fatal `Diagnostic` on failure.
 
-**Examples:**
+### Rules
 
-- Array index out of bounds (read): return X-filled value with correct width
-- Array index out of bounds (write): defined behavior (often no-op or X-propagate)
-- Negative index / bit offset: invalid select → return X with correct width
-- Bit slice exceeds container: invalid select → return X with correct width
+- The sink may collect:
+  - warnings
+  - informational notes
+  - optional "secondary errors" only if you explicitly decide to support "continue after error" in that stage.
 
-**Rule:** If you can point to an LRM rule that defines the result as X/Z/unchanged,
-implement that behavior. Do not throw an exception.
+- The stage's returned `Diagnostic` remains the one authoritative failure.
 
-### std::expected (Shared Code)
-
-When code is shared between interpreter and SDK (e.g., parsing logic):
-
-1. **Shared code** returns `std::expected<T, std::string>` (pure logic, no policy)
-2. **Caller** converts error to `std::runtime_error`
+### Recommended Sink API
 
 ```cpp
-// common/parser.hpp - Pure parsing, no error policy
-auto ParseToken(std::string_view s) -> std::expected<Token, std::string>;
-
-// Interpreter or SDK usage
-auto result = ParseToken(input);
-if (!result) {
-  throw std::runtime_error(result.error());
-}
+class DiagnosticSink {
+ public:
+  void Emit(DiagItem item);  // warnings/notes
+  // Optional: tracking counts, etc.
+};
 ```
 
-This keeps shared code simple and lets callers decide error handling.
+---
 
-## Forbidden Patterns
+## Origin and Span Resolution
 
-### Never use std::unreachable()
+### Rule: `OriginId` Never Appears in `Diagnostic`
 
-`std::unreachable()` is undefined behavior. If reached, there's no error message,
-no stack trace, just undefined behavior or a crash. Always use `InternalError` instead:
+`OriginId` / `OriginMap` are internal bookkeeping only.
+
+- **Inside a stage**, you may throw or carry `OriginId` internally.
+- **Before returning** a `Diagnostic`, resolve to `SourceSpan`.
+
+### Canonical Resolution API
 
 ```cpp
-// BAD - undefined behavior, no diagnostics
-switch (kind) {
-  case A: return handleA();
-  case B: return handleB();
-}
-std::unreachable();
-
-// GOOD - clear error message if reached
-switch (kind) {
-  case A: return handleA();
-  case B: return handleB();
-}
-throw common::InternalError("context", "unhandled kind");
+auto ResolveOriginToSpan(common::OriginId id,
+                         const lowering::OriginMap& origin_map,
+                         const hir::Arena& hir_arena,
+                         const SourceManager& sm)
+    -> std::optional<SourceSpan>;
 ```
 
-### Never use DiagnosticException with empty source location
+### Stage Responsibility
 
-If you don't have a source location, you're in the wrong stage:
+- AST→HIR: you already have slang source ranges → produce `SourceSpan` directly.
+- HIR→MIR: you have HIR nodes + source manager → produce `SourceSpan` directly (preferred).
+- MIR→LLVM / Execution: you must have `origin_map + hir_arena + source_manager` available in the stage context so you can resolve and return `Diagnostic`.
+
+### Forbidden Pattern
+
+Returning a Diagnostic that contains an unresolved handle (directly or indirectly).
+
+---
+
+## Precision Policy: Smallest Responsible Node
+
+When producing `Diagnostic::Unsupported` / `Diagnostic::Error`, choose the most precise span available:
+
+1. Exact projection/select/member/operator expression span
+2. Enclosing expression span
+3. Enclosing statement span
+4. Enclosing function/process/module span (last resort)
+
+This is a **structural dominance** rule: the stage should attach spans at the point constructs are created so later stages can reliably report precise locations.
+
+---
+
+## Runtime Semantics vs Errors
+
+Many SystemVerilog "edge cases" are not errors; they have LRM-defined behavior. Do **not** emit diagnostics for these cases.
+
+Examples (non-exhaustive):
+
+- out-of-bounds read → X-filled value (with correct width)
+- invalid select → X
+- etc.
+
+If the LRM defines behavior, implement it.
+
+---
+
+## Host Failures
+
+Host failures are user-facing, but may not have a source span.
+
+Examples:
+
+- `$readmemh` file open failure
+- malformed external data
+- OOM / allocation failure (if caught and handled)
+
+Return:
 
 ```cpp
-// BAD - no source info means wrong error type
-throw DiagnosticException(Diagnostic::Error({}, "some error"));
-
-// GOOD - use InternalError for post-AST stages
-throw common::InternalError("context", "some error");
-
-// GOOD - use runtime_error for interpreter runtime
-throw std::runtime_error("some error");
+return std::unexpected(Diagnostic::HostError("failed to open file: " + path));
 ```
+
+If you can attribute host failure to a call site (e.g., `$readmemh("x")` span), attach that span and add a note for the OS error.
+
+---
 
 ## Verification Functions
 
-For internal IR validation (e.g., MIR invariant checks), verification functions throw
-`InternalError` directly on failure. This is the simplest pattern for compiler-internal
-checks where failure always indicates a bug.
+Internal IR validation is compiler-internal. Throw `InternalError` on failure:
 
 ```cpp
-// verify.hpp - Throws InternalError on failure
-void VerifyFunction(const Function& func, const Arena& arena, const TypeArena& types);
-
-// Caller just invokes - no error handling needed
-mir::VerifyFunction(func, arena, type_arena);  // throws on invalid MIR
+void VerifyFunction(const mir::Function& f, const mir::Arena& a);
 ```
 
-**Rules:**
+No stage should convert verification failures into user-facing diagnostics.
 
-- Verification functions return `void` and throw `InternalError` on failure
-- Caller does not catch or handle - failure propagates as compiler bug
-- Use for internal invariant checks, not user-facing validation
+---
 
-## assert() vs InternalError
+## Forbidden Patterns
 
-| Mechanism       | Debug Only? | Recovery? | When to Use                                 |
-| --------------- | ----------- | --------- | ------------------------------------------- |
-| `assert()`      | Yes         | No        | Expensive checks already guarded elsewhere  |
-| `InternalError` | No          | Yes       | Default choice - any invariant that matters |
-
-**Use `InternalError` for any invariant whose violation would corrupt IR, constants, symbols, or semantics.** These must be enforced in release builds, not just debug.
-
-Use `assert()` **only** when ALL of these are true:
-
-- The check is computationally expensive
-- Failure would be caught immediately in debug testing
-- The invariant is already guarded elsewhere in the code path
+### Throwing for user-facing failures
 
 ```cpp
-// BAD - this invariant could corrupt data silently in release
-assert(total_words % 2 == 0 && "storage assumption");
+// BAD
+throw UnsupportedErrorException(...);
 
-// GOOD - enforced in all builds, clear error message
-if (total_words % 2 != 0) {
-  throw common::InternalError("context", "storage assumption violated");
-}
-
-// OK - expensive check, failure would be caught by downstream validation
-assert(expensive_graph_validation() && "graph invariant");
+// GOOD
+return std::unexpected(Diagnostic::Unsupported(span, "..."));
 ```
+
+### Converting diagnostics into strings
+
+```cpp
+// BAD
+catch (...) { return std::unexpected(Diagnostic::HostError(e.what())); } // loses spans/category
+
+// GOOD
+return std::unexpected(result.error()); // preserve Diagnostic
+```
+
+### Returning SV-attributable error without span
+
+```cpp
+// BAD
+return std::unexpected(Diagnostic::Unsupported(std::nullopt, "..."));
+
+// GOOD
+return std::unexpected(Diagnostic::Unsupported(expr.span, "..."));
+```
+
+### `std::unreachable()`
+
+Use `InternalError` instead.
+
+---
+
+## Driver / CLI Contract
+
+- The driver prints exactly one fatal diagnostic (primary + notes) on failure.
+- Formatting is clang-style.
+- Exit code is non-zero on failure.
+- Warnings emitted through `DiagnosticSink` may be printed even on success.
+
+---
 
 ## Summary Table
 
-| Stage       | Invalid SV            | Unsupported SV     | Compiler Bug    | Host Failure         | SV Semantics |
-| ----------- | --------------------- | ------------------ | --------------- | -------------------- | ------------ |
-| AST->HIR    | `DiagnosticException` | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
-| HIR->MIR    | N/A                   | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
-| MIR->LLVM   | N/A                   | `UnsupportedError` | `InternalError` | N/A                  | N/A          |
-| Interpreter | N/A                   | `UnsupportedError` | `InternalError` | `std::runtime_error` | No exception |
-| SDK         | N/A                   | N/A                | N/A             | `std::runtime_error` | No exception |
-| Shared code | N/A                   | N/A                | N/A             | `std::expected`      | N/A          |
+| Stage       | Invalid SV          | Unsupported         | Compiler Bug          | Host Failure        | SV Semantics |
+| ----------- | ------------------- | ------------------- | --------------------- | ------------------- | ------------ |
+| AST→HIR     | return `Diagnostic` | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| HIR→MIR     | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| MIR→LLVM    | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| Interpreter | N/A                 | return `Diagnostic` | throw `InternalError` | return `Diagnostic` | no error     |

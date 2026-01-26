@@ -3,9 +3,9 @@
 #include <filesystem>
 #include <format>
 #include <optional>
-#include <stdexcept>
 #include <string>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "toml.hpp"
 
 namespace lyra::driver {
@@ -30,7 +30,7 @@ auto FindConfig(const fs::path& start_dir) -> std::optional<fs::path> {
   }
 }
 
-auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
+auto LoadConfig(const fs::path& config_path) -> lyra::Result<ProjectConfig> {
   ProjectConfig config;
   config.root_dir = config_path.parent_path();
 
@@ -38,45 +38,56 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
   try {
     tbl = toml::parse_file(config_path.string());
   } catch (const toml::parse_error& e) {
-    throw std::runtime_error(
-        std::format("failed to parse {}: {}", config_path.string(), e.what()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "failed to parse {}: {}", config_path.string(), e.what())));
   }
 
   // [package] section
   auto package = tbl["package"];
   if (!package) {
-    throw std::runtime_error(
-        std::format("{}: missing [package] section", config_path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: missing [package] section", config_path.string())));
   }
 
   auto name = package["name"].value<std::string>();
   if (!name) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing required field 'package.name'", config_path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: missing required field 'package.name'",
+                config_path.string())));
   }
   config.name = *name;
 
   auto top = package["top"].value<std::string>();
   if (!top) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing required field 'package.top'", config_path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: missing required field 'package.top'",
+                config_path.string())));
   }
   config.top = *top;
 
   // [sources] section
   auto sources = tbl["sources"];
   if (!sources) {
-    throw std::runtime_error(
-        std::format("{}: missing [sources] section", config_path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: missing [sources] section", config_path.string())));
   }
 
   auto* files_arr = sources["files"].as_array();
   if (files_arr == nullptr || files_arr->empty()) {
-    throw std::runtime_error(
-        std::format(
-            "{}: missing or empty 'sources.files'", config_path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: missing or empty 'sources.files'", config_path.string())));
   }
   for (const auto& elem : *files_arr) {
     if (auto str = elem.value<std::string>()) {
@@ -86,9 +97,10 @@ auto LoadConfig(const fs::path& config_path) -> ProjectConfig {
         file_path = config.root_dir / file_path;
       }
       if (!fs::exists(file_path)) {
-        throw std::runtime_error(
-            std::format(
-                "source file not found: {} (listed in lyra.toml)", *str));
+        return std::unexpected(
+            Diagnostic::HostError(
+                std::format(
+                    "source file not found: {} (listed in lyra.toml)", *str)));
       }
       config.files.push_back(file_path.string());
     }

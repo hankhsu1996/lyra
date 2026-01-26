@@ -7,9 +7,10 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/layout.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -62,7 +63,8 @@ class Context {
       const mir::Design& design, const mir::Arena& arena,
       const TypeArena& types, const Layout& layout,
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
-      std::unique_ptr<llvm::Module> module);
+      std::unique_ptr<llvm::Module> module,
+      const lowering::DiagnosticContext* diag_ctx);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
     return *llvm_context_;
@@ -139,7 +141,7 @@ class Context {
     llvm::Constant* destroy_fn = nullptr;
     bool needs_clone = false;
   };
-  auto GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo;
+  auto GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo>;
 
   // Cached union storage info
   struct CachedUnionInfo {
@@ -175,7 +177,8 @@ class Context {
   // Allocas are always inserted in the entry block via alloca_builder_.
   // Key insight: storage is per-root, NOT per-PlaceId. Multiple PlaceIds with
   // the same root (but different projections) share the same storage.
-  auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root) -> llvm::AllocaInst*;
+  auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
+      -> Result<llvm::AllocaInst*>;
 
   // FieldIndex accessors (encapsulate map lookups)
   [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;
@@ -213,10 +216,12 @@ class Context {
   // at the first BitRangeProjection. For bitrange reads/writes, use
   // ComposeBitRange() to get the composed offset within this base.
   // Note: Automatically resolves aliases for output/inout ports.
-  [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id) -> llvm::Value*;
+  [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id)
+      -> Result<llvm::Value*>;
 
   // Get the LLVM type for a place's storage
-  [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type*;
+  [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id)
+      -> Result<llvm::Type*>;
 
   // BitRangeProjection helpers
   [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
@@ -224,7 +229,8 @@ class Context {
       -> const mir::BitRangeProjection&;
   // LLVM type of the base value that GetPlacePointer() points to.
   // Traverses non-BitRange projections only (same boundary as GetPlacePointer).
-  [[nodiscard]] auto GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type*;
+  [[nodiscard]] auto GetPlaceBaseType(mir::PlaceId place_id)
+      -> Result<llvm::Type*>;
 
   struct ComposedBitRange {
     llvm::Value* offset;
@@ -233,7 +239,8 @@ class Context {
   // Compose all chained BitRangeProjections into a single offset+width.
   // Sums all bitrange offsets (emitting LLVM add instructions) and returns
   // the last projection's width. Validates the contiguous-suffix invariant.
-  [[nodiscard]] auto ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange;
+  [[nodiscard]] auto ComposeBitRange(mir::PlaceId place_id)
+      -> Result<ComposedBitRange>;
 
   // Get the 4-state struct type for a given semantic bit width
   [[nodiscard]] auto GetPlaceLlvmType4State(uint32_t bit_width)
@@ -248,6 +255,12 @@ class Context {
   }
   [[nodiscard]] auto GetCurrentOrigin() const -> common::OriginId {
     return current_origin_;
+  }
+
+  // Access diagnostic context for error reporting.
+  [[nodiscard]] auto GetDiagnosticContext() const
+      -> const lowering::DiagnosticContext& {
+    return *diag_ctx_;
   }
 
   // Register an owned string temp that needs release at end of statement
@@ -268,7 +281,7 @@ class Context {
   // Build LLVM function type from MIR function signature.
   // All user functions receive (DesignState*, Engine*, args...).
   [[nodiscard]] auto BuildUserFunctionType(const mir::FunctionSignature& sig)
-      -> llvm::FunctionType*;
+      -> Result<llvm::FunctionType*>;
 
  private:
   const mir::Design& design_;
@@ -352,6 +365,9 @@ class Context {
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
+
+  // Diagnostic context for error reporting (resolves OriginId → SourceSpan)
+  const lowering::DiagnosticContext* diag_ctx_ = nullptr;
 
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;

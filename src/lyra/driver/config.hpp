@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
+
 namespace lyra::driver {
 
 struct ProjectConfig {
@@ -27,7 +29,8 @@ auto FindConfig(
     -> std::optional<std::filesystem::path>;
 
 // Parse lyra.toml file.
-// Throws std::runtime_error on parse errors or missing required fields.
-auto LoadConfig(const std::filesystem::path& config_path) -> ProjectConfig;
+// Returns error Diagnostic on parse errors or missing required fields.
+auto LoadConfig(const std::filesystem::path& config_path)
+    -> lyra::Result<ProjectConfig>;
 
 }  // namespace lyra::driver

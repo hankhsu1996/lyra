@@ -65,7 +65,7 @@ auto GetTargetBitWidth(Context& context, mir::PlaceId target) -> uint32_t {
 // target element type.
 auto LoadFourStateOperand(
     Context& context, const mir::Operand& operand, llvm::Type* elem_type)
-    -> FourStateValue {
+    -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
@@ -84,9 +84,13 @@ auto LoadFourStateOperand(
       operand.payload);
 
   if (is_four_state) {
-    llvm::Value* loaded = LowerOperandRaw(context, operand);
+    auto loaded_or_err = LowerOperandRaw(context, operand);
+    if (!loaded_or_err) {
+      return std::unexpected(loaded_or_err.error());
+    }
+    llvm::Value* loaded = *loaded_or_err;
     auto fs = ExtractFourState(builder, loaded);
-    return {
+    return FourStateValue{
         .value = builder.CreateZExtOrTrunc(fs.value, elem_type, "cast4.val"),
         .unknown =
             builder.CreateZExtOrTrunc(fs.unknown, elem_type, "cast4.unk"),
@@ -94,21 +98,35 @@ auto LoadFourStateOperand(
   }
 
   // 2-state operand -> extend to 4-state element type, unknown = 0
-  llvm::Value* loaded_val = LowerOperand(context, operand);
+  auto loaded_val_or_err = LowerOperand(context, operand);
+  if (!loaded_val_or_err) {
+    return std::unexpected(loaded_val_or_err.error());
+  }
+  llvm::Value* loaded_val = *loaded_val_or_err;
   auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "cast2to4.val");
   auto* unk = llvm::ConstantInt::get(elem_type, 0);
-  return {.value = val, .unknown = unk};
+  return FourStateValue{.value = val, .unknown = unk};
 }
 
 // Cast 2-state int -> 2-state int
-void LowerCast2sTo2s(
+auto LowerCast2sTo2s(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
-  llvm::Type* target_type = context.GetPlaceLlvmType(target);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
+  auto target_type_or_err = context.GetPlaceLlvmType(target);
+  if (!target_type_or_err) {
+    return std::unexpected(target_type_or_err.error());
+  }
+  llvm::Type* target_type = *target_type_or_err;
+
   bool is_signed = IsSignedIntegral(types, info.source_type);
 
   llvm::Value* result = ExtOrTrunc(builder, source, target_type, is_signed);
@@ -117,19 +135,35 @@ void LowerCast2sTo2s(
   uint32_t bit_width = GetTargetBitWidth(context, target);
   result = ApplyWidthMask(context, result, bit_width);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast 2-state int -> 4-state int
-void LowerCast2sTo4s(
+auto LowerCast2sTo4s(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
+  auto storage_type_or_err = context.GetPlaceLlvmType(target);
+  if (!storage_type_or_err) {
+    return std::unexpected(storage_type_or_err.error());
+  }
+  llvm::Type* storage_type = *storage_type_or_err;
+
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = GetFourStateElemIntType(struct_type);
 
@@ -142,20 +176,36 @@ void LowerCast2sTo4s(
 
   llvm::Value* result = MakeKnown(builder, struct_type, val);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast 4-state int -> 2-state int
-void LowerCast4sTo2s(
+auto LowerCast4sTo2s(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source_raw = LowerOperandRaw(context, source_operand);
+  auto source_raw_or_err = LowerOperandRaw(context, source_operand);
+  if (!source_raw_or_err) {
+    return std::unexpected(source_raw_or_err.error());
+  }
+  llvm::Value* source_raw = *source_raw_or_err;
+
   auto fs = ExtractFourState(builder, source_raw);
-  llvm::Type* target_type = context.GetPlaceLlvmType(target);
+
+  auto target_type_or_err = context.GetPlaceLlvmType(target);
+  if (!target_type_or_err) {
+    return std::unexpected(target_type_or_err.error());
+  }
+  llvm::Type* target_type = *target_type_or_err;
 
   bool is_signed = IsSignedIntegral(types, info.source_type);
   llvm::Value* result = ExtOrTrunc(builder, fs.value, target_type, is_signed);
@@ -164,21 +214,36 @@ void LowerCast4sTo2s(
   uint32_t bit_width = GetTargetBitWidth(context, target);
   result = ApplyWidthMask(context, result, bit_width);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast 4-state int -> 4-state int
-void LowerCast4sTo4s(
+auto LowerCast4sTo4s(
     Context& context, const mir::CastRvalueInfo& /*info*/,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
 
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto storage_type_or_err = context.GetPlaceLlvmType(target);
+  if (!storage_type_or_err) {
+    return std::unexpected(storage_type_or_err.error());
+  }
+  llvm::Type* storage_type = *storage_type_or_err;
+
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = GetFourStateElemIntType(struct_type);
 
-  auto fs = LoadFourStateOperand(context, source_operand, elem_type);
+  auto fs_or_err = LoadFourStateOperand(context, source_operand, elem_type);
+  if (!fs_or_err) {
+    return std::unexpected(fs_or_err.error());
+  }
+  auto fs = *fs_or_err;
 
   // Apply width mask to both planes
   uint32_t bit_width = GetTargetBitWidth(context, target);
@@ -188,18 +253,29 @@ void LowerCast4sTo4s(
   llvm::Value* result =
       PackFourState(builder, struct_type, fs.value, fs.unknown);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast int -> float (2-state source)
-void LowerCastIntToFloat(
+auto LowerCastIntToFloat(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
   const Type& tgt_type = types[info.target_type];
 
   llvm::Type* float_ty = (tgt_type.Kind() == TypeKind::kReal)
@@ -214,19 +290,34 @@ void LowerCastIntToFloat(
     result = builder.CreateUIToFP(source, float_ty, "uitofp");
   }
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast float -> 2-state int
-void LowerCastFloatTo2sInt(
+auto LowerCastFloatTo2sInt(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
-  llvm::Type* target_type = context.GetPlaceLlvmType(target);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
+  auto target_type_or_err = context.GetPlaceLlvmType(target);
+  if (!target_type_or_err) {
+    return std::unexpected(target_type_or_err.error());
+  }
+  llvm::Type* target_type = *target_type_or_err;
 
   bool is_signed = IsSignedIntegral(types, info.target_type);
   llvm::Value* result = nullptr;
@@ -240,21 +331,37 @@ void LowerCastFloatTo2sInt(
   uint32_t bit_width = GetTargetBitWidth(context, target);
   result = ApplyWidthMask(context, result, bit_width);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast float -> 4-state int (THE BUG FIX)
 // Previously this would try to FPToSI to the struct type, crashing.
 // Now we FPToSI to the element type, then wrap with MakeKnown.
-void LowerCastFloatTo4sInt(
+auto LowerCastFloatTo4sInt(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
+  auto storage_type_or_err = context.GetPlaceLlvmType(target);
+  if (!storage_type_or_err) {
+    return std::unexpected(storage_type_or_err.error());
+  }
+  llvm::Type* storage_type = *storage_type_or_err;
+
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = GetFourStateElemIntType(struct_type);
 
@@ -272,23 +379,39 @@ void LowerCastFloatTo4sInt(
 
   llvm::Value* result = MakeKnown(builder, struct_type, int_val);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 // Cast float -> float (fptrunc or fpext)
-void LowerCastFloatToFloat(
+auto LowerCastFloatToFloat(
     Context& context, const mir::CastRvalueInfo& info,
-    const mir::Operand& source_operand, mir::PlaceId target) {
+    const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* source = LowerOperand(context, source_operand);
+  auto source_or_err = LowerOperand(context, source_operand);
+  if (!source_or_err) {
+    return std::unexpected(source_or_err.error());
+  }
+  llvm::Value* source = *source_or_err;
+
   const Type& src_type = types[info.source_type];
   const Type& tgt_type = types[info.target_type];
 
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   llvm::Value* result = nullptr;
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
 
   // real -> shortreal (fptrunc)
   if (src_type.Kind() == TypeKind::kReal &&
@@ -296,7 +419,7 @@ void LowerCastFloatToFloat(
     result = builder.CreateFPTrunc(
         source, llvm::Type::getFloatTy(context.GetLlvmContext()), "fptrunc");
     builder.CreateStore(result, target_ptr);
-    return;
+    return {};
   }
 
   // shortreal -> real (fpext)
@@ -305,16 +428,18 @@ void LowerCastFloatToFloat(
     result = builder.CreateFPExt(
         source, llvm::Type::getDoubleTy(context.GetLlvmContext()), "fpext");
     builder.CreateStore(result, target_ptr);
-    return;
+    return {};
   }
 
   // Same type -> no-op
   builder.CreateStore(source, target_ptr);
+  return {};
 }
 
 }  // namespace
 
-void LowerCastUnified(Context& context, const mir::Compute& compute) {
+auto LowerCastUnified(Context& context, const mir::Compute& compute)
+    -> Result<void> {
   const auto& types = context.GetTypeArena();
   const auto& info = std::get<mir::CastRvalueInfo>(compute.value.info);
   const mir::Operand& source_operand = compute.value.operands[0];
@@ -338,46 +463,50 @@ void LowerCastUnified(Context& context, const mir::Compute& compute) {
 
   // Float -> Float
   if (src_is_float && tgt_is_float) {
-    LowerCastFloatToFloat(context, info, source_operand, compute.target);
-    return;
+    return LowerCastFloatToFloat(context, info, source_operand, compute.target);
   }
 
   // Int -> Float
   if (!src_is_float && tgt_is_float) {
     // For 4-state source, LowerOperand extracts the value plane
-    LowerCastIntToFloat(context, info, source_operand, compute.target);
-    return;
+    return LowerCastIntToFloat(context, info, source_operand, compute.target);
   }
 
   // Float -> Int
   if (src_is_float && !tgt_is_float) {
     if (tgt_is_4s) {
-      LowerCastFloatTo4sInt(context, info, source_operand, compute.target);
-    } else {
-      LowerCastFloatTo2sInt(context, info, source_operand, compute.target);
+      return LowerCastFloatTo4sInt(
+          context, info, source_operand, compute.target);
     }
-    return;
+    return LowerCastFloatTo2sInt(context, info, source_operand, compute.target);
   }
 
   // Int -> Int
   if (src_is_4s && tgt_is_4s) {
-    LowerCast4sTo4s(context, info, source_operand, compute.target);
-  } else if (src_is_4s && !tgt_is_4s) {
-    LowerCast4sTo2s(context, info, source_operand, compute.target);
-  } else if (!src_is_4s && tgt_is_4s) {
-    LowerCast2sTo4s(context, info, source_operand, compute.target);
-  } else {
-    LowerCast2sTo2s(context, info, source_operand, compute.target);
+    return LowerCast4sTo4s(context, info, source_operand, compute.target);
   }
+  if (src_is_4s && !tgt_is_4s) {
+    return LowerCast4sTo2s(context, info, source_operand, compute.target);
+  }
+  if (!src_is_4s && tgt_is_4s) {
+    return LowerCast2sTo4s(context, info, source_operand, compute.target);
+  }
+  return LowerCast2sTo2s(context, info, source_operand, compute.target);
 }
 
-void LowerBitCastUnified(Context& context, const mir::Compute& compute) {
+auto LowerBitCastUnified(Context& context, const mir::Compute& compute)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
   const auto& info = std::get<mir::BitCastRvalueInfo>(compute.value.info);
 
-  llvm::Value* src = LowerOperand(context, compute.value.operands[0]);
+  auto src_or_err = LowerOperand(context, compute.value.operands[0]);
+  if (!src_or_err) {
+    return std::unexpected(src_or_err.error());
+  }
+  llvm::Value* src = *src_or_err;
+
   const Type& src_type = types[info.source_type];
   const Type& tgt_type = types[info.target_type];
 
@@ -407,8 +536,14 @@ void LowerBitCastUnified(Context& context, const mir::Compute& compute) {
     llvm_unreachable("invalid bitcast types");
   }
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
+  if (!target_ptr_or_err) {
+    return std::unexpected(target_ptr_or_err.error());
+  }
+  llvm::Value* target_ptr = *target_ptr_or_err;
+
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

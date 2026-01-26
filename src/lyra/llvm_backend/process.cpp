@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <string>
 #include <type_traits>
@@ -15,13 +16,14 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
@@ -34,10 +36,21 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  llvm::Value* cond_ptr = context.GetPlacePointer(place_id);
-  llvm::Type* cond_type = context.GetPlaceLlvmType(place_id);
+
+  auto cond_ptr_or_err = context.GetPlacePointer(place_id);
+  if (!cond_ptr_or_err) {
+    return std::unexpected(cond_ptr_or_err.error());
+  }
+  llvm::Value* cond_ptr = *cond_ptr_or_err;
+
+  auto cond_type_or_err = context.GetPlaceLlvmType(place_id);
+  if (!cond_type_or_err) {
+    return std::unexpected(cond_type_or_err.error());
+  }
+  llvm::Type* cond_type = *cond_type_or_err;
+
   llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
 
   // 4-state struct: extract known-true bits (a & ~b)
@@ -67,13 +80,17 @@ void LowerJump(
   context.GetBuilder().CreateBr(blocks[jump.target.value]);
 }
 
-void LowerBranch(
+auto LowerBranch(
     Context& context, const mir::Branch& branch,
-    const std::vector<llvm::BasicBlock*>& blocks) {
-  auto* cond_val = LoadConditionAsI1(context, branch.condition);
+    const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
+  auto cond_or_err = LoadConditionAsI1(context, branch.condition);
+  if (!cond_or_err) {
+    return std::unexpected(cond_or_err.error());
+  }
   context.GetBuilder().CreateCondBr(
-      cond_val, blocks[branch.then_target.value],
+      *cond_or_err, blocks[branch.then_target.value],
       blocks[branch.else_target.value]);
+  return {};
 }
 
 void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
@@ -104,17 +121,18 @@ void LowerDelay(
   builder.CreateBr(exit_block);
 }
 
-void LowerWait(
-    Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block) {
+auto LowerWait(
+    Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block)
+    -> Result<void> {
   static_assert(sizeof(runtime::WaitTriggerRecord) == 8);
 
   if (wait.triggers.size() > runtime::kMaxInlineTriggers) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         std::format(
             "too many wait triggers ({}, max {})", wait.triggers.size(),
-            runtime::kMaxInlineTriggers));
+            runtime::kMaxInlineTriggers),
+        UnsupportedCategory::kFeature));
   }
 
   auto& builder = context.GetBuilder();
@@ -160,6 +178,7 @@ void LowerWait(
        llvm::ConstantInt::get(i32_ty, num_triggers)});
 
   builder.CreateBr(exit_block);
+  return {};
 }
 
 void LowerRepeat(Context& context, llvm::BasicBlock* exit_block) {
@@ -191,9 +210,9 @@ auto ComputeNomatchMessage(const mir::QualifiedDispatch& d) -> std::string {
   return std::format("warning: {} in unique {}\n", what, stmt);
 }
 
-void LowerQualifiedDispatch(
+auto LowerQualifiedDispatch(
     Context& context, const mir::QualifiedDispatch& dispatch,
-    const std::vector<llvm::BasicBlock*>& blocks) {
+    const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* func = builder.GetInsertBlock()->getParent();
@@ -205,13 +224,17 @@ void LowerQualifiedDispatch(
   std::vector<llvm::Value*> conds;
   conds.reserve(dispatch.conditions.size());
   for (auto place_id : dispatch.conditions) {
-    conds.push_back(LoadConditionAsI1(context, place_id));
+    auto cond_or_err = LoadConditionAsI1(context, place_id);
+    if (!cond_or_err) {
+      return std::unexpected(cond_or_err.error());
+    }
+    conds.push_back(*cond_or_err);
   }
 
   // No conditions: jump directly to else target
   if (conds.empty()) {
     builder.CreateBr(else_target);
-    return;
+    return {};
   }
 
   // Count true conditions (i32 accumulator)
@@ -272,34 +295,54 @@ void LowerQualifiedDispatch(
       builder.SetInsertPoint(next_check);
     }
   }
+  return {};
 }
 
-void LowerTerminator(
+auto LowerTerminator(
     Context& context, const mir::Terminator& term,
-    const std::vector<llvm::BasicBlock*>& blocks,
-    llvm::BasicBlock* exit_block) {
+    const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block)
+    -> Result<void> {
   // Set origin for error reporting.
   // OriginScope preserves outer (function/process) origin if term.origin is
   // Invalid.
   OriginScope origin_scope(context, term.origin);
 
-  std::visit(
+  return std::visit(
       common::Overloaded{
-          [&](const mir::Jump& t) { LowerJump(context, t, blocks); },
-          [&](const mir::Branch& t) { LowerBranch(context, t, blocks); },
-          [&](const mir::Return&) { LowerReturn(context, exit_block); },
-          [&](const mir::Finish&) { LowerFinish(context, exit_block); },
-          [&](const mir::Delay& d) { LowerDelay(context, d, exit_block); },
-          [&](const mir::Wait& w) { LowerWait(context, w, exit_block); },
-          [&](const mir::Repeat&) { LowerRepeat(context, exit_block); },
-          [&](const mir::QualifiedDispatch& d) {
-            LowerQualifiedDispatch(context, d, blocks);
+          [&](const mir::Jump& t) -> Result<void> {
+            LowerJump(context, t, blocks);
+            return {};
           },
-          [&](const auto&) {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                "terminator not yet supported");
+          [&](const mir::Branch& t) -> Result<void> {
+            return LowerBranch(context, t, blocks);
+          },
+          [&](const mir::Return&) -> Result<void> {
+            LowerReturn(context, exit_block);
+            return {};
+          },
+          [&](const mir::Finish&) -> Result<void> {
+            LowerFinish(context, exit_block);
+            return {};
+          },
+          [&](const mir::Delay& d) -> Result<void> {
+            LowerDelay(context, d, exit_block);
+            return {};
+          },
+          [&](const mir::Wait& w) -> Result<void> {
+            return LowerWait(context, w, exit_block);
+          },
+          [&](const mir::Repeat&) -> Result<void> {
+            LowerRepeat(context, exit_block);
+            return {};
+          },
+          [&](const mir::QualifiedDispatch& d) -> Result<void> {
+            return LowerQualifiedDispatch(context, d, blocks);
+          },
+          [&](const auto&) -> Result<void> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(), "terminator not yet supported",
+                    UnsupportedCategory::kFeature));
           },
       },
       term.data);
@@ -309,7 +352,7 @@ void LowerTerminator(
 
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
-    -> llvm::Function* {
+    -> Result<llvm::Function*> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
@@ -389,11 +432,14 @@ auto GenerateProcessFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.instructions) {
-      LowerInstruction(context, instruction);
+      auto result = LowerInstruction(context, instruction);
+      if (!result) return std::unexpected(result.error());
     }
 
     // Lower terminator
-    LowerTerminator(context, block.terminator, llvm_blocks, exit_block);
+    auto term_result =
+        LowerTerminator(context, block.terminator, llvm_blocks, exit_block);
+    if (!term_result) return std::unexpected(term_result.error());
   }
 
   // Exit block: just return
@@ -411,13 +457,17 @@ auto GenerateProcessFunction(
 
 auto DeclareUserFunction(
     Context& context, mir::FunctionId func_id, const std::string& name)
-    -> llvm::Function* {
+    -> Result<llvm::Function*> {
   auto& module = context.GetModule();
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
   // Build LLVM function type from MIR signature
-  llvm::FunctionType* fn_type = context.BuildUserFunctionType(func.signature);
+  auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
+  if (!fn_type_or_err) {
+    return std::unexpected(fn_type_or_err.error());
+  }
+  llvm::FunctionType* fn_type = *fn_type_or_err;
 
   // Create function declaration
   auto* llvm_func = llvm::Function::Create(
@@ -516,8 +566,9 @@ struct PlaceCollector {
 
 }  // namespace
 
-void DefineUserFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func) {
+auto DefineUserFunction(
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func)
+    -> Result<void> {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
@@ -584,7 +635,11 @@ void DefineUserFunction(
     auto it = collector.roots.find(key);
     if (it != collector.roots.end()) {
       // Create alloca for this parameter local
-      llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(it->second);
+      auto alloca_or_err = context.GetOrCreatePlaceStorage(it->second);
+      if (!alloca_or_err) {
+        return std::unexpected(alloca_or_err.error());
+      }
+      llvm::AllocaInst* alloca = *alloca_or_err;
 
       // Store argument value into the alloca (offset by 2 for design+engine)
       llvm::Value* arg_val = llvm_func->getArg(static_cast<unsigned>(i + 2));
@@ -603,39 +658,54 @@ void DefineUserFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.instructions) {
-      LowerInstruction(context, instruction);
+      auto result = LowerInstruction(context, instruction);
+      if (!result) {
+        return std::unexpected(result.error());
+      }
     }
 
     // Lower terminator.
     // OriginScope preserves func.origin if terminator.origin is Invalid.
     OriginScope term_scope(context, block.terminator.origin);
-    std::visit(
+    auto term_result = std::visit(
         common::Overloaded{
-            [&](const mir::Jump& t) { LowerJump(context, t, llvm_blocks); },
-            [&](const mir::Branch& t) { LowerBranch(context, t, llvm_blocks); },
-            [&](const mir::Return& t) {
+            [&](const mir::Jump& t) -> Result<void> {
+              LowerJump(context, t, llvm_blocks);
+              return {};
+            },
+            [&](const mir::Branch& t) -> Result<void> {
+              return LowerBranch(context, t, llvm_blocks);
+            },
+            [&](const mir::Return& t) -> Result<void> {
               // Store return value if present and non-void
               if (t.value.has_value() && return_value_ptr != nullptr) {
-                llvm::Value* val = LowerOperandRaw(context, *t.value);
-                builder.CreateStore(val, return_value_ptr);
+                auto val_result = LowerOperandRaw(context, *t.value);
+                if (!val_result) return std::unexpected(val_result.error());
+                builder.CreateStore(*val_result, return_value_ptr);
               }
               builder.CreateBr(exit_block);
+              return {};
             },
-            [&](const mir::Finish&) {
+            [&](const mir::Finish&) -> Result<void> {
               // $finish in a function - just return (shouldn't happen normally)
               builder.CreateBr(exit_block);
+              return {};
             },
-            [&](const mir::QualifiedDispatch& d) {
-              LowerQualifiedDispatch(context, d, llvm_blocks);
+            [&](const mir::QualifiedDispatch& d) -> Result<void> {
+              return LowerQualifiedDispatch(context, d, llvm_blocks);
             },
-            [&](const auto&) {
-              throw common::UnsupportedErrorException(
-                  common::UnsupportedLayer::kMirToLlvm,
-                  common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                  "terminator not yet supported in user function");
+            [&](const auto&) -> Result<void> {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      "terminator not yet supported in user function",
+                      UnsupportedCategory::kFeature));
             },
         },
         block.terminator.data);
+    if (!term_result) {
+      return std::unexpected(term_result.error());
+    }
   }
 
   // Exit block: return the value
@@ -651,6 +721,8 @@ void DefineUserFunction(
   // Clean up function scope
   context.EndFunction();
   context.SetDesignPointer(nullptr);
+
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

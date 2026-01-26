@@ -4,7 +4,6 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -12,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mem_io.hpp"
@@ -51,19 +51,27 @@ auto FormatSeverityPrefix(Severity level) -> std::string_view {
 
 }  // namespace
 
-auto Interpreter::Run(ProcessState& state) -> ProcessStatus {
+auto Interpreter::Run(ProcessState& state) -> Result<ProcessStatus> {
   while (state.status == ProcessStatus::kRunning) {
     const auto& process = (*arena_)[state.process];
     const auto& block = process.blocks[state.current_block.value];
 
     // Execute all instructions in block
     while (state.instruction_index < block.instructions.size()) {
-      ExecInstruction(state, block.instructions[state.instruction_index]);
+      auto result =
+          ExecInstruction(state, block.instructions[state.instruction_index]);
+      if (!result) {
+        return std::unexpected(std::move(result).error());
+      }
       state.instruction_index++;
     }
 
     // Execute terminator
-    auto next = ExecTerminator(state, block.terminator);
+    auto next_result = ExecTerminator(state, block.terminator);
+    if (!next_result) {
+      return std::unexpected(std::move(next_result).error());
+    }
+    auto next = *next_result;
     if (!next) {
       state.status = ProcessStatus::kFinished;
       break;
@@ -78,7 +86,7 @@ auto Interpreter::Run(ProcessState& state) -> ProcessStatus {
 
 auto Interpreter::RunFunction(
     FunctionId func_id, const std::vector<RuntimeValue>& args,
-    DesignState* design_state) -> RuntimeValue {
+    DesignState* design_state) -> Result<RuntimeValue> {
   const auto& func = (*arena_)[func_id];
 
   // Use function's metadata for storage allocation
@@ -126,12 +134,19 @@ auto Interpreter::RunFunction(
     const auto& block = func.blocks[func_state.current_block.value];
 
     while (func_state.instruction_index < block.instructions.size()) {
-      ExecInstruction(
+      auto result = ExecInstruction(
           func_state, block.instructions[func_state.instruction_index]);
+      if (!result) {
+        return std::unexpected(std::move(result).error());
+      }
       func_state.instruction_index++;
     }
 
-    auto next = ExecTerminator(func_state, block.terminator);
+    auto next_result = ExecTerminator(func_state, block.terminator);
+    if (!next_result) {
+      return std::unexpected(std::move(next_result).error());
+    }
+    auto next = *next_result;
     if (!next) {
       break;  // Return reached
     }
@@ -149,30 +164,79 @@ auto Interpreter::RunFunction(
   return std::monostate{};
 }
 
-void Interpreter::ExecAssign(ProcessState& state, const Assign& assign) {
-  auto value = EvalOperand(state, assign.source);
-  StoreToPlace(state, assign.target, std::move(value));
+auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
+    -> Result<void> {
+  auto value_result = EvalOperand(state, assign.source);
+  if (!value_result) {
+    return std::unexpected(std::move(value_result).error());
+  }
+  return StoreToPlace(state, assign.target, std::move(*value_result));
 }
 
-void Interpreter::ExecCompute(ProcessState& state, const Compute& compute) {
+auto Interpreter::ExecCompute(ProcessState& state, const Compute& compute)
+    -> Result<void> {
   TypeId result_type = TypeOfPlace(*types_, (*arena_)[compute.target]);
-  auto value = EvalRvalue(state, compute.value, result_type);
-  StoreToPlace(state, compute.target, std::move(value));
+  auto value_result = EvalRvalue(state, compute.value, result_type);
+  if (!value_result) {
+    return std::unexpected(std::move(value_result).error());
+  }
+  return StoreToPlace(state, compute.target, std::move(*value_result));
 }
 
-void Interpreter::ExecEffect(ProcessState& state, const Effect& effect) {
+auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
+    -> Result<void> {
+  std::optional<Diagnostic> error;
+
   std::visit(
       common::Overloaded{
-          [&](const DisplayEffect& op) { ExecDisplayEffect(state, op); },
-          [&](const SeverityEffect& op) { ExecSeverityEffect(state, op); },
-          [&](const MemIOEffect& op) { ExecMemIOEffect(state, op); },
-          [&](const FcloseEffect& op) { ExecFcloseEffect(state, op); },
+          [&](const DisplayEffect& op) {
+            if (error) {
+              return;
+            }
+            auto result = ExecDisplayEffect(state, op);
+            if (!result) {
+              error = std::move(result).error();
+            }
+          },
+          [&](const SeverityEffect& op) {
+            if (error) {
+              return;
+            }
+            auto result = ExecSeverityEffect(state, op);
+            if (!result) {
+              error = std::move(result).error();
+            }
+          },
+          [&](const MemIOEffect& op) {
+            if (error) {
+              return;
+            }
+            auto result = ExecMemIOEffect(state, op);
+            if (!result) {
+              error = std::move(result).error();
+            }
+          },
+          [&](const FcloseEffect& op) {
+            if (error) {
+              return;
+            }
+            auto result = ExecFcloseEffect(state, op);
+            if (!result) {
+              error = std::move(result).error();
+            }
+          },
       },
       effect.op);
+
+  if (error) {
+    return std::unexpected(std::move(*error));
+  }
+  return {};
 }
 
 auto Interpreter::FormatDisplayOps(
-    const ProcessState& state, std::span<const FormatOp> ops) -> std::string {
+    const ProcessState& state, std::span<const FormatOp> ops)
+    -> Result<std::string> {
   std::string result;
   FormatContext ctx{};
 
@@ -180,8 +244,11 @@ auto Interpreter::FormatDisplayOps(
     if (op.kind == FormatKind::kLiteral) {
       result += op.literal;
     } else {
-      RuntimeValue value = EvalOperand(state, *op.value);
-      TypedValue typed{.value = std::move(value), .type = op.type};
+      auto value_result = EvalOperand(state, *op.value);
+      if (!value_result) {
+        return std::unexpected(std::move(value_result).error());
+      }
+      TypedValue typed{.value = std::move(*value_result), .type = op.type};
 
       FormatSpec spec{
           .kind = op.kind,
@@ -197,13 +264,17 @@ auto Interpreter::FormatDisplayOps(
   return result;
 }
 
-void Interpreter::ExecDisplayEffect(
-    const ProcessState& state, const DisplayEffect& disp) {
+auto Interpreter::ExecDisplayEffect(
+    const ProcessState& state, const DisplayEffect& disp) -> Result<void> {
   if (disp.descriptor) {
     // File-directed output: evaluate descriptor and route through FileManager
-    RuntimeValue desc_val = EvalOperand(state, *disp.descriptor);
+    auto desc_val_result = EvalOperand(state, *disp.descriptor);
+    if (!desc_val_result) {
+      return std::unexpected(std::move(desc_val_result).error());
+    }
+    auto& desc_val = *desc_val_result;
     if (!IsIntegral(desc_val)) {
-      return;  // Invalid descriptor: no-op
+      return {};  // Invalid descriptor: no-op
     }
     const auto& desc_int = AsIntegral(desc_val);
     auto udesc =
@@ -211,10 +282,14 @@ void Interpreter::ExecDisplayEffect(
 
     StreamTargets targets = file_manager_.CollectStreams(udesc);
     if (!targets.include_stdout && targets.file_stream_count == 0) {
-      return;  // No targets: no-op
+      return {};  // No targets: no-op
     }
 
-    std::string formatted = FormatDisplayOps(state, disp.ops);
+    auto formatted_result = FormatDisplayOps(state, disp.ops);
+    if (!formatted_result) {
+      return std::unexpected(std::move(formatted_result).error());
+    }
+    std::string formatted = std::move(*formatted_result);
     if (disp.print_kind == PrintKind::kDisplay) {
       formatted += "\n";
     }
@@ -229,15 +304,20 @@ void Interpreter::ExecDisplayEffect(
   } else {
     // Direct stdout output (original $display/$write path)
     std::ostream& out = output_ != nullptr ? *output_ : std::cout;
-    out << FormatDisplayOps(state, disp.ops);
+    auto formatted_result = FormatDisplayOps(state, disp.ops);
+    if (!formatted_result) {
+      return std::unexpected(std::move(formatted_result).error());
+    }
+    out << *formatted_result;
     if (disp.print_kind == PrintKind::kDisplay) {
       out << "\n";
     }
   }
+  return {};
 }
 
-void Interpreter::ExecSeverityEffect(
-    const ProcessState& state, const SeverityEffect& severity) {
+auto Interpreter::ExecSeverityEffect(
+    const ProcessState& state, const SeverityEffect& severity) -> Result<void> {
   std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
   // Print severity prefix
@@ -248,8 +328,12 @@ void Interpreter::ExecSeverityEffect(
   typed_args.reserve(severity.args.size());
   for (const auto& arg : severity.args) {
     TypeId type = TypeOfOperand(arg, *arena_, *types_);
-    RuntimeValue value = EvalOperand(state, arg);
-    typed_args.push_back(TypedValue{.value = std::move(value), .type = type});
+    auto value_result = EvalOperand(state, arg);
+    if (!value_result) {
+      return std::unexpected(std::move(value_result).error());
+    }
+    typed_args.push_back(
+        TypedValue{.value = std::move(*value_result), .type = type});
   }
 
   // Use decimal as default radix for severity messages
@@ -257,28 +341,33 @@ void Interpreter::ExecSeverityEffect(
   std::string message = FormatMessage(typed_args, 'd', *types_, ctx);
 
   out << message << "\n";
+  return {};
 }
 
-void Interpreter::ExecMemIOEffect(
-    ProcessState& state, const MemIOEffect& mem_io) {
+auto Interpreter::ExecMemIOEffect(
+    ProcessState& state, const MemIOEffect& mem_io) -> Result<void> {
   // Evaluate filename
-  RuntimeValue filename_val = EvalOperand(state, mem_io.filename);
+  auto filename_val_result = EvalOperand(state, mem_io.filename);
+  if (!filename_val_result) {
+    return std::unexpected(std::move(filename_val_result).error());
+  }
+  auto& filename_val = *filename_val_result;
   if (!IsString(filename_val)) {
-    throw std::runtime_error("$readmem/$writemem: filename must be a string");
+    throw common::InternalError("ExecMemIOEffect", "filename must be a string");
   }
   const std::string& filename = AsString(filename_val).value;
 
   // Get array type info
   const Type& arr_type = (*types_)[mem_io.target_type];
   if (arr_type.Kind() != TypeKind::kUnpackedArray) {
-    throw std::runtime_error(
-        "$readmem/$writemem: target must be an unpacked array");
+    throw common::InternalError(
+        "ExecMemIOEffect", "target must be an unpacked array");
   }
   const auto& arr_info = arr_type.AsUnpackedArray();
   const Type& elem_type = (*types_)[arr_info.element_type];
   if (!IsPacked(elem_type)) {
-    throw std::runtime_error(
-        "$readmem/$writemem: array element must be a packed type");
+    throw common::InternalError(
+        "ExecMemIOEffect", "array element must be a packed type");
   }
   uint32_t elem_width = PackedBitWidth(elem_type, *types_);
   auto elem_count = static_cast<int64_t>(arr_info.range.Size());
@@ -289,24 +378,40 @@ void Interpreter::ExecMemIOEffect(
   int64_t start_addr = min_addr;
   int64_t end_addr = max_addr;
   if (mem_io.start_addr) {
-    RuntimeValue addr_val = EvalOperand(state, *mem_io.start_addr);
+    auto addr_val_result = EvalOperand(state, *mem_io.start_addr);
+    if (!addr_val_result) {
+      return std::unexpected(std::move(addr_val_result).error());
+    }
+    auto& addr_val = *addr_val_result;
     if (!IsIntegral(addr_val)) {
-      throw std::runtime_error("$readmem/$writemem: address must be integral");
+      throw common::InternalError(
+          "ExecMemIOEffect", "address must be integral");
     }
     const auto& addr_int = AsIntegral(addr_val);
     if (!addr_int.IsKnown()) {
-      throw std::runtime_error("$readmem/$writemem: address contains X/Z bits");
+      // TODO(hankhsu): SV semantics - should return X, not throw
+      return std::unexpected(
+          Diagnostic::HostError(
+              "$readmem/$writemem: address contains X/Z bits"));
     }
     start_addr = static_cast<int64_t>(addr_int.value[0]);
   }
   if (mem_io.end_addr) {
-    RuntimeValue addr_val = EvalOperand(state, *mem_io.end_addr);
+    auto addr_val_result = EvalOperand(state, *mem_io.end_addr);
+    if (!addr_val_result) {
+      return std::unexpected(std::move(addr_val_result).error());
+    }
+    auto& addr_val = *addr_val_result;
     if (!IsIntegral(addr_val)) {
-      throw std::runtime_error("$readmem/$writemem: address must be integral");
+      throw common::InternalError(
+          "ExecMemIOEffect", "address must be integral");
     }
     const auto& addr_int = AsIntegral(addr_val);
     if (!addr_int.IsKnown()) {
-      throw std::runtime_error("$readmem/$writemem: address contains X/Z bits");
+      // TODO(hankhsu): SV semantics - should return X, not throw
+      return std::unexpected(
+          Diagnostic::HostError(
+              "$readmem/$writemem: address contains X/Z bits"));
     }
     end_addr = static_cast<int64_t>(addr_int.value[0]);
   }
@@ -324,30 +429,41 @@ void Interpreter::ExecMemIOEffect(
     // Read the file
     std::ifstream file(resolved_path);
     if (!file.is_open()) {
-      throw std::runtime_error(
-          std::format("{}: cannot open file '{}'", task_name, filename));
+      return std::unexpected(
+          Diagnostic::HostError(
+              std::format("{}: cannot open file '{}'", task_name, filename)));
     }
     std::string content(
         (std::istreambuf_iterator<char>(file)),
         std::istreambuf_iterator<char>());
 
     // Read current array value
-    RuntimeValue arr_val = ReadPlace(state, mem_io.target);
+    auto arr_val_result = ReadPlace(state, mem_io.target);
+    if (!arr_val_result) {
+      return std::unexpected(std::move(arr_val_result).error());
+    }
+    auto& arr_val = *arr_val_result;
     if (!IsArray(arr_val)) {
-      throw std::runtime_error(
-          std::format("{}: target is not an array", task_name));
+      throw common::InternalError("ExecMemIOEffect", "target is not an array");
     }
     auto& arr = AsArray(arr_val);
+
+    // Error captured from callback
+    std::optional<Diagnostic> callback_error;
 
     int64_t current_addr = start_addr;
     auto result = common::mem_io::ParseMemFile(
         content, mem_io.is_hex, min_addr, max_addr, current_addr, end_addr,
         task_name, [&](std::string_view token, int64_t addr) {
+          if (callback_error) {
+            return;  // Already have an error
+          }
           auto words_result = common::mem_io::ParseMemTokenToWords(
               token, elem_width, mem_io.is_hex);
           if (!words_result) {
-            throw std::runtime_error(
+            callback_error = Diagnostic::HostError(
                 std::format("{}: {}", task_name, words_result.error()));
+            return;
           }
           // Convert words to RuntimeIntegral
           IntegralConstant ic;
@@ -362,67 +478,89 @@ void Interpreter::ExecMemIOEffect(
           }
         });
 
+    if (callback_error) {
+      return std::unexpected(std::move(*callback_error));
+    }
+
     if (!result.success) {
-      throw std::runtime_error(std::format("{}: {}", task_name, result.error));
+      return std::unexpected(
+          Diagnostic::HostError(
+              std::format("{}: {}", task_name, result.error)));
     }
 
     // Write back the modified array
-    StoreToPlace(state, mem_io.target, std::move(arr_val));
-  } else {
-    // Write mode: read array and write to file
-    RuntimeValue arr_val = ReadPlace(state, mem_io.target);
-    if (!IsArray(arr_val)) {
-      throw std::runtime_error(
-          std::format("{}: target is not an array", task_name));
-    }
-    const auto& arr = AsArray(arr_val);
-
-    std::ofstream file(resolved_path);
-    if (!file.is_open()) {
-      throw std::runtime_error(
-          std::format(
-              "{}: cannot open file '{}' for writing", task_name, filename));
-    }
-
-    for (int64_t addr = start_addr; addr <= end_addr; ++addr) {
-      auto index = static_cast<size_t>(addr - min_addr);
-      if (index >= arr.elements.size()) {
-        break;
-      }
-      const auto& elem = arr.elements[index];
-      if (!IsIntegral(elem)) {
-        continue;
-      }
-      const auto& integral = AsIntegral(elem);
-      std::vector<uint64_t> words = integral.value;
-      words.resize((elem_width + 63) / 64, 0);
-      std::string formatted =
-          common::mem_io::FormatMemWords(words, elem_width, mem_io.is_hex);
-      file << formatted << "\n";
-    }
+    return StoreToPlace(state, mem_io.target, std::move(arr_val));
   }
+  // Write mode: read array and write to file
+  auto arr_val_result = ReadPlace(state, mem_io.target);
+  if (!arr_val_result) {
+    return std::unexpected(std::move(arr_val_result).error());
+  }
+  auto& arr_val = *arr_val_result;
+  if (!IsArray(arr_val)) {
+    throw common::InternalError("ExecMemIOEffect", "target is not an array");
+  }
+  const auto& arr = AsArray(arr_val);
+
+  std::ofstream file(resolved_path);
+  if (!file.is_open()) {
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format(
+                "{}: cannot open file '{}' for writing", task_name, filename)));
+  }
+
+  for (int64_t addr = start_addr; addr <= end_addr; ++addr) {
+    auto index = static_cast<size_t>(addr - min_addr);
+    if (index >= arr.elements.size()) {
+      break;
+    }
+    const auto& elem = arr.elements[index];
+    if (!IsIntegral(elem)) {
+      continue;
+    }
+    const auto& integral = AsIntegral(elem);
+    std::vector<uint64_t> words = integral.value;
+    words.resize((elem_width + 63) / 64, 0);
+    std::string formatted =
+        common::mem_io::FormatMemWords(words, elem_width, mem_io.is_hex);
+    file << formatted << "\n";
+  }
+  return {};
 }
 
-void Interpreter::ExecFcloseEffect(
-    ProcessState& state, const FcloseEffect& effect) {
-  RuntimeValue desc_val = EvalOperand(state, effect.descriptor);
+auto Interpreter::ExecFcloseEffect(
+    ProcessState& state, const FcloseEffect& effect) -> Result<void> {
+  auto desc_val_result = EvalOperand(state, effect.descriptor);
+  if (!desc_val_result) {
+    return std::unexpected(std::move(desc_val_result).error());
+  }
+  auto& desc_val = *desc_val_result;
   if (!IsIntegral(desc_val)) {
-    return;  // Invalid descriptor: no-op
+    return {};  // Invalid descriptor: no-op
   }
   const auto& desc_int = AsIntegral(desc_val);
   auto descriptor =
       static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
   file_manager_.Fclose(descriptor);
+  return {};
 }
 
-void Interpreter::ExecGuardedAssign(
-    ProcessState& state, const GuardedAssign& guarded) {
+auto Interpreter::ExecGuardedAssign(
+    ProcessState& state, const GuardedAssign& guarded) -> Result<void> {
   // Always evaluate source unconditionally (per spec: only the write is
   // guarded)
-  auto value = EvalOperand(state, guarded.source);
+  auto value_result = EvalOperand(state, guarded.source);
+  if (!value_result) {
+    return std::unexpected(std::move(value_result).error());
+  }
 
   // Evaluate validity predicate
-  auto validity = EvalOperand(state, guarded.validity);
+  auto validity_result = EvalOperand(state, guarded.validity);
+  if (!validity_result) {
+    return std::unexpected(std::move(validity_result).error());
+  }
+  auto& validity = *validity_result;
   if (!IsIntegral(validity)) {
     throw common::InternalError(
         "ExecGuardedAssign", "validity must be integral");
@@ -431,48 +569,87 @@ void Interpreter::ExecGuardedAssign(
 
   // If invalid (OOB/X/Z), the write is a no-op
   if (valid_int.IsZero()) {
-    return;
+    return {};
   }
 
   // Valid: perform the assignment
-  StoreToPlace(state, guarded.target, std::move(value));
+  return StoreToPlace(state, guarded.target, std::move(*value_result));
 }
 
-void Interpreter::ExecInstruction(
-    ProcessState& state, const Instruction& inst) {
+auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
+    -> Result<void> {
+  std::optional<Diagnostic> error;
+
   std::visit(
       [&](const auto& i) {
+        if (error) {
+          return;
+        }
         using T = std::decay_t<decltype(i)>;
         if constexpr (std::is_same_v<T, Assign>) {
-          ExecAssign(state, i);
+          auto result = ExecAssign(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
         } else if constexpr (std::is_same_v<T, Compute>) {
-          ExecCompute(state, i);
+          auto result = ExecCompute(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
         } else if constexpr (std::is_same_v<T, GuardedAssign>) {
-          ExecGuardedAssign(state, i);
+          auto result = ExecGuardedAssign(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
         } else if constexpr (std::is_same_v<T, Effect>) {
-          ExecEffect(state, i);
+          auto result = ExecEffect(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
         } else {
-          throw common::UnsupportedErrorException(
-              common::UnsupportedError{
-                  .layer = common::UnsupportedLayer::kExecution,
-                  .kind = common::UnsupportedKind::kFeature,
-                  .origin = inst.origin,
-                  .detail = "non-blocking assignments require the LLVM backend "
-                            "(use --backend=llvm)",
-              });
+          // Non-blocking assignments require the LLVM backend runtime
+          if (diag_ctx_ != nullptr) {
+            error = diag_ctx_->MakeUnsupported(
+                inst.origin,
+                "non-blocking assignments require the LLVM backend "
+                "(use --backend=llvm)",
+                UnsupportedCategory::kFeature);
+          } else {
+            error = Diagnostic{
+                .primary =
+                    {.kind = DiagKind::kUnsupported,
+                     .span = UnknownSpan{},
+                     .message =
+                         "non-blocking assignments require the LLVM backend "
+                         "(use --backend=llvm)",
+                     .category = UnsupportedCategory::kFeature},
+                .notes = {},
+            };
+          }
         }
       },
       inst.data);
+
+  if (error) {
+    return std::unexpected(std::move(*error));
+  }
+  return {};
 }
 
 auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
-    -> std::optional<BasicBlockId> {
+    -> Result<std::optional<BasicBlockId>> {
+  using ResultType = Result<std::optional<BasicBlockId>>;
+
   return std::visit(
       common::Overloaded{
-          [](const Jump& t) -> std::optional<BasicBlockId> { return t.target; },
+          [](const Jump& t) -> ResultType { return t.target; },
 
-          [&](const Branch& t) -> std::optional<BasicBlockId> {
-            auto cond = ReadPlace(state, t.condition);
+          [&](const Branch& t) -> ResultType {
+            auto cond_result = ReadPlace(state, t.condition);
+            if (!cond_result) {
+              return std::unexpected(std::move(cond_result).error());
+            }
+            auto& cond = *cond_result;
             // Support integral, real, and shortreal conditions
             if (IsReal(cond)) {
               return RealIsTrue(AsReal(cond)) ? t.then_target : t.else_target;
@@ -488,17 +665,23 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             }
             const auto& cond_int = AsIntegral(cond);
             if (!cond_int.IsKnown()) {
-              throw std::runtime_error("branch condition is X/Z");
+              // TODO(hankhsu): SV semantics - should return X, not throw
+              return std::unexpected(
+                  Diagnostic::HostError("branch condition is X/Z"));
             }
             return cond_int.IsZero() ? t.else_target : t.then_target;
           },
 
-          [&](const Switch& t) -> std::optional<BasicBlockId> {
+          [&](const Switch& t) -> ResultType {
             if (t.targets.empty()) {
               throw common::InternalError(
                   "ExecTerminator", "switch terminator has no targets");
             }
-            auto selector = ReadPlace(state, t.selector);
+            auto selector_result = ReadPlace(state, t.selector);
+            if (!selector_result) {
+              return std::unexpected(std::move(selector_result).error());
+            }
+            auto& selector = *selector_result;
             if (!IsIntegral(selector)) {
               throw common::InternalError(
                   "ExecTerminator", "switch selector must be integral");
@@ -514,7 +697,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return t.targets[static_cast<size_t>(val)];
           },
 
-          [&](const QualifiedDispatch& t) -> std::optional<BasicBlockId> {
+          [&](const QualifiedDispatch& t) -> ResultType {
             // Validate invariant: targets = one per condition + else
             if (t.targets.size() != t.conditions.size() + 1) {
               throw common::InternalError(
@@ -528,16 +711,23 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             size_t first_true_index = t.conditions.size();  // sentinel
             size_t true_count = 0;
             for (size_t i = 0; i < t.conditions.size(); ++i) {
-              auto cond = ReadPlace(state, t.conditions[i]);
+              auto cond_result = ReadPlace(state, t.conditions[i]);
+              if (!cond_result) {
+                return std::unexpected(std::move(cond_result).error());
+              }
+              auto& cond = *cond_result;
               if (!IsIntegral(cond)) {
                 throw common::InternalError(
                     "ExecTerminator",
                     "QualifiedDispatch condition must be integral");
               }
               const auto& cond_int = AsIntegral(cond);
-              // Throw on X/Z conditions (same as Branch)
+              // Return error on X/Z conditions (same as Branch)
               if (!cond_int.IsKnown()) {
-                throw std::runtime_error("QualifiedDispatch condition is X/Z");
+                // TODO(hankhsu): SV semantics - should return X, not error
+                return std::unexpected(
+                    Diagnostic::HostError(
+                        "QualifiedDispatch condition is X/Z"));
               }
               if (!cond_int.IsZero()) {
                 ++true_count;
@@ -582,7 +772,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return t.targets.back();
           },
 
-          [&](const Delay& t) -> std::optional<BasicBlockId> {
+          [&](const Delay& t) -> ResultType {
             // Signal suspension - RunUntilSuspend will return SuspendDelay
             state.pending_suspend = SuspendDelay{
                 .ticks = t.ticks,
@@ -591,20 +781,24 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return std::nullopt;
           },
 
-          [](const Wait& /*t*/) -> std::optional<BasicBlockId> {
+          [](const Wait& /*t*/) -> ResultType {
             throw common::InternalError(
                 "ExecTerminator", "wait terminator requires runtime/scheduler");
           },
 
-          [&](const Return& t) -> std::optional<BasicBlockId> {
+          [&](const Return& t) -> ResultType {
             // If return has a value (function return), evaluate and store it
             if (t.value.has_value()) {
-              state.function_return_value = Clone(EvalOperand(state, *t.value));
+              auto val_result = EvalOperand(state, *t.value);
+              if (!val_result) {
+                return std::unexpected(std::move(val_result).error());
+              }
+              state.function_return_value = Clone(*val_result);
             }
             return std::nullopt;
           },
 
-          [&](const Finish& t) -> std::optional<BasicBlockId> {
+          [&](const Finish& t) -> ResultType {
             std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
             if (t.kind == TerminationKind::kFatal) {
@@ -615,9 +809,13 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                   typed_args.reserve(t.message_args.size());
                   for (const auto& arg : t.message_args) {
                     TypeId type = TypeOfOperand(arg, *arena_, *types_);
-                    RuntimeValue value = EvalOperand(state, arg);
+                    auto value_result = EvalOperand(state, arg);
+                    if (!value_result) {
+                      return std::unexpected(std::move(value_result).error());
+                    }
                     typed_args.push_back(
-                        TypedValue{.value = std::move(value), .type = type});
+                        TypedValue{
+                            .value = std::move(*value_result), .type = type});
                   }
                   FormatContext ctx{};
                   std::string message =
@@ -647,7 +845,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return std::nullopt;
           },
 
-          [](const Repeat& /*t*/) -> std::optional<BasicBlockId> {
+          [](const Repeat& /*t*/) -> ResultType {
             throw common::InternalError(
                 "ExecTerminator",
                 "repeat terminator requires runtime/scheduler");
@@ -656,19 +854,28 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
       term.data);
 }
 
-auto Interpreter::RunUntilSuspend(ProcessState& state) -> SuspendReason {
+auto Interpreter::RunUntilSuspend(ProcessState& state)
+    -> Result<SuspendReason> {
   while (state.status == ProcessStatus::kRunning) {
     const auto& process = (*arena_)[state.process];
     const auto& block = process.blocks[state.current_block.value];
 
     // Execute all instructions in block
     while (state.instruction_index < block.instructions.size()) {
-      ExecInstruction(state, block.instructions[state.instruction_index]);
+      auto result =
+          ExecInstruction(state, block.instructions[state.instruction_index]);
+      if (!result) {
+        return std::unexpected(std::move(result).error());
+      }
       state.instruction_index++;
     }
 
     // Execute terminator
-    auto next_block = ExecTerminator(state, block.terminator);
+    auto next_block_result = ExecTerminator(state, block.terminator);
+    if (!next_block_result) {
+      return std::unexpected(std::move(next_block_result).error());
+    }
+    auto next_block = *next_block_result;
 
     if (next_block) {
       // Continue to next block

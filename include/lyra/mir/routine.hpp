@@ -2,8 +2,8 @@
 
 #include <vector>
 
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 

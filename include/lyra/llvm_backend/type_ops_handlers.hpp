@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
 #include "lyra/mir/handle.hpp"
@@ -15,40 +16,40 @@ namespace lyra::lowering::mir_to_llvm {
 class Context;
 
 // String handler (type_ops_string.cpp)
-void AssignString(
+auto AssignString(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    OwnershipPolicy policy, TypeId type_id);
+    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
 
 // Container handlers (type_ops_container.cpp)
-void AssignDynArray(
+auto AssignDynArray(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    OwnershipPolicy policy, TypeId type_id);
+    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
 
 // Struct handlers (type_ops_struct.cpp)
-void AssignStruct(
+auto AssignStruct(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    OwnershipPolicy policy, TypeId struct_type_id);
+    OwnershipPolicy policy, TypeId struct_type_id) -> Result<void>;
 
 // Array handler (type_ops_array.cpp)
-void AssignArray(
+auto AssignArray(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId array_type_id);
+    TypeId array_type_id) -> Result<void>;
 
 // Packed handlers (type_ops_packed.cpp)
-void AssignFourState(
+auto AssignFourState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    llvm::StructType* struct_type);
+    llvm::StructType* struct_type) -> Result<void>;
 
-void AssignTwoState(
+auto AssignTwoState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId type_id);
+    TypeId type_id) -> Result<void>;
 
 // Union handlers (type_ops_union.cpp)
-void AssignUnion(
+auto AssignUnion(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId union_type_id);
+    TypeId union_type_id) -> Result<void>;
 
-void ConstructDefaultUnion(
-    Context& context, llvm::Value* ptr, TypeId union_type_id);
+auto ConstructDefaultUnion(
+    Context& context, llvm::Value* ptr, TypeId union_type_id) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

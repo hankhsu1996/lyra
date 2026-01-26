@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -18,9 +19,10 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
 // Handles all ownership semantics: string refcount, dynarray clone, struct
 // field recursion, etc. Delegates to type-specific handlers internally.
 //
-// Throws UnsupportedErrorException for deferred cases (e.g., design slot +
+// Returns error Diagnostic for unsupported cases (e.g., design slot +
 // string struct).
-void AssignPlace(
-    Context& context, mir::PlaceId target, const mir::Operand& source);
+auto AssignPlace(
+    Context& context, mir::PlaceId target, const mir::Operand& source)
+    -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

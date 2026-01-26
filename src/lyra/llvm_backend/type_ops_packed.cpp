@@ -1,5 +1,8 @@
+#include <expected>
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
@@ -7,16 +10,20 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-void AssignFourState(
+auto AssignFourState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    llvm::StructType* struct_type) {
+    llvm::StructType* struct_type) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* elem_type = struct_type->getElementType(0);
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
 
   // Load source as raw value (struct if 4-state, integer if 2-state)
-  llvm::Value* raw = LowerOperandRaw(context, source);
+  auto raw_or_err = LowerOperandRaw(context, source);
+  if (!raw_or_err) return std::unexpected(raw_or_err.error());
+  llvm::Value* raw = *raw_or_err;
 
   llvm::Value* val = nullptr;
   llvm::Value* unk = nullptr;
@@ -42,20 +49,27 @@ void AssignFourState(
   } else {
     builder.CreateStore(packed, target_ptr);
   }
+  return {};
 }
 
-void AssignTwoState(
+auto AssignTwoState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId type_id) {
+    TypeId type_id) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto storage_type_or_err = context.GetPlaceLlvmType(target);
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
+  llvm::Type* storage_type = *storage_type_or_err;
 
   // Lower source (coerces 4-state to integer)
-  llvm::Value* source_value = LowerOperand(context, source);
+  auto source_value_or_err = LowerOperand(context, source);
+  if (!source_value_or_err) return std::unexpected(source_value_or_err.error());
+  llvm::Value* source_value = *source_value_or_err;
 
   // Adjust the value to match storage type if needed (only for integrals)
   if (source_value->getType() != storage_type &&
@@ -74,6 +88,7 @@ void AssignTwoState(
   } else {
     builder.CreateStore(source_value, target_ptr);
   }
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -22,13 +22,14 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -71,14 +72,16 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
 Context::Context(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const Layout& layout, std::unique_ptr<llvm::LLVMContext> llvm_ctx,
-    std::unique_ptr<llvm::Module> module)
+    std::unique_ptr<llvm::Module> module,
+    const lowering::DiagnosticContext* diag_ctx)
     : design_(design),
       arena_(arena),
       types_(types),
       layout_(layout),
       llvm_context_(std::move(llvm_ctx)),
       llvm_module_(std::move(module)),
-      builder_(*llvm_context_) {
+      builder_(*llvm_context_),
+      diag_ctx_(diag_ctx) {
 }
 
 auto Context::GetLyraPrintLiteral() -> llvm::Function* {
@@ -698,7 +701,7 @@ auto Context::GetLyraStringFormatFinish() -> llvm::Function* {
   return lyra_string_format_finish_;
 }
 
-auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
+auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* null_ptr =
@@ -719,12 +722,15 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> ElemOpsInfo {
   }
 
   // POD types: compute size from DataLayout, no clone/destroy needed
-  llvm::Type* llvm_type = BuildLlvmTypeForTypeId(*this, elem_type);
+  auto llvm_type = BuildLlvmTypeForTypeId(*this, elem_type);
+  if (!llvm_type) {
+    return std::unexpected(llvm_type.error());
+  }
   auto byte_size = static_cast<int32_t>(
-      llvm_module_->getDataLayout().getTypeAllocSize(llvm_type));
+      llvm_module_->getDataLayout().getTypeAllocSize(*llvm_type));
   return ElemOpsInfo{
       .elem_size = byte_size,
-      .elem_llvm_type = llvm_type,
+      .elem_llvm_type = *llvm_type,
       .clone_fn = null_ptr,
       .destroy_fn = null_ptr,
   };
@@ -825,7 +831,7 @@ void Context::EndFunction() {
 }
 
 auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
-    -> llvm::AllocaInst* {
+    -> Result<llvm::AllocaInst*> {
   // Check if we already have storage for this root.
   // Storage is keyed by root identity (kind + id), NOT by PlaceId.
   PlaceRootKey key{.kind = root.kind, .id = root.id};
@@ -872,12 +878,17 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       type.Kind() == TypeKind::kUnpackedStruct ||
       type.Kind() == TypeKind::kUnpackedArray ||
       type.Kind() == TypeKind::kUnpackedUnion) {
-    llvm_type = BuildLlvmTypeForTypeId(*this, type_id);
+    auto llvm_type_result = BuildLlvmTypeForTypeId(*this, type_id);
+    if (!llvm_type_result) {
+      return std::unexpected(llvm_type_result.error());
+    }
+    llvm_type = *llvm_type_result;
   } else {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-        current_origin_,
-        std::format("type not yet supported: {}", ToString(type)));
+    return std::unexpected(
+        GetDiagnosticContext().MakeUnsupported(
+            current_origin_,
+            std::format("type not yet supported: {}", ToString(type)),
+            UnsupportedCategory::kType));
   }
 
   // Re-compute insertion point: after all existing allocas, before any
@@ -912,7 +923,8 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
 auto Context::GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t {
   auto it = layout_.design.slot_to_field.find(slot_id);
   if (it == layout_.design.slot_to_field.end()) {
-    throw std::runtime_error("design slot not found in layout");
+    throw common::InternalError(
+        "llvm_backend", "design slot not found in layout");
   }
   return it->second;
 }
@@ -923,7 +935,8 @@ auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
   const auto& frame = layout_.processes[current_process_index_].frame;
   auto it = frame.root_to_field.find(key);
   if (it == frame.root_to_field.end()) {
-    throw std::runtime_error("frame place not found in layout");
+    throw common::InternalError(
+        "llvm_backend", "frame place not found in layout");
   }
   return it->second;
 }
@@ -1035,7 +1048,7 @@ auto Context::ResolveAliases(mir::PlaceId place_id) -> mir::Place {
   return resolved;
 }
 
-auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
+auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
   // Resolve aliases first (handles output/inout ports)
   mir::Place place = ResolveAliases(place_id);
 
@@ -1043,7 +1056,7 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
   llvm::Value* ptr = nullptr;
   if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
     if (design_ptr_ == nullptr) {
-      throw std::runtime_error("design pointer not set");
+      throw common::InternalError("llvm_backend", "design pointer not set");
     }
     auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
     uint32_t field_index = GetDesignFieldIndex(slot_id);
@@ -1064,7 +1077,11 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
           GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
     } else {
       // User function: create alloca lazily for the root
-      ptr = GetOrCreatePlaceStorage(place.root);
+      auto alloca_or_err = GetOrCreatePlaceStorage(place.root);
+      if (!alloca_or_err) {
+        return std::unexpected(alloca_or_err.error());
+      }
+      ptr = *alloca_or_err;
     }
   }
 
@@ -1095,7 +1112,11 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
                 field_idx, struct_info.fields.size()));
       }
 
-      llvm::Type* struct_type = BuildLlvmTypeForTypeId(*this, current_type);
+      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      if (!struct_type_result) {
+        return std::unexpected(struct_type_result.error());
+      }
+      llvm::Type* struct_type = *struct_type_result;
       ptr = builder_.CreateStructGEP(
           struct_type, ptr, static_cast<unsigned>(field->field_index),
           "struct_field_ptr");
@@ -1144,9 +1165,12 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
       // Load the handle, call ElementPtr
       auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
       llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
-      llvm::Value* index = LowerOperand(*this, idx->index);
-      index = builder_.CreateSExtOrTrunc(
-          index, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
+      auto index_result = LowerOperand(*this, idx->index);
+      if (!index_result) {
+        return std::unexpected(index_result.error());
+      }
+      llvm::Value* index = builder_.CreateSExtOrTrunc(
+          *index_result, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
       ptr = builder_.CreateCall(
           GetLyraDynArrayElementPtr(), {handle, index}, "da.elem_ptr");
       current_type = (cur_type.Kind() == TypeKind::kQueue)
@@ -1154,10 +1178,18 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
                          : cur_type.AsDynamicArray().element_type;
     } else {
       // Unpacked array: GEP into fixed array
-      llvm::Type* array_type = BuildLlvmTypeForTypeId(*this, current_type);
-      llvm::Value* index = LowerOperand(*this, idx->index);
+      auto array_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      if (!array_type_result) {
+        return std::unexpected(array_type_result.error());
+      }
+      llvm::Type* array_type = *array_type_result;
+      auto index_result = LowerOperand(*this, idx->index);
+      if (!index_result) {
+        return std::unexpected(index_result.error());
+      }
       ptr = builder_.CreateGEP(
-          array_type, ptr, {builder_.getInt32(0), index}, "array_elem_ptr");
+          array_type, ptr, {builder_.getInt32(0), *index_result},
+          "array_elem_ptr");
       current_type = cur_type.AsUnpackedArray().element_type;
     }
   }
@@ -1165,7 +1197,7 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
   return ptr;
 }
 
-auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
+auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = arena_[place_id];
 
   TypeId type_id = mir::TypeOfPlace(types_, place);
@@ -1203,10 +1235,11 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> llvm::Type* {
     return BuildLlvmTypeForTypeId(*this, type_id);
   }
 
-  throw common::UnsupportedErrorException(
-      common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-      current_origin_,
-      std::format("type not yet supported: {}", ToString(type)));
+  return std::unexpected(
+      GetDiagnosticContext().MakeUnsupported(
+          current_origin_,
+          std::format("type not yet supported: {}", ToString(type)),
+          UnsupportedCategory::kType));
 }
 
 auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
@@ -1226,7 +1259,7 @@ auto Context::GetBitRangeProjection(mir::PlaceId place_id) const
   return std::get<mir::BitRangeProjection>(place.projections.back().info);
 }
 
-auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
+auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = arena_[place_id];
 
   // The base type is root.type after applying all non-BitRange projections.
@@ -1262,7 +1295,8 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> llvm::Type* {
   return BuildLlvmTypeForTypeId(*this, base_type_id);
 }
 
-auto Context::ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange {
+auto Context::ComposeBitRange(mir::PlaceId place_id)
+    -> Result<ComposedBitRange> {
   const auto& place = arena_[place_id];
 
   // Invariant: BitRangeProjections must form a contiguous suffix.
@@ -1288,8 +1322,12 @@ auto Context::ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange {
       continue;
     }
     const auto& br = std::get<mir::BitRangeProjection>(proj.info);
-    llvm::Value* br_offset = LowerOperand(*this, br.bit_offset);
-    br_offset = builder_.CreateZExtOrTrunc(br_offset, offset_ty);
+    auto br_offset_result = LowerOperand(*this, br.bit_offset);
+    if (!br_offset_result) {
+      return std::unexpected(br_offset_result.error());
+    }
+    llvm::Value* br_offset =
+        builder_.CreateZExtOrTrunc(*br_offset_result, offset_ty);
     if (total_offset == nullptr) {
       total_offset = br_offset;
     } else {
@@ -1301,7 +1339,7 @@ auto Context::ComposeBitRange(mir::PlaceId place_id) -> ComposedBitRange {
     throw common::InternalError(
         "ComposeBitRange", "called on place with no BitRangeProjection");
   }
-  return {.offset = total_offset, .width = width};
+  return ComposedBitRange{.offset = total_offset, .width = width};
 }
 
 auto Context::TakeOwnership() -> std::pair<
@@ -1345,7 +1383,7 @@ auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
 }
 
 auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
-    -> llvm::FunctionType* {
+    -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
 
   // First two parameters are DesignState* and Engine*
@@ -1381,10 +1419,12 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
         param_ty = GetLlvmStorageType(*llvm_context_, width);
       }
     } else {
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-          current_origin_,
-          std::format("unsupported parameter type: {}", ToString(type.Kind())));
+      return std::unexpected(
+          GetDiagnosticContext().MakeUnsupported(
+              current_origin_,
+              std::format(
+                  "unsupported parameter type: {}", ToString(type.Kind())),
+              UnsupportedCategory::kType));
     }
 
     param_types.push_back(param_ty);
@@ -1413,10 +1453,12 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
       llvm_ret_type = GetLlvmStorageType(*llvm_context_, width);
     }
   } else {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
-        current_origin_,
-        std::format("unsupported return type: {}", ToString(ret_type.Kind())));
+    return std::unexpected(
+        GetDiagnosticContext().MakeUnsupported(
+            current_origin_,
+            std::format(
+                "unsupported return type: {}", ToString(ret_type.Kind())),
+            UnsupportedCategory::kType));
   }
 
   return llvm::FunctionType::get(llvm_ret_type, param_types, false);

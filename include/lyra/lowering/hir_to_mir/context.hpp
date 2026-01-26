@@ -106,8 +106,8 @@ struct Context {
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
 
   // Resolve a function symbol to its pre-allocated mir::FunctionId.
-  // Throws std::runtime_error with function name if symbol not found.
-  // Throws InternalError if function map pointer is null (programmer bug).
+  // Throws InternalError if symbol not found (HIR guarantees all functions
+  // are pre-allocated, so missing = compiler bug).
   [[nodiscard]] auto ResolveCallee(SymbolId sym) const -> mir::FunctionId;
 
   [[nodiscard]] auto GetBitType() const -> TypeId {

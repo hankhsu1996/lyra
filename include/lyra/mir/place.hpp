@@ -4,8 +4,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {

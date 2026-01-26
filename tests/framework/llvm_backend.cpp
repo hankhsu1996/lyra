@@ -6,7 +6,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -17,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 #include <variant>
@@ -27,15 +27,14 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
-#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
-#include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 
@@ -335,8 +334,10 @@ auto RunLlvmBackend(
   if (sink.HasErrors()) {
     std::ostringstream error_stream;
     for (const auto& diagnostic : sink.GetDiagnostics()) {
-      if (diagnostic.severity == DiagnosticSeverity::kError) {
-        error_stream << diagnostic.message << "\n";
+      if (diagnostic.primary.kind == DiagKind::kError ||
+          diagnostic.primary.kind == DiagKind::kUnsupported ||
+          diagnostic.primary.kind == DiagKind::kHostError) {
+        error_stream << diagnostic.primary.message << "\n";
       }
     }
     result.error_message = "HIR lowering errors:\n" + error_stream.str();
@@ -354,6 +355,11 @@ auto RunLlvmBackend(
       .binding_plan = &hir_result.binding_plan,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  if (!mir_result) {
+    result.error_message =
+        std::format("MIR lowering error: {}", mir_result.error().primary.message);
+    return result;
+  }
 
   // Find the top module (first module in elaboration order) and calculate base
   // slot ID. Slot ordering: packages first, then all modules' variables in
@@ -380,38 +386,39 @@ auto RunLlvmBackend(
   // Create test hooks for variable inspection and timing
   TestSimulationHooks hooks(std::move(tracked_variables), true);
 
+  // Create diagnostic context for LLVM backend error reporting
+  lowering::OriginMapLookup origin_lookup(
+      &mir_result->origin_map, hir_result.hir_arena.get());
+  lowering::DiagnosticContext diag_ctx(origin_lookup);
+
   // Lower MIR to LLVM IR
   lowering::mir_to_llvm::LoweringInput llvm_input{
-      .design = &mir_result.design,
-      .mir_arena = mir_result.mir_arena.get(),
+      .design = &mir_result->design,
+      .mir_arena = mir_result->mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
+      .diag_ctx = &diag_ctx,
       .hooks = &hooks,
   };
 
-  lowering::mir_to_llvm::LoweringResult llvm_result;
-  try {
-    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
-  } catch (const common::UnsupportedErrorException& e) {
-    // Try to resolve origin to source location
-    const auto& error = e.GetError();
+  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  if (!llvm_result) {
+    const auto& diag = llvm_result.error();
     std::string location;
-    if (error.origin.IsValid()) {
-      auto entry = mir_result.origin_map.Resolve(error.origin);
-      if (entry &&
-          std::holds_alternative<hir::StatementId>(entry->hir_source)) {
-        auto stmt_id = std::get<hir::StatementId>(entry->hir_source);
-        const hir::Statement& stmt = (*hir_result.hir_arena)[stmt_id];
-        location = FormatSourceLocation(stmt.span, *hir_result.source_manager);
-      }
-    }
+    std::visit(
+        [&](const auto& span) {
+          using T = std::decay_t<decltype(span)>;
+          if constexpr (std::is_same_v<T, SourceSpan>) {
+            location = FormatSourceLocation(span, *hir_result.source_manager);
+          }
+        },
+        diag.primary.span);
     if (!location.empty()) {
-      result.error_message = std::format("{}: error: {}", location, e.what());
+      result.error_message =
+          std::format("{}: error: {}", location, diag.primary.message);
     } else {
-      result.error_message = std::format("LLVM lowering error: {}", e.what());
+      result.error_message =
+          std::format("LLVM lowering error: {}", diag.primary.message);
     }
-    return result;
-  } catch (const std::exception& e) {
-    result.error_message = std::format("LLVM lowering error: {}", e.what());
     return result;
   }
 
@@ -427,7 +434,7 @@ auto RunLlvmBackend(
       result.error_message = "Failed to write IR file";
       return result;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
   }
 
   // Find runtime library

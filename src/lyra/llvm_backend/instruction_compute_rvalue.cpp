@@ -1,18 +1,20 @@
 #include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 
+#include <expected>
 #include <format>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
-    -> PlaceTypeInfo {
+    -> Result<PlaceTypeInfo> {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
   const auto& place = arena[place_id];
@@ -27,10 +29,10 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
   }
 
   if (!IsPacked(type)) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
-        std::format("non-packed type not supported: {}", ToString(type)));
+        std::format("non-packed type not supported: {}", ToString(type)),
+        UnsupportedCategory::kType));
   }
   return PlaceTypeInfo{
       .kind = PlaceKind::kIntegral,

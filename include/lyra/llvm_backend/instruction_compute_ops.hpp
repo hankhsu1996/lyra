@@ -4,6 +4,7 @@
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -33,11 +34,11 @@ auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
 
 auto LowerBinaryArith(
     Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> llvm::Value*;
+    -> Result<llvm::Value*>;
 
 auto LowerBinaryComparison(
     Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> llvm::Value*;
+    -> Result<llvm::Value*>;
 
 auto LowerShiftOp(
     Context& context, mir::BinaryOp op, llvm::Value* value,
@@ -49,6 +50,7 @@ auto LowerShiftOpUnknown(
 
 auto LowerUnaryOp(
     Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value*;
+    llvm::Type* storage_type, uint32_t operand_bit_width)
+    -> Result<llvm::Value*>;
 
 }  // namespace lyra::lowering::mir_to_llvm

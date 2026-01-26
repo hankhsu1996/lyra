@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <format>
-#include <stdexcept>
 #include <utility>
 #include <variant>
 
@@ -96,7 +95,8 @@ auto Context::ResolveCallee(SymbolId sym) const -> mir::FunctionId {
     return it->second;
   }
   const Symbol& s = (*symbol_table)[sym];
-  throw std::runtime_error(
+  throw common::InternalError(
+      "hir_to_mir",
       std::format("unresolved function '{}' in MIR lowering", s.name));
 }
 

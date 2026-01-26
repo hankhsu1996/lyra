@@ -258,11 +258,15 @@ auto MakeIntegralConst(int64_t value, TypeId type) -> Constant {
 // separation doesn't allow side-effecting Rvalues, so we desugar here.
 auto LowerIncrementDecrement(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // 1. Lower operand as lvalue
-  LvalueResult target = LowerLvalue(data.operand, builder);
+  Result<LvalueResult> target_result = LowerLvalue(data.operand, builder);
+  if (!target_result) {
+    return std::unexpected(target_result.error());
+  }
+  LvalueResult target = *target_result;
 
   // 2. Type validation (defensive - Slang already checked)
   const Type& type = (*ctx.type_arena)[expr.type];
@@ -318,14 +322,22 @@ auto LowerIncrementDecrement(
 // Similar to LowerIncrementDecrement but uses the user-provided operand.
 auto LowerCompoundAssignment(
     const hir::CompoundAssignmentExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // 1. Lower target as lvalue (evaluates index expressions once)
-  LvalueResult target = LowerLvalue(data.target, builder);
+  Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
+  if (!target_result) {
+    return std::unexpected(target_result.error());
+  }
+  LvalueResult target = *target_result;
 
   // 2. Lower the RHS operand
-  mir::Operand rhs = LowerExpression(data.operand, builder);
+  Result<mir::Operand> rhs_result = LowerExpression(data.operand, builder);
+  if (!rhs_result) {
+    return std::unexpected(rhs_result.error());
+  }
+  mir::Operand rhs = *rhs_result;
 
   // 3. Read old value with OOB handling using GuardedUse
   mir::Operand read_val;
@@ -382,13 +394,17 @@ auto LowerCompoundAssignment(
 
 auto LowerUnary(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   // Desugar increment/decrement operators into read-modify-write sequence
   if (IsIncrementOrDecrement(data.op)) {
     return LowerIncrementDecrement(data, expr, builder);
   }
 
-  mir::Operand operand = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  if (!operand_result) {
+    return std::unexpected(operand_result.error());
+  }
+  mir::Operand operand = *operand_result;
 
   mir::Rvalue rvalue{
       .operands = {operand},
@@ -401,9 +417,18 @@ auto LowerUnary(
 
 auto LowerBinary(
     const hir::BinaryExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
-  mir::Operand lhs = LowerExpression(data.lhs, builder);
-  mir::Operand rhs = LowerExpression(data.rhs, builder);
+    MirBuilder& builder) -> Result<mir::Operand> {
+  Result<mir::Operand> lhs_result = LowerExpression(data.lhs, builder);
+  if (!lhs_result) {
+    return std::unexpected(lhs_result.error());
+  }
+  mir::Operand lhs = *lhs_result;
+
+  Result<mir::Operand> rhs_result = LowerExpression(data.rhs, builder);
+  if (!rhs_result) {
+    return std::unexpected(rhs_result.error());
+  }
+  mir::Operand rhs = *rhs_result;
 
   auto select_mir_op = [&]() -> mir::BinaryOp {
     if (IsRelationalOp(data.op)) {
@@ -427,7 +452,7 @@ auto LowerBinary(
 
 auto LowerCast(
     const hir::CastExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   // Invariant: caller dispatched based on CastExpressionData
   if (expr.kind != hir::ExpressionKind::kCast) {
     throw common::InternalError("LowerCast", "expected kCast expression kind");
@@ -504,7 +529,11 @@ auto LowerCast(
 
   // Lower operand first. Note: current lowering is structure-preserving (no
   // rewriting), so we can safely read source type from HIR after lowering.
-  mir::Operand operand = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  if (!operand_result) {
+    return std::unexpected(operand_result.error());
+  }
+  mir::Operand operand = *operand_result;
 
   const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
   TypeId source_type = operand_expr.type;
@@ -526,9 +555,13 @@ auto LowerCast(
 
 auto LowerBitCast(
     const hir::BitCastExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   // Lower operand
-  mir::Operand operand = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  if (!operand_result) {
+    return std::unexpected(operand_result.error());
+  }
+  mir::Operand operand = *operand_result;
 
   const Context& ctx = builder.GetContext();
   const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
@@ -548,7 +581,7 @@ auto LowerBitCast(
 
 auto LowerSystemCall(
     const hir::SystemCallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   // Handle SFormatSystemCallData in expression context ($sformatf)
   if (const auto* sformat = std::get_if<hir::SFormatSystemCallData>(&data)) {
     Context& ctx = builder.GetContext();
@@ -571,7 +604,12 @@ auto LowerSystemCall(
                   .type = TypeId{},
                   .mods = {}});
         } else {
-          mir::Operand operand = LowerExpression(*hir_op.value, builder);
+          Result<mir::Operand> operand_result =
+              LowerExpression(*hir_op.value, builder);
+          if (!operand_result) {
+            return std::unexpected(operand_result.error());
+          }
+          mir::Operand operand = *operand_result;
           const hir::Expression& val_expr = (*ctx.hir_arena)[*hir_op.value];
           info.ops.push_back(
               mir::FormatOp{
@@ -589,7 +627,11 @@ auto LowerSystemCall(
       std::vector<mir::Operand> operands;
       operands.reserve(sformat->args.size());
       for (hir::ExpressionId arg_id : sformat->args) {
-        operands.push_back(LowerExpression(arg_id, builder));
+        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        if (!arg_result) {
+          return std::unexpected(arg_result.error());
+        }
+        operands.push_back(*arg_result);
       }
       rvalue =
           mir::Rvalue{.operands = std::move(operands), .info = std::move(info)};
@@ -601,7 +643,12 @@ auto LowerSystemCall(
 
   // $test$plusargs → PlusargsRvalueInfo{kTest}
   if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
-    mir::Operand query_op = LowerExpression(test_pa->query, builder);
+    Result<mir::Operand> query_result =
+        LowerExpression(test_pa->query, builder);
+    if (!query_result) {
+      return std::unexpected(query_result.error());
+    }
+    mir::Operand query_op = *query_result;
     mir::Rvalue rvalue{
         .operands = {query_op},
         .info =
@@ -616,8 +663,18 @@ auto LowerSystemCall(
 
   // $value$plusargs → PlusargsRvalueInfo{kValue, output_place, output_type}
   if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
-    mir::Operand format_op = LowerExpression(val_pa->format, builder);
-    LvalueResult output_lv = LowerLvalue(val_pa->output, builder);
+    Result<mir::Operand> format_result =
+        LowerExpression(val_pa->format, builder);
+    if (!format_result) {
+      return std::unexpected(format_result.error());
+    }
+    mir::Operand format_op = *format_result;
+    Result<LvalueResult> output_lv_result =
+        LowerLvalue(val_pa->output, builder);
+    if (!output_lv_result) {
+      return std::unexpected(output_lv_result.error());
+    }
+    LvalueResult output_lv = *output_lv_result;
 
     Context& ctx = builder.GetContext();
     const hir::Expression& out_expr = (*ctx.hir_arena)[val_pa->output];
@@ -637,10 +694,20 @@ auto LowerSystemCall(
 
   // $fopen → FopenRvalueInfo
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
-    mir::Operand filename_op = LowerExpression(fopen_data->filename, builder);
+    Result<mir::Operand> filename_result =
+        LowerExpression(fopen_data->filename, builder);
+    if (!filename_result) {
+      return std::unexpected(filename_result.error());
+    }
+    mir::Operand filename_op = *filename_result;
     std::vector<mir::Operand> operands = {filename_op};
     if (fopen_data->mode) {
-      operands.push_back(LowerExpression(*fopen_data->mode, builder));
+      Result<mir::Operand> mode_result =
+          LowerExpression(*fopen_data->mode, builder);
+      if (!mode_result) {
+        return std::unexpected(mode_result.error());
+      }
+      operands.push_back(*mode_result);
     }
     mir::Rvalue rvalue{
         .operands = std::move(operands), .info = mir::FopenRvalueInfo{}};
@@ -666,12 +733,20 @@ auto LowerSystemCall(
 
 auto LowerAssignment(
     const hir::AssignmentExpressionData& data, const hir::Expression& /*expr*/,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   // Lower target as lvalue
-  LvalueResult target = LowerLvalue(data.target, builder);
+  Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
+  if (!target_result) {
+    return std::unexpected(target_result.error());
+  }
+  LvalueResult target = *target_result;
 
   // Lower value as rvalue
-  mir::Operand value = LowerExpression(data.value, builder);
+  Result<mir::Operand> value_result = LowerExpression(data.value, builder);
+  if (!value_result) {
+    return std::unexpected(value_result.error());
+  }
+  mir::Operand value = *value_result;
 
   if (data.is_non_blocking) {
     // Non-blocking: schedule for NBA region (validity handled in LLVM backend)
@@ -700,7 +775,7 @@ auto LowerAssignment(
 //   merge_bb: (continue here)
 auto LowerConditional(
     const hir::ConditionalExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // 1. Allocate result temp BEFORE branching (dominates both arms and merge)
@@ -708,7 +783,11 @@ auto LowerConditional(
 
   // 2. Lower condition (must not emit terminator - currently safe since
   //    logical ops use binary instructions, not control flow)
-  mir::Operand cond = LowerExpression(data.condition, builder);
+  Result<mir::Operand> cond_result = LowerExpression(data.condition, builder);
+  if (!cond_result) {
+    return std::unexpected(cond_result.error());
+  }
+  mir::Operand cond = *cond_result;
 
   // 3. EmitBranch requires Use operand; materialize if needed
   //    Use condition's type (not expr.type) for the temp
@@ -727,13 +806,21 @@ auto LowerConditional(
 
   // 5. Then block: lower then_expr HERE (short-circuit), assign, terminate
   builder.SetCurrentBlock(then_bb);
-  mir::Operand then_val = LowerExpression(data.then_expr, builder);
+  Result<mir::Operand> then_result = LowerExpression(data.then_expr, builder);
+  if (!then_result) {
+    return std::unexpected(then_result.error());
+  }
+  mir::Operand then_val = *then_result;
   builder.EmitAssign(result, std::move(then_val));
   builder.EmitJump(merge_bb);
 
   // 6. Else block: lower else_expr HERE (short-circuit), assign, terminate
   builder.SetCurrentBlock(else_bb);
-  mir::Operand else_val = LowerExpression(data.else_expr, builder);
+  Result<mir::Operand> else_result = LowerExpression(data.else_expr, builder);
+  if (!else_result) {
+    return std::unexpected(else_result.error());
+  }
+  mir::Operand else_val = *else_result;
   builder.EmitAssign(result, std::move(else_val));
   builder.EmitJump(merge_bb);
 
@@ -744,14 +831,18 @@ auto LowerConditional(
 
 auto LowerStructLiteral(
     const hir::StructLiteralExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
   const Type& type_info = (*ctx.type_arena)[expr.type];
 
   std::vector<mir::Operand> operands;
   operands.reserve(data.field_values.size());
   for (hir::ExpressionId field_id : data.field_values) {
-    operands.push_back(LowerExpression(field_id, builder));
+    Result<mir::Operand> field_result = LowerExpression(field_id, builder);
+    if (!field_result) {
+      return std::unexpected(field_result.error());
+    }
+    operands.push_back(*field_result);
   }
 
   if (type_info.Kind() == TypeKind::kPackedStruct) {
@@ -774,7 +865,7 @@ auto LowerStructLiteral(
 
 auto LowerCall(
     const hir::CallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Resolve mir::FunctionId from symbol (throws if not found)
@@ -791,7 +882,11 @@ auto LowerCall(
   std::vector<mir::Operand> args;
   args.reserve(data.arguments.size());
   for (hir::ExpressionId arg_id : data.arguments) {
-    args.push_back(LowerExpression(arg_id, builder));
+    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+    if (!arg_result) {
+      return std::unexpected(arg_result.error());
+    }
+    args.push_back(*arg_result);
   }
 
   mir::Rvalue rvalue{
@@ -805,11 +900,20 @@ auto LowerCall(
 
 auto LowerNewArray(
     const hir::NewArrayExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   std::vector<mir::Operand> operands;
-  operands.push_back(LowerExpression(data.size_expr, builder));
+  Result<mir::Operand> size_result = LowerExpression(data.size_expr, builder);
+  if (!size_result) {
+    return std::unexpected(size_result.error());
+  }
+  operands.push_back(*size_result);
   if (data.init_expr) {
-    operands.push_back(LowerExpression(*data.init_expr, builder));
+    Result<mir::Operand> init_result =
+        LowerExpression(*data.init_expr, builder);
+    if (!init_result) {
+      return std::unexpected(init_result.error());
+    }
+    operands.push_back(*init_result);
   }
 
   mir::Rvalue rvalue{
@@ -828,11 +932,15 @@ auto LowerNewArray(
 
 auto LowerArrayLiteral(
     const hir::ArrayLiteralExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   std::vector<mir::Operand> operands;
   operands.reserve(data.elements.size());
   for (hir::ExpressionId elem_id : data.elements) {
-    operands.push_back(LowerExpression(elem_id, builder));
+    Result<mir::Operand> elem_result = LowerExpression(elem_id, builder);
+    if (!elem_result) {
+      return std::unexpected(elem_result.error());
+    }
+    operands.push_back(*elem_result);
   }
 
   mir::Rvalue rvalue{
@@ -844,13 +952,18 @@ auto LowerArrayLiteral(
 
 auto LowerBuiltinMethodCall(
     const hir::BuiltinMethodCallExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
   const hir::Expression& receiver_expr = (*ctx.hir_arena)[data.receiver];
 
   switch (data.method) {
     case hir::BuiltinMethod::kSize: {
-      mir::Operand receiver = LowerExpression(data.receiver, builder);
+      Result<mir::Operand> receiver_result =
+          LowerExpression(data.receiver, builder);
+      if (!receiver_result) {
+        return std::unexpected(receiver_result.error());
+      }
+      mir::Operand receiver = *receiver_result;
       // Determine which size method based on receiver type
       const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
       mir::BuiltinMethod method = (receiver_type.Kind() == TypeKind::kQueue)
@@ -873,7 +986,11 @@ auto LowerBuiltinMethodCall(
     case hir::BuiltinMethod::kPopFront: {
       // Pop methods mutate the receiver AND return a value
       // Need receiver as PlaceId for mutation
-      LvalueResult lv = LowerLvalue(data.receiver, builder);
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) {
+        return std::unexpected(lv_result.error());
+      }
+      LvalueResult lv = *lv_result;
 
       mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPopBack)
                                       ? mir::BuiltinMethod::kQueuePopBack
@@ -894,10 +1011,18 @@ auto LowerBuiltinMethodCall(
 
     case hir::BuiltinMethod::kPushBack:
     case hir::BuiltinMethod::kPushFront: {
-      LvalueResult lv = LowerLvalue(data.receiver, builder);
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) {
+        return std::unexpected(lv_result.error());
+      }
+      LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        operands.push_back(LowerExpression(arg_id, builder));
+        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        if (!arg_result) {
+          return std::unexpected(arg_result.error());
+        }
+        operands.push_back(*arg_result);
       }
 
       mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPushBack)
@@ -919,10 +1044,18 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kInsert: {
-      LvalueResult lv = LowerLvalue(data.receiver, builder);
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) {
+        return std::unexpected(lv_result.error());
+      }
+      LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        operands.push_back(LowerExpression(arg_id, builder));
+        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        if (!arg_result) {
+          return std::unexpected(arg_result.error());
+        }
+        operands.push_back(*arg_result);
       }
 
       mir::Rvalue rvalue{
@@ -940,10 +1073,18 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kDelete: {
-      LvalueResult lv = LowerLvalue(data.receiver, builder);
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) {
+        return std::unexpected(lv_result.error());
+      }
+      LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        operands.push_back(LowerExpression(arg_id, builder));
+        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        if (!arg_result) {
+          return std::unexpected(arg_result.error());
+        }
+        operands.push_back(*arg_result);
       }
 
       // Determine method: kArrayDelete, kQueueDelete, or kQueueDeleteAt
@@ -974,12 +1115,22 @@ auto LowerBuiltinMethodCall(
     case hir::BuiltinMethod::kEnumNext:
     case hir::BuiltinMethod::kEnumPrev: {
       // operands[0] = receiver value
-      mir::Operand receiver_val = LowerExpression(data.receiver, builder);
+      Result<mir::Operand> receiver_result =
+          LowerExpression(data.receiver, builder);
+      if (!receiver_result) {
+        return std::unexpected(receiver_result.error());
+      }
+      mir::Operand receiver_val = *receiver_result;
       std::vector<mir::Operand> operands = {receiver_val};
 
       // operands[1] = optional step N
       if (!data.args.empty()) {
-        operands.push_back(LowerExpression(data.args[0], builder));
+        Result<mir::Operand> step_result =
+            LowerExpression(data.args[0], builder);
+        if (!step_result) {
+          return std::unexpected(step_result.error());
+        }
+        operands.push_back(*step_result);
       }
 
       // Get enum type from receiver
@@ -1010,7 +1161,12 @@ auto LowerBuiltinMethodCall(
 
     case hir::BuiltinMethod::kEnumName: {
       // operands[0] = receiver value
-      mir::Operand receiver_val = LowerExpression(data.receiver, builder);
+      Result<mir::Operand> receiver_result =
+          LowerExpression(data.receiver, builder);
+      if (!receiver_result) {
+        return std::unexpected(receiver_result.error());
+      }
+      mir::Operand receiver_val = *receiver_result;
 
       // Get enum type from receiver
       TypeId enum_type_id = receiver_expr.type;
@@ -1141,12 +1297,21 @@ auto EmitBitSelectOffset(
 
 auto LowerPackedElementSelect(
     const hir::PackedElementSelectExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  mir::Operand base_operand = LowerExpression(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
+
+  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = *index_result;
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1176,12 +1341,21 @@ auto LowerPackedElementSelect(
 
 auto LowerBitSelect(
     const hir::BitSelectExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  mir::Operand base_operand = LowerExpression(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
+
+  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = *index_result;
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1209,11 +1383,15 @@ auto LowerBitSelect(
 
 auto LowerRangeSelect(
     const hir::RangeSelectExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base expression
-  mir::Operand base_operand = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1393,12 +1571,21 @@ auto EmitIndexedPartSelectOffset(
 
 auto LowerIndexedPartSelect(
     const hir::IndexedPartSelectExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  mir::Operand base_operand = LowerExpression(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
+
+  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = *index_result;
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1428,11 +1615,15 @@ auto LowerIndexedPartSelect(
 
 auto LowerPackedFieldAccess(
     const hir::PackedFieldAccessExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> mir::Operand {
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base expression
-  mir::Operand base_operand = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
 
   // Get base expression type
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1467,11 +1658,15 @@ auto LowerPackedFieldAccess(
 
 auto LowerConcat(
     const hir::ConcatExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   std::vector<mir::Operand> operands;
   operands.reserve(data.operands.size());
   for (hir::ExpressionId op_id : data.operands) {
-    operands.push_back(LowerExpression(op_id, builder));
+    Result<mir::Operand> op_result = LowerExpression(op_id, builder);
+    if (!op_result) {
+      return std::unexpected(op_result.error());
+    }
+    operands.push_back(*op_result);
   }
 
   mir::Rvalue rvalue{
@@ -1483,7 +1678,7 @@ auto LowerConcat(
 
 auto LowerMathCall(
     const hir::MathCallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> mir::Operand {
+    MirBuilder& builder) -> Result<mir::Operand> {
   int expected_arity = GetMathFnArity(data.fn);
   if (static_cast<int>(data.args.size()) != expected_arity) {
     throw common::InternalError(
@@ -1496,7 +1691,11 @@ auto LowerMathCall(
   std::vector<mir::Operand> operands;
   operands.reserve(data.args.size());
   for (hir::ExpressionId arg_id : data.args) {
-    operands.push_back(LowerExpression(arg_id, builder));
+    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+    if (!arg_result) {
+      return std::unexpected(arg_result.error());
+    }
+    operands.push_back(*arg_result);
   }
 
   mir::Rvalue rvalue{
@@ -1508,11 +1707,20 @@ auto LowerMathCall(
 
 auto LowerElementAccessRvalue(
     const hir::ElementAccessExpressionData& data, MirBuilder& builder)
-    -> mir::Operand {
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  mir::Operand base_operand = LowerExpression(data.base, builder);
-  mir::Operand index_operand = LowerExpression(data.index, builder);
+  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  if (!base_result) {
+    return std::unexpected(base_result.error());
+  }
+  mir::Operand base_operand = *base_result;
+
+  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  if (!index_result) {
+    return std::unexpected(index_result.error());
+  }
+  mir::Operand index_operand = *index_result;
 
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
   mir::PlaceId base_place =
@@ -1542,11 +1750,11 @@ auto LowerElementAccessRvalue(
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
-    -> mir::Operand {
+    -> Result<mir::Operand> {
   const hir::Expression& expr = (*builder.GetContext().hir_arena)[expr_id];
 
   return std::visit(
-      [&](const auto& data) -> mir::Operand {
+      [&](const auto& data) -> Result<mir::Operand> {
         using T = std::decay_t<decltype(data)>;
         if constexpr (std::is_same_v<T, hir::ConstantExpressionData>) {
           return LowerConstant(data, builder);
@@ -1592,12 +1800,20 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
                 lit->field_values[data.field_index], builder);
           }
           // Addressable base — use existing lvalue+load path
-          LvalueResult lv = LowerLvalue(expr_id, builder);
+          Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
+          if (!lv_result) {
+            return std::unexpected(lv_result.error());
+          }
+          LvalueResult lv = *lv_result;
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
           // Union member access - always valid (member index is compile-time)
-          LvalueResult lv = LowerLvalue(expr_id, builder);
+          Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
+          if (!lv_result) {
+            return std::unexpected(lv_result.error());
+          }
+          LvalueResult lv = *lv_result;
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
