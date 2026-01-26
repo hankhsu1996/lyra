@@ -1,6 +1,8 @@
+#include <expected>
 #include <variant>
 
-#include "llvm/IR/Constants.h"
+#include <llvm/IR/Constants.h>
+
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
@@ -9,14 +11,19 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-void AssignUnion(
+auto AssignUnion(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId union_type_id) {
+    TypeId union_type_id) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
-  auto info = GetUnionStorageInfo(context, union_type_id);
+  auto target_ptr_result = context.GetPlacePointer(target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
+
+  auto info_result = GetUnionStorageInfo(context, union_type_id);
+  if (!info_result) return std::unexpected(info_result.error());
+  auto info = *info_result;
 
   // Source must be a PlaceId for union assignment
   const auto* src_place_id = std::get_if<mir::PlaceId>(&source.payload);
@@ -35,7 +42,9 @@ void AssignUnion(
         "AssignUnion", "source place type does not match target union type");
   }
 
-  llvm::Value* source_ptr = context.GetPlacePointer(*src_place_id);
+  auto source_ptr_result = context.GetPlacePointer(*src_place_id);
+  if (!source_ptr_result) return std::unexpected(source_ptr_result.error());
+  llvm::Value* source_ptr = *source_ptr_result;
 
   // memcpy from source to target
   builder.CreateMemCpy(
@@ -53,15 +62,18 @@ void AssignUnion(
          llvm::ConstantInt::get(i32_ty, info.size),
          llvm::ConstantInt::get(i32_ty, signal_id)});
   }
+  return {};
 }
 
-void ConstructDefaultUnion(
-    Context& context, llvm::Value* ptr, TypeId union_type_id) {
+auto ConstructDefaultUnion(
+    Context& context, llvm::Value* ptr, TypeId union_type_id) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
   const Type& type = types[union_type_id];
   const auto& union_info = type.AsUnpackedUnion();
-  auto info = GetUnionStorageInfo(context, union_type_id);
+  auto info_result = GetUnionStorageInfo(context, union_type_id);
+  if (!info_result) return std::unexpected(info_result.error());
+  auto info = *info_result;
 
   // 1. Zero entire storage
   builder.CreateMemSet(
@@ -72,13 +84,14 @@ void ConstructDefaultUnion(
   // we would need to recursively construct, but for now zero is sufficient
   // for 2-state types (which is the scope of this PR).
   if (union_info.members.empty()) {
-    return;  // Empty union (shouldn't happen)
+    return {};  // Empty union (shouldn't happen)
   }
 
   // For integral/real types, zero is already correct.
   // For struct/array members, we would need to call ConstructDefault,
   // but since all members overlay at offset 0, zero-init suffices for
   // 2-state types as long as the first member's default is zero-valued.
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

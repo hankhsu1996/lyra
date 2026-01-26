@@ -2,20 +2,24 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/raw_ostream.h"
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -180,7 +184,7 @@ void EmitTimeReport(Context& context) {
   context.GetBuilder().CreateCall(context.GetLyraReportTime());
 }
 
-auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
+auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Create LLVM context and module
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
@@ -195,7 +199,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   // Create context with layout
   Context context(
       *input.design, *input.mir_arena, *input.type_arena, layout,
-      std::move(llvm_ctx), std::move(module));
+      std::move(llvm_ctx), std::move(module), input.diag_ctx);
 
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -219,14 +223,17 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
   declared_funcs.reserve(all_func_ids.size());
   for (size_t i = 0; i < all_func_ids.size(); ++i) {
     mir::FunctionId func_id = all_func_ids[i];
-    auto* llvm_func =
+    auto llvm_func_or_err =
         DeclareUserFunction(context, func_id, std::format("user_func_{}", i));
+    if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
+    llvm::Function* llvm_func = *llvm_func_or_err;
     declared_funcs.emplace_back(func_id, llvm_func);
   }
 
   // Pass 2: Define all user functions (emits bodies, can reference other funcs)
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    DefineUserFunction(context, func_id, llvm_func);
+    auto result = DefineUserFunction(context, func_id, llvm_func);
+    if (!result) return std::unexpected(result.error());
   }
 
   // Generate process functions (use process_ids from layout for single source
@@ -241,9 +248,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult {
     mir::ProcessId proc_id = layout.process_ids[i];
     const auto& mir_process = (*input.mir_arena)[proc_id];
 
-    auto* func = GenerateProcessFunction(
+    auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
-    process_funcs.push_back(func);
+    if (!func_result) return std::unexpected(func_result.error());
+    process_funcs.push_back(*func_result);
   }
 
   // Create main function: int main()

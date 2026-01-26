@@ -1,10 +1,19 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 
+#include <expected>
+#include <memory>
+#include <utility>
 #include <variant>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/verify.hpp"
@@ -41,15 +50,17 @@ void VerifyLoweredMir(
 
 }  // namespace
 
-auto LowerHirToMir(const LoweringInput& input) -> LoweringResult {
+auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   auto mir_arena = std::make_unique<mir::Arena>();
   OriginMap origin_map;
 
   LoweringInput full_input = input;
   full_input.builtin_types = InternBuiltinTypes(*input.type_arena);
 
-  mir::Design design =
+  auto design_result =
       LowerDesign(*input.design, full_input, *mir_arena, &origin_map);
+  if (!design_result) return std::unexpected(design_result.error());
+  mir::Design design = std::move(*design_result);
 
   // Single verification gate at the end of lowering
   VerifyLoweredMir(design, *mir_arena, *input.type_arena);

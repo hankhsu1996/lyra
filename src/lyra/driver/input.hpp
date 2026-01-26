@@ -8,6 +8,7 @@
 
 #include "config.hpp"
 #include "frontend.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 
 namespace lyra::driver {
 
@@ -18,13 +19,15 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string>;
 void AddCompilationFlags(argparse::ArgumentParser& cmd);
 
 // Merge CLI arguments and optional config into a CompilationInput.
-// Returns nullopt and prints an error on failure.
+// Returns error Diagnostic on failure.
 auto BuildInput(
     const argparse::ArgumentParser& cmd,
     const std::optional<ProjectConfig>& config)
-    -> std::optional<CompilationInput>;
+    -> lyra::Result<CompilationInput>;
 
-// Load lyra.toml from current directory (or parents). Returns nullopt if none.
-auto LoadOptionalConfig() -> std::optional<ProjectConfig>;
+// Load lyra.toml from current directory (or parents).
+// Returns nullopt wrapped in Result if no config found.
+// Returns error Diagnostic if config found but invalid.
+auto LoadOptionalConfig() -> lyra::Result<std::optional<ProjectConfig>>;
 
 }  // namespace lyra::driver

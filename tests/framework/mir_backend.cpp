@@ -9,6 +9,7 @@
 #include <iterator>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -112,8 +113,10 @@ auto RunMirInterpreter(
   if (sink.HasErrors()) {
     std::ostringstream error_stream;
     for (const auto& diagnostic : sink.GetDiagnostics()) {
-      if (diagnostic.severity == DiagnosticSeverity::kError) {
-        error_stream << diagnostic.message << "\n";
+      if (diagnostic.primary.kind == DiagKind::kError ||
+          diagnostic.primary.kind == DiagKind::kUnsupported ||
+          diagnostic.primary.kind == DiagKind::kHostError) {
+        error_stream << diagnostic.primary.message << "\n";
       }
     }
     result.error_message = "HIR lowering errors:\n" + error_stream.str();
@@ -131,6 +134,11 @@ auto RunMirInterpreter(
       .binding_plan = &hir_result.binding_plan,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  if (!mir_result) {
+    result.error_message = std::format(
+        "MIR lowering error: {}", mir_result.error().primary.message);
+    return result;
+  }
 
   // Find the top HIR module (the one with processes) for variable assertions
   const hir::Module* hir_module = nullptr;
@@ -174,8 +182,8 @@ auto RunMirInterpreter(
   }
 
   // Find initial module
-  auto module_info =
-      mir::interp::FindInitialModule(mir_result.design, *mir_result.mir_arena);
+  auto module_info = mir::interp::FindInitialModule(
+      mir_result->design, *mir_result->mir_arena);
   if (!module_info) {
     result.error_message = "No initial process found (no kOnce process in MIR)";
     return result;
@@ -183,7 +191,7 @@ auto RunMirInterpreter(
 
   // Create design storage
   auto design_state = mir::interp::CreateDesignState(
-      *mir_result.mir_arena, *hir_result.type_arena, mir_result.design);
+      *mir_result->mir_arena, *hir_result.type_arena, mir_result->design);
 
   // Initialize design slots from HIR variable types.
   // CreateDesignState only initializes slots that are referenced in code; this
@@ -221,7 +229,7 @@ auto RunMirInterpreter(
   // Run interpreter with output capture
   std::ostringstream output_stream;
   mir::interp::Interpreter interpreter(
-      mir_result.mir_arena.get(), hir_result.type_arena.get());
+      mir_result->mir_arena.get(), hir_result.type_arena.get());
   interpreter.SetOutput(&output_stream);
   interpreter.SetPlusargs(test_case.plusargs);
 
@@ -232,17 +240,22 @@ auto RunMirInterpreter(
   }
 
   // Run design init processes (package variable initialization)
-  for (mir::ProcessId proc_id : mir_result.design.init_processes) {
+  for (mir::ProcessId proc_id : mir_result->design.init_processes) {
     auto state = mir::interp::CreateProcessState(
-        *mir_result.mir_arena, *hir_result.type_arena, proc_id, &design_state);
-    interpreter.Run(state);
+        *mir_result->mir_arena, *hir_result.type_arena, proc_id, &design_state);
+    auto run_result = interpreter.Run(state);
+    if (!run_result) {
+      result.error_message = std::format(
+          "Init process error: {}", run_result.error().primary.message);
+      return result;
+    }
   }
 
   // Create process states for all initial processes
   std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
   for (mir::ProcessId proc_id : module_info->initial_processes) {
     auto state = mir::interp::CreateProcessState(
-        *mir_result.mir_arena, *hir_result.type_arena, proc_id, &design_state);
+        *mir_result->mir_arena, *hir_result.type_arena, proc_id, &design_state);
     process_states.emplace(proc_id.value, std::move(state));
   }
 
@@ -261,7 +274,11 @@ auto RunMirInterpreter(
       state.instruction_index = resume.instruction_index;
       state.status = mir::interp::ProcessStatus::kRunning;
 
-      auto reason = interpreter.RunUntilSuspend(state);
+      auto reason_result = interpreter.RunUntilSuspend(state);
+      if (!reason_result) {
+        throw std::runtime_error(reason_result.error().primary.message);
+      }
+      auto& reason = *reason_result;
 
       std::visit(
           common::Overloaded{

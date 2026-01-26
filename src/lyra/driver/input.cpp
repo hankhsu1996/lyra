@@ -1,14 +1,19 @@
 #include "input.hpp"
 
-#include <exception>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "print.hpp"
+#include "argparse/argparse.hpp"
+#include "config.hpp"
+#include "frontend.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 
 namespace lyra::driver {
 namespace {
@@ -27,12 +32,13 @@ struct CommandFileResult {
 // - +define+<macro>[=<value>] for defines
 // - File paths (everything else)
 auto ParseCommandFile(const fs::path& path, bool relative_to_file)
-    -> CommandFileResult {
+    -> lyra::Result<CommandFileResult> {
   CommandFileResult result;
   std::ifstream in(path);
   if (!in) {
-    throw std::runtime_error(
-        std::format("cannot open command file '{}'", path.string()));
+    return std::unexpected(
+        Diagnostic::HostError(
+            std::format("cannot open command file '{}'", path.string())));
   }
 
   fs::path base =
@@ -113,7 +119,7 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
 auto BuildInput(
     const argparse::ArgumentParser& cmd,
     const std::optional<ProjectConfig>& config)
-    -> std::optional<CompilationInput> {
+    -> lyra::Result<CompilationInput> {
   CompilationInput input;
 
   // Expand command files first
@@ -121,36 +127,33 @@ auto BuildInput(
   std::vector<std::string> cmdfile_incdirs;
   std::vector<std::string> cmdfile_defines;
 
-  try {
-    if (auto vals = cmd.present<std::vector<std::string>>("-f")) {
-      for (const auto& f : *vals) {
-        auto expanded = ParseCommandFile(f, false);
-        cmdfile_files.insert(
-            cmdfile_files.end(), expanded.files.begin(), expanded.files.end());
-        cmdfile_incdirs.insert(
-            cmdfile_incdirs.end(), expanded.incdirs.begin(),
-            expanded.incdirs.end());
-        cmdfile_defines.insert(
-            cmdfile_defines.end(), expanded.defines.begin(),
-            expanded.defines.end());
-      }
+  if (auto vals = cmd.present<std::vector<std::string>>("-f")) {
+    for (const auto& f : *vals) {
+      auto expanded = ParseCommandFile(f, false);
+      if (!expanded) return std::unexpected(expanded.error());
+      cmdfile_files.insert(
+          cmdfile_files.end(), expanded->files.begin(), expanded->files.end());
+      cmdfile_incdirs.insert(
+          cmdfile_incdirs.end(), expanded->incdirs.begin(),
+          expanded->incdirs.end());
+      cmdfile_defines.insert(
+          cmdfile_defines.end(), expanded->defines.begin(),
+          expanded->defines.end());
     }
-    if (auto vals = cmd.present<std::vector<std::string>>("-F")) {
-      for (const auto& f : *vals) {
-        auto expanded = ParseCommandFile(f, true);
-        cmdfile_files.insert(
-            cmdfile_files.end(), expanded.files.begin(), expanded.files.end());
-        cmdfile_incdirs.insert(
-            cmdfile_incdirs.end(), expanded.incdirs.begin(),
-            expanded.incdirs.end());
-        cmdfile_defines.insert(
-            cmdfile_defines.end(), expanded.defines.begin(),
-            expanded.defines.end());
-      }
+  }
+  if (auto vals = cmd.present<std::vector<std::string>>("-F")) {
+    for (const auto& f : *vals) {
+      auto expanded = ParseCommandFile(f, true);
+      if (!expanded) return std::unexpected(expanded.error());
+      cmdfile_files.insert(
+          cmdfile_files.end(), expanded->files.begin(), expanded->files.end());
+      cmdfile_incdirs.insert(
+          cmdfile_incdirs.end(), expanded->incdirs.begin(),
+          expanded->incdirs.end());
+      cmdfile_defines.insert(
+          cmdfile_defines.end(), expanded->defines.begin(),
+          expanded->defines.end());
     }
-  } catch (const std::exception& e) {
-    PrintError(e.what());
-    return std::nullopt;
   }
 
   // Files: CLI replaces config entirely; command files are additive to CLI
@@ -165,8 +168,7 @@ auto BuildInput(
       input.files.end(), cmdfile_files.begin(), cmdfile_files.end());
 
   if (input.files.empty()) {
-    PrintError("no input files");
-    return std::nullopt;
+    return std::unexpected(Diagnostic::HostError("no input files"));
   }
 
   // Top: CLI overrides config (scalar)
@@ -199,12 +201,14 @@ auto BuildInput(
   return input;
 }
 
-auto LoadOptionalConfig() -> std::optional<ProjectConfig> {
+auto LoadOptionalConfig() -> lyra::Result<std::optional<ProjectConfig>> {
   auto config_path = FindConfig();
   if (!config_path) {
     return std::nullopt;
   }
-  return LoadConfig(*config_path);
+  auto config = LoadConfig(*config_path);
+  if (!config) return std::unexpected(config.error());
+  return *config;
 }
 
 }  // namespace lyra::driver

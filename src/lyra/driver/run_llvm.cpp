@@ -5,22 +5,22 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+// POSIX headers
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <vector>
 
 #include <fmt/color.h>
 #include <fmt/core.h>
 
 #include "frontend.hpp"
-#include "lyra/common/overloaded.hpp"
-#include "lyra/common/unsupported_error.hpp"
-#include "lyra/hir/expression.hpp"
-#include "lyra/hir/routine.hpp"
-#include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/lower.hpp"
-#include "lyra/lowering/origin_map.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
@@ -142,95 +142,31 @@ auto RunLli(const std::string& runtime_path, const std::string& ir_path)
   return -1;
 }
 
-// Resolve an UnsupportedError origin to a source location string.
-// Returns the location if resolvable, otherwise returns empty string.
-auto ResolveErrorLocation(
-    const common::UnsupportedError& error, const CompilationResult& compilation)
-    -> std::string {
-  if (!error.origin.IsValid()) {
-    return "";
-  }
-
-  auto entry = compilation.mir.origin_map.Resolve(error.origin);
-  if (!entry) {
-    return "";
-  }
-
-  return std::visit(
-      common::Overloaded{
-          [&](hir::StatementId stmt_id) {
-            const hir::Statement& stmt = (*compilation.hir.hir_arena)[stmt_id];
-            return FormatSourceLocation(
-                stmt.span, *compilation.hir.source_manager);
-          },
-          [&](hir::ExpressionId expr_id) {
-            const hir::Expression& expr = (*compilation.hir.hir_arena)[expr_id];
-            return FormatSourceLocation(
-                expr.span, *compilation.hir.source_manager);
-          },
-          [&](hir::FunctionId func_id) {
-            const hir::Function& func = (*compilation.hir.hir_arena)[func_id];
-            return FormatSourceLocation(
-                func.span, *compilation.hir.source_manager);
-          },
-          [&](hir::ProcessId proc_id) {
-            const hir::Process& proc = (*compilation.hir.hir_arena)[proc_id];
-            return FormatSourceLocation(
-                proc.span, *compilation.hir.source_manager);
-          },
-          [&](lowering::FunctionParamRef ref) {
-            // Use function span for parameter errors (parameters don't have
-            // individual spans in our representation yet).
-            const hir::Function& func = (*compilation.hir.hir_arena)[ref.func];
-            return FormatSourceLocation(
-                func.span, *compilation.hir.source_manager);
-          },
-      },
-      entry->hir_source);
-}
-
 }  // namespace
 
 auto RunLlvm(const CompilationInput& input) -> int {
-  std::optional<CompilationResult> compilation;
-  try {
-    auto result = CompileToMir(input);
-    if (!result) {
-      result.error().Print();
-      return 1;
-    }
-    compilation = std::move(*result);
-  } catch (const common::UnsupportedErrorException& e) {
-    // HIR->MIR threw unsupported error - can't resolve origin yet (no mir)
-    // Fall back to just printing the message
-    PrintError(e.what());
+  auto result = CompileToMir(input);
+  if (!result) {
+    result.error().Print();
     return 1;
   }
+  auto compilation = std::move(*result);
+
+  // Create diagnostic context for LLVM backend error reporting
+  lowering::OriginMapLookup origin_lookup(
+      &compilation.mir.origin_map, compilation.hir.hir_arena.get());
+  lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
-      .design = &compilation->mir.design,
-      .mir_arena = compilation->mir.mir_arena.get(),
-      .type_arena = compilation->hir.type_arena.get(),
+      .design = &compilation.mir.design,
+      .mir_arena = compilation.mir.mir_arena.get(),
+      .type_arena = compilation.hir.type_arena.get(),
+      .diag_ctx = &diag_ctx,
   };
 
-  lowering::mir_to_llvm::LoweringResult llvm_result;
-  try {
-    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
-  } catch (const common::UnsupportedErrorException& e) {
-    std::string location = ResolveErrorLocation(e.GetError(), *compilation);
-    if (!location.empty()) {
-      fmt::print(
-          stderr, "{}: {} {}\n", fmt::styled(location, fmt::emphasis::bold),
-          fmt::styled(
-              "error:",
-              fmt::fg(fmt::terminal_color::bright_red) | fmt::emphasis::bold),
-          fmt::styled(e.what(), fmt::emphasis::bold));
-    } else {
-      PrintError(e.what());
-    }
-    return 1;
-  } catch (const std::exception& e) {
-    PrintError(e.what());
+  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  if (!llvm_result) {
+    PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
     return 1;
   }
 
@@ -248,7 +184,7 @@ auto RunLlvm(const CompilationInput& input) -> int {
       PrintError(fmt::format("failed to write to {}", ir_path));
       return 1;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
   }
 
   std::vector<std::string> tried_paths;

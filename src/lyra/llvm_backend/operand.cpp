@@ -1,17 +1,27 @@
 #include "lyra/llvm_backend/operand.hpp"
 
+#include <cstdint>
+#include <expected>
 #include <utility>
+#include <variant>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/Support/Casting.h>
+
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/four_state.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/llvm_backend/context.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -20,17 +30,26 @@ namespace {
 // Load a place with BitRangeProjection: load base, lshr by offset, mask.
 // Invariant: offset is always in-range (dynamic offsets are guarded by
 // GuardedUse/IndexValidity which branches to OOB default before reaching here).
-auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
+auto LoadBitRange(Context& context, mir::PlaceId place_id)
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  auto [offset, width] = context.ComposeBitRange(place_id);
+  auto br_result = context.ComposeBitRange(place_id);
+  if (!br_result) return std::unexpected(br_result.error());
+  auto [offset, width] = *br_result;
 
   // Load the full base value
-  llvm::Value* ptr = context.GetPlacePointer(place_id);
-  llvm::Type* base_type = context.GetPlaceBaseType(place_id);
+  auto ptr_result = context.GetPlacePointer(place_id);
+  if (!ptr_result) return std::unexpected(ptr_result.error());
+  llvm::Value* ptr = *ptr_result;
+  auto base_type_result = context.GetPlaceBaseType(place_id);
+  if (!base_type_result) return std::unexpected(base_type_result.error());
+  llvm::Type* base_type = *base_type_result;
   llvm::Value* base = builder.CreateLoad(base_type, ptr, "base");
 
   // Get the element LLVM type for the result
-  llvm::Type* elem_type = context.GetPlaceLlvmType(place_id);
+  auto elem_type_result = context.GetPlaceLlvmType(place_id);
+  if (!elem_type_result) return std::unexpected(elem_type_result.error());
+  llvm::Type* elem_type = *elem_type_result;
 
   if (base_type->isStructTy()) {
     // 4-state base: shift+trunc both planes
@@ -100,27 +119,32 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id) -> llvm::Value* {
 }  // namespace
 
 auto LowerOperandRaw(Context& context, const mir::Operand& operand)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
-          [&context](const Constant& constant) {
+          [&context](const Constant& constant) -> Result<llvm::Value*> {
             return LowerConstant(context, constant);
           },
-          [&context](mir::PlaceId place_id) -> llvm::Value* {
+          [&context](mir::PlaceId place_id) -> Result<llvm::Value*> {
             if (context.HasBitRangeProjection(place_id)) {
               return LoadBitRange(context, place_id);
             }
-            llvm::Value* ptr = context.GetPlacePointer(place_id);
-            llvm::Type* type = context.GetPlaceLlvmType(place_id);
-            return context.GetBuilder().CreateLoad(type, ptr, "load");
+            auto ptr_result = context.GetPlacePointer(place_id);
+            if (!ptr_result) return std::unexpected(ptr_result.error());
+            auto type_result = context.GetPlaceLlvmType(place_id);
+            if (!type_result) return std::unexpected(type_result.error());
+            return context.GetBuilder().CreateLoad(
+                *type_result, *ptr_result, "load");
           },
       },
       operand.payload);
 }
 
 auto LowerOperand(Context& context, const mir::Operand& operand)
-    -> llvm::Value* {
-  llvm::Value* val = LowerOperandRaw(context, operand);
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  llvm::Value* val = *val_or_err;
 
   // Coerce 4-state struct to 2-state integer: value & ~unknown (known bits)
   if (val->getType()->isStructTy()) {
@@ -135,8 +159,10 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
 
 auto LowerOperandAsStorage(
     Context& context, const mir::Operand& operand, llvm::Type* target_type)
-    -> llvm::Value* {
-  llvm::Value* val = LowerOperandRaw(context, operand);
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  llvm::Value* val = *val_or_err;
 
   if (val->getType() == target_type) {
     return val;
@@ -182,12 +208,13 @@ auto LowerOperandAsStorage(
       "unsupported storage coercion: source and target types incompatible");
 }
 
-auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
+auto LowerConstant(Context& context, const Constant& constant)
+    -> Result<llvm::Value*> {
   auto& llvm_ctx = context.GetLlvmContext();
 
   return std::visit(
       common::Overloaded{
-          [&](const IntegralConstant& integral) -> llvm::Value* {
+          [&](const IntegralConstant& integral) -> Result<llvm::Value*> {
             // Get semantic bit width from type
             const Type& type = context.GetTypeArena()[constant.type];
             uint32_t bit_width = PackedBitWidth(type, context.GetTypeArena());
@@ -227,7 +254,7 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             // 2-state constant: simple integer
             return llvm::ConstantInt::get(llvm_ctx, value_ap);
           },
-          [&](const StringConstant& str) -> llvm::Value* {
+          [&](const StringConstant& str) -> Result<llvm::Value*> {
             auto& builder = context.GetBuilder();
             auto* data = builder.CreateGlobalStringPtr(str.value);
             auto* len = llvm::ConstantInt::get(
@@ -235,7 +262,7 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             return builder.CreateCall(
                 context.GetLyraStringFromLiteral(), {data, len}, "str.handle");
           },
-          [&](const RealConstant& real) -> llvm::Value* {
+          [&](const RealConstant& real) -> Result<llvm::Value*> {
             const Type& type = context.GetTypeArena()[constant.type];
             if (type.Kind() == TypeKind::kShortReal) {
               return llvm::ConstantFP::get(
@@ -245,17 +272,19 @@ auto LowerConstant(Context& context, const Constant& constant) -> llvm::Value* {
             return llvm::ConstantFP::get(
                 llvm::Type::getDoubleTy(llvm_ctx), real.value);
           },
-          [&](const StructConstant& /*s*/) -> llvm::Value* {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
-                "struct constants not yet supported");
+          [&](const StructConstant& /*s*/) -> Result<llvm::Value*> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    "struct constants not yet supported",
+                    UnsupportedCategory::kType));
           },
-          [&](const ArrayConstant& /*a*/) -> llvm::Value* {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
-                "array constants not yet supported");
+          [&](const ArrayConstant& /*a*/) -> Result<llvm::Value*> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    "array constants not yet supported",
+                    UnsupportedCategory::kType));
           },
       },
       constant.value);

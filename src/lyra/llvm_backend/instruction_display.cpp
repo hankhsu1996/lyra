@@ -1,19 +1,32 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 
+#include <cstdint>
+#include <expected>
+#include <format>
+
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/effect.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
+auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
+    -> Result<void> {
   if (display.descriptor) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
-        "$fdisplay/$fwrite not supported in LLVM backend");
+        "$fdisplay/$fwrite not supported in LLVM backend",
+        UnsupportedCategory::kFeature));
   }
 
   auto& builder = context.GetBuilder();
@@ -34,7 +47,9 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
       // String: pass the handle to LyraPrintString (layout stays private to
       // runtime)
       if (op.value.has_value()) {
-        llvm::Value* handle = LowerOperand(context, *op.value);
+        auto handle_or_err = LowerOperand(context, *op.value);
+        if (!handle_or_err) return std::unexpected(handle_or_err.error());
+        llvm::Value* handle = *handle_or_err;
         builder.CreateCall(context.GetLyraPrintString(), {handle});
       }
     } else {
@@ -63,7 +78,9 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
       // Get pointer to the value
       llvm::Value* data_ptr = nullptr;
       if (op.value.has_value()) {
-        llvm::Value* value = LowerOperand(context, *op.value);
+        auto value_or_err = LowerOperand(context, *op.value);
+        if (!value_or_err) return std::unexpected(value_or_err.error());
+        llvm::Value* value = *value_or_err;
 
         if (is_real) {
           // For real types, allocate matching float type and store
@@ -74,13 +91,14 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
           // For integral types, allocate storage sized to match width
           // This ensures LyraPrintValue can read the correct number of bytes
           if (width > 64) {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kType, context.GetCurrentOrigin(),
-                std::format(
-                    "display of values wider than 64 bits not yet supported "
-                    "(got {} bits)",
-                    width));
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    std::format(
+                        "display of values wider than 64 bits not yet "
+                        "supported (got {} bits)",
+                        width),
+                    UnsupportedCategory::kType));
           }
 
           llvm::Type* storage_ty = nullptr;
@@ -145,6 +163,7 @@ void LowerDisplayEffect(Context& context, const mir::DisplayEffect& display) {
   auto* kind_val =
       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(display.print_kind));
   builder.CreateCall(context.GetLyraPrintEnd(), {kind_val});
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -16,6 +16,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/design.hpp"
@@ -291,8 +292,8 @@ auto FindInitialModule(const Design& design, const Arena& arena)
 
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
-    std::ostream* output, std::span<const std::string> plusargs)
-    -> SimulationResult {
+    std::ostream* output, std::span<const std::string> plusargs,
+    const lowering::DiagnosticContext* diag_ctx) -> SimulationResult {
   // Find initial module
   auto module_info = FindInitialModule(design, mir_arena);
   if (!module_info) {
@@ -304,7 +305,7 @@ auto RunSimulation(
   auto design_state = CreateDesignState(mir_arena, types, design);
 
   // Create interpreter
-  Interpreter interp(&mir_arena, &types);
+  Interpreter interp(&mir_arena, &types, diag_ctx);
   if (output != nullptr) {
     interp.SetOutput(output);
   } else {
@@ -316,7 +317,11 @@ auto RunSimulation(
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
-    interp.Run(state);
+    auto result = interp.Run(state);
+    if (!result) {
+      return SimulationResult{
+          .exit_code = 1, .error_message = result.error().primary.message};
+    }
   }
 
   // Create process states
@@ -326,10 +331,17 @@ auto RunSimulation(
     process_states.emplace(proc_id.value, std::move(state));
   }
 
+  // Error from callback (captured by reference)
+  std::optional<Diagnostic> callback_error;
+
   // Create engine with suspension handler
   runtime::Engine engine([&](runtime::Engine& eng,
                              runtime::ProcessHandle handle,
                              runtime::ResumePoint resume) {
+    if (callback_error) {
+      return;  // Stop processing if we already have an error
+    }
+
     auto it = process_states.find(handle.process_id);
     if (it == process_states.end()) {
       return;
@@ -340,7 +352,11 @@ auto RunSimulation(
     state.instruction_index = resume.instruction_index;
     state.status = ProcessStatus::kRunning;
 
-    auto reason = interp.RunUntilSuspend(state);
+    auto reason_result = interp.RunUntilSuspend(state);
+    if (!reason_result) {
+      callback_error = std::move(reason_result).error();
+      return;
+    }
 
     std::visit(
         common::Overloaded{
@@ -371,7 +387,7 @@ auto RunSimulation(
                   1);
             },
         },
-        reason);
+        *reason_result);
   });
 
   // Schedule initial processes
@@ -387,6 +403,12 @@ auto RunSimulation(
     return SimulationResult{
         .exit_code = 1,
         .error_message = std::format("runtime error: {}", e.what())};
+  }
+
+  // Check if callback encountered an error
+  if (callback_error) {
+    return SimulationResult{
+        .exit_code = 1, .error_message = callback_error->primary.message};
   }
 
   return SimulationResult{.exit_code = 0, .error_message = {}};

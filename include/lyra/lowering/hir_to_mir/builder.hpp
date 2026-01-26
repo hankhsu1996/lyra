@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"

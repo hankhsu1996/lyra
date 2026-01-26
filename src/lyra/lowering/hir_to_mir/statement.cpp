@@ -1,6 +1,8 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
 #include <cstdint>
+#include <expected>
+#include <functional>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -8,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
@@ -52,32 +55,44 @@ class LoopGuard {
   MirBuilder& builder_;
 };
 
-void LowerBlock(const hir::BlockStatementData& data, MirBuilder& builder) {
+auto LowerBlock(const hir::BlockStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   for (hir::StatementId stmt_id : data.statements) {
-    LowerStatement(stmt_id, builder);
+    Result<void> result = LowerStatement(stmt_id, builder);
+    if (!result) return std::unexpected(result.error());
   }
+  return {};
 }
 
-void LowerVariableDeclaration(
-    const hir::VariableDeclarationStatementData& data, MirBuilder& builder) {
+auto LowerVariableDeclaration(
+    const hir::VariableDeclarationStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
   const Symbol& sym = (*ctx.symbol_table)[data.symbol];
   auto alloc = ctx.AllocLocal(data.symbol, sym.type);
 
   if (data.init != hir::kInvalidExpressionId) {
-    mir::Operand value = LowerExpression(data.init, builder);
-    builder.EmitAssign(alloc.place, std::move(value));
+    Result<mir::Operand> value_result = LowerExpression(data.init, builder);
+    if (!value_result) return std::unexpected(value_result.error());
+    builder.EmitAssign(alloc.place, std::move(*value_result));
   }
+  return {};
 }
 
-void LowerAssignment(
-    const hir::AssignmentStatementData& data, MirBuilder& builder) {
-  LvalueResult target = LowerLvalue(data.target, builder);
-  mir::Operand value = LowerExpression(data.value, builder);
+auto LowerAssignment(
+    const hir::AssignmentStatementData& data, MirBuilder& builder)
+    -> Result<void> {
+  Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
+  if (!target_result) return std::unexpected(target_result.error());
+  LvalueResult target = *target_result;
+
+  Result<mir::Operand> value_result = LowerExpression(data.value, builder);
+  if (!value_result) return std::unexpected(value_result.error());
+  mir::Operand value = *value_result;
 
   if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, std::move(value));
-    return;
+    return {};
   }
 
   // Guarded store: only write if validity is true (OOB/X/Z = no-op)
@@ -100,16 +115,21 @@ void LowerAssignment(
   builder.EmitJump(merge_bb);
 
   builder.SetCurrentBlock(merge_bb);
+  return {};
 }
 
-void LowerDisplayEffect(
-    const hir::DisplaySystemCallData& data, MirBuilder& builder) {
+auto LowerDisplayEffect(
+    const hir::DisplaySystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // Lower descriptor first (single eval, before format args)
   std::optional<mir::Operand> mir_descriptor;
   if (data.descriptor) {
-    mir::Operand desc_val = LowerExpression(*data.descriptor, builder);
+    Result<mir::Operand> desc_result =
+        LowerExpression(*data.descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+    mir::Operand desc_val = *desc_result;
     // Materialize to a temp so it's evaluated once
     const hir::Expression& desc_expr = (*ctx.hir_arena)[*data.descriptor];
     mir::PlaceId temp = ctx.AllocTemp(desc_expr.type);
@@ -131,7 +151,10 @@ void LowerDisplayEffect(
               .mods = {}});
     } else {
       // Lower the value expression and get its type
-      mir::Operand operand = LowerExpression(*hir_op.value, builder);
+      Result<mir::Operand> operand_result =
+          LowerExpression(*hir_op.value, builder);
+      if (!operand_result) return std::unexpected(operand_result.error());
+      mir::Operand operand = *operand_result;
       const hir::Expression& expr = (*ctx.hir_arena)[*hir_op.value];
       mir_ops.push_back(
           mir::FormatOp{
@@ -149,14 +172,18 @@ void LowerDisplayEffect(
       .descriptor = std::move(mir_descriptor),
   };
   builder.EmitEffect(std::move(display));
+  return {};
 }
 
-void LowerSeverityEffect(
-    const hir::SeveritySystemCallData& data, MirBuilder& builder) {
+auto LowerSeverityEffect(
+    const hir::SeveritySystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
   std::vector<mir::Operand> operands;
   operands.reserve(data.args.size());
   for (hir::ExpressionId arg_id : data.args) {
-    operands.push_back(LowerExpression(arg_id, builder));
+    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+    if (!arg_result) return std::unexpected(arg_result.error());
+    operands.push_back(*arg_result);
   }
 
   mir::SeverityEffect severity{
@@ -164,11 +191,12 @@ void LowerSeverityEffect(
       .args = std::move(operands),
   };
   builder.EmitEffect(std::move(severity));
+  return {};
 }
 
 auto BuildSFormatRvalue(
     const hir::SFormatSystemCallData& data, MirBuilder& builder)
-    -> mir::Rvalue {
+    -> Result<mir::Rvalue> {
   Context& ctx = builder.GetContext();
   mir::SFormatRvalueInfo info;
   info.default_format = data.default_format;
@@ -186,7 +214,10 @@ auto BuildSFormatRvalue(
                 .type = TypeId{},
                 .mods = {}});
       } else {
-        mir::Operand operand = LowerExpression(*hir_op.value, builder);
+        Result<mir::Operand> operand_result =
+            LowerExpression(*hir_op.value, builder);
+        if (!operand_result) return std::unexpected(operand_result.error());
+        mir::Operand operand = *operand_result;
         const hir::Expression& expr = (*ctx.hir_arena)[*hir_op.value];
         info.ops.push_back(
             mir::FormatOp{
@@ -210,41 +241,61 @@ auto BuildSFormatRvalue(
   std::vector<mir::Operand> operands;
   operands.reserve(data.args.size());
   for (hir::ExpressionId arg_id : data.args) {
-    operands.push_back(LowerExpression(arg_id, builder));
+    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+    if (!arg_result) return std::unexpected(arg_result.error());
+    operands.push_back(*arg_result);
   }
   return mir::Rvalue{.operands = std::move(operands), .info = std::move(info)};
 }
 
-void LowerSFormatEffect(
-    const hir::SFormatSystemCallData& data, MirBuilder& builder) {
+auto LowerSFormatEffect(
+    const hir::SFormatSystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // Build the SFormat rvalue
-  mir::Rvalue rvalue = BuildSFormatRvalue(data, builder);
+  Result<mir::Rvalue> rvalue_result = BuildSFormatRvalue(data, builder);
+  if (!rvalue_result) return std::unexpected(rvalue_result.error());
+  mir::Rvalue rvalue = std::move(*rvalue_result);
 
   // Get string type from the output expression (output is always a string)
   const hir::Expression& out_expr = (*ctx.hir_arena)[*data.output];
   mir::PlaceId tmp = builder.EmitTemp(out_expr.type, std::move(rvalue));
 
   // Assign to output
-  LvalueResult target = LowerLvalue(*data.output, builder);
+  Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
+  if (!target_result) return std::unexpected(target_result.error());
+  LvalueResult target = *target_result;
   builder.EmitAssign(target.place, mir::Operand::Use(tmp));
+  return {};
 }
 
-void LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder) {
+auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
-  mir::Operand filename = LowerExpression(data.filename, builder);
-  LvalueResult target = LowerLvalue(data.target, builder);
+  Result<mir::Operand> filename_result =
+      LowerExpression(data.filename, builder);
+  if (!filename_result) return std::unexpected(filename_result.error());
+  mir::Operand filename = *filename_result;
+
+  Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
+  if (!target_result) return std::unexpected(target_result.error());
+  LvalueResult target = *target_result;
   const hir::Expression& target_expr = (*ctx.hir_arena)[data.target];
 
   std::optional<mir::Operand> start_addr;
   std::optional<mir::Operand> end_addr;
   if (data.start_addr) {
-    start_addr = LowerExpression(*data.start_addr, builder);
+    Result<mir::Operand> addr_result =
+        LowerExpression(*data.start_addr, builder);
+    if (!addr_result) return std::unexpected(addr_result.error());
+    start_addr = *addr_result;
   }
   if (data.end_addr) {
-    end_addr = LowerExpression(*data.end_addr, builder);
+    Result<mir::Operand> addr_result = LowerExpression(*data.end_addr, builder);
+    if (!addr_result) return std::unexpected(addr_result.error());
+    end_addr = *addr_result;
   }
 
   mir::MemIOEffect effect{
@@ -257,52 +308,74 @@ void LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder) {
       .end_addr = std::move(end_addr),
   };
   builder.EmitEffect(std::move(effect));
+  return {};
 }
 
-void LowerExpressionStatement(
-    const hir::ExpressionStatementData& data, MirBuilder& builder) {
+auto LowerExpressionStatement(
+    const hir::ExpressionStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
   const hir::Expression& expr = (*ctx.hir_arena)[data.expression];
 
   // Check if this is a system call that should be an Effect instruction
   if (const auto* syscall =
           std::get_if<hir::SystemCallExpressionData>(&expr.data)) {
+    Result<void> result;
     std::visit(
         [&](const auto& call_data) {
           using T = std::decay_t<decltype(call_data)>;
           if constexpr (std::is_same_v<T, hir::DisplaySystemCallData>) {
-            LowerDisplayEffect(call_data, builder);
+            result = LowerDisplayEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SeveritySystemCallData>) {
-            LowerSeverityEffect(call_data, builder);
+            result = LowerSeverityEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SFormatSystemCallData>) {
-            LowerSFormatEffect(call_data, builder);
+            result = LowerSFormatEffect(call_data, builder);
           } else if constexpr (
               std::is_same_v<T, hir::TestPlusargsData> ||
               std::is_same_v<T, hir::ValuePlusargsData>) {
             // Plusargs always produce a value; evaluate and discard
-            LowerExpression(data.expression, builder);
+            Result<mir::Operand> expr_result =
+                LowerExpression(data.expression, builder);
+            if (!expr_result) {
+              result = std::unexpected(expr_result.error());
+            } else {
+              result = {};
+            }
           } else if constexpr (std::is_same_v<T, hir::MemIOData>) {
-            LowerMemIOEffect(call_data, builder);
+            result = LowerMemIOEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::FopenData>) {
             // $fopen as statement - evaluate for side effect, discard result
-            LowerExpression(data.expression, builder);
+            Result<mir::Operand> expr_result =
+                LowerExpression(data.expression, builder);
+            if (!expr_result) {
+              result = std::unexpected(expr_result.error());
+            } else {
+              result = {};
+            }
           } else if constexpr (std::is_same_v<T, hir::FcloseData>) {
-            mir::Operand desc_op =
+            Result<mir::Operand> desc_result =
                 LowerExpression(call_data.descriptor, builder);
-            builder.EmitEffect(mir::FcloseEffect{.descriptor = desc_op});
+            if (!desc_result) {
+              result = std::unexpected(desc_result.error());
+            } else {
+              builder.EmitEffect(mir::FcloseEffect{.descriptor = *desc_result});
+              result = {};
+            }
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");
           }
         },
         *syscall);
-    return;
+    return result;
   }
 
   // Regular expression statement - evaluate for side effects, discard result
   // All builtin methods (including void methods like push_back, delete)
   // are handled uniformly through LowerExpression.
-  LowerExpression(data.expression, builder);
+  Result<mir::Operand> expr_result = LowerExpression(data.expression, builder);
+  if (!expr_result) return std::unexpected(expr_result.error());
+  return {};
 }
 
 // Represents a flattened condition-body pair from an if-else chain.
@@ -359,9 +432,11 @@ auto FlattenIfElseChain(
 
 // Materialize condition to a PlaceId (for EmitBranch/QualifiedDispatch).
 auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
-    -> mir::PlaceId {
+    -> Result<mir::PlaceId> {
   Context& ctx = builder.GetContext();
-  mir::Operand cond = LowerExpression(cond_expr_id, builder);
+  Result<mir::Operand> cond_result = LowerExpression(cond_expr_id, builder);
+  if (!cond_result) return std::unexpected(cond_result.error());
+  mir::Operand cond = *cond_result;
 
   if (cond.kind == mir::Operand::Kind::kUse) {
     return std::get<mir::PlaceId>(cond.payload);
@@ -373,23 +448,38 @@ auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
 }
 
 // Standard if-else lowering without qualifiers.
-void LowerConditionalNone(
-    const hir::ConditionalStatementData& data, MirBuilder& builder) {
-  mir::PlaceId cond_place = MaterializeCondition(data.condition, builder);
+auto LowerConditionalNone(
+    const hir::ConditionalStatementData& data, MirBuilder& builder)
+    -> Result<void> {
+  Result<mir::PlaceId> cond_result =
+      MaterializeCondition(data.condition, builder);
+  if (!cond_result) return std::unexpected(cond_result.error());
+  mir::PlaceId cond_place = *cond_result;
   mir::Operand cond = mir::Operand::Use(cond_place);
 
+  // Use a result holder to capture errors from callbacks
+  Result<void> callback_result;
   if (data.else_branch.has_value()) {
     builder.EmitIfElse(
-        cond, [&] { LowerStatement(data.then_branch, builder); },
-        [&] { LowerStatement(*data.else_branch, builder); });
+        cond,
+        [&] { callback_result = LowerStatement(data.then_branch, builder); },
+        [&] {
+          if (callback_result) {
+            callback_result = LowerStatement(*data.else_branch, builder);
+          }
+        });
   } else {
-    builder.EmitIf(cond, [&] { LowerStatement(data.then_branch, builder); });
+    builder.EmitIf(cond, [&] {
+      callback_result = LowerStatement(data.then_branch, builder);
+    });
   }
+  return callback_result;
 }
 
 // Priority if: branch cascade + warning at end if no else.
-void LowerConditionalPriority(
-    const hir::ConditionalStatementData& data, MirBuilder& builder) {
+auto LowerConditionalPriority(
+    const hir::ConditionalStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // Flatten the if-else chain (only chain same-qualifier else-if's)
@@ -397,26 +487,40 @@ void LowerConditionalPriority(
       data, *ctx.hir_arena, hir::UniquePriorityCheck::kPriority);
   const auto& pairs = flat.pairs;
 
+  // Use a result holder to capture errors from callbacks
+  Result<void> callback_result;
+
   // Build condition callbacks (each evaluates and materializes a condition)
   std::vector<std::function<mir::Operand()>> conditions;
   for (const auto& pair : pairs) {
-    conditions.emplace_back([&builder, cond_id = pair.condition]() {
-      return mir::Operand::Use(MaterializeCondition(cond_id, builder));
+    conditions.emplace_back([&builder, &callback_result,
+                             cond_id = pair.condition]() {
+      Result<mir::PlaceId> cond_result = MaterializeCondition(cond_id, builder);
+      if (!cond_result) {
+        callback_result = std::unexpected(cond_result.error());
+        return mir::Operand::Use(mir::kInvalidPlaceId);  // Will be ignored
+      }
+      return mir::Operand::Use(*cond_result);
     });
   }
 
   // Build body callbacks
   std::vector<std::function<void()>> bodies;
   for (const auto& pair : pairs) {
-    bodies.emplace_back([&builder, body_id = pair.body]() {
-      LowerStatement(body_id, builder);
+    bodies.emplace_back([&builder, &callback_result, body_id = pair.body]() {
+      if (callback_result) {
+        callback_result = LowerStatement(body_id, builder);
+      }
     });
   }
 
   // Build else callback
   auto else_callback = [&]() {
+    if (!callback_result) {
+      return;
+    }
     if (flat.else_body.has_value()) {
-      LowerStatement(*flat.else_body, builder);
+      callback_result = LowerStatement(*flat.else_body, builder);
     } else {
       // No else clause: emit warning
       mir::DisplayEffect display{
@@ -434,12 +538,13 @@ void LowerConditionalPriority(
   };
 
   builder.EmitPriorityChain(conditions, bodies, else_callback);
+  return callback_result;
 }
 
 // Unique/Unique0 if: eval all conditions, emit QualifiedDispatch.
-void LowerConditionalUnique(
+auto LowerConditionalUnique(
     const hir::ConditionalStatementData& data, MirBuilder& builder,
-    hir::UniquePriorityCheck check) {
+    hir::UniquePriorityCheck check) -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // Flatten the if-else chain (only chain same-qualifier else-if's)
@@ -450,14 +555,22 @@ void LowerConditionalUnique(
   // Evaluate all conditions upfront
   std::vector<mir::PlaceId> condition_places;
   for (const auto& pair : pairs) {
-    condition_places.push_back(MaterializeCondition(pair.condition, builder));
+    Result<mir::PlaceId> cond_result =
+        MaterializeCondition(pair.condition, builder);
+    if (!cond_result) return std::unexpected(cond_result.error());
+    condition_places.push_back(*cond_result);
   }
+
+  // Use a result holder to capture errors from callbacks
+  Result<void> callback_result;
 
   // Build body callbacks
   std::vector<std::function<void()>> bodies;
   for (const auto& pair : pairs) {
-    bodies.emplace_back([&builder, body_id = pair.body]() {
-      LowerStatement(body_id, builder);
+    bodies.emplace_back([&builder, &callback_result, body_id = pair.body]() {
+      if (callback_result) {
+        callback_result = LowerStatement(body_id, builder);
+      }
     });
   }
 
@@ -470,27 +583,27 @@ void LowerConditionalUnique(
   builder.EmitUniqueDispatch(
       qualifier, mir::DispatchStatementKind::kIf, condition_places, bodies,
       [&]() {
-        if (flat.else_body.has_value()) {
-          LowerStatement(*flat.else_body, builder);
+        if (callback_result && flat.else_body.has_value()) {
+          callback_result = LowerStatement(*flat.else_body, builder);
         }
       },
       has_else);
+  return callback_result;
 }
 
-void LowerConditional(
-    const hir::ConditionalStatementData& data, MirBuilder& builder) {
+auto LowerConditional(
+    const hir::ConditionalStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   switch (data.check) {
     case hir::UniquePriorityCheck::kNone:
-      LowerConditionalNone(data, builder);
-      break;
+      return LowerConditionalNone(data, builder);
     case hir::UniquePriorityCheck::kPriority:
-      LowerConditionalPriority(data, builder);
-      break;
+      return LowerConditionalPriority(data, builder);
     case hir::UniquePriorityCheck::kUnique:
     case hir::UniquePriorityCheck::kUnique0:
-      LowerConditionalUnique(data, builder, data.check);
-      break;
+      return LowerConditionalUnique(data, builder, data.check);
   }
+  return {};
 }
 
 // Helper: get comparison operator based on case condition type.
@@ -508,9 +621,11 @@ auto GetCaseComparisonOp(hir::CaseCondition condition) -> mir::BinaryOp {
 
 // Helper: materialize selector to a place.
 auto MaterializeSelector(hir::ExpressionId selector_id, MirBuilder& builder)
-    -> mir::PlaceId {
+    -> Result<mir::PlaceId> {
   Context& ctx = builder.GetContext();
-  mir::Operand sel = LowerExpression(selector_id, builder);
+  Result<mir::Operand> sel_result = LowerExpression(selector_id, builder);
+  if (!sel_result) return std::unexpected(sel_result.error());
+  mir::Operand sel = *sel_result;
   if (sel.kind == mir::Operand::Kind::kUse) {
     return std::get<mir::PlaceId>(sel.payload);
   }
@@ -521,55 +636,88 @@ auto MaterializeSelector(hir::ExpressionId selector_id, MirBuilder& builder)
 }
 
 // Standard case lowering without qualifiers.
-void LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder) {
+auto LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  mir::PlaceId sel_place = MaterializeSelector(data.selector, builder);
+  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
+  if (!sel_result) return std::unexpected(sel_result.error());
+  mir::PlaceId sel_place = *sel_result;
+
+  // Use a result holder to capture errors from callbacks
+  Result<void> callback_result;
 
   // Build case items
   std::vector<MirBuilder::CaseItem> items;
   for (const auto& item : data.items) {
     MirBuilder::CaseItem case_item;
     for (auto expr_id : item.expressions) {
-      case_item.expressions.emplace_back(
-          [&builder, expr_id]() { return LowerExpression(expr_id, builder); });
+      case_item.expressions.emplace_back([&builder, &callback_result,
+                                          expr_id]() {
+        Result<mir::Operand> expr_result = LowerExpression(expr_id, builder);
+        if (!expr_result) {
+          callback_result = std::unexpected(expr_result.error());
+          return mir::Operand::Const(Constant{});  // Will be ignored
+        }
+        return *expr_result;
+      });
     }
-    case_item.body = [&builder, stmt_id = item.statement]() {
-      LowerStatement(stmt_id, builder);
+    case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
+      if (callback_result) {
+        callback_result = LowerStatement(stmt_id, builder);
+      }
     };
     items.push_back(std::move(case_item));
   }
 
   builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
-    if (data.default_statement.has_value()) {
-      LowerStatement(*data.default_statement, builder);
+    if (callback_result && data.default_statement.has_value()) {
+      callback_result = LowerStatement(*data.default_statement, builder);
     }
   });
+  return callback_result;
 }
 
 // Priority case: comparison cascade + warning at end if no default.
-void LowerCasePriority(
-    const hir::CaseStatementData& data, MirBuilder& builder) {
+auto LowerCasePriority(const hir::CaseStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  mir::PlaceId sel_place = MaterializeSelector(data.selector, builder);
+  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
+  if (!sel_result) return std::unexpected(sel_result.error());
+  mir::PlaceId sel_place = *sel_result;
   bool has_default = data.default_statement.has_value();
+
+  // Use a result holder to capture errors from callbacks
+  Result<void> callback_result;
 
   // Build case items
   std::vector<MirBuilder::CaseItem> items;
   for (const auto& item : data.items) {
     MirBuilder::CaseItem case_item;
     for (auto expr_id : item.expressions) {
-      case_item.expressions.emplace_back(
-          [&builder, expr_id]() { return LowerExpression(expr_id, builder); });
+      case_item.expressions.emplace_back([&builder, &callback_result,
+                                          expr_id]() {
+        Result<mir::Operand> expr_result = LowerExpression(expr_id, builder);
+        if (!expr_result) {
+          callback_result = std::unexpected(expr_result.error());
+          return mir::Operand::Const(Constant{});  // Will be ignored
+        }
+        return *expr_result;
+      });
     }
-    case_item.body = [&builder, stmt_id = item.statement]() {
-      LowerStatement(stmt_id, builder);
+    case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
+      if (callback_result) {
+        callback_result = LowerStatement(stmt_id, builder);
+      }
     };
     items.push_back(std::move(case_item));
   }
 
   builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
+    if (!callback_result) {
+      return;
+    }
     if (has_default) {
-      LowerStatement(*data.default_statement, builder);
+      callback_result = LowerStatement(*data.default_statement, builder);
     } else {
       mir::DisplayEffect display{
           .print_kind = PrintKind::kDisplay,
@@ -584,15 +732,18 @@ void LowerCasePriority(
       builder.EmitEffect(std::move(display));
     }
   });
+  return callback_result;
 }
 
 // Unique/Unique0 case: eval all matches, emit QualifiedDispatch.
-void LowerCaseUnique(
+auto LowerCaseUnique(
     const hir::CaseStatementData& data, MirBuilder& builder,
-    hir::UniquePriorityCheck check) {
+    hir::UniquePriorityCheck check) -> Result<void> {
   Context& ctx = builder.GetContext();
   mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  mir::PlaceId sel_place = MaterializeSelector(data.selector, builder);
+  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
+  if (!sel_result) return std::unexpected(sel_result.error());
+  mir::PlaceId sel_place = *sel_result;
   bool has_default = data.default_statement.has_value();
 
   // Evaluate all item matches upfront.
@@ -602,7 +753,9 @@ void LowerCaseUnique(
     mir::PlaceId item_match = mir::kInvalidPlaceId;
 
     for (const auto& expr : item.expressions) {
-      mir::Operand val = LowerExpression(expr, builder);
+      auto val_result = LowerExpression(expr, builder);
+      if (!val_result) return std::unexpected(val_result.error());
+      mir::Operand val = std::move(*val_result);
       TypeId cmp_type = ctx.GetBitType();
       mir::Rvalue cmp_rvalue{
           .operands = {mir::Operand::Use(sel_place), std::move(val)},
@@ -626,12 +779,16 @@ void LowerCaseUnique(
     item_conditions.push_back(item_match);
   }
 
-  // Build body callbacks
+  // Build body callbacks with error capture
+  Result<void> callback_result;
   std::vector<std::function<void()>> bodies;
   for (const auto& item : data.items) {
-    bodies.emplace_back([&builder, stmt_id = item.statement]() {
-      LowerStatement(stmt_id, builder);
-    });
+    bodies.emplace_back(
+        [&builder, &callback_result, stmt_id = item.statement]() {
+          if (callback_result) {
+            callback_result = LowerStatement(stmt_id, builder);
+          }
+        });
   }
 
   mir::DispatchQualifier qualifier =
@@ -642,14 +799,19 @@ void LowerCaseUnique(
   builder.EmitUniqueDispatch(
       qualifier, mir::DispatchStatementKind::kCase, item_conditions, bodies,
       [&]() {
+        if (!callback_result) {
+          return;
+        }
         if (has_default) {
-          LowerStatement(*data.default_statement, builder);
+          callback_result = LowerStatement(*data.default_statement, builder);
         }
       },
       has_default);
+  return callback_result;
 }
 
-void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
+auto LowerCase(const hir::CaseStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   // Slang invariant: each case item has at least one expression.
   for (const auto& item : data.items) {
     if (item.expressions.empty()) {
@@ -661,29 +823,30 @@ void LowerCase(const hir::CaseStatementData& data, MirBuilder& builder) {
 
   switch (data.check) {
     case hir::UniquePriorityCheck::kNone:
-      LowerCaseNone(data, builder);
-      break;
+      return LowerCaseNone(data, builder);
     case hir::UniquePriorityCheck::kPriority:
-      LowerCasePriority(data, builder);
-      break;
+      return LowerCasePriority(data, builder);
     case hir::UniquePriorityCheck::kUnique:
     case hir::UniquePriorityCheck::kUnique0:
-      LowerCaseUnique(data, builder, data.check);
-      break;
+      return LowerCaseUnique(data, builder, data.check);
   }
+  return {};
 }
 
-void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
+auto LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // 1. Execute variable declarations in current block
   for (hir::StatementId var_decl : data.var_decls) {
-    LowerStatement(var_decl, builder);
+    auto result = LowerStatement(var_decl, builder);
+    if (!result) return std::unexpected(result.error());
   }
 
   // 2. Evaluate init expressions (for side effects, result discarded)
   for (hir::ExpressionId init_expr : data.init_exprs) {
-    LowerExpression(init_expr, builder);
+    auto result = LowerExpression(init_expr, builder);
+    if (!result) return std::unexpected(result.error());
   }
 
   // 3. Create blocks
@@ -698,7 +861,9 @@ void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
   // 5. Condition block
   builder.SetCurrentBlock(cond_bb);
   if (data.condition.has_value()) {
-    mir::Operand cond = LowerExpression(*data.condition, builder);
+    auto cond_result = LowerExpression(*data.condition, builder);
+    if (!cond_result) return std::unexpected(cond_result.error());
+    mir::Operand cond = std::move(*cond_result);
 
     // Materialize constant to temp if needed (EmitBranch requires Use operand)
     if (cond.kind == mir::Operand::Kind::kConst) {
@@ -719,23 +884,27 @@ void LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder) {
   {
     LoopGuard guard(
         builder, {.exit_block = exit_bb, .continue_block = step_bb});
-    LowerStatement(data.body, builder);
+    auto result = LowerStatement(data.body, builder);
+    if (!result) return std::unexpected(result.error());
   }
   builder.EmitJump(step_bb);
 
   // 7. Step block - evaluate step expressions (for side effects)
   builder.SetCurrentBlock(step_bb);
   for (hir::ExpressionId step_expr : data.steps) {
-    LowerExpression(step_expr, builder);
+    auto result = LowerExpression(step_expr, builder);
+    if (!result) return std::unexpected(result.error());
   }
   builder.EmitJump(cond_bb);
 
   // 8. Continue in exit block
   builder.SetCurrentBlock(exit_bb);
+  return {};
 }
 
-void LowerWhileLoop(
-    const hir::WhileLoopStatementData& data, MirBuilder& builder) {
+auto LowerWhileLoop(
+    const hir::WhileLoopStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   BlockIndex cond_bb = builder.CreateBlock();
@@ -746,7 +915,9 @@ void LowerWhileLoop(
 
   // Condition block
   builder.SetCurrentBlock(cond_bb);
-  mir::Operand cond = LowerExpression(data.condition, builder);
+  auto cond_result = LowerExpression(data.condition, builder);
+  if (!cond_result) return std::unexpected(cond_result.error());
+  mir::Operand cond = std::move(*cond_result);
   if (cond.kind == mir::Operand::Kind::kConst) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
     mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
@@ -760,15 +931,18 @@ void LowerWhileLoop(
   {
     LoopGuard guard(
         builder, {.exit_block = exit_bb, .continue_block = cond_bb});
-    LowerStatement(data.body, builder);
+    auto result = LowerStatement(data.body, builder);
+    if (!result) return std::unexpected(result.error());
   }
   builder.EmitJump(cond_bb);
 
   builder.SetCurrentBlock(exit_bb);
+  return {};
 }
 
-void LowerDoWhileLoop(
-    const hir::DoWhileLoopStatementData& data, MirBuilder& builder) {
+auto LowerDoWhileLoop(
+    const hir::DoWhileLoopStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   BlockIndex body_bb = builder.CreateBlock();
@@ -782,13 +956,16 @@ void LowerDoWhileLoop(
   {
     LoopGuard guard(
         builder, {.exit_block = exit_bb, .continue_block = cond_bb});
-    LowerStatement(data.body, builder);
+    auto result = LowerStatement(data.body, builder);
+    if (!result) return std::unexpected(result.error());
   }
   builder.EmitJump(cond_bb);
 
   // Condition block
   builder.SetCurrentBlock(cond_bb);
-  mir::Operand cond = LowerExpression(data.condition, builder);
+  auto cond_result = LowerExpression(data.condition, builder);
+  if (!cond_result) return std::unexpected(cond_result.error());
+  mir::Operand cond = std::move(*cond_result);
   if (cond.kind == mir::Operand::Kind::kConst) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
     mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
@@ -798,6 +975,7 @@ void LowerDoWhileLoop(
   builder.EmitBranch(cond, body_bb, exit_bb);
 
   builder.SetCurrentBlock(exit_bb);
+  return {};
 }
 
 auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
@@ -807,14 +985,17 @@ auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
-void LowerEventWait(
-    const hir::EventWaitStatementData& data, MirBuilder& builder) {
+auto LowerEventWait(
+    const hir::EventWaitStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
   BlockIndex resume_bb = builder.CreateBlock();
 
   std::vector<mir::WaitTrigger> triggers;
   for (const auto& hir_trigger : data.triggers) {
-    mir::Operand signal_op = LowerExpression(hir_trigger.signal, builder);
+    auto signal_result = LowerExpression(hir_trigger.signal, builder);
+    if (!signal_result) return std::unexpected(signal_result.error());
+    mir::Operand signal_op = std::move(*signal_result);
     if (signal_op.kind != mir::Operand::Kind::kUse) {
       throw common::InternalError(
           "LowerEventWait", "event trigger signal must be a design variable");
@@ -853,14 +1034,18 @@ void LowerEventWait(
 
   builder.EmitWait(std::move(triggers), resume_bb);
   builder.SetCurrentBlock(resume_bb);
+  return {};
 }
 
-void LowerRepeatLoop(
-    const hir::RepeatLoopStatementData& data, MirBuilder& builder) {
+auto LowerRepeatLoop(
+    const hir::RepeatLoopStatementData& data, MirBuilder& builder)
+    -> Result<void> {
   Context& ctx = builder.GetContext();
 
   // 1. Evaluate count once and store in a temp
-  mir::Operand count_val = LowerExpression(data.count, builder);
+  auto count_result = LowerExpression(data.count, builder);
+  if (!count_result) return std::unexpected(count_result.error());
+  mir::Operand count_val = std::move(*count_result);
   const hir::Expression& count_expr = (*ctx.hir_arena)[data.count];
   mir::PlaceId counter = ctx.AllocTemp(count_expr.type);
   builder.EmitAssign(counter, std::move(count_val));
@@ -897,7 +1082,8 @@ void LowerRepeatLoop(
   {
     LoopGuard guard(
         builder, {.exit_block = exit_bb, .continue_block = step_bb});
-    LowerStatement(data.body, builder);
+    auto result = LowerStatement(data.body, builder);
+    if (!result) return std::unexpected(result.error());
   }
   builder.EmitJump(step_bb);
 
@@ -915,40 +1101,43 @@ void LowerRepeatLoop(
 
   // 6. Exit
   builder.SetCurrentBlock(exit_bb);
+  return {};
 }
 
 }  // namespace
 
-void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
+auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
+    -> Result<void> {
   // Set HIR source for origin tracking (recorded at emit time)
   builder.SetCurrentHirSource(stmt_id);
 
   const hir::Statement& stmt = (*builder.GetContext().hir_arena)[stmt_id];
 
+  Result<void> result;
   std::visit(
       [&](const auto& data) {
         using T = std::decay_t<decltype(data)>;
         if constexpr (std::is_same_v<T, hir::BlockStatementData>) {
-          LowerBlock(data, builder);
+          result = LowerBlock(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::VariableDeclarationStatementData>) {
-          LowerVariableDeclaration(data, builder);
+          result = LowerVariableDeclaration(data, builder);
         } else if constexpr (std::is_same_v<T, hir::AssignmentStatementData>) {
-          LowerAssignment(data, builder);
+          result = LowerAssignment(data, builder);
         } else if constexpr (std::is_same_v<T, hir::ExpressionStatementData>) {
-          LowerExpressionStatement(data, builder);
+          result = LowerExpressionStatement(data, builder);
         } else if constexpr (std::is_same_v<T, hir::ConditionalStatementData>) {
-          LowerConditional(data, builder);
+          result = LowerConditional(data, builder);
         } else if constexpr (std::is_same_v<T, hir::CaseStatementData>) {
-          LowerCase(data, builder);
+          result = LowerCase(data, builder);
         } else if constexpr (std::is_same_v<T, hir::ForLoopStatementData>) {
-          LowerForLoop(data, builder);
+          result = LowerForLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::WhileLoopStatementData>) {
-          LowerWhileLoop(data, builder);
+          result = LowerWhileLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::DoWhileLoopStatementData>) {
-          LowerDoWhileLoop(data, builder);
+          result = LowerDoWhileLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::RepeatLoopStatementData>) {
-          LowerRepeatLoop(data, builder);
+          result = LowerRepeatLoop(data, builder);
         } else if constexpr (std::is_same_v<T, hir::BreakStatementData>) {
           const auto* loop = builder.CurrentLoop();
           if (loop == nullptr) {
@@ -987,7 +1176,12 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           std::vector<mir::Operand> message_operands;
           message_operands.reserve(data.message_args.size());
           for (hir::ExpressionId arg_id : data.message_args) {
-            message_operands.push_back(LowerExpression(arg_id, builder));
+            auto arg_result = LowerExpression(arg_id, builder);
+            if (!arg_result) {
+              result = std::unexpected(arg_result.error());
+              return;
+            }
+            message_operands.push_back(std::move(*arg_result));
           }
 
           builder.EmitTerminate(
@@ -1004,8 +1198,12 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           // After emitting a terminator, IsReachable() returns false and
           // subsequent Emit* calls are no-ops.
           if (data.value != hir::kInvalidExpressionId) {
-            mir::Operand value = LowerExpression(data.value, builder);
-            builder.EmitReturn(std::move(value));
+            auto value_result = LowerExpression(data.value, builder);
+            if (!value_result) {
+              result = std::unexpected(value_result.error());
+              return;
+            }
+            builder.EmitReturn(std::move(*value_result));
           } else {
             builder.EmitTerminate(std::nullopt);
           }
@@ -1019,13 +1217,14 @@ void LowerStatement(hir::StatementId stmt_id, MirBuilder& builder) {
           // Continue lowering in the resume block
           builder.SetCurrentBlock(resume_bb);
         } else if constexpr (std::is_same_v<T, hir::EventWaitStatementData>) {
-          LowerEventWait(data, builder);
+          result = LowerEventWait(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");
         }
       },
       stmt.data);
+  return result;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

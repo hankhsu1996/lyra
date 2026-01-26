@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -20,6 +22,7 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 

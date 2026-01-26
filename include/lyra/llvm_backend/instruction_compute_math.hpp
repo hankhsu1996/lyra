@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/instruction.hpp"
 
@@ -11,6 +12,7 @@ auto IsMathCompute(Context& context, const mir::Compute& compute) -> bool;
 
 // Lowers a math function compute instruction.
 // Internally dispatches based on operand type (real vs integral).
-void LowerMathCompute(Context& context, const mir::Compute& compute);
+auto LowerMathCompute(Context& context, const mir::Compute& compute)
+    -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

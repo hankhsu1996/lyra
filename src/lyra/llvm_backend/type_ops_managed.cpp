@@ -50,7 +50,7 @@ auto TypeContainsManaged(TypeId type_id, const TypeArena& types) -> bool {
 
 auto NeedsFieldByField(TypeId type_id, const TypeArena& types) -> bool {
   // Currently only strings require field-by-field assignment.
-  // Container deep-copy is deferred (throws UnsupportedErrorException).
+  // Container deep-copy is deferred (returns UnsupportedCategory::kType).
   return TypeContains(
       type_id, types, [](TypeKind kind) { return kind == TypeKind::kString; });
 }

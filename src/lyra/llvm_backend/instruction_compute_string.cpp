@@ -2,22 +2,25 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <variant>
 #include <vector>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Value.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -43,20 +46,24 @@ auto CreateEmptyString(Context& context) -> llvm::Value* {
 auto LowerStringBinaryOp(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   if (!IsComparisonOp(info.op)) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm,
-        common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
         std::format(
             "string operation not supported (only comparisons): {}",
-            mir::ToString(info.op)));
+            mir::ToString(info.op)),
+        UnsupportedCategory::kOperation));
   }
 
-  llvm::Value* lhs = LowerOperand(context, operands[0]);
-  llvm::Value* rhs = LowerOperand(context, operands[1]);
+  auto lhs_or_err = LowerOperand(context, operands[0]);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  llvm::Value* lhs = *lhs_or_err;
+  auto rhs_or_err = LowerOperand(context, operands[1]);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  llvm::Value* rhs = *rhs_or_err;
 
   if (std::holds_alternative<Constant>(operands[0].payload)) {
     context.RegisterOwnedTemp(lhs);
@@ -95,19 +102,20 @@ auto LowerStringBinaryOp(
       bool_result = builder.CreateICmpSGE(cmp_result, zero, "str.ge");
       break;
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
           std::format(
-              "unsupported string comparison: {}", mir::ToString(info.op)));
+              "unsupported string comparison: {}", mir::ToString(info.op)),
+          UnsupportedCategory::kOperation));
   }
 
   return builder.CreateZExt(bool_result, result_type, "str.cmp.ext");
 }
 
-void LowerStringConcat(
+auto LowerStringConcat(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place) {
+    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
@@ -119,7 +127,9 @@ void LowerStringConcat(
   std::vector<llvm::Value*> handles;
   handles.reserve(operands.size());
   for (const auto& operand : operands) {
-    llvm::Value* handle = LowerOperand(context, operand);
+    auto handle_or_err = LowerOperand(context, operand);
+    if (!handle_or_err) return std::unexpected(handle_or_err.error());
+    llvm::Value* handle = *handle_or_err;
     handles.push_back(handle);
 
     // Register constant operands for release at statement end
@@ -143,20 +153,24 @@ void LowerStringConcat(
       {array_alloca, llvm::ConstantInt::get(i64_ty, count)}, "str.concat");
 
   // Store result into target place (NOT registered as owned temp)
-  llvm::Value* target_ptr = context.GetPlacePointer(target_place);
+  auto target_ptr_or_err = context.GetPlacePointer(target_place);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
-void LowerSFormatRvalue(
+auto LowerSFormatRvalue(
     Context& context, const mir::SFormatRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place) {
+    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
+    -> Result<void> {
   // Check for unsupported paths
   if (info.has_runtime_format) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$sformat/$sformatf with runtime format string not supported in LLVM "
-        "backend");
+        "backend",
+        UnsupportedCategory::kFeature));
   }
   if (info.ops.empty()) {
     // Auto-format path: $swrite/$swriteh/$swriteb/$swriteo without format
@@ -164,15 +178,17 @@ void LowerSFormatRvalue(
     if (operands.empty()) {
       // No values to format - return empty string constant
       llvm::Value* result = CreateEmptyString(context);
-      llvm::Value* target_ptr = context.GetPlacePointer(target_place);
+      auto target_ptr_or_err = context.GetPlacePointer(target_place);
+      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+      llvm::Value* target_ptr = *target_ptr_or_err;
       context.GetBuilder().CreateStore(result, target_ptr);
-      return;
+      return {};
     }
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$swrite/$swriteh/$swriteb/$swriteo auto-format with values not "
-        "supported in LLVM backend");
+        "supported in LLVM backend",
+        UnsupportedCategory::kFeature));
   }
 
   auto& builder = context.GetBuilder();
@@ -199,10 +215,10 @@ void LowerSFormatRvalue(
       // Check supported type kinds
       if (ty.Kind() != TypeKind::kIntegral && ty.Kind() != TypeKind::kReal &&
           ty.Kind() != TypeKind::kShortReal && !IsPacked(ty)) {
-        throw common::UnsupportedErrorException(
-            common::UnsupportedLayer::kMirToLlvm,
-            common::UnsupportedKind::kType, context.GetCurrentOrigin(),
-            std::format("unsupported type kind in $sformat: {}", ToString(ty)));
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            context.GetCurrentOrigin(),
+            std::format("unsupported type kind in $sformat: {}", ToString(ty)),
+            UnsupportedCategory::kType));
       }
       // Check width limit (same as $display)
       int32_t width = 32;
@@ -217,28 +233,28 @@ void LowerSFormatRvalue(
       }
       if (width > 64 && ty.Kind() != TypeKind::kReal &&
           ty.Kind() != TypeKind::kShortReal) {
-        throw common::UnsupportedErrorException(
-            common::UnsupportedLayer::kMirToLlvm,
-            common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            context.GetCurrentOrigin(),
             std::format(
                 "$sformat with values wider than 64 bits not supported (got "
                 "{} bits)",
-                width));
+                width),
+            UnsupportedCategory::kType));
       }
       // Check 4-state (would need x/z masks)
       if (ty.Kind() == TypeKind::kIntegral && ty.AsIntegral().is_four_state) {
-        throw common::UnsupportedErrorException(
-            common::UnsupportedLayer::kMirToLlvm,
-            common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            context.GetCurrentOrigin(),
             "$sformat with 4-state operand not supported in LLVM backend (use "
-            "2-state)");
+            "2-state)",
+            UnsupportedCategory::kType));
       }
       if (IsPacked(ty) && IsPackedFourState(ty, types)) {
-        throw common::UnsupportedErrorException(
-            common::UnsupportedLayer::kMirToLlvm,
-            common::UnsupportedKind::kType, context.GetCurrentOrigin(),
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            context.GetCurrentOrigin(),
             "$sformat with 4-state operand not supported in LLVM backend (use "
-            "2-state)");
+            "2-state)",
+            UnsupportedCategory::kType));
       }
     }
   }
@@ -257,7 +273,9 @@ void LowerSFormatRvalue(
     } else if (op.kind == FormatKind::kString) {
       // Append string handle contents
       if (op.value.has_value()) {
-        llvm::Value* handle = LowerOperand(context, *op.value);
+        auto handle_or_err = LowerOperand(context, *op.value);
+        if (!handle_or_err) return std::unexpected(handle_or_err.error());
+        llvm::Value* handle = *handle_or_err;
         builder.CreateCall(context.GetLyraStringFormatString(), {buf, handle});
       }
     } else {
@@ -286,7 +304,9 @@ void LowerSFormatRvalue(
       // Get pointer to the value
       llvm::Value* data_ptr = nullptr;
       if (op.value.has_value()) {
-        llvm::Value* value = LowerOperand(context, *op.value);
+        auto value_or_err = LowerOperand(context, *op.value);
+        if (!value_or_err) return std::unexpected(value_or_err.error());
+        llvm::Value* value = *value_or_err;
 
         if (is_real) {
           // For real types, allocate matching float type and store
@@ -350,8 +370,11 @@ void LowerSFormatRvalue(
   llvm::Value* result = builder.CreateCall(
       context.GetLyraStringFormatFinish(), {buf}, "sformat.result");
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target_place);
+  auto target_ptr_or_err = context.GetPlacePointer(target_place);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

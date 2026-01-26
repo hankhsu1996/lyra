@@ -11,7 +11,9 @@ namespace lyra {
 class DiagnosticSink {
  public:
   void Report(Diagnostic diag) {
-    if (diag.severity == DiagnosticSeverity::kError) {
+    if (diag.primary.kind == DiagKind::kError ||
+        diag.primary.kind == DiagKind::kUnsupported ||
+        diag.primary.kind == DiagKind::kHostError) {
       has_errors_ = true;
     }
     diagnostics_.push_back(std::move(diag));
@@ -23,10 +25,6 @@ class DiagnosticSink {
 
   void Warning(SourceSpan loc, std::string msg) {
     Report(Diagnostic::Warning(loc, std::move(msg)));
-  }
-
-  void Note(SourceSpan loc, std::string msg) {
-    Report(Diagnostic::Note(loc, std::move(msg)));
   }
 
   [[nodiscard]] auto HasErrors() const -> bool {

@@ -2,10 +2,12 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
+#include "lyra/mir/interp/runtime_value.hpp"
 
 namespace lyra::mir::interp {
 

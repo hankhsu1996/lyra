@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_manager.hpp"
 
@@ -9,6 +10,9 @@ namespace lyra::driver {
 
 void PrintError(const std::string& message);
 void PrintWarning(const std::string& message);
+void PrintDiagnostic(const Diagnostic& diag);
+void PrintDiagnostic(
+    const Diagnostic& diag, const SourceManager& source_manager);
 void PrintDiagnostics(
     const DiagnosticSink& sink, const SourceManager* source_manager = nullptr);
 

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -19,8 +20,8 @@ struct PlaceTypeInfo {
 };
 
 // Validate target place type and return info for dispatch.
-// Throws UnsupportedErrorException for non-packed, non-string types.
+// Returns error for non-packed, non-string types.
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
-    -> PlaceTypeInfo;
+    -> Result<PlaceTypeInfo>;
 
 }  // namespace lyra::lowering::mir_to_llvm

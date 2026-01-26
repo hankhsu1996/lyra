@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -54,8 +55,10 @@ struct LvalueResult {
 //
 // For writes with potentially invalid indices, callers should check validity
 // and emit guarded stores (no-op if invalid).
+//
+// Returns Diagnostic::Unsupported on unsupported expression types.
 auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
-    -> LvalueResult;
+    -> Result<LvalueResult>;
 
 // Normalize a declaration-space index to a 0-based storage offset.
 // Ascending [L:U]: offset = index - L

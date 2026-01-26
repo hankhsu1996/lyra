@@ -2,46 +2,58 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
+#include <llvm/Support/Casting.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-void LowerUnpackedArrayAggregate(
-    Context& context, const mir::Compute& compute) {
+auto LowerUnpackedArrayAggregate(Context& context, const mir::Compute& compute)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
-  llvm::Type* arr_type = context.GetPlaceLlvmType(compute.target);
+  auto target_ptr_result = context.GetPlacePointer(compute.target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
+
+  auto arr_type_result = context.GetPlaceLlvmType(compute.target);
+  if (!arr_type_result) return std::unexpected(arr_type_result.error());
+  llvm::Type* arr_type = *arr_type_result;
   llvm::Type* elem_type = arr_type->getArrayElementType();
 
   llvm::Value* aggregate = llvm::UndefValue::get(arr_type);
   for (size_t i = 0; i < compute.value.operands.size(); ++i) {
-    llvm::Value* elem =
+    auto elem_result =
         LowerOperandAsStorage(context, compute.value.operands[i], elem_type);
+    if (!elem_result) return std::unexpected(elem_result.error());
+    llvm::Value* elem = *elem_result;
     aggregate =
         builder.CreateInsertValue(aggregate, elem, {static_cast<unsigned>(i)});
   }
   builder.CreateStore(aggregate, target_ptr);
+  return {};
 }
 
-void LowerUnpackedStructAggregate(
-    Context& context, const mir::Compute& compute, const Type& target_type) {
+auto LowerUnpackedStructAggregate(
+    Context& context, const mir::Compute& compute, const Type& target_type)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& struct_info = target_type.AsUnpackedStruct();
 
@@ -53,23 +65,32 @@ void LowerUnpackedStructAggregate(
             compute.value.operands.size(), struct_info.fields.size()));
   }
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
-  llvm::Type* struct_type = context.GetPlaceLlvmType(compute.target);
+  auto target_ptr_result = context.GetPlacePointer(compute.target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
+
+  auto struct_type_result = context.GetPlaceLlvmType(compute.target);
+  if (!struct_type_result) return std::unexpected(struct_type_result.error());
+  llvm::Type* struct_type = *struct_type_result;
 
   llvm::Value* aggregate = llvm::UndefValue::get(struct_type);
   for (size_t i = 0; i < compute.value.operands.size(); ++i) {
     llvm::Type* field_type = llvm::cast<llvm::StructType>(struct_type)
                                  ->getElementType(static_cast<unsigned>(i));
-    llvm::Value* field_val =
+    auto field_val_result =
         LowerOperandAsStorage(context, compute.value.operands[i], field_type);
+    if (!field_val_result) return std::unexpected(field_val_result.error());
+    llvm::Value* field_val = *field_val_result;
     aggregate = builder.CreateInsertValue(
         aggregate, field_val, {static_cast<unsigned>(i)});
   }
   builder.CreateStore(aggregate, target_ptr);
+  return {};
 }
 
-void LowerQueueAggregate(
-    Context& context, const mir::Compute& compute, const Type& target_type) {
+auto LowerQueueAggregate(
+    Context& context, const mir::Compute& compute, const Type& target_type)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -83,7 +104,9 @@ void LowerQueueAggregate(
   }
 
   TypeId elem_type_id = target_type.AsQueue().element_type;
-  auto elem_ops = context.GetElemOpsForType(elem_type_id);
+  auto elem_ops_result = context.GetElemOpsForType(elem_type_id);
+  if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
+  auto elem_ops = *elem_ops_result;
 
   llvm::Value* handle = builder.CreateCall(
       context.GetLyraDynArrayNew(),
@@ -96,8 +119,10 @@ void LowerQueueAggregate(
     llvm::Value* elem_ptr = builder.CreateCall(
         context.GetLyraDynArrayElementPtr(),
         {handle, llvm::ConstantInt::get(i64_ty, i)}, "q.lit.ep");
-    llvm::Value* val = LowerOperandAsStorage(
+    auto val_result = LowerOperandAsStorage(
         context, compute.value.operands[i], elem_ops.elem_llvm_type);
+    if (!val_result) return std::unexpected(val_result.error());
+    llvm::Value* val = *val_result;
 
     if (elem_ops.needs_clone) {
       auto* clone_fn = llvm::cast<llvm::Function>(elem_ops.clone_fn);
@@ -110,17 +135,20 @@ void LowerQueueAggregate(
     }
   }
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
+  auto target_ptr_result = context.GetPlacePointer(compute.target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
   auto* old = builder.CreateLoad(ptr_ty, target_ptr, "q.lit.old");
   builder.CreateCall(context.GetLyraDynArrayRelease(), {old});
   builder.CreateStore(handle, target_ptr);
+  return {};
 }
 
 }  // namespace
 
-void LowerAggregate(
+auto LowerAggregate(
     Context& context, const mir::Compute& compute,
-    const mir::AggregateRvalueInfo& /*info*/) {
+    const mir::AggregateRvalueInfo& /*info*/) -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
   const Type& target_type =
@@ -128,20 +156,17 @@ void LowerAggregate(
 
   switch (target_type.Kind()) {
     case TypeKind::kUnpackedArray:
-      LowerUnpackedArrayAggregate(context, compute);
-      return;
+      return LowerUnpackedArrayAggregate(context, compute);
     case TypeKind::kUnpackedStruct:
-      LowerUnpackedStructAggregate(context, compute, target_type);
-      return;
+      return LowerUnpackedStructAggregate(context, compute, target_type);
     case TypeKind::kQueue:
-      LowerQueueAggregate(context, compute, target_type);
-      return;
+      return LowerQueueAggregate(context, compute, target_type);
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
           std::format(
-              "aggregate for type {} not supported", ToString(target_type)));
+              "aggregate for type {} not supported", ToString(target_type)),
+          UnsupportedCategory::kType));
   }
 }
 

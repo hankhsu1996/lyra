@@ -1,9 +1,11 @@
 #include "lyra/llvm_backend/type_ops.hpp"
 
+#include <expected>
 #include <variant>
 
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/Casting.h>
+
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -35,8 +37,9 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
   return OwnershipPolicy::kClone;
 }
 
-void AssignPlace(
-    Context& context, mir::PlaceId target, const mir::Operand& source) {
+auto AssignPlace(
+    Context& context, mir::PlaceId target, const mir::Operand& source)
+    -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
@@ -46,31 +49,43 @@ void AssignPlace(
   const Type& type = types[type_id];
 
   OwnershipPolicy policy = DetermineOwnership(context, source);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto storage_type_or_err = context.GetPlaceLlvmType(target);
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
+  llvm::Type* storage_type = *storage_type_or_err;
 
   // Dispatch based on managed kind first
   switch (GetManagedKind(type.Kind())) {
-    case ManagedKind::kString:
-      AssignString(context, target, source, policy, type_id);
-      return;
-    case ManagedKind::kContainer:
-      AssignDynArray(context, target, source, policy, type_id);
-      return;
+    case ManagedKind::kString: {
+      auto result = AssignString(context, target, source, policy, type_id);
+      if (!result) return std::unexpected(result.error());
+      return {};
+    }
+    case ManagedKind::kContainer: {
+      auto result = AssignDynArray(context, target, source, policy, type_id);
+      if (!result) return std::unexpected(result.error());
+      return {};
+    }
     case ManagedKind::kNone:
       break;
   }
 
   // Non-managed types: dispatch by TypeKind
   switch (type.Kind()) {
-    case TypeKind::kUnpackedStruct:
-      AssignStruct(context, target, source, policy, type_id);
-      return;
-    case TypeKind::kUnpackedArray:
-      AssignArray(context, target, source, type_id);
-      return;
-    case TypeKind::kUnpackedUnion:
-      AssignUnion(context, target, source, type_id);
-      return;
+    case TypeKind::kUnpackedStruct: {
+      auto result = AssignStruct(context, target, source, policy, type_id);
+      if (!result) return std::unexpected(result.error());
+      return {};
+    }
+    case TypeKind::kUnpackedArray: {
+      auto result = AssignArray(context, target, source, type_id);
+      if (!result) return std::unexpected(result.error());
+      return {};
+    }
+    case TypeKind::kUnpackedUnion: {
+      auto result = AssignUnion(context, target, source, type_id);
+      if (!result) return std::unexpected(result.error());
+      return {};
+    }
     default:
       break;
   }
@@ -78,12 +93,15 @@ void AssignPlace(
   // Packed types: dispatch on LLVM storage type
   if (storage_type->isStructTy()) {
     // 4-state target
-    AssignFourState(
+    auto result = AssignFourState(
         context, target, source, llvm::cast<llvm::StructType>(storage_type));
+    if (!result) return std::unexpected(result.error());
   } else {
     // 2-state target
-    AssignTwoState(context, target, source, type_id);
+    auto result = AssignTwoState(context, target, source, type_id);
+    if (!result) return std::unexpected(result.error());
   }
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

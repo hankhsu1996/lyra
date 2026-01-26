@@ -1,28 +1,35 @@
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <variant>
 #include <vector>
 
-#include "llvm/ADT/APInt.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/ADT/APInt.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/ErrorHandling.h>
+
+#include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -34,6 +41,8 @@ struct FourStateValue {
   llvm::Value* value;
   llvm::Value* unknown;
 };
+
+using FourStateResult = std::expected<FourStateValue, Diagnostic>;
 
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
     -> FourStateValue {
@@ -73,24 +82,27 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
 
 auto LowerOperandFourState(
     Context& context, const mir::Operand& operand, llvm::Type* elem_type)
-    -> FourStateValue {
+    -> FourStateResult {
   auto& builder = context.GetBuilder();
 
   if (IsOperandFourState(context, operand)) {
-    llvm::Value* loaded = LowerOperandRaw(context, operand);
-    return ExtractFourState(builder, loaded);
+    auto loaded_or_err = LowerOperandRaw(context, operand);
+    if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
+    return ExtractFourState(builder, *loaded_or_err);
   }
 
-  llvm::Value* loaded_val = LowerOperand(context, operand);
-  auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "fs2.val");
+  auto loaded_val_or_err = LowerOperand(context, operand);
+  if (!loaded_val_or_err) return std::unexpected(loaded_val_or_err.error());
+  auto* val =
+      builder.CreateZExtOrTrunc(*loaded_val_or_err, elem_type, "fs2.val");
   auto* unk = llvm::ConstantInt::get(elem_type, 0);
-  return {.value = val, .unknown = unk};
+  return FourStateValue{.value = val, .unknown = unk};
 }
 
 auto LowerConcatRvalue4State(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type)
-    -> FourStateValue {
+    -> FourStateResult {
   auto& builder = context.GetBuilder();
 
   if (operands.empty()) {
@@ -99,7 +111,9 @@ auto LowerConcatRvalue4State(
   }
 
   uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
-  auto first = LowerOperandFourState(context, operands[0], elem_type);
+  auto first_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!first_or_err) return std::unexpected(first_or_err.error());
+  auto first = *first_or_err;
 
   auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
   auto* val_first =
@@ -111,7 +125,9 @@ auto LowerConcatRvalue4State(
 
   for (size_t i = 1; i < operands.size(); ++i) {
     uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
-    auto op = LowerOperandFourState(context, operands[i], elem_type);
+    auto op_or_err = LowerOperandFourState(context, operands[i], elem_type);
+    if (!op_or_err) return std::unexpected(op_or_err.error());
+    auto op = *op_or_err;
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
     auto* val_op = builder.CreateZExtOrTrunc(op.value, op_ty, "cat4.val.trunc");
@@ -127,17 +143,19 @@ auto LowerConcatRvalue4State(
     acc_unk = builder.CreateOr(acc_unk, unk_op, "cat4.unk.or");
   }
 
-  return {.value = acc_val, .unknown = acc_unk};
+  return FourStateValue{.value = acc_val, .unknown = acc_unk};
 }
 
 auto LowerUnaryRvalue4State(
     Context& context, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
-    uint32_t semantic_width) -> FourStateValue {
+    uint32_t semantic_width) -> FourStateResult {
   auto& builder = context.GetBuilder();
   auto* zero = llvm::ConstantInt::get(elem_type, 0);
 
-  auto src = LowerOperandFourState(context, operands[0], elem_type);
+  auto src_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!src_or_err) return std::unexpected(src_or_err.error());
+  auto src = *src_or_err;
   src.value = builder.CreateZExtOrTrunc(src.value, elem_type, "un4.val");
   src.unknown = builder.CreateZExtOrTrunc(src.unknown, elem_type, "un4.unk");
 
@@ -148,7 +166,7 @@ auto LowerUnaryRvalue4State(
     case mir::UnaryOp::kMinus: {
       auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
       auto* sem_mask = GetSemanticMask(elem_type, semantic_width);
-      return {
+      return FourStateValue{
           .value = builder.CreateNeg(src.value, "un4.neg"),
           .unknown =
               builder.CreateSelect(any_unk, sem_mask, zero, "un4.neg.unk"),
@@ -156,7 +174,7 @@ auto LowerUnaryRvalue4State(
     }
 
     case mir::UnaryOp::kBitwiseNot:
-      return {
+      return FourStateValue{
           .value = builder.CreateNot(src.value, "un4.not"),
           .unknown = src.unknown,
       };
@@ -167,7 +185,7 @@ auto LowerUnaryRvalue4State(
       auto* is_nonzero = builder.CreateICmpNE(known, zero, "un4.nz");
       auto* negated = builder.CreateNot(is_nonzero, "un4.lnot");
       auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
-      return {
+      return FourStateValue{
           .value = builder.CreateZExt(negated, elem_type, "un4.lnot.val"),
           .unknown = builder.CreateZExt(any_unk, elem_type, "un4.lnot.unk"),
       };
@@ -179,12 +197,13 @@ auto LowerUnaryRvalue4State(
       auto* known = builder.CreateAnd(
           masked_val, builder.CreateNot(masked_unk), "un4.red.known");
 
-      auto* red_result =
+      auto red_result_or_err =
           LowerUnaryOp(context, info.op, known, elem_type, semantic_width);
+      if (!red_result_or_err) return std::unexpected(red_result_or_err.error());
 
       auto* any_unk = builder.CreateICmpNE(masked_unk, zero, "un4.red.taint");
-      return {
-          .value = red_result,
+      return FourStateValue{
+          .value = *red_result_or_err,
           .unknown = builder.CreateZExt(any_unk, elem_type, "un4.red.unk"),
       };
     }
@@ -194,10 +213,12 @@ auto LowerUnaryRvalue4State(
 auto LowerGuardedUse4State(
     Context& context, const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
-    uint32_t semantic_width) -> FourStateValue {
+    uint32_t semantic_width) -> FourStateResult {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* valid = LowerOperand(context, operands[0]);
+  auto valid_or_err = LowerOperand(context, operands[0]);
+  if (!valid_or_err) return std::unexpected(valid_or_err.error());
+  llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
     auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
     valid = builder.CreateICmpNE(valid, zero, "gu4.tobool");
@@ -215,7 +236,10 @@ auto LowerGuardedUse4State(
 
   builder.SetInsertPoint(do_read_bb);
   auto place_operand = mir::Operand::Use(info.place);
-  auto read_fs = LowerOperandFourState(context, place_operand, elem_type);
+  auto read_fs_or_err =
+      LowerOperandFourState(context, place_operand, elem_type);
+  if (!read_fs_or_err) return std::unexpected(read_fs_or_err.error());
+  auto read_fs = *read_fs_or_err;
   auto* do_read_end_bb = builder.GetInsertBlock();
   builder.CreateBr(merge_bb);
 
@@ -235,18 +259,23 @@ auto LowerGuardedUse4State(
   phi_unk->addIncoming(read_fs.unknown, do_read_end_bb);
   phi_unk->addIncoming(oob_unk, oob_bb);
 
-  return {.value = phi_val, .unknown = phi_unk};
+  return FourStateValue{.value = phi_val, .unknown = phi_unk};
 }
 
 auto LowerBinaryRvalue4State(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* elem_type,
-    uint32_t semantic_width) -> FourStateValue {
+    uint32_t semantic_width) -> FourStateResult {
   auto& builder = context.GetBuilder();
   auto* zero = llvm::ConstantInt::get(elem_type, 0);
 
-  auto lhs = LowerOperandFourState(context, operands[0], elem_type);
-  auto rhs = LowerOperandFourState(context, operands[1], elem_type);
+  auto lhs_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  auto lhs = *lhs_or_err;
+
+  auto rhs_or_err = LowerOperandFourState(context, operands[1], elem_type);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  auto rhs = *rhs_or_err;
 
   lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "bin4.lhs.val");
   rhs.value = builder.CreateZExtOrTrunc(rhs.value, elem_type, "bin4.rhs.val");
@@ -265,19 +294,21 @@ auto LowerBinaryRvalue4State(
       cmp_lhs = SignExtendToStorage(builder, cmp_lhs, op_width);
       cmp_rhs = SignExtendToStorage(builder, cmp_rhs, op_width);
     }
-    auto* cmp = LowerBinaryComparison(context, info.op, cmp_lhs, cmp_rhs);
+    auto cmp_or_err = LowerBinaryComparison(context, info.op, cmp_lhs, cmp_rhs);
+    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
     auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
-    return {
-        .value = builder.CreateZExt(cmp, elem_type, "bin4.cmp.val"),
+    return FourStateValue{
+        .value = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp.val"),
         .unknown = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk"),
     };
   }
 
   if (IsLogicalOp(info.op)) {
-    auto* val = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
+    auto val_or_err = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
+    if (!val_or_err) return std::unexpected(val_or_err.error());
     auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
-    return {
-        .value = builder.CreateZExt(val, elem_type, "bin4.log.val"),
+    return FourStateValue{
+        .value = builder.CreateZExt(*val_or_err, elem_type, "bin4.log.val"),
         .unknown = builder.CreateZExt(taint, elem_type, "bin4.log.unk"),
     };
   }
@@ -287,7 +318,7 @@ auto LowerBinaryRvalue4State(
         LowerShiftOp(context, info.op, lhs.value, rhs.value, semantic_width);
     auto* unk = LowerShiftOpUnknown(
         context, info.op, lhs.unknown, rhs.value, semantic_width);
-    return {.value = val, .unknown = unk};
+    return FourStateValue{.value = val, .unknown = unk};
   }
 
   if (ReturnsI1(info.op)) {
@@ -295,8 +326,9 @@ auto LowerBinaryRvalue4State(
         "LowerBinaryRvalue4State",
         "i1-producing op must be handled as comparison or logical");
   }
-  auto* val = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
-  return {.value = val, .unknown = combined_unk};
+  auto val_or_err = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  return FourStateValue{.value = *val_or_err, .unknown = combined_unk};
 }
 
 }  // namespace
@@ -304,15 +336,20 @@ auto LowerBinaryRvalue4State(
 auto LowerCaseMatchOp(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
   auto* elem_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
-  auto lhs = LowerOperandFourState(context, operands[0], elem_type);
-  auto rhs = LowerOperandFourState(context, operands[1], elem_type);
+  auto lhs_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  auto lhs = *lhs_or_err;
+
+  auto rhs_or_err = LowerOperandFourState(context, operands[1], elem_type);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  auto rhs = *rhs_or_err;
 
   lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "cm.lhs.val");
   lhs.unknown = builder.CreateZExtOrTrunc(lhs.unknown, elem_type, "cm.lhs.unk");
@@ -347,34 +384,39 @@ auto LowerCaseMatchOp(
   return builder.CreateZExt(result, storage_type, "cm.ext");
 }
 
-void LowerCompute4State(
-    Context& context, const mir::Compute& compute, uint32_t bit_width) {
+auto LowerCompute4State(
+    Context& context, const mir::Compute& compute, uint32_t bit_width)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(compute.target);
+  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto storage_type_or_err = context.GetPlaceLlvmType(compute.target);
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
+  llvm::Type* storage_type = *storage_type_or_err;
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = struct_type->getElementType(0);
 
-  FourStateValue result = std::visit(
+  FourStateResult result_or_err = std::visit(
       common::Overloaded{
-          [&](const mir::ConcatRvalueInfo& info) {
+          [&](const mir::ConcatRvalueInfo& info) -> FourStateResult {
             return LowerConcatRvalue4State(
                 context, info, compute.value.operands, elem_type);
           },
-          [&](const mir::UnaryRvalueInfo& info) {
+          [&](const mir::UnaryRvalueInfo& info) -> FourStateResult {
             return LowerUnaryRvalue4State(
                 context, info, compute.value.operands, elem_type, bit_width);
           },
-          [&](const mir::BinaryRvalueInfo& info) {
+          [&](const mir::BinaryRvalueInfo& info) -> FourStateResult {
             return LowerBinaryRvalue4State(
                 context, info, compute.value.operands, elem_type, bit_width);
           },
-          [&](const mir::GuardedUseRvalueInfo& info) {
+          [&](const mir::GuardedUseRvalueInfo& info) -> FourStateResult {
             return LowerGuardedUse4State(
                 context, info, compute.value.operands, elem_type, bit_width);
           },
-          [&](const mir::RuntimeQueryRvalueInfo& info) -> FourStateValue {
+          [&](const mir::RuntimeQueryRvalueInfo& info) -> FourStateResult {
             switch (info.kind) {
               case RuntimeQueryKind::kTimeRawTicks: {
                 auto& builder = context.GetBuilder();
@@ -385,12 +427,12 @@ void LowerCompute4State(
                   val = builder.CreateZExtOrTrunc(raw, elem_type, "time.fit");
                 }
                 auto* zero = llvm::ConstantInt::get(elem_type, 0);
-                return {.value = val, .unknown = zero};
+                return FourStateValue{.value = val, .unknown = zero};
               }
             }
             llvm_unreachable("unhandled RuntimeQueryKind");
           },
-          [&](const mir::UserCallRvalueInfo& info) -> FourStateValue {
+          [&](const mir::UserCallRvalueInfo& info) -> FourStateResult {
             auto& builder = context.GetBuilder();
 
             // Get the LLVM function for this MIR function
@@ -404,17 +446,20 @@ void LowerCompute4State(
 
             // Add user arguments (lower as 4-state if needed)
             for (const auto& operand : compute.value.operands) {
-              args.push_back(LowerOperandRaw(context, operand));
+              auto arg_or_err = LowerOperandRaw(context, operand);
+              if (!arg_or_err) return std::unexpected(arg_or_err.error());
+              args.push_back(*arg_or_err);
             }
 
             // Call the function
-            llvm::Value* result = builder.CreateCall(callee, args, "user_call");
+            llvm::Value* call_result =
+                builder.CreateCall(callee, args, "user_call");
 
             // Unpack 4-state result
             llvm::Value* val =
-                builder.CreateExtractValue(result, 0, "call.val");
+                builder.CreateExtractValue(call_result, 0, "call.val");
             llvm::Value* unk =
-                builder.CreateExtractValue(result, 1, "call.unk");
+                builder.CreateExtractValue(call_result, 1, "call.unk");
 
             // Coerce to expected element type if needed
             if (val->getType() != elem_type) {
@@ -422,25 +467,30 @@ void LowerCompute4State(
               unk = builder.CreateZExtOrTrunc(unk, elem_type, "call.unk.fit");
             }
 
-            return {.value = val, .unknown = unk};
+            return FourStateValue{.value = val, .unknown = unk};
           },
-          [&](const auto& /*info*/) -> FourStateValue {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                std::format(
-                    "4-state rvalue kind not yet supported: {}",
-                    mir::GetRvalueKind(compute.value.info)));
+          [&](const auto& /*info*/) -> FourStateResult {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    std::format(
+                        "4-state rvalue kind not yet supported: {}",
+                        mir::GetRvalueKind(compute.value.info)),
+                    UnsupportedCategory::kFeature));
           },
       },
       compute.value.info);
 
+  if (!result_or_err) return std::unexpected(result_or_err.error());
+
+  FourStateValue result = *result_or_err;
   result.value = ApplyWidthMask(context, result.value, bit_width);
   result.unknown = ApplyWidthMask(context, result.unknown, bit_width);
 
   llvm::Value* packed =
       PackFourState(builder, struct_type, result.value, result.unknown);
   builder.CreateStore(packed, target_ptr);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

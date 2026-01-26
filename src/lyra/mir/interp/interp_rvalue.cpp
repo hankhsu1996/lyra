@@ -2,9 +2,9 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -14,13 +14,13 @@
 #include <vector>
 
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
@@ -168,7 +168,7 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
 }
 
 auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   switch (op.kind) {
     case Operand::Kind::kConst: {
       const auto& c = std::get<Constant>(op.payload);
@@ -215,72 +215,96 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
 }
 
 auto Interpreter::EvalRvalue(
-    ProcessState& state, const Rvalue& rv, TypeId result_type) -> RuntimeValue {
+    ProcessState& state, const Rvalue& rv, TypeId result_type)
+    -> Result<RuntimeValue> {
   return std::visit(
       common::Overloaded{
-          [&](const UnaryRvalueInfo& info) -> RuntimeValue {
+          [&](const UnaryRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 1) {
               throw common::InternalError(
                   "EvalRvalue", "unary operation requires exactly 1 operand");
             }
-            auto operand = EvalOperand(state, rv.operands[0]);
-            return EvalUnary(info.op, operand, result_type, *types_);
+            auto operand_result = EvalOperand(state, rv.operands[0]);
+            if (!operand_result) {
+              return std::unexpected(std::move(operand_result).error());
+            }
+            return EvalUnary(info.op, *operand_result, result_type, *types_);
           },
-          [&](const BinaryRvalueInfo& info) -> RuntimeValue {
+          [&](const BinaryRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 2) {
               throw common::InternalError(
                   "EvalRvalue", "binary operation requires exactly 2 operands");
             }
-            auto lhs = EvalOperand(state, rv.operands[0]);
-            auto rhs = EvalOperand(state, rv.operands[1]);
-            return EvalBinary(info.op, lhs, rhs);
+            auto lhs_result = EvalOperand(state, rv.operands[0]);
+            if (!lhs_result) {
+              return std::unexpected(std::move(lhs_result).error());
+            }
+            auto rhs_result = EvalOperand(state, rv.operands[1]);
+            if (!rhs_result) {
+              return std::unexpected(std::move(rhs_result).error());
+            }
+            return EvalBinary(info.op, *lhs_result, *rhs_result);
           },
-          [&](const CastRvalueInfo& info) -> RuntimeValue {
+          [&](const CastRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 1) {
               throw common::InternalError(
                   "EvalRvalue", "cast operation requires exactly 1 operand");
             }
-            auto operand = EvalOperand(state, rv.operands[0]);
+            auto operand_result = EvalOperand(state, rv.operands[0]);
+            if (!operand_result) {
+              return std::unexpected(std::move(operand_result).error());
+            }
             const auto& src_type = (*types_)[info.source_type];
             const auto& tgt_type = (*types_)[info.target_type];
-            return EvalCast(operand, src_type, tgt_type, *types_);
+            return EvalCast(*operand_result, src_type, tgt_type, *types_);
           },
-          [&](const BitCastRvalueInfo& info) -> RuntimeValue {
+          [&](const BitCastRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 1) {
               throw common::InternalError(
                   "EvalRvalue", "bitcast operation requires exactly 1 operand");
             }
-            auto operand = EvalOperand(state, rv.operands[0]);
+            auto operand_result = EvalOperand(state, rv.operands[0]);
+            if (!operand_result) {
+              return std::unexpected(std::move(operand_result).error());
+            }
             return EvalBitCast(
-                operand, info.source_type, info.target_type, *types_);
+                *operand_result, info.source_type, info.target_type, *types_);
           },
-          [&](const SystemCallRvalueInfo&) -> RuntimeValue {
+          [&](const SystemCallRvalueInfo&) -> Result<RuntimeValue> {
             throw common::InternalError(
                 "EvalRvalue", "pure system calls not yet supported");
           },
-          [&](const UserCallRvalueInfo& info) -> RuntimeValue {
+          [&](const UserCallRvalueInfo& info) -> Result<RuntimeValue> {
             std::vector<RuntimeValue> args;
             args.reserve(rv.operands.size());
             for (const auto& operand : rv.operands) {
-              args.push_back(EvalOperand(state, operand));
+              auto arg_result = EvalOperand(state, operand);
+              if (!arg_result) {
+                return std::unexpected(std::move(arg_result).error());
+              }
+              args.push_back(std::move(*arg_result));
             }
             return RunFunction(info.callee, args, state.design_state);
           },
-          [&](const AggregateRvalueInfo&) -> RuntimeValue {
+          [&](const AggregateRvalueInfo&) -> Result<RuntimeValue> {
             return EvalAggregate(state, rv);
           },
-          [&](const BuiltinCallRvalueInfo&) -> RuntimeValue {
+          [&](const BuiltinCallRvalueInfo&) -> Result<RuntimeValue> {
             return EvalBuiltinCall(state, rv);
           },
-          [&](const IndexValidityRvalueInfo&) -> RuntimeValue {
+          [&](const IndexValidityRvalueInfo&) -> Result<RuntimeValue> {
             return EvalIndexValidity(state, rv);
           },
-          [&](const GuardedUseRvalueInfo& info) -> RuntimeValue {
+          [&](const GuardedUseRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 1) {
               throw common::InternalError(
                   "EvalRvalue", "guarded_use requires exactly 1 operand");
             }
-            auto validity = EvalOperand(state, rv.operands[0]);
+            auto validity_result = EvalOperand(state, rv.operands[0]);
+            if (!validity_result) {
+              return std::unexpected(std::move(validity_result).error());
+            }
+            auto& validity = *validity_result;
             if (!IsIntegral(validity)) {
               throw common::InternalError(
                   "EvalRvalue", "guarded_use validity must be integral");
@@ -291,27 +315,35 @@ auto Interpreter::EvalRvalue(
             }
             return CreateDefaultValue(*types_, info.result_type);
           },
-          [&](const ConcatRvalueInfo&) -> RuntimeValue {
+          [&](const ConcatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalConcat(state, rv);
           },
-          [&](const SFormatRvalueInfo&) -> RuntimeValue {
+          [&](const SFormatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalSFormat(state, rv);
           },
-          [&](const PlusargsRvalueInfo&) -> RuntimeValue {
+          [&](const PlusargsRvalueInfo&) -> Result<RuntimeValue> {
             return EvalPlusargs(state, rv);
           },
-          [&](const FopenRvalueInfo&) -> RuntimeValue {
+          [&](const FopenRvalueInfo&) -> Result<RuntimeValue> {
             return EvalFopen(state, rv);
           },
-          [&](const RuntimeQueryRvalueInfo&) -> RuntimeValue {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kExecution,
-                common::UnsupportedKind::kFeature, {},
-                std::format(
-                    "rvalue kind '{}' requires runtime backend",
-                    GetRvalueKind(rv.info)));
+          [&](const RuntimeQueryRvalueInfo&) -> Result<RuntimeValue> {
+            // Runtime queries (e.g., $time) require the LLVM backend runtime.
+            // Note: EvalRvalue doesn't have access to instruction origin,
+            // so we use UnknownSpan here.
+            return std::unexpected(
+                Diagnostic{
+                    .primary =
+                        {.kind = DiagKind::kUnsupported,
+                         .span = UnknownSpan{},
+                         .message = std::format(
+                             "rvalue kind '{}' requires runtime backend",
+                             GetRvalueKind(rv.info)),
+                         .category = UnsupportedCategory::kFeature},
+                    .notes = {},
+                });
           },
-          [&](const MathCallRvalueInfo& info) -> RuntimeValue {
+          [&](const MathCallRvalueInfo& info) -> Result<RuntimeValue> {
             return EvalMathCall(state, rv, info);
           },
       },
@@ -319,7 +351,7 @@ auto Interpreter::EvalRvalue(
 }
 
 auto Interpreter::EvalAggregate(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<AggregateRvalueInfo>(rv.info);
   const Type& type = (*types_)[info.result_type];
 
@@ -332,7 +364,11 @@ auto Interpreter::EvalAggregate(ProcessState& state, const Rvalue& rv)
     std::vector<RuntimeValue> fields;
     fields.reserve(rv.operands.size());
     for (const auto& operand : rv.operands) {
-      fields.push_back(EvalOperand(state, operand));
+      auto field_result = EvalOperand(state, operand);
+      if (!field_result) {
+        return std::unexpected(std::move(field_result).error());
+      }
+      fields.push_back(std::move(*field_result));
     }
     return MakeStruct(std::move(fields));
   }
@@ -343,7 +379,11 @@ auto Interpreter::EvalAggregate(ProcessState& state, const Rvalue& rv)
     std::vector<RuntimeValue> elements;
     elements.reserve(rv.operands.size());
     for (const auto& operand : rv.operands) {
-      elements.push_back(EvalOperand(state, operand));
+      auto elem_result = EvalOperand(state, operand);
+      if (!elem_result) {
+        return std::unexpected(std::move(elem_result).error());
+      }
+      elements.push_back(std::move(*elem_result));
     }
     if (type.Kind() == TypeKind::kQueue) {
       TruncateToBound(elements, type.AsQueue().max_bound);
@@ -355,18 +395,23 @@ auto Interpreter::EvalAggregate(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalNewArray(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<BuiltinCallRvalueInfo>(rv.info);
   if (rv.operands.empty()) {
     throw common::InternalError("EvalNewArray", "new[] requires size");
   }
-  auto size_val = EvalOperand(state, rv.operands[0]);
+  auto size_val_result = EvalOperand(state, rv.operands[0]);
+  if (!size_val_result) {
+    return std::unexpected(std::move(size_val_result).error());
+  }
+  auto& size_val = *size_val_result;
   if (!IsIntegral(size_val)) {
     throw common::InternalError("EvalNewArray", "new[] size must be integral");
   }
   const auto& size_int = AsIntegral(size_val);
   if (!size_int.IsKnown()) {
-    throw std::runtime_error("new[] size is X/Z");
+    // TODO(hankhsu): SV semantics - should return X, not throw
+    return std::unexpected(Diagnostic::HostError("new[] size is X/Z"));
   }
 
   // Sign-extend based on operand type to detect negatives
@@ -385,7 +430,9 @@ auto Interpreter::EvalNewArray(ProcessState& state, const Rvalue& rv)
   }
   auto signed_size = static_cast<int64_t>(raw_bits);
   if (signed_size < 0) {
-    throw std::runtime_error("new[] size cannot be negative");
+    // TODO(hankhsu): SV semantics - should return X, not throw
+    return std::unexpected(
+        Diagnostic::HostError("new[] size cannot be negative"));
   }
   auto new_size = static_cast<size_t>(signed_size);
 
@@ -402,7 +449,11 @@ auto Interpreter::EvalNewArray(ProcessState& state, const Rvalue& rv)
 
   if (rv.operands.size() > 1) {
     // new[size](init) - copy from initializer
-    auto init_val = EvalOperand(state, rv.operands[1]);
+    auto init_val_result = EvalOperand(state, rv.operands[1]);
+    if (!init_val_result) {
+      return std::unexpected(std::move(init_val_result).error());
+    }
+    auto& init_val = *init_val_result;
     if (!IsArray(init_val)) {
       throw common::InternalError("EvalNewArray", "new[] init must be array");
     }
@@ -423,7 +474,7 @@ auto Interpreter::EvalNewArray(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<BuiltinCallRvalueInfo>(rv.info);
   if (!info.enum_type) {
     throw common::InternalError(
@@ -441,7 +492,11 @@ auto Interpreter::EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
 
   auto bit_width = PackedBitWidth(enum_type, *types_);
 
-  auto current_val = EvalOperand(state, rv.operands[0]);
+  auto current_val_result = EvalOperand(state, rv.operands[0]);
+  if (!current_val_result) {
+    return std::unexpected(std::move(current_val_result).error());
+  }
+  auto& current_val = *current_val_result;
   if (!IsIntegral(current_val)) {
     throw common::InternalError(
         "EvalEnumNextPrev", "enum value must be integral");
@@ -452,10 +507,15 @@ auto Interpreter::EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
   // Get step from operands[1] (default 1 if no operand)
   size_t step = 1;
   if (rv.operands.size() > 1) {
-    auto step_val = EvalOperand(state, rv.operands[1]);
-    const auto& step_int = AsIntegral(step_val);
+    auto step_val_result = EvalOperand(state, rv.operands[1]);
+    if (!step_val_result) {
+      return std::unexpected(std::move(step_val_result).error());
+    }
+    const auto& step_int = AsIntegral(*step_val_result);
     if (!step_int.IsKnown()) {
-      throw std::runtime_error("enum next/prev step cannot be X/Z");
+      // TODO(hankhsu): SV semantics - should return X, not throw
+      return std::unexpected(
+          Diagnostic::HostError("enum next/prev step cannot be X/Z"));
     }
     auto lo = step_int.value.empty() ? 0ULL : step_int.value[0] & 0xFFFF'FFFFU;
     step = static_cast<size_t>(lo);
@@ -490,7 +550,7 @@ auto Interpreter::EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalEnumName(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<BuiltinCallRvalueInfo>(rv.info);
   if (!info.enum_type) {
     throw common::InternalError("EvalEnumName", "name() requires enum_type");
@@ -502,7 +562,11 @@ auto Interpreter::EvalEnumName(ProcessState& state, const Rvalue& rv)
   const auto& enum_info = enum_type.AsEnum();
   auto bit_width = PackedBitWidth(enum_type, *types_);
 
-  auto current_val = EvalOperand(state, rv.operands[0]);
+  auto current_val_result = EvalOperand(state, rv.operands[0]);
+  if (!current_val_result) {
+    return std::unexpected(std::move(current_val_result).error());
+  }
+  auto& current_val = *current_val_result;
   if (!IsIntegral(current_val)) {
     return MakeString("");
   }
@@ -523,7 +587,7 @@ auto Interpreter::EvalEnumName(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<BuiltinCallRvalueInfo>(rv.info);
   switch (info.method) {
     case BuiltinMethod::kNewArray:
@@ -534,12 +598,16 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
       if (rv.operands.empty()) {
         throw common::InternalError("EvalBuiltinCall", "size() requires array");
       }
-      auto arr_val = EvalOperand(state, rv.operands[0]);
-      if (!IsArray(arr_val)) {
+      auto arr_val_result = EvalOperand(state, rv.operands[0]);
+      if (!arr_val_result) {
+        return std::unexpected(std::move(arr_val_result).error());
+      }
+      if (!IsArray(*arr_val_result)) {
         throw common::InternalError(
             "EvalBuiltinCall", "size() operand must be array");
       }
-      auto size = static_cast<int64_t>(AsArray(arr_val).elements.size());
+      auto size =
+          static_cast<int64_t>(AsArray(*arr_val_result).elements.size());
       return MakeIntegral(size, 32);
     }
 
@@ -548,7 +616,11 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
         throw common::InternalError(
             "EvalBuiltinCall", "pop_back() requires receiver");
       }
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
       if (elements.empty()) {
         return CreateDefaultValue(*types_, info.result_type);
       }
@@ -562,7 +634,11 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
         throw common::InternalError(
             "EvalBuiltinCall", "pop_front() requires receiver");
       }
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
       if (elements.empty()) {
         return CreateDefaultValue(*types_, info.result_type);
       }
@@ -576,8 +652,16 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
         throw common::InternalError(
             "EvalBuiltinCall", "push_back() requires receiver");
       }
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
-      elements.push_back(EvalOperand(state, rv.operands[0]));
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto operand_result = EvalOperand(state, rv.operands[0]);
+      if (!operand_result) {
+        return std::unexpected(std::move(operand_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      elements.push_back(std::move(*operand_result));
       TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
       const auto& type = (*types_)[receiver_type];
       if (type.Kind() == TypeKind::kQueue) {
@@ -591,8 +675,16 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
         throw common::InternalError(
             "EvalBuiltinCall", "push_front() requires receiver");
       }
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
-      elements.insert(elements.begin(), EvalOperand(state, rv.operands[0]));
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto operand_result = EvalOperand(state, rv.operands[0]);
+      if (!operand_result) {
+        return std::unexpected(std::move(operand_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      elements.insert(elements.begin(), std::move(*operand_result));
       TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
       const auto& type = (*types_)[receiver_type];
       if (type.Kind() == TypeKind::kQueue) {
@@ -607,18 +699,28 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
             "EvalBuiltinCall", "insert() requires receiver");
       }
       TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
-      auto idx_opt =
-          TryGetIndex(EvalOperand(state, rv.operands[0]), *types_, idx_type);
+      auto idx_val_result = EvalOperand(state, rv.operands[0]);
+      if (!idx_val_result) {
+        return std::unexpected(std::move(idx_val_result).error());
+      }
+      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
       if (!idx_opt) {
         return std::monostate{};  // X/Z -> no-op
       }
       auto idx = *idx_opt;
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
       if (idx < 0 || std::cmp_greater(idx, elements.size())) {
         return std::monostate{};  // Invalid index -> no-op
       }
-      elements.insert(
-          elements.begin() + idx, EvalOperand(state, rv.operands[1]));
+      auto val_result = EvalOperand(state, rv.operands[1]);
+      if (!val_result) {
+        return std::unexpected(std::move(val_result).error());
+      }
+      elements.insert(elements.begin() + idx, std::move(*val_result));
       TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
       const auto& type = (*types_)[receiver_type];
       if (type.Kind() == TypeKind::kQueue) {
@@ -633,7 +735,11 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
         throw common::InternalError(
             "EvalBuiltinCall", "delete() requires receiver");
       }
-      AsArray(WritePlace(state, *info.receiver)).elements.clear();
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      AsArray(write_result->get()).elements.clear();
       return std::monostate{};
     }
 
@@ -643,13 +749,20 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
             "EvalBuiltinCall", "delete(idx) requires receiver");
       }
       TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
-      auto idx_opt =
-          TryGetIndex(EvalOperand(state, rv.operands[0]), *types_, idx_type);
+      auto idx_val_result = EvalOperand(state, rv.operands[0]);
+      if (!idx_val_result) {
+        return std::unexpected(std::move(idx_val_result).error());
+      }
+      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
       if (!idx_opt) {
         return std::monostate{};  // X/Z -> no-op
       }
       auto idx = *idx_opt;
-      auto& elements = AsArray(WritePlace(state, *info.receiver)).elements;
+      auto write_result = WritePlace(state, *info.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
       if (idx >= 0 && std::cmp_less(idx, elements.size())) {
         elements.erase(elements.begin() + idx);
       }
@@ -667,13 +780,17 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalIndexValidity(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<IndexValidityRvalueInfo>(rv.info);
   if (rv.operands.size() != 1) {
     throw common::InternalError(
         "EvalIndexValidity", "requires exactly 1 operand");
   }
-  auto index = EvalOperand(state, rv.operands[0]);
+  auto index_result = EvalOperand(state, rv.operands[0]);
+  if (!index_result) {
+    return std::unexpected(std::move(index_result).error());
+  }
+  auto& index = *index_result;
   if (!IsIntegral(index)) {
     throw common::InternalError(
         "EvalIndexValidity", "operand must be integral");
@@ -721,7 +838,7 @@ auto Interpreter::EvalIndexValidity(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<ConcatRvalueInfo>(rv.info);
   const Type& result_type = (*types_)[info.result_type];
 
@@ -729,7 +846,11 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
   if (result_type.Kind() == TypeKind::kString) {
     std::string result;
     for (const auto& operand : rv.operands) {
-      auto val = EvalOperand(state, operand);
+      auto val_result = EvalOperand(state, operand);
+      if (!val_result) {
+        return std::unexpected(std::move(val_result).error());
+      }
+      auto& val = *val_result;
       if (IsString(val)) {
         result += AsString(val).value;
       } else if (IsIntegral(val)) {
@@ -749,7 +870,11 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
   values.reserve(rv.operands.size());
   uint32_t total_width = 0;
   for (const auto& operand : rv.operands) {
-    auto val = EvalOperand(state, operand);
+    auto val_result = EvalOperand(state, operand);
+    if (!val_result) {
+      return std::unexpected(std::move(val_result).error());
+    }
+    auto& val = *val_result;
     RuntimeIntegral integral;
     if (IsString(val)) {
       TypeId op_type = TypeOfOperand(operand, *arena_, *types_);
@@ -786,7 +911,7 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<SFormatRvalueInfo>(rv.info);
   FormatContext ctx{};
   std::string result;
@@ -797,8 +922,11 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
       if (op.kind == FormatKind::kLiteral) {
         result += op.literal;
       } else {
-        RuntimeValue value = EvalOperand(state, *op.value);
-        TypedValue typed{.value = std::move(value), .type = op.type};
+        auto value_result = EvalOperand(state, *op.value);
+        if (!value_result) {
+          return std::unexpected(std::move(value_result).error());
+        }
+        TypedValue typed{.value = std::move(*value_result), .type = op.type};
         FormatSpec spec{
             .kind = op.kind,
             .width = op.mods.width,
@@ -810,12 +938,19 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
     }
   } else if (info.has_runtime_format) {
     // Runtime format path
-    RuntimeValue fmt_val = EvalOperand(state, rv.operands[0]);
-    std::string fmt_str = AsString(fmt_val).value;
+    auto fmt_val_result = EvalOperand(state, rv.operands[0]);
+    if (!fmt_val_result) {
+      return std::unexpected(std::move(fmt_val_result).error());
+    }
+    std::string fmt_str = AsString(*fmt_val_result).value;
     std::vector<TypedValue> value_args;
     for (size_t i = 1; i < rv.operands.size(); ++i) {
       TypeId type = TypeOfOperand(rv.operands[i], *arena_, *types_);
-      value_args.push_back({EvalOperand(state, rv.operands[i]), type});
+      auto arg_result = EvalOperand(state, rv.operands[i]);
+      if (!arg_result) {
+        return std::unexpected(std::move(arg_result).error());
+      }
+      value_args.push_back({std::move(*arg_result), type});
     }
     char fmt_char = FormatKindToSpecChar(info.default_format);
     result = FormatDisplay(fmt_str, value_args, fmt_char, *types_, ctx);
@@ -824,7 +959,11 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
     std::vector<TypedValue> typed_args;
     for (const auto& operand : rv.operands) {
       TypeId type = TypeOfOperand(operand, *arena_, *types_);
-      typed_args.push_back({EvalOperand(state, operand), type});
+      auto arg_result = EvalOperand(state, operand);
+      if (!arg_result) {
+        return std::unexpected(std::move(arg_result).error());
+      }
+      typed_args.push_back({std::move(*arg_result), type});
     }
     char fmt_char = FormatKindToSpecChar(info.default_format);
     result = FormatMessage(typed_args, fmt_char, *types_, ctx);
@@ -834,11 +973,15 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   const auto& info = std::get<PlusargsRvalueInfo>(rv.info);
 
   // Evaluate query/format operand (always a string)
-  RuntimeValue query_val = EvalOperand(state, rv.operands[0]);
+  auto query_val_result = EvalOperand(state, rv.operands[0]);
+  if (!query_val_result) {
+    return std::unexpected(std::move(query_val_result).error());
+  }
+  auto& query_val = *query_val_result;
   if (!IsString(query_val)) {
     throw common::InternalError(
         "EvalPlusargs", "query operand is not a string");
@@ -905,13 +1048,21 @@ auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
         parsed_value = 0;  // Conversion failed
       }
       if (info.output.has_value()) {
-        StoreToPlace(state, *info.output, MakeIntegralSigned(parsed_value, 32));
+        auto store_result = StoreToPlace(
+            state, *info.output, MakeIntegralSigned(parsed_value, 32));
+        if (!store_result) {
+          return std::unexpected(std::move(store_result).error());
+        }
       }
       return MakeIntegralSigned(1, 32);
     }
     if (spec == 's' || spec == 'S') {
       if (info.output.has_value()) {
-        StoreToPlace(state, *info.output, MakeString(std::string(remainder)));
+        auto store_result = StoreToPlace(
+            state, *info.output, MakeString(std::string(remainder)));
+        if (!store_result) {
+          return std::unexpected(std::move(store_result).error());
+        }
       }
       return MakeIntegralSigned(1, 32);
     }
@@ -925,8 +1076,12 @@ auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
-    -> RuntimeValue {
-  RuntimeValue filename_val = EvalOperand(state, rv.operands[0]);
+    -> Result<RuntimeValue> {
+  auto filename_val_result = EvalOperand(state, rv.operands[0]);
+  if (!filename_val_result) {
+    return std::unexpected(std::move(filename_val_result).error());
+  }
+  auto& filename_val = *filename_val_result;
   if (!IsString(filename_val)) {
     throw common::InternalError(
         "EvalFopen", "filename operand is not a string");
@@ -936,7 +1091,11 @@ auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
   int32_t result = 0;
   if (rv.operands.size() == 2) {
     // FD mode: $fopen(filename, mode)
-    RuntimeValue mode_val = EvalOperand(state, rv.operands[1]);
+    auto mode_val_result = EvalOperand(state, rv.operands[1]);
+    if (!mode_val_result) {
+      return std::unexpected(std::move(mode_val_result).error());
+    }
+    auto& mode_val = *mode_val_result;
     if (!IsString(mode_val)) {
       throw common::InternalError("EvalFopen", "mode operand is not a string");
     }
@@ -951,12 +1110,16 @@ auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
 
 auto Interpreter::EvalMathCall(
     ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
-    -> RuntimeValue {
+    -> Result<RuntimeValue> {
   // Evaluate all operands
   std::vector<RuntimeValue> args;
   args.reserve(rv.operands.size());
   for (const auto& operand : rv.operands) {
-    args.push_back(EvalOperand(state, operand));
+    auto arg_result = EvalOperand(state, operand);
+    if (!arg_result) {
+      return std::unexpected(std::move(arg_result).error());
+    }
+    args.push_back(std::move(*arg_result));
   }
 
   // Delegate to the single math call entry point (handles arity validation)

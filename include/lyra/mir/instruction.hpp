@@ -2,7 +2,7 @@
 
 #include <variant>
 
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"

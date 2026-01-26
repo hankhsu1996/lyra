@@ -2,15 +2,18 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <vector>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DataLayout.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/place.hpp"
 
@@ -48,11 +51,13 @@ auto BuildLlvmTypeForTypeIdNoUnion(
 
 // Build LLVM type for an unpacked struct with Context (supports unions).
 auto BuildUnpackedStructTypeWithContext(
-    Context& context, const UnpackedStructInfo& info) -> llvm::Type* {
+    Context& context, const UnpackedStructInfo& info) -> Result<llvm::Type*> {
   std::vector<llvm::Type*> field_types;
   field_types.reserve(info.fields.size());
   for (const auto& field : info.fields) {
-    field_types.push_back(BuildLlvmTypeForTypeId(context, field.type));
+    auto field_type = BuildLlvmTypeForTypeId(context, field.type);
+    if (!field_type) return std::unexpected(field_type.error());
+    field_types.push_back(*field_type);
   }
   return llvm::StructType::get(context.GetLlvmContext(), field_types);
 }
@@ -111,7 +116,8 @@ auto BuildLlvmTypeForTypeIdNoUnion(
 
 }  // namespace
 
-auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id) -> llvm::Type* {
+auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
+    -> Result<llvm::Type*> {
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
@@ -124,12 +130,15 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id) -> llvm::Type* {
   if (type.Kind() == TypeKind::kUnpackedUnion) {
     // Use GetUnionStorageInfo which is the single source of truth for union
     // layout, backed by DataLayout
-    return GetUnionStorageInfo(context, type_id).storage_type;
+    auto result = GetUnionStorageInfo(context, type_id);
+    if (!result) return std::unexpected(result.error());
+    return result->storage_type;
   }
   if (type.Kind() == TypeKind::kUnpackedArray) {
     const auto& info = type.AsUnpackedArray();
-    llvm::Type* elem = BuildLlvmTypeForTypeId(context, info.element_type);
-    return llvm::ArrayType::get(elem, info.range.Size());
+    auto elem = BuildLlvmTypeForTypeId(context, info.element_type);
+    if (!elem) return std::unexpected(elem.error());
+    return llvm::ArrayType::get(*elem, info.range.Size());
   }
   if (type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue) {
@@ -227,8 +236,17 @@ void DestroyStructFields(
   const Type& struct_type = types[struct_type_id];
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
-  llvm::Type* llvm_struct_type =
+  // Type should already be validated/cached during lowering. If this fails,
+  // it indicates a bug where we're trying to destroy a type that was never
+  // properly created.
+  auto llvm_struct_type_result =
       BuildLlvmTypeForTypeId(context, struct_type_id);
+  if (!llvm_struct_type_result) {
+    throw common::InternalError(
+        "DestroyStructFields",
+        "failed to get LLVM type for struct - type was not properly lowered");
+  }
+  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
 
   for (size_t i = 0; i < struct_info.fields.size(); ++i) {
     const auto& field = struct_info.fields[i];
@@ -243,7 +261,8 @@ namespace {
 
 // Get the ABI alignment for a member type in bytes
 auto GetMemberAlignment(
-    Context& context, TypeId member_type, const TypeArena& types) -> uint32_t {
+    Context& context, TypeId member_type, const TypeArena& types)
+    -> Result<uint32_t> {
   const auto& dl = context.GetModule().getDataLayout();
   const Type& type = types[member_type];
 
@@ -271,8 +290,9 @@ auto GetMemberAlignment(
       return dl.getABITypeAlign(llvm_type).value();
     }
     case TypeKind::kUnpackedStruct: {
-      llvm::Type* llvm_type = BuildLlvmTypeForTypeId(context, member_type);
-      return dl.getABITypeAlign(llvm_type).value();
+      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      if (!llvm_type) return std::unexpected(llvm_type.error());
+      return dl.getABITypeAlign(*llvm_type).value();
     }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
@@ -288,8 +308,9 @@ auto GetMemberAlignment(
       const auto& union_info = type.AsUnpackedUnion();
       uint32_t max_align = 1;
       for (const auto& m : union_info.members) {
-        max_align =
-            std::max(max_align, GetMemberAlignment(context, m.type, types));
+        auto align = GetMemberAlignment(context, m.type, types);
+        if (!align) return std::unexpected(align.error());
+        max_align = std::max(max_align, *align);
       }
       return max_align;
     }
@@ -300,7 +321,8 @@ auto GetMemberAlignment(
 
 // Get the allocation size for a member type in bytes
 auto GetMemberAllocSize(
-    Context& context, TypeId member_type, const TypeArena& types) -> uint32_t {
+    Context& context, TypeId member_type, const TypeArena& types)
+    -> Result<uint32_t> {
   const auto& dl = context.GetModule().getDataLayout();
   const Type& type = types[member_type];
 
@@ -326,12 +348,14 @@ auto GetMemberAllocSize(
       return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
     }
     case TypeKind::kUnpackedStruct: {
-      llvm::Type* llvm_type = BuildLlvmTypeForTypeId(context, member_type);
-      return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
+      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      if (!llvm_type) return std::unexpected(llvm_type.error());
+      return static_cast<uint32_t>(dl.getTypeAllocSize(*llvm_type));
     }
     case TypeKind::kUnpackedArray: {
-      llvm::Type* llvm_type = BuildLlvmTypeForTypeId(context, member_type);
-      return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
+      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      if (!llvm_type) return std::unexpected(llvm_type.error());
+      return static_cast<uint32_t>(dl.getTypeAllocSize(*llvm_type));
     }
     case TypeKind::kUnpackedUnion: {
       const auto* cached = context.GetCachedUnionStorageInfo(member_type);
@@ -342,13 +366,15 @@ auto GetMemberAllocSize(
       const auto& union_info = type.AsUnpackedUnion();
       uint32_t max_size = 0;
       for (const auto& m : union_info.members) {
-        max_size =
-            std::max(max_size, GetMemberAllocSize(context, m.type, types));
+        auto size = GetMemberAllocSize(context, m.type, types);
+        if (!size) return std::unexpected(size.error());
+        max_size = std::max(max_size, *size);
       }
       uint32_t max_align = 1;
       for (const auto& m : union_info.members) {
-        max_align =
-            std::max(max_align, GetMemberAlignment(context, m.type, types));
+        auto align = GetMemberAlignment(context, m.type, types);
+        if (!align) return std::unexpected(align.error());
+        max_align = std::max(max_align, *align);
       }
       // Round up to alignment
       return (max_size + max_align - 1) / max_align * max_align;
@@ -363,7 +389,7 @@ auto GetMemberAllocSize(
 }  // namespace
 
 auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
-    -> UnionStorageInfo {
+    -> Result<UnionStorageInfo> {
   // Check cache first
   const auto* cached = context.GetCachedUnionStorageInfo(union_type_id);
   if (cached != nullptr) {
@@ -380,20 +406,22 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
 
   // Validate: reject 4-state unions (LLVM backend limitation)
   if (union_info.storage_is_four_state) {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kType,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
-        "unions with 4-state members are not yet supported in LLVM backend");
+        "unions with 4-state members are not yet supported in LLVM backend",
+        UnsupportedCategory::kType));
   }
 
   // Compute max allocation size and alignment across all members
   uint32_t max_size = 0;
   uint32_t max_align = 1;
   for (const auto& member : union_info.members) {
-    uint32_t member_size = GetMemberAllocSize(context, member.type, types);
-    uint32_t member_align = GetMemberAlignment(context, member.type, types);
-    max_size = std::max(max_size, member_size);
-    max_align = std::max(max_align, member_align);
+    auto member_size = GetMemberAllocSize(context, member.type, types);
+    if (!member_size) return std::unexpected(member_size.error());
+    auto member_align = GetMemberAlignment(context, member.type, types);
+    if (!member_align) return std::unexpected(member_align.error());
+    max_size = std::max(max_size, *member_size);
+    max_align = std::max(max_align, *member_align);
   }
 
   // Round size up to alignment
@@ -420,8 +448,10 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
 
 auto BuildUnpackedUnionType(
     Context& context, TypeId union_type_id, const TypeArena& /*types*/)
-    -> llvm::Type* {
-  return GetUnionStorageInfo(context, union_type_id).storage_type;
+    -> Result<llvm::Type*> {
+  auto result = GetUnionStorageInfo(context, union_type_id);
+  if (!result) return std::unexpected(result.error());
+  return result->storage_type;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

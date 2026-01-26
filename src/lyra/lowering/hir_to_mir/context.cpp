@@ -1,14 +1,16 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <format>
-#include <stdexcept>
 #include <utility>
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 
@@ -96,7 +98,8 @@ auto Context::ResolveCallee(SymbolId sym) const -> mir::FunctionId {
     return it->second;
   }
   const Symbol& s = (*symbol_table)[sym];
-  throw std::runtime_error(
+  throw common::InternalError(
+      "hir_to_mir",
       std::format("unresolved function '{}' in MIR lowering", s.name));
 }
 

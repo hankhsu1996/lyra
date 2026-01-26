@@ -5,7 +5,7 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/mir/handle.hpp"
 

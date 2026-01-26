@@ -1,32 +1,35 @@
 #include <cstddef>
+#include <expected>
 #include <variant>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/Casting.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
 // Forward declaration for mutual recursion
-void AssignStructFieldByField(
+auto AssignStructFieldByField(
     Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy);
+    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
 
 // Assign a single field, handling string ref counting and nested structs.
 // Uses Destroy(target) first, then stores new value.
-void AssignField(
+auto AssignField(
     Context& context, llvm::Value* source_field_ptr,
     llvm::Value* target_field_ptr, llvm::Type* field_llvm_type,
-    TypeId field_type_id, OwnershipPolicy policy) {
+    TypeId field_type_id, OwnershipPolicy policy) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
   const Type& field_type = types[field_type_id];
@@ -53,41 +56,46 @@ void AssignField(
 
     // 4. Store new value
     builder.CreateStore(new_val, target_field_ptr);
-    return;
+    return {};
   }
 
   if (field_type.Kind() == TypeKind::kUnpackedStruct) {
     // Nested struct: check if it contains managed fields and recurse if so
     if (NeedsFieldByField(field_type_id, types)) {
-      AssignStructFieldByField(
+      auto result = AssignStructFieldByField(
           context, source_field_ptr, target_field_ptr, field_type_id, policy);
+      if (!result) return result;
     } else {
       // No managed fields: aggregate load/store
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
       builder.CreateStore(val, target_field_ptr);
     }
-    return;
+    return {};
   }
 
   // Other fields: simple load/store (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
   builder.CreateStore(val, target_field_ptr);
+  return {};
 }
 
 // Assign struct field-by-field for structs containing string fields.
-void AssignStructFieldByField(
+auto AssignStructFieldByField(
     Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) {
+    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
   const Type& struct_type = types[struct_type_id];
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
   // Get LLVM struct type for GEP operations
-  llvm::Type* llvm_struct_type =
+  auto llvm_struct_type_result =
       BuildLlvmTypeForTypeId(context, struct_type_id);
+  if (!llvm_struct_type_result)
+    return std::unexpected(llvm_struct_type_result.error());
+  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
   auto* llvm_struct = llvm::cast<llvm::StructType>(llvm_struct_type);
 
   for (size_t i = 0; i < struct_info.fields.size(); ++i) {
@@ -100,43 +108,50 @@ void AssignStructFieldByField(
         builder.CreateStructGEP(llvm_struct_type, target_ptr, field_idx);
     llvm::Type* field_llvm_type = llvm_struct->getElementType(field_idx);
 
-    AssignField(
+    auto result = AssignField(
         context, src_field_ptr, tgt_field_ptr, field_llvm_type, field.type,
         policy);
+    if (!result) return result;
   }
+  return {};
 }
 
 }  // namespace
 
-void AssignStruct(
+auto AssignStruct(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    OwnershipPolicy policy, TypeId struct_type_id) {
+    OwnershipPolicy policy, TypeId struct_type_id) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(target);
+  auto target_ptr_result = context.GetPlacePointer(target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
+
+  auto storage_type_result = context.GetPlaceLlvmType(target);
+  if (!storage_type_result) return std::unexpected(storage_type_result.error());
+  llvm::Type* storage_type = *storage_type_result;
 
   // Container handles (dynarray/queue) require deep copy not yet implemented
   if (TypeContainsManaged(struct_type_id, types) &&
       !NeedsFieldByField(struct_type_id, types)) {
     // Contains containers but not strings - this is the deferred case
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "unpacked struct assignment with container fields "
-        "(dynamic array/queue) not yet supported");
+        "(dynamic array/queue) not yet supported",
+        UnsupportedCategory::kFeature));
   }
 
   // Structs with string fields require field-by-field assignment
   if (NeedsFieldByField(struct_type_id, types)) {
     // Design slots with string-containing structs not yet supported
     if (IsDesignPlace(context, target)) {
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
           "unpacked struct assignment to design slot with string fields "
-          "not yet supported");
+          "not yet supported",
+          UnsupportedCategory::kFeature));
     }
 
     // Get source pointer (source must be a place for struct assignment)
@@ -146,20 +161,24 @@ void AssignStruct(
           "struct assignment source must be a place, not a constant");
     }
     auto src_place_id = std::get<mir::PlaceId>(source.payload);
-    llvm::Value* source_ptr = context.GetPlacePointer(src_place_id);
+    auto source_ptr_result = context.GetPlacePointer(src_place_id);
+    if (!source_ptr_result) return std::unexpected(source_ptr_result.error());
+    llvm::Value* source_ptr = *source_ptr_result;
 
-    AssignStructFieldByField(
+    return AssignStructFieldByField(
         context, source_ptr, target_ptr, struct_type_id, policy);
-    return;
   }
 
   // No managed fields: fast aggregate load/store
-  llvm::Value* val = LowerOperandRaw(context, source);
+  auto val_result = LowerOperandRaw(context, source);
+  if (!val_result) return std::unexpected(val_result.error());
+  llvm::Value* val = *val_result;
   if (IsDesignPlace(context, target)) {
     StoreDesignWithNotify(context, val, target_ptr, storage_type, target);
   } else {
     builder.CreateStore(val, target_ptr);
   }
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

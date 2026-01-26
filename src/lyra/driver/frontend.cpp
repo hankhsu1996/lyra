@@ -1,5 +1,9 @@
 #include "frontend.hpp"
 
+#include <memory>
+#include <optional>
+#include <utility>
+
 #include <fmt/color.h>
 #include <fmt/core.h>
 #include <slang/diagnostics/DiagnosticEngine.h>

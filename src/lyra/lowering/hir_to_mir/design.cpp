@@ -1,11 +1,16 @@
 #include "lyra/lowering/hir_to_mir/design.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <format>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/design.hpp"
@@ -25,8 +30,11 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/sensitivity.hpp"
@@ -43,7 +51,8 @@ inline constexpr bool kAlwaysFalse = false;
 // variable.
 auto CreateDriveProcess(
     const ast_to_hir::DriveBinding& binding, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena) -> mir::ProcessId {
+    const LoweringInput& input, mir::Arena& mir_arena)
+    -> Result<mir::ProcessId> {
   // Set up context for lowering the rvalue expression.
   // Port bindings only reference design-level symbols, so module_places
   // points to design_places.
@@ -69,7 +78,9 @@ auto CreateDriveProcess(
   builder.SetCurrentBlock(entry_idx);
 
   // Lower the rvalue expression to MIR operand
-  mir::Operand source = LowerExpression(binding.rvalue, builder);
+  auto source_result = LowerExpression(binding.rvalue, builder);
+  if (!source_result) return std::unexpected(source_result.error());
+  mir::Operand source = std::move(*source_result);
 
   // Get the target place (child port variable)
   mir::PlaceId target = decls.design_places.at(binding.child_port_sym);
@@ -112,11 +123,12 @@ auto CreateDriveProcess(
 
 // Apply port bindings: drives become synthetic processes, aliases become
 // entries in the alias_map.
-void ApplyBindings(
+auto ApplyBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena, mir::Design& design) {
+    const LoweringInput& input, mir::Arena& mir_arena, mir::Design& design)
+    -> Result<void> {
   if (plan.drives.empty() && plan.aliases.empty()) {
-    return;
+    return {};
   }
 
   // Build map from instance_sym -> element index for finding parent modules
@@ -139,7 +151,9 @@ void ApplyBindings(
     }
     size_t parent_idx = parent_it->second;
 
-    mir::ProcessId proc_id = CreateDriveProcess(drive, decls, input, mir_arena);
+    auto proc_result = CreateDriveProcess(drive, decls, input, mir_arena);
+    if (!proc_result) return std::unexpected(proc_result.error());
+    mir::ProcessId proc_id = *proc_result;
 
     // Attach process to parent module
     auto& module = std::get<mir::Module>(design.elements[parent_idx]);
@@ -192,7 +206,11 @@ void ApplyBindings(
     };
 
     MirBuilder builder(&mir_arena, &ctx);
-    LvalueResult parent_lvalue = LowerLvalue(alias.lvalue, builder);
+    Result<LvalueResult> parent_lvalue_result =
+        LowerLvalue(alias.lvalue, builder);
+    if (!parent_lvalue_result)
+      return std::unexpected(parent_lvalue_result.error());
+    LvalueResult parent_lvalue = *parent_lvalue_result;
 
     // Validate parent place resolves to kDesign (may have projections)
     const mir::Place& parent_place = mir_arena[parent_lvalue.place];
@@ -216,6 +234,7 @@ void ApplyBindings(
     // Record alias: child_slot -> parent_place
     design.alias_map[child_slot] = parent_lvalue.place;
   }
+  return {};
 }
 
 }  // namespace
@@ -286,7 +305,7 @@ auto CollectDeclarations(
 
 auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map) -> mir::Design {
+    mir::Arena& mir_arena, OriginMap* origin_map) -> Result<mir::Design> {
   const DesignDeclarations decls =
       CollectDeclarations(design, input, mir_arena);
 
@@ -329,7 +348,9 @@ auto LowerDesign(
 
   // Apply port drive bindings (creates synthetic always_comb processes)
   if (input.binding_plan != nullptr) {
-    ApplyBindings(*input.binding_plan, decls, input, mir_arena, result);
+    auto binding_result =
+        ApplyBindings(*input.binding_plan, decls, input, mir_arena, result);
+    if (!binding_result) return std::unexpected(binding_result.error());
   }
 
   return result;

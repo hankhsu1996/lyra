@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/package.hpp"
 
+#include <cstdint>
 #include <utility>
 
 #include "lyra/hir/fwd.hpp"

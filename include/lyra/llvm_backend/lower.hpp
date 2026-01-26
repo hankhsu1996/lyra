@@ -4,11 +4,14 @@
 #include <string>
 #include <vector>
 
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Value.h"
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Value.h>
+
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/layout.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -69,6 +72,7 @@ struct LoweringInput {
   const mir::Design* design = nullptr;
   const mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
+  const lowering::DiagnosticContext* diag_ctx = nullptr;
   SimulationHooks* hooks = nullptr;  // Optional instrumentation (nullable)
 };
 
@@ -77,7 +81,7 @@ struct LoweringResult {
   std::unique_ptr<llvm::Module> module;
 };
 
-auto LowerMirToLlvm(const LoweringInput& input) -> LoweringResult;
+auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult>;
 
 auto DumpLlvmIr(const LoweringResult& result) -> std::string;
 

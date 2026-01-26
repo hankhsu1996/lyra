@@ -1,0 +1,21 @@
+name: Exception Policy
+
+on:
+  pull_request:
+    paths:
+      - 'src/lyra/**'
+      - 'include/lyra/**'
+      - 'tools/policy/check_exceptions.py'
+
+jobs:
+  check:
+    name: Check exception policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check exception policy
+        run: python3 tools/policy/check_exceptions.py --diff-base origin/main

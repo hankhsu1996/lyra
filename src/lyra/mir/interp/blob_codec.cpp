@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
-#include <stdexcept>
+#include <expected>
+#include <utility>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -29,12 +32,13 @@ auto SliceHasXZ(
 
 auto LoadFromBlob(
     TypeId type_id, const RuntimeIntegral& storage, uint32_t bit_offset,
-    const TypeArena& types) -> RuntimeValue {
+    const TypeArena& types) -> Result<RuntimeValue> {
   const auto& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kReal: {
       if (SliceHasXZ(storage, bit_offset, 64)) {
-        throw std::runtime_error("reading real from X/Z-containing storage");
+        return std::unexpected(
+            Diagnostic::HostError("reading real from X/Z-containing storage"));
       }
       RuntimeIntegral bits = IntegralExtractSlice(storage, bit_offset, 64);
       uint64_t raw = bits.value.empty() ? 0 : bits.value[0];
@@ -42,8 +46,9 @@ auto LoadFromBlob(
     }
     case TypeKind::kShortReal: {
       if (SliceHasXZ(storage, bit_offset, 32)) {
-        throw std::runtime_error(
-            "reading shortreal from X/Z-containing storage");
+        return std::unexpected(
+            Diagnostic::HostError(
+                "reading shortreal from X/Z-containing storage"));
       }
       RuntimeIntegral bits = IntegralExtractSlice(storage, bit_offset, 32);
       uint64_t raw = bits.value.empty() ? 0 : bits.value[0];
@@ -69,8 +74,12 @@ auto LoadFromBlob(
       std::vector<RuntimeValue> fields;
       fields.reserve(info.fields.size());
       for (const auto& fl : layout.fields) {
-        fields.push_back(
-            LoadFromBlob(fl.type, storage, bit_offset + fl.bit_offset, types));
+        auto field_result =
+            LoadFromBlob(fl.type, storage, bit_offset + fl.bit_offset, types);
+        if (!field_result) {
+          return std::unexpected(std::move(field_result).error());
+        }
+        fields.push_back(std::move(*field_result));
       }
       return MakeStruct(std::move(fields));
     }
@@ -83,8 +92,12 @@ auto LoadFromBlob(
       for (size_t i = 0; i < count; ++i) {
         uint32_t elem_offset = bit_offset + (static_cast<uint32_t>(i) *
                                              *layout.element_stride_bits);
-        elements.push_back(
-            LoadFromBlob(*layout.element_type, storage, elem_offset, types));
+        auto elem_result =
+            LoadFromBlob(*layout.element_type, storage, elem_offset, types);
+        if (!elem_result) {
+          return std::unexpected(std::move(elem_result).error());
+        }
+        elements.push_back(std::move(*elem_result));
       }
       return MakeArray(std::move(elements));
     }

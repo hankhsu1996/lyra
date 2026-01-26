@@ -2,26 +2,29 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <variant>
 #include <vector>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Support/ErrorHandling.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
+#include <llvm/Support/ErrorHandling.h>
+
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -56,7 +59,7 @@ auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
 auto LowerBinaryRvalue(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type,
-    uint32_t semantic_width) -> llvm::Value* {
+    uint32_t semantic_width) -> Result<llvm::Value*> {
   if (IsStringOperand(context, operands[0])) {
     return LowerStringBinaryOp(context, info, operands, storage_type);
   }
@@ -67,8 +70,12 @@ auto LowerBinaryRvalue(
 
   auto& builder = context.GetBuilder();
 
-  llvm::Value* lhs = LowerOperand(context, operands[0]);
-  llvm::Value* rhs = LowerOperand(context, operands[1]);
+  auto lhs_or_err = LowerOperand(context, operands[0]);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  auto rhs_or_err = LowerOperand(context, operands[1]);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  llvm::Value* lhs = *lhs_or_err;
+  llvm::Value* rhs = *rhs_or_err;
 
   lhs = builder.CreateZExtOrTrunc(lhs, storage_type, "lhs.coerce");
   rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
@@ -79,32 +86,36 @@ auto LowerBinaryRvalue(
       lhs = SignExtendToStorage(builder, lhs, op_width);
       rhs = SignExtendToStorage(builder, rhs, op_width);
     }
-    llvm::Value* cmp = LowerBinaryComparison(context, info.op, lhs, rhs);
-    return builder.CreateZExt(cmp, storage_type, "cmp.ext");
+    auto cmp_or_err = LowerBinaryComparison(context, info.op, lhs, rhs);
+    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
+    return builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
   }
 
   if (IsShiftOp(info.op)) {
     return LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
   }
 
-  llvm::Value* result = LowerBinaryArith(context, info.op, lhs, rhs);
+  auto result_or_err = LowerBinaryArith(context, info.op, lhs, rhs);
+  if (!result_or_err) return std::unexpected(result_or_err.error());
 
   if (ReturnsI1(info.op)) {
-    return builder.CreateZExt(result, storage_type, "bool.ext");
+    return builder.CreateZExt(*result_or_err, storage_type, "bool.ext");
   }
 
-  return result;
+  return *result_or_err;
 }
 
 auto LowerUnaryRvalue(
     Context& context, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   uint32_t operand_bit_width = GetOperandPackedWidth(context, operands[0]);
 
-  llvm::Value* operand = LowerOperand(context, operands[0]);
+  auto operand_or_err = LowerOperand(context, operands[0]);
+  if (!operand_or_err) return std::unexpected(operand_or_err.error());
+  llvm::Value* operand = *operand_or_err;
 
   if (!IsReductionOp(info.op)) {
     operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
@@ -117,7 +128,7 @@ auto LowerUnaryRvalue(
 auto LowerConcatRvalue(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   if (operands.empty()) {
@@ -126,14 +137,18 @@ auto LowerConcatRvalue(
   }
 
   uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
-  llvm::Value* first = LowerOperand(context, operands[0]);
+  auto first_or_err = LowerOperand(context, operands[0]);
+  if (!first_or_err) return std::unexpected(first_or_err.error());
+  llvm::Value* first = *first_or_err;
   auto* first_ty = llvm::Type::getIntNTy(builder.getContext(), first_width);
   first = builder.CreateZExtOrTrunc(first, first_ty, "concat.trunc");
   llvm::Value* acc = builder.CreateZExt(first, storage_type, "concat.ext");
 
   for (size_t i = 1; i < operands.size(); ++i) {
     uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
-    llvm::Value* op = LowerOperand(context, operands[i]);
+    auto op_or_err = LowerOperand(context, operands[i]);
+    if (!op_or_err) return std::unexpected(op_or_err.error());
+    llvm::Value* op = *op_or_err;
 
     auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
     op = builder.CreateZExtOrTrunc(op, op_ty, "concat.trunc");
@@ -150,10 +165,12 @@ auto LowerConcatRvalue(
 auto LowerIndexValidity(
     Context& context, const mir::IndexValidityRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* index = LowerOperand(context, operands[0]);
+  auto index_or_err = LowerOperand(context, operands[0]);
+  if (!index_or_err) return std::unexpected(index_or_err.error());
+  llvm::Value* index = *index_or_err;
   auto* idx_type = index->getType();
 
   auto* lower = llvm::ConstantInt::get(idx_type, info.lower_bound, true);
@@ -165,7 +182,9 @@ auto LowerIndexValidity(
   llvm::Value* valid = builder.CreateAnd(ge_lower, le_upper, "idx.valid");
 
   if (info.check_known) {
-    llvm::Value* raw = LowerOperandRaw(context, operands[0]);
+    auto raw_or_err = LowerOperandRaw(context, operands[0]);
+    if (!raw_or_err) return std::unexpected(raw_or_err.error());
+    llvm::Value* raw = *raw_or_err;
     if (raw->getType()->isStructTy()) {
       auto* unk = builder.CreateExtractValue(raw, 1, "idx.unk");
       auto* zero = llvm::ConstantInt::get(unk->getType(), 0);
@@ -180,10 +199,12 @@ auto LowerIndexValidity(
 auto LowerGuardedUse(
     Context& context, const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> llvm::Value* {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* valid = LowerOperand(context, operands[0]);
+  auto valid_or_err = LowerOperand(context, operands[0]);
+  if (!valid_or_err) return std::unexpected(valid_or_err.error());
+  llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
     auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
     valid = builder.CreateICmpNE(valid, zero, "gu.tobool");
@@ -201,7 +222,9 @@ auto LowerGuardedUse(
 
   builder.SetInsertPoint(do_read_bb);
   auto place_operand = mir::Operand::Use(info.place);
-  llvm::Value* read_val = LowerOperand(context, place_operand);
+  auto read_val_or_err = LowerOperand(context, place_operand);
+  if (!read_val_or_err) return std::unexpected(read_val_or_err.error());
+  llvm::Value* read_val = *read_val_or_err;
   read_val = builder.CreateZExtOrTrunc(read_val, storage_type, "gu.fit");
   auto* do_read_end_bb = builder.GetInsertBlock();
   builder.CreateBr(merge_bb);
@@ -217,36 +240,42 @@ auto LowerGuardedUse(
   return phi;
 }
 
-void LowerCompute2State(
-    Context& context, const mir::Compute& compute, uint32_t bit_width) {
+auto LowerCompute2State(
+    Context& context, const mir::Compute& compute, uint32_t bit_width)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
-  llvm::Value* target_ptr = context.GetPlacePointer(compute.target);
-  llvm::Type* storage_type = context.GetPlaceLlvmType(compute.target);
+  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto storage_type_or_err = context.GetPlaceLlvmType(compute.target);
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
+  llvm::Type* storage_type = *storage_type_or_err;
 
-  llvm::Value* result = std::visit(
+  auto result_or_err = std::visit(
       common::Overloaded{
-          [&](const mir::UnaryRvalueInfo& info) {
+          [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerUnaryRvalue(
                 context, info, compute.value.operands, storage_type);
           },
-          [&](const mir::BinaryRvalueInfo& info) {
+          [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerBinaryRvalue(
                 context, info, compute.value.operands, storage_type, bit_width);
           },
-          [&](const mir::ConcatRvalueInfo& info) {
+          [&](const mir::ConcatRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerConcatRvalue(
                 context, info, compute.value.operands, storage_type);
           },
-          [&](const mir::IndexValidityRvalueInfo& info) {
+          [&](const mir::IndexValidityRvalueInfo& info)
+              -> Result<llvm::Value*> {
             return LowerIndexValidity(
                 context, info, compute.value.operands, storage_type);
           },
-          [&](const mir::GuardedUseRvalueInfo& info) {
+          [&](const mir::GuardedUseRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerGuardedUse(
                 context, info, compute.value.operands, storage_type);
           },
-          [&](const mir::RuntimeQueryRvalueInfo& info) -> llvm::Value* {
+          [&](const mir::RuntimeQueryRvalueInfo& info) -> Result<llvm::Value*> {
             switch (info.kind) {
               case RuntimeQueryKind::kTimeRawTicks: {
                 auto* raw = builder.CreateCall(
@@ -259,7 +288,7 @@ void LowerCompute2State(
             }
             llvm_unreachable("unhandled RuntimeQueryKind");
           },
-          [&](const mir::UserCallRvalueInfo& info) -> llvm::Value* {
+          [&](const mir::UserCallRvalueInfo& info) -> Result<llvm::Value*> {
             llvm::Function* callee = context.GetUserFunction(info.callee);
 
             std::vector<llvm::Value*> args;
@@ -267,7 +296,9 @@ void LowerCompute2State(
             args.push_back(context.GetEnginePointer());
 
             for (const auto& operand : compute.value.operands) {
-              args.push_back(LowerOperand(context, operand));
+              auto arg_or_err = LowerOperand(context, operand);
+              if (!arg_or_err) return std::unexpected(arg_or_err.error());
+              args.push_back(*arg_or_err);
             }
 
             llvm::Value* call_result =
@@ -282,20 +313,24 @@ void LowerCompute2State(
 
             return call_result;
           },
-          [&](const auto& /*info*/) -> llvm::Value* {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                std::format(
-                    "unsupported rvalue kind in 2-state path: {}",
-                    mir::GetRvalueKind(compute.value.info)));
+          [&](const auto& /*info*/) -> Result<llvm::Value*> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    std::format(
+                        "unsupported rvalue kind in 2-state path: {}",
+                        mir::GetRvalueKind(compute.value.info)),
+                    UnsupportedCategory::kFeature));
           },
       },
       compute.value.info);
 
-  result = ApplyWidthMask(context, result, bit_width);
+  if (!result_or_err) return std::unexpected(result_or_err.error());
+
+  llvm::Value* result = ApplyWidthMask(context, *result_or_err, bit_width);
 
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

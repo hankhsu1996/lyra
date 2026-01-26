@@ -1,8 +1,9 @@
 #pragma once
 
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Value.h"
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 

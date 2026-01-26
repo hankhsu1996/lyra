@@ -1,7 +1,13 @@
 #include "pipeline.hpp"
 
+#include <expected>
+#include <utility>
+
 #include "frontend.hpp"
-#include "lyra/common/unsupported_error.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/hir_to_mir/lower.hpp"
 
 namespace lyra::driver {
 
@@ -33,19 +39,18 @@ auto CompileToMir(const CompilationInput& input)
       .binding_plan = &hir_result.binding_plan,
   };
 
-  lowering::hir_to_mir::LoweringResult mir_result;
-  try {
-    mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
-  } catch (const common::UnsupportedErrorException&) {
-    // Let UnsupportedError propagate - caller has origin_map to resolve it
-    throw;
-  } catch (const std::exception& e) {
-    return std::unexpected(CompilationError::Simple(e.what()));
+  auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  if (!mir_result) {
+    DiagnosticSink error_sink;
+    error_sink.Report(mir_result.error());
+    return std::unexpected(
+        CompilationError::FromDiagnostics(
+            std::move(error_sink), std::move(hir_result.source_manager)));
   }
 
   return CompilationResult{
       .hir = std::move(hir_result),
-      .mir = std::move(mir_result),
+      .mir = std::move(*mir_result),
   };
 }
 

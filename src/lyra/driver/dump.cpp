@@ -7,7 +7,9 @@
 #include "lyra/hir/dumper.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/dumper.hpp"
 #include "print.hpp"
 
@@ -61,10 +63,14 @@ auto DumpMir(const CompilationInput& input) -> int {
       .binding_plan = &hir_result.binding_plan,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  if (!mir_result) {
+    PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    return 1;
+  }
 
   mir::Dumper dumper(
-      mir_result.mir_arena.get(), hir_result.type_arena.get(), &std::cout);
-  dumper.Dump(mir_result.design);
+      mir_result->mir_arena.get(), hir_result.type_arena.get(), &std::cout);
+  dumper.Dump(mir_result->design);
 
   return 0;
 }
@@ -94,15 +100,29 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .binding_plan = &hir_result.binding_plan,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  if (!mir_result) {
+    PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    return 1;
+  }
+
+  // Create diagnostic context for LLVM backend error reporting
+  lowering::OriginMapLookup origin_lookup(
+      &mir_result->origin_map, hir_result.hir_arena.get());
+  lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
-      .design = &mir_result.design,
-      .mir_arena = mir_result.mir_arena.get(),
+      .design = &mir_result->design,
+      .mir_arena = mir_result->mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
+      .diag_ctx = &diag_ctx,
   };
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  if (!llvm_result) {
+    PrintDiagnostic(llvm_result.error(), *hir_result.source_manager);
+    return 1;
+  }
 
-  std::cout << lowering::mir_to_llvm::DumpLlvmIr(llvm_result);
+  std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
 
   return 0;
 }

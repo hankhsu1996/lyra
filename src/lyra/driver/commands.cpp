@@ -1,12 +1,13 @@
 #include "commands.hpp"
 
-#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 
+#include "argparse/argparse.hpp"
 #include "check.hpp"
 #include "dump.hpp"
 #include "input.hpp"
@@ -29,16 +30,15 @@ auto RunCommand(const argparse::ArgumentParser& cmd) -> int {
     return 1;
   }
 
-  std::optional<ProjectConfig> config;
-  try {
-    config = LoadOptionalConfig();
-  } catch (const std::exception& e) {
-    PrintError(e.what());
+  auto config_result = LoadOptionalConfig();
+  if (!config_result) {
+    PrintDiagnostic(config_result.error());
     return 1;
   }
 
-  auto input = BuildInput(cmd, config);
+  auto input = BuildInput(cmd, *config_result);
   if (!input) {
+    PrintDiagnostic(input.error());
     return 1;
   }
 
@@ -56,16 +56,15 @@ auto DumpCommand(const argparse::ArgumentParser& cmd) -> int {
     return 1;
   }
 
-  std::optional<ProjectConfig> config;
-  try {
-    config = LoadOptionalConfig();
-  } catch (const std::exception& e) {
-    PrintError(e.what());
+  auto config_result = LoadOptionalConfig();
+  if (!config_result) {
+    PrintDiagnostic(config_result.error());
     return 1;
   }
 
-  auto input = BuildInput(cmd, config);
+  auto input = BuildInput(cmd, *config_result);
   if (!input) {
+    PrintDiagnostic(input.error());
     return 1;
   }
 
@@ -79,16 +78,15 @@ auto DumpCommand(const argparse::ArgumentParser& cmd) -> int {
 }
 
 auto CheckCommand(const argparse::ArgumentParser& cmd) -> int {
-  std::optional<ProjectConfig> config;
-  try {
-    config = LoadOptionalConfig();
-  } catch (const std::exception& e) {
-    PrintError(e.what());
+  auto config_result = LoadOptionalConfig();
+  if (!config_result) {
+    PrintDiagnostic(config_result.error());
     return 1;
   }
 
-  auto input = BuildInput(cmd, config);
+  auto input = BuildInput(cmd, *config_result);
   if (!input) {
+    PrintDiagnostic(input.error());
     return 1;
   }
 
@@ -129,36 +127,31 @@ auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
     }
   }
 
-  try {
-    if (create_directory) {
-      fs::create_directories(project_dir);
+  if (create_directory) {
+    fs::create_directories(project_dir);
 
-      std::ofstream sv_file(project_dir / (project_name + ".sv"));
-      sv_file << std::format(
-          "module {};\n"
-          "  initial begin\n"
-          "    $display(\"Hello from {}!\");\n"
-          "  end\n"
-          "endmodule\n",
-          project_name, project_name);
-    }
-
-    std::ofstream toml_file(project_dir / "lyra.toml");
-    toml_file << std::format(
-        "[package]\n"
-        "name = \"{}\"\n"
-        "top = \"{}\"\n"
-        "\n"
-        "[sources]\n"
-        "files = [\"{}.sv\"]\n",
-        project_name, project_name, project_name);
-
-    std::cout << std::format("Created project '{}'\n", project_name);
-    return 0;
-  } catch (const std::exception& e) {
-    PrintError(e.what());
-    return 1;
+    std::ofstream sv_file(project_dir / (project_name + ".sv"));
+    sv_file << std::format(
+        "module {};\n"
+        "  initial begin\n"
+        "    $display(\"Hello from {}!\");\n"
+        "  end\n"
+        "endmodule\n",
+        project_name, project_name);
   }
+
+  std::ofstream toml_file(project_dir / "lyra.toml");
+  toml_file << std::format(
+      "[package]\n"
+      "name = \"{}\"\n"
+      "top = \"{}\"\n"
+      "\n"
+      "[sources]\n"
+      "files = [\"{}.sv\"]\n",
+      project_name, project_name, project_name);
+
+  std::cout << std::format("Created project '{}'\n", project_name);
+  return 0;
 }
 
 }  // namespace lyra::driver

@@ -4,6 +4,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"

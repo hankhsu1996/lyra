@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/instruction.hpp"
 
@@ -12,10 +13,12 @@ namespace lyra::lowering::mir_to_llvm {
 //   - 4s-int <-> 4s-int
 //   - int <-> float
 // The target type determines the storage format (2-state vs 4-state).
-void LowerCastUnified(Context& context, const mir::Compute& compute);
+auto LowerCastUnified(Context& context, const mir::Compute& compute)
+    -> Result<void>;
 
 // Unified bitcast lowering for BitCastRvalueInfo.
 // Handles reinterpretation casts between integral and floating-point types.
-void LowerBitCastUnified(Context& context, const mir::Compute& compute);
+auto LowerBitCastUnified(Context& context, const mir::Compute& compute)
+    -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

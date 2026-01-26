@@ -1,24 +1,27 @@
 #include "lyra/llvm_backend/instruction_compute_real.hpp"
 
+#include <expected>
 #include <format>
 #include <variant>
 #include <vector>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstrTypes.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Support/ErrorHandling.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InstrTypes.h>
+#include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/Value.h>
+#include <llvm/Support/ErrorHandling.h>
+
 #include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
@@ -96,13 +99,16 @@ auto MapToFcmpPredicate(mir::BinaryOp op) -> llvm::CmpInst::Predicate {
   }
 }
 
-void LowerRealUnary(
+auto LowerRealUnary(
     Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target) {
+    const std::vector<mir::Operand>& operands, mir::PlaceId target)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
-  llvm::Value* operand = LowerOperand(context, operands[0]);
+  auto operand_or_err = LowerOperand(context, operands[0]);
+  if (!operand_or_err) return std::unexpected(operand_or_err.error());
+  llvm::Value* operand = *operand_or_err;
 
   llvm::Value* result = nullptr;
 
@@ -114,27 +120,37 @@ void LowerRealUnary(
     auto* zero = llvm::ConstantFP::get(float_ty, 0.0);
     auto* nonzero = builder.CreateFCmpUNE(operand, zero, "nonzero");
     auto* not_val = builder.CreateNot(nonzero, "lnot");
-    llvm::Type* target_type = context.GetPlaceLlvmType(target);
+    auto target_type_or_err = context.GetPlaceLlvmType(target);
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
+    llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(not_val, target_type, "lnot.ext");
   } else {
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm,
-        common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-        std::format("unsupported real unary op: {}", mir::ToString(info.op)));
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        std::format("unsupported real unary op: {}", mir::ToString(info.op)),
+        UnsupportedCategory::kOperation));
   }
 
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
-void LowerRealBinary(
+auto LowerRealBinary(
     Context& context, const mir::BinaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target) {
+    const std::vector<mir::Operand>& operands, mir::PlaceId target)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
-  llvm::Value* lhs = LowerOperand(context, operands[0]);
-  llvm::Value* rhs = LowerOperand(context, operands[1]);
+  auto lhs_or_err = LowerOperand(context, operands[0]);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  llvm::Value* lhs = *lhs_or_err;
+  auto rhs_or_err = LowerOperand(context, operands[1]);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  llvm::Value* rhs = *rhs_or_err;
 
   if (!lhs->getType()->isFloatingPointTy() ||
       !rhs->getType()->isFloatingPointTy()) {
@@ -155,15 +171,19 @@ void LowerRealBinary(
   }
 
   llvm::Value* result = nullptr;
-  llvm::Value* target_ptr = context.GetPlacePointer(target);
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
 
   if (IsRealComparisonOp(info.op)) {
     auto pred = MapToFcmpPredicate(info.op);
     auto* cmp = builder.CreateFCmp(pred, lhs, rhs, "fcmp");
-    llvm::Type* target_type = context.GetPlaceLlvmType(target);
+    auto target_type_or_err = context.GetPlaceLlvmType(target);
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
+    llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(cmp, target_type, "fcmp.ext");
     builder.CreateStore(result, target_ptr);
-    return;
+    return {};
   }
 
   if (info.op == mir::BinaryOp::kLogicalAnd ||
@@ -178,10 +198,12 @@ void LowerRealBinary(
     } else {
       logic_result = builder.CreateOr(lhs_true, rhs_true, "flor");
     }
-    llvm::Type* target_type = context.GetPlaceLlvmType(target);
+    auto target_type_or_err = context.GetPlaceLlvmType(target);
+    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
+    llvm::Type* target_type = *target_type_or_err;
     result = builder.CreateZExtOrTrunc(logic_result, target_type, "flog.ext");
     builder.CreateStore(result, target_ptr);
-    return;
+    return {};
   }
 
   // Arithmetic operations
@@ -207,14 +229,14 @@ void LowerRealBinary(
       break;
     }
     default:
-      throw common::UnsupportedErrorException(
-          common::UnsupportedLayer::kMirToLlvm,
-          common::UnsupportedKind::kOperation, context.GetCurrentOrigin(),
-          std::format(
-              "unsupported real binary op: {}", mir::ToString(info.op)));
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          std::format("unsupported real binary op: {}", mir::ToString(info.op)),
+          UnsupportedCategory::kOperation));
   }
 
   builder.CreateStore(result, target_ptr);
+  return {};
 }
 
 }  // namespace
@@ -238,28 +260,30 @@ auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
       compute.value.info);
 }
 
-void LowerRealCompute(Context& context, const mir::Compute& compute) {
-  std::visit(
+auto LowerRealCompute(Context& context, const mir::Compute& compute)
+    -> Result<void> {
+  return std::visit(
       common::Overloaded{
-          [&](const mir::UnaryRvalueInfo& info) {
-            LowerRealUnary(
+          [&](const mir::UnaryRvalueInfo& info) -> Result<void> {
+            return LowerRealUnary(
                 context, info, compute.value.operands, compute.target);
           },
-          [&](const mir::BinaryRvalueInfo& info) {
-            LowerRealBinary(
+          [&](const mir::BinaryRvalueInfo& info) -> Result<void> {
+            return LowerRealBinary(
                 context, info, compute.value.operands, compute.target);
           },
-          [&](const mir::CastRvalueInfo&) {
+          [&](const mir::CastRvalueInfo&) -> Result<void> {
             throw common::InternalError(
                 "LowerRealCompute", "casts use LowerCastUnified");
           },
-          [&](const auto&) {
-            throw common::UnsupportedErrorException(
-                common::UnsupportedLayer::kMirToLlvm,
-                common::UnsupportedKind::kFeature, context.GetCurrentOrigin(),
-                std::format(
-                    "unsupported real rvalue kind: {}",
-                    mir::GetRvalueKind(compute.value.info)));
+          [&](const auto&) -> Result<void> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    std::format(
+                        "unsupported real rvalue kind: {}",
+                        mir::GetRvalueKind(compute.value.info)),
+                    UnsupportedCategory::kFeature));
           },
       },
       compute.value.info);
