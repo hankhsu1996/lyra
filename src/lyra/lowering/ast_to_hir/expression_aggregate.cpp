@@ -14,17 +14,17 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
-#include "lyra/lowering/ast_to_hir/expression.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerAssignmentPatternExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
   using slang::ast::ExpressionKind;
 
+  auto* ctx = view.context;
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
   // Validate type exists
@@ -65,7 +65,7 @@ auto LowerAssignmentPatternExpression(
         const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
         auto expected_size = arr.range.width();
         hir::ExpressionId default_id =
-            LowerExpression(*structured.defaultSetter, registrar, ctx);
+            LowerExpression(*structured.defaultSetter, view);
         if (!default_id) {
           return hir::kInvalidExpressionId;
         }
@@ -107,8 +107,7 @@ auto LowerAssignmentPatternExpression(
             return hir::kInvalidExpressionId;
           }
 
-          hir::ExpressionId value_id =
-              LowerExpression(*setter.expr, registrar, ctx);
+          hir::ExpressionId value_id = LowerExpression(*setter.expr, view);
           if (!value_id) {
             return hir::kInvalidExpressionId;
           }
@@ -143,7 +142,7 @@ auto LowerAssignmentPatternExpression(
     std::vector<hir::ExpressionId> element_ids;
     element_ids.reserve(elements.size());
     for (const auto* elem : elements) {
-      hir::ExpressionId id = LowerExpression(*elem, registrar, ctx);
+      hir::ExpressionId id = LowerExpression(*elem, view);
       if (!id) {
         return hir::kInvalidExpressionId;
       }
@@ -200,7 +199,7 @@ auto LowerAssignmentPatternExpression(
   std::vector<hir::ExpressionId> field_values;
   field_values.reserve(elements.size());
   for (const auto* elem : elements) {
-    hir::ExpressionId field_id = LowerExpression(*elem, registrar, ctx);
+    hir::ExpressionId field_id = LowerExpression(*elem, view);
     if (!field_id) {
       return hir::kInvalidExpressionId;
     }
@@ -222,10 +221,11 @@ auto LowerAssignmentPatternExpression(
 }
 
 auto LowerReplicationExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
   using slang::ast::ExpressionKind;
 
+  auto* ctx = view.context;
   const auto& repl = expr.as<slang::ast::ReplicationExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -246,7 +246,7 @@ auto LowerReplicationExpression(
     return hir::kInvalidExpressionId;
   }
 
-  hir::ExpressionId inner_id = LowerExpression(repl.concat(), registrar, ctx);
+  hir::ExpressionId inner_id = LowerExpression(repl.concat(), view);
   if (!inner_id) {
     return hir::kInvalidExpressionId;
   }
@@ -268,10 +268,11 @@ auto LowerReplicationExpression(
 }
 
 auto LowerConcatenationExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
   using slang::ast::ExpressionKind;
 
+  auto* ctx = view.context;
   const auto& concat = expr.as<slang::ast::ConcatenationExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -317,7 +318,7 @@ auto LowerConcatenationExpression(
     if (is_integral_concat) {
       total_width += op->type->getBitWidth();
     }
-    hir::ExpressionId op_id = LowerExpression(*op, registrar, ctx);
+    hir::ExpressionId op_id = LowerExpression(*op, view);
     if (!op_id) {
       return hir::kInvalidExpressionId;
     }

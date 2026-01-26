@@ -18,6 +18,25 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+/// Canonical types used across AST→HIR lowering.
+/// Initialized once per compilation via InternBuiltinTypes().
+struct BuiltinTypes {
+  /// Internal simulation ticks (uint64, two-state).
+  /// Used by $time lowering for raw tick queries.
+  TypeId tick_type;
+};
+
+/// Initialize canonical builtin types in the given arena.
+/// Called once per compilation from LowerDesign.
+inline auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
+  return BuiltinTypes{
+      .tick_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 64, .is_signed = false, .is_four_state = false}),
+  };
+}
+
 struct Context {
   DiagnosticSink* sink = nullptr;
   hir::Arena* hir_arena = nullptr;
@@ -33,6 +52,13 @@ struct Context {
   // Cached global precision (avoids repeated hierarchy walks).
   // Computed once per compilation, used by all ModuleLowerer instances.
   std::optional<int> cached_global_precision;
+
+  // Canonical builtin types. Initialized once in LowerDesign.
+  BuiltinTypes builtin_types{};
+
+  [[nodiscard]] auto GetTickType() const -> TypeId {
+    return builtin_types.tick_type;
+  }
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {
     return source_mapper->SpanOf(range);

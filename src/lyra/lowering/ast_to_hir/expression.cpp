@@ -19,9 +19,11 @@
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/expression_access.hpp"
 #include "lyra/lowering/ast_to_hir/expression_aggregate.hpp"
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
@@ -405,8 +407,13 @@ auto TryGetConstantValue(
 }  // namespace
 
 auto LowerExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  // Aliases for backward compatibility with existing code
+  auto& registrar = *view.registrar;
+  auto* ctx = view.context;
+  [[maybe_unused]] const auto* frame = view.frame;
+
   using slang::ast::ExpressionKind;
 
   switch (expr.kind) {
@@ -585,8 +592,7 @@ auto LowerExpression(
             span, "unsupported unary operator '{}'", toString(unary.op));
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId operand =
-          LowerExpression(unary.operand(), registrar, ctx);
+      hir::ExpressionId operand = LowerExpression(unary.operand(), view);
       if (!operand) {
         return hir::kInvalidExpressionId;
       }
@@ -615,11 +621,11 @@ auto LowerExpression(
             span, "unsupported binary operator '{}'", toString(binary.op));
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId lhs = LowerExpression(binary.left(), registrar, ctx);
+      hir::ExpressionId lhs = LowerExpression(binary.left(), view);
       if (!lhs) {
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId rhs = LowerExpression(binary.right(), registrar, ctx);
+      hir::ExpressionId rhs = LowerExpression(binary.right(), view);
       if (!rhs) {
         return hir::kInvalidExpressionId;
       }
@@ -643,16 +649,14 @@ auto LowerExpression(
       const auto& new_arr = expr.as<slang::ast::NewArrayExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-      hir::ExpressionId size_expr =
-          LowerExpression(new_arr.sizeExpr(), registrar, ctx);
+      hir::ExpressionId size_expr = LowerExpression(new_arr.sizeExpr(), view);
       if (!size_expr) {
         return hir::kInvalidExpressionId;
       }
 
       std::optional<hir::ExpressionId> init_expr;
       if (new_arr.initExpr() != nullptr) {
-        hir::ExpressionId init_id =
-            LowerExpression(*new_arr.initExpr(), registrar, ctx);
+        hir::ExpressionId init_id = LowerExpression(*new_arr.initExpr(), view);
         if (!init_id) {
           return hir::kInvalidExpressionId;
         }
@@ -677,10 +681,10 @@ auto LowerExpression(
     }
 
     case ExpressionKind::Call:
-      return LowerCallExpression(expr, registrar, ctx);
+      return LowerCallExpression(expr, view);
 
     case ExpressionKind::Conversion:
-      return LowerConversionExpression(expr, registrar, ctx);
+      return LowerConversionExpression(expr, view);
 
     case ExpressionKind::ConditionalOp: {
       const auto& cond = expr.as<slang::ast::ConditionalExpression>();
@@ -700,18 +704,15 @@ auto LowerExpression(
       }
 
       // Lower all three sub-expressions
-      hir::ExpressionId cond_expr =
-          LowerExpression(*condition.expr, registrar, ctx);
+      hir::ExpressionId cond_expr = LowerExpression(*condition.expr, view);
       if (!cond_expr) {
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId then_expr =
-          LowerExpression(cond.left(), registrar, ctx);
+      hir::ExpressionId then_expr = LowerExpression(cond.left(), view);
       if (!then_expr) {
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId else_expr =
-          LowerExpression(cond.right(), registrar, ctx);
+      hir::ExpressionId else_expr = LowerExpression(cond.right(), view);
       if (!else_expr) {
         return hir::kInvalidExpressionId;
       }
@@ -759,15 +760,14 @@ auto LowerExpression(
         }
 
         // Lower target (the lvalue being modified)
-        hir::ExpressionId target =
-            LowerExpression(assign.left(), registrar, ctx);
+        hir::ExpressionId target = LowerExpression(assign.left(), view);
         if (!target) {
           return hir::kInvalidExpressionId;
         }
 
         // Extract and lower the user's RHS from slang's expanded binary
         const auto& rhs = ExtractCompoundAssignmentRhs(assign.right());
-        hir::ExpressionId operand = LowerExpression(rhs, registrar, ctx);
+        hir::ExpressionId operand = LowerExpression(rhs, view);
         if (!operand) {
           return hir::kInvalidExpressionId;
         }
@@ -784,11 +784,11 @@ auto LowerExpression(
       }
 
       // Regular assignment
-      hir::ExpressionId target = LowerExpression(assign.left(), registrar, ctx);
+      hir::ExpressionId target = LowerExpression(assign.left(), view);
       if (!target) {
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId value = LowerExpression(assign.right(), registrar, ctx);
+      hir::ExpressionId value = LowerExpression(assign.right(), view);
       if (!value) {
         return hir::kInvalidExpressionId;
       }
@@ -807,24 +807,24 @@ auto LowerExpression(
     }
 
     case ExpressionKind::ElementSelect:
-      return LowerElementSelectExpression(expr, registrar, ctx);
+      return LowerElementSelectExpression(expr, view);
 
     case ExpressionKind::RangeSelect:
-      return LowerRangeSelectExpression(expr, registrar, ctx);
+      return LowerRangeSelectExpression(expr, view);
 
     case ExpressionKind::MemberAccess:
-      return LowerMemberAccessExpression(expr, registrar, ctx);
+      return LowerMemberAccessExpression(expr, view);
 
     case ExpressionKind::ReplicatedAssignmentPattern:
     case ExpressionKind::SimpleAssignmentPattern:
     case ExpressionKind::StructuredAssignmentPattern:
-      return LowerAssignmentPatternExpression(expr, registrar, ctx);
+      return LowerAssignmentPatternExpression(expr, view);
 
     case ExpressionKind::Replication:
-      return LowerReplicationExpression(expr, registrar, ctx);
+      return LowerReplicationExpression(expr, view);
 
     case ExpressionKind::Concatenation:
-      return LowerConcatenationExpression(expr, registrar, ctx);
+      return LowerConcatenationExpression(expr, view);
 
     case ExpressionKind::HierarchicalValue: {
       const auto& hier = expr.as<slang::ast::HierarchicalValueExpression>();
@@ -863,6 +863,23 @@ auto LowerExpression(
           toString(expr.kind));
       return hir::kInvalidExpressionId;
   }
+}
+
+auto LowerDesignLevelExpression(
+    const slang::ast::Expression& expr, Context& ctx,
+    SymbolRegistrar& registrar) -> hir::ExpressionId {
+  ExpressionLoweringView view{
+      .context = &ctx, .registrar = &registrar, .frame = nullptr};
+  return LowerExpression(expr, view);
+}
+
+auto LowerScopedExpression(
+    const slang::ast::Expression& expr, Context& ctx,
+    SymbolRegistrar& registrar, const LoweringFrame& frame)
+    -> hir::ExpressionId {
+  ExpressionLoweringView view{
+      .context = &ctx, .registrar = &registrar, .frame = &frame};
+  return LowerExpression(expr, view);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

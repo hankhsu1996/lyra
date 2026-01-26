@@ -107,7 +107,8 @@ auto LowerPackage(
     init_stmts.reserve(var_init_refs.size());
 
     for (const auto& [sym, init_ast] : var_init_refs) {
-      hir::ExpressionId init_expr = LowerExpression(*init_ast, registrar, ctx);
+      hir::ExpressionId init_expr =
+          LowerScopedExpression(*init_ast, *ctx, registrar, lowerer.Frame());
       if (!init_expr) {
         continue;
       }

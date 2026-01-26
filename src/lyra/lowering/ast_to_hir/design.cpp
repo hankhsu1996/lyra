@@ -14,6 +14,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/type.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
@@ -278,8 +279,9 @@ auto LowerPortBindings(
       continue;
     }
 
-    // Lower the connection expression to HIR
-    hir::ExpressionId expr_id = LowerExpression(*pb.value_expr, registrar, ctx);
+    // Lower the connection expression to HIR (design-level, no timescale)
+    hir::ExpressionId expr_id =
+        LowerDesignLevelExpression(*pb.value_expr, *ctx, registrar);
     if (!expr_id) {
       continue;
     }
@@ -340,6 +342,9 @@ auto LowerPortBindings(
 auto LowerDesign(
     slang::ast::Compilation& compilation, SymbolRegistrar& registrar,
     Context* ctx) -> DesignLoweringResult {
+  // Initialize canonical builtin types (tick_type for $time, etc.)
+  ctx->builtin_types = InternBuiltinTypes(*ctx->type_arena);
+
   const slang::ast::RootSymbol& root = compilation.getRoot();
 
   std::vector<hir::DesignElement> elements;

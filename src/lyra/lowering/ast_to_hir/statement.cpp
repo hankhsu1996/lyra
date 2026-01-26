@@ -137,9 +137,15 @@ auto BuildForLoop(
 
 auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
     -> std::optional<hir::StatementId> {
-  // Alias for convenience - minimizes changes to existing code
+  // Alias for convenience
   auto& registrar = lowerer.Registrar();
   auto* ctx = &lowerer.Ctx();
+  const auto* frame = &lowerer.Frame();
+
+  // Helper to lower expressions using the public API
+  auto lower_expr = [&](const slang::ast::Expression& expr) {
+    return LowerScopedExpression(expr, *ctx, registrar, *frame);
+  };
 
   using slang::ast::StatementKind;
 
@@ -195,7 +201,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
       hir::ExpressionId init = hir::kInvalidExpressionId;
       if (const slang::ast::Expression* init_expr = var_sym.getInitializer()) {
-        init = LowerExpression(*init_expr, registrar, ctx);
+        init = lower_expr(*init_expr);
         if (!init) {
           return hir::kInvalidStatementId;
         }
@@ -315,8 +321,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
               // Lower remaining arguments as message
               std::vector<hir::ExpressionId> message_args;
               for (size_t i = message_start; i < call.arguments().size(); ++i) {
-                hir::ExpressionId arg_id =
-                    LowerExpression(*call.arguments()[i], registrar, ctx);
+                hir::ExpressionId arg_id = lower_expr(*call.arguments()[i]);
                 if (!arg_id) {
                   return hir::kInvalidStatementId;
                 }
@@ -341,7 +346,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       // Not a termination call - lower as regular expression statement
       // All builtin methods (including void methods like push_back, delete)
       // are handled uniformly through LowerExpression.
-      hir::ExpressionId expr = LowerExpression(expr_stmt.expr, registrar, ctx);
+      hir::ExpressionId expr = lower_expr(expr_stmt.expr);
       if (!expr) {
         return hir::kInvalidStatementId;
       }
@@ -380,8 +385,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           break;
       }
 
-      hir::ExpressionId condition =
-          LowerExpression(*cond_stmt.conditions[0].expr, registrar, ctx);
+      hir::ExpressionId condition = lower_expr(*cond_stmt.conditions[0].expr);
       if (!condition) {
         return hir::kInvalidStatementId;
       }
@@ -458,8 +462,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           break;
       }
 
-      hir::ExpressionId selector =
-          LowerExpression(case_stmt.expr, registrar, ctx);
+      hir::ExpressionId selector = lower_expr(case_stmt.expr);
       if (!selector) {
         return hir::kInvalidStatementId;
       }
@@ -468,7 +471,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       for (const auto& group : case_stmt.items) {
         std::vector<hir::ExpressionId> expressions;
         for (const slang::ast::Expression* expr : group.expressions) {
-          hir::ExpressionId e = LowerExpression(*expr, registrar, ctx);
+          hir::ExpressionId e = lower_expr(*expr);
           if (!e) {
             return hir::kInvalidStatementId;
           }
@@ -536,7 +539,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           hir::ExpressionId init = hir::kInvalidExpressionId;
           if (const slang::ast::Expression* init_expr =
                   var_sym->getInitializer()) {
-            init = LowerExpression(*init_expr, registrar, ctx);
+            init = lower_expr(*init_expr);
             if (!init) {
               return hir::kInvalidStatementId;
             }
@@ -555,7 +558,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       } else {
         // Expression initializers: for (i = 0, j = 3; ...)
         for (const slang::ast::Expression* init_expr : for_stmt.initializers) {
-          hir::ExpressionId expr = LowerExpression(*init_expr, registrar, ctx);
+          hir::ExpressionId expr = lower_expr(*init_expr);
           if (!expr) {
             return hir::kInvalidStatementId;
           }
@@ -565,8 +568,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
       std::optional<hir::ExpressionId> condition;
       if (for_stmt.stopExpr != nullptr) {
-        hir::ExpressionId cond =
-            LowerExpression(*for_stmt.stopExpr, registrar, ctx);
+        hir::ExpressionId cond = lower_expr(*for_stmt.stopExpr);
         if (!cond) {
           return hir::kInvalidStatementId;
         }
@@ -575,7 +577,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
       std::vector<hir::ExpressionId> steps;
       for (const slang::ast::Expression* step_expr : for_stmt.steps) {
-        hir::ExpressionId expr = LowerExpression(*step_expr, registrar, ctx);
+        hir::ExpressionId expr = lower_expr(*step_expr);
         if (!expr) {
           return hir::kInvalidStatementId;
         }
@@ -610,8 +612,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       const auto& while_stmt = stmt.as<slang::ast::WhileLoopStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      hir::ExpressionId condition =
-          LowerExpression(while_stmt.cond, registrar, ctx);
+      hir::ExpressionId condition = lower_expr(while_stmt.cond);
       if (!condition) {
         return hir::kInvalidStatementId;
       }
@@ -639,8 +640,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       const auto& dowhile_stmt = stmt.as<slang::ast::DoWhileLoopStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      hir::ExpressionId condition =
-          LowerExpression(dowhile_stmt.cond, registrar, ctx);
+      hir::ExpressionId condition = lower_expr(dowhile_stmt.cond);
       if (!condition) {
         return hir::kInvalidStatementId;
       }
@@ -710,8 +710,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       const auto& repeat_stmt = stmt.as<slang::ast::RepeatLoopStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      hir::ExpressionId count =
-          LowerExpression(repeat_stmt.count, registrar, ctx);
+      hir::ExpressionId count = lower_expr(repeat_stmt.count);
       if (!count) {
         return hir::kInvalidStatementId;
       }
@@ -792,8 +791,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       // If all dimensions are skipped, evaluate arrayRef for side effects,
       // then execute body once
       if (active_count == 0) {
-        hir::ExpressionId array_expr =
-            LowerExpression(fs.arrayRef, registrar, ctx);
+        hir::ExpressionId array_expr = lower_expr(fs.arrayRef);
         if (!array_expr) {
           return hir::kInvalidStatementId;
         }
@@ -857,8 +855,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       }
 
       // Lower arrayRef expression and store in temp to ensure once-only eval
-      hir::ExpressionId array_expr =
-          LowerExpression(fs.arrayRef, registrar, ctx);
+      hir::ExpressionId array_expr = lower_expr(fs.arrayRef);
       if (!array_expr) {
         return hir::kInvalidStatementId;
       }
@@ -1130,7 +1127,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
       hir::ExpressionId value = hir::kInvalidExpressionId;
       if (ret.expr != nullptr) {
-        value = LowerExpression(*ret.expr, registrar, ctx);
+        value = lower_expr(*ret.expr);
         if (!value) {
           return hir::kInvalidStatementId;
         }
@@ -1206,8 +1203,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
         const auto& sig_event =
             timed.timing.as<slang::ast::SignalEventControl>();
 
-        hir::ExpressionId signal_expr =
-            LowerExpression(sig_event.expr, registrar, ctx);
+        hir::ExpressionId signal_expr = lower_expr(sig_event.expr);
         if (!signal_expr) {
           return hir::kInvalidStatementId;
         }
@@ -1273,8 +1269,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           }
           const auto& sig_event = event->as<slang::ast::SignalEventControl>();
 
-          hir::ExpressionId signal_expr =
-              LowerExpression(sig_event.expr, registrar, ctx);
+          hir::ExpressionId signal_expr = lower_expr(sig_event.expr);
           if (!signal_expr) {
             return hir::kInvalidStatementId;
           }

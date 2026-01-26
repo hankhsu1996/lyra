@@ -105,7 +105,8 @@ auto LowerModule(
       const auto& assign_expr = ca->getAssignment();
       const auto& assign = assign_expr.as<slang::ast::AssignmentExpression>();
 
-      hir::ExpressionId target = LowerExpression(assign.left(), registrar, ctx);
+      hir::ExpressionId target = LowerScopedExpression(
+          assign.left(), *ctx, registrar, lowerer.Frame());
       if (!target) {
         continue;
       }
@@ -118,7 +119,8 @@ auto LowerModule(
         continue;
       }
 
-      hir::ExpressionId value = LowerExpression(assign.right(), registrar, ctx);
+      hir::ExpressionId value = LowerScopedExpression(
+          assign.right(), *ctx, registrar, lowerer.Frame());
       if (!value) {
         continue;
       }
@@ -175,7 +177,7 @@ auto LowerModule(
       for (const auto& [sym, init_ast] : var_init_refs) {
         // Lower the initializer expression (now that functions are registered)
         hir::ExpressionId init_expr =
-            LowerExpression(*init_ast, registrar, ctx);
+            LowerScopedExpression(*init_ast, *ctx, registrar, lowerer.Frame());
         if (!init_expr) {
           continue;
         }

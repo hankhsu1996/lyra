@@ -380,7 +380,7 @@ void LowerCompute4State(
           },
           [&](const mir::RuntimeQueryRvalueInfo& info) -> FourStateValue {
             switch (info.kind) {
-              case RuntimeQueryKind::kTime: {
+              case RuntimeQueryKind::kTimeRawTicks: {
                 auto& builder = context.GetBuilder();
                 auto* raw = builder.CreateCall(
                     context.GetLyraGetTime(), {context.GetEnginePointer()});
