@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/marshal.hpp"
+#include "lyra/runtime/string.hpp"
 
 namespace {
 
@@ -145,4 +147,25 @@ extern "C" void LyraSnapshotVars() {
     }
   }
   g_registered_vars.clear();
+}
+
+extern "C" auto LyraFopenFd(
+    void* engine_ptr, LyraStringHandle filename_handle,
+    LyraStringHandle mode_handle) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string filename{LyraStringAsView(filename_handle)};
+  std::string mode{LyraStringAsView(mode_handle)};
+  return engine->GetFileManager().FopenFd(filename, mode);
+}
+
+extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string filename{LyraStringAsView(filename_handle)};
+  return engine->GetFileManager().FopenMcd(filename);
+}
+
+extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->GetFileManager().Fclose(descriptor);
 }

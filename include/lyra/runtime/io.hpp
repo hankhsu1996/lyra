@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/runtime/string.hpp"
+
 extern "C" {
 
 // Print a literal string (FormatKind::kLiteral only)
@@ -41,4 +43,17 @@ void LyraRegisterVar(
 
 // Output all registered variables. Called before exit.
 void LyraSnapshotVars();
+
+// $fopen with mode (FD mode) - returns int32, 0 on failure
+// engine: opaque pointer to lyra::runtime::Engine
+auto LyraFopenFd(void* engine, LyraStringHandle filename, LyraStringHandle mode)
+    -> int32_t;
+
+// $fopen without mode (MCD mode) - returns int32, 0 on failure
+// engine: opaque pointer to lyra::runtime::Engine
+auto LyraFopenMcd(void* engine, LyraStringHandle filename) -> int32_t;
+
+// $fclose - no-op for invalid descriptor
+// engine: opaque pointer to lyra::runtime::Engine
+void LyraFclose(void* engine, int32_t descriptor);
 }

@@ -14,12 +14,12 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
-#include "lyra/mir/interp/file_manager.hpp"
 #include "lyra/mir/interp/frame.hpp"
 #include "lyra/mir/interp/location.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/runtime/file_manager.hpp"
 
 namespace lyra::mir::interp {
 
@@ -246,7 +246,7 @@ class Interpreter {
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
   std::ostream* output_ = nullptr;
   std::vector<std::string> plusargs_;
-  FileManager file_manager_;
+  runtime::FileManager file_manager_;
   uint64_t simulation_time_ = 0;
 };
 

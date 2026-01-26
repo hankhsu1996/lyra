@@ -741,6 +741,47 @@ auto Context::GetLyraSetTimeFormat() -> llvm::Function* {
   return lyra_set_timeformat_;
 }
 
+auto Context::GetLyraFopenFd() -> llvm::Function* {
+  if (lyra_fopen_fd_ == nullptr) {
+    // int32_t LyraFopenFd(ptr engine, ptr filename, ptr mode)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_fopen_fd_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFopenFd",
+        llvm_module_.get());
+  }
+  return lyra_fopen_fd_;
+}
+
+auto Context::GetLyraFopenMcd() -> llvm::Function* {
+  if (lyra_fopen_mcd_ == nullptr) {
+    // int32_t LyraFopenMcd(ptr engine, ptr filename)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_fopen_mcd_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFopenMcd",
+        llvm_module_.get());
+  }
+  return lyra_fopen_mcd_;
+}
+
+auto Context::GetLyraFclose() -> llvm::Function* {
+  if (lyra_fclose_ == nullptr) {
+    // void LyraFclose(ptr engine, i32 descriptor)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
+    lyra_fclose_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFclose",
+        llvm_module_.get());
+  }
+  return lyra_fclose_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
