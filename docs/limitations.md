@@ -210,7 +210,7 @@ See [scheduling.md](scheduling.md) for implemented regions.
 
 ## Display/File Output Limitations
 
-- **Runtime format strings (codegen only)**: Dynamic format strings stored in string variables are not supported in the codegen path:
+- **Runtime format strings in $display/$fdisplay (codegen only)**: Dynamic format strings stored in string variables are not supported in $display/$fdisplay in the codegen path:
 
   ```systemverilog
   string fmt = "X=%0d";
@@ -218,4 +218,10 @@ See [scheduling.md](scheduling.md) for implemented regions.
   $fdisplay(1, fmt, 7); // Same limitation
   ```
 
-  Literal format strings work correctly in both paths. The interpreter has a runtime format parser; codegen generates compile-time `std::format` calls. Runtime format support will be added with `$sformatf`.
+  However, `$sformat`/`$sformatf` support runtime format strings in both paths:
+
+  ```systemverilog
+  string fmt = "x=%0d";
+  string s;
+  $sformat(s, fmt, 42);  // Works in both interpreter and codegen
+  ```
