@@ -14,3 +14,4 @@ IncludeCategories:
 
 AlignAfterOpenBracket: AlwaysBreak
 AllowShortFunctionsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: WithoutElse

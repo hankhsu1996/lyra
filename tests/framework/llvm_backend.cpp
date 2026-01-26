@@ -356,8 +356,8 @@ auto RunLlvmBackend(
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
-    result.error_message =
-        std::format("MIR lowering error: {}", mir_result.error().primary.message);
+    result.error_message = std::format(
+        "MIR lowering error: {}", mir_result.error().primary.message);
     return result;
   }
 

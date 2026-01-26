@@ -134,8 +134,8 @@ auto RunMirInterpreter(
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
-    result.error_message =
-        std::format("MIR lowering error: {}", mir_result.error().primary.message);
+    result.error_message = std::format(
+        "MIR lowering error: {}", mir_result.error().primary.message);
     return result;
   }
 
@@ -181,8 +181,8 @@ auto RunMirInterpreter(
   }
 
   // Find initial module
-  auto module_info =
-      mir::interp::FindInitialModule(mir_result->design, *mir_result->mir_arena);
+  auto module_info = mir::interp::FindInitialModule(
+      mir_result->design, *mir_result->mir_arena);
   if (!module_info) {
     result.error_message = "No initial process found (no kOnce process in MIR)";
     return result;
@@ -244,8 +244,8 @@ auto RunMirInterpreter(
         *mir_result->mir_arena, *hir_result.type_arena, proc_id, &design_state);
     auto run_result = interpreter.Run(state);
     if (!run_result) {
-      result.error_message =
-          std::format("Init process error: {}", run_result.error().primary.message);
+      result.error_message = std::format(
+          "Init process error: {}", run_result.error().primary.message);
       return result;
     }
   }
