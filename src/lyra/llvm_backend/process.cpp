@@ -20,7 +20,6 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
 #include "lyra/llvm_backend/layout.hpp"
@@ -94,12 +93,32 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
   context.GetBuilder().CreateBr(exit_block);
 }
 
-void LowerFinish(Context& context, llvm::BasicBlock* exit_block) {
-  // $finish stops the simulation engine, then returns to the exit block which
-  // runs LyraSnapshotVars + LyraReportTime for test harness output.
-  context.GetBuilder().CreateCall(
-      context.GetLyraFinishSimulation(), {context.GetEnginePointer()});
-  context.GetBuilder().CreateBr(exit_block);
+auto LowerFinish(
+    Context& context, const mir::Finish& finish, llvm::BasicBlock* exit_block)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+
+  auto kind_val = static_cast<uint32_t>(finish.kind);
+
+  // Message is already a string handle from SFormat lowering, or null
+  llvm::Value* message = llvm::ConstantPointerNull::get(ptr_ty);
+  if (finish.message.has_value()) {
+    auto msg_or_err = LowerOperand(context, *finish.message);
+    if (!msg_or_err) return std::unexpected(msg_or_err.error());
+    message = *msg_or_err;
+  }
+
+  builder.CreateCall(
+      context.GetLyraTerminate(),
+      {context.GetEnginePointer(), llvm::ConstantInt::get(i32_ty, kind_val),
+       llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(finish.level)),
+       message});
+
+  builder.CreateBr(exit_block);
+  return {};
 }
 
 void LowerDelay(
@@ -315,9 +334,8 @@ auto LowerTerminator(
             LowerReturn(context, exit_block);
             return {};
           },
-          [&](const mir::Finish&) -> Result<void> {
-            LowerFinish(context, exit_block);
-            return {};
+          [&](const mir::Finish& f) -> Result<void> {
+            return LowerFinish(context, f, exit_block);
           },
           [&](const mir::Delay& d) -> Result<void> {
             LowerDelay(context, d, exit_block);

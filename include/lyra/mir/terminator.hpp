@@ -7,6 +7,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/termination_kind.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -84,19 +85,16 @@ struct Return {
   std::optional<Operand> value;
 };
 
-// Kind of simulation termination.
-enum class TerminationKind : uint8_t {
-  kFinish,  // normal termination ($finish)
-  kFatal,   // error termination ($fatal - non-zero exit)
-  kStop,    // pause for debugger ($stop)
-  kExit,    // normal termination ($exit - synonym for $finish)
-};
+// Use shared TerminationKind enum from common header (ABI contract with
+// runtime)
+using ::lyra::common::TerminationKind;
 
 // Simulation termination ($finish, $fatal, $stop, $exit).
 struct Finish {
   TerminationKind kind;
   int level;  // 0 = silent, 1 = print time, 2 = print time+stats
-  std::vector<Operand> message_args;  // For $fatal message (if any)
+  std::optional<Operand>
+      message;  // String handle for $fatal, nullopt otherwise
 };
 
 // Repeat loop back to entry block (requires scheduler).

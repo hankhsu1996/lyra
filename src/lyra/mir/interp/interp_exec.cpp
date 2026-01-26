@@ -812,23 +812,15 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             if (t.kind == TerminationKind::kFatal) {
               if (t.level >= 1) {
                 out << "fatal: ";
-                if (!t.message_args.empty()) {
-                  std::vector<TypedValue> typed_args;
-                  typed_args.reserve(t.message_args.size());
-                  for (const auto& arg : t.message_args) {
-                    TypeId type = TypeOfOperand(arg, *arena_, *types_);
-                    auto value_result = EvalOperand(state, arg);
-                    if (!value_result) {
-                      return std::unexpected(std::move(value_result).error());
-                    }
-                    typed_args.push_back(
-                        TypedValue{
-                            .value = std::move(*value_result), .type = type});
+                if (t.message.has_value()) {
+                  // Message is already a formatted string from SFormat
+                  auto msg_result = EvalOperand(state, *t.message);
+                  if (!msg_result) {
+                    return std::unexpected(std::move(msg_result).error());
                   }
-                  FormatContext ctx{};
-                  std::string message =
-                      FormatMessage(typed_args, 'd', *types_, ctx);
-                  out << message;
+                  if (IsString(*msg_result)) {
+                    out << AsString(*msg_result).value;
+                  }
                 }
                 out << "\n";
               }
@@ -848,7 +840,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                   name = "$exit";
                   break;
               }
-              out << name << " called at time 0\n";
+              out << name << " called at time " << GetSimulationTime() << "\n";
             }
             return std::nullopt;
           },

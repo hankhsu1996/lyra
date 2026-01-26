@@ -23,6 +23,10 @@ auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
 // Decrement refcount, free if 0. No-op for null.
 void LyraStringRelease(LyraStringHandle handle);
 
+// Print string contents to stdout (for $display and $fatal messages).
+// Does NOT retain - reads immediately; handle must be valid for call duration.
+void LyraPrintString(LyraStringHandle handle);
+
 // Opaque buffer handle for string formatting (C ABI)
 struct LyraStringFormatBuffer;
 

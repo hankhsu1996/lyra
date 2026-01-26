@@ -186,8 +186,42 @@ extern "C" void LyraScheduleNba(
       notify_slot_id);
 }
 
-extern "C" void LyraFinishSimulation(void* engine_ptr) {
+extern "C" void LyraTerminate(
+    void* engine_ptr, uint32_t kind, int32_t level, LyraStringHandle message) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  uint64_t time = engine->CurrentTime();
+
+  // Negative level treated as silent
+  if (level >= 1) {
+    // Out-of-range kind defaults to kFinish behavior
+    switch (kind) {
+      case 0:  // kFinish
+      default:
+        std::print("$finish called at time {}\n", time);
+        break;
+      case 1:  // kFatal - "fatal: <msg>\n", NOT "called at time"
+        std::print("fatal: ");
+        if (message != nullptr) {
+          LyraPrintString(message);
+        }
+        std::print("\n");
+        break;
+      case 2:  // kStop
+        // MVP: same as finish. Future: may pause for interactive debugger.
+        std::print("$stop called at time {}\n", time);
+        break;
+      case 3:  // kExit
+        // MVP: same as finish. Future: may have program-block semantics.
+        std::print("$exit called at time {}\n", time);
+        break;
+    }
+    std::fflush(stdout);
+  }
+
+  // MVP: all kinds terminate simulation. Future: $stop may not terminate.
+  // Message handle is borrowed (read-only), no release needed since:
+  // 1. All kinds currently call Finish() which terminates immediately
+  // 2. If $stop becomes non-terminating later, must add LyraStringRelease here
   engine->Finish();
 }
 

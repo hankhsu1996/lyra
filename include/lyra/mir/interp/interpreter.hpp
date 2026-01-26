@@ -112,6 +112,15 @@ class Interpreter {
     plusargs_ = std::move(plusargs);
   }
 
+  // Set current simulation time (from Engine) for $finish/$time output.
+  // Must be called before RunUntilSuspend to provide accurate time.
+  void SetSimulationTime(uint64_t time) {
+    simulation_time_ = time;
+  }
+  [[nodiscard]] auto GetSimulationTime() const -> uint64_t {
+    return simulation_time_;
+  }
+
   // Execute process to completion. Returns final status.
   // Returns error on suspension terminators (Delay, Wait, Repeat).
   auto Run(ProcessState& state) -> Result<ProcessStatus>;
@@ -238,6 +247,7 @@ class Interpreter {
   std::ostream* output_ = nullptr;
   std::vector<std::string> plusargs_;
   FileManager file_manager_;
+  uint64_t simulation_time_ = 0;
 };
 
 // Helper: Create ProcessState for a given process.

@@ -1193,23 +1193,42 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
               break;
           }
 
-          // Lower message_args for $fatal
-          std::vector<mir::Operand> message_operands;
-          message_operands.reserve(data.message_args.size());
-          for (hir::ExpressionId arg_id : data.message_args) {
-            auto arg_result = LowerExpression(arg_id, builder);
-            if (!arg_result) {
-              result = std::unexpected(arg_result.error());
-              return;
+          // Format message for $fatal using SFormat (reuse $sformatf infra)
+          std::optional<mir::Operand> message = std::nullopt;
+          if (mir_kind == mir::TerminationKind::kFatal &&
+              !data.message_args.empty()) {
+            Context& ctx = builder.GetContext();
+
+            // Build SFormat rvalue from message args
+            std::vector<mir::Operand> format_operands;
+            format_operands.reserve(data.message_args.size());
+            for (hir::ExpressionId arg_id : data.message_args) {
+              auto arg_result = LowerExpression(arg_id, builder);
+              if (!arg_result) {
+                result = std::unexpected(arg_result.error());
+                return;
+              }
+              format_operands.push_back(std::move(*arg_result));
             }
-            message_operands.push_back(std::move(*arg_result));
+
+            // SFormat with runtime format (args[0] is format string or first
+            // value)
+            mir::SFormatRvalueInfo info{
+                .ops = {},
+                .default_format = FormatKind::kDecimal,
+                .has_runtime_format = true,
+            };
+            mir::Rvalue rvalue{
+                .operands = std::move(format_operands),
+                .info = std::move(info)};
+            mir::PlaceId msg_place =
+                builder.EmitTemp(ctx.GetStringType(), std::move(rvalue));
+            message = mir::Operand::Use(msg_place);
           }
 
           builder.EmitTerminate(
               mir::Finish{
-                  .kind = mir_kind,
-                  .level = data.level,
-                  .message_args = std::move(message_operands)});
+                  .kind = mir_kind, .level = data.level, .message = message});
           // After emitting a terminator, subsequent code is unreachable (no-op)
         } else if constexpr (std::is_same_v<T, hir::ReturnStatementData>) {
           // Purely structural return lowering:

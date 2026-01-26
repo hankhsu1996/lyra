@@ -355,6 +355,10 @@ auto RunSimulation(
     state.instruction_index = resume.instruction_index;
     state.status = ProcessStatus::kRunning;
 
+    // Provide authoritative simulation time from Engine for $finish/$time
+    // output
+    interp.SetSimulationTime(eng.CurrentTime());
+
     auto reason_result = interp.RunUntilSuspend(state);
     if (!reason_result) {
       callback_error = std::move(reason_result).error();
