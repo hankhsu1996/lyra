@@ -532,4 +532,36 @@ void LowerEnumBuiltin(
   }
 }
 
+void LowerBuiltin(
+    Context& context, const mir::Compute& compute,
+    const mir::BuiltinCallRvalueInfo& info) {
+  switch (info.method) {
+    case mir::BuiltinMethod::kNewArray:
+    case mir::BuiltinMethod::kArraySize:
+    case mir::BuiltinMethod::kArrayDelete:
+      LowerDynArrayBuiltin(context, compute, info);
+      return;
+    case mir::BuiltinMethod::kQueueSize:
+    case mir::BuiltinMethod::kQueueDelete:
+    case mir::BuiltinMethod::kQueueDeleteAt:
+    case mir::BuiltinMethod::kQueuePushBack:
+    case mir::BuiltinMethod::kQueuePushFront:
+    case mir::BuiltinMethod::kQueuePopBack:
+    case mir::BuiltinMethod::kQueuePopFront:
+    case mir::BuiltinMethod::kQueueInsert:
+      LowerQueueBuiltin(context, compute, info);
+      return;
+    case mir::BuiltinMethod::kEnumNext:
+    case mir::BuiltinMethod::kEnumPrev:
+    case mir::BuiltinMethod::kEnumName:
+      LowerEnumBuiltin(context, compute, info);
+      return;
+  }
+  throw common::UnsupportedErrorException(
+      common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
+      context.GetCurrentOrigin(),
+      std::format(
+          "unsupported builtin method: {}", static_cast<int>(info.method)));
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

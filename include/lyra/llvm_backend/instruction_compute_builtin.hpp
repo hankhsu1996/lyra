@@ -6,6 +6,11 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+// Unified builtin handler - dispatches to appropriate builtin based on method.
+void LowerBuiltin(
+    Context& context, const mir::Compute& compute,
+    const mir::BuiltinCallRvalueInfo& info);
+
 void LowerDynArrayBuiltin(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info);
