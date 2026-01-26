@@ -22,7 +22,6 @@ suites:
     exclude_regex:
       # system_tf/effect - various unsupported features
       - system_tf/effect/display.yaml
-      - system_tf/effect/display_real_format.yaml
       - system_tf/effect/fdisplay.yaml
       - system_tf/effect/fopen.yaml
       - system_tf/effect/plusargs.yaml
@@ -48,5 +47,3 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
-    exclude_regex:
-      - system_tf/effect/display_real_format.yaml

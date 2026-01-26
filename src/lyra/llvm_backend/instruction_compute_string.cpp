@@ -27,6 +27,7 @@
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/runtime/marshal.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -435,7 +436,7 @@ auto LowerSFormatRvalue(
       // Value formatting - mirrors LowerDisplayEffect
       int32_t width = 32;
       bool is_signed = false;
-      bool is_real = false;
+      auto value_kind = runtime::RuntimeValueKind::kIntegral;
 
       if (op.type) {
         const Type& ty = types[op.type];
@@ -443,10 +444,10 @@ auto LowerSFormatRvalue(
           width = static_cast<int32_t>(ty.AsIntegral().bit_width);
           is_signed = ty.AsIntegral().is_signed;
         } else if (ty.Kind() == TypeKind::kReal) {
-          is_real = true;
+          value_kind = runtime::RuntimeValueKind::kReal64;
           width = 64;
         } else if (ty.Kind() == TypeKind::kShortReal) {
-          is_real = true;
+          value_kind = runtime::RuntimeValueKind::kReal32;
           width = 32;
         } else if (IsPacked(ty)) {
           width = static_cast<int32_t>(PackedBitWidth(ty, types));
@@ -461,7 +462,7 @@ auto LowerSFormatRvalue(
         if (!value_or_err) return std::unexpected(value_or_err.error());
         llvm::Value* value = *value_or_err;
 
-        if (is_real) {
+        if (value_kind != runtime::RuntimeValueKind::kIntegral) {
           // For real types, allocate matching float type and store
           auto* alloca = builder.CreateAlloca(value->getType());
           builder.CreateStore(value, alloca);
@@ -501,6 +502,8 @@ auto LowerSFormatRvalue(
       // Call LyraStringFormatValue
       auto* format_val =
           llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
+      auto* value_kind_val =
+          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(value_kind));
       auto* width_val = llvm::ConstantInt::get(i32_ty, width);
       auto* signed_val = llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0);
       auto* output_width_val =
@@ -514,8 +517,9 @@ auto LowerSFormatRvalue(
 
       builder.CreateCall(
           context.GetLyraStringFormatValue(),
-          {buf, format_val, data_ptr, width_val, signed_val, output_width_val,
-           precision_val, zero_pad_val, left_align_val, null_ptr, null_ptr});
+          {buf, format_val, value_kind_val, data_ptr, width_val, signed_val,
+           output_width_val, precision_val, zero_pad_val, left_align_val,
+           null_ptr, null_ptr});
     }
   }
 

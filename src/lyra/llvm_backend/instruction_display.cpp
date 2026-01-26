@@ -17,6 +17,7 @@
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/runtime/marshal.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -57,17 +58,17 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
       int32_t width = 32;
       bool is_signed = false;
 
-      bool is_real = false;
+      auto value_kind = runtime::RuntimeValueKind::kIntegral;
       if (op.type) {
         const Type& ty = types[op.type];
         if (ty.Kind() == TypeKind::kIntegral) {
           width = static_cast<int32_t>(ty.AsIntegral().bit_width);
           is_signed = ty.AsIntegral().is_signed;
         } else if (ty.Kind() == TypeKind::kReal) {
-          is_real = true;
+          value_kind = runtime::RuntimeValueKind::kReal64;
           width = 64;  // double is 64 bits
         } else if (ty.Kind() == TypeKind::kShortReal) {
-          is_real = true;
+          value_kind = runtime::RuntimeValueKind::kReal32;
           width = 32;  // float is 32 bits
         } else if (IsPacked(ty)) {
           width = static_cast<int32_t>(PackedBitWidth(ty, types));
@@ -82,7 +83,7 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
         if (!value_or_err) return std::unexpected(value_or_err.error());
         llvm::Value* value = *value_or_err;
 
-        if (is_real) {
+        if (value_kind != runtime::RuntimeValueKind::kIntegral) {
           // For real types, allocate matching float type and store
           auto* alloca = builder.CreateAlloca(value->getType());
           builder.CreateStore(value, alloca);
@@ -132,11 +133,13 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
         data_ptr = null_ptr;
       }
 
-      // Call LyraPrintValue(format, data, width, is_signed,
+      // Call LyraPrintValue(format, value_kind, data, width, is_signed,
       //                     field_width, precision, zero_pad, left_align,
       //                     x_mask, z_mask)
       auto* format_val =
           llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
+      auto* value_kind_val =
+          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(value_kind));
       auto* width_val = llvm::ConstantInt::get(i32_ty, width);
       auto* signed_val = llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0);
 
@@ -154,8 +157,9 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
 
       builder.CreateCall(
           context.GetLyraPrintValue(),
-          {format_val, data_ptr, width_val, signed_val, output_width_val,
-           precision_val, zero_pad_val, left_align_val, null_ptr, null_ptr});
+          {format_val, value_kind_val, data_ptr, width_val, signed_val,
+           output_width_val, precision_val, zero_pad_val, left_align_val,
+           null_ptr, null_ptr});
     }
   }
 
