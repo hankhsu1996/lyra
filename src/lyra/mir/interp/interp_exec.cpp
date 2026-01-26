@@ -27,7 +27,6 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
-#include "lyra/mir/interp/file_manager.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
@@ -36,6 +35,7 @@
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/file_manager.hpp"
 
 namespace lyra::mir::interp {
 
@@ -288,7 +288,7 @@ auto Interpreter::ExecDisplayEffect(
     auto udesc =
         static_cast<uint32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
 
-    StreamTargets targets = file_manager_.CollectStreams(udesc);
+    runtime::StreamTargets targets = file_manager_.CollectStreams(udesc);
     if (!targets.include_stdout && targets.file_stream_count == 0) {
       return {};  // No targets: no-op
     }

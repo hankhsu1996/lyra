@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 using LyraStringHandle = void*;
 
@@ -26,6 +27,13 @@ void LyraStringRelease(LyraStringHandle handle);
 // Print string contents to stdout (for $display and $fatal messages).
 // Does NOT retain - reads immediately; handle must be valid for call duration.
 void LyraPrintString(LyraStringHandle handle);
+
+// Get a non-owning view of string data (ptr + len).
+// Does NOT transfer ownership. Returned pointer valid while handle is valid.
+// out_ptr/out_len must not be null. If handle is null, sets *out_ptr="",
+// *out_len=0.
+void LyraStringGetView(
+    LyraStringHandle handle, const char** out_ptr, uint64_t* out_len);
 
 // Opaque buffer handle for string formatting (C ABI)
 struct LyraStringFormatBuffer;
@@ -65,4 +73,13 @@ auto LyraStringFormatRuntime(
     LyraStringHandle format_handle, void* const* data_ptrs,
     const int32_t* widths, const int8_t* signeds, const int32_t* kinds,
     int64_t count) -> LyraStringHandle;
+}
+
+// C++ convenience wrapper: returns non-owning view of string data.
+// If handle is null, returns empty string_view.
+inline auto LyraStringAsView(LyraStringHandle handle) -> std::string_view {
+  const char* ptr = nullptr;
+  uint64_t len = 0;
+  LyraStringGetView(handle, &ptr, &len);
+  return {ptr, len};
 }

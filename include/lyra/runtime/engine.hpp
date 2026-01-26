@@ -11,6 +11,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/time_format.hpp"
+#include "lyra/runtime/file_manager.hpp"
 
 namespace lyra::runtime {
 
@@ -153,6 +154,11 @@ class Engine {
     return time_format_;
   }
 
+  // Get file manager for $fopen/$fclose operations.
+  [[nodiscard]] auto GetFileManager() -> FileManager& {
+    return file_manager_;
+  }
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -187,6 +193,9 @@ class Engine {
     common::EdgeKind edge = common::EdgeKind::kAnyChange;
   };
   std::map<SignalId, std::vector<Waiter>> waiters_;
+
+  // File manager for $fopen/$fclose
+  FileManager file_manager_;
 };
 
 }  // namespace lyra::runtime

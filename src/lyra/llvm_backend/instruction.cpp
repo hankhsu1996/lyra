@@ -674,8 +674,13 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
             // TODO(hankhsu): Handle mem IO effects
             return {};
           },
-          [](const mir::FcloseEffect& /*fclose*/) -> Result<void> {
-            // TODO(hankhsu): Handle fclose effects
+          [&context](const mir::FcloseEffect& fclose) -> Result<void> {
+            auto& builder = context.GetBuilder();
+            auto desc_or_err = LowerOperand(context, fclose.descriptor);
+            if (!desc_or_err) return std::unexpected(desc_or_err.error());
+            builder.CreateCall(
+                context.GetLyraFclose(),
+                {context.GetEnginePointer(), *desc_or_err});
             return {};
           },
           [&context](const mir::TimeFormatEffect& tf) -> Result<void> {

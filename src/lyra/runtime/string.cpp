@@ -134,6 +134,18 @@ extern "C" void LyraStringRelease(LyraStringHandle handle) {
   }
 }
 
+extern "C" void LyraStringGetView(
+    LyraStringHandle handle, const char** out_ptr, uint64_t* out_len) {
+  if (handle == nullptr) {
+    *out_ptr = "";
+    *out_len = 0;
+    return;
+  }
+  auto* str = static_cast<LyraStringData*>(handle);
+  *out_ptr = str->data;
+  *out_len = str->len;
+}
+
 extern "C" void LyraPrintString(LyraStringHandle handle) {
   if (handle == nullptr) {
     return;

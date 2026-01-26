@@ -9,7 +9,7 @@
 #include <ostream>
 #include <string>
 
-namespace lyra::mir::interp {
+namespace lyra::runtime {
 
 // Result of CollectStreams: identifies which output streams a descriptor
 // targets.
@@ -21,8 +21,17 @@ struct StreamTargets {
 
 // Manages open file handles for $fopen/$fclose system tasks.
 // Supports both MCD (multi-channel descriptor) and FD (file descriptor) modes.
+//
+// Handle encoding (IEEE 1800-2017 21.3):
+// - MCD: bits [30:1] are channel flags, bit 0 = stdout, bit 31 = 0
+//   Returned value is (1 << channel) where channel in [1,30]
+// - FD:  bit 31 = 1, bits [30:0] = file index (>= 3, as 0-2 are reserved)
+//   Returned value is (0x80000000 | index)
+// - Both return 0 on failure
 class FileManager {
  public:
+  static constexpr uint32_t kFdBit = 0x80000000;
+
   FileManager() = default;
   ~FileManager();
   FileManager(const FileManager&) = delete;
@@ -46,7 +55,6 @@ class FileManager {
   auto CollectStreams(uint32_t descriptor) -> StreamTargets;
 
  private:
-  static constexpr uint32_t kFdBit = 0x80000000;
   static constexpr int kMaxMcdBit = 30;
 
   std::map<int, std::unique_ptr<std::fstream>> mcd_channels_;
@@ -57,4 +65,4 @@ class FileManager {
       -> std::optional<std::ios_base::openmode>;
 };
 
-}  // namespace lyra::mir::interp
+}  // namespace lyra::runtime

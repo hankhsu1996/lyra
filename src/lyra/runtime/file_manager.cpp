@@ -1,4 +1,4 @@
-#include "lyra/mir/interp/file_manager.hpp"
+#include "lyra/runtime/file_manager.hpp"
 
 #include <cstdint>
 #include <fstream>
@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-namespace lyra::mir::interp {
+namespace lyra::runtime {
 
 FileManager::~FileManager() {
   mcd_channels_.clear();
@@ -133,4 +133,4 @@ auto FileManager::ParseMode(const std::string& mode)
   return flags;
 }
 
-}  // namespace lyra::mir::interp
+}  // namespace lyra::runtime
