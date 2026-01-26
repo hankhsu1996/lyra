@@ -41,6 +41,19 @@ auto LowerBinaryComparison(
     Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
     -> Result<llvm::Value*>;
 
+// Lowers a comparison operation to i1, handling operand width coercion.
+//
+// Contract:
+// - lhs/rhs are LLVM integer values (any width)
+// - lhs_semantic_width/rhs_semantic_width are the MIR semantic widths
+// - For signed comparisons, each operand is sign-extended from its semantic
+//   width to the comparison width (max of both semantic widths)
+// - Returns i1 (caller is responsible for extending to storage type)
+auto LowerCompareToI1(
+    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
+    uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
+    -> Result<llvm::Value*>;
+
 auto LowerShiftOp(
     Context& context, mir::BinaryOp op, llvm::Value* value,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value*;

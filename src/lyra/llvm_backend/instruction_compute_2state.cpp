@@ -77,19 +77,18 @@ auto LowerBinaryRvalue(
   llvm::Value* lhs = *lhs_or_err;
   llvm::Value* rhs = *rhs_or_err;
 
-  lhs = builder.CreateZExtOrTrunc(lhs, storage_type, "lhs.coerce");
-  rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
-
   if (IsComparisonOp(info.op)) {
-    if (IsSignedComparisonOp(info.op)) {
-      uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
-      lhs = SignExtendToStorage(builder, lhs, op_width);
-      rhs = SignExtendToStorage(builder, rhs, op_width);
-    }
-    auto cmp_or_err = LowerBinaryComparison(context, info.op, lhs, rhs);
+    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
+    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    auto cmp_or_err =
+        LowerCompareToI1(context, info.op, lhs, rhs, lhs_width, rhs_width);
     if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
     return builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
   }
+
+  // For non-comparison ops, coerce to result storage type
+  lhs = builder.CreateZExtOrTrunc(lhs, storage_type, "lhs.coerce");
+  rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
 
   if (IsShiftOp(info.op)) {
     return LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
