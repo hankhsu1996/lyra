@@ -186,7 +186,8 @@ struct ParsedOutput {
 
 // Parse __LYRA_VAR and __LYRA_TIME__ output, stripping protocol lines.
 // Preserves all other output exactly, including trailing newlines.
-// Handles __LYRA_VAR appearing mid-line (after $write with no newline).
+// Handles __LYRA_VAR and __LYRA_TIME__ appearing mid-line (after $write with no
+// newline).
 auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
   ParsedOutput parsed;
   std::string& clean_output = parsed.clean;
@@ -207,10 +208,22 @@ auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
   constexpr std::string_view kTimePrefix = "__LYRA_TIME__=";
 
   while (std::getline(stream, line)) {
-    // Check for __LYRA_TIME__=<N> (always a full line)
-    if (line.starts_with(kTimePrefix)) {
+    // Check for __LYRA_TIME__=<N> anywhere in the line
+    auto time_pos = line.find(kTimePrefix);
+    if (time_pos != std::string::npos) {
       parsed.final_time =
-          std::stoull(std::string(line.substr(kTimePrefix.size())));
+          std::stoull(std::string(line.substr(time_pos + kTimePrefix.size())));
+      if (time_pos == 0) {
+        // Line starts with __LYRA_TIME__= - no user content on this line
+        continue;
+      }
+      // __LYRA_TIME__= appears mid-line (after $write output with no newline)
+      if (!first_clean_line) {
+        clean_output += '\n';
+      }
+      clean_output += line.substr(0, time_pos);
+      first_clean_line = false;
+      user_ends_with_newline = false;
       continue;
     }
 

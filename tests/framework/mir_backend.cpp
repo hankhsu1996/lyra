@@ -274,7 +274,8 @@ auto RunMirInterpreter(
       state.instruction_index = resume.instruction_index;
       state.status = mir::interp::ProcessStatus::kRunning;
 
-      // Provide authoritative simulation time from Engine for $finish/$time output
+      // Provide authoritative simulation time from Engine for $finish/$time
+      // output
       interpreter.SetSimulationTime(eng.CurrentTime());
 
       auto reason_result = interpreter.RunUntilSuspend(state);

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include "lyra/runtime/format_spec_abi.hpp"
+
 using LyraStringHandle = void*;
 
 extern "C" {
@@ -26,7 +28,9 @@ void LyraStringRelease(LyraStringHandle handle);
 
 // Print string contents to stdout (for $display and $fatal messages).
 // Does NOT retain - reads immediately; handle must be valid for call duration.
-void LyraPrintString(LyraStringHandle handle);
+// spec: pointer to format specification (width, alignment, etc.)
+void LyraPrintString(
+    LyraStringHandle handle, const lyra::runtime::LyraFormatSpec* spec);
 
 // Get a non-owning view of string data (ptr + len).
 // Does NOT transfer ownership. Returned pointer valid while handle is valid.
