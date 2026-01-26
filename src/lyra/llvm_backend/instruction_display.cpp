@@ -77,8 +77,7 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
       auto* format_val =
           llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
       auto* value_kind_val = llvm::ConstantInt::get(
-          i32_ty,
-          static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral));
+          i32_ty, static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral));
       auto* width_val = llvm::ConstantInt::get(i32_ty, 64);
       auto* signed_val = llvm::ConstantInt::get(i1_ty, 0);
       auto* output_width_val =

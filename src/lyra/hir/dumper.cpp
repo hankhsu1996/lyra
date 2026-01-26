@@ -1,6 +1,5 @@
 #include "lyra/hir/dumper.hpp"
 
-#include <cassert>
 #include <format>
 #include <ostream>
 #include <string>
@@ -12,6 +11,7 @@
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/symbol_table.hpp"
 #include "lyra/common/symbol_types.hpp"
@@ -51,7 +51,9 @@ void Dumper::Indent() {
 }
 
 void Dumper::Dedent() {
-  assert(indent_ > 0);
+  if (indent_ == 0) {
+    throw common::InternalError("Dumper::Dedent", "indent underflow");
+  }
   --indent_;
 }
 
