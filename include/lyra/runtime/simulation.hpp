@@ -1,8 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 
 #include "lyra/runtime/string.hpp"
+
+namespace lyra::runtime {
+
+// Get the base directory for relative path resolution in file I/O.
+auto GetFsBaseDir() -> const std::filesystem::path&;
+
+}  // namespace lyra::runtime
 
 // Process function signature for LLVM-generated code.
 // - state: pointer to ProcessState (contains SuspendRecord at offset 0, then
@@ -92,8 +100,9 @@ void LyraSetTimeFormat(
     void* engine_ptr, int8_t units, int32_t precision, const char* suffix,
     int32_t min_width);
 
-// Reset runtime state (call before running processes).
-void LyraInitRuntime();
+// Initialize runtime state (call before running processes).
+// fs_base_dir: absolute path for relative file I/O resolution.
+void LyraInitRuntime(const char* fs_base_dir);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 void LyraReportTime();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@ struct CompilationInput {
   std::vector<std::string> incdir;
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
+  std::filesystem::path fs_base_dir;  // Base directory for runtime file I/O
 };
 
 struct ParseResult {

@@ -274,8 +274,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Initialize DesignState (zero + 4-state X init)
   InitializeDesignState(context, design_state, slot_info);
 
-  // Initialize runtime state (reset time tracker)
-  builder.CreateCall(context.GetLyraInitRuntime());
+  // Initialize runtime state (reset time tracker, set fs_base_dir)
+  auto* fs_base_dir_str =
+      builder.CreateGlobalStringPtr(input.fs_base_dir, "fs_base_dir");
+  builder.CreateCall(context.GetLyraInitRuntime(), {fs_base_dir_str});
 
   // Hook: after design state and runtime are initialized
   if (input.hooks != nullptr) {

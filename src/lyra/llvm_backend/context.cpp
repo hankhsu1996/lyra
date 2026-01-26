@@ -402,8 +402,10 @@ auto Context::GetLyraGetTime() -> llvm::Function* {
 
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
-    auto* fn_type =
-        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    // void LyraInitRuntime(const char* fs_base_dir)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
     lyra_init_runtime_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraInitRuntime",
         llvm_module_.get());

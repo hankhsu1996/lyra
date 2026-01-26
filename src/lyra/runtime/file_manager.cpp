@@ -1,6 +1,7 @@
 #include "lyra/runtime/file_manager.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <memory>
@@ -8,7 +9,18 @@
 #include <string>
 #include <utility>
 
+#include "lyra/runtime/simulation.hpp"
+
 namespace lyra::runtime {
+
+auto FileManager::ResolvePath(const std::string& filename) -> std::string {
+  std::filesystem::path p(filename);
+  if (p.is_absolute()) {
+    return p.lexically_normal().string();
+  }
+  const auto& base = GetFsBaseDir();
+  return (base / p).lexically_normal().string();
+}
 
 FileManager::~FileManager() {
   mcd_channels_.clear();
@@ -16,11 +28,12 @@ FileManager::~FileManager() {
 }
 
 auto FileManager::FopenMcd(const std::string& filename) -> int32_t {
+  auto resolved = ResolvePath(filename);
   // Find first unused MCD bit in [1, 30]
   for (int bit = 1; bit <= kMaxMcdBit; ++bit) {
     if (!mcd_channels_.contains(bit)) {
       auto stream = std::make_unique<std::fstream>(
-          filename, std::ios::out | std::ios::trunc);
+          resolved, std::ios::out | std::ios::trunc);
       if (!stream->is_open()) {
         return 0;
       }
@@ -38,7 +51,8 @@ auto FileManager::FopenFd(const std::string& filename, const std::string& mode)
     return 0;
   }
 
-  auto stream = std::make_unique<std::fstream>(filename, *flags);
+  auto resolved = ResolvePath(filename);
+  auto stream = std::make_unique<std::fstream>(resolved, *flags);
   if (!stream->is_open()) {
     return 0;
   }

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <optional>
@@ -30,6 +31,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/simulation.hpp"
 
 namespace lyra::mir::interp {
 
@@ -303,7 +305,11 @@ auto FindInitialModule(const Design& design, const Arena& arena)
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
     std::ostream* output, std::span<const std::string> plusargs,
+    const std::filesystem::path& fs_base_dir,
     const lowering::DiagnosticContext* diag_ctx) -> SimulationResult {
+  // Initialize runtime state (same API as LLVM backend uses)
+  LyraInitRuntime(fs_base_dir.c_str());
+
   // Find initial module
   auto module_info = FindInitialModule(design, mir_arena);
   if (!module_info) {

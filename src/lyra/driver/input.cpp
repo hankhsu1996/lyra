@@ -16,6 +16,24 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 
 namespace lyra::driver {
+
+auto ParseBackend(const std::string& s) -> lyra::Result<Backend> {
+  if (s == "llvm") return Backend::kLlvm;
+  if (s == "mir") return Backend::kMir;
+  return std::unexpected(
+      Diagnostic::HostError(
+          "unknown backend '" + s + "', use 'llvm' or 'mir'"));
+}
+
+auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat> {
+  if (s == "hir") return DumpFormat::kHir;
+  if (s == "mir") return DumpFormat::kMir;
+  if (s == "llvm") return DumpFormat::kLlvm;
+  return std::unexpected(
+      Diagnostic::HostError(
+          "unknown format '" + s + "', use 'hir', 'mir', or 'llvm'"));
+}
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -201,14 +219,47 @@ auto BuildInput(
   return input;
 }
 
-auto LoadOptionalConfig() -> lyra::Result<std::optional<ProjectConfig>> {
+auto LoadProjectConfig() -> lyra::Result<ProjectConfig> {
   auto config_path = FindConfig();
   if (!config_path) {
-    return std::nullopt;
+    return std::unexpected(
+        Diagnostic::HostError(
+            "no lyra.toml found\n"
+            "       hint: run from within a project, use -C to specify project "
+            "dir,\n"
+            "             or use --no-project for ad-hoc mode"));
   }
-  auto config = LoadConfig(*config_path);
-  if (!config) return std::unexpected(config.error());
-  return *config;
+  return LoadConfig(*config_path);
+}
+
+auto PrepareInput(const argparse::ArgumentParser& cmd, bool no_project)
+    -> lyra::Result<CompilationInput> {
+  // Capture effective CWD (after -C chdir in main.cpp, before config search)
+  auto effective_cwd = fs::absolute(fs::current_path()).lexically_normal();
+
+  std::optional<ProjectConfig> config;
+  fs::path fs_base_dir;
+
+  if (no_project) {
+    // Ad-hoc mode: use effective CWD as base dir, no config required
+    fs_base_dir = effective_cwd;
+  } else {
+    // Project mode: require lyra.toml
+    auto config_result = LoadProjectConfig();
+    if (!config_result) {
+      return std::unexpected(config_result.error());
+    }
+    config = std::move(*config_result);
+    fs_base_dir = fs::absolute(config->root_dir).lexically_normal();
+  }
+
+  auto input = BuildInput(cmd, config);
+  if (!input) {
+    return std::unexpected(input.error());
+  }
+  input->fs_base_dir = fs_base_dir;
+
+  return input;
 }
 
 }  // namespace lyra::driver
