@@ -359,17 +359,19 @@ auto Context::GetLyraScheduleNba() -> llvm::Function* {
   return lyra_schedule_nba_;
 }
 
-auto Context::GetLyraFinishSimulation() -> llvm::Function* {
-  if (lyra_finish_simulation_ == nullptr) {
-    // void LyraFinishSimulation(ptr engine)
+auto Context::GetLyraTerminate() -> llvm::Function* {
+  if (lyra_terminate_ == nullptr) {
+    // void LyraTerminate(ptr engine, i32 kind, i32 level, ptr message)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
-    lyra_finish_simulation_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraFinishSimulation",
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty, ptr_ty},
+        false);
+    lyra_terminate_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraTerminate",
         llvm_module_.get());
   }
-  return lyra_finish_simulation_;
+  return lyra_terminate_;
 }
 
 auto Context::GetLyraGetTime() -> llvm::Function* {

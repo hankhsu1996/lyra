@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/runtime/string.hpp"
+
 // Process function signature for LLVM-generated code.
 // - state: pointer to ProcessState (contains SuspendRecord at offset 0, then
 // slots)
@@ -63,9 +65,12 @@ void LyraScheduleNba(
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
     uint32_t notify_slot_id);
 
-// Stop the simulation ($finish semantics).
-// Sets Engine::finished_ flag so the event loop terminates.
-void LyraFinishSimulation(void* engine_ptr);
+// Unified termination with kind/level/message support.
+// kind: 0=finish, 1=fatal, 2=stop, 3=exit
+// level: 0=silent, >=1=print. Negative level treated as 0.
+// message: nullable string handle for $fatal (borrowed, not retained)
+void LyraTerminate(
+    void* engine, uint32_t kind, int32_t level, LyraStringHandle message);
 
 // Get current simulation time ($time semantics).
 // Returns raw tick count from the Engine.

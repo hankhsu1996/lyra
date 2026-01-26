@@ -458,13 +458,10 @@ auto LowerExpression(
     case ExpressionKind::StringLiteral: {
       const auto& literal = expr.as<slang::ast::StringLiteral>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
-      if (expr.type == nullptr) {
-        return hir::kInvalidExpressionId;
-      }
-      TypeId type = LowerType(*expr.type, span, ctx);
-      if (!type) {
-        return hir::kInvalidExpressionId;
-      }
+      // String literals always use kString type, regardless of slang's
+      // reported type (which may be a packed bit array for format strings).
+      TypeId type =
+          ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
       ConstId constant = ctx->constant_arena->Intern(
           type, StringConstant{.value = std::string(literal.getValue())});
       return ctx->hir_arena->AddExpression(

@@ -104,7 +104,14 @@ auto FormatTerminator(const Terminator& term) -> std::string {
               kind_str = "exit";
               break;
           }
-          return std::format("terminate({}, {})", kind_str, t.level);
+          std::string result =
+              std::format("terminate({}, {}", kind_str, t.level);
+          if (t.message.has_value() && t.message->kind == Operand::Kind::kUse) {
+            auto place_id = std::get<PlaceId>(t.message->payload);
+            result += std::format(", %{}", place_id.value);
+          }
+          result += ")";
+          return result;
         } else if constexpr (std::is_same_v<T, Repeat>) {
           return "repeat";
         } else {
