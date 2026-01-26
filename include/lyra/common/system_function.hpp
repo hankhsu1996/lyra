@@ -24,6 +24,7 @@ enum class PrintRadix : uint8_t {
 struct DisplayFunctionInfo {
   PrintRadix radix;
   bool append_newline;
+  bool is_strobe = false;  // true for $strobe family (deferred to Postponed)
 };
 
 enum class TerminationType : uint8_t {
@@ -82,6 +83,12 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$writeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
   {.name = "$writeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
   {.name = "$writeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
+
+  // $strobe family (stdout, with newline, deferred to Postponed region)
+  {.name = "$strobe",  .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
 
   // Simulation control tasks
   {.name = "$finish", .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},

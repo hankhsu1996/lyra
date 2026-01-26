@@ -180,6 +180,9 @@ struct StorageCollector {
                           Visit(arg, arena);
                         }
                       },
+                      [&](const StrobeEffect&) -> void {
+                        // StrobeEffect only has FunctionId thunk, no operands
+                      },
                   },
                   i.op);
             },

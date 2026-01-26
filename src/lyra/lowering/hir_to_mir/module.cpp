@@ -70,11 +70,19 @@ auto LowerModule(
   }
 
   // Phase 3: Lower module processes (can reference functions)
+  // Collect dynamically generated functions (e.g., strobe thunks)
+  std::vector<mir::FunctionId> generated_functions;
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     mir::ProcessId mir_proc_id = LowerProcess(
-        proc_id, hir_process, input, mir_arena, decl_view, origin_map);
+        proc_id, hir_process, input, mir_arena, decl_view, origin_map,
+        &generated_functions);
     result.processes.push_back(mir_proc_id);
+  }
+
+  // Merge generated functions (thunks) into module's function list
+  for (mir::FunctionId func_id : generated_functions) {
+    result.functions.push_back(func_id);
   }
 
   // Note: Tasks are lowered similarly to functions

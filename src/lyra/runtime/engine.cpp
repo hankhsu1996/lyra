@@ -55,6 +55,14 @@ void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
       });
 }
 
+void Engine::SchedulePostponed(PostponedCallback callback, void* design_state) {
+  postponed_queue_.push_back(
+      PostponedRecord{
+          .callback = callback,
+          .design_state = design_state,
+      });
+}
+
 void Engine::ScheduleNba(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
     const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id) {
@@ -226,6 +234,18 @@ void Engine::ExecuteRegion(Region region) {
   }
 }
 
+void Engine::ExecutePostponedRegion() {
+  // Execute all postponed callbacks in append order, then clear.
+  // IEEE 1800-2023 §4.4.2.5: Postponed region executes after all delta cycles.
+  // $strobe values reflect the final end-of-timestep state.
+  for (const auto& record : postponed_queue_) {
+    if (finished_) break;
+    // Call thunk with (DesignState*, Engine*) matching user function ABI
+    record.callback(record.design_state, this);
+  }
+  postponed_queue_.clear();
+}
+
 void Engine::ExecuteTimeSlot() {
   // IEEE 1800 stratified event scheduler: Active → Inactive → NBA per delta.
   // Each iteration of the outer loop is one delta cycle.
@@ -248,6 +268,9 @@ void Engine::ExecuteTimeSlot() {
     active_queue_ = std::move(pending_queue_);
     pending_queue_.clear();
   }
+
+  // After all delta cycles complete, execute Postponed region ($strobe, etc.)
+  ExecutePostponedRegion();
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {

@@ -188,6 +188,12 @@ extern "C" void LyraScheduleNba(
       notify_slot_id);
 }
 
+extern "C" void LyraSchedulePostponed(
+    void* engine_ptr, LyraPostponedCallback callback, void* design_state) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->SchedulePostponed(callback, design_state);
+}
+
 extern "C" void LyraTerminate(
     void* engine_ptr, uint32_t kind, int32_t level, LyraStringHandle message) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);

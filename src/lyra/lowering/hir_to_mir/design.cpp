@@ -315,6 +315,7 @@ auto LowerDesign(
   result.global_precision_power = input.global_precision_power;
 
   // Lower package init processes
+  // Collect dynamically generated functions (e.g., strobe thunks)
   DeclView init_view{
       .places = &decls.design_places, .functions = &decls.functions};
   for (const auto& element : design.elements) {
@@ -323,7 +324,8 @@ auto LowerDesign(
         hir::ProcessId hir_proc_id = pkg->init_process;
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
         mir::ProcessId mir_proc = LowerProcess(
-            hir_proc_id, proc, input, mir_arena, init_view, origin_map);
+            hir_proc_id, proc, input, mir_arena, init_view, origin_map,
+            &result.generated_functions);
         result.init_processes.push_back(mir_proc);
       }
     }

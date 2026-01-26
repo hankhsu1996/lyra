@@ -28,7 +28,6 @@ suites:
       # system_tf/state - various unsupported features
       - system_tf/state/fstrobe.yaml
       - system_tf/state/monitor.yaml
-      - system_tf/state/strobe.yaml
 
   mir_dev:
     backend: mir

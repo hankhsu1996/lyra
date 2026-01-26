@@ -206,7 +206,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto& mod = context.GetModule();
 
   // Two-pass user function generation for mutual recursion support
-  // Collect all function IDs from modules and packages
+  // Collect all function IDs from modules, packages, and generated functions
   std::vector<mir::FunctionId> all_func_ids;
   for (const auto& element : input.design->elements) {
     std::visit(
@@ -216,6 +216,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
           }
         },
         element);
+  }
+  // Include dynamically generated functions (e.g., strobe thunks)
+  for (mir::FunctionId func_id : input.design->generated_functions) {
+    all_func_ids.push_back(func_id);
   }
 
   // Pass 1: Declare all user functions (builds function types, registers them)

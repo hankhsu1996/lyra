@@ -118,29 +118,32 @@ auto LowerAssignment(
   return {};
 }
 
-auto LowerDisplayEffect(
-    const hir::DisplaySystemCallData& data, MirBuilder& builder)
-    -> Result<void> {
+// Lower format ops for display/strobe (shared logic).
+// Returns the lowered MIR format ops.
+auto LowerFormatOps(
+    const std::vector<hir::FormatOp>& hir_ops,
+    std::optional<hir::ExpressionId> descriptor, MirBuilder& builder)
+    -> Result<
+        std::pair<std::vector<mir::FormatOp>, std::optional<mir::Operand>>> {
   Context& ctx = builder.GetContext();
 
   // Lower descriptor first (single eval, before format args)
   std::optional<mir::Operand> mir_descriptor;
-  if (data.descriptor) {
-    Result<mir::Operand> desc_result =
-        LowerExpression(*data.descriptor, builder);
+  if (descriptor) {
+    Result<mir::Operand> desc_result = LowerExpression(*descriptor, builder);
     if (!desc_result) return std::unexpected(desc_result.error());
     mir::Operand desc_val = *desc_result;
     // Materialize to a temp so it's evaluated once
-    const hir::Expression& desc_expr = (*ctx.hir_arena)[*data.descriptor];
+    const hir::Expression& desc_expr = (*ctx.hir_arena)[*descriptor];
     mir::PlaceId temp = ctx.AllocTemp(desc_expr.type);
     builder.EmitAssign(temp, std::move(desc_val));
     mir_descriptor = mir::Operand::Use(temp);
   }
 
   std::vector<mir::FormatOp> mir_ops;
-  mir_ops.reserve(data.ops.size());
+  mir_ops.reserve(hir_ops.size());
 
-  for (const auto& hir_op : data.ops) {
+  for (const auto& hir_op : hir_ops) {
     if (hir_op.kind == FormatKind::kLiteral) {
       mir_ops.push_back(
           mir::FormatOp{
@@ -167,6 +170,97 @@ auto LowerDisplayEffect(
               .module_timeunit_power = hir_op.module_timeunit_power});
     }
   }
+
+  return std::make_pair(std::move(mir_ops), std::move(mir_descriptor));
+}
+
+// Generate a synthetic thunk function for $strobe.
+// The thunk re-evaluates expressions and prints at Postponed time.
+auto LowerStrobeEffect(
+    const hir::DisplaySystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
+  Context& original_ctx = builder.GetContext();
+
+  // Create a new context for the thunk function (shares design state mappings).
+  Context thunk_ctx{
+      .mir_arena = original_ctx.mir_arena,
+      .hir_arena = original_ctx.hir_arena,
+      .type_arena = original_ctx.type_arena,
+      .constant_arena = original_ctx.constant_arena,
+      .symbol_table = original_ctx.symbol_table,
+      .module_places = original_ctx.module_places,
+      .local_places = {},  // Fresh local mapping (thunk has no SV locals)
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
+      .builtin_types = original_ctx.builtin_types,
+      .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+  };
+
+  // Create builder for the thunk function
+  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+
+  // Create entry block for thunk
+  BlockIndex entry = thunk_builder.CreateBlock();
+  thunk_builder.SetCurrentBlock(entry);
+
+  // Lower format ops into thunk (re-evaluates expressions at Postponed time)
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  if (!ops_result) return std::unexpected(ops_result.error());
+  auto [mir_ops, mir_descriptor] = std::move(*ops_result);
+
+  // Emit DisplayEffect in thunk
+  mir::DisplayEffect display{
+      .print_kind = data.print_kind,
+      .ops = std::move(mir_ops),
+      .descriptor = std::move(mir_descriptor),
+  };
+  thunk_builder.EmitEffect(std::move(display));
+
+  // Emit void return (thunk is always void)
+  thunk_builder.EmitTerminate(std::nullopt);
+
+  // Build thunk function
+  auto blocks = thunk_builder.Finish();
+  mir::Function thunk{
+      .signature =
+          {
+              .return_type = original_ctx.builtin_types.void_type,
+              .params = {},  // Called via runtime ABI, not MIR call
+          },
+      .entry = mir::BasicBlockId{0},
+      .blocks = std::move(blocks),
+      .local_types = std::move(thunk_ctx.local_types),
+      .temp_types = std::move(thunk_ctx.temp_types),
+      .param_local_slots = {},
+      .param_origins = {},
+  };
+  mir::FunctionId thunk_id =
+      original_ctx.mir_arena->AddFunction(std::move(thunk));
+
+  // Track the thunk so it gets declared in LLVM lowering
+  if (original_ctx.generated_functions != nullptr) {
+    original_ctx.generated_functions->push_back(thunk_id);
+  }
+
+  // Emit StrobeEffect in original builder
+  builder.EmitEffect(mir::StrobeEffect{.thunk = thunk_id});
+  return {};
+}
+
+auto LowerDisplayEffect(
+    const hir::DisplaySystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
+  // $strobe: create a thunk function and schedule for Postponed region
+  if (data.is_strobe) {
+    return LowerStrobeEffect(data, builder);
+  }
+
+  // $display/$write: immediate output
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, builder);
+  if (!ops_result) return std::unexpected(ops_result.error());
+  auto [mir_ops, mir_descriptor] = std::move(*ops_result);
 
   mir::DisplayEffect display{
       .print_kind = data.print_kind,

@@ -42,7 +42,8 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
 auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
-    const DeclView& decl_view, OriginMap* origin_map) -> mir::ProcessId {
+    const DeclView& decl_view, OriginMap* origin_map,
+    std::vector<mir::FunctionId>* generated_functions) -> mir::ProcessId {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -57,6 +58,7 @@ auto LowerProcess(
       .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
+      .generated_functions = generated_functions,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);

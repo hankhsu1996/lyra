@@ -65,6 +65,15 @@ void LyraScheduleNba(
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
     uint32_t notify_slot_id);
 
+// Postponed callback type for $strobe and related TFs.
+// Thunk matches user function ABI: void (DesignState*, Engine*)
+using LyraPostponedCallback = void (*)(void*, void*);
+
+// Schedule a callback to execute in the Postponed region.
+// Used by $strobe to defer printing until end of time slot.
+void LyraSchedulePostponed(
+    void* engine_ptr, LyraPostponedCallback callback, void* design_state);
+
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
 // level: 0=silent, >=1=print. Negative level treated as 0.

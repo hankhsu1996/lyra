@@ -64,6 +64,17 @@ struct NbaEntry {
 // Forward declaration for callback
 class Engine;
 
+// Callback for Postponed region ($strobe, future $monitor, etc.).
+// Called at end of time slot to re-evaluate and print with final values.
+// Matches user function ABI: void (DesignState*, Engine*)
+using PostponedCallback = void (*)(void*, void*);
+
+// Postponed queue entry: callback + captured context.
+struct PostponedRecord {
+  PostponedCallback callback;
+  void* design_state;  // DesignState*
+};
+
 // Callback type for process execution.
 // Engine calls this when a process should run; callback handles suspension.
 // The callback should call Delay/Subscribe/etc. on the engine to reschedule.
@@ -110,6 +121,10 @@ class Engine {
   void ScheduleNba(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
+
+  // Schedule a callback for the Postponed region ($strobe, future $monitor).
+  // Callback executes at end of time slot with final signal values.
+  void SchedulePostponed(PostponedCallback callback, void* design_state);
 
   // Notify that a signal changed (called after stores).
   // Wakes up subscribed processes into the next delta cycle.
@@ -162,6 +177,7 @@ class Engine {
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
+  void ExecutePostponedRegion();
 
   ProcessRunner runner_;
   SimTime current_time_ = 0;
@@ -196,6 +212,10 @@ class Engine {
 
   // File manager for $fopen/$fclose
   FileManager file_manager_;
+
+  // Postponed queue: callbacks executed at end of time slot ($strobe, etc.)
+  // Executed in append order after all delta cycles complete.
+  std::vector<PostponedRecord> postponed_queue_;
 };
 
 }  // namespace lyra::runtime

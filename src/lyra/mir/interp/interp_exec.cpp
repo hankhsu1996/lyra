@@ -216,6 +216,10 @@ auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
               error = std::move(result).error();
             }
           },
+          [&](const StrobeEffect&) {
+            // $strobe not supported in MIR interpreter (requires Postponed
+            // region scheduling). Use LLVM backend for full $strobe semantics.
+          },
       },
       effect.op);
 

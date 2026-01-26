@@ -376,6 +376,9 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(arg, places);
             }
           },
+          [&](const mir::StrobeEffect&) {
+            // StrobeEffect only has FunctionId thunk, no operands
+          },
       },
       effect);
 }
