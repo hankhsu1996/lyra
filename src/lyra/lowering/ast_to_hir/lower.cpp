@@ -5,6 +5,7 @@
 #include "lyra/lowering/ast_to_hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/timescale.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -46,6 +47,9 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
     design_result = LowerDesign(compilation, registrar, &ctx);
   }
 
+  auto global_precision =
+      static_cast<int8_t>(ComputeGlobalPrecision(compilation));
+
   return LoweringResult{
       .design = std::move(design_result.design),
       .hir_arena = std::move(hir_arena),
@@ -56,6 +60,7 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
       .source_manager = std::move(source_manager),
       .source_mapper = std::move(source_mapper),
       .binding_plan = std::move(design_result.binding_plan),
+      .global_precision_power = global_precision,
   };
 }
 

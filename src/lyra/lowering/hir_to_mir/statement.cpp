@@ -148,7 +148,8 @@ auto LowerDisplayEffect(
               .value = std::nullopt,
               .literal = hir_op.literal,
               .type = TypeId{},
-              .mods = {}});
+              .mods = {},
+              .module_timeunit_power = hir_op.module_timeunit_power});
     } else {
       // Lower the value expression and get its type
       Result<mir::Operand> operand_result =
@@ -162,7 +163,8 @@ auto LowerDisplayEffect(
               .value = std::move(operand),
               .literal = {},
               .type = expr.type,
-              .mods = hir_op.mods});
+              .mods = hir_op.mods,
+              .module_timeunit_power = hir_op.module_timeunit_power});
     }
   }
 
@@ -212,7 +214,8 @@ auto BuildSFormatRvalue(
                 .value = std::nullopt,
                 .literal = hir_op.literal,
                 .type = TypeId{},
-                .mods = {}});
+                .mods = {},
+                .module_timeunit_power = hir_op.module_timeunit_power});
       } else {
         Result<mir::Operand> operand_result =
             LowerExpression(*hir_op.value, builder);
@@ -225,7 +228,8 @@ auto BuildSFormatRvalue(
                 .value = std::move(operand),
                 .literal = {},
                 .type = expr.type,
-                .mods = hir_op.mods});
+                .mods = hir_op.mods,
+                .module_timeunit_power = hir_op.module_timeunit_power});
       }
     }
     return mir::Rvalue{.operands = {}, .info = std::move(info)};
@@ -359,6 +363,23 @@ auto LowerExpressionStatement(
               result = std::unexpected(desc_result.error());
             } else {
               builder.EmitEffect(mir::FcloseEffect{.descriptor = *desc_result});
+              result = {};
+            }
+          } else if constexpr (std::is_same_v<T, hir::TimeFormatData>) {
+            builder.EmitEffect(
+                mir::TimeFormatEffect{
+                    .units = call_data.units,
+                    .precision = call_data.precision,
+                    .suffix = call_data.suffix,
+                    .min_width = call_data.min_width});
+            result = {};
+          } else if constexpr (std::is_same_v<T, hir::RuntimeQueryData>) {
+            // Runtime queries produce a value; evaluate and discard
+            Result<mir::Operand> expr_result =
+                LowerExpression(data.expression, builder);
+            if (!expr_result) {
+              result = std::unexpected(expr_result.error());
+            } else {
               result = {};
             }
           } else {

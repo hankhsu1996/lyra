@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "lyra/common/constant_arena.hpp"
@@ -24,6 +25,8 @@ struct LoweringInput {
   const SymbolTable* symbol_table = nullptr;
   BuiltinTypes builtin_types;
   const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;
+  int8_t global_precision_power =
+      -9;  // Finest timeprecision across all modules
 };
 
 struct LoweringResult {

@@ -230,6 +230,9 @@ auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
               error = std::move(result).error();
             }
           },
+          [&](const TimeFormatEffect&) {
+            // $timeformat not supported in MIR interpreter (debug-only backend)
+          },
       },
       effect.op);
 

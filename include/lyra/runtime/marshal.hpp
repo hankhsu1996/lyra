@@ -5,6 +5,7 @@
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "lyra/semantic/format.hpp"
 #include "lyra/semantic/value.hpp"
 
@@ -31,15 +32,37 @@ enum class RuntimeValueKind : int32_t {
 //   output_width: field width (-1 = auto, 0 = minimal, >0 = explicit)
 //   precision: decimal precision for reals (-1 = default)
 //   zero_pad, left_align: formatting flags
+//   engine_ptr: pointer to Engine (required for kTime, can be nullptr for
+//   others) module_timeunit_power: timeunit of the value (for kTime: e.g., -9
+//   for ns)
 //
 // Returns the formatted string.
 inline auto FormatRuntimeValue(
     FormatKind kind, RuntimeValueKind value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
-    bool zero_pad, bool left_align) -> std::string {
+    bool zero_pad, bool left_align, void* engine_ptr = nullptr,
+    int8_t module_timeunit_power = -9) -> std::string {
   // Handle string specially - data IS the string pointer
   if (kind == FormatKind::kString) {
     return static_cast<const char*>(data);
+  }
+
+  // Handle time format - requires engine for formatting state
+  if (kind == FormatKind::kTime) {
+    auto* engine = static_cast<Engine*>(engine_ptr);
+    auto time_value = *static_cast<const uint64_t*>(data);
+    const auto& tf = engine->GetTimeFormat();
+
+    // Width precedence: specifier width overrides $timeformat min_width
+    int effective_min_width = (output_width >= 0) ? output_width : tf.min_width;
+
+    // Convert time_value from module's timeunit to display units:
+    // time_value is in module_timeunit_power units (e.g., if -9, it's in ns)
+    // tf.units is the target unit (e.g., if -12, display in ps)
+    // Formula: display_value = time_value * 10^(module_timeunit_power -
+    // tf.units)
+    return tf.FormatWithWidth(
+        time_value, module_timeunit_power, effective_min_width);
   }
 
   // Build FormatSpec from parameters

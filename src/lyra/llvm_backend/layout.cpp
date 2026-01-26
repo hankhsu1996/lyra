@@ -369,6 +369,9 @@ void CollectPlacesFromEffectOp(
           [&](const mir::FcloseEffect& f) {
             CollectPlaceFromOperand(f.descriptor, places);
           },
+          [&](const mir::TimeFormatEffect&) {
+            // TimeFormatEffect has no operands - all constants
+          },
       },
       effect);
 }

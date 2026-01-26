@@ -35,7 +35,9 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
   const auto& types = context.GetTypeArena();
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
@@ -53,6 +55,47 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
         llvm::Value* handle = *handle_or_err;
         builder.CreateCall(context.GetLyraPrintString(), {handle});
       }
+    } else if (op.kind == FormatKind::kTime) {
+      // Time format: data is uint64_t time value, needs engine for formatting
+      llvm::Value* data_ptr = nullptr;
+      if (op.value.has_value()) {
+        auto value_or_err = LowerOperand(context, *op.value);
+        if (!value_or_err) return std::unexpected(value_or_err.error());
+        llvm::Value* value = *value_or_err;
+        auto* alloca = builder.CreateAlloca(i64_ty);
+        // Extend to i64 if needed
+        if (value->getType()->getIntegerBitWidth() < 64) {
+          value = builder.CreateZExt(value, i64_ty);
+        }
+        builder.CreateStore(value, alloca);
+        data_ptr = alloca;
+      } else {
+        data_ptr = null_ptr;
+      }
+
+      auto* engine_ptr = context.GetEnginePointer();
+      auto* format_val =
+          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
+      auto* value_kind_val = llvm::ConstantInt::get(
+          i32_ty, static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral));
+      auto* width_val = llvm::ConstantInt::get(i32_ty, 64);
+      auto* signed_val = llvm::ConstantInt::get(i1_ty, 0);
+      auto* output_width_val =
+          llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1));
+      auto* precision_val =
+          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1));
+      auto* zero_pad_val =
+          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0);
+      auto* left_align_val =
+          llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0);
+      auto* timeunit_val =
+          llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
+
+      builder.CreateCall(
+          context.GetLyraPrintValue(),
+          {engine_ptr, format_val, value_kind_val, data_ptr, width_val,
+           signed_val, output_width_val, precision_val, zero_pad_val,
+           left_align_val, null_ptr, null_ptr, timeunit_val});
     } else {
       // Get type info for width and signedness
       int32_t width = 32;
@@ -133,9 +176,9 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
         data_ptr = null_ptr;
       }
 
-      // Call LyraPrintValue(format, value_kind, data, width, is_signed,
+      // Call LyraPrintValue(engine, format, value_kind, data, width, is_signed,
       //                     field_width, precision, zero_pad, left_align,
-      //                     x_mask, z_mask)
+      //                     x_mask, z_mask, module_timeunit_power)
       auto* format_val =
           llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
       auto* value_kind_val =
@@ -154,12 +197,14 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
           llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0);
       auto* left_align_val =
           llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0);
+      auto* timeunit_val =
+          llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
 
       builder.CreateCall(
           context.GetLyraPrintValue(),
-          {format_val, value_kind_val, data_ptr, width_val, signed_val,
-           output_width_val, precision_val, zero_pad_val, left_align_val,
-           null_ptr, null_ptr});
+          {null_ptr, format_val, value_kind_val, data_ptr, width_val,
+           signed_val, output_width_val, precision_val, zero_pad_val,
+           left_align_val, null_ptr, null_ptr, timeunit_val});
     }
   }
 

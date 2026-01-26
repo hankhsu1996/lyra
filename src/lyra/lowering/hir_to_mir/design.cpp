@@ -312,6 +312,7 @@ auto LowerDesign(
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
   result.slot_table = decls.slot_table;
+  result.global_precision_power = input.global_precision_power;
 
   // Lower package init processes
   DeclView init_view{

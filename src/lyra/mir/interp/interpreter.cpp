@@ -173,6 +173,9 @@ struct StorageCollector {
                       [&](const FcloseEffect& f) -> void {
                         Visit(f.descriptor, arena);
                       },
+                      [&](const TimeFormatEffect&) -> void {
+                        // TimeFormatEffect has no operands - all constants
+                      },
                   },
                   i.op);
             },

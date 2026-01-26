@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include <slang/ast/Compilation.h>
@@ -26,6 +27,8 @@ struct LoweringResult {
   std::unique_ptr<SourceManager> source_manager;
   std::unique_ptr<SourceMapper> source_mapper;
   DesignBindingPlan binding_plan;
+  int8_t global_precision_power =
+      -9;  // Finest timeprecision across all modules
 };
 
 auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)

@@ -52,9 +52,12 @@ struct SFormatFunctionInfo {
   bool has_output_target;  // true for $sformat/$swrite*
 };
 
+// $timeformat - sets global time format for %t
+struct TimeFormatFunctionInfo {};
+
 using CategoryPayload = std::variant<
     DisplayFunctionInfo, TerminationFunctionInfo, SeverityFunctionInfo,
-    FatalFunctionInfo, SFormatFunctionInfo>;
+    FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -100,6 +103,9 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$swriteh",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kHex,     .has_format_string = false, .has_output_target = true}},
   {.name = "$swriteb",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kBinary,  .has_format_string = false, .has_output_target = true}},
   {.name = "$swriteo",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kOctal,   .has_format_string = false, .has_output_target = true}},
+
+  // Time formatting task
+  {.name = "$timeformat", .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .payload = TimeFormatFunctionInfo{}},
 });
 // clang-format on
 

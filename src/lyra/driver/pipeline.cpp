@@ -37,6 +37,7 @@ auto CompileToMir(const CompilationInput& input)
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
       .binding_plan = &hir_result.binding_plan,
+      .global_precision_power = hir_result.global_precision_power,
   };
 
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
