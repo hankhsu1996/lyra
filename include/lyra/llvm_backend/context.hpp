@@ -94,6 +94,7 @@ class Context {
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
+  [[nodiscard]] auto GetFormatSpecType() -> llvm::StructType*;
   [[nodiscard]] auto GetLyraRegisterVar() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSnapshotVars() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringFromLiteral() -> llvm::Function*;
@@ -307,6 +308,7 @@ class Context {
   llvm::Function* lyra_print_value_ = nullptr;
   llvm::Function* lyra_print_string_ = nullptr;
   llvm::Function* lyra_print_end_ = nullptr;
+  llvm::StructType* format_spec_type_ = nullptr;
   llvm::Function* lyra_register_var_ = nullptr;
   llvm::Function* lyra_snapshot_vars_ = nullptr;
   llvm::Function* lyra_string_from_literal_ = nullptr;

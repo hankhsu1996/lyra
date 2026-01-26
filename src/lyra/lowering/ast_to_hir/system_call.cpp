@@ -52,6 +52,21 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
   return FormatKind::kDecimal;
 }
 
+// Create a FormatOp for auto-formatting an argument.
+// String types use kString; other types use the provided default.
+auto MakeAutoFormatOp(
+    hir::ExpressionId arg_id, FormatKind default_format, Context* ctx)
+    -> hir::FormatOp {
+  const hir::Expression& expr = (*ctx->hir_arena)[arg_id];
+  const Type& ty = (*ctx->type_arena)[expr.type];
+  FormatKind kind = default_format;
+  if (ty.Kind() == TypeKind::kString) {
+    kind = FormatKind::kString;
+  }
+  return hir::FormatOp{
+      .kind = kind, .value = arg_id, .literal = {}, .mods = {}};
+}
+
 // Convert format specifier character to FormatKind
 auto SpecToFormatKind(char spec) -> std::optional<FormatKind> {
   switch (spec) {
@@ -294,11 +309,7 @@ struct LowerVisitor {
         size_t next_arg = 1 + parse_result.args_consumed;
         while (next_arg < args->size()) {
           ops.push_back(
-              hir::FormatOp{
-                  .kind = default_format,
-                  .value = (*args)[next_arg],
-                  .literal = {},
-                  .mods = {}});
+              MakeAutoFormatOp((*args)[next_arg], default_format, Ctx()));
           ++next_arg;
         }
       } else if (has_format_string) {
@@ -310,22 +321,12 @@ struct LowerVisitor {
                 .literal = format_str,
                 .mods = {}});
         for (size_t i = 1; i < args->size(); ++i) {
-          ops.push_back(
-              hir::FormatOp{
-                  .kind = default_format,
-                  .value = (*args)[i],
-                  .literal = {},
-                  .mods = {}});
+          ops.push_back(MakeAutoFormatOp((*args)[i], default_format, Ctx()));
         }
       } else {
         // First arg is not a string - auto-format all arguments
         for (hir::ExpressionId arg_id : *args) {
-          ops.push_back(
-              hir::FormatOp{
-                  .kind = default_format,
-                  .value = arg_id,
-                  .literal = {},
-                  .mods = {}});
+          ops.push_back(MakeAutoFormatOp(arg_id, default_format, Ctx()));
         }
       }
     }
@@ -460,11 +461,7 @@ struct LowerVisitor {
         size_t next_arg = 1 + parse_result.args_consumed;
         while (next_arg < remaining.size()) {
           data.ops.push_back(
-              hir::FormatOp{
-                  .kind = default_format,
-                  .value = remaining[next_arg],
-                  .literal = {},
-                  .mods = {}});
+              MakeAutoFormatOp(remaining[next_arg], default_format, Ctx()));
           ++next_arg;
         }
       } else {
@@ -504,11 +501,7 @@ struct LowerVisitor {
           size_t next_arg = 1 + parse_result.args_consumed;
           while (next_arg < remaining.size()) {
             data.ops.push_back(
-                hir::FormatOp{
-                    .kind = default_format,
-                    .value = remaining[next_arg],
-                    .literal = {},
-                    .mods = {}});
+                MakeAutoFormatOp(remaining[next_arg], default_format, Ctx()));
             ++next_arg;
           }
         } else if (has_format_string) {
@@ -521,21 +514,13 @@ struct LowerVisitor {
                   .mods = {}});
           for (size_t i = 1; i < remaining.size(); ++i) {
             data.ops.push_back(
-                hir::FormatOp{
-                    .kind = default_format,
-                    .value = remaining[i],
-                    .literal = {},
-                    .mods = {}});
+                MakeAutoFormatOp(remaining[i], default_format, Ctx()));
           }
         } else {
           // First arg not a string literal: auto-format all
           for (hir::ExpressionId expr_id : remaining) {
             data.ops.push_back(
-                hir::FormatOp{
-                    .kind = default_format,
-                    .value = expr_id,
-                    .literal = {},
-                    .mods = {}});
+                MakeAutoFormatOp(expr_id, default_format, Ctx()));
           }
         }
       }
@@ -698,12 +683,7 @@ auto BuildDisplayFormatOps(
     // Auto-format any remaining arguments not consumed by format string
     size_t next_arg = 1 + parse_result.args_consumed;
     while (next_arg < hir_args.size()) {
-      ops.push_back(
-          hir::FormatOp{
-              .kind = default_format,
-              .value = hir_args[next_arg],
-              .literal = {},
-              .mods = {}});
+      ops.push_back(MakeAutoFormatOp(hir_args[next_arg], default_format, ctx));
       ++next_arg;
     }
   } else if (has_format_string) {
@@ -715,22 +695,12 @@ auto BuildDisplayFormatOps(
             .literal = format_str,
             .mods = {}});
     for (size_t i = 1; i < hir_args.size(); ++i) {
-      ops.push_back(
-          hir::FormatOp{
-              .kind = default_format,
-              .value = hir_args[i],
-              .literal = {},
-              .mods = {}});
+      ops.push_back(MakeAutoFormatOp(hir_args[i], default_format, ctx));
     }
   } else {
     // First arg is not a string - auto-format all arguments
     for (hir::ExpressionId arg_id : hir_args) {
-      ops.push_back(
-          hir::FormatOp{
-              .kind = default_format,
-              .value = arg_id,
-              .literal = {},
-              .mods = {}});
+      ops.push_back(MakeAutoFormatOp(arg_id, default_format, ctx));
     }
   }
 

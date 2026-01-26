@@ -146,12 +146,26 @@ extern "C" void LyraStringGetView(
   *out_len = str->len;
 }
 
-extern "C" void LyraPrintString(LyraStringHandle handle) {
+extern "C" void LyraPrintString(
+    LyraStringHandle handle, const lyra::runtime::LyraFormatSpec* spec) {
   if (handle == nullptr) {
     return;
   }
   auto* str = static_cast<LyraStringData*>(handle);
-  std::print("{}", std::string_view(str->data, str->len));
+  std::string str_value(str->data, str->len);
+
+  // Decode ABI format spec to semantic format spec
+  lyra::semantic::FormatSpec decoded{
+      .kind = static_cast<lyra::FormatKind>(spec->kind),
+      .width = spec->width >= 0 ? std::optional(spec->width) : std::nullopt,
+      .precision =
+          spec->precision >= 0 ? std::optional(spec->precision) : std::nullopt,
+      .zero_pad = (spec->flags & lyra::runtime::kFormatFlagZeroPad) != 0,
+      .left_align = (spec->flags & lyra::runtime::kFormatFlagLeftAlign) != 0,
+  };
+  std::string formatted = lyra::semantic::FormatValue(
+      lyra::semantic::MakeString(std::move(str_value)), decoded, false);
+  std::print("{}", formatted);
 }
 
 // Internal buffer for string formatting

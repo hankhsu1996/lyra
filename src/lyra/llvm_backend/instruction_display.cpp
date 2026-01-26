@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -45,13 +46,39 @@ auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
       auto* str_const = builder.CreateGlobalStringPtr(op.literal);
       builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
     } else if (op.kind == FormatKind::kString) {
-      // String: pass the handle to LyraPrintString (layout stays private to
-      // runtime)
+      // String: pass the handle to LyraPrintString with format spec pointer
       if (op.value.has_value()) {
         auto handle_or_err = LowerOperand(context, *op.value);
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         llvm::Value* handle = *handle_or_err;
-        builder.CreateCall(context.GetLyraPrintString(), {handle});
+
+        // Build LyraFormatSpec struct on stack
+        uint8_t flags = 0;
+        if (op.mods.zero_pad) {
+          flags |= runtime::kFormatFlagZeroPad;
+        }
+        if (op.mods.left_align) {
+          flags |= runtime::kFormatFlagLeftAlign;
+        }
+        auto* spec_ty = context.GetFormatSpecType();
+        auto* spec_alloca = builder.CreateAlloca(spec_ty);
+        auto* kind_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 0);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+            kind_ptr);
+        auto* width_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 1);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
+            width_ptr);
+        auto* precision_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 2);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
+            precision_ptr);
+        auto* flags_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 3);
+        builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
+        // reserved[3] left uninitialized (don't care)
+
+        builder.CreateCall(context.GetLyraPrintString(), {handle, spec_alloca});
       }
     } else if (op.kind == FormatKind::kTime) {
       // Time format: data is uint64_t time value, needs engine for formatting

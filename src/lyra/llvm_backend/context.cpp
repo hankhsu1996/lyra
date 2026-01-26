@@ -123,12 +123,25 @@ auto Context::GetLyraPrintValue() -> llvm::Function* {
   return lyra_print_value_;
 }
 
+auto Context::GetFormatSpecType() -> llvm::StructType* {
+  if (format_spec_type_ == nullptr) {
+    // LyraFormatSpec: { i32 kind, i32 width, i32 precision, i8 flags, [3 x i8]
+    // }
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
+    auto* reserved_ty = llvm::ArrayType::get(i8_ty, 3);
+    format_spec_type_ = llvm::StructType::get(
+        *llvm_context_, {i32_ty, i32_ty, i32_ty, i8_ty, reserved_ty});
+  }
+  return format_spec_type_;
+}
+
 auto Context::GetLyraPrintString() -> llvm::Function* {
   if (lyra_print_string_ == nullptr) {
-    // void LyraPrintString(void* handle)
+    // void LyraPrintString(void* handle, const LyraFormatSpec* spec)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_),
-        {llvm::PointerType::getUnqual(*llvm_context_)}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_print_string_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintString",
         llvm_module_.get());

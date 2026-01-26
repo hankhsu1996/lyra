@@ -9,7 +9,9 @@
 #include <span>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/format.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
 namespace {
@@ -202,7 +204,14 @@ extern "C" void LyraTerminate(
       case 1:  // kFatal - "fatal: <msg>\n", NOT "called at time"
         std::print("fatal: ");
         if (message != nullptr) {
-          LyraPrintString(message);
+          // No width/align for fatal message
+          lyra::runtime::LyraFormatSpec spec{
+              .kind = static_cast<int32_t>(lyra::FormatKind::kString),
+              .width = -1,
+              .precision = -1,
+              .flags = 0,
+              .reserved = {}};
+          LyraPrintString(message, &spec);
         }
         std::print("\n");
         break;
