@@ -10,7 +10,7 @@ Format all files (fast), then run linters on changed files.
 ## Context
 
 - **Git status:** !`git status --short`
-- **Changed files:** !`git diff --name-only HEAD`
+- **Changed files (vs origin/main):** !`git diff --name-only origin/main`
 
 ## Format (All Files)
 
@@ -22,13 +22,16 @@ npx prettier --write "**/*.md"
 buildifier -r .
 ```
 
-## Lint (Changed Files)
+## Lint (Changed Files vs origin/main)
 
 ### C++ Files (clang-tidy)
 
 For changed files only (faster):
 
 ```bash
+# Get changed C++ files
+git diff --name-only origin/main -- '*.cpp' '*.hpp'
+
 clang-tidy -p . <changed-cpp-files>              # Few files (~20s each)
 run-clang-tidy -p . -j 8 <changed-cpp-files>    # Many files (parallel)
 ```
@@ -44,5 +47,5 @@ run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 8 src/lyra/
 ## Instructions
 
 1. Format all files (C++, markdown, Bazel)
-2. Run clang-tidy on changed C++ files
+2. Run clang-tidy on C++ files changed from origin/main
 3. Fix all warnings before finishing
