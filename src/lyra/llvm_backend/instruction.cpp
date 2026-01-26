@@ -635,6 +635,30 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   return {};
 }
 
+auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  // Get engine pointer
+  auto* engine_ptr = context.GetEnginePointer();
+
+  // Create global constant for suffix string
+  auto* suffix_global =
+      builder.CreateGlobalStringPtr(tf.suffix, "timeformat_suffix");
+
+  // Call LyraSetTimeFormat(engine, units, precision, suffix, min_width)
+  builder.CreateCall(
+      context.GetLyraSetTimeFormat(),
+      {engine_ptr,
+       llvm::ConstantInt::get(llvm::Type::getInt8Ty(llvm_ctx), tf.units),
+       llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), tf.precision),
+       suffix_global,
+       llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), tf.min_width)});
+
+  return {};
+}
+
 auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
     -> Result<void> {
   return std::visit(
@@ -653,6 +677,9 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           [](const mir::FcloseEffect& /*fclose*/) -> Result<void> {
             // TODO(hankhsu): Handle fclose effects
             return {};
+          },
+          [&context](const mir::TimeFormatEffect& tf) -> Result<void> {
+            return LowerTimeFormatEffect(context, tf);
           },
       },
       effect_op);

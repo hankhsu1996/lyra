@@ -589,7 +589,8 @@ auto LowerSystemCall(
                   .value = std::nullopt,
                   .literal = hir_op.literal,
                   .type = TypeId{},
-                  .mods = {}});
+                  .mods = {},
+                  .module_timeunit_power = hir_op.module_timeunit_power});
         } else {
           Result<mir::Operand> operand_result =
               LowerExpression(*hir_op.value, builder);
@@ -602,7 +603,8 @@ auto LowerSystemCall(
                   .value = std::move(operand),
                   .literal = {},
                   .type = val_expr.type,
-                  .mods = hir_op.mods});
+                  .mods = hir_op.mods,
+                  .module_timeunit_power = hir_op.module_timeunit_power});
         }
       }
       rvalue = mir::Rvalue{.operands = {}, .info = std::move(info)};

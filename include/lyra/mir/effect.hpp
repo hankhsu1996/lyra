@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -20,6 +21,8 @@ struct FormatOp {
   std::string literal;           // only valid when kind == kLiteral
   TypeId type;           // for width/signedness lookup (invalid for kLiteral)
   FormatModifiers mods;  // width, precision, flags
+  int8_t module_timeunit_power =
+      -9;  // For kTime: unit of value (from scope's timescale)
 };
 
 // DisplayEffect represents a $display/$write/$fdisplay/$fwrite family system
@@ -54,10 +57,19 @@ struct FcloseEffect {
   Operand descriptor;
 };
 
+// $timeformat: sets global time format for %t.
+// All values are compile-time constants resolved in AST->HIR.
+struct TimeFormatEffect {
+  int8_t units = 127;  // Time unit power (127 = use global precision)
+  int precision = 0;   // Decimal digits
+  std::string suffix;  // Appended string
+  int min_width = 20;  // Minimum field width
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
-using EffectOp =
-    std::variant<DisplayEffect, SeverityEffect, MemIOEffect, FcloseEffect>;
+using EffectOp = std::variant<
+    DisplayEffect, SeverityEffect, MemIOEffect, FcloseEffect, TimeFormatEffect>;
 
 }  // namespace lyra::mir

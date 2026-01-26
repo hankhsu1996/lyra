@@ -32,8 +32,6 @@ suites:
       - system_tf/state/fstrobe.yaml
       - system_tf/state/monitor.yaml
       - system_tf/state/strobe.yaml
-      - system_tf/state/time.yaml
-      - system_tf/state/timeformat.yaml
 
   mir_dev:
     backend: mir

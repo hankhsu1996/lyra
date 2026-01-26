@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -19,6 +20,8 @@ struct FormatOp {
   std::optional<ExpressionId> value;  // nullopt for kLiteral
   std::string literal;                // only valid when kind == kLiteral
   FormatModifiers mods;               // width, precision, flags
+  int8_t module_timeunit_power =
+      -9;  // For kTime: unit of value (from scope's timescale)
 
   auto operator==(const FormatOp&) const -> bool = default;
 };
@@ -90,9 +93,20 @@ struct RuntimeQueryData {
   auto operator==(const RuntimeQueryData&) const -> bool = default;
 };
 
+// $timeformat(units, precision, suffix, min_width)
+// All arguments are compile-time constants (validated in AST->HIR).
+struct TimeFormatData {
+  int8_t units = 127;  // 127 = sentinel for "use global precision"
+  int precision = 0;   // decimal digits
+  std::string suffix;  // appended string
+  int min_width = 20;  // minimum field width
+
+  auto operator==(const TimeFormatData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
-    RuntimeQueryData>;
+    RuntimeQueryData, TimeFormatData>;
 
 }  // namespace lyra::hir

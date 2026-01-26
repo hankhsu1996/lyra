@@ -135,6 +135,7 @@ class Context {
   [[nodiscard]] auto GetLyraStringFormatString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringFormatFinish() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringFormatRuntime() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSetTimeFormat() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -344,6 +345,7 @@ class Context {
   llvm::Function* lyra_string_format_string_ = nullptr;
   llvm::Function* lyra_string_format_finish_ = nullptr;
   llvm::Function* lyra_string_format_runtime_ = nullptr;
+  llvm::Function* lyra_set_timeformat_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

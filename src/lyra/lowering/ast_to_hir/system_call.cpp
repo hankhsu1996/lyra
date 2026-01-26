@@ -11,20 +11,31 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/system_function.hpp"
+#include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// Get module timeunit power from view, with default fallback.
+auto GetModuleTimeunitPower(const ExpressionLoweringView& view) -> int8_t {
+  if (view.frame != nullptr) {
+    return static_cast<int8_t>(view.frame->unit_power);
+  }
+  return static_cast<int8_t>(kDefaultTimeScalePower);
+}
 
 // Convert PrintRadix to default FormatKind
 auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
@@ -57,6 +68,8 @@ auto SpecToFormatKind(char spec) -> std::optional<FormatKind> {
       return FormatKind::kString;
     case 'f':
       return FormatKind::kReal;
+    case 't':
+      return FormatKind::kTime;
     default:
       return std::nullopt;
   }
@@ -71,8 +84,8 @@ struct ParseResult {
 
 auto ParseFormatString(
     std::string_view fmt, std::span<const hir::ExpressionId> args,
-    FormatKind /*default_format*/, DiagnosticSink& diag, SourceSpan span)
-    -> ParseResult {
+    FormatKind /*default_format*/, DiagnosticSink& diag, SourceSpan span,
+    int8_t module_timeunit_power) -> ParseResult {
   ParseResult result;
   size_t arg_idx = 0;
   size_t pos = 0;
@@ -184,11 +197,12 @@ auto ParseFormatString(
               .kind = *format_kind,
               .value = args[arg_idx],
               .literal = {},
-              .mods = {
-                  .width = width,
-                  .precision = precision,
-                  .zero_pad = zero_pad,
-                  .left_align = left_align}});
+              .mods =
+                  {.width = width,
+                   .precision = precision,
+                   .zero_pad = zero_pad,
+                   .left_align = left_align},
+              .module_timeunit_power = module_timeunit_power});
       ++arg_idx;
     } else {
       diag.Error(
@@ -272,7 +286,8 @@ struct LowerVisitor {
         std::span<const hir::ExpressionId> all_args(*args);
         auto remaining_args = all_args.subspan(1);
         auto parse_result = ParseFormatString(
-            format_str, remaining_args, default_format, *Ctx()->sink, span);
+            format_str, remaining_args, default_format, *Ctx()->sink, span,
+            GetModuleTimeunitPower(view));
         ops = std::move(parse_result.ops);
 
         // Auto-format any remaining arguments not consumed by format string
@@ -426,7 +441,8 @@ struct LowerVisitor {
         // Compile-time path: parse format string with value args
         auto value_args = remaining.subspan(1);
         auto parse_result = ParseFormatString(
-            format_str, value_args, default_format, *Ctx()->sink, span);
+            format_str, value_args, default_format, *Ctx()->sink, span,
+            GetModuleTimeunitPower(view));
         data.ops = std::move(parse_result.ops);
 
         // Auto-format any remaining arguments not consumed
@@ -470,7 +486,8 @@ struct LowerVisitor {
           // String with '%': parse as format string
           auto value_args = remaining.subspan(1);
           auto parse_result = ParseFormatString(
-              format_str, value_args, default_format, *Ctx()->sink, span);
+              format_str, value_args, default_format, *Ctx()->sink, span,
+              GetModuleTimeunitPower(view));
           data.ops = std::move(parse_result.ops);
 
           size_t next_arg = 1 + parse_result.args_consumed;
@@ -520,6 +537,111 @@ struct LowerVisitor {
             .span = span,
             .data = std::move(data)});
   }
+
+  auto operator()(const TimeFormatFunctionInfo& /*info*/) const
+      -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    hir::TimeFormatData data;
+
+    const auto& args = call->arguments();
+
+    // Helper to unwrap conversion and get underlying literal
+    auto unwrap =
+        [](const slang::ast::Expression* arg) -> const slang::ast::Expression* {
+      if (arg->kind == slang::ast::ExpressionKind::Conversion) {
+        const auto& conv = arg->as<slang::ast::ConversionExpression>();
+        return &conv.operand();
+      }
+      return arg;
+    };
+
+    // Helper to extract constant integer from slang argument
+    auto extract_int = [&](size_t idx) -> std::optional<int64_t> {
+      if (idx >= args.size()) return std::nullopt;
+      const auto* arg = unwrap(args[idx]);
+      if (arg->kind == slang::ast::ExpressionKind::IntegerLiteral) {
+        const auto& literal = arg->as<slang::ast::IntegerLiteral>();
+        return literal.getValue().as<int64_t>();
+      }
+      if (arg->kind == slang::ast::ExpressionKind::UnaryOp) {
+        // Handle negative literals like -9
+        const auto& unary = arg->as<slang::ast::UnaryExpression>();
+        if (unary.op == slang::ast::UnaryOperator::Minus) {
+          const auto* operand = unwrap(&unary.operand());
+          if (operand->kind == slang::ast::ExpressionKind::IntegerLiteral) {
+            const auto& literal = operand->as<slang::ast::IntegerLiteral>();
+            return -literal.getValue().as<int64_t>().value();
+          }
+        }
+      }
+      return std::nullopt;
+    };
+
+    // Helper to extract constant string
+    auto extract_string = [&](size_t idx) -> std::optional<std::string> {
+      if (idx >= args.size()) return std::nullopt;
+      const auto* arg = unwrap(args[idx]);
+      if (arg->kind == slang::ast::ExpressionKind::StringLiteral) {
+        const auto& literal = arg->as<slang::ast::StringLiteral>();
+        return std::string(literal.getValue());
+      }
+      return std::nullopt;
+    };
+
+    // units (arg 0): -15 to 2
+    if (auto units = extract_int(0)) {
+      if (*units < -15 || *units > 2) {
+        Ctx()->ErrorFmt(
+            span, "$timeformat units must be -15 to 2, got {}", *units);
+        return hir::kInvalidExpressionId;
+      }
+      data.units = static_cast<int8_t>(*units);
+    } else if (!args.empty()) {
+      Ctx()->ErrorFmt(span, "$timeformat units must be a constant integer");
+      return hir::kInvalidExpressionId;
+    }
+
+    // precision (arg 1): 0 to 17
+    if (auto precision = extract_int(1)) {
+      if (*precision < 0 || *precision > 17) {
+        Ctx()->ErrorFmt(
+            span, "$timeformat precision must be 0 to 17, got {}", *precision);
+        return hir::kInvalidExpressionId;
+      }
+      data.precision = static_cast<int>(*precision);
+    } else if (args.size() > 1) {
+      Ctx()->ErrorFmt(span, "$timeformat precision must be a constant integer");
+      return hir::kInvalidExpressionId;
+    }
+
+    // suffix (arg 2): string
+    if (auto suffix = extract_string(2)) {
+      data.suffix = *suffix;
+    } else if (args.size() > 2) {
+      Ctx()->ErrorFmt(span, "$timeformat suffix must be a constant string");
+      return hir::kInvalidExpressionId;
+    }
+
+    // min_width (arg 3): >= 0
+    if (auto min_width = extract_int(3)) {
+      if (*min_width < 0) {
+        Ctx()->ErrorFmt(
+            span, "$timeformat min_width must be >= 0, got {}", *min_width);
+        return hir::kInvalidExpressionId;
+      }
+      data.min_width = static_cast<int>(*min_width);
+    } else if (args.size() > 3) {
+      Ctx()->ErrorFmt(span, "$timeformat min_width must be a constant integer");
+      return hir::kInvalidExpressionId;
+    }
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = std::move(data)});
+  }
 };
 
 }  // namespace
@@ -527,8 +649,8 @@ struct LowerVisitor {
 auto BuildDisplayFormatOps(
     std::span<const slang::ast::Expression* const> slang_args,
     std::span<const hir::ExpressionId> hir_args, FormatKind default_format,
-    Context* context) -> std::vector<hir::FormatOp> {
-  SourceSpan span = context->SpanOf(
+    Context* ctx, int8_t module_timeunit_power) -> std::vector<hir::FormatOp> {
+  SourceSpan span = ctx->SpanOf(
       slang_args.empty() ? slang::SourceRange{} : slang_args[0]->sourceRange);
   std::vector<hir::FormatOp> ops;
 
@@ -558,7 +680,8 @@ auto BuildDisplayFormatOps(
     // Parse format string with remaining arguments
     auto remaining_args = hir_args.subspan(1);
     auto parse_result = ParseFormatString(
-        format_str, remaining_args, default_format, *context->sink, span);
+        format_str, remaining_args, default_format, *ctx->sink, span,
+        module_timeunit_power);
     ops = std::move(parse_result.ops);
 
     // Auto-format any remaining arguments not consumed by format string

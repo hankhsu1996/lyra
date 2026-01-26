@@ -23,9 +23,11 @@ auto LowerSystemCall(
 // Build FormatOps from a slice of call arguments.
 // slang_args and hir_args must be the same length and already exclude
 // any leading non-display arguments (e.g., file descriptor).
+// module_timeunit_power is used for %t format specifier conversions.
 auto BuildDisplayFormatOps(
     std::span<const slang::ast::Expression* const> slang_args,
     std::span<const hir::ExpressionId> hir_args, FormatKind default_format,
-    Context* ctx) -> std::vector<hir::FormatOp>;
+    Context* ctx, int8_t module_timeunit_power = -9)
+    -> std::vector<hir::FormatOp>;
 
 }  // namespace lyra::lowering::ast_to_hir

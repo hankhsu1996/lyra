@@ -71,6 +71,13 @@ void LyraFinishSimulation(void* engine_ptr);
 // Returns raw tick count from the Engine.
 auto LyraGetTime(void* engine_ptr) -> uint64_t;
 
+// Set time format state ($timeformat semantics).
+// Engine copies the suffix string; caller's pointer only valid for call
+// duration.
+void LyraSetTimeFormat(
+    void* engine_ptr, int8_t units, int32_t precision, const char* suffix,
+    int32_t min_width);
+
 // Reset runtime state (call before running processes).
 void LyraInitRuntime();
 

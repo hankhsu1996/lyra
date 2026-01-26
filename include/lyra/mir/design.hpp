@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <variant>
 #include <vector>
 
@@ -23,6 +24,10 @@ struct Design {
   // num_design_slots.
   std::vector<TypeId> slot_table;
   std::vector<ProcessId> init_processes;
+
+  // Global precision power for %t formatting (e.g., -12 for 1ps).
+  // Set from compilation context, used by $timeformat defaults.
+  int8_t global_precision_power = -9;
 
   // Alias map for output/inout ports.
   // Key: child port's SlotId (must be kDesign root with no projections)

@@ -4,10 +4,13 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/time_format.hpp"
 
 namespace lyra::runtime {
 
@@ -126,6 +129,30 @@ class Engine {
     return current_time_;
   }
 
+  // Set global precision power (called once at simulation init).
+  void SetGlobalPrecision(int8_t power) {
+    global_precision_power_ = power;
+  }
+
+  // Get global precision power.
+  [[nodiscard]] auto GetGlobalPrecision() const -> int8_t {
+    return global_precision_power_;
+  }
+
+  // Set time format state (called by $timeformat).
+  void SetTimeFormat(
+      int8_t units, int precision, std::string suffix, int min_width) {
+    time_format_.units = units;
+    time_format_.precision = precision;
+    time_format_.suffix = std::move(suffix);
+    time_format_.min_width = min_width;
+  }
+
+  // Get time format state.
+  [[nodiscard]] auto GetTimeFormat() const -> const common::TimeFormatState& {
+    return time_format_;
+  }
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -133,6 +160,8 @@ class Engine {
   ProcessRunner runner_;
   SimTime current_time_ = 0;
   bool finished_ = false;
+  int8_t global_precision_power_ = -9;   // Set once at simulation init
+  common::TimeFormatState time_format_;  // Mutable via $timeformat
 
   // Time-based scheduling: time → events
   std::map<SimTime, std::vector<ScheduledEvent>> delay_queue_;

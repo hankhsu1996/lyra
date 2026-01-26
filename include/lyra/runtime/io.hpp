@@ -8,6 +8,7 @@ extern "C" {
 void LyraPrintLiteral(const char* str);
 
 // Print a formatted value (all FormatKind except kLiteral)
+// - engine: pointer to Engine (required for kTime, can be nullptr for others)
 // - format: FormatKind cast to int32_t (how to render)
 // - value_kind: RuntimeValueKind cast to int32_t (how to interpret bytes)
 // - data: pointer to value bits
@@ -23,10 +24,12 @@ void LyraPrintLiteral(const char* str);
 // - left_align: left-align within field width (from %-Nd syntax)
 // - x_mask: pointer to X bits (null for 2-state)
 // - z_mask: pointer to Z bits (null for 2-state)
+// - module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
 void LyraPrintValue(
-    int32_t format, int32_t value_kind, const void* data, int32_t width,
-    bool is_signed, int32_t output_width, int32_t precision, bool zero_pad,
-    bool left_align, const void* x_mask, const void* z_mask);
+    void* engine, int32_t format, int32_t value_kind, const void* data,
+    int32_t width, bool is_signed, int32_t output_width, int32_t precision,
+    bool zero_pad, bool left_align, const void* x_mask, const void* z_mask,
+    int8_t module_timeunit_power);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(int32_t kind);

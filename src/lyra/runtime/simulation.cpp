@@ -196,6 +196,14 @@ extern "C" auto LyraGetTime(void* engine_ptr) -> uint64_t {
   return engine->CurrentTime();
 }
 
+extern "C" void LyraSetTimeFormat(
+    void* engine_ptr, int8_t units, int32_t precision, const char* suffix,
+    int32_t min_width) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->SetTimeFormat(
+      units, precision, suffix != nullptr ? suffix : "", min_width);
+}
+
 extern "C" void LyraInitRuntime() {
   FinalTime() = 0;
 }

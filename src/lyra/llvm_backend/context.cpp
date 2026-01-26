@@ -101,17 +101,20 @@ auto Context::GetLyraPrintLiteral() -> llvm::Function* {
 
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
-    // void LyraPrintValue(int32_t format, int32_t value_kind, const void* data,
-    //                     int32_t width, bool is_signed, int32_t output_width,
-    //                     int32_t precision, bool zero_pad, bool left_align,
-    //                     const void* x_mask, const void* z_mask)
+    // void LyraPrintValue(void* engine, int32_t format, int32_t value_kind,
+    //                     const void* data, int32_t width, bool is_signed,
+    //                     int32_t output_width, int32_t precision,
+    //                     bool zero_pad, bool left_align,
+    //                     const void* x_mask, const void* z_mask,
+    //                     int8_t module_timeunit_power)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty, i1_ty,
-         ptr_ty, ptr_ty},
+        {ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty,
+         i1_ty, ptr_ty, ptr_ty, i8_ty},
         false);
     lyra_print_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintValue",
@@ -717,6 +720,23 @@ auto Context::GetLyraStringFormatRuntime() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_string_format_runtime_;
+}
+
+auto Context::GetLyraSetTimeFormat() -> llvm::Function* {
+  if (lyra_set_timeformat_ == nullptr) {
+    // void LyraSetTimeFormat(ptr engine, i8 units, i32 precision,
+    //                        ptr suffix, i32 min_width)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        void_ty, {ptr_ty, i8_ty, i32_ty, ptr_ty, i32_ty}, false);
+    lyra_set_timeformat_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSetTimeFormat",
+        llvm_module_.get());
+  }
+  return lyra_set_timeformat_;
 }
 
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {

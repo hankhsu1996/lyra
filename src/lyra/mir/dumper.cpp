@@ -559,6 +559,9 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
                 case FormatKind::kReal:
                   kind_str = "%f";
                   break;
+                case FormatKind::kTime:
+                  kind_str = "%t";
+                  break;
                 case FormatKind::kLiteral:
                   break;  // Already handled above
               }

@@ -15,6 +15,7 @@ enum class FormatKind : int32_t {
   kOctal = 3,     // %o
   kString = 4,    // %s
   kReal = 5,      // %f
+  kTime = 6,      // %t
 };
 
 // Print kind for display/write operations.
@@ -51,6 +52,8 @@ constexpr auto FormatKindToSpecChar(FormatKind kind) -> char {
       return 's';
     case FormatKind::kReal:
       return 'f';
+    case FormatKind::kTime:
+      return 't';
     case FormatKind::kLiteral:
       return '\0';
   }

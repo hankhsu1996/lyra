@@ -211,6 +211,10 @@ auto FormatIntegral(
     case FormatKind::kLiteral:
       result = ToDecimalString(val, false);
       break;
+    case FormatKind::kTime:
+      // %t formatting happens at runtime with engine access
+      result = ToDecimalString(val, false);
+      break;
   }
 
   // Apply width: either explicit or auto-sized
