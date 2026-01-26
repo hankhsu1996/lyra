@@ -64,6 +64,10 @@ auto MakeIntegral(uint64_t value, uint32_t bit_width) -> RuntimeValue;
 auto MakeIntegralSigned(int64_t value, uint32_t bit_width)
     -> RuntimeValue;  // Sign-extends for wide values
 auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue;  // All bits unknown (X)
+auto MakeIntegralWide(
+    const uint64_t* words, size_t num_words, uint32_t bit_width)
+    -> RuntimeValue;  // From multi-word array (little-endian: word[0] = bits
+                      // 0-63)
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;

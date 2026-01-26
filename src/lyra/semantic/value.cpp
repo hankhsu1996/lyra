@@ -6,13 +6,14 @@
 #include <format>
 #include <memory>
 #include <ranges>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include "lyra/common/constant.hpp"
+#include "lyra/common/internal_error.hpp"
 
 namespace lyra::semantic {
 
@@ -172,6 +173,42 @@ auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue {
   result.unknown.resize(num_words, ~uint64_t{0});
   MaskTopWord(result.unknown, bit_width);
   return result;
+}
+
+auto MakeIntegralWide(
+    const uint64_t* words, size_t num_words, uint32_t bit_width)
+    -> RuntimeValue {
+  if (words == nullptr) {
+    throw lyra::common::InternalError("MakeIntegralWide", "words is null");
+  }
+
+  size_t expected = WordsNeeded(bit_width);
+  if (num_words != expected) {
+    throw lyra::common::InternalError(
+        "MakeIntegralWide",
+        std::format(
+            "word count mismatch: got {}, expected {}", num_words, expected));
+  }
+
+  // Wrap in span to avoid pointer arithmetic
+  std::span<const uint64_t> words_span(words, num_words);
+
+  // Validate top word has no garbage padding bits (caller must mask)
+  uint32_t top_bits = bit_width % kBitsPerWord;
+  if (top_bits != 0) {
+    uint64_t top_mask = (uint64_t{1} << top_bits) - 1;
+    if ((words_span.back() & ~top_mask) != 0) {
+      throw lyra::common::InternalError(
+          "MakeIntegralWide",
+          "top word has nonzero padding bits (caller must mask)");
+    }
+  }
+
+  RuntimeIntegral result;
+  result.bit_width = bit_width;
+  result.value.assign(words_span.begin(), words_span.end());
+  result.unknown.resize(num_words, 0);  // 2-state: all known
+  return RuntimeValue{std::move(result)};
 }
 
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
