@@ -583,19 +583,48 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
           std::string result;
           switch (effect_op.level) {
             case Severity::kInfo:
-              result = "$info";
+              result = "$info(";
               break;
             case Severity::kWarning:
-              result = "$warning";
+              result = "$warning(";
               break;
             case Severity::kError:
-              result = "$error";
+              result = "$error(";
               break;
           }
-          for (const Operand& arg : effect_op.args) {
-            result += ", ";
-            result += FormatOperand(arg);
+          for (size_t i = 0; i < effect_op.ops.size(); ++i) {
+            if (i > 0) result += ", ";
+            const auto& op = effect_op.ops[i];
+            std::string kind_str;
+            switch (op.kind) {
+              case FormatKind::kLiteral:
+                result += std::format("\"{}\"", op.literal);
+                continue;
+              case FormatKind::kDecimal:
+                kind_str = "d";
+                break;
+              case FormatKind::kHex:
+                kind_str = "h";
+                break;
+              case FormatKind::kBinary:
+                kind_str = "b";
+                break;
+              case FormatKind::kOctal:
+                kind_str = "o";
+                break;
+              case FormatKind::kString:
+                kind_str = "s";
+                break;
+              case FormatKind::kReal:
+                kind_str = "f";
+                break;
+              case FormatKind::kTime:
+                kind_str = "t";
+                break;
+            }
+            result += std::format("{}:{}", kind_str, FormatOperand(*op.value));
           }
+          result += ")";
           return result;
         } else if constexpr (std::is_same_v<T, MemIOEffect>) {
           std::string result;

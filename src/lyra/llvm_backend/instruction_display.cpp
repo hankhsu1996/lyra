@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <span>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -11,6 +12,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -21,15 +23,11 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
-    -> Result<void> {
-  if (display.descriptor) {
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(),
-        "$fdisplay/$fwrite not supported in LLVM backend",
-        UnsupportedCategory::kFeature));
-  }
+namespace {
 
+// Lower a sequence of FormatOps to LLVM IR (shared by display and severity)
+auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
@@ -41,7 +39,7 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
-  for (const auto& op : display.ops) {
+  for (const auto& op : ops) {
     if (op.kind == FormatKind::kLiteral) {
       // Call LyraPrintLiteral(str)
       auto* str_const = builder.CreateGlobalStringPtr(op.literal);
@@ -208,10 +206,52 @@ auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
     }
   }
 
+  return {};
+}
+
+}  // namespace
+
+auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
+    -> Result<void> {
+  if (display.descriptor) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        "$fdisplay/$fwrite not supported in LLVM backend",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Lower format ops (shared helper)
+  auto result = LowerFormatOps(context, display.ops);
+  if (!result) return result;
+
   // Call LyraPrintEnd(kind)
+  auto& builder = context.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
   auto* kind_val =
       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(display.print_kind));
   builder.CreateCall(context.GetLyraPrintEnd(), {kind_val});
+  return {};
+}
+
+auto LowerSeverityEffect(Context& context, const mir::SeverityEffect& severity)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+
+  // 1. Print prefix using shared SeverityPrefixCStr (single source of truth)
+  const char* prefix = SeverityPrefixCStr(severity.level);
+  auto* prefix_ptr = builder.CreateGlobalStringPtr(prefix);
+  builder.CreateCall(context.GetLyraPrintLiteral(), {prefix_ptr});
+
+  // 2. Lower format ops (shared helper - same as display)
+  auto result = LowerFormatOps(context, severity.ops);
+  if (!result) return result;
+
+  // 3. Newline (same as display)
+  auto* kind_val =
+      llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(PrintKind::kDisplay));
+  builder.CreateCall(context.GetLyraPrintEnd(), {kind_val});
+
   return {};
 }
 

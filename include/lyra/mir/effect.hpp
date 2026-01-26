@@ -38,7 +38,7 @@ struct DisplayEffect {
 // These print severity-prefixed messages and continue execution.
 struct SeverityEffect {
   Severity level;
-  std::vector<Operand> args;
+  std::vector<FormatOp> ops;
 };
 
 // MemIOEffect represents $readmemh/$readmemb/$writememh/$writememb system

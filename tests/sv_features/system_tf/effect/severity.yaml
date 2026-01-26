@@ -21,6 +21,44 @@ cases:
           - "info"
           - "Info message"
 
+  # Golden test: auto-format uses decimal (not hex)
+  - name: info_auto_decimal
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          $info(x);  // Should output "info: 42" (decimal, not hex)
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+      stdout:
+        contains:
+          - "info: "
+          - "42"
+        not_contains:
+          - "2a"  # hex for 42
+
+  # Golden test: explicit format string overrides default
+  - name: info_explicit_hex
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 255;
+          $info("val=%0h", x);  // Should output "info: val=ff" (minimal width)
+        end
+      endmodule
+    expect:
+      variables:
+        x: 255
+      stdout:
+        contains:
+          - "info: "
+          - "val=ff"
+
   - name: info_no_message
     sv: |
       module Test;

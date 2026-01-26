@@ -36,7 +36,7 @@ struct DisplaySystemCallData {
 
 struct SeveritySystemCallData {
   Severity level;
-  std::vector<ExpressionId> args;
+  std::vector<FormatOp> ops;
 
   auto operator==(const SeveritySystemCallData&) const -> bool = default;
 };

@@ -648,12 +648,43 @@ void Dumper::Dump(ExpressionId id) {
               }();
               *out_ << name << "(";
               bool first = true;
-              for (ExpressionId arg : syscall_data.args) {
+              for (const auto& op : syscall_data.ops) {
                 if (!first) {
                   *out_ << ", ";
                 }
                 first = false;
-                Dump(arg);
+                if (op.kind == FormatKind::kLiteral) {
+                  *out_ << std::format("literal(\"{}\")", op.literal);
+                } else {
+                  const char* kind_str = "?";
+                  switch (op.kind) {
+                    case FormatKind::kDecimal:
+                      kind_str = "%d";
+                      break;
+                    case FormatKind::kHex:
+                      kind_str = "%h";
+                      break;
+                    case FormatKind::kBinary:
+                      kind_str = "%b";
+                      break;
+                    case FormatKind::kOctal:
+                      kind_str = "%o";
+                      break;
+                    case FormatKind::kString:
+                      kind_str = "%s";
+                      break;
+                    case FormatKind::kReal:
+                      kind_str = "%f";
+                      break;
+                    case FormatKind::kTime:
+                      kind_str = "%t";
+                      break;
+                    case FormatKind::kLiteral:
+                      break;  // Already handled above
+                  }
+                  *out_ << kind_str << ":";
+                  Dump(*op.value);
+                }
               }
               *out_ << ")";
             }

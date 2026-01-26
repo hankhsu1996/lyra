@@ -361,13 +361,24 @@ struct LowerVisitor {
       return hir::kInvalidExpressionId;
     }
 
+    // Build format ops with decimal as default radix (per LRM)
+    std::vector<const slang::ast::Expression*> slang_ptrs;
+    slang_ptrs.reserve(call->arguments().size());
+    for (const slang::ast::Expression* arg : call->arguments()) {
+      slang_ptrs.push_back(arg);
+    }
+
+    std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
+        slang_ptrs, *args, FormatKind::kDecimal, Ctx(),
+        GetModuleTimeunitPower(view));
+
     return Ctx()->hir_arena->AddExpression(
         hir::Expression{
             .kind = hir::ExpressionKind::kSystemCall,
             .type = result_type,
             .span = span,
             .data = hir::SeveritySystemCallData{
-                .level = info.level, .args = std::move(*args)}});
+                .level = info.level, .ops = std::move(ops)}});
   }
 
   auto operator()(const FatalFunctionInfo& /*info*/) const
