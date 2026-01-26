@@ -139,6 +139,7 @@ class Context {
   [[nodiscard]] auto GetLyraFopenFd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFopenMcd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFclose() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -352,6 +353,7 @@ class Context {
   llvm::Function* lyra_fopen_fd_ = nullptr;
   llvm::Function* lyra_fopen_mcd_ = nullptr;
   llvm::Function* lyra_fclose_ = nullptr;
+  llvm::Function* lyra_schedule_postponed_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

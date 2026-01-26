@@ -30,6 +30,7 @@ struct DisplaySystemCallData {
   PrintKind print_kind;
   std::vector<FormatOp> ops;
   std::optional<ExpressionId> descriptor;  // nullopt = stdout
+  bool is_strobe = false;  // true for $strobe/$strobeb/$strobeo/$strobeh
 
   auto operator==(const DisplaySystemCallData&) const -> bool = default;
 };

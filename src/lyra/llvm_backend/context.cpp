@@ -782,6 +782,19 @@ auto Context::GetLyraFclose() -> llvm::Function* {
   return lyra_fclose_;
 }
 
+auto Context::GetLyraSchedulePostponed() -> llvm::Function* {
+  if (lyra_schedule_postponed_ == nullptr) {
+    // void LyraSchedulePostponed(ptr engine, ptr callback, ptr design_state)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_schedule_postponed_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSchedulePostponed",
+        llvm_module_.get());
+  }
+  return lyra_schedule_postponed_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

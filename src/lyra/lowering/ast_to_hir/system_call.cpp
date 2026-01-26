@@ -338,7 +338,8 @@ struct LowerVisitor {
             .data = hir::DisplaySystemCallData{
                 .print_kind = print_kind,
                 .ops = std::move(ops),
-                .descriptor = std::nullopt}});
+                .descriptor = std::nullopt,
+                .is_strobe = info.is_strobe}});
   }
 
   auto operator()(const TerminationFunctionInfo& /*info*/) const

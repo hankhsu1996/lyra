@@ -24,6 +24,9 @@ struct Design {
   // num_design_slots.
   std::vector<TypeId> slot_table;
   std::vector<ProcessId> init_processes;
+  // Functions dynamically generated during lowering (e.g., strobe thunks from
+  // init processes). These are not associated with any specific module.
+  std::vector<FunctionId> generated_functions;
 
   // Global precision power for %t formatting (e.g., -12 for 1ps).
   // Set from compilation context, used by $timeformat defaults.

@@ -659,6 +659,8 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result += FormatOperand(arg);
           }
           return result;
+        } else if constexpr (std::is_same_v<T, StrobeEffect>) {
+          return std::format("$strobe(thunk=func[{}])", effect_op.thunk.value);
         } else {
           return "unknown_effect";
         }

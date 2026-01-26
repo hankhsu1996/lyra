@@ -27,6 +27,7 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
           IntegralInfo{
               .bit_width = 32, .is_signed = false, .is_four_state = false}),
       .string_type = arena.Intern(TypeKind::kString, std::monostate{}),
+      .void_type = arena.Intern(TypeKind::kVoid, std::monostate{}),
   };
 }
 

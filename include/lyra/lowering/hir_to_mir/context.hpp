@@ -20,6 +20,7 @@ struct BuiltinTypes {
   TypeId bit_type;
   TypeId offset_type;
   TypeId string_type;
+  TypeId void_type;  // For void return types
 };
 
 auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes;
@@ -98,6 +99,11 @@ struct Context {
 
   // Function-specific: map symbols to MIR function IDs (for call lowering)
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
+
+  // Optional sink for dynamically generated functions (e.g., strobe thunks).
+  // If set, LowerStrobeEffect will push thunk FunctionIds here.
+  // Caller merges these into the parent element's functions list.
+  std::vector<mir::FunctionId>* generated_functions = nullptr;
 
   auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;

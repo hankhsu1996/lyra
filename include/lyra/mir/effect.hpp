@@ -10,6 +10,7 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
@@ -61,6 +62,14 @@ struct SystemTfEffect {
   std::vector<Operand> args;
 };
 
+// StrobeEffect: $strobe system task (IEEE 1800-2023 §21.2.2).
+// Unlike $display (immediate output), $strobe defers printing to the Postponed
+// region and re-evaluates expressions using end-of-timestep values.
+// The thunk is a synthetic MIR function that reads fresh values and prints.
+struct StrobeEffect {
+  FunctionId thunk;  // Synthetic function that performs the print
+};
+
 // $timeformat: sets global time format for %t.
 // All values are compile-time constants resolved in AST->HIR.
 struct TimeFormatEffect {
@@ -75,6 +84,6 @@ struct TimeFormatEffect {
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
-    SystemTfEffect>;
+    SystemTfEffect, StrobeEffect>;
 
 }  // namespace lyra::mir

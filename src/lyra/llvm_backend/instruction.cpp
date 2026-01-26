@@ -660,6 +660,30 @@ auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
   return {};
 }
 
+auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+
+  // Get the thunk function (already declared via DeclareUserFunction)
+  llvm::Function* thunk_fn = context.GetUserFunction(strobe.thunk);
+  if (thunk_fn == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(), "$strobe thunk function not found",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Get engine and design state pointers from process state header
+  llvm::Value* engine_ptr = context.GetEnginePointer();
+  llvm::Value* design_ptr = context.GetDesignPointer();
+
+  // Schedule the thunk for the Postponed region
+  // LyraSchedulePostponed(engine, callback, design_state)
+  builder.CreateCall(
+      context.GetLyraSchedulePostponed(), {engine_ptr, thunk_fn, design_ptr});
+
+  return {};
+}
+
 auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
     -> Result<void> {
   return std::visit(
@@ -679,6 +703,9 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           },
           [&context](const mir::SystemTfEffect& effect) -> Result<void> {
             return LowerSystemTfEffect(context, effect);
+          },
+          [&context](const mir::StrobeEffect& strobe) -> Result<void> {
+            return LowerStrobeEffect(context, strobe);
           },
       },
       effect_op);
