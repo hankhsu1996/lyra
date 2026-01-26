@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <format>
@@ -260,6 +261,35 @@ auto LowerBinaryComparison(
           std::format("unsupported comparison op: {}", mir::ToString(op)),
           UnsupportedCategory::kOperation));
   }
+}
+
+auto LowerCompareToI1(
+    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
+    uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
+    -> Result<llvm::Value*> {
+  auto& builder = context.GetBuilder();
+
+  // Compare at the max of operand widths (not result width, which is always 1)
+  uint32_t cmp_width = std::max(lhs_semantic_width, rhs_semantic_width);
+  auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+
+  // Coerce operands to comparison width
+  llvm::Value* cmp_lhs = builder.CreateZExtOrTrunc(lhs, cmp_type, "cmp.lhs");
+  llvm::Value* cmp_rhs = builder.CreateZExtOrTrunc(rhs, cmp_type, "cmp.rhs");
+
+  // Verify coercion succeeded (catch contract violations early)
+  if (cmp_lhs->getType() != cmp_type || cmp_rhs->getType() != cmp_type) {
+    throw common::InternalError(
+        "LowerCompareToI1", "operand coercion produced unexpected type");
+  }
+
+  // For signed comparisons, sign-extend each operand from its semantic width
+  if (IsSignedComparisonOp(op)) {
+    cmp_lhs = SignExtendToStorage(builder, cmp_lhs, lhs_semantic_width);
+    cmp_rhs = SignExtendToStorage(builder, cmp_rhs, rhs_semantic_width);
+  }
+
+  return LowerBinaryComparison(context, op, cmp_lhs, cmp_rhs);
 }
 
 auto LowerShiftOp(

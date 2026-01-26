@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -277,6 +278,32 @@ auto LowerBinaryRvalue4State(
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
+  if (IsComparisonOp(info.op)) {
+    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
+    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+
+    // Use shared helper for value comparison
+    auto cmp_or_err = LowerCompareToI1(
+        context, info.op, lhs.value, rhs.value, lhs_width, rhs_width);
+    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
+
+    // Unknown bit handling: any X/Z in either operand taints the result
+    uint32_t cmp_width = std::max(lhs_width, rhs_width);
+    auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+    auto* cmp_lhs_unk =
+        builder.CreateZExtOrTrunc(lhs.unknown, cmp_type, "bin4.lhs.unk");
+    auto* cmp_rhs_unk =
+        builder.CreateZExtOrTrunc(rhs.unknown, cmp_type, "bin4.rhs.unk");
+    auto* combined_unk = builder.CreateOr(cmp_lhs_unk, cmp_rhs_unk, "bin4.unk");
+    auto* taint = builder.CreateICmpNE(
+        combined_unk, llvm::ConstantInt::get(cmp_type, 0), "bin4.taint");
+
+    return FourStateValue{
+        .value = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp.val"),
+        .unknown = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk"),
+    };
+  }
+
   lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "bin4.lhs.val");
   rhs.value = builder.CreateZExtOrTrunc(rhs.value, elem_type, "bin4.rhs.val");
   lhs.unknown =
@@ -285,23 +312,6 @@ auto LowerBinaryRvalue4State(
       builder.CreateZExtOrTrunc(rhs.unknown, elem_type, "bin4.rhs.unk");
 
   auto* combined_unk = builder.CreateOr(lhs.unknown, rhs.unknown, "bin4.unk");
-
-  if (IsComparisonOp(info.op)) {
-    auto* cmp_lhs = lhs.value;
-    auto* cmp_rhs = rhs.value;
-    if (IsSignedComparisonOp(info.op)) {
-      uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
-      cmp_lhs = SignExtendToStorage(builder, cmp_lhs, op_width);
-      cmp_rhs = SignExtendToStorage(builder, cmp_rhs, op_width);
-    }
-    auto cmp_or_err = LowerBinaryComparison(context, info.op, cmp_lhs, cmp_rhs);
-    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
-    auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
-    return FourStateValue{
-        .value = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp.val"),
-        .unknown = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk"),
-    };
-  }
 
   if (IsLogicalOp(info.op)) {
     auto val_or_err = LowerBinaryArith(context, info.op, lhs.value, rhs.value);

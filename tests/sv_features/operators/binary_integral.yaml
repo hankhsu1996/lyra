@@ -401,3 +401,118 @@ cases:
     expect:
       variables:
         c: 1001
+
+  - name: comparison_signed_negative_high_bits
+    description: Signed comparison with values differing only in high bits
+    sv: |
+      module Test;
+        int a, b;
+        bit lt, gt, eq;
+        initial begin
+          // 0x80000003 (-2147483645) vs 0x00000003 (3)
+          a = 32'h80000003;
+          b = 32'h00000003;
+          lt = (a < b);
+          gt = (a > b);
+          eq = (a == b);
+        end
+      endmodule
+    expect:
+      variables:
+        lt: 1
+        gt: 0
+        eq: 0
+
+  - name: comparison_signed_against_zero
+    description: Signed comparison of negative value against zero
+    sv: |
+      module Test;
+        int a;
+        bit lt_zero, ge_zero;
+        initial begin
+          a = 32'h80000003;  // -2147483645
+          lt_zero = (a < 0);
+          ge_zero = (a >= 0);
+        end
+      endmodule
+    expect:
+      variables:
+        lt_zero: 1
+        ge_zero: 0
+
+  - name: comparison_signed_minmax
+    description: Signed comparison at INT_MIN and INT_MAX boundaries
+    sv: |
+      module Test;
+        int min_val, max_val, zero;
+        bit min_lt_zero, min_lt_max, max_gt_zero;
+        initial begin
+          min_val = 32'h80000000;  // INT_MIN (-2147483648)
+          max_val = 32'h7FFFFFFF;  // INT_MAX (2147483647)
+          zero = 0;
+          min_lt_zero = (min_val < zero);
+          min_lt_max = (min_val < max_val);
+          max_gt_zero = (max_val > zero);
+        end
+      endmodule
+    expect:
+      variables:
+        min_lt_zero: 1
+        min_lt_max: 1
+        max_gt_zero: 1
+
+  - name: comparison_equality_high_bits
+    description: Equality comparison with high bits set
+    sv: |
+      module Test;
+        int a, b;
+        bit eq, ne;
+        initial begin
+          a = 32'hFFFFFFFF;  // -1
+          b = 32'hFFFFFFFF;
+          eq = (a == b);
+          ne = (a != 32'h7FFFFFFF);
+        end
+      endmodule
+    expect:
+      variables:
+        eq: 1
+        ne: 1
+
+  - name: comparison_mixed_width_signed
+    description: Comparison of narrower signed value with wider signed value
+    sv: |
+      module Test;
+        byte a;       // 8-bit signed
+        int b;        // 32-bit signed
+        bit lt, gt;
+        initial begin
+          a = -1;     // 0xFF as byte, sign-extends to -1 as int
+          b = 100;
+          lt = (a < b);
+          gt = (a > b);
+        end
+      endmodule
+    expect:
+      variables:
+        lt: 1
+        gt: 0
+
+  - name: comparison_mixed_width_unsigned
+    description: Comparison of narrower unsigned value with wider signed value
+    sv: |
+      module Test;
+        bit [7:0] a;  // 8-bit unsigned
+        int b;        // 32-bit signed
+        bit lt, gt;
+        initial begin
+          a = 8'hFF;  // 255 as unsigned, zero-extends to 255
+          b = 100;
+          lt = (a < b);
+          gt = (a > b);
+        end
+      endmodule
+    expect:
+      variables:
+        lt: 0
+        gt: 1
