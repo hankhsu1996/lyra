@@ -819,12 +819,17 @@ void Context::BeginFunction(llvm::Function& func) {
 void Context::EndFunction() {
   current_function_ = nullptr;
   alloca_builder_.reset();
+  // Clear place storage for next function. With PlaceRootKey keying, different
+  // functions' locals with the same ID would otherwise collide.
+  place_storage_.clear();
 }
 
-auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
+auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
     -> llvm::AllocaInst* {
-  // Check if we already have storage for this place
-  auto it = place_storage_.find(place_id);
+  // Check if we already have storage for this root.
+  // Storage is keyed by root identity (kind + id), NOT by PlaceId.
+  PlaceRootKey key{.kind = root.kind, .id = root.id};
+  auto it = place_storage_.find(key);
   if (it != place_storage_.end()) {
     return it->second;
   }
@@ -836,18 +841,7 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
         "must call BeginFunction before creating place storage");
   }
 
-  // Get the place from the arena
-  const auto& place = arena_[place_id];
-
-  if (!place.projections.empty()) {
-    const char* desc = mir::DescribeProjection(place.projections[0].info);
-    throw common::UnsupportedErrorException(
-        common::UnsupportedLayer::kMirToLlvm, common::UnsupportedKind::kFeature,
-        current_origin_,
-        std::format("{} as assignment target not yet supported", desc));
-  }
-
-  TypeId type_id = place.root.type;
+  TypeId type_id = root.type;
   const Type& type = types_[type_id];
 
   llvm::Type* llvm_type = nullptr;
@@ -909,8 +903,8 @@ auto Context::GetOrCreatePlaceStorage(mir::PlaceId place_id)
     alloca_builder_->CreateStore(null_val, alloca);
   }
 
-  // Store in the map
-  place_storage_[place_id] = alloca;
+  // Store in the map, keyed by root identity
+  place_storage_[key] = alloca;
 
   return alloca;
 }
@@ -1058,7 +1052,10 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
   } else {
     // Local/Temp places: check place_storage_ first (user functions)
     // If not found and frame_ptr_ is set, use frame (processes)
-    auto it = place_storage_.find(place_id);
+    //
+    // Storage is keyed by root identity (kind + id), NOT PlaceId.
+    PlaceRootKey root_key{.kind = place.root.kind, .id = place.root.id};
+    auto it = place_storage_.find(root_key);
     if (it != place_storage_.end()) {
       ptr = it->second;
     } else if (frame_ptr_ != nullptr) {
@@ -1066,8 +1063,8 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> llvm::Value* {
       ptr = builder_.CreateStructGEP(
           GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
     } else {
-      // User function: create alloca lazily
-      ptr = GetOrCreatePlaceStorage(place_id);
+      // User function: create alloca lazily for the root
+      ptr = GetOrCreatePlaceStorage(place.root);
     }
   }
 

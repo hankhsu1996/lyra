@@ -196,6 +196,10 @@ class MirBuilder {
     return current_origin_;
   }
 
+  // Record a projection origin for error reporting.
+  // Used by lvalue lowering to attach origins to projections.
+  auto RecordProjectionOrigin(hir::ExpressionId expr_id) -> common::OriginId;
+
  private:
   // Returns true if there is a valid insertion point (current block exists
   // and has no terminator yet). Used internally by control flow primitives.

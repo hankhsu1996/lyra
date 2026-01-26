@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "llvm/IR/IRBuilder.h"
@@ -170,9 +171,11 @@ class Context {
   void EndFunction();
 
   // Place storage management
-  // Returns the alloca for a place, creating it if necessary
-  // Allocas are always inserted in the entry block via alloca_builder_
-  auto GetOrCreatePlaceStorage(mir::PlaceId place_id) -> llvm::AllocaInst*;
+  // Returns the alloca for a place root, creating it if necessary.
+  // Allocas are always inserted in the entry block via alloca_builder_.
+  // Key insight: storage is per-root, NOT per-PlaceId. Multiple PlaceIds with
+  // the same root (but different projections) share the same storage.
+  auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root) -> llvm::AllocaInst*;
 
   // FieldIndex accessors (encapsulate map lookups)
   [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;
@@ -326,8 +329,11 @@ class Context {
   llvm::Function* lyra_string_format_string_ = nullptr;
   llvm::Function* lyra_string_format_finish_ = nullptr;
 
-  // Maps PlaceId to its LLVM alloca storage
-  absl::flat_hash_map<mir::PlaceId, llvm::AllocaInst*> place_storage_;
+  // Maps PlaceRootKey to its LLVM alloca storage.
+  // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
+  // (but different projections) share the same storage.
+  std::unordered_map<PlaceRootKey, llvm::AllocaInst*, PlaceRootKeyHash>
+      place_storage_;
 
   // Cached enum member values globals (per enum TypeId)
   absl::flat_hash_map<TypeId, llvm::GlobalVariable*> enum_values_globals_;

@@ -38,10 +38,12 @@ struct PrologueParamRef {
 };
 
 // The MIR node that an origin entry refers to.
+// std::monostate is used for source-only entries (projections) where no MIR
+// construct exists to reference - these origins are purely for error reporting.
 // Extensible: can add BasicBlockId later for block-level origins.
 using MirNode = std::variant<
-    mir::FunctionId, mir::ProcessId, InstructionRef, TerminatorRef,
-    PrologueParamRef>;
+    std::monostate, mir::FunctionId, mir::ProcessId, InstructionRef,
+    TerminatorRef, PrologueParamRef>;
 
 // Reference to a function parameter in HIR (for prologue errors).
 // Resolves to the parameter's declaration span via function.parameters[index].
@@ -101,6 +103,11 @@ class OriginMap {
     return Record(MirNode{mir}, HirSource{hir});
   }
   auto Record(PrologueParamRef mir, FunctionParamRef hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
+  }
+
+  // Source-only entry for projections (no MIR construct to reference).
+  auto Record(std::monostate mir, hir::ExpressionId hir) -> common::OriginId {
     return Record(MirNode{mir}, HirSource{hir});
   }
 

@@ -48,6 +48,14 @@ void MirBuilder::ClearCurrentHirSource() {
   current_hir_source_.reset();
 }
 
+auto MirBuilder::RecordProjectionOrigin(hir::ExpressionId expr_id)
+    -> common::OriginId {
+  if (origin_map_ == nullptr) {
+    return common::OriginId::Invalid();
+  }
+  return origin_map_->Record(std::monostate{}, expr_id);
+}
+
 auto MirBuilder::IsReachable() const -> bool {
   if (current_block_ == kInvalidBlockIndex) {
     return false;

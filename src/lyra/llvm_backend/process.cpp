@@ -5,10 +5,10 @@
 #include <format>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -20,6 +20,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -430,22 +431,23 @@ auto DeclareUserFunction(
 
 namespace {
 
-// Collect all unique PlaceIds that are Local or Temp root places from a
-// function Map from local/temp id -> PlaceId for later lookup
+// Collect all unique place roots (Local or Temp) from a function.
+// Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
+// (but different projections) share the same storage.
 struct PlaceCollector {
-  absl::flat_hash_map<int, mir::PlaceId> locals;
-  absl::flat_hash_map<int, mir::PlaceId> temps;
+  // Collect PlaceRoot directly, keyed by root identity.
+  // No arena scanning needed - we just extract the root from any place.
+  std::unordered_map<PlaceRootKey, mir::PlaceRoot, PlaceRootKeyHash> roots;
 
   void CollectFromPlace(mir::PlaceId place_id, const mir::Arena& arena) {
     const auto& place = arena[place_id];
-    if (place.root.kind == mir::PlaceRoot::Kind::kLocal) {
-      if (!locals.contains(place.root.id)) {
-        locals[place.root.id] = place_id;
-      }
-    } else if (place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-      if (!temps.contains(place.root.id)) {
-        temps[place.root.id] = place_id;
-      }
+
+    // Only collect Local and Temp roots (Design roots go in design state)
+    if (place.root.kind == mir::PlaceRoot::Kind::kLocal ||
+        place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+      PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
+      // try_emplace: only insert if key not present
+      roots.try_emplace(key, place.root);
     }
   }
 
@@ -576,8 +578,11 @@ void DefineUserFunction(
     OriginScope param_scope(context, param_origin);
 
     uint32_t local_slot = func.param_local_slots[i];
-    auto it = collector.locals.find(static_cast<int>(local_slot));
-    if (it != collector.locals.end()) {
+    PlaceRootKey key{
+        .kind = mir::PlaceRoot::Kind::kLocal,
+        .id = static_cast<int>(local_slot)};
+    auto it = collector.roots.find(key);
+    if (it != collector.roots.end()) {
       // Create alloca for this parameter local
       llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(it->second);
 

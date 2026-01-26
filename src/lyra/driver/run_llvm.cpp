@@ -21,7 +21,6 @@
 #include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/origin_map.hpp"
-#include "lyra/mir/handle.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
@@ -193,9 +192,18 @@ auto ResolveErrorLocation(
 }  // namespace
 
 auto RunLlvm(const CompilationInput& input) -> int {
-  auto compilation = CompileToMir(input);
-  if (!compilation) {
-    compilation.error().Print();
+  std::optional<CompilationResult> compilation;
+  try {
+    auto result = CompileToMir(input);
+    if (!result) {
+      result.error().Print();
+      return 1;
+    }
+    compilation = std::move(*result);
+  } catch (const common::UnsupportedErrorException& e) {
+    // HIR->MIR threw unsupported error - can't resolve origin yet (no mir)
+    // Fall back to just printing the message
+    PrintError(e.what());
     return 1;
   }
 
