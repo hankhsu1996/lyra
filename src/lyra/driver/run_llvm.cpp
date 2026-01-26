@@ -17,8 +17,10 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
@@ -166,6 +168,23 @@ auto ResolveErrorLocation(
             return FormatSourceLocation(
                 expr.span, *compilation.hir.source_manager);
           },
+          [&](hir::FunctionId func_id) {
+            const hir::Function& func = (*compilation.hir.hir_arena)[func_id];
+            return FormatSourceLocation(
+                func.span, *compilation.hir.source_manager);
+          },
+          [&](hir::ProcessId proc_id) {
+            const hir::Process& proc = (*compilation.hir.hir_arena)[proc_id];
+            return FormatSourceLocation(
+                proc.span, *compilation.hir.source_manager);
+          },
+          [&](lowering::FunctionParamRef ref) {
+            // Use function span for parameter errors (parameters don't have
+            // individual spans in our representation yet).
+            const hir::Function& func = (*compilation.hir.hir_arena)[ref.func];
+            return FormatSourceLocation(
+                func.span, *compilation.hir.source_manager);
+          },
       },
       entry->hir_source);
 }
@@ -173,9 +192,18 @@ auto ResolveErrorLocation(
 }  // namespace
 
 auto RunLlvm(const CompilationInput& input) -> int {
-  auto compilation = CompileToMir(input);
-  if (!compilation) {
-    compilation.error().Print();
+  std::optional<CompilationResult> compilation;
+  try {
+    auto result = CompileToMir(input);
+    if (!result) {
+      result.error().Print();
+      return 1;
+    }
+    compilation = std::move(*result);
+  } catch (const common::UnsupportedErrorException& e) {
+    // HIR->MIR threw unsupported error - can't resolve origin yet (no mir)
+    // Fall back to just printing the message
+    PrintError(e.what());
     return 1;
   }
 

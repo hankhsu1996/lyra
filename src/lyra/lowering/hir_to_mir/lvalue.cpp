@@ -7,6 +7,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
@@ -131,8 +132,8 @@ auto LowerNameRefLvalue(
 }
 
 auto LowerElementAccessLvalue(
-    const hir::ElementAccessExpressionData& data, MirBuilder& builder)
-    -> LvalueResult {
+    const hir::ElementAccessExpressionData& data, hir::ExpressionId expr_id,
+    MirBuilder& builder) -> LvalueResult {
   Context& ctx = builder.GetContext();
 
   LvalueResult base = LowerLvalue(data.base, builder);
@@ -157,8 +158,10 @@ auto LowerElementAccessLvalue(
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
 
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -173,8 +176,8 @@ auto LowerElementAccessLvalue(
 }
 
 auto LowerMemberAccessLvalue(
-    const hir::MemberAccessExpressionData& data, MirBuilder& builder)
-    -> LvalueResult {
+    const hir::MemberAccessExpressionData& data, hir::ExpressionId expr_id,
+    MirBuilder& builder) -> LvalueResult {
   Context& ctx = builder.GetContext();
 
   LvalueResult base = LowerLvalue(data.base, builder);
@@ -187,8 +190,10 @@ auto LowerMemberAccessLvalue(
         "LowerMemberAccessLvalue", "base is not an unpacked struct");
   }
 
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info = mir::FieldProjection{.field_index = data.field_index},
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -201,8 +206,8 @@ auto LowerMemberAccessLvalue(
 }
 
 auto LowerUnionMemberAccessLvalue(
-    const hir::UnionMemberAccessExpressionData& data, MirBuilder& builder)
-    -> LvalueResult {
+    const hir::UnionMemberAccessExpressionData& data, hir::ExpressionId expr_id,
+    MirBuilder& builder) -> LvalueResult {
   Context& ctx = builder.GetContext();
 
   LvalueResult base = LowerLvalue(data.base, builder);
@@ -215,10 +220,12 @@ auto LowerUnionMemberAccessLvalue(
         "LowerUnionMemberAccessLvalue", "base is not an unpacked union");
   }
 
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info =
           mir::UnionMemberProjection{
               .member_index = static_cast<uint32_t>(data.member_index)},
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -232,7 +239,8 @@ auto LowerUnionMemberAccessLvalue(
 
 auto LowerPackedElementSelectLvalue(
     const hir::PackedElementSelectExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
+    hir::ExpressionId expr_id, const hir::Expression& expr, MirBuilder& builder)
+    -> LvalueResult {
   Context& ctx = builder.GetContext();
 
   LvalueResult base = LowerLvalue(data.base, builder);
@@ -257,6 +265,7 @@ auto LowerPackedElementSelectLvalue(
       index_operand, index_expr.type, base_type, builder);
 
   // Create BitRangeProjection
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info =
           mir::BitRangeProjection{
@@ -264,6 +273,7 @@ auto LowerPackedElementSelectLvalue(
               .width = element_width,
               .element_type = expr.type,
           },
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -375,7 +385,7 @@ auto EmitIndexedPartSelectOffsetAndValidity(
 }
 
 auto LowerIndexedPartSelectLvalue(
-    const hir::IndexedPartSelectExpressionData& data,
+    const hir::IndexedPartSelectExpressionData& data, hir::ExpressionId expr_id,
     const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
   Context& ctx = builder.GetContext();
 
@@ -400,6 +410,7 @@ auto LowerIndexedPartSelectLvalue(
       ComposeValidity(base.validity, our_validity, builder);
 
   // Create BitRangeProjection
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info =
           mir::BitRangeProjection{
@@ -407,6 +418,7 @@ auto LowerIndexedPartSelectLvalue(
               .width = data.width,
               .element_type = expr.type,
           },
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -418,7 +430,7 @@ auto LowerIndexedPartSelectLvalue(
 }
 
 auto LowerPackedFieldAccessLvalue(
-    const hir::PackedFieldAccessExpressionData& data,
+    const hir::PackedFieldAccessExpressionData& data, hir::ExpressionId expr_id,
     const hir::Expression& expr, MirBuilder& builder) -> LvalueResult {
   Context& ctx = builder.GetContext();
 
@@ -430,6 +442,7 @@ auto LowerPackedFieldAccessLvalue(
       mir::Operand::Const(MakeIntegralConst(data.bit_offset, offset_type));
 
   // Create BitRangeProjection
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{
       .info =
           mir::BitRangeProjection{
@@ -437,6 +450,7 @@ auto LowerPackedFieldAccessLvalue(
               .width = data.bit_width,
               .element_type = expr.type,
           },
+      .origin = origin,
   };
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
@@ -501,22 +515,22 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerNameRefLvalue(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
-          return LowerElementAccessLvalue(data, builder);
+          return LowerElementAccessLvalue(data, expr_id, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
-          return LowerMemberAccessLvalue(data, builder);
+          return LowerMemberAccessLvalue(data, expr_id, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
-          return LowerUnionMemberAccessLvalue(data, builder);
+          return LowerUnionMemberAccessLvalue(data, expr_id, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {
-          return LowerPackedElementSelectLvalue(data, expr, builder);
+          return LowerPackedElementSelectLvalue(data, expr_id, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::IndexedPartSelectExpressionData>) {
-          return LowerIndexedPartSelectLvalue(data, expr, builder);
+          return LowerIndexedPartSelectLvalue(data, expr_id, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
-          return LowerPackedFieldAccessLvalue(data, expr, builder);
+          return LowerPackedFieldAccessLvalue(data, expr_id, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           return LvalueResult{
@@ -524,8 +538,11 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
               .validity = MakeAlwaysValid(builder),
           };
         } else {
-          throw common::InternalError(
-              "LowerLvalue", "unsupported lvalue expression");
+          common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
+          throw common::UnsupportedErrorException(
+              common::UnsupportedLayer::kHirToMir,
+              common::UnsupportedKind::kFeature, origin,
+              "unsupported lvalue expression");
         }
       },
       expr.data);

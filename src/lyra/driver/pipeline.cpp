@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include "frontend.hpp"
+#include "lyra/common/unsupported_error.hpp"
 
 namespace lyra::driver {
 
@@ -35,6 +36,9 @@ auto CompileToMir(const CompilationInput& input)
   lowering::hir_to_mir::LoweringResult mir_result;
   try {
     mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  } catch (const common::UnsupportedErrorException&) {
+    // Let UnsupportedError propagate - caller has origin_map to resolve it
+    throw;
   } catch (const std::exception& e) {
     return std::unexpected(CompilationError::Simple(e.what()));
   }

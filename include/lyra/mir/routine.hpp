@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/common/type.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -21,6 +22,7 @@ struct Process {
   ProcessKind kind = ProcessKind::kOnce;
   BasicBlockId entry;              // Local index within blocks (0, 1, 2...)
   std::vector<BasicBlock> blocks;  // Direct ownership
+  common::OriginId origin = common::OriginId::Invalid();  // Source location
 };
 
 enum class PassingKind {
@@ -59,6 +61,13 @@ struct Function {
   // param_local_slots[i] = local slot index for parameter i.
   // Size must equal signature.params.size().
   std::vector<uint32_t> param_local_slots;
+
+  // Per-parameter origins for prologue error reporting.
+  // param_origins[i] = origin for parameter i's allocation/initialization.
+  // Size must equal signature.params.size().
+  std::vector<common::OriginId> param_origins;
+
+  common::OriginId origin = common::OriginId::Invalid();  // Source location
 };
 
 }  // namespace lyra::mir

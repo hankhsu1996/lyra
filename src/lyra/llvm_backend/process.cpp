@@ -5,10 +5,10 @@
 #include <format>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -20,6 +20,7 @@
 #include "lyra/common/unsupported_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
+#include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -277,8 +278,10 @@ void LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks,
     llvm::BasicBlock* exit_block) {
-  // Set origin for error reporting
-  context.SetCurrentOrigin(term.origin);
+  // Set origin for error reporting.
+  // OriginScope preserves outer (function/process) origin if term.origin is
+  // Invalid.
+  OriginScope origin_scope(context, term.origin);
 
   std::visit(
       common::Overloaded{
@@ -307,6 +310,10 @@ void LowerTerminator(
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> llvm::Function* {
+  // Process-level origin scope for errors during code generation.
+  // If process.origin is Invalid, this is a no-op.
+  OriginScope proc_scope(context, process.origin);
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
@@ -424,22 +431,23 @@ auto DeclareUserFunction(
 
 namespace {
 
-// Collect all unique PlaceIds that are Local or Temp root places from a
-// function Map from local/temp id -> PlaceId for later lookup
+// Collect all unique place roots (Local or Temp) from a function.
+// Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
+// (but different projections) share the same storage.
 struct PlaceCollector {
-  absl::flat_hash_map<int, mir::PlaceId> locals;
-  absl::flat_hash_map<int, mir::PlaceId> temps;
+  // Collect PlaceRoot directly, keyed by root identity.
+  // No arena scanning needed - we just extract the root from any place.
+  std::unordered_map<PlaceRootKey, mir::PlaceRoot, PlaceRootKeyHash> roots;
 
   void CollectFromPlace(mir::PlaceId place_id, const mir::Arena& arena) {
     const auto& place = arena[place_id];
-    if (place.root.kind == mir::PlaceRoot::Kind::kLocal) {
-      if (!locals.contains(place.root.id)) {
-        locals[place.root.id] = place_id;
-      }
-    } else if (place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-      if (!temps.contains(place.root.id)) {
-        temps[place.root.id] = place_id;
-      }
+
+    // Only collect Local and Temp roots (Design roots go in design state)
+    if (place.root.kind == mir::PlaceRoot::Kind::kLocal ||
+        place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+      PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
+      // try_emplace: only insert if key not present
+      roots.try_emplace(key, place.root);
     }
   }
 
@@ -516,6 +524,10 @@ void DefineUserFunction(
   const auto& types = context.GetTypeArena();
   const auto& func = arena[func_id];
 
+  // Function-level origin scope for prologue errors.
+  // If func.origin is Invalid, this is a no-op.
+  OriginScope func_scope(context, func.origin);
+
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", llvm_func);
@@ -559,9 +571,18 @@ void DefineUserFunction(
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
   // Arguments start at index 2 (after design and engine pointers).
   for (size_t i = 0; i < func.signature.params.size(); ++i) {
+    // Set parameter-specific origin for prologue errors
+    common::OriginId param_origin = (i < func.param_origins.size())
+                                        ? func.param_origins[i]
+                                        : common::OriginId::Invalid();
+    OriginScope param_scope(context, param_origin);
+
     uint32_t local_slot = func.param_local_slots[i];
-    auto it = collector.locals.find(static_cast<int>(local_slot));
-    if (it != collector.locals.end()) {
+    PlaceRootKey key{
+        .kind = mir::PlaceRoot::Kind::kLocal,
+        .id = static_cast<int>(local_slot)};
+    auto it = collector.roots.find(key);
+    if (it != collector.roots.end()) {
       // Create alloca for this parameter local
       llvm::AllocaInst* alloca = context.GetOrCreatePlaceStorage(it->second);
 
@@ -585,8 +606,9 @@ void DefineUserFunction(
       LowerInstruction(context, instruction);
     }
 
-    // Lower terminator
-    context.SetCurrentOrigin(block.terminator.origin);
+    // Lower terminator.
+    // OriginScope preserves func.origin if terminator.origin is Invalid.
+    OriginScope term_scope(context, block.terminator.origin);
     std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) { LowerJump(context, t, llvm_blocks); },

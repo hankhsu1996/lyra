@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/type.hpp"
+#include "lyra/common/unsupported_error.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
@@ -61,6 +62,7 @@ using ProjectionInfo = std::variant<
 
 struct Projection {
   ProjectionInfo info;
+  common::OriginId origin = common::OriginId::Invalid();
 };
 
 struct Place {

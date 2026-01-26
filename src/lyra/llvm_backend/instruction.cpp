@@ -68,6 +68,26 @@ void StoreDesignWithNotify(
 // Clears the target bit range in the base value, then OR's in the new value.
 void StoreBitRange(
     Context& context, mir::PlaceId target, llvm::Value* source_raw) {
+  // Check for unsupported case: part-select on local/temp in user functions.
+  // User functions don't have frame_ptr_ set, and locals use alloca storage.
+  const auto& arena = context.GetMirArena();
+  const auto& place = arena[target];
+  if ((place.root.kind == mir::PlaceRoot::Kind::kLocal ||
+       place.root.kind == mir::PlaceRoot::Kind::kTemp) &&
+      context.GetFramePointer() == nullptr) {
+    // Find the BitRangeProjection for error origin
+    for (const auto& proj : place.projections) {
+      if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
+        common::OriginId blame =
+            proj.origin.IsValid() ? proj.origin : context.GetCurrentOrigin();
+        throw common::UnsupportedErrorException(
+            common::UnsupportedLayer::kMirToLlvm,
+            common::UnsupportedKind::kFeature, blame,
+            "part-select as assignment target in function not yet supported");
+      }
+    }
+  }
+
   auto& builder = context.GetBuilder();
   auto [offset, width] = context.ComposeBitRange(target);
 
@@ -578,8 +598,9 @@ void LowerEffectOp(Context& context, const mir::EffectOp& effect_op) {
 }  // namespace
 
 void LowerInstruction(Context& context, const mir::Instruction& instruction) {
-  // Set origin for error reporting
-  context.SetCurrentOrigin(instruction.origin);
+  // Set origin for error reporting.
+  // OriginScope preserves outer origin if instruction.origin is Invalid.
+  OriginScope origin_scope(context, instruction.origin);
 
   // RAII guard for statement-scoped cleanup of owned string temps
   StatementScope scope(context);
