@@ -6,8 +6,9 @@
 #include <format>
 #include <vector>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DataLayout.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"

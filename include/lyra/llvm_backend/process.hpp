@@ -1,6 +1,7 @@
 #pragma once
 
-#include "llvm/IR/Function.h"
+#include <llvm/IR/Function.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/routine.hpp"

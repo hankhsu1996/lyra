@@ -24,7 +24,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "llvm/IR/Value.h"
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_span.hpp"

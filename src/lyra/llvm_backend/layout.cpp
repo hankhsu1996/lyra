@@ -10,8 +10,9 @@
 #include <variant>
 #include <vector>
 
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Type.h"
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Type.h>
+
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"

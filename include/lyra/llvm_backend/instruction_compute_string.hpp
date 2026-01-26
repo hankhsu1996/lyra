@@ -2,8 +2,9 @@
 
 #include <vector>
 
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/handle.hpp"

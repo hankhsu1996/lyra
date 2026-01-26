@@ -3,8 +3,9 @@
 #include <expected>
 #include <variant>
 
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/Casting.h>
+
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"

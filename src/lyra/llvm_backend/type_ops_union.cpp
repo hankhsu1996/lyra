@@ -1,7 +1,8 @@
 #include <expected>
 #include <variant>
 
-#include "llvm/IR/Constants.h"
+#include <llvm/IR/Constants.h>
+
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"

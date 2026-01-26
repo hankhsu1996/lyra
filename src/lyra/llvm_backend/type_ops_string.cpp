@@ -1,8 +1,9 @@
 #include <expected>
 #include <variant>
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"

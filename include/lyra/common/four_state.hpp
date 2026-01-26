@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "llvm/ADT/APInt.h"
+#include <llvm/ADT/APInt.h>
 
 namespace lyra {
 

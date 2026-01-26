@@ -1,10 +1,11 @@
 #include "lyra/llvm_backend/four_state_utils.hpp"
 
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
+#include <llvm/Support/Casting.h>
+
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 

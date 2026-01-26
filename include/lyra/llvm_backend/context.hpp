@@ -4,9 +4,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/layout.hpp"
