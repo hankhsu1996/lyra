@@ -17,6 +17,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute.hpp"
 #include "lyra/llvm_backend/instruction_display.hpp"
+#include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -674,17 +675,11 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
             // TODO(hankhsu): Handle mem IO effects
             return {};
           },
-          [&context](const mir::FcloseEffect& fclose) -> Result<void> {
-            auto& builder = context.GetBuilder();
-            auto desc_or_err = LowerOperand(context, fclose.descriptor);
-            if (!desc_or_err) return std::unexpected(desc_or_err.error());
-            builder.CreateCall(
-                context.GetLyraFclose(),
-                {context.GetEnginePointer(), *desc_or_err});
-            return {};
-          },
           [&context](const mir::TimeFormatEffect& tf) -> Result<void> {
             return LowerTimeFormatEffect(context, tf);
+          },
+          [&context](const mir::SystemTfEffect& effect) -> Result<void> {
+            return LowerSystemTfEffect(context, effect);
           },
       },
       effect_op);

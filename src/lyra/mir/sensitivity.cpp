@@ -80,16 +80,15 @@ void CollectFromRvalue(
           [](const BinaryRvalueInfo&) {},
           [](const CastRvalueInfo&) {},
           [](const BitCastRvalueInfo&) {},
-          [](const SystemCallRvalueInfo&) {},
           [](const UserCallRvalueInfo&) {},
           [](const AggregateRvalueInfo&) {},
           [](const IndexValidityRvalueInfo&) {},
           [](const ConcatRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
           [](const PlusargsRvalueInfo&) {},
-          [](const FopenRvalueInfo&) {},
           [](const RuntimeQueryRvalueInfo&) {},
           [](const MathCallRvalueInfo&) {},
+          [](const SystemTfRvalueInfo&) {},
       },
       rvalue.info);
 }

@@ -671,7 +671,7 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
-  // $fopen → FopenRvalueInfo
+  // $fopen → SystemTfRvalueInfo
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
     Result<mir::Operand> filename_result =
         LowerExpression(fopen_data->filename, builder);
@@ -685,7 +685,8 @@ auto LowerSystemCall(
       operands.push_back(*mode_result);
     }
     mir::Rvalue rvalue{
-        .operands = std::move(operands), .info = mir::FopenRvalueInfo{}};
+        .operands = std::move(operands),
+        .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kFopen}};
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }

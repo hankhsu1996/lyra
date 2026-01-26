@@ -414,9 +414,6 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 "bitcast({} -> {})", FormatType(info.source_type),
                 FormatType(info.target_type));
           },
-          [](const SystemCallRvalueInfo& info) {
-            return std::format("syscall({})", info.opcode);
-          },
           [](const UserCallRvalueInfo& info) {
             return std::format("call(func[{}])", info.callee.value);
           },
@@ -500,12 +497,14 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::format("plusargs.{}", kind_str);
           },
-          [](const FopenRvalueInfo&) { return std::string("fopen"); },
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
           },
           [](const MathCallRvalueInfo& info) {
             return std::format("math_call({})", ToString(info.fn));
+          },
+          [](const SystemTfRvalueInfo& info) {
+            return std::format("system_tf({})", ToString(info.opcode));
           },
       },
       rv.info);
@@ -617,9 +616,20 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
                 std::format(" end={}", FormatOperand(*effect_op.end_addr));
           }
           return result;
-        } else if constexpr (std::is_same_v<T, FcloseEffect>) {
+        } else if constexpr (std::is_same_v<T, TimeFormatEffect>) {
           return std::format(
-              "$fclose({})", FormatOperand(effect_op.descriptor));
+              "$timeformat(units={}, precision={}, suffix=\"{}\", "
+              "min_width={})",
+              effect_op.units, effect_op.precision, effect_op.suffix,
+              effect_op.min_width);
+        } else if constexpr (std::is_same_v<T, SystemTfEffect>) {
+          std::string result =
+              std::format("system_tf({})", ToString(effect_op.opcode));
+          for (const Operand& arg : effect_op.args) {
+            result += ", ";
+            result += FormatOperand(arg);
+          }
+          return result;
         } else {
           return "unknown_effect";
         }

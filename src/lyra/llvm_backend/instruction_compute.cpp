@@ -1,7 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute.hpp"
 
 #include <expected>
-#include <format>
 #include <variant>
 #include <vector>
 
@@ -10,7 +9,6 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -24,6 +22,7 @@
 #include "lyra/llvm_backend/instruction_compute_real.hpp"
 #include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
+#include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -134,13 +133,6 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
           [&](const mir::MathCallRvalueInfo&) -> Result<void> {
             return LowerMathCompute(context, compute);
           },
-          [&](const mir::SystemCallRvalueInfo&) -> Result<void> {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    "system calls not yet supported in LLVM backend",
-                    UnsupportedCategory::kFeature));
-          },
           [&](const mir::PlusargsRvalueInfo&) -> Result<void> {
             return std::unexpected(
                 context.GetDiagnosticContext().MakeUnsupported(
@@ -148,44 +140,8 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
                     "$plusargs not yet supported in LLVM backend",
                     UnsupportedCategory::kFeature));
           },
-          [&](const mir::FopenRvalueInfo&) -> Result<void> {
-            auto& builder = context.GetBuilder();
-            const auto& rv = compute.value;
-
-            // Validate operand count
-            if (rv.operands.size() != 1 && rv.operands.size() != 2) {
-              throw common::InternalError(
-                  "LowerFopen",
-                  std::format(
-                      "expected 1 or 2 operands, got {}", rv.operands.size()));
-            }
-
-            // Get filename operand (string handle)
-            auto filename_or_err = LowerOperand(context, rv.operands[0]);
-            if (!filename_or_err)
-              return std::unexpected(filename_or_err.error());
-
-            llvm::Value* result = nullptr;
-            if (rv.operands.size() == 2) {
-              // FD mode: $fopen(filename, mode)
-              auto mode_or_err = LowerOperand(context, rv.operands[1]);
-              if (!mode_or_err) return std::unexpected(mode_or_err.error());
-              result = builder.CreateCall(
-                  context.GetLyraFopenFd(),
-                  {context.GetEnginePointer(), *filename_or_err, *mode_or_err},
-                  "fopen.fd");
-            } else {
-              // MCD mode: $fopen(filename)
-              result = builder.CreateCall(
-                  context.GetLyraFopenMcd(),
-                  {context.GetEnginePointer(), *filename_or_err}, "fopen.mcd");
-            }
-
-            // Store result to target
-            auto target_ptr = context.GetPlacePointer(compute.target);
-            if (!target_ptr) return std::unexpected(target_ptr.error());
-            builder.CreateStore(result, *target_ptr);
-            return {};
+          [&](const mir::SystemTfRvalueInfo& info) -> Result<void> {
+            return LowerSystemTfRvalue(context, compute, info);
           },
       },
       compute.value.info);

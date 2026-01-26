@@ -7,6 +7,7 @@
 
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
@@ -35,10 +36,6 @@ struct CastRvalueInfo {
 struct BitCastRvalueInfo {
   TypeId source_type;
   TypeId target_type;
-};
-
-struct SystemCallRvalueInfo {
-  int opcode;  // System call opcode
 };
 
 struct UserCallRvalueInfo {
@@ -112,10 +109,12 @@ struct PlusargsRvalueInfo {
   // operands[0] = query/format string (always a string operand)
 };
 
-// $fopen: opens a file, returns int32 descriptor.
-// operands[0] = filename (string)
-// operands[1] = mode string (FD mode only, absent for MCD)
-struct FopenRvalueInfo {};
+// SystemTfRvalueInfo: Generic rvalue-producing system TFs.
+// Covers simple system TFs where payload is just opcode + operands.
+// Operands come from Rvalue::operands (existing pattern).
+struct SystemTfRvalueInfo {
+  SystemTfOpcode opcode;
+};
 
 // Engine-state queries ($time, $stime, $realtime).
 // No operands — reads from engine pointer at runtime.
@@ -132,10 +131,10 @@ struct MathCallRvalueInfo {
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
-    SystemCallRvalueInfo, UserCallRvalueInfo, AggregateRvalueInfo,
-    BuiltinCallRvalueInfo, IndexValidityRvalueInfo, GuardedUseRvalueInfo,
-    ConcatRvalueInfo, SFormatRvalueInfo, PlusargsRvalueInfo, FopenRvalueInfo,
-    RuntimeQueryRvalueInfo, MathCallRvalueInfo>;
+    UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
+    IndexValidityRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo,
+    SFormatRvalueInfo, PlusargsRvalueInfo, RuntimeQueryRvalueInfo,
+    MathCallRvalueInfo, SystemTfRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -155,8 +154,6 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "cast";
         } else if constexpr (std::is_same_v<T, BitCastRvalueInfo>) {
           return "bitcast";
-        } else if constexpr (std::is_same_v<T, SystemCallRvalueInfo>) {
-          return "syscall";
         } else if constexpr (std::is_same_v<T, UserCallRvalueInfo>) {
           return "call";
         } else if constexpr (std::is_same_v<T, AggregateRvalueInfo>) {
@@ -173,12 +170,12 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "sformat";
         } else if constexpr (std::is_same_v<T, PlusargsRvalueInfo>) {
           return "plusargs";
-        } else if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
-          return "fopen";
         } else if constexpr (std::is_same_v<T, RuntimeQueryRvalueInfo>) {
           return "runtime_query";
         } else if constexpr (std::is_same_v<T, MathCallRvalueInfo>) {
           return "math_call";
+        } else if constexpr (std::is_same_v<T, SystemTfRvalueInfo>) {
+          return "system_tf";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

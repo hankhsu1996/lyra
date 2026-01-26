@@ -170,11 +170,13 @@ struct StorageCollector {
                           Visit(*m.end_addr, arena);
                         }
                       },
-                      [&](const FcloseEffect& f) -> void {
-                        Visit(f.descriptor, arena);
-                      },
                       [&](const TimeFormatEffect&) -> void {
                         // TimeFormatEffect has no operands - all constants
+                      },
+                      [&](const SystemTfEffect& s) -> void {
+                        for (const auto& arg : s.args) {
+                          Visit(arg, arena);
+                        }
                       },
                   },
                   i.op);
