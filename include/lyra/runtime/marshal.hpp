@@ -17,7 +17,9 @@ enum class RuntimeValueKind : int32_t {
   kIntegral = 0,  // Inline 2-state integral, width <= 64 bits (validated)
   kReal64 = 1,    // double (64-bit IEEE 754)
   kReal32 = 2,    // float (32-bit IEEE 754, shortreal)
-  // Future: kIntegral4State, kWideIntegral, kStringHandle, ...
+  kWideIntegral =
+      3,  // width > 64, data → uint64_t[n] (little-endian), 8-byte aligned
+  // Future: kIntegral4State, kWideIntegral4State, kStringHandle, ...
 };
 
 // Format a runtime value from raw parameters.
@@ -86,7 +88,7 @@ inline auto FormatRuntimeValue(
       value = semantic::MakeReal(
           static_cast<double>(*static_cast<const float*>(data)));
       break;
-    case RuntimeValueKind::kIntegral:
+    case RuntimeValueKind::kIntegral: {
       if (width > 64) {
         throw common::InternalError(
             "FormatRuntimeValue", "kIntegral requires width <= 64");
@@ -107,6 +109,22 @@ inline auto FormatRuntimeValue(
       }
       value = semantic::MakeIntegral(raw_value, static_cast<uint32_t>(width));
       break;
+    }
+    case RuntimeValueKind::kWideIntegral: {
+      if (width <= 64) {
+        throw common::InternalError(
+            "FormatRuntimeValue", "kWideIntegral requires width > 64");
+      }
+      if (data == nullptr) {
+        throw common::InternalError(
+            "FormatRuntimeValue", "kWideIntegral requires non-null data");
+      }
+      size_t num_words = (static_cast<size_t>(width) + 63) / 64;
+      value = semantic::MakeIntegralWide(
+          static_cast<const uint64_t*>(data), num_words,
+          static_cast<uint32_t>(width));
+      break;
+    }
   }
 
   return semantic::FormatValue(value, spec, is_signed);

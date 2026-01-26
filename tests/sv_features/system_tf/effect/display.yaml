@@ -524,3 +524,28 @@ cases:
       endmodule
     expect:
       stdout: "-12345678901234567890\n"
+
+  # 65-bit boundary cases verify top-word masking at the word boundary
+  - name: wide_decimal_65bit_boundary
+    sv: |
+      module Test;
+        bit [64:0] val;
+        initial begin
+          val = 65'h1_FFFF_FFFF_FFFF_FFFF;  // 2^65 - 1
+          $display("%d", val);
+        end
+      endmodule
+    expect:
+      stdout: "36893488147419103231\n"
+
+  - name: wide_decimal_65bit_single_high_bit
+    sv: |
+      module Test;
+        bit [64:0] val;
+        initial begin
+          val = 65'h1_0000_0000_0000_0000;  // 2^64
+          $display("%d", val);
+        end
+      endmodule
+    expect:
+      stdout: "18446744073709551616\n"

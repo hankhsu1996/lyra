@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <span>
 
 #include <llvm/IR/Constants.h>
@@ -26,12 +25,153 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Lower a sequence of FormatOps to LLVM IR (shared by display and severity)
-auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
-    -> Result<void> {
+// Decompose wide iN value into [n x i64] array in canonical little-endian
+// order. word[0] = bits 0-63, word[1] = bits 64-127, etc. Top word is masked to
+// semantic width. Returns pointer to first element (uint64_t*), not array
+// pointer.
+//
+// ABI contract: returned pointer valid only until runtime call returns.
+// Runtime must NOT retain pointer beyond synchronous call.
+auto EmitStoreWideToTemp(
+    llvm::IRBuilder<>& builder, llvm::Value* wide_val, uint32_t bit_width,
+    llvm::LLVMContext& ctx) -> llvm::Value* {
+  size_t num_words = (static_cast<size_t>(bit_width) + 63) / 64;
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* array_ty = llvm::ArrayType::get(i64_ty, num_words);
+  auto* alloca = builder.CreateAlloca(array_ty, nullptr, "wide.temp");
+  alloca->setAlignment(llvm::Align(8));  // Guarantee 8-byte alignment
+
+  // Always extend to padded width for predictable type in shift operations.
+  // MUST use zext (not sext) to preserve bit pattern and clear padding bits.
+  // Signedness is handled later via is_signed parameter to runtime.
+  auto padded_width = static_cast<uint32_t>(num_words * 64);
+  auto* padded_ty = llvm::IntegerType::get(ctx, padded_width);
+  llvm::Value* extended = (wide_val->getType() == padded_ty)
+                              ? wide_val
+                              : builder.CreateZExt(wide_val, padded_ty);
+
+  // Extract and store each 64-bit word
+  for (size_t i = 0; i < num_words; ++i) {
+    llvm::Value* word = nullptr;
+    if (i == 0) {
+      word = builder.CreateTrunc(extended, i64_ty);
+    } else {
+      // Use uint64_t for shift to handle very wide values (future-proof)
+      // Shift amount type matches extended (padded_ty)
+      uint64_t shift_bits = 64ULL * i;
+      auto* shift_amt = llvm::ConstantInt::get(padded_ty, shift_bits);
+      auto* shifted = builder.CreateLShr(extended, shift_amt);
+      word = builder.CreateTrunc(shifted, i64_ty);
+    }
+
+    // Mask top word to semantic width (required by contract)
+    // Guard avoids UB from (1 << 64) when top_bits == 0
+    if (i == num_words - 1) {
+      uint32_t top_bits = bit_width % 64;
+      if (top_bits != 0) {
+        uint64_t mask = (uint64_t{1} << top_bits) - 1;
+        word = builder.CreateAnd(word, llvm::ConstantInt::get(i64_ty, mask));
+      }
+    }
+
+    auto* gep = builder.CreateConstInBoundsGEP2_64(array_ty, alloca, 0, i);
+    builder.CreateStore(word, gep);
+  }
+
+  // Return pointer to first element (uint64_t*), not array pointer
+  // This matches runtime expectation: data is uint64_t*
+  return builder.CreateConstInBoundsGEP2_64(array_ty, alloca, 0, 0);
+}
+
+// Store narrow integral (<=64 bits) to appropriately-sized temp storage.
+// Returns pointer to the storage.
+auto EmitStoreNarrowToTemp(
+    llvm::IRBuilder<>& builder, llvm::Value* value, int32_t width,
+    bool is_signed, llvm::LLVMContext& ctx) -> llvm::Value* {
+  llvm::Type* storage_ty = nullptr;
+  if (width <= 8) {
+    storage_ty = llvm::Type::getInt8Ty(ctx);
+  } else if (width <= 16) {
+    storage_ty = llvm::Type::getInt16Ty(ctx);
+  } else if (width <= 32) {
+    storage_ty = llvm::Type::getInt32Ty(ctx);
+  } else {
+    storage_ty = llvm::Type::getInt64Ty(ctx);
+  }
+
+  auto* alloca = builder.CreateAlloca(storage_ty);
+  llvm::Value* sized_value = value;
+  if (value->getType() != storage_ty) {
+    if (value->getType()->getIntegerBitWidth() >
+        storage_ty->getIntegerBitWidth()) {
+      sized_value = builder.CreateTrunc(value, storage_ty);
+    } else if (is_signed) {
+      sized_value = builder.CreateSExt(value, storage_ty);
+    } else {
+      sized_value = builder.CreateZExt(value, storage_ty);
+    }
+  }
+  builder.CreateStore(sized_value, alloca);
+  return alloca;
+}
+
+void LowerLiteralOp(Context& context, const mir::FormatOp& op) {
+  auto& builder = context.GetBuilder();
+  auto* str_const = builder.CreateGlobalStringPtr(op.literal);
+  builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
+}
+
+auto LowerStringOp(Context& context, const mir::FormatOp& op) -> Result<void> {
+  if (!op.value.has_value()) {
+    return {};
+  }
+
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+
+  auto handle_or_err = LowerOperand(context, *op.value);
+  if (!handle_or_err) return std::unexpected(handle_or_err.error());
+  llvm::Value* handle = *handle_or_err;
+
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+
+  // Build LyraFormatSpec struct on stack
+  uint8_t flags = 0;
+  if (op.mods.zero_pad) {
+    flags |= runtime::kFormatFlagZeroPad;
+  }
+  if (op.mods.left_align) {
+    flags |= runtime::kFormatFlagLeftAlign;
+  }
+
+  auto* spec_ty = context.GetFormatSpecType();
+  auto* spec_alloca = builder.CreateAlloca(spec_ty);
+
+  auto* kind_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 0);
+  builder.CreateStore(
+      llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)), kind_ptr);
+
+  auto* width_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 1);
+  builder.CreateStore(
+      llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)), width_ptr);
+
+  auto* precision_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 2);
+  builder.CreateStore(
+      llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
+      precision_ptr);
+
+  auto* flags_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 3);
+  builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
+  // reserved[3] left uninitialized (don't care)
+
+  builder.CreateCall(context.GetLyraPrintString(), {handle, spec_alloca});
+  return {};
+}
+
+auto LowerTimeOp(Context& context, const mir::FormatOp& op) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
@@ -40,199 +180,135 @@ auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
-  for (const auto& op : ops) {
-    if (op.kind == FormatKind::kLiteral) {
-      // Call LyraPrintLiteral(str)
-      auto* str_const = builder.CreateGlobalStringPtr(op.literal);
-      builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
-    } else if (op.kind == FormatKind::kString) {
-      // String: pass the handle to LyraPrintString with format spec pointer
-      if (op.value.has_value()) {
-        auto handle_or_err = LowerOperand(context, *op.value);
-        if (!handle_or_err) return std::unexpected(handle_or_err.error());
-        llvm::Value* handle = *handle_or_err;
+  llvm::Value* data_ptr = nullptr;
+  if (op.value.has_value()) {
+    auto value_or_err = LowerOperand(context, *op.value);
+    if (!value_or_err) return std::unexpected(value_or_err.error());
+    llvm::Value* value = *value_or_err;
+    auto* alloca = builder.CreateAlloca(i64_ty);
+    if (value->getType()->getIntegerBitWidth() < 64) {
+      value = builder.CreateZExt(value, i64_ty);
+    }
+    builder.CreateStore(value, alloca);
+    data_ptr = alloca;
+  } else {
+    data_ptr = null_ptr;
+  }
 
-        // Build LyraFormatSpec struct on stack
-        uint8_t flags = 0;
-        if (op.mods.zero_pad) {
-          flags |= runtime::kFormatFlagZeroPad;
-        }
-        if (op.mods.left_align) {
-          flags |= runtime::kFormatFlagLeftAlign;
-        }
-        auto* spec_ty = context.GetFormatSpecType();
-        auto* spec_alloca = builder.CreateAlloca(spec_ty);
-        auto* kind_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 0);
-        builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
-            kind_ptr);
-        auto* width_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 1);
-        builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
-            width_ptr);
-        auto* precision_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 2);
-        builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
-            precision_ptr);
-        auto* flags_ptr = builder.CreateStructGEP(spec_ty, spec_alloca, 3);
-        builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
-        // reserved[3] left uninitialized (don't care)
+  auto* engine_ptr = context.GetEnginePointer();
+  builder.CreateCall(
+      context.GetLyraPrintValue(),
+      {engine_ptr,
+       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+       llvm::ConstantInt::get(
+           i32_ty, static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral)),
+       data_ptr, llvm::ConstantInt::get(i32_ty, 64),
+       llvm::ConstantInt::get(i1_ty, 0),
+       llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
+       llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
+       llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
+       llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
+       null_ptr, llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
 
-        builder.CreateCall(context.GetLyraPrintString(), {handle, spec_alloca});
-      }
-    } else if (op.kind == FormatKind::kTime) {
-      // Time format: data is uint64_t time value, needs engine for formatting
-      llvm::Value* data_ptr = nullptr;
-      if (op.value.has_value()) {
-        auto value_or_err = LowerOperand(context, *op.value);
-        if (!value_or_err) return std::unexpected(value_or_err.error());
-        llvm::Value* value = *value_or_err;
-        auto* alloca = builder.CreateAlloca(i64_ty);
-        // Extend to i64 if needed
-        if (value->getType()->getIntegerBitWidth() < 64) {
-          value = builder.CreateZExt(value, i64_ty);
-        }
-        builder.CreateStore(value, alloca);
-        data_ptr = alloca;
-      } else {
-        data_ptr = null_ptr;
-      }
+  return {};
+}
 
-      auto* engine_ptr = context.GetEnginePointer();
-      auto* format_val =
-          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
-      auto* value_kind_val = llvm::ConstantInt::get(
-          i32_ty, static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral));
-      auto* width_val = llvm::ConstantInt::get(i32_ty, 64);
-      auto* signed_val = llvm::ConstantInt::get(i1_ty, 0);
-      auto* output_width_val =
-          llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1));
-      auto* precision_val =
-          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1));
-      auto* zero_pad_val =
-          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0);
-      auto* left_align_val =
-          llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0);
-      auto* timeunit_val =
-          llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
+auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
 
-      builder.CreateCall(
-          context.GetLyraPrintValue(),
-          {engine_ptr, format_val, value_kind_val, data_ptr, width_val,
-           signed_val, output_width_val, precision_val, zero_pad_val,
-           left_align_val, null_ptr, null_ptr, timeunit_val});
-    } else {
-      // Get type info for width and signedness
-      int32_t width = 32;
-      bool is_signed = false;
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
-      auto value_kind = runtime::RuntimeValueKind::kIntegral;
-      if (op.type) {
-        const Type& ty = types[op.type];
-        if (ty.Kind() == TypeKind::kIntegral) {
-          width = static_cast<int32_t>(ty.AsIntegral().bit_width);
-          is_signed = ty.AsIntegral().is_signed;
-        } else if (ty.Kind() == TypeKind::kReal) {
-          value_kind = runtime::RuntimeValueKind::kReal64;
-          width = 64;  // double is 64 bits
-        } else if (ty.Kind() == TypeKind::kShortReal) {
-          value_kind = runtime::RuntimeValueKind::kReal32;
-          width = 32;  // float is 32 bits
-        } else if (IsPacked(ty)) {
-          width = static_cast<int32_t>(PackedBitWidth(ty, types));
-          is_signed = IsPackedSigned(ty, types);
-        }
-      }
+  // Determine type info: width, signedness, value_kind
+  int32_t width = 32;
+  bool is_signed = false;
+  auto value_kind = runtime::RuntimeValueKind::kIntegral;
 
-      // Get pointer to the value
-      llvm::Value* data_ptr = nullptr;
-      if (op.value.has_value()) {
-        auto value_or_err = LowerOperand(context, *op.value);
-        if (!value_or_err) return std::unexpected(value_or_err.error());
-        llvm::Value* value = *value_or_err;
-
-        if (value_kind != runtime::RuntimeValueKind::kIntegral) {
-          // For real types, allocate matching float type and store
-          auto* alloca = builder.CreateAlloca(value->getType());
-          builder.CreateStore(value, alloca);
-          data_ptr = alloca;
-        } else {
-          // For integral types, allocate storage sized to match width
-          // This ensures LyraPrintValue can read the correct number of bytes
-          if (width > 64) {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    std::format(
-                        "display of values wider than 64 bits not yet "
-                        "supported (got {} bits)",
-                        width),
-                    UnsupportedCategory::kType));
-          }
-
-          llvm::Type* storage_ty = nullptr;
-          if (width <= 8) {
-            storage_ty = llvm::Type::getInt8Ty(llvm_ctx);
-          } else if (width <= 16) {
-            storage_ty = llvm::Type::getInt16Ty(llvm_ctx);
-          } else if (width <= 32) {
-            storage_ty = llvm::Type::getInt32Ty(llvm_ctx);
-          } else {
-            storage_ty = llvm::Type::getInt64Ty(llvm_ctx);
-          }
-
-          auto* alloca = builder.CreateAlloca(storage_ty);
-          // Truncate or extend value to match storage type
-          llvm::Value* sized_value = value;
-          if (value->getType() != storage_ty) {
-            if (value->getType()->getIntegerBitWidth() >
-                storage_ty->getIntegerBitWidth()) {
-              sized_value = builder.CreateTrunc(value, storage_ty);
-            } else if (is_signed) {
-              sized_value = builder.CreateSExt(value, storage_ty);
-            } else {
-              sized_value = builder.CreateZExt(value, storage_ty);
-            }
-          }
-          builder.CreateStore(sized_value, alloca);
-          data_ptr = alloca;
-        }
-      } else {
-        data_ptr = null_ptr;
-      }
-
-      // Call LyraPrintValue(engine, format, value_kind, data, width, is_signed,
-      //                     field_width, precision, zero_pad, left_align,
-      //                     x_mask, z_mask, module_timeunit_power)
-      auto* format_val =
-          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
-      auto* value_kind_val =
-          llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(value_kind));
-      auto* width_val = llvm::ConstantInt::get(i32_ty, width);
-      auto* signed_val = llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0);
-
-      // Pass format modifiers
-      // output_width encodes FormatModifiers.width (optional<int>):
-      // -1 = nullopt (auto-size), 0 = minimal, >0 = explicit width
-      auto* output_width_val =
-          llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1));
-      auto* precision_val =
-          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1));
-      auto* zero_pad_val =
-          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0);
-      auto* left_align_val =
-          llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0);
-      auto* timeunit_val =
-          llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
-
-      builder.CreateCall(
-          context.GetLyraPrintValue(),
-          {null_ptr, format_val, value_kind_val, data_ptr, width_val,
-           signed_val, output_width_val, precision_val, zero_pad_val,
-           left_align_val, null_ptr, null_ptr, timeunit_val});
+  if (op.type) {
+    const Type& ty = types[op.type];
+    if (ty.Kind() == TypeKind::kIntegral) {
+      width = static_cast<int32_t>(ty.AsIntegral().bit_width);
+      is_signed = ty.AsIntegral().is_signed;
+    } else if (ty.Kind() == TypeKind::kReal) {
+      value_kind = runtime::RuntimeValueKind::kReal64;
+      width = 64;
+    } else if (ty.Kind() == TypeKind::kShortReal) {
+      value_kind = runtime::RuntimeValueKind::kReal32;
+      width = 32;
+    } else if (IsPacked(ty)) {
+      width = static_cast<int32_t>(PackedBitWidth(ty, types));
+      is_signed = IsPackedSigned(ty, types);
     }
   }
 
+  // Create storage for the value
+  llvm::Value* data_ptr = null_ptr;
+  if (op.value.has_value()) {
+    auto value_or_err = LowerOperand(context, *op.value);
+    if (!value_or_err) return std::unexpected(value_or_err.error());
+    llvm::Value* value = *value_or_err;
+
+    if (value_kind != runtime::RuntimeValueKind::kIntegral) {
+      // Real types: store directly
+      auto* alloca = builder.CreateAlloca(value->getType());
+      builder.CreateStore(value, alloca);
+      data_ptr = alloca;
+    } else if (width > 64) {
+      // Wide integral: decompose to [n x i64] array
+      value_kind = runtime::RuntimeValueKind::kWideIntegral;
+      data_ptr = EmitStoreWideToTemp(
+          builder, value, static_cast<uint32_t>(width), llvm_ctx);
+    } else {
+      // Narrow integral: store to appropriately-sized temp
+      data_ptr =
+          EmitStoreNarrowToTemp(builder, value, width, is_signed, llvm_ctx);
+    }
+  }
+
+  // Call LyraPrintValue
+  builder.CreateCall(
+      context.GetLyraPrintValue(),
+      {null_ptr, llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(value_kind)),
+       data_ptr, llvm::ConstantInt::get(i32_ty, width),
+       llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
+       llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
+       llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
+       llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
+       llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
+       null_ptr, llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
+
+  return {};
+}
+
+// Lower a sequence of FormatOps to LLVM IR (shared by display and severity)
+auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
+    -> Result<void> {
+  for (const auto& op : ops) {
+    Result<void> result;
+    switch (op.kind) {
+      case FormatKind::kLiteral:
+        LowerLiteralOp(context, op);
+        break;
+      case FormatKind::kString:
+        result = LowerStringOp(context, op);
+        break;
+      case FormatKind::kTime:
+        result = LowerTimeOp(context, op);
+        break;
+      default:
+        result = LowerValueOp(context, op);
+        break;
+    }
+    if (!result) {
+      return result;
+    }
+  }
   return {};
 }
 
