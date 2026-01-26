@@ -24,16 +24,15 @@
 .DS_Store
 Thumbs.db
 
-# Misc
+# Logs
 *.log
 *.log.*
-*tmp*
 
 # Generated output
 out/
+*tmp*
 
-# Testing playground (local to each workspace)
+# Local files (personal, not committed)
 playground/
-
-# Local config files (personal preferences)
 *.local.md
+.bazelrc.user

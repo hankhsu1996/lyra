@@ -47,13 +47,13 @@ Then run clang-tidy on specific files:
 
 ```bash
 clang-tidy -p . <files>                # Single file (~20s each)
-run-clang-tidy -p . -j 20 <files>      # Multiple files in parallel
+run-clang-tidy -p . -j 8 <files>      # Multiple files in parallel
 ```
 
 Or run on all files (update path when new code is added):
 
 ```bash
-run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 20 src/lyra/
+run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 8 src/lyra/
 ```
 
 **Note:** When using Bash tool, avoid `$(...)` subshell substitution (it gets escaped incorrectly). Use hardcoded values instead of `$(nproc)`.
