@@ -255,11 +255,13 @@ auto Context::GetLyraStringConcat() -> llvm::Function* {
 
 auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
-    // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num)
+    // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,
+    //                        const char** plusargs, uint32_t num_plusargs)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
         llvm_module_.get());
@@ -278,6 +280,47 @@ auto Context::GetLyraRunProcessSync() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_run_process_sync_;
+}
+
+auto Context::GetLyraPlusargsTest() -> llvm::Function* {
+  if (lyra_plusargs_test_ == nullptr) {
+    // int32_t LyraPlusargsTest(ptr engine, ptr query)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_plusargs_test_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPlusargsTest",
+        llvm_module_.get());
+  }
+  return lyra_plusargs_test_;
+}
+
+auto Context::GetLyraPlusargsValueInt() -> llvm::Function* {
+  if (lyra_plusargs_value_int_ == nullptr) {
+    // int32_t LyraPlusargsValueInt(ptr engine, ptr format, ptr output)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_plusargs_value_int_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPlusargsValueInt",
+        llvm_module_.get());
+  }
+  return lyra_plusargs_value_int_;
+}
+
+auto Context::GetLyraPlusargsValueString() -> llvm::Function* {
+  if (lyra_plusargs_value_string_ == nullptr) {
+    // int32_t LyraPlusargsValueString(ptr engine, ptr format, ptr output)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_plusargs_value_string_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPlusargsValueString",
+        llvm_module_.get());
+  }
+  return lyra_plusargs_value_string_;
 }
 
 auto Context::GetLyraSuspendDelay() -> llvm::Function* {

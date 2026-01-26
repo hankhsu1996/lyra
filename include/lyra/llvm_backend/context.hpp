@@ -104,6 +104,9 @@ class Context {
   [[nodiscard]] auto GetLyraStringConcat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPlusargsTest() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPlusargsValueInt() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPlusargsValueString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendDelay() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendWait() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
@@ -319,6 +322,9 @@ class Context {
   llvm::Function* lyra_string_concat_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
   llvm::Function* lyra_run_process_sync_ = nullptr;
+  llvm::Function* lyra_plusargs_test_ = nullptr;
+  llvm::Function* lyra_plusargs_value_int_ = nullptr;
+  llvm::Function* lyra_plusargs_value_string_ = nullptr;
   llvm::Function* lyra_suspend_delay_ = nullptr;
   llvm::Function* lyra_suspend_wait_ = nullptr;
   llvm::Function* lyra_suspend_repeat_ = nullptr;

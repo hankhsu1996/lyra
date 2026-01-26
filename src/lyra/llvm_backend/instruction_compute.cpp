@@ -9,6 +9,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -24,13 +25,69 @@
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
+
+enum class PlusargsOutputKind { kInt32, kString };
+
+auto GetPlusargsOutputKind(const TypeArena& types, TypeId output_type)
+    -> PlusargsOutputKind {
+  const Type& type = types[output_type];
+  if (type.Kind() == TypeKind::kString) {
+    return PlusargsOutputKind::kString;
+  }
+  return PlusargsOutputKind::kInt32;
+}
+
+auto LowerPlusargsCompute(
+    Context& context, const mir::Compute& compute,
+    const mir::PlusargsRvalueInfo& info) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+
+  // Lower query/format string operand (already LyraStringHandle via
+  // LowerOperand)
+  auto query_or_err = LowerOperand(context, compute.value.operands[0]);
+  if (!query_or_err) return std::unexpected(query_or_err.error());
+
+  auto target_ptr = context.GetPlacePointer(compute.target);
+  if (!target_ptr) return std::unexpected(target_ptr.error());
+
+  llvm::Value* result = nullptr;
+
+  if (info.kind == mir::PlusargsKind::kTest) {
+    result = builder.CreateCall(
+        context.GetLyraPlusargsTest(),
+        {context.GetEnginePointer(), *query_or_err});
+  } else {
+    // kValue: output must be present (MIR invariant)
+    if (!info.output) {
+      throw common::InternalError(
+          "LowerPlusargsCompute", "kValue without output place");
+    }
+
+    auto output_ptr = context.GetPlacePointer(*info.output);
+    if (!output_ptr) return std::unexpected(output_ptr.error());
+
+    auto kind = GetPlusargsOutputKind(types, info.output_type);
+    if (kind == PlusargsOutputKind::kString) {
+      result = builder.CreateCall(
+          context.GetLyraPlusargsValueString(),
+          {context.GetEnginePointer(), *query_or_err, *output_ptr});
+    } else {
+      result = builder.CreateCall(
+          context.GetLyraPlusargsValueInt(),
+          {context.GetEnginePointer(), *query_or_err, *output_ptr});
+    }
+  }
+
+  builder.CreateStore(result, *target_ptr);
+  return {};
+}
 
 // Dispatch to 2-state or 4-state based on target type.
 auto LowerIntegral(Context& context, const mir::Compute& compute)
@@ -133,12 +190,8 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
           [&](const mir::MathCallRvalueInfo&) -> Result<void> {
             return LowerMathCompute(context, compute);
           },
-          [&](const mir::PlusargsRvalueInfo&) -> Result<void> {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    "$plusargs not yet supported in LLVM backend",
-                    UnsupportedCategory::kFeature));
+          [&](const mir::PlusargsRvalueInfo& info) -> Result<void> {
+            return LowerPlusargsCompute(context, compute, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<void> {
             return LowerSystemTfRvalue(context, compute, info);

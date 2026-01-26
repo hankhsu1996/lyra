@@ -420,6 +420,7 @@ auto RunLlvmBackend(
       .diag_ctx = &diag_ctx,
       .hooks = &hooks,
       .fs_base_dir = fs_base_dir,
+      .plusargs = test_case.plusargs,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
