@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cassert>
 #include <cstdint>
 #include <string>
 
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/semantic/format.hpp"
 #include "lyra/semantic/value.hpp"
 
@@ -64,7 +64,10 @@ inline auto FormatRuntimeValue(
           static_cast<double>(*static_cast<const float*>(data)));
       break;
     case RuntimeValueKind::kIntegral:
-      assert(width <= 64 && "kIntegral requires width <= 64");
+      if (width > 64) {
+        throw common::InternalError(
+            "FormatRuntimeValue", "kIntegral requires width <= 64");
+      }
       uint64_t raw_value = 0;
       if (width <= 8) {
         raw_value = *static_cast<const uint8_t*>(data);
