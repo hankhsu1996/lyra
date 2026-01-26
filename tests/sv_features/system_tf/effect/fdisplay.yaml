@@ -81,7 +81,7 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [3:0] x = 4'b1010;
+            bit [3:0] x = 4'b1010;
             initial begin
               $fdisplayb(1, x);
             end

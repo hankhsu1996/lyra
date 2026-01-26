@@ -15,8 +15,8 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/operand.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"
@@ -317,12 +317,46 @@ auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
 auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
     -> Result<void> {
   if (display.descriptor) {
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(),
-        "$fdisplay/$fwrite not supported in LLVM backend",
-        UnsupportedCategory::kFeature));
+    // File-directed output: $fdisplay / $fwrite
+    auto& builder = context.GetBuilder();
+
+    // PHASE 1: Validate all ops BEFORE calling Start (ensures no early returns
+    // after Start)
+    auto validate_result = ValidateFormatOps(context, display.ops);
+    if (!validate_result) return validate_result;
+
+    // PHASE 2: Emit code (no failures expected - validation passed)
+    auto* buf = builder.CreateCall(context.GetLyraStringFormatStart(), {});
+
+    for (const auto& op : display.ops) {
+      // LowerFormatOpToBuffer should not fail after validation
+      auto result = LowerFormatOpToBuffer(context, buf, op);
+      if (!result) return result;  // Defensive; validation should catch this
+    }
+
+    // Finish consumes buffer, returns +1 ref handle
+    auto* message =
+        builder.CreateCall(context.GetLyraStringFormatFinish(), {buf});
+
+    // Lower descriptor - should be i32 from $fopen return type
+    auto desc_or = LowerOperand(context, *display.descriptor);
+    if (!desc_or) return std::unexpected(desc_or.error());
+
+    // Call LyraFWrite
+    auto* engine = context.GetEnginePointer();
+    auto* add_newline = llvm::ConstantInt::get(
+        llvm::Type::getInt1Ty(context.GetLlvmContext()),
+        display.print_kind == PrintKind::kDisplay ? 1 : 0);
+    builder.CreateCall(
+        context.GetLyraFWrite(), {engine, *desc_or, message, add_newline});
+
+    // Release temporary (Finish returns +1 ref; we consumed it)
+    builder.CreateCall(context.GetLyraStringRelease(), {message});
+
+    return {};
   }
 
+  // Direct stdout output: $display / $write
   // Lower format ops (shared helper)
   auto result = LowerFormatOps(context, display.ops);
   if (!result) return result;

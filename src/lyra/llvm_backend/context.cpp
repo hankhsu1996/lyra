@@ -840,6 +840,22 @@ auto Context::GetLyraFclose() -> llvm::Function* {
   return lyra_fclose_;
 }
 
+auto Context::GetLyraFWrite() -> llvm::Function* {
+  if (lyra_fwrite_ == nullptr) {
+    // void LyraFWrite(ptr engine, i32 descriptor, ptr message, i1 add_newline)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, ptr_ty, i1_ty},
+        false);
+    lyra_fwrite_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFWrite",
+        llvm_module_.get());
+  }
+  return lyra_fwrite_;
+}
+
 auto Context::GetLyraSchedulePostponed() -> llvm::Function* {
   if (lyra_schedule_postponed_ == nullptr) {
     // void LyraSchedulePostponed(ptr engine, ptr callback, ptr design_state)
