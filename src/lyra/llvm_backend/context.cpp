@@ -703,6 +703,21 @@ auto Context::GetLyraStringFormatFinish() -> llvm::Function* {
   return lyra_string_format_finish_;
 }
 
+auto Context::GetLyraStringFormatRuntime() -> llvm::Function* {
+  if (lyra_string_format_runtime_ == nullptr) {
+    // ptr LyraStringFormatRuntime(ptr fmt, ptr* data, i32* widths, i8* signeds,
+    //                             i32* kinds, i64 count)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        ptr_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i64_ty}, false);
+    lyra_string_format_runtime_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatRuntime",
+        llvm_module_.get());
+  }
+  return lyra_string_format_runtime_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

@@ -47,4 +47,17 @@ void LyraStringFormatString(
 
 // Finish and return new string handle (refcount=1). CONSUMES buffer.
 auto LyraStringFormatFinish(LyraStringFormatBuffer* buf) -> LyraStringHandle;
+
+// Format with runtime format string (for $sformat with variable format).
+// Parameters:
+//   format_handle: string handle containing format string
+//   data_ptrs: array of pointers to operand data (or LyraStringHandle for
+//   strings) widths: array of bit widths (32/64 for real/shortreal) signeds:
+//   array of signedness flags (0=unsigned, 1=signed) kinds: array of value
+//   kinds (0=integral, 1=real, 2=string) count: number of operands
+// Returns: newly allocated string handle (refcount=1)
+auto LyraStringFormatRuntime(
+    LyraStringHandle format_handle, void* const* data_ptrs,
+    const int32_t* widths, const int8_t* signeds, const int32_t* kinds,
+    int64_t count) -> LyraStringHandle;
 }

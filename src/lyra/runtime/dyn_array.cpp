@@ -1,10 +1,10 @@
 #include "lyra/runtime/dyn_array.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdlib>
 #include <cstring>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
 
@@ -13,9 +13,10 @@ using LyraDynArrayData = lyra::runtime::DynArrayData;
 namespace {
 
 void DestroyElements(LyraDynArrayData* arr) {
-  assert(
-      (arr->data != nullptr || arr->size == 0) &&
-      "corrupt state: null data with non-zero size");
+  if (arr->data == nullptr && arr->size != 0) {
+    throw lyra::common::InternalError(
+        "DestroyElements", "corrupt state: null data with non-zero size");
+  }
   if (arr->destroy_fn == nullptr || arr->data == nullptr) {
     return;
   }
@@ -46,8 +47,14 @@ void CloneElements(
 extern "C" auto LyraDynArrayNew(
     int64_t size, int32_t elem_size, void (*clone_fn)(void*, const void*),
     void (*destroy_fn)(void*)) -> LyraDynArrayHandle {
-  assert(size >= 0 && "array size must be non-negative");
-  assert(elem_size > 0 && "element size must be positive");
+  if (size < 0) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayNew", "array size must be non-negative");
+  }
+  if (elem_size <= 0) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayNew", "element size must be positive");
+  }
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* arr = new LyraDynArrayData();
@@ -57,9 +64,10 @@ extern "C" auto LyraDynArrayNew(
   arr->destroy_fn = destroy_fn;
 
   if (size > 0) {
-    assert(
-        static_cast<size_t>(size) <= SIZE_MAX / elem_size &&
-        "allocation size overflow");
+    if (static_cast<size_t>(size) > SIZE_MAX / elem_size) {
+      throw lyra::common::InternalError(
+          "LyraDynArrayNew", "allocation size overflow");
+    }
     auto alloc_size = static_cast<size_t>(size) * elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);
@@ -77,8 +85,14 @@ extern "C" auto LyraDynArrayNew(
 extern "C" auto LyraDynArrayNewCopy(
     int64_t size, int32_t elem_size, void (*clone_fn)(void*, const void*),
     void (*destroy_fn)(void*), LyraDynArrayHandle src) -> LyraDynArrayHandle {
-  assert(size >= 0 && "array size must be non-negative");
-  assert(elem_size > 0 && "element size must be positive");
+  if (size < 0) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayNewCopy", "array size must be non-negative");
+  }
+  if (elem_size <= 0) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayNewCopy", "element size must be positive");
+  }
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* arr = new LyraDynArrayData();
@@ -88,9 +102,10 @@ extern "C" auto LyraDynArrayNewCopy(
   arr->destroy_fn = destroy_fn;
 
   if (size > 0) {
-    assert(
-        static_cast<size_t>(size) <= SIZE_MAX / elem_size &&
-        "allocation size overflow");
+    if (static_cast<size_t>(size) > SIZE_MAX / elem_size) {
+      throw lyra::common::InternalError(
+          "LyraDynArrayNewCopy", "allocation size overflow");
+    }
     auto alloc_size = static_cast<size_t>(size) * elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);
@@ -101,9 +116,11 @@ extern "C" auto LyraDynArrayNewCopy(
 
     if (src != nullptr) {
       auto* src_arr = static_cast<LyraDynArrayData*>(src);
-      assert(
-          src_arr->elem_size == elem_size &&
-          "source and destination element sizes must match");
+      if (src_arr->elem_size != elem_size) {
+        throw lyra::common::InternalError(
+            "LyraDynArrayNewCopy",
+            "source and destination element sizes must match");
+      }
       int64_t copy_count = std::min(size, src_arr->size);
       if (copy_count > 0) {
         CloneElements(
@@ -127,10 +144,19 @@ extern "C" auto LyraDynArraySize(LyraDynArrayHandle arr) -> int64_t {
 
 extern "C" auto LyraDynArrayElementPtr(LyraDynArrayHandle arr, int64_t index)
     -> void* {
-  assert(arr != nullptr && "ElementPtr called on null handle");
+  if (arr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayElementPtr", "ElementPtr called on null handle");
+  }
   auto* a = static_cast<LyraDynArrayData*>(arr);
-  assert(a->data != nullptr && "ElementPtr called on empty array");
-  assert(index >= 0 && index < a->size && "index out of bounds");
+  if (a->data == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayElementPtr", "ElementPtr called on empty array");
+  }
+  if (index < 0 || index >= a->size) {
+    throw lyra::common::InternalError(
+        "LyraDynArrayElementPtr", "index out of bounds");
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   return static_cast<char*>(a->data) + (index * a->elem_size);
 }
@@ -150,9 +176,10 @@ extern "C" auto LyraDynArrayClone(LyraDynArrayHandle src)
   arr->destroy_fn = s->destroy_fn;
 
   if (s->size > 0) {
-    assert(
-        static_cast<size_t>(s->size) <= SIZE_MAX / s->elem_size &&
-        "allocation size overflow");
+    if (static_cast<size_t>(s->size) > SIZE_MAX / s->elem_size) {
+      throw lyra::common::InternalError(
+          "LyraDynArrayClone", "allocation size overflow");
+    }
     auto alloc_size = static_cast<size_t>(s->size) * s->elem_size;
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
     arr->data = std::malloc(alloc_size);

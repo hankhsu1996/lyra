@@ -113,7 +113,7 @@ struct Diagnostic {
 
 ---
 
-## InternalError (Compiler Bugs Only)
+## InternalError (Compiler and Runtime Bugs)
 
 `InternalError` indicates a Lyra bug or violated invariant and is the only exception allowed.
 
@@ -127,12 +127,17 @@ throw common::InternalError("codegen", "unexpected expression kind");
 - Impossible `switch` cases
 - Corrupted IR invariants
 - Unreachable code paths (in release too)
+- Runtime library invariant violations (e.g., refcount underflow, null where non-null required)
 
 ### Never Use When
 
 - Invalid SV (return `Diagnostic::Error`)
 - Unsupported feature (return `Diagnostic::Unsupported`)
 - Host failure (return `Diagnostic::HostError`)
+
+### Never Use `assert`
+
+Do not use `assert()` for invariant checks. Asserts only fire in debug builds; `InternalError` fires in all builds and provides consistent error reporting. This applies to both compiler stages and runtime library code.
 
 ---
 

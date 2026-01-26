@@ -5,6 +5,7 @@ Rules:
   E001: No std::runtime_error or std::logic_error
   E002: No catch(...) except in driver
   E003: No throw except InternalError (rethrow 'throw;' also banned outside driver)
+  E004: No assert() or <cassert>/<assert.h> (use InternalError for invariants)
 
 Usage:
   python3 tools/policy/check_exceptions.py                          # All files
@@ -36,6 +37,9 @@ RE_CATCH_ALL = re.compile(r'\bcatch\s*\(\s*\.\.\.\s*\)', re.DOTALL)
 RE_THROW_STMT = re.compile(r'\bthrow\s+([^;]+);', re.DOTALL)
 RE_RETHROW = re.compile(r'\bthrow\s*;')
 RE_INTERNAL_ERROR = re.compile(r'\b(common::)?InternalError\b')
+RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
+RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
+RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
 
 
 def get_repo_root() -> Path:
@@ -137,6 +141,22 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             errors.append(
                 f"{filepath}:{line}: E003 rethrow banned outside driver")
 
+    # E004: No assert() or <cassert>/<assert.h>
+    for match in RE_ASSERT_CALL.finditer(content):
+        line = offset_to_line(original, match.start())
+        errors.append(
+            f"{filepath}:{line}: E004 assert() banned - use InternalError")
+
+    for match in RE_CASSERT_INCLUDE.finditer(content):
+        line = offset_to_line(original, match.start())
+        errors.append(
+            f"{filepath}:{line}: E004 <cassert> banned - use InternalError")
+
+    for match in RE_ASSERT_H_INCLUDE.finditer(content):
+        line = offset_to_line(original, match.start())
+        errors.append(
+            f"{filepath}:{line}: E004 <assert.h> banned - use InternalError")
+
     return errors
 
 
@@ -183,6 +203,7 @@ def main() -> int:
         print("  E001: Use std::expected<T, Diagnostic> instead of std exceptions")
         print("  E002: catch(...) allowed only in src/lyra/driver/")
         print("  E003: Only throw common::InternalError for compiler bugs")
+        print("  E004: Use InternalError for invariants, not assert()")
         return 1
 
     print(f"Checked {len(files)} files, no violations")
