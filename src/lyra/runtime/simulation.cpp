@@ -8,6 +8,9 @@
 #include <filesystem>
 #include <print>
 #include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
@@ -18,7 +21,10 @@
 
 namespace {
 
-std::filesystem::path g_fs_base_dir;
+auto FsBaseDir() -> std::filesystem::path& {
+  static std::filesystem::path value;
+  return value;
+}
 
 // Process state header layout (matches LLVM-generated struct)
 struct StateHeader {
@@ -117,14 +123,15 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
   }
 }
 
-extern "C" void LyraRunSimulation(
-    LyraProcessFunc* processes, void** states_raw, uint32_t num_processes) {
-  auto states = std::span(states_raw, num_processes);
-  auto procs = std::span(processes, num_processes);
+namespace {
 
-  lyra::runtime::Engine engine([&](lyra::runtime::Engine& eng,
-                                   lyra::runtime::ProcessHandle handle,
-                                   lyra::runtime::ResumePoint resume) {
+// Create the process runner callback used by both LyraRunSimulation and
+// LyraRunSimulationWithPlusargs.
+auto MakeProcessRunner(
+    std::span<LyraProcessFunc> procs, std::span<void*> states) {
+  return [procs, states](
+             lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
+             lyra::runtime::ResumePoint resume) {
     uint32_t proc_idx = handle.process_id;
     void* state = states[proc_idx];
     auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
@@ -132,8 +139,12 @@ extern "C" void LyraRunSimulation(
 
     procs[proc_idx](state, resume.block_index);
     HandleSuspendRecord(eng, handle, suspend);
-  });
+  };
+}
 
+void SetupAndRunSimulation(
+    lyra::runtime::Engine& engine, std::span<void*> states,
+    uint32_t num_processes) {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -147,6 +158,58 @@ extern "C" void LyraRunSimulation(
 
   auto final_time = engine.Run();
   FinalTime() = std::max(FinalTime(), final_time);
+}
+
+}  // namespace
+
+extern "C" void LyraRunSimulation(
+    LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
+    const char** plusargs_raw, uint32_t num_plusargs) {
+  auto states = std::span(states_raw, num_processes);
+  auto procs = std::span(processes, num_processes);
+
+  // Convert plusargs to vector<string> for Engine
+  std::vector<std::string> plusargs_vec;
+  if (plusargs_raw != nullptr && num_plusargs > 0) {
+    auto plusargs_span = std::span(plusargs_raw, num_plusargs);
+    plusargs_vec.reserve(num_plusargs);
+    for (const char* arg : plusargs_span) {
+      plusargs_vec.emplace_back(arg != nullptr ? arg : "");
+    }
+  }
+
+  lyra::runtime::Engine engine(
+      MakeProcessRunner(procs, states), std::span(plusargs_vec));
+  SetupAndRunSimulation(engine, states, num_processes);
+}
+
+extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string_view query_str = LyraStringAsView(query);
+  return engine->TestPlusargs(query_str);
+}
+
+extern "C" auto LyraPlusargsValueInt(
+    void* engine_ptr, LyraStringHandle format, int32_t* output) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string_view format_str = LyraStringAsView(format);
+  return engine->ValuePlusargsInt(format_str, output);
+}
+
+extern "C" auto LyraPlusargsValueString(
+    void* engine_ptr, LyraStringHandle format, LyraStringHandle* output)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string_view format_str = LyraStringAsView(format);
+  std::string result_str;
+  int32_t found = engine->ValuePlusargsString(format_str, &result_str);
+  if (found != 0 && output != nullptr) {
+    // Create a new string handle for the result
+    *output = LyraStringFromLiteral(
+        result_str.data(), static_cast<int64_t>(result_str.size()));
+  }
+  return found;
 }
 
 extern "C" void LyraStorePacked(
@@ -263,14 +326,14 @@ extern "C" void LyraInitRuntime(const char* fs_base_dir) {
     throw lyra::common::InternalError(
         "LyraInitRuntime", "fs_base_dir must be absolute");
   }
-  g_fs_base_dir = base.lexically_normal();
+  FsBaseDir() = base.lexically_normal();
   FinalTime() = 0;
 }
 
 namespace lyra::runtime {
 
 auto GetFsBaseDir() -> const std::filesystem::path& {
-  return g_fs_base_dir;
+  return FsBaseDir();
 }
 
 }  // namespace lyra::runtime

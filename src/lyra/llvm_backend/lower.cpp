@@ -345,11 +345,30 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       builder.CreateStore(module_states[i], state_slot);
     }
 
+    // Build plusargs array for $test$plusargs and $value$plusargs
+    auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
+    llvm::Value* plusargs_array = nullptr;
+    if (num_plusargs > 0) {
+      plusargs_array = builder.CreateAlloca(
+          ptr_ty, llvm::ConstantInt::get(i32_ty, num_plusargs), "plusargs");
+      for (uint32_t i = 0; i < num_plusargs; ++i) {
+        auto* plusarg_str = builder.CreateGlobalStringPtr(
+            input.plusargs[i], std::format("plusarg_{}", i));
+        auto* slot =
+            builder.CreateGEP(ptr_ty, plusargs_array, {builder.getInt32(i)});
+        builder.CreateStore(plusarg_str, slot);
+      }
+    } else {
+      plusargs_array =
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    }
+
     // Call multi-process scheduler
     builder.CreateCall(
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
-         llvm::ConstantInt::get(i32_ty, num_module_processes)});
+         llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
+         llvm::ConstantInt::get(i32_ty, num_plusargs)});
   }
 
   // Branch to exit block

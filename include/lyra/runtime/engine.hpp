@@ -4,7 +4,9 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -97,6 +99,11 @@ class Engine {
   explicit Engine(ProcessRunner runner) : runner_(std::move(runner)) {
   }
 
+  Engine(ProcessRunner runner, std::span<const std::string> plusargs)
+      : runner_(std::move(runner)),
+        plusargs_(plusargs.begin(), plusargs.end()) {
+  }
+
   // Schedule a process to start at time 0 (for initial blocks).
   void ScheduleInitial(ProcessHandle handle);
 
@@ -174,6 +181,20 @@ class Engine {
     return file_manager_;
   }
 
+  // Plusargs query interface for $test$plusargs and $value$plusargs.
+  // Returns 1 if prefix matches any plusarg, 0 otherwise.
+  [[nodiscard]] auto TestPlusargs(std::string_view query) const -> int32_t;
+
+  // $value$plusargs with integer output (%d format).
+  // Returns 1 if match found, 0 otherwise. Writes parsed value to output.
+  [[nodiscard]] auto ValuePlusargsInt(
+      std::string_view format, int32_t* output) const -> int32_t;
+
+  // $value$plusargs with string output (%s format).
+  // Returns 1 if match found, 0 otherwise. Allocates new string in output.
+  [[nodiscard]] auto ValuePlusargsString(
+      std::string_view format, std::string* output) const -> int32_t;
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -216,6 +237,9 @@ class Engine {
   // Postponed queue: callbacks executed at end of time slot ($strobe, etc.)
   // Executed in append order after all delta cycles complete.
   std::vector<PostponedRecord> postponed_queue_;
+
+  // Plusargs for $test$plusargs and $value$plusargs queries.
+  std::vector<std::string> plusargs_;
 };
 
 }  // namespace lyra::runtime

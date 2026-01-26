@@ -30,8 +30,27 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 // - processes: array of process function pointers
 // - states: array of state pointers (one per process)
 // - num_processes: number of processes
+// - plusargs: optional array of C strings for $plusargs (nullptr if none)
+// - num_plusargs: number of plusargs (0 if none)
 void LyraRunSimulation(
-    LyraProcessFunc* processes, void** states, uint32_t num_processes);
+    LyraProcessFunc* processes, void** states, uint32_t num_processes,
+    const char** plusargs, uint32_t num_plusargs);
+
+// $test$plusargs: prefix match against plusargs.
+// Query is LyraStringHandle (matches SV string operand lowering).
+// Returns 1 if match found, 0 otherwise.
+auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query) -> int32_t;
+
+// $value$plusargs with integer output (%d format).
+// Returns 1 if match found, 0 otherwise. Writes parsed value to output.
+auto LyraPlusargsValueInt(
+    void* engine_ptr, LyraStringHandle format, int32_t* output) -> int32_t;
+
+// $value$plusargs with string output (%s format).
+// Returns 1 if match found, 0 otherwise. Creates new string handle in output.
+auto LyraPlusargsValueString(
+    void* engine_ptr, LyraStringHandle format, LyraStringHandle* output)
+    -> int32_t;
 
 // Suspend helpers — own the SuspendRecord layout, called by LLVM-generated
 // code. state: pointer to ProcessState (SuspendRecord is at offset 0).

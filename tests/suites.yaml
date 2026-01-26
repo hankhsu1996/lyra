@@ -22,7 +22,6 @@ suites:
     exclude_regex:
       # system_tf/effect - various unsupported features
       - system_tf/effect/fdisplay.yaml
-      - system_tf/effect/plusargs.yaml
       - system_tf/effect/readmem.yaml
       # system_tf/state - various unsupported features
       - system_tf/state/fstrobe.yaml
