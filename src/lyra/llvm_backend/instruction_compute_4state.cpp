@@ -362,10 +362,6 @@ void LowerCompute4State(
             return LowerConcatRvalue4State(
                 context, info, compute.value.operands, elem_type);
           },
-          [&](const mir::CastRvalueInfo&) -> FourStateValue {
-            throw common::InternalError(
-                "LowerCompute4State", "casts use LowerCastUnified");
-          },
           [&](const mir::UnaryRvalueInfo& info) {
             return LowerUnaryRvalue4State(
                 context, info, compute.value.operands, elem_type, bit_width);
