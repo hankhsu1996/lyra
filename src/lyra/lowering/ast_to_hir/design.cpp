@@ -9,6 +9,7 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -337,6 +338,37 @@ auto LowerPortBindings(
   return plan;
 }
 
+// Recursively collect instances from a scope, walking into generate blocks.
+// The `parent` is the instance whose body we're scanning - used for port
+// bindings. The `instances` vector is the BFS queue; caller uses index-based
+// iteration.
+void CollectInstancesFromScope(
+    const slang::ast::Scope& scope, const slang::ast::InstanceSymbol& parent,
+    Context* ctx, std::vector<PendingPortBinding>& pending_bindings,
+    std::vector<const slang::ast::InstanceSymbol*>& instances) {
+  for (const auto& member : scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      CollectPendingPortBindings(parent, child, ctx, pending_bindings);
+      instances.push_back(&child);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (!block.isUninstantiated) {
+        CollectInstancesFromScope(
+            block, parent, ctx, pending_bindings, instances);
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : array.entries) {
+        if (!entry->isUninstantiated) {
+          CollectInstancesFromScope(
+              *entry, parent, ctx, pending_bindings, instances);
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 auto LowerDesign(
@@ -360,12 +392,8 @@ auto LowerDesign(
   }
   for (size_t i = 0; i < all_instances.size(); ++i) {
     const auto* parent = all_instances[i];
-
-    for (const auto& child :
-         parent->body.membersOfType<slang::ast::InstanceSymbol>()) {
-      CollectPendingPortBindings(*parent, child, ctx, pending_bindings);
-      all_instances.push_back(&child);
-    }
+    CollectInstancesFromScope(
+        parent->body, *parent, ctx, pending_bindings, all_instances);
   }
 
   // Stable sort for deterministic slot ordering.
