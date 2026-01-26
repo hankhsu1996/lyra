@@ -586,6 +586,145 @@ auto LowerCallExpression(
               .span = span,
               .data = hir::CastExpressionData{.operand = divided}});
     }
+    if (name == "$stime") {
+      // $stime returns 32-bit unsigned time: uint32($time)
+      // Truncation happens AFTER scaling.
+
+      if (frame == nullptr) {
+        ctx->sink->Error(
+            span,
+            "$stime requires module scope (cannot be used in port bindings"
+            " or parameter contexts)");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Compute divisor = 10^(unit_power - global_precision)
+      int exponent = frame->unit_power - frame->global_precision_power;
+      if (exponent < 0) {
+        throw common::InternalError(
+            "$stime scaling",
+            "negative exponent - global precision coarser than timeunit");
+      }
+
+      uint64_t divisor = 1;
+      if (exponent > 0) {
+        auto mul = IntegerPow10(exponent);
+        if (!mul) {
+          throw common::InternalError("$stime scaling", "divisor overflow");
+        }
+        divisor = *mul;
+      }
+
+      TypeId tick_type = ctx->GetTickType();
+
+      // RuntimeQuery returns raw ticks (uint64)
+      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = tick_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
+                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
+
+      // Integer floor division: raw_ticks / divisor
+      hir::ExpressionId scaled_time = raw_time;
+      if (divisor != 1) {
+        hir::ExpressionId divisor_expr =
+            MakeConstant(divisor, tick_type, span, ctx);
+        scaled_time = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBinaryOp,
+                .type = tick_type,
+                .span = span,
+                .data = hir::BinaryExpressionData{
+                    .op = hir::BinaryOp::kDivide,
+                    .lhs = raw_time,
+                    .rhs = divisor_expr}});
+      }
+
+      // Cast to 32-bit unsigned (truncate)
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCast,
+              .type = result_type,
+              .span = span,
+              .data = hir::CastExpressionData{.operand = scaled_time}});
+    }
+    if (name == "$realtime") {
+      // $realtime returns real-valued time with fractional precision.
+      // Uses real arithmetic: real(raw_ticks) / real(divisor)
+
+      if (frame == nullptr) {
+        ctx->sink->Error(
+            span,
+            "$realtime requires module scope (cannot be used in port bindings"
+            " or parameter contexts)");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Compute divisor = 10^(unit_power - global_precision)
+      int exponent = frame->unit_power - frame->global_precision_power;
+      if (exponent < 0) {
+        throw common::InternalError(
+            "$realtime scaling",
+            "negative exponent - global precision coarser than timeunit");
+      }
+
+      uint64_t divisor = 1;
+      if (exponent > 0) {
+        auto mul = IntegerPow10(exponent);
+        if (!mul) {
+          throw common::InternalError("$realtime scaling", "divisor overflow");
+        }
+        divisor = *mul;
+      }
+
+      TypeId tick_type = ctx->GetTickType();
+      TypeId real_type =
+          ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
+
+      // RuntimeQuery returns raw ticks (uint64)
+      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kSystemCall,
+              .type = tick_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
+                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
+
+      // Cast raw_ticks to real (may lose precision for >53-bit values)
+      hir::ExpressionId raw_time_real = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCast,
+              .type = real_type,
+              .span = span,
+              .data = hir::CastExpressionData{.operand = raw_time}});
+
+      if (divisor == 1) {
+        return raw_time_real;
+      }
+
+      // Cast divisor to real and divide
+      hir::ExpressionId divisor_int =
+          MakeConstant(divisor, tick_type, span, ctx);
+      hir::ExpressionId divisor_real = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCast,
+              .type = real_type,
+              .span = span,
+              .data = hir::CastExpressionData{.operand = divisor_int}});
+
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kBinaryOp,
+              .type = real_type,
+              .span = span,
+              .data = hir::BinaryExpressionData{
+                  .op = hir::BinaryOp::kDivide,
+                  .lhs = raw_time_real,
+                  .rhs = divisor_real}});
+    }
     if (name == "$printtimescale") {
       if (call.arguments().size() > 1) {
         ctx->ErrorFmt(span, "$printtimescale takes at most one argument");

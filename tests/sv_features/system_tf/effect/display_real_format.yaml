@@ -1,0 +1,18 @@
+feature: display_real_format
+description: Tests for $display with real values using integer format specifiers
+
+cases:
+  # TODO(hankhsu): BUG - %d with real should convert to integer, not reinterpret bits
+  # LRM 21.2.1.2: When a real is displayed with %d, it should be truncated to integer.
+  # Currently outputs the raw IEEE-754 bits as integer instead.
+  - name: display_real_as_decimal
+    sv: |
+      module Test;
+        real r;
+        initial begin
+          r = 42.7;
+          $display("%d", r);
+        end
+      endmodule
+    expect:
+      stdout: "42\n"
