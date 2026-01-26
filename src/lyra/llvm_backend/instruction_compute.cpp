@@ -804,7 +804,7 @@ void LowerCompute(Context& context, const mir::Compute& compute) {
           },
           [&](const mir::RuntimeQueryRvalueInfo& info) -> llvm::Value* {
             switch (info.kind) {
-              case RuntimeQueryKind::kTime: {
+              case RuntimeQueryKind::kTimeRawTicks: {
                 auto& builder = context.GetBuilder();
                 auto* raw = builder.CreateCall(
                     context.GetLyraGetTime(), {context.GetEnginePointer()});

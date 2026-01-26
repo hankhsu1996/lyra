@@ -5,7 +5,7 @@
 namespace lyra {
 
 enum class RuntimeQueryKind : uint8_t {
-  kTime,  // $time
+  kTimeRawTicks,  // Returns simulation time in internal ticks (uint64)
 };
 
 }  // namespace lyra

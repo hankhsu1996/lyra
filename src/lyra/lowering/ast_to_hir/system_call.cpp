@@ -20,8 +20,7 @@
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
-#include "lyra/lowering/ast_to_hir/expression.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -209,11 +208,11 @@ auto ParseFormatString(
 // Lower call arguments to HIR expressions.
 // Returns nullopt on failure; diagnostics are emitted by LowerExpression.
 auto LowerArguments(
-    const slang::ast::CallExpression& call, SymbolRegistrar& registrar,
-    Context* ctx) -> std::optional<std::vector<hir::ExpressionId>> {
+    const slang::ast::CallExpression& call, ExpressionLoweringView view)
+    -> std::optional<std::vector<hir::ExpressionId>> {
   std::vector<hir::ExpressionId> args;
   for (const slang::ast::Expression* arg : call.arguments()) {
-    hir::ExpressionId arg_id = LowerExpression(*arg, registrar, ctx);
+    hir::ExpressionId arg_id = LowerExpression(*arg, view);
     if (!arg_id) {
       return std::nullopt;
     }
@@ -224,14 +223,17 @@ auto LowerArguments(
 
 struct LowerVisitor {
   const slang::ast::CallExpression* call = nullptr;
-  SymbolRegistrar* registrar = nullptr;
-  Context* ctx = nullptr;
+  ExpressionLoweringView view{};
   TypeId result_type;
 
-  auto operator()(const DisplayFunctionInfo& info) const -> hir::ExpressionId {
-    SourceSpan span = ctx->SpanOf(call->sourceRange);
+  [[nodiscard]] auto Ctx() const -> Context* {
+    return view.context;
+  }
 
-    auto args = LowerArguments(*call, *registrar, ctx);
+  auto operator()(const DisplayFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    auto args = LowerArguments(*call, view);
     if (!args) {
       return hir::kInvalidExpressionId;
     }
@@ -270,7 +272,7 @@ struct LowerVisitor {
         std::span<const hir::ExpressionId> all_args(*args);
         auto remaining_args = all_args.subspan(1);
         auto parse_result = ParseFormatString(
-            format_str, remaining_args, default_format, *ctx->sink, span);
+            format_str, remaining_args, default_format, *Ctx()->sink, span);
         ops = std::move(parse_result.ops);
 
         // Auto-format any remaining arguments not consumed by format string
@@ -313,7 +315,7 @@ struct LowerVisitor {
       }
     }
 
-    return ctx->hir_arena->AddExpression(
+    return Ctx()->hir_arena->AddExpression(
         hir::Expression{
             .kind = hir::ExpressionKind::kSystemCall,
             .type = result_type,
@@ -328,8 +330,8 @@ struct LowerVisitor {
       -> hir::ExpressionId {
     // Termination calls should be handled in statement.cpp, not here.
     // If we reach here, something is wrong.
-    SourceSpan span = ctx->SpanOf(call->sourceRange);
-    ctx->sink->Error(
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    Ctx()->sink->Error(
         span,
         "termination calls ($finish/$stop/$exit) should not be used as "
         "expressions");
@@ -337,14 +339,14 @@ struct LowerVisitor {
   }
 
   auto operator()(const SeverityFunctionInfo& info) const -> hir::ExpressionId {
-    SourceSpan span = ctx->SpanOf(call->sourceRange);
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
 
-    auto args = LowerArguments(*call, *registrar, ctx);
+    auto args = LowerArguments(*call, view);
     if (!args) {
       return hir::kInvalidExpressionId;
     }
 
-    return ctx->hir_arena->AddExpression(
+    return Ctx()->hir_arena->AddExpression(
         hir::Expression{
             .kind = hir::ExpressionKind::kSystemCall,
             .type = result_type,
@@ -357,13 +359,13 @@ struct LowerVisitor {
       -> hir::ExpressionId {
     // $fatal should be handled in statement.cpp, not here.
     // If we reach here, something is wrong.
-    SourceSpan span = ctx->SpanOf(call->sourceRange);
-    ctx->sink->Error(span, "$fatal should not be used as an expression");
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    Ctx()->sink->Error(span, "$fatal should not be used as an expression");
     return hir::kInvalidExpressionId;
   }
 
   auto operator()(const SFormatFunctionInfo& info) const -> hir::ExpressionId {
-    SourceSpan span = ctx->SpanOf(call->sourceRange);
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
 
     FormatKind default_format = RadixToFormatKind(info.radix);
     hir::SFormatSystemCallData data;
@@ -380,9 +382,9 @@ struct LowerVisitor {
       const slang::ast::Expression* out_arg = call->arguments()[0];
       if (out_arg->kind == slang::ast::ExpressionKind::Assignment) {
         const auto& assign = out_arg->as<slang::ast::AssignmentExpression>();
-        data.output = LowerExpression(assign.left(), *registrar, ctx);
+        data.output = LowerExpression(assign.left(), view);
       } else {
-        data.output = LowerExpression(*out_arg, *registrar, ctx);
+        data.output = LowerExpression(*out_arg, view);
       }
       if (!data.output || !*data.output) {
         return hir::kInvalidExpressionId;
@@ -393,8 +395,7 @@ struct LowerVisitor {
     // Lower remaining arguments (skip the output arg)
     std::vector<hir::ExpressionId> lowered_args;
     for (size_t i = arg_cursor; i < call->arguments().size(); ++i) {
-      hir::ExpressionId arg_id =
-          LowerExpression(*call->arguments()[i], *registrar, ctx);
+      hir::ExpressionId arg_id = LowerExpression(*call->arguments()[i], view);
       if (!arg_id) {
         return hir::kInvalidExpressionId;
       }
@@ -425,7 +426,7 @@ struct LowerVisitor {
         // Compile-time path: parse format string with value args
         auto value_args = remaining.subspan(1);
         auto parse_result = ParseFormatString(
-            format_str, value_args, default_format, *ctx->sink, span);
+            format_str, value_args, default_format, *Ctx()->sink, span);
         data.ops = std::move(parse_result.ops);
 
         // Auto-format any remaining arguments not consumed
@@ -469,7 +470,7 @@ struct LowerVisitor {
           // String with '%': parse as format string
           auto value_args = remaining.subspan(1);
           auto parse_result = ParseFormatString(
-              format_str, value_args, default_format, *ctx->sink, span);
+              format_str, value_args, default_format, *Ctx()->sink, span);
           data.ops = std::move(parse_result.ops);
 
           size_t next_arg = 1 + parse_result.args_consumed;
@@ -512,7 +513,7 @@ struct LowerVisitor {
       }
     }
 
-    return ctx->hir_arena->AddExpression(
+    return Ctx()->hir_arena->AddExpression(
         hir::Expression{
             .kind = hir::ExpressionKind::kSystemCall,
             .type = result_type,
@@ -526,8 +527,8 @@ struct LowerVisitor {
 auto BuildDisplayFormatOps(
     std::span<const slang::ast::Expression* const> slang_args,
     std::span<const hir::ExpressionId> hir_args, FormatKind default_format,
-    Context* ctx) -> std::vector<hir::FormatOp> {
-  SourceSpan span = ctx->SpanOf(
+    Context* context) -> std::vector<hir::FormatOp> {
+  SourceSpan span = context->SpanOf(
       slang_args.empty() ? slang::SourceRange{} : slang_args[0]->sourceRange);
   std::vector<hir::FormatOp> ops;
 
@@ -557,7 +558,7 @@ auto BuildDisplayFormatOps(
     // Parse format string with remaining arguments
     auto remaining_args = hir_args.subspan(1);
     auto parse_result = ParseFormatString(
-        format_str, remaining_args, default_format, *ctx->sink, span);
+        format_str, remaining_args, default_format, *context->sink, span);
     ops = std::move(parse_result.ops);
 
     // Auto-format any remaining arguments not consumed by format string
@@ -603,8 +604,9 @@ auto BuildDisplayFormatOps(
 }
 
 auto LowerSystemCall(
-    const slang::ast::CallExpression& call, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::CallExpression& call, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
   SourceSpan span = ctx->SpanOf(call.sourceRange);
   std::string_view name = call.getSubroutineName();
 
@@ -636,11 +638,7 @@ auto LowerSystemCall(
   }
 
   return std::visit(
-      LowerVisitor{
-          .call = &call,
-          .registrar = &registrar,
-          .ctx = ctx,
-          .result_type = result_type},
+      LowerVisitor{.call = &call, .view = view, .result_type = result_type},
       info->payload);
 }
 

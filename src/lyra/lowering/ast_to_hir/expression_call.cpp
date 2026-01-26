@@ -24,7 +24,8 @@
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/builtin_method.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
-#include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/system_function_desugar.hpp"
@@ -96,11 +97,28 @@ auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
          slang::ast::SymbolKind::Root;
 }
 
+auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
+  IntegralConstant constant;
+  constant.value.push_back(value);
+  constant.unknown.push_back(0);
+  ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kConstant,
+          .type = type,
+          .span = span,
+          .data = hir::ConstantExpressionData{.constant = cid}});
+}
+
 }  // namespace
 
 auto LowerCallExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto& registrar = *view.registrar;
+  auto* ctx = view.context;
+  const auto* frame = view.frame;
   const auto& call = expr.as<slang::ast::CallExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -110,7 +128,7 @@ auto LowerCallExpression(
   if (auto info = ClassifyBuiltinMethod(call)) {
     // Lower the receiver (first argument).
     const auto* first_arg = call.arguments()[0];
-    hir::ExpressionId receiver = LowerExpression(*first_arg, registrar, ctx);
+    hir::ExpressionId receiver = LowerExpression(*first_arg, view);
     if (!receiver) {
       return hir::kInvalidExpressionId;
     }
@@ -153,8 +171,7 @@ auto LowerCallExpression(
           return hir::kInvalidExpressionId;
         }
         if (call.arguments().size() == 2) {
-          hir::ExpressionId idx =
-              LowerExpression(*call.arguments()[1], registrar, ctx);
+          hir::ExpressionId idx = LowerExpression(*call.arguments()[1], view);
           if (!idx) {
             return hir::kInvalidExpressionId;
           }
@@ -177,8 +194,7 @@ auto LowerCallExpression(
                         call.getSubroutineName()));
           return hir::kInvalidExpressionId;
         }
-        hir::ExpressionId value =
-            LowerExpression(*call.arguments()[1], registrar, ctx);
+        hir::ExpressionId value = LowerExpression(*call.arguments()[1], view);
         if (!value) {
           return hir::kInvalidExpressionId;
         }
@@ -196,13 +212,11 @@ auto LowerCallExpression(
               "insert() requires exactly two arguments (index and value)");
           return hir::kInvalidExpressionId;
         }
-        hir::ExpressionId idx =
-            LowerExpression(*call.arguments()[1], registrar, ctx);
+        hir::ExpressionId idx = LowerExpression(*call.arguments()[1], view);
         if (!idx) {
           return hir::kInvalidExpressionId;
         }
-        hir::ExpressionId value =
-            LowerExpression(*call.arguments()[2], registrar, ctx);
+        hir::ExpressionId value = LowerExpression(*call.arguments()[2], view);
         if (!value) {
           return hir::kInvalidExpressionId;
         }
@@ -292,8 +306,7 @@ auto LowerCallExpression(
 
         // Optional step argument: next(N) or prev(N)
         if (call.arguments().size() > 1) {
-          hir::ExpressionId step =
-              LowerExpression(*call.arguments()[1], registrar, ctx);
+          hir::ExpressionId step = LowerExpression(*call.arguments()[1], view);
           if (!step) {
             return hir::kInvalidExpressionId;
           }
@@ -329,7 +342,7 @@ auto LowerCallExpression(
 
   // Pure system functions ($signed, $unsigned, $itor, etc.) -> desugar
   if (auto pure_kind = ClassifyPureSystemFunction(call)) {
-    return LowerPureSystemFunction(call, *pure_kind, registrar, ctx);
+    return LowerPureSystemFunction(call, *pure_kind, view);
   }
 
   // Plusargs system functions - intercept before general system call dispatch
@@ -340,8 +353,7 @@ auto LowerCallExpression(
         ctx->ErrorFmt(span, "$test$plusargs expects 1 argument");
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId query =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+      hir::ExpressionId query = LowerExpression(*call.arguments()[0], view);
       if (!query) {
         return hir::kInvalidExpressionId;
       }
@@ -360,7 +372,7 @@ auto LowerCallExpression(
         return hir::kInvalidExpressionId;
       }
       hir::ExpressionId format_expr =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+          LowerExpression(*call.arguments()[0], view);
       if (!format_expr) {
         return hir::kInvalidExpressionId;
       }
@@ -369,9 +381,9 @@ auto LowerCallExpression(
       hir::ExpressionId output_expr;
       if (out_arg->kind == slang::ast::ExpressionKind::Assignment) {
         const auto& assign = out_arg->as<slang::ast::AssignmentExpression>();
-        output_expr = LowerExpression(assign.left(), registrar, ctx);
+        output_expr = LowerExpression(assign.left(), view);
       } else {
-        output_expr = LowerExpression(*out_arg, registrar, ctx);
+        output_expr = LowerExpression(*out_arg, view);
       }
       if (!output_expr) {
         return hir::kInvalidExpressionId;
@@ -396,8 +408,7 @@ auto LowerCallExpression(
       }
 
       // Lower filename (arg 0)
-      hir::ExpressionId filename =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+      hir::ExpressionId filename = LowerExpression(*call.arguments()[0], view);
       if (!filename) {
         return hir::kInvalidExpressionId;
       }
@@ -407,9 +418,9 @@ auto LowerCallExpression(
       hir::ExpressionId target;
       if (target_arg->kind == slang::ast::ExpressionKind::Assignment) {
         const auto& assign = target_arg->as<slang::ast::AssignmentExpression>();
-        target = LowerExpression(assign.left(), registrar, ctx);
+        target = LowerExpression(assign.left(), view);
       } else {
-        target = LowerExpression(*target_arg, registrar, ctx);
+        target = LowerExpression(*target_arg, view);
       }
       if (!target) {
         return hir::kInvalidExpressionId;
@@ -419,16 +430,14 @@ auto LowerCallExpression(
       std::optional<hir::ExpressionId> start_addr;
       std::optional<hir::ExpressionId> end_addr;
       if (call.arguments().size() >= 3) {
-        hir::ExpressionId addr =
-            LowerExpression(*call.arguments()[2], registrar, ctx);
+        hir::ExpressionId addr = LowerExpression(*call.arguments()[2], view);
         if (!addr) {
           return hir::kInvalidExpressionId;
         }
         start_addr = addr;
       }
       if (call.arguments().size() >= 4) {
-        hir::ExpressionId addr =
-            LowerExpression(*call.arguments()[3], registrar, ctx);
+        hir::ExpressionId addr = LowerExpression(*call.arguments()[3], view);
         if (!addr) {
           return hir::kInvalidExpressionId;
         }
@@ -455,15 +464,14 @@ auto LowerCallExpression(
         ctx->ErrorFmt(span, "$fopen expects 1 or 2 arguments");
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId filename =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+      hir::ExpressionId filename = LowerExpression(*call.arguments()[0], view);
       if (!filename) {
         return hir::kInvalidExpressionId;
       }
       std::optional<hir::ExpressionId> mode;
       if (call.arguments().size() == 2) {
         hir::ExpressionId mode_expr =
-            LowerExpression(*call.arguments()[1], registrar, ctx);
+            LowerExpression(*call.arguments()[1], view);
         if (!mode_expr) {
           return hir::kInvalidExpressionId;
         }
@@ -484,7 +492,7 @@ auto LowerCallExpression(
         return hir::kInvalidExpressionId;
       }
       hir::ExpressionId descriptor =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+          LowerExpression(*call.arguments()[0], view);
       if (!descriptor) {
         return hir::kInvalidExpressionId;
       }
@@ -500,13 +508,83 @@ auto LowerCallExpression(
     }
     if (name == "$time") {
       TypeId result_type = LowerType(*expr.type, span, ctx);
-      return ctx->hir_arena->AddExpression(
+
+      // $time requires a timescale context (module scope).
+      // Design-level expressions (port bindings, parameters) pass nullptr
+      // frame.
+      if (frame == nullptr) {
+        ctx->sink->Error(
+            span,
+            "$time requires module scope (cannot be used in port bindings"
+            " or parameter contexts)");
+        return hir::kInvalidExpressionId;
+      }
+
+      // Compute divisor = 10^(unit_power - global_precision)
+      int exponent = frame->unit_power - frame->global_precision_power;
+      if (exponent < 0) {
+        throw common::InternalError(
+            "$time scaling",
+            "negative exponent - global precision coarser than timeunit");
+      }
+
+      uint64_t divisor = 1;
+      if (exponent > 0) {
+        auto mul = IntegerPow10(exponent);
+        if (!mul) {
+          throw common::InternalError("$time scaling", "divisor overflow");
+        }
+        divisor = *mul;
+      }
+
+      // Use canonical tick type from Context
+      TypeId tick_type = ctx->GetTickType();
+
+      // RuntimeQuery returns raw ticks
+      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
           hir::Expression{
               .kind = hir::ExpressionKind::kSystemCall,
+              .type = tick_type,
+              .span = span,
+              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
+                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
+
+      if (divisor == 1) {
+        // No scaling needed, but may need type conversion
+        if (tick_type == result_type) {
+          return raw_time;
+        }
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kCast,
+                .type = result_type,
+                .span = span,
+                .data = hir::CastExpressionData{.operand = raw_time}});
+      }
+
+      // Integer floor division: raw_ticks / divisor (SV $time semantics)
+      hir::ExpressionId divisor_expr =
+          MakeConstant(divisor, tick_type, span, ctx);
+      hir::ExpressionId divided = ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kBinaryOp,
+              .type = tick_type,
+              .span = span,
+              .data = hir::BinaryExpressionData{
+                  .op = hir::BinaryOp::kDivide,
+                  .lhs = raw_time,
+                  .rhs = divisor_expr}});
+
+      // Cast to result type if different
+      if (tick_type == result_type) {
+        return divided;
+      }
+      return ctx->hir_arena->AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kCast,
               .type = result_type,
               .span = span,
-              .data = hir::SystemCallExpressionData{
-                  hir::RuntimeQueryData{.kind = RuntimeQueryKind::kTime}}});
+              .data = hir::CastExpressionData{.operand = divided}});
     }
     if (name == "$printtimescale") {
       if (call.arguments().size() > 1) {
@@ -583,8 +661,7 @@ auto LowerCallExpression(
       }
 
       // Lower descriptor (arg 0)
-      hir::ExpressionId desc_expr =
-          LowerExpression(*call.arguments()[0], registrar, ctx);
+      hir::ExpressionId desc_expr = LowerExpression(*call.arguments()[0], view);
       if (!desc_expr) {
         return hir::kInvalidExpressionId;
       }
@@ -593,8 +670,7 @@ auto LowerCallExpression(
       std::vector<hir::ExpressionId> display_args;
       std::vector<const slang::ast::Expression*> slang_display_args;
       for (size_t i = 1; i < call.arguments().size(); ++i) {
-        hir::ExpressionId arg =
-            LowerExpression(*call.arguments()[i], registrar, ctx);
+        hir::ExpressionId arg = LowerExpression(*call.arguments()[i], view);
         if (!arg) {
           return hir::kInvalidExpressionId;
         }
@@ -621,7 +697,7 @@ auto LowerCallExpression(
                   .ops = std::move(ops),
                   .descriptor = desc_expr}});
     }
-    return LowerSystemCall(call, registrar, ctx);
+    return LowerSystemCall(call, view);
   }
 
   // User function call
@@ -648,7 +724,7 @@ auto LowerCallExpression(
   std::vector<hir::ExpressionId> args;
   args.reserve(call.arguments().size());
   for (const auto* arg_expr : call.arguments()) {
-    hir::ExpressionId arg = LowerExpression(*arg_expr, registrar, ctx);
+    hir::ExpressionId arg = LowerExpression(*arg_expr, view);
     if (!arg) {
       return hir::kInvalidExpressionId;
     }

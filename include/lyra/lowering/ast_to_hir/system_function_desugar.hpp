@@ -8,11 +8,9 @@
 #include "lyra/common/math_fn.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-struct Context;
-class SymbolRegistrar;
 
 // Category 1: Type conversion -> kCast or kBitCast
 enum class ConversionSysFnKind {
@@ -59,7 +57,7 @@ auto ClassifyPureSystemFunction(const slang::ast::CallExpression& call)
 // returns a valid classification.
 auto LowerPureSystemFunction(
     const slang::ast::CallExpression& call,
-    const PureSysFnClassification& classification, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId;
+    const PureSysFnClassification& classification, ExpressionLoweringView view)
+    -> hir::ExpressionId;
 
 }  // namespace lyra::lowering::ast_to_hir

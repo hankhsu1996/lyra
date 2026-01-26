@@ -8,6 +8,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/system_call.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 
 namespace lyra {
 class DiagnosticSink;
@@ -15,12 +16,9 @@ class DiagnosticSink;
 
 namespace lyra::lowering::ast_to_hir {
 
-class Context;
-class SymbolRegistrar;
-
 auto LowerSystemCall(
-    const slang::ast::CallExpression& call, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId;
+    const slang::ast::CallExpression& call, ExpressionLoweringView view)
+    -> hir::ExpressionId;
 
 // Build FormatOps from a slice of call arguments.
 // slang_args and hir_args must be the same length and already exclude

@@ -12,17 +12,17 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
-#include "lyra/lowering/ast_to_hir/expression.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerConversionExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
   using slang::ast::ExpressionKind;
 
+  auto* ctx = view.context;
   const auto& conv = expr.as<slang::ast::ConversionExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -67,7 +67,7 @@ auto LowerConversionExpression(
 
   // Handle integral -> string conversion (packed bits to byte string)
   if (tgt_type.isString() && src_type.isIntegral()) {
-    hir::ExpressionId operand = LowerExpression(conv.operand(), registrar, ctx);
+    hir::ExpressionId operand = LowerExpression(conv.operand(), view);
     if (!operand) {
       return hir::kInvalidExpressionId;
     }
@@ -87,7 +87,7 @@ auto LowerConversionExpression(
 
   // Handle string -> integral conversion (byte string to packed bits)
   if (tgt_type.isIntegral() && src_type.isString()) {
-    hir::ExpressionId operand = LowerExpression(conv.operand(), registrar, ctx);
+    hir::ExpressionId operand = LowerExpression(conv.operand(), view);
     if (!operand) {
       return hir::kInvalidExpressionId;
     }
@@ -118,7 +118,7 @@ auto LowerConversionExpression(
   // Note: 2-state -> 4-state is lossless (no X/Z bits introduced)
   // Note: real -> integral truncates toward zero
 
-  hir::ExpressionId operand = LowerExpression(conv.operand(), registrar, ctx);
+  hir::ExpressionId operand = LowerExpression(conv.operand(), view);
   if (!operand) {
     return hir::kInvalidExpressionId;
   }
@@ -137,8 +137,9 @@ auto LowerConversionExpression(
 }
 
 auto LowerElementSelectExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
   const auto& select = expr.as<slang::ast::ElementSelectExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -146,12 +147,11 @@ auto LowerElementSelectExpression(
 
   // Check if this is a packed array select
   if (value_type.isPackedArray()) {
-    hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+    hir::ExpressionId base = LowerExpression(select.value(), view);
     if (!base) {
       return hir::kInvalidExpressionId;
     }
-    hir::ExpressionId index =
-        LowerExpression(select.selector(), registrar, ctx);
+    hir::ExpressionId index = LowerExpression(select.selector(), view);
     if (!index) {
       return hir::kInvalidExpressionId;
     }
@@ -175,12 +175,11 @@ auto LowerElementSelectExpression(
 
   // Integral (bit select)
   if (value_type.isIntegral()) {
-    hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+    hir::ExpressionId base = LowerExpression(select.value(), view);
     if (!base) {
       return hir::kInvalidExpressionId;
     }
-    hir::ExpressionId index =
-        LowerExpression(select.selector(), registrar, ctx);
+    hir::ExpressionId index = LowerExpression(select.selector(), view);
     if (!index) {
       return hir::kInvalidExpressionId;
     }
@@ -207,11 +206,11 @@ auto LowerElementSelectExpression(
     return hir::kInvalidExpressionId;
   }
 
-  hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+  hir::ExpressionId base = LowerExpression(select.value(), view);
   if (!base) {
     return hir::kInvalidExpressionId;
   }
-  hir::ExpressionId index = LowerExpression(select.selector(), registrar, ctx);
+  hir::ExpressionId index = LowerExpression(select.selector(), view);
   if (!index) {
     return hir::kInvalidExpressionId;
   }
@@ -235,8 +234,9 @@ auto LowerElementSelectExpression(
 }
 
 auto LowerRangeSelectExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
   const auto& select = expr.as<slang::ast::RangeSelectExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -257,7 +257,7 @@ auto LowerRangeSelectExpression(
       return hir::kInvalidExpressionId;
     }
 
-    hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+    hir::ExpressionId base = LowerExpression(select.value(), view);
     if (!base) {
       return hir::kInvalidExpressionId;
     }
@@ -286,13 +286,13 @@ auto LowerRangeSelectExpression(
     return hir::kInvalidExpressionId;
   }
 
-  hir::ExpressionId base = LowerExpression(select.value(), registrar, ctx);
+  hir::ExpressionId base = LowerExpression(select.value(), view);
   if (!base) {
     return hir::kInvalidExpressionId;
   }
 
   // Index expression (dynamic)
-  hir::ExpressionId index = LowerExpression(select.left(), registrar, ctx);
+  hir::ExpressionId index = LowerExpression(select.left(), view);
   if (!index) {
     return hir::kInvalidExpressionId;
   }
@@ -332,8 +332,9 @@ auto LowerRangeSelectExpression(
 }
 
 auto LowerMemberAccessExpression(
-    const slang::ast::Expression& expr, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
   const auto& access = expr.as<slang::ast::MemberAccessExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
@@ -345,7 +346,7 @@ auto LowerMemberAccessExpression(
     return hir::kInvalidExpressionId;
   }
 
-  hir::ExpressionId base = LowerExpression(access.value(), registrar, ctx);
+  hir::ExpressionId base = LowerExpression(access.value(), view);
   if (!base) {
     return hir::kInvalidExpressionId;
   }

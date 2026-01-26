@@ -12,8 +12,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
-#include "lyra/lowering/ast_to_hir/expression.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/semantic/bitcast_validation.hpp"
@@ -263,8 +262,9 @@ auto MakeIntConstant(int32_t value, SourceSpan span, Context* ctx)
 
 auto LowerPureSystemFunction(
     const slang::ast::CallExpression& call,
-    const PureSysFnClassification& classification, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::ExpressionId {
+    const PureSysFnClassification& classification, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
   SourceSpan span = ctx->SpanOf(call.sourceRange);
 
   return std::visit(
@@ -277,7 +277,7 @@ auto LowerPureSystemFunction(
               return hir::kInvalidExpressionId;
             }
             hir::ExpressionId operand =
-                LowerExpression(*call.arguments()[0], registrar, ctx);
+                LowerExpression(*call.arguments()[0], view);
             if (!operand) {
               return hir::kInvalidExpressionId;
             }
@@ -291,7 +291,7 @@ auto LowerPureSystemFunction(
               return hir::kInvalidExpressionId;
             }
             hir::ExpressionId operand =
-                LowerExpression(*call.arguments()[0], registrar, ctx);
+                LowerExpression(*call.arguments()[0], view);
             if (!operand) {
               return hir::kInvalidExpressionId;
             }
@@ -311,13 +311,11 @@ auto LowerPureSystemFunction(
                   call.getSubroutineName());
               return hir::kInvalidExpressionId;
             }
-            hir::ExpressionId lhs =
-                LowerExpression(*call.arguments()[0], registrar, ctx);
+            hir::ExpressionId lhs = LowerExpression(*call.arguments()[0], view);
             if (!lhs) {
               return hir::kInvalidExpressionId;
             }
-            hir::ExpressionId rhs =
-                LowerExpression(*call.arguments()[1], registrar, ctx);
+            hir::ExpressionId rhs = LowerExpression(*call.arguments()[1], view);
             if (!rhs) {
               return hir::kInvalidExpressionId;
             }
@@ -404,7 +402,7 @@ auto LowerPureSystemFunction(
             args.reserve(static_cast<size_t>(expected_arity));
             for (int i = 0; i < expected_arity; ++i) {
               hir::ExpressionId arg =
-                  LowerExpression(*call.arguments()[i], registrar, ctx);
+                  LowerExpression(*call.arguments()[i], view);
               if (!arg) {
                 return hir::kInvalidExpressionId;
               }
