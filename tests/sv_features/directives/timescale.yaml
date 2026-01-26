@@ -134,16 +134,16 @@ cases:
     sv: |
       `timescale 1ns / 1ps
       module Test;
+        real rt;
         initial begin
           #42;
-          $display("realtime=%0d", $realtime);
+          rt = $realtime;
         end
       endmodule
     expect:
       time: 42000
-      stdout:
-        contains:
-          - "realtime=42"
+      variables:
+        rt: 42.0
 
   # $stime returns 32-bit unsigned, $time returns 64-bit
   - name: timescale_stime_vs_time
