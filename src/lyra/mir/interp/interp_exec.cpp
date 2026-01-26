@@ -39,23 +39,6 @@
 
 namespace lyra::mir::interp {
 
-namespace {
-
-// Helper: format severity prefix for $info/$warning/$error messages
-auto FormatSeverityPrefix(Severity level) -> std::string_view {
-  switch (level) {
-    case Severity::kInfo:
-      return "info: ";
-    case Severity::kWarning:
-      return "warning: ";
-    case Severity::kError:
-      return "error: ";
-  }
-  return "unknown: ";
-}
-
-}  // namespace
-
 auto Interpreter::Run(ProcessState& state) -> Result<ProcessStatus> {
   while (state.status == ProcessStatus::kRunning) {
     const auto& process = (*arena_)[state.process];
@@ -328,27 +311,16 @@ auto Interpreter::ExecSeverityEffect(
     const ProcessState& state, const SeverityEffect& severity) -> Result<void> {
   std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-  // Print severity prefix
-  out << FormatSeverityPrefix(severity.level);
+  // Print severity prefix (use shared constant)
+  out << SeverityPrefixCStr(severity.level);
 
-  // Evaluate and format message arguments
-  std::vector<TypedValue> typed_args;
-  typed_args.reserve(severity.args.size());
-  for (const auto& arg : severity.args) {
-    TypeId type = TypeOfOperand(arg, *arena_, *types_);
-    auto value_result = EvalOperand(state, arg);
-    if (!value_result) {
-      return std::unexpected(std::move(value_result).error());
-    }
-    typed_args.push_back(
-        TypedValue{.value = std::move(*value_result), .type = type});
+  // Format the message using the same path as display (FormatOps)
+  auto formatted_result = FormatDisplayOps(state, severity.ops);
+  if (!formatted_result) {
+    return std::unexpected(std::move(formatted_result).error());
   }
 
-  // Use decimal as default radix for severity messages
-  FormatContext ctx{};
-  std::string message = FormatMessage(typed_args, 'd', *types_, ctx);
-
-  out << message << "\n";
+  out << *formatted_result << "\n";
   return {};
 }
 

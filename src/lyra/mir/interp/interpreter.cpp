@@ -156,8 +156,10 @@ struct StorageCollector {
                         }
                       },
                       [&](const SeverityEffect& s) -> void {
-                        for (const auto& arg : s.args) {
-                          Visit(arg, arena);
+                        for (const auto& format_op : s.ops) {
+                          if (format_op.value.has_value()) {
+                            Visit(*format_op.value, arena);
+                          }
                         }
                       },
                       [&](const MemIOEffect& m) -> void {

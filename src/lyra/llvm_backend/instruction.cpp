@@ -667,9 +667,8 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           [&context](const mir::DisplayEffect& display) -> Result<void> {
             return LowerDisplayEffect(context, display);
           },
-          [](const mir::SeverityEffect& /*severity*/) -> Result<void> {
-            // TODO(hankhsu): Handle severity effects
-            return {};
+          [&context](const mir::SeverityEffect& severity) -> Result<void> {
+            return LowerSeverityEffect(context, severity);
           },
           [](const mir::MemIOEffect& /*mem_io*/) -> Result<void> {
             // TODO(hankhsu): Handle mem IO effects

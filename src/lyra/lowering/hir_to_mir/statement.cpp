@@ -180,17 +180,42 @@ auto LowerDisplayEffect(
 auto LowerSeverityEffect(
     const hir::SeveritySystemCallData& data, MirBuilder& builder)
     -> Result<void> {
-  std::vector<mir::Operand> operands;
-  operands.reserve(data.args.size());
-  for (hir::ExpressionId arg_id : data.args) {
-    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
-    if (!arg_result) return std::unexpected(arg_result.error());
-    operands.push_back(*arg_result);
+  Context& ctx = builder.GetContext();
+
+  std::vector<mir::FormatOp> mir_ops;
+  mir_ops.reserve(data.ops.size());
+
+  for (const auto& hir_op : data.ops) {
+    if (hir_op.kind == FormatKind::kLiteral) {
+      mir_ops.push_back(
+          mir::FormatOp{
+              .kind = FormatKind::kLiteral,
+              .value = std::nullopt,
+              .literal = hir_op.literal,
+              .type = TypeId{},
+              .mods = {},
+              .module_timeunit_power = hir_op.module_timeunit_power});
+    } else {
+      // Lower the value expression and get its type
+      Result<mir::Operand> operand_result =
+          LowerExpression(*hir_op.value, builder);
+      if (!operand_result) return std::unexpected(operand_result.error());
+      mir::Operand operand = *operand_result;
+      const hir::Expression& expr = (*ctx.hir_arena)[*hir_op.value];
+      mir_ops.push_back(
+          mir::FormatOp{
+              .kind = hir_op.kind,
+              .value = std::move(operand),
+              .literal = {},
+              .type = expr.type,
+              .mods = hir_op.mods,
+              .module_timeunit_power = hir_op.module_timeunit_power});
+    }
   }
 
   mir::SeverityEffect severity{
       .level = data.level,
-      .args = std::move(operands),
+      .ops = std::move(mir_ops),
   };
   builder.EmitEffect(std::move(severity));
   return {};

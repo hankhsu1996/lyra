@@ -9,4 +9,7 @@ namespace lyra::lowering::mir_to_llvm {
 auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
     -> Result<void>;
 
+auto LowerSeverityEffect(Context& context, const mir::SeverityEffect& severity)
+    -> Result<void>;
+
 }  // namespace lyra::lowering::mir_to_llvm

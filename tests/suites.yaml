@@ -26,7 +26,6 @@ suites:
       - system_tf/effect/fopen.yaml
       - system_tf/effect/plusargs.yaml
       - system_tf/effect/readmem.yaml
-      - system_tf/effect/severity.yaml  # $info/$warning/$error not yet supported
       # system_tf/state - various unsupported features
       - system_tf/state/fstrobe.yaml
       - system_tf/state/monitor.yaml
