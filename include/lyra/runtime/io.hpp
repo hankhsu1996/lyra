@@ -56,4 +56,14 @@ auto LyraFopenMcd(void* engine, LyraStringHandle filename) -> int32_t;
 // $fclose - no-op for invalid descriptor
 // engine: opaque pointer to lyra::runtime::Engine
 void LyraFclose(void* engine, int32_t descriptor);
+
+// Write formatted message to file descriptor(s).
+// - engine: pointer to Engine (for FileManager access)
+// - descriptor: MCD or FD descriptor (0 = no-op, silently ignored)
+// - message: string handle (read-only, NOT retained by this function)
+// - add_newline: true for $fdisplay, false for $fwrite
+// Silently skips invalid/closed streams (matches MIR interpreter behavior).
+void LyraFWrite(
+    void* engine, uint32_t descriptor, LyraStringHandle message,
+    bool add_newline);
 }

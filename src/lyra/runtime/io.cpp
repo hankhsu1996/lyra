@@ -6,6 +6,7 @@
 #include <limits>
 #include <print>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "lyra/common/format.hpp"
@@ -168,4 +169,30 @@ extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
 extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->GetFileManager().Fclose(descriptor);
+}
+
+extern "C" void LyraFWrite(
+    void* engine_ptr, uint32_t descriptor, LyraStringHandle message,
+    bool add_newline) {
+  if (descriptor == 0) return;
+
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  lyra::runtime::StreamTargets targets =
+      engine->GetFileManager().CollectStreams(descriptor);
+
+  if (!targets.include_stdout && targets.file_stream_count == 0) return;
+
+  const char* ptr = nullptr;
+  uint64_t len = 0;
+  LyraStringGetView(message, &ptr, &len);
+  std::string_view msg{ptr, len};
+
+  if (targets.include_stdout) {
+    std::print("{}", msg);
+    if (add_newline) std::print("\n");
+  }
+  for (int i = 0; i < targets.file_stream_count; ++i) {
+    *targets.file_streams.at(i) << msg;
+    if (add_newline) *targets.file_streams.at(i) << '\n';
+  }
 }
