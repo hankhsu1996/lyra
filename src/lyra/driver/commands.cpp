@@ -8,12 +8,7 @@
 #include <string>
 
 #include "argparse/argparse.hpp"
-#include "check.hpp"
-#include "dump.hpp"
-#include "input.hpp"
 #include "print.hpp"
-#include "run_llvm.hpp"
-#include "run_mir.hpp"
 
 namespace lyra::driver {
 namespace {
@@ -21,77 +16,6 @@ namespace {
 namespace fs = std::filesystem;
 
 }  // namespace
-
-auto RunCommand(const argparse::ArgumentParser& cmd) -> int {
-  auto backend = cmd.get<std::string>("--backend");
-
-  if (backend != "mir" && backend != "llvm") {
-    PrintError("unknown backend '" + backend + "', use 'mir' or 'llvm'");
-    return 1;
-  }
-
-  auto config_result = LoadOptionalConfig();
-  if (!config_result) {
-    PrintDiagnostic(config_result.error());
-    return 1;
-  }
-
-  auto input = BuildInput(cmd, *config_result);
-  if (!input) {
-    PrintDiagnostic(input.error());
-    return 1;
-  }
-
-  if (backend == "llvm") {
-    return RunLlvm(*input);
-  }
-  return RunMir(*input);
-}
-
-auto DumpCommand(const argparse::ArgumentParser& cmd) -> int {
-  auto format = cmd.get<std::string>("format");
-
-  if (format != "hir" && format != "mir" && format != "llvm") {
-    PrintError("unknown format '" + format + "', use 'hir', 'mir', or 'llvm'");
-    return 1;
-  }
-
-  auto config_result = LoadOptionalConfig();
-  if (!config_result) {
-    PrintDiagnostic(config_result.error());
-    return 1;
-  }
-
-  auto input = BuildInput(cmd, *config_result);
-  if (!input) {
-    PrintDiagnostic(input.error());
-    return 1;
-  }
-
-  if (format == "hir") {
-    return DumpHir(*input);
-  }
-  if (format == "mir") {
-    return DumpMir(*input);
-  }
-  return DumpLlvm(*input);
-}
-
-auto CheckCommand(const argparse::ArgumentParser& cmd) -> int {
-  auto config_result = LoadOptionalConfig();
-  if (!config_result) {
-    PrintDiagnostic(config_result.error());
-    return 1;
-  }
-
-  auto input = BuildInput(cmd, *config_result);
-  if (!input) {
-    PrintDiagnostic(input.error());
-    return 1;
-  }
-
-  return Check(*input);
-}
 
 auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
   std::optional<std::string> name;

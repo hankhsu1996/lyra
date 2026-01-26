@@ -117,6 +117,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .mir_arena = mir_result->mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
+      .fs_base_dir = input.fs_base_dir.string(),
   };
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   if (!llvm_result) {

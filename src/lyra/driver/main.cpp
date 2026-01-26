@@ -8,11 +8,15 @@
 #include <string>
 #include <system_error>
 
+#include "check.hpp"
 #include "commands.hpp"
+#include "dump.hpp"
 #include "input.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "print.hpp"
+#include "run_llvm.hpp"
+#include "run_mir.hpp"
 
 auto main(int argc, char* argv[]) -> int {
   auto args = lyra::driver::PreprocessArgs(
@@ -21,6 +25,10 @@ auto main(int argc, char* argv[]) -> int {
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("A modern SystemVerilog simulation toolchain");
   program.add_argument("-C").help("Run as if started in <dir>").metavar("dir");
+  program.add_argument("--no-project")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Run without a project (ad-hoc mode, CWD-relative paths)");
 
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Run simulation");
@@ -76,19 +84,63 @@ auto main(int argc, char* argv[]) -> int {
     }
   }
 
+  // Capture --no-project flag (global, affects compilation commands)
+  bool no_project = program.get<bool>("--no-project");
+
+  // Helper: prepare input for compilation commands
+  auto prepare = [&](const argparse::ArgumentParser& cmd) {
+    auto input = lyra::driver::PrepareInput(cmd, no_project);
+    if (!input) {
+      lyra::driver::PrintDiagnostic(input.error());
+    }
+    return input;
+  };
+
   // Safety net: catch any unexpected exceptions from subcommand execution.
   // - InternalError: compiler bug, should not happen in normal operation
   // - Other exceptions: truly unexpected failures from third-party/stdlib code
   try {
     if (program.is_subcommand_used("run")) {
-      return lyra::driver::RunCommand(run_cmd);
+      auto backend =
+          lyra::driver::ParseBackend(run_cmd.get<std::string>("--backend"));
+      if (!backend) {
+        lyra::driver::PrintDiagnostic(backend.error());
+        return 1;
+      }
+      auto input = prepare(run_cmd);
+      if (!input) return 1;
+
+      return *backend == lyra::driver::Backend::kLlvm
+                 ? lyra::driver::RunLlvm(*input)
+                 : lyra::driver::RunMir(*input);
     }
+
     if (program.is_subcommand_used("check")) {
-      return lyra::driver::CheckCommand(check_cmd);
+      auto input = prepare(check_cmd);
+      if (!input) return 1;
+      return lyra::driver::Check(*input);
     }
+
     if (program.is_subcommand_used("dump")) {
-      return lyra::driver::DumpCommand(dump_cmd);
+      auto format =
+          lyra::driver::ParseDumpFormat(dump_cmd.get<std::string>("format"));
+      if (!format) {
+        lyra::driver::PrintDiagnostic(format.error());
+        return 1;
+      }
+      auto input = prepare(dump_cmd);
+      if (!input) return 1;
+
+      switch (*format) {
+        case lyra::driver::DumpFormat::kHir:
+          return lyra::driver::DumpHir(*input);
+        case lyra::driver::DumpFormat::kMir:
+          return lyra::driver::DumpMir(*input);
+        case lyra::driver::DumpFormat::kLlvm:
+          return lyra::driver::DumpLlvm(*input);
+      }
     }
+
     if (program.is_subcommand_used("init")) {
       return lyra::driver::InitCommand(init_cmd);
     }

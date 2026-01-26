@@ -74,6 +74,7 @@ struct LoweringInput {
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   SimulationHooks* hooks = nullptr;  // Optional instrumentation (nullable)
+  std::string fs_base_dir;           // Base directory for file I/O (absolute)
 };
 
 struct LoweringResult {

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -286,9 +287,11 @@ struct SimulationResult {
 // High-level API: Run simulation with MIR design.
 // Encapsulates all interpreter internals (process states, suspension handling,
 // engine integration). Returns exit code (0 = success).
+// fs_base_dir: Absolute path for relative file I/O resolution.
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
-    std::ostream* output = nullptr, std::span<const std::string> plusargs = {},
+    std::ostream* output, std::span<const std::string> plusargs,
+    const std::filesystem::path& fs_base_dir,
     const lowering::DiagnosticContext* diag_ctx = nullptr) -> SimulationResult;
 
 }  // namespace lyra::mir::interp

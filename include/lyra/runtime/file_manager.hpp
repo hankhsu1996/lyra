@@ -63,6 +63,11 @@ class FileManager {
 
   static auto ParseMode(const std::string& mode)
       -> std::optional<std::ios_base::openmode>;
+
+  // Resolve filename against the runtime's fs_base_dir.
+  // Absolute paths returned as-is (normalized); relative paths joined with
+  // base.
+  static auto ResolvePath(const std::string& filename) -> std::string;
 };
 
 }  // namespace lyra::runtime

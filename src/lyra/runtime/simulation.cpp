@@ -5,16 +5,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <print>
 #include <span>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
 namespace {
+
+std::filesystem::path g_fs_base_dir;
 
 // Process state header layout (matches LLVM-generated struct)
 struct StateHeader {
@@ -247,9 +251,23 @@ extern "C" void LyraSetTimeFormat(
       units, precision, suffix != nullptr ? suffix : "", min_width);
 }
 
-extern "C" void LyraInitRuntime() {
+extern "C" void LyraInitRuntime(const char* fs_base_dir) {
+  std::filesystem::path base(fs_base_dir);
+  if (!base.is_absolute()) {
+    throw lyra::common::InternalError(
+        "LyraInitRuntime", "fs_base_dir must be absolute");
+  }
+  g_fs_base_dir = base.lexically_normal();
   FinalTime() = 0;
 }
+
+namespace lyra::runtime {
+
+auto GetFsBaseDir() -> const std::filesystem::path& {
+  return g_fs_base_dir;
+}
+
+}  // namespace lyra::runtime
 
 extern "C" void LyraReportTime() {
   std::print("__LYRA_TIME__={}\n", FinalTime());
