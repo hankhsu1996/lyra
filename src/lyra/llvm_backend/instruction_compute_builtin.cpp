@@ -157,9 +157,7 @@ auto LowerDynArrayBuiltin(
       builder.CreateCall(context.GetLyraDynArrayDelete(), {handle});
 
       // Notify if design slot (handle unchanged, content cleared)
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -219,9 +217,7 @@ auto LowerQueueBuiltin(
 
       // Store null handle
       builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -238,9 +234,7 @@ auto LowerQueueBuiltin(
 
       index = builder.CreateSExtOrTrunc(index, i64_ty, "q.delat.idx");
       builder.CreateCall(context.GetLyraQueueDeleteAt(), {handle, index});
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -269,9 +263,7 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -300,9 +292,7 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -327,9 +317,7 @@ auto LowerQueueBuiltin(
           llvm::Constant::getNullValue(target_type), target_ptr);
 
       builder.CreateCall(context.GetLyraQueuePopBack(), {handle, target_ptr});
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -353,9 +341,7 @@ auto LowerQueueBuiltin(
           llvm::Constant::getNullValue(target_type), target_ptr);
 
       builder.CreateCall(context.GetLyraQueuePopFront(), {handle, target_ptr});
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -390,9 +376,7 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      if (context.GetCanonicalRootSignalId(*info.receiver).has_value()) {
-        CommitNotifyMutation(context, *info.receiver);
-      }
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 

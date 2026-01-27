@@ -67,8 +67,13 @@ void CommitPlainField(
   ctx.GetBuilder().CreateStore(value, ptr);
 }
 
+}  // namespace detail
+
+namespace {
+
 // Store a packed value to a WriteTarget with design-slot notification.
 // If canonical_signal_id has value, notifies runtime. Otherwise plain store.
+// Internal to commit module - external callers use CommitPackedValueRaw.
 void StorePackedToWriteTarget(
     Context& ctx, llvm::Value* new_value, const WriteTarget& wt) {
   if (wt.canonical_signal_id.has_value()) {
@@ -78,7 +83,17 @@ void StorePackedToWriteTarget(
   }
 }
 
-}  // namespace detail
+}  // namespace
+
+void CommitPackedValueRaw(
+    Context& ctx, mir::PlaceId target, llvm::Value* value) {
+  auto wt_or_err = ctx.GetWriteTarget(target);
+  if (!wt_or_err) {
+    throw common::InternalError(
+        "CommitPackedValueRaw", "failed to resolve WriteTarget for target");
+  }
+  StorePackedToWriteTarget(ctx, value, *wt_or_err);
+}
 
 namespace {
 
@@ -116,7 +131,7 @@ auto StoreFourStateRaw(
   llvm::Value* packed = llvm::UndefValue::get(storage_type);
   packed = builder.CreateInsertValue(packed, val, 0);
   packed = builder.CreateInsertValue(packed, unk, 1);
-  detail::StorePackedToWriteTarget(ctx, packed, wt);
+  StorePackedToWriteTarget(ctx, packed, wt);
   return {};
 }
 
@@ -153,7 +168,7 @@ auto StoreTwoStateRaw(
       value = builder.CreateZExtOrTrunc(value, storage_type);
     }
   }
-  detail::StorePackedToWriteTarget(ctx, value, wt);
+  StorePackedToWriteTarget(ctx, value, wt);
   return {};
 }
 

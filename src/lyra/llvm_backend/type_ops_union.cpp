@@ -16,9 +16,9 @@ auto AssignUnion(
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  auto wt_or_err = context.GetWriteTarget(target);
-  if (!wt_or_err) return std::unexpected(wt_or_err.error());
-  const WriteTarget& wt = *wt_or_err;
+  auto target_ptr_or_err = context.GetPlacePointer(target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  llvm::Value* target_ptr = *target_ptr_or_err;
 
   auto info_result = GetUnionStorageInfo(context, union_type_id);
   if (!info_result) return std::unexpected(info_result.error());
@@ -47,13 +47,11 @@ auto AssignUnion(
 
   // memcpy from source to target
   builder.CreateMemCpy(
-      wt.ptr, llvm::Align(info.align), source_ptr, llvm::Align(info.align),
+      target_ptr, llvm::Align(info.align), source_ptr, llvm::Align(info.align),
       info.size);
 
-  // Notify if this is a design slot
-  if (wt.canonical_signal_id.has_value()) {
-    CommitNotifyUnionMemcpy(context, target, info.size);
-  }
+  // Notify if this is a design slot (conditional - no-op otherwise)
+  CommitNotifyUnionMemcpyIfDesignSlot(context, target, info.size);
   return {};
 }
 

@@ -8,6 +8,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/commit_internal.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
@@ -122,21 +123,21 @@ auto AssignStruct(
         UnsupportedCategory::kFeature));
   }
 
-  // Get WriteTarget for unified pointer + signal_id
-  auto wt_or_err = context.GetWriteTarget(target);
-  if (!wt_or_err) return std::unexpected(wt_or_err.error());
-  const WriteTarget& wt = *wt_or_err;
-
   // Structs with string fields require field-by-field assignment
   if (NeedsFieldByField(struct_type_id, types)) {
     // Design slots with string-containing structs not yet supported
-    if (wt.canonical_signal_id.has_value()) {
+    if (detail::IsDesignSlotInternal(context, target)) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
           "unpacked struct assignment to design slot with string fields "
           "not yet supported",
           UnsupportedCategory::kFeature));
     }
+
+    // Get target pointer
+    auto target_ptr_or_err = context.GetPlacePointer(target);
+    if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+    llvm::Value* target_ptr = *target_ptr_or_err;
 
     // Get source pointer (source must be a place for struct assignment)
     if (!std::holds_alternative<mir::PlaceId>(source.payload)) {
@@ -150,7 +151,7 @@ auto AssignStruct(
     llvm::Value* source_ptr = *source_ptr_result;
 
     auto result = AssignStructFieldByField(
-        context, source_ptr, wt.ptr, struct_type_id, policy);
+        context, source_ptr, target_ptr, struct_type_id, policy);
     if (!result) return result;
 
     // After move: null out source managed fields to prevent double-release.
@@ -166,7 +167,7 @@ auto AssignStruct(
   auto val_result = LowerOperandRaw(context, source);
   if (!val_result) return std::unexpected(val_result.error());
   llvm::Value* val = *val_result;
-  detail::StorePackedToWriteTarget(context, val, wt);
+  CommitPackedValueRaw(context, target, val);
   return {};
 }
 

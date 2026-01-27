@@ -64,10 +64,10 @@ auto StoreBitRange(
   if (!br_result) return std::unexpected(br_result.error());
   auto [offset, width] = *br_result;
 
-  // Get WriteTarget for unified pointer + signal_id
-  auto wt_or_err = context.GetWriteTarget(target);
-  if (!wt_or_err) return std::unexpected(wt_or_err.error());
-  const WriteTarget& wt = *wt_or_err;
+  // Get pointer for RMW load
+  auto ptr_or_err = context.GetPlacePointer(target);
+  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
+  llvm::Value* ptr = *ptr_or_err;
 
   auto base_type_result = context.GetPlaceBaseType(target);
   if (!base_type_result) return std::unexpected(base_type_result.error());
@@ -79,7 +79,7 @@ auto StoreBitRange(
     auto* plane_type = base_struct->getElementType(0);
     uint32_t plane_width = plane_type->getIntegerBitWidth();
 
-    llvm::Value* old_packed = builder.CreateLoad(base_type, wt.ptr, "rmw.old");
+    llvm::Value* old_packed = builder.CreateLoad(base_type, ptr, "rmw.old");
     llvm::Value* old_val =
         builder.CreateExtractValue(old_packed, 0, "rmw.old.val");
     llvm::Value* old_unk =
@@ -125,7 +125,7 @@ auto StoreBitRange(
     llvm::Value* packed = llvm::UndefValue::get(base_struct);
     packed = builder.CreateInsertValue(packed, result_val, 0);
     packed = builder.CreateInsertValue(packed, result_unk, 1);
-    detail::StorePackedToWriteTarget(context, packed, wt);
+    CommitPackedValueRaw(context, target, packed);
     return {};
   }
 
@@ -138,7 +138,7 @@ auto StoreBitRange(
   auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
   auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
 
-  llvm::Value* old_val = builder.CreateLoad(base_type, wt.ptr, "rmw.old");
+  llvm::Value* old_val = builder.CreateLoad(base_type, ptr, "rmw.old");
   auto* cleared = builder.CreateAnd(old_val, not_mask, "rmw.clear");
 
   // Extend source to base width and shift into position
@@ -153,7 +153,7 @@ auto StoreBitRange(
   src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
   auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
   auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  detail::StorePackedToWriteTarget(context, result, wt);
+  CommitPackedValueRaw(context, target, result);
   return {};
 }
 
@@ -226,16 +226,11 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 }
 
 // Get the root design slot pointer (before any projections) after alias
-// resolution.
+// resolution. Uses GetSignalIdForNba from commit module.
 auto GetDesignRootPointer(Context& context, mir::PlaceId place_id)
     -> llvm::Value* {
-  // Use resolved signal_id to ensure we get the canonical root
-  auto signal_id_opt = context.GetCanonicalRootSignalId(place_id);
-  if (!signal_id_opt.has_value()) {
-    throw common::InternalError(
-        "GetDesignRootPointer", "called on non-design place after resolution");
-  }
-  auto slot_id = mir::SlotId{*signal_id_opt};
+  uint32_t signal_id = GetSignalIdForNba(context, place_id);
+  auto slot_id = mir::SlotId{signal_id};
   uint32_t field_index = context.GetDesignFieldIndex(slot_id);
   return context.GetBuilder().CreateStructGEP(
       context.GetDesignStateType(), context.GetDesignPointer(), field_index,
@@ -275,13 +270,8 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   const auto& place = arena[nba.target];
 
   // Use canonical signal_id (after alias resolution) for notification
-  // NBA is only valid for design places
-  auto signal_id_opt = context.GetCanonicalRootSignalId(nba.target);
-  if (!signal_id_opt.has_value()) {
-    throw common::InternalError(
-        "LowerNonBlockingAssign", "NBA target must resolve to a design place");
-  }
-  uint32_t signal_id = *signal_id_opt;
+  // NBA is only valid for design places (GetSignalIdForNba throws if not)
+  uint32_t signal_id = GetSignalIdForNba(context, nba.target);
 
   // Case 1: BitRangeProjection — shifted value and mask
   if (context.HasBitRangeProjection(nba.target)) {
