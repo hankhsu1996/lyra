@@ -274,6 +274,46 @@ void StoreStringToWriteTarget(
   }
 }
 
+void StoreStringFieldRaw(
+    Context& context, llvm::Value* target_ptr, llvm::Value* handle,
+    OwnershipPolicy policy, TypeId type_id) {
+  auto& builder = context.GetBuilder();
+
+  // Apply ownership policy
+  if (policy == OwnershipPolicy::kClone) {
+    handle = builder.CreateCall(context.GetLyraStringRetain(), {handle});
+  }
+  // kMove: handle already has ownership, no retain needed
+
+  // Destroy old value and store new
+  Destroy(context, target_ptr, type_id);
+  builder.CreateStore(handle, target_ptr);
+}
+
+void StorePlainFieldRaw(
+    Context& context, llvm::Value* target_ptr, llvm::Value* value,
+    TypeId /*type_id*/) {
+  // For non-managed fields, just store. type_id reserved for future use
+  // (e.g., if we need field-level notify for design slots with struct fields).
+  context.GetBuilder().CreateStore(value, target_ptr);
+}
+
+void NotifyUnionStore(
+    Context& context, const WriteTarget& target, uint32_t size) {
+  if (!target.canonical_signal_id.has_value()) {
+    return;  // Not a design slot, nothing to notify
+  }
+
+  auto& builder = context.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+  builder.CreateCall(
+      context.GetLyraStorePacked(),
+      {context.GetEnginePointer(), target.ptr,
+       target.ptr,  // For unions, source = target after memcpy
+       llvm::ConstantInt::get(i32_ty, size),
+       llvm::ConstantInt::get(i32_ty, *target.canonical_signal_id)});
+}
+
 void Destroy(Context& context, llvm::Value* ptr, TypeId type_id) {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();

@@ -14,6 +14,8 @@
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -37,25 +39,12 @@ auto AssignField(
   if (field_type.Kind() == TypeKind::kString) {
     auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
 
-    // 1. Load source string handle
+    // Load source string handle and store with ownership policy.
+    // Source null-out (for move) is handled at struct level, not here.
     llvm::Value* new_val =
         builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-
-    // 2. Apply ownership policy
-    if (policy == OwnershipPolicy::kClone) {
-      new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
-    } else {
-      // Move: null out source field to transfer ownership
-      auto* null_val =
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-      builder.CreateStore(null_val, source_field_ptr);
-    }
-
-    // 3. Destroy old target value
-    Destroy(context, target_field_ptr, field_type_id);
-
-    // 4. Store new value
-    builder.CreateStore(new_val, target_field_ptr);
+    StoreStringFieldRaw(
+        context, target_field_ptr, new_val, policy, field_type_id);
     return {};
   }
 
@@ -66,19 +55,61 @@ auto AssignField(
           context, source_field_ptr, target_field_ptr, field_type_id, policy);
       if (!result) return result;
     } else {
-      // No managed fields: aggregate load/store
+      // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      builder.CreateStore(val, target_field_ptr);
+      StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
     }
     return {};
   }
 
-  // Other fields: simple load/store (no ownership semantics)
+  // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  builder.CreateStore(val, target_field_ptr);
+  StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
   return {};
+}
+
+// Null out string fields in a struct after move.
+// Called at struct level after field-by-field move from a temp source.
+void NullOutStringFields(
+    Context& context, llvm::Value* struct_ptr, TypeId struct_type_id) {
+  auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+  const Type& struct_type = types[struct_type_id];
+  const auto& struct_info = struct_type.AsUnpackedStruct();
+
+  auto llvm_struct_type_result =
+      BuildLlvmTypeForTypeId(context, struct_type_id);
+  if (!llvm_struct_type_result) {
+    // Type should already be validated - this is an internal error
+    throw common::InternalError(
+        "NullOutStringFields", "failed to get LLVM type for struct");
+  }
+  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  auto* null_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
+    const auto& field = struct_info.fields[i];
+    const Type& field_type = types[field.type];
+
+    if (field_type.Kind() == TypeKind::kString) {
+      auto field_idx = static_cast<unsigned>(i);
+      llvm::Value* field_ptr =
+          builder.CreateStructGEP(llvm_struct_type, struct_ptr, field_idx);
+      builder.CreateStore(null_val, field_ptr);
+    } else if (
+        field_type.Kind() == TypeKind::kUnpackedStruct &&
+        NeedsFieldByField(field.type, types)) {
+      // Recurse for nested structs with string fields
+      auto field_idx = static_cast<unsigned>(i);
+      llvm::Value* field_ptr =
+          builder.CreateStructGEP(llvm_struct_type, struct_ptr, field_idx);
+      NullOutStringFields(context, field_ptr, field.type);
+    }
+  }
 }
 
 // Assign struct field-by-field for structs containing string fields.
@@ -161,8 +192,29 @@ auto AssignStruct(
     if (!source_ptr_result) return std::unexpected(source_ptr_result.error());
     llvm::Value* source_ptr = *source_ptr_result;
 
-    return AssignStructFieldByField(
-        context, source_ptr, wt.ptr, struct_type_id, policy);
+    // Determine if source is a temp - only temps can be moved from.
+    const auto& arena = context.GetMirArena();
+    const auto& src_place = arena[src_place_id];
+    bool source_is_temp = (src_place.root.kind == mir::PlaceRoot::Kind::kTemp);
+
+    // Force kClone if source is not temp (defensive: prevents corrupting
+    // non-temp sources when move semantics would null out fields).
+    OwnershipPolicy effective_policy = policy;
+    if (policy == OwnershipPolicy::kMove && !source_is_temp) {
+      effective_policy = OwnershipPolicy::kClone;
+    }
+
+    auto result = AssignStructFieldByField(
+        context, source_ptr, wt.ptr, struct_type_id, effective_policy);
+    if (!result) return result;
+
+    // After move from temp: null out source string fields to prevent
+    // double-release when temp is destroyed.
+    if (effective_policy == OwnershipPolicy::kMove) {
+      NullOutStringFields(context, source_ptr, struct_type_id);
+    }
+
+    return {};
   }
 
   // No managed fields: fast aggregate load/store

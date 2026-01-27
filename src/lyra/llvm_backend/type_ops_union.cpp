@@ -1,8 +1,6 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/Constants.h>
-
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
@@ -52,15 +50,7 @@ auto AssignUnion(
       info.size);
 
   // Notify if this is a design slot
-  if (wt.canonical_signal_id.has_value()) {
-    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-    builder.CreateCall(
-        context.GetLyraStorePacked(),
-        {context.GetEnginePointer(), wt.ptr,
-         wt.ptr,  // For unions, source = target after memcpy
-         llvm::ConstantInt::get(i32_ty, info.size),
-         llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id)});
-  }
+  NotifyUnionStore(context, wt, info.size);
   return {};
 }
 

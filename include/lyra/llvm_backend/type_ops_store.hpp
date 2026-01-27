@@ -75,9 +75,38 @@ void StoreStringToWriteTarget(
     Context& context, llvm::Value* new_val, const WriteTarget& target,
     TypeId type_id);
 
+// Store a string handle to a field pointer with ownership handling.
+// Unlike StoreStringToWriteTarget, this takes a raw pointer (not WriteTarget)
+// because field-by-field assignment doesn't have WriteTarget per field.
+//
+// This function handles:
+// - Clone: retain the handle
+// - Move: use handle directly (caller already nulled source)
+// - Destroy old value at target
+// - Store new handle
+//
+// NOTE: Does NOT handle design-slot notify (design slots with string-containing
+// structs are rejected at AssignStruct level).
+void StoreStringFieldRaw(
+    Context& context, llvm::Value* target_ptr, llvm::Value* handle,
+    OwnershipPolicy policy, TypeId type_id);
+
+// Store a plain (non-managed) value to a field pointer.
+// For field-by-field assignment - no design-slot notify (fields don't have
+// WriteTarget). Future extension point if we need field-level notify.
+void StorePlainFieldRaw(
+    Context& context, llvm::Value* target_ptr, llvm::Value* value,
+    TypeId type_id);
+
 // Get union storage info (cached). Validates 4-state restriction.
 auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
     -> Result<UnionStorageInfo>;
+
+// Notify after union byte-copy store to design slot.
+// Called by AssignUnion after memcpy to trigger change notification.
+// No-op if target is not a design slot.
+void NotifyUnionStore(
+    Context& context, const WriteTarget& target, uint32_t size);
 
 // Build LLVM storage type for an unpacked union (byte array with alignment)
 // Returns error for unsupported types (e.g., 4-state unions).
