@@ -1,7 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute_builtin.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -418,7 +417,10 @@ namespace {
 auto LowerEnumNextPrev(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-  assert(info.enum_type.has_value());
+  if (!info.enum_type.has_value()) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "enum_type must be set for enum builtin");
+  }
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -426,10 +428,16 @@ auto LowerEnumNextPrev(
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  assert(member_count > 0);
+  if (member_count == 0) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "enum must have at least one member");
+  }
 
   uint32_t bit_width = PackedBitWidth(enum_type, types);
-  assert(!IsPackedFourState(enum_type, types));
+  if (IsPackedFourState(enum_type, types)) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "4-state enums not supported");
+  }
 
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
@@ -523,7 +531,10 @@ auto LowerEnumNextPrev(
 auto LowerEnumName(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-  assert(info.enum_type.has_value());
+  if (!info.enum_type.has_value()) {
+    throw common::InternalError(
+        "LowerEnumName", "enum_type must be set for enum builtin");
+  }
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -531,7 +542,9 @@ auto LowerEnumName(
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  assert(!IsPackedFourState(enum_type, types));
+  if (IsPackedFourState(enum_type, types)) {
+    throw common::InternalError("LowerEnumName", "4-state enums not supported");
+  }
 
   // enum_name target is string (ptr), but we need the enum's integral type
   // for comparisons. Round up to power-of-2 storage size.
