@@ -34,13 +34,13 @@ namespace {
 
 auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
     -> Result<void> {
-  const auto& arena = context.GetMirArena();
-  const auto& place = arena[receiver];
-  if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
-    return {};
+  // Use canonical signal_id (after alias resolution)
+  auto signal_id_opt = context.GetCanonicalRootSignalId(receiver);
+  if (!signal_id_opt.has_value()) {
+    return {};  // Non-design slot, no notification needed
   }
+
   auto& builder = context.GetBuilder();
-  auto signal_id = static_cast<uint32_t>(place.root.id);
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
@@ -52,7 +52,7 @@ auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
   builder.CreateCall(
       context.GetLyraStoreDynArray(),
       {context.GetEnginePointer(), recv_ptr, handle,
-       llvm::ConstantInt::get(i32_ty, signal_id)});
+       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
   return {};
 }
 
@@ -177,16 +177,15 @@ auto LowerDynArrayBuiltin(
       // Delete: clear contents, handle stays valid
       builder.CreateCall(context.GetLyraDynArrayDelete(), {handle});
 
-      // If receiver is a design slot, notify the engine
-      const auto& arena = context.GetMirArena();
-      const auto& recv_place = arena[*info.receiver];
-      if (recv_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        auto signal_id = static_cast<uint32_t>(recv_place.root.id);
+      // If receiver is a design slot (after alias resolution), notify the
+      // engine
+      auto signal_id_opt = context.GetCanonicalRootSignalId(*info.receiver);
+      if (signal_id_opt.has_value()) {
         auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
         builder.CreateCall(
             context.GetLyraStoreDynArray(),
             {context.GetEnginePointer(), recv_ptr, handle,
-             llvm::ConstantInt::get(i32_ty, signal_id)});
+             llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
       }
       return {};
     }

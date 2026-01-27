@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
+#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -32,45 +33,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-// Check if a target place is a design slot (needs notify on write)
-auto IsDesignPlace(Context& context, mir::PlaceId place_id) -> bool {
-  const auto& place = context.GetMirArena()[place_id];
-  return place.root.kind == mir::PlaceRoot::Kind::kDesign;
-}
-
-// Get the signal_id for a design place (slot index)
-auto GetSignalId(Context& context, mir::PlaceId place_id) -> uint32_t {
-  const auto& place = context.GetMirArena()[place_id];
-  return static_cast<uint32_t>(place.root.id);
-}
-
-// Store a non-string value to a design slot with change notification.
-// new_value: the LLVM value to store (integer or 4-state struct)
-// target_ptr: pointer to the design slot
-// storage_type: LLVM type of the stored value
-void StoreDesignWithNotify(
-    Context& context, llvm::Value* new_value, llvm::Value* target_ptr,
-    llvm::Type* storage_type, mir::PlaceId target_place) {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-
-  // Compute byte size from storage type
-  auto byte_size = static_cast<uint32_t>(
-      context.GetModule().getDataLayout().getTypeAllocSize(storage_type));
-  auto signal_id = GetSignalId(context, target_place);
-
-  // Store new value to a temp alloca (notify helper reads from pointer)
-  auto* temp = builder.CreateAlloca(storage_type, nullptr, "notify_tmp");
-  builder.CreateStore(new_value, temp);
-
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  builder.CreateCall(
-      context.GetLyraStorePacked(),
-      {context.GetEnginePointer(), target_ptr, temp,
-       llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, signal_id)});
-}
 
 // Read-modify-write for BitRangeProjection assignment.
 // Clears the target bit range in the base value, then OR's in the new value.
@@ -102,9 +64,11 @@ auto StoreBitRange(
   if (!br_result) return std::unexpected(br_result.error());
   auto [offset, width] = *br_result;
 
-  auto ptr_or_err = context.GetPlacePointer(target);
-  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
-  llvm::Value* ptr = *ptr_or_err;
+  // Get WriteTarget for unified pointer + signal_id
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
   auto base_type_result = context.GetPlaceBaseType(target);
   if (!base_type_result) return std::unexpected(base_type_result.error());
   llvm::Type* base_type = *base_type_result;
@@ -115,7 +79,7 @@ auto StoreBitRange(
     auto* plane_type = base_struct->getElementType(0);
     uint32_t plane_width = plane_type->getIntegerBitWidth();
 
-    llvm::Value* old_packed = builder.CreateLoad(base_type, ptr, "rmw.old");
+    llvm::Value* old_packed = builder.CreateLoad(base_type, wt.ptr, "rmw.old");
     llvm::Value* old_val =
         builder.CreateExtractValue(old_packed, 0, "rmw.old.val");
     llvm::Value* old_unk =
@@ -161,11 +125,7 @@ auto StoreBitRange(
     llvm::Value* packed = llvm::UndefValue::get(base_struct);
     packed = builder.CreateInsertValue(packed, result_val, 0);
     packed = builder.CreateInsertValue(packed, result_unk, 1);
-    if (IsDesignPlace(context, target)) {
-      StoreDesignWithNotify(context, packed, ptr, base_type, target);
-    } else {
-      builder.CreateStore(packed, ptr);
-    }
+    StoreToWriteTarget(context, packed, wt);
     return {};
   }
 
@@ -178,7 +138,7 @@ auto StoreBitRange(
   auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
   auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
 
-  llvm::Value* old_val = builder.CreateLoad(base_type, ptr, "rmw.old");
+  llvm::Value* old_val = builder.CreateLoad(base_type, wt.ptr, "rmw.old");
   auto* cleared = builder.CreateAnd(old_val, not_mask, "rmw.clear");
 
   // Extend source to base width and shift into position
@@ -193,11 +153,7 @@ auto StoreBitRange(
   src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
   auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
   auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  if (IsDesignPlace(context, target)) {
-    StoreDesignWithNotify(context, result, ptr, base_type, target);
-  } else {
-    builder.CreateStore(result, ptr);
-  }
+  StoreToWriteTarget(context, result, wt);
   return {};
 }
 
@@ -249,10 +205,12 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
       return result;
     }
   } else {
-    // Direct store (same as LowerAssign but with pre-computed source_raw)
-    auto target_ptr_or_err = context.GetPlacePointer(guarded.target);
-    if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-    llvm::Value* target_ptr = *target_ptr_or_err;
+    // Get WriteTarget for unified pointer + signal_id
+    auto wt_or_err = context.GetWriteTarget(guarded.target);
+    if (!wt_or_err) return std::unexpected(wt_or_err.error());
+    const WriteTarget& wt = *wt_or_err;
+
+    // Get storage type separately for type checking
     auto storage_type_or_err = context.GetPlaceLlvmType(guarded.target);
     if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());
@@ -260,30 +218,17 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 
     const auto& types = context.GetTypeArena();
     const auto& ga_place = context.GetMirArena()[guarded.target];
-    const Type& ga_type = types[mir::TypeOfPlace(types, ga_place)];
+    TypeId ga_type_id = mir::TypeOfPlace(types, ga_place);
+    const Type& ga_type = types[ga_type_id];
 
     if (ga_type.Kind() == TypeKind::kDynamicArray ||
         ga_type.Kind() == TypeKind::kQueue) {
-      // Dynamic array / queue: clone source, store new, release old
+      // Dynamic array / queue: clone source, then store using centralized
+      // helper
       llvm::Value* new_handle = source_raw;
       new_handle = builder.CreateCall(
           context.GetLyraDynArrayClone(), {new_handle}, "ga.da.clone");
-
-      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-      auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "ga.da.old");
-
-      if (IsDesignPlace(context, guarded.target)) {
-        auto signal_id = GetSignalId(context, guarded.target);
-        auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-        builder.CreateCall(
-            context.GetLyraStoreDynArray(),
-            {context.GetEnginePointer(), target_ptr, new_handle,
-             llvm::ConstantInt::get(i32_ty, signal_id)});
-      } else {
-        builder.CreateStore(new_handle, target_ptr);
-      }
-
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+      StoreDynArrayToWriteTarget(context, new_handle, wt, ga_type_id);
     } else if (storage_type->isStructTy()) {
       // 4-state target
       auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
@@ -304,12 +249,7 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
       llvm::Value* packed = llvm::UndefValue::get(struct_type);
       packed = builder.CreateInsertValue(packed, val, 0);
       packed = builder.CreateInsertValue(packed, unk, 1);
-      if (IsDesignPlace(context, guarded.target)) {
-        StoreDesignWithNotify(
-            context, packed, target_ptr, storage_type, guarded.target);
-      } else {
-        builder.CreateStore(packed, target_ptr);
-      }
+      StoreToWriteTarget(context, packed, wt);
     } else {
       // 2-state target
       llvm::Value* src = source_raw;
@@ -323,12 +263,7 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
           storage_type->isIntegerTy()) {
         src = builder.CreateZExtOrTrunc(src, storage_type, "ga.fit");
       }
-      if (IsDesignPlace(context, guarded.target)) {
-        StoreDesignWithNotify(
-            context, src, target_ptr, storage_type, guarded.target);
-      } else {
-        builder.CreateStore(src, target_ptr);
-      }
+      StoreToWriteTarget(context, src, wt);
     }
   }
   builder.CreateBr(skip_bb);
@@ -338,11 +273,17 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
   return {};
 }
 
-// Get the root design slot pointer (before any projections).
+// Get the root design slot pointer (before any projections) after alias
+// resolution.
 auto GetDesignRootPointer(Context& context, mir::PlaceId place_id)
     -> llvm::Value* {
-  const auto& place = context.GetMirArena()[place_id];
-  auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+  // Use resolved signal_id to ensure we get the canonical root
+  auto signal_id_opt = context.GetCanonicalRootSignalId(place_id);
+  if (!signal_id_opt.has_value()) {
+    throw common::InternalError(
+        "GetDesignRootPointer", "called on non-design place after resolution");
+  }
+  auto slot_id = mir::SlotId{*signal_id_opt};
   uint32_t field_index = context.GetDesignFieldIndex(slot_id);
   return context.GetBuilder().CreateStructGEP(
       context.GetDesignStateType(), context.GetDesignPointer(), field_index,
@@ -381,7 +322,14 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   const auto& types = context.GetTypeArena();
   const auto& place = arena[nba.target];
 
-  uint32_t signal_id = GetSignalId(context, nba.target);
+  // Use canonical signal_id (after alias resolution) for notification
+  // NBA is only valid for design places
+  auto signal_id_opt = context.GetCanonicalRootSignalId(nba.target);
+  if (!signal_id_opt.has_value()) {
+    throw common::InternalError(
+        "LowerNonBlockingAssign", "NBA target must resolve to a design place");
+  }
+  uint32_t signal_id = *signal_id_opt;
 
   // Case 1: BitRangeProjection — shifted value and mask
   if (context.HasBitRangeProjection(nba.target)) {

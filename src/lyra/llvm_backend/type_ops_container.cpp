@@ -21,9 +21,6 @@ auto AssignDynArray(
   const auto& arena = context.GetMirArena();
 
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto target_ptr_result = context.GetPlacePointer(target);
-  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-  llvm::Value* target_ptr = *target_ptr_result;
 
   // 1. Get new value
   auto new_handle_or_err = LowerOperand(context, source);
@@ -47,22 +44,13 @@ auto AssignDynArray(
   }
   // else: source is a Const (nullptr literal) - use as-is
 
-  // 3. Destroy old + 4. Store new
-  // Note: For design slots, load old before helper to preserve across notify
-  if (IsDesignPlace(context, target)) {
-    auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.old");
-    auto signal_id = GetSignalId(context, target);
-    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-    builder.CreateCall(
-        context.GetLyraStoreDynArray(),
-        {context.GetEnginePointer(), target_ptr, new_handle,
-         llvm::ConstantInt::get(i32_ty, signal_id)});
-    builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
-  } else {
-    // Non-design: Destroy then store
-    Destroy(context, target_ptr, type_id);
-    builder.CreateStore(new_handle, target_ptr);
-  }
+  // 3. Get WriteTarget for unified pointer + signal_id
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
+  // 4. Store using centralized helper (handles destroy-old, store, notify)
+  StoreDynArrayToWriteTarget(context, new_handle, wt, type_id);
   return {};
 }
 

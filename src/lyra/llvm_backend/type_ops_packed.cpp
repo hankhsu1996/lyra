@@ -17,9 +17,9 @@ auto AssignFourState(
   auto& builder = context.GetBuilder();
   auto* elem_type = struct_type->getElementType(0);
 
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
 
   // Load source as raw value (struct if 4-state, integer if 2-state)
   auto raw_or_err = LowerOperandRaw(context, source);
@@ -42,14 +42,11 @@ auto AssignFourState(
   val = builder.CreateZExtOrTrunc(val, elem_type, "assign.val.fit");
   unk = builder.CreateZExtOrTrunc(unk, elem_type, "assign.unk.fit");
 
+  // Build the packed struct - StoreDesignWithNotify derives byte_size from this
   llvm::Value* packed = llvm::UndefValue::get(struct_type);
   packed = builder.CreateInsertValue(packed, val, 0);
   packed = builder.CreateInsertValue(packed, unk, 1);
-  if (IsDesignPlace(context, target)) {
-    StoreDesignWithNotify(context, packed, target_ptr, struct_type, target);
-  } else {
-    builder.CreateStore(packed, target_ptr);
-  }
+  StoreToWriteTarget(context, packed, wt);
   return {};
 }
 
@@ -60,9 +57,11 @@ auto AssignTwoState(
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
+  // Get storage type for width adjustment
   auto storage_type_or_err = context.GetPlaceLlvmType(target);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
@@ -83,12 +82,7 @@ auto AssignTwoState(
   }
 
   // Store to the place (with notify if design)
-  if (IsDesignPlace(context, target)) {
-    StoreDesignWithNotify(
-        context, source_value, target_ptr, storage_type, target);
-  } else {
-    builder.CreateStore(source_value, target_ptr);
-  }
+  StoreToWriteTarget(context, source_value, wt);
   return {};
 }
 

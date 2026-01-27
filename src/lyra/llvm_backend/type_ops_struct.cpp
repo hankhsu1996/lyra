@@ -121,16 +121,7 @@ auto AssignStructFieldByField(
 auto AssignStruct(
     Context& context, mir::PlaceId target, const mir::Operand& source,
     OwnershipPolicy policy, TypeId struct_type_id) -> Result<void> {
-  auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
-
-  auto target_ptr_result = context.GetPlacePointer(target);
-  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-  llvm::Value* target_ptr = *target_ptr_result;
-
-  auto storage_type_result = context.GetPlaceLlvmType(target);
-  if (!storage_type_result) return std::unexpected(storage_type_result.error());
-  llvm::Type* storage_type = *storage_type_result;
 
   // Container handles (dynarray/queue) require deep copy not yet implemented
   if (TypeContainsManaged(struct_type_id, types) &&
@@ -143,10 +134,15 @@ auto AssignStruct(
         UnsupportedCategory::kFeature));
   }
 
+  // Get WriteTarget for unified pointer + signal_id
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
   // Structs with string fields require field-by-field assignment
   if (NeedsFieldByField(struct_type_id, types)) {
     // Design slots with string-containing structs not yet supported
-    if (IsDesignPlace(context, target)) {
+    if (wt.canonical_signal_id.has_value()) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
           "unpacked struct assignment to design slot with string fields "
@@ -166,18 +162,14 @@ auto AssignStruct(
     llvm::Value* source_ptr = *source_ptr_result;
 
     return AssignStructFieldByField(
-        context, source_ptr, target_ptr, struct_type_id, policy);
+        context, source_ptr, wt.ptr, struct_type_id, policy);
   }
 
   // No managed fields: fast aggregate load/store
   auto val_result = LowerOperandRaw(context, source);
   if (!val_result) return std::unexpected(val_result.error());
   llvm::Value* val = *val_result;
-  if (IsDesignPlace(context, target)) {
-    StoreDesignWithNotify(context, val, target_ptr, storage_type, target);
-  } else {
-    builder.CreateStore(val, target_ptr);
-  }
+  StoreToWriteTarget(context, val, wt);
   return {};
 }
 

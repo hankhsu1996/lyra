@@ -9,11 +9,11 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct WriteTarget;
 
 // Union storage info - cached layout for union types
 struct UnionStorageInfo {
@@ -47,16 +47,31 @@ void Destroy(Context& context, llvm::Value* ptr, TypeId type_id);
 void DestroyStructFields(
     Context& context, llvm::Value* ptr, TypeId struct_type_id);
 
-// Check if a target place is a design slot (needs notify on write)
-auto IsDesignPlace(Context& context, mir::PlaceId place_id) -> bool;
-
-// Get the signal_id for a design place (slot index)
-auto GetSignalId(Context& context, mir::PlaceId place_id) -> uint32_t;
+// Store a value to a WriteTarget.
+// If canonical_signal_id has value, calls StoreDesignWithNotify.
+// Otherwise, performs a plain store.
+void StoreToWriteTarget(
+    Context& context, llvm::Value* new_value, const WriteTarget& target);
 
 // Store a non-string value to a design slot with change notification.
+// Internal helper called by StoreToWriteTarget for design places.
+// Asserts that target.canonical_signal_id has value.
 void StoreDesignWithNotify(
-    Context& context, llvm::Value* new_value, llvm::Value* target_ptr,
-    llvm::Type* storage_type, mir::PlaceId target_place);
+    Context& context, llvm::Value* new_value, const WriteTarget& target);
+
+// Store a dynamic array handle to a WriteTarget.
+// Handles destroy-old, store-new, and notify if design place.
+// The new_handle must already have the correct ownership (cloned if needed).
+void StoreDynArrayToWriteTarget(
+    Context& context, llvm::Value* new_handle, const WriteTarget& target,
+    TypeId type_id);
+
+// Store a string handle to a WriteTarget.
+// Handles destroy-old, store-new, and notify if design place.
+// The new_val must already have the correct ownership (retained if needed).
+void StoreStringToWriteTarget(
+    Context& context, llvm::Value* new_val, const WriteTarget& target,
+    TypeId type_id);
 
 // Get union storage info (cached). Validates 4-state restriction.
 auto GetUnionStorageInfo(Context& context, TypeId union_type_id)

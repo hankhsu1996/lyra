@@ -14,8 +14,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -167,37 +165,98 @@ auto BuildLlvmTypeForTypeId(
   return BuildLlvmTypeForTypeIdNoUnion(ctx, type_id, types);
 }
 
-auto IsDesignPlace(Context& context, mir::PlaceId place_id) -> bool {
-  const auto& place = context.GetMirArena()[place_id];
-  return place.root.kind == mir::PlaceRoot::Kind::kDesign;
-}
-
-auto GetSignalId(Context& context, mir::PlaceId place_id) -> uint32_t {
-  const auto& place = context.GetMirArena()[place_id];
-  return static_cast<uint32_t>(place.root.id);
+void StoreToWriteTarget(
+    Context& context, llvm::Value* new_value, const WriteTarget& target) {
+  if (target.canonical_signal_id.has_value()) {
+    StoreDesignWithNotify(context, new_value, target);
+  } else {
+    context.GetBuilder().CreateStore(new_value, target.ptr);
+  }
 }
 
 void StoreDesignWithNotify(
-    Context& context, llvm::Value* new_value, llvm::Value* target_ptr,
-    llvm::Type* storage_type, mir::PlaceId target_place) {
+    Context& context, llvm::Value* new_value, const WriteTarget& target) {
+  if (!target.canonical_signal_id.has_value()) {
+    throw common::InternalError(
+        "StoreDesignWithNotify", "called with non-design WriteTarget");
+  }
+
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  // Compute byte size from storage type
+  // INVARIANT: new_value->getType() must match the storage type of the
+  // destination slot. Callers are responsible for coercing the value to the
+  // correct type (zext/trunc for width, insert/extract for 4-state packing)
+  // before calling this function.
+  llvm::Type* value_type = new_value->getType();
+
+  // Sanity check: packed stores should be integer or struct types, not pointers
+  // (pointer types use StoreDynArrayToWriteTarget or StoreStringToWriteTarget)
+  if (value_type->isPointerTy()) {
+    throw common::InternalError(
+        "StoreDesignWithNotify",
+        "called with pointer type - use StoreDynArrayToWriteTarget or "
+        "StoreStringToWriteTarget for managed types");
+  }
+
   auto byte_size = static_cast<uint32_t>(
-      context.GetModule().getDataLayout().getTypeAllocSize(storage_type));
-  auto signal_id = GetSignalId(context, target_place);
+      context.GetModule().getDataLayout().getTypeAllocSize(value_type));
+  auto signal_id = *target.canonical_signal_id;
 
   // Store new value to a temp alloca (notify helper reads from pointer)
-  auto* temp = builder.CreateAlloca(storage_type, nullptr, "notify_tmp");
+  auto* temp = builder.CreateAlloca(value_type, nullptr, "notify_tmp");
   builder.CreateStore(new_value, temp);
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   builder.CreateCall(
       context.GetLyraStorePacked(),
-      {context.GetEnginePointer(), target_ptr, temp,
+      {context.GetEnginePointer(), target.ptr, temp,
        llvm::ConstantInt::get(i32_ty, byte_size),
        llvm::ConstantInt::get(i32_ty, signal_id)});
+}
+
+void StoreDynArrayToWriteTarget(
+    Context& context, llvm::Value* new_handle, const WriteTarget& target,
+    TypeId type_id) {
+  auto& builder = context.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+
+  if (target.canonical_signal_id.has_value()) {
+    // Design slot: load old first, then atomic store+notify, then release old
+    auto* old_handle = builder.CreateLoad(ptr_ty, target.ptr, "da.old");
+    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+    builder.CreateCall(
+        context.GetLyraStoreDynArray(),
+        {context.GetEnginePointer(), target.ptr, new_handle,
+         llvm::ConstantInt::get(i32_ty, *target.canonical_signal_id)});
+    builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+  } else {
+    // Non-design: destroy old, store new
+    Destroy(context, target.ptr, type_id);
+    builder.CreateStore(new_handle, target.ptr);
+  }
+}
+
+void StoreStringToWriteTarget(
+    Context& context, llvm::Value* new_val, const WriteTarget& target,
+    TypeId type_id) {
+  auto& builder = context.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+
+  if (target.canonical_signal_id.has_value()) {
+    // Design slot: load old first, then atomic store+notify, then release old
+    auto* old_val = builder.CreateLoad(ptr_ty, target.ptr, "str.old");
+    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+    builder.CreateCall(
+        context.GetLyraStoreString(),
+        {context.GetEnginePointer(), target.ptr, new_val,
+         llvm::ConstantInt::get(i32_ty, *target.canonical_signal_id)});
+    builder.CreateCall(context.GetLyraStringRelease(), {old_val});
+  } else {
+    // Non-design: destroy old, store new
+    Destroy(context, target.ptr, type_id);
+    builder.CreateStore(new_val, target.ptr);
+  }
 }
 
 void Destroy(Context& context, llvm::Value* ptr, TypeId type_id) {

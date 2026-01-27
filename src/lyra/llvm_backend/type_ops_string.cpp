@@ -20,10 +20,6 @@ auto AssignString(
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
 
-  auto target_ptr_result = context.GetPlacePointer(target);
-  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-  llvm::Value* target_ptr = *target_ptr_result;
-
   // 1. Get new value
   auto new_val_or_err = LowerOperand(context, source);
   if (!new_val_or_err) return std::unexpected(new_val_or_err.error());
@@ -46,27 +42,13 @@ auto AssignString(
     }
   }
 
-  // 3. Destroy old target value
-  // Note: For design slots, we load old before helper call to preserve across
-  // notify. The helper handles the store+notify atomically.
-  if (IsDesignPlace(context, target)) {
-    auto storage_type_or_err = context.GetPlaceLlvmType(target);
-    if (!storage_type_or_err)
-      return std::unexpected(storage_type_or_err.error());
-    llvm::Type* storage_type = *storage_type_or_err;
-    auto* old_val = builder.CreateLoad(storage_type, target_ptr);
-    auto signal_id = GetSignalId(context, target);
-    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-    builder.CreateCall(
-        context.GetLyraStoreString(),
-        {context.GetEnginePointer(), target_ptr, new_val,
-         llvm::ConstantInt::get(i32_ty, signal_id)});
-    builder.CreateCall(context.GetLyraStringRelease(), {old_val});
-  } else {
-    // Non-design: Destroy then store
-    Destroy(context, target_ptr, type_id);
-    builder.CreateStore(new_val, target_ptr);
-  }
+  // 3. Get WriteTarget for unified pointer + signal_id
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
+  // 4. Store using centralized helper (handles destroy-old, store, notify)
+  StoreStringToWriteTarget(context, new_val, wt, type_id);
   return {};
 }
 
