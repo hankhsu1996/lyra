@@ -58,10 +58,6 @@ auto BuildLlvmTypeForTypeId(
 // This is the primitive operation - every assignment should Destroy(dst) first.
 void Destroy(Context& context, llvm::Value* ptr, TypeId type_id);
 
-// Recursively destroy fields of a struct
-void DestroyStructFields(
-    Context& context, llvm::Value* ptr, TypeId struct_type_id);
-
 // Store a value to a WriteTarget.
 // If canonical_signal_id has value, calls StoreDesignWithNotify.
 // Otherwise, performs a plain store.

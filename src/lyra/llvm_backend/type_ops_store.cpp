@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
 
@@ -314,60 +315,83 @@ void NotifyUnionStore(
        llvm::ConstantInt::get(i32_ty, *target.canonical_signal_id)});
 }
 
-void Destroy(Context& context, llvm::Value* ptr, TypeId type_id) {
-  auto& builder = context.GetBuilder();
+namespace {
+
+// Shared walker for struct fields that contain managed types.
+// Used by both Destroy() and NullOutManagedFields() to prevent drift.
+//
+// Only iterates fields where TypeContainsManaged returns true.
+// Callback receives field pointer and field TypeId.
+using ManagedFieldCallback = llvm::function_ref<void(llvm::Value*, TypeId)>;
+
+void ForEachManagedFieldPtr(
+    Context& context, llvm::Value* struct_ptr, TypeId struct_type_id,
+    ManagedFieldCallback callback) {
+  const auto& types = context.GetTypeArena();
+  const Type& type = types[struct_type_id];
+  const auto& struct_info = type.AsUnpackedStruct();
+
+  auto llvm_struct_type_result =
+      BuildLlvmTypeForTypeId(context, struct_type_id);
+  if (!llvm_struct_type_result) {
+    throw common::InternalError(
+        "ForEachManagedFieldPtr", "failed to get LLVM type for struct");
+  }
+  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
+
+  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
+    const auto& field = struct_info.fields[i];
+    if (TypeContainsManaged(field.type, types)) {
+      auto field_idx = static_cast<unsigned>(i);
+      llvm::Value* field_ptr = context.GetBuilder().CreateStructGEP(
+          llvm_struct_type, struct_ptr, field_idx);
+      callback(field_ptr, field.type);
+    }
+  }
+}
+
+}  // namespace
+
+namespace {
+
+// Internal recursive walker for destroying managed fields.
+// Handles leaf managed types and recurses into structs via shared walker.
+void DestroyManagedFields(Context& context, llvm::Value* ptr, TypeId type_id) {
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
   switch (type.Kind()) {
     case TypeKind::kString: {
       auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-      auto* val = builder.CreateLoad(ptr_ty, ptr, "destroy.str");
-      builder.CreateCall(context.GetLyraStringRelease(), {val});
+      auto* val = context.GetBuilder().CreateLoad(ptr_ty, ptr, "destroy.str");
+      context.GetBuilder().CreateCall(context.GetLyraStringRelease(), {val});
       return;
     }
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue: {
       auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-      auto* val = builder.CreateLoad(ptr_ty, ptr, "destroy.da");
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {val});
+      auto* val = context.GetBuilder().CreateLoad(ptr_ty, ptr, "destroy.da");
+      context.GetBuilder().CreateCall(context.GetLyraDynArrayRelease(), {val});
       return;
     }
     case TypeKind::kUnpackedStruct:
-      if (NeedsDestroy(type_id, types)) {
-        DestroyStructFields(context, ptr, type_id);
-      }
+      ForEachManagedFieldPtr(
+          context, ptr, type_id,
+          [&](llvm::Value* field_ptr, TypeId field_type) {
+            DestroyManagedFields(context, field_ptr, field_type);
+          });
       return;
     default:
-      return;  // Value types: no-op
+      return;
   }
 }
 
-void DestroyStructFields(
-    Context& context, llvm::Value* ptr, TypeId struct_type_id) {
-  auto& builder = context.GetBuilder();
+}  // namespace
+
+void Destroy(Context& context, llvm::Value* ptr, TypeId type_id) {
   const auto& types = context.GetTypeArena();
-  const Type& struct_type = types[struct_type_id];
-  const auto& struct_info = struct_type.AsUnpackedStruct();
-
-  // Type should already be validated/cached during lowering. If this fails,
-  // it indicates a bug where we're trying to destroy a type that was never
-  // properly created.
-  auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
-  if (!llvm_struct_type_result) {
-    throw common::InternalError(
-        "DestroyStructFields",
-        "failed to get LLVM type for struct - type was not properly lowered");
-  }
-  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
-
-  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
-    const auto& field = struct_info.fields[i];
-    auto field_idx = static_cast<unsigned>(i);
-    llvm::Value* field_ptr =
-        builder.CreateStructGEP(llvm_struct_type, ptr, field_idx);
-    Destroy(context, field_ptr, field.type);
+  if (TypeContainsManaged(type_id, types)) {
+    DestroyManagedFields(context, ptr, type_id);
   }
 }
 
@@ -705,37 +729,16 @@ void NullOutManagedFields(Context& context, llvm::Value* ptr, TypeId type_id) {
     case TypeKind::kString:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
-      // Managed leaf type: store nullptr
       context.GetBuilder().CreateStore(null_val, ptr);
       return;
-
-    case TypeKind::kUnpackedStruct: {
-      // Iterate fields, recurse for those with managed content
-      const auto& struct_info = type.AsUnpackedStruct();
-
-      auto llvm_struct_type_result = BuildLlvmTypeForTypeId(context, type_id);
-      if (!llvm_struct_type_result) {
-        throw common::InternalError(
-            "NullOutManagedFields",
-            "failed to get LLVM type for struct - type was not properly "
-            "lowered");
-      }
-      llvm::Type* llvm_struct_type = *llvm_struct_type_result;
-
-      for (size_t i = 0; i < struct_info.fields.size(); ++i) {
-        const auto& field = struct_info.fields[i];
-        if (TypeContainsManaged(field.type, types)) {
-          auto field_idx = static_cast<unsigned>(i);
-          llvm::Value* field_ptr = context.GetBuilder().CreateStructGEP(
-              llvm_struct_type, ptr, field_idx);
-          NullOutManagedFields(context, field_ptr, field.type);
-        }
-      }
+    case TypeKind::kUnpackedStruct:
+      ForEachManagedFieldPtr(
+          context, ptr, type_id,
+          [&](llvm::Value* field_ptr, TypeId field_type) {
+            NullOutManagedFields(context, field_ptr, field_type);
+          });
       return;
-    }
-
     default:
-      // Non-managed type: no-op
       return;
   }
 }
