@@ -238,8 +238,16 @@ auto LowerQueueBuiltin(
       if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.del.h");
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {handle});
+      // Get receiver TypeId for typed teardown
+      const auto& arena = context.GetMirArena();
+      const auto& recv_place = arena[*info.receiver];
+      TypeId recv_type_id =
+          mir::TypeOfPlace(context.GetTypeArena(), recv_place);
+
+      // Typed teardown via lifecycle (loads handle, calls release)
+      Destroy(context, recv_ptr, recv_type_id);
+
+      // Store null handle
       builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
       return NotifyIfDesignSlot(context, *info.receiver);
     }
