@@ -61,7 +61,7 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 
 **CRITICAL: Do NOT add attribution.** No "Generated with Claude Code", no "Co-Authored-By", no author credits. These duplicate badly when squash-merging. The commit message should ONLY contain the summary line and bullet points.
 
-**IMPORTANT: Focus on features, not implementation journey.** Don't reference internal tracking like "Phase 1", "Step 2", or planning documents.
+**IMPORTANT: Describe the outcome, not the process.** The commit message reflects what changed, not how you got there.
 
 ## Branch Rules
 
