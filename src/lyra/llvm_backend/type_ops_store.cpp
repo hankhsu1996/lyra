@@ -7,13 +7,13 @@
 #include <variant>
 #include <vector>
 
-#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -278,17 +278,15 @@ void StoreStringToWriteTarget(
 void StoreStringFieldRaw(
     Context& context, llvm::Value* target_ptr, llvm::Value* handle,
     OwnershipPolicy policy, TypeId type_id) {
-  auto& builder = context.GetBuilder();
-
-  // Apply ownership policy
+  // Apply ownership policy via CloneValue
   if (policy == OwnershipPolicy::kClone) {
-    handle = builder.CreateCall(context.GetLyraStringRetain(), {handle});
+    handle = CloneValue(context, handle, type_id);
   }
   // kMove: handle already has ownership, no retain needed
 
   // Destroy old value and store new
   Destroy(context, target_ptr, type_id);
-  builder.CreateStore(handle, target_ptr);
+  context.GetBuilder().CreateStore(handle, target_ptr);
 }
 
 void StorePlainFieldRaw(
@@ -313,86 +311,6 @@ void NotifyUnionStore(
        target.ptr,  // For unions, source = target after memcpy
        llvm::ConstantInt::get(i32_ty, size),
        llvm::ConstantInt::get(i32_ty, *target.canonical_signal_id)});
-}
-
-namespace {
-
-// Shared walker for struct fields that contain managed types.
-// Used by both Destroy() and NullOutManagedFields() to prevent drift.
-//
-// Only iterates fields where TypeContainsManaged returns true.
-// Callback receives field pointer and field TypeId.
-using ManagedFieldCallback = llvm::function_ref<void(llvm::Value*, TypeId)>;
-
-void ForEachManagedFieldPtr(
-    Context& context, llvm::Value* struct_ptr, TypeId struct_type_id,
-    ManagedFieldCallback callback) {
-  const auto& types = context.GetTypeArena();
-  const Type& type = types[struct_type_id];
-  const auto& struct_info = type.AsUnpackedStruct();
-
-  auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
-  if (!llvm_struct_type_result) {
-    throw common::InternalError(
-        "ForEachManagedFieldPtr", "failed to get LLVM type for struct");
-  }
-  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
-
-  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
-    const auto& field = struct_info.fields[i];
-    if (TypeContainsManaged(field.type, types)) {
-      auto field_idx = static_cast<unsigned>(i);
-      llvm::Value* field_ptr = context.GetBuilder().CreateStructGEP(
-          llvm_struct_type, struct_ptr, field_idx);
-      callback(field_ptr, field.type);
-    }
-  }
-}
-
-}  // namespace
-
-namespace {
-
-// Internal recursive walker for destroying managed fields.
-// Handles leaf managed types and recurses into structs via shared walker.
-void DestroyManagedFields(Context& context, llvm::Value* ptr, TypeId type_id) {
-  const auto& types = context.GetTypeArena();
-  const Type& type = types[type_id];
-
-  switch (type.Kind()) {
-    case TypeKind::kString: {
-      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-      auto* val = context.GetBuilder().CreateLoad(ptr_ty, ptr, "destroy.str");
-      context.GetBuilder().CreateCall(context.GetLyraStringRelease(), {val});
-      return;
-    }
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue: {
-      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-      auto* val = context.GetBuilder().CreateLoad(ptr_ty, ptr, "destroy.da");
-      context.GetBuilder().CreateCall(context.GetLyraDynArrayRelease(), {val});
-      return;
-    }
-    case TypeKind::kUnpackedStruct:
-      ForEachManagedFieldPtr(
-          context, ptr, type_id,
-          [&](llvm::Value* field_ptr, TypeId field_type) {
-            DestroyManagedFields(context, field_ptr, field_type);
-          });
-      return;
-    default:
-      return;
-  }
-}
-
-}  // namespace
-
-void Destroy(Context& context, llvm::Value* ptr, TypeId type_id) {
-  const auto& types = context.GetTypeArena();
-  if (TypeContainsManaged(type_id, types)) {
-    DestroyManagedFields(context, ptr, type_id);
-  }
 }
 
 namespace {
@@ -594,19 +512,19 @@ auto BuildUnpackedUnionType(
 
 namespace {
 
-// String: retain if clone, store, destroy old
+// String: clone if kClone, store, destroy old
 auto StoreStringRaw(
     Context& ctx, const WriteTarget& wt, llvm::Value* handle,
     OwnershipPolicy policy, TypeId type_id) -> Result<void> {
   if (policy == OwnershipPolicy::kClone) {
-    handle = ctx.GetBuilder().CreateCall(ctx.GetLyraStringRetain(), {handle});
+    handle = CloneValue(ctx, handle, type_id);
   }
   // kMove: handle already has ownership, no retain needed
   StoreStringToWriteTarget(ctx, handle, wt, type_id);
   return {};
 }
 
-// Container (DynArray, Queue): clone if clone, store, destroy old
+// Container (DynArray, Queue): clone if kClone, store, destroy old
 auto StoreContainerRaw(
     Context& ctx, const WriteTarget& wt, llvm::Value* handle,
     OwnershipPolicy policy, TypeId type_id) -> Result<void> {
@@ -623,7 +541,7 @@ auto StoreContainerRaw(
   }
 
   if (policy == OwnershipPolicy::kClone) {
-    handle = ctx.GetBuilder().CreateCall(ctx.GetLyraDynArrayClone(), {handle});
+    handle = CloneValue(ctx, handle, type_id);
   }
   // kMove: handle already has ownership, no clone needed
   StoreDynArrayToWriteTarget(ctx, handle, wt, type_id);
@@ -707,42 +625,6 @@ auto StoreTwoStateRaw(
 
 }  // namespace
 
-// Null out managed fields in a value at ptr.
-// Pure mechanical operation - does not check permissions.
-// Called by NullOutSourceIfMoveTemp after permission checks.
-//
-// Handles:
-// - kString, kDynamicArray, kQueue: store nullptr to ptr
-// - kUnpackedStruct: recurse for fields where TypeContainsManaged is true
-// - Other types: no-op (no managed content)
-//
-// Internal to this file - not exposed in header.
-void NullOutManagedFields(Context& context, llvm::Value* ptr, TypeId type_id) {
-  const auto& types = context.GetTypeArena();
-  const Type& type = types[type_id];
-
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto* null_val =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
-  switch (type.Kind()) {
-    case TypeKind::kString:
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-      context.GetBuilder().CreateStore(null_val, ptr);
-      return;
-    case TypeKind::kUnpackedStruct:
-      ForEachManagedFieldPtr(
-          context, ptr, type_id,
-          [&](llvm::Value* field_ptr, TypeId field_type) {
-            NullOutManagedFields(context, field_ptr, field_type);
-          });
-      return;
-    default:
-      return;
-  }
-}
-
 auto StoreRawToTarget(
     Context& context, const WriteTarget& target, llvm::Value* raw_value,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
@@ -807,8 +689,8 @@ void NullOutSourceIfMoveTemp(
         "NullOutSourceIfMoveTemp", "failed to get source place pointer");
   }
 
-  // Null out managed fields in source
-  NullOutManagedFields(context, *src_ptr_result, type_id);
+  // Null out managed fields in source (delegate to lifecycle module)
+  MoveCleanup(context, *src_ptr_result, type_id);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

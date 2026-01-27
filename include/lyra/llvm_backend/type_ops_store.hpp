@@ -9,6 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -16,19 +17,6 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 struct WriteTarget;
-
-// Design Note: ConstructDefault API is deliberately deferred.
-//
-// Current state:
-// - Strings/dynarray default to nullptr - no explicit construct needed
-// - Structs with all-POD fields use aggregate zero at init time (lower.cpp)
-// - Structs with managed fields: each managed field is nullptr anyway
-//
-// When to revisit and add ConstructDefault():
-// - Non-null default handles (e.g., pre-allocated empty string/array)
-// - User-defined field initializers in struct declarations
-// - Class types with constructors
-// - Associative arrays (may need non-trivial default state)
 
 // Union storage info - cached layout for union types
 struct UnionStorageInfo {
@@ -53,10 +41,6 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
 auto BuildLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type*;
-
-// Release owned resources for a value at ptr of given type.
-// This is the primitive operation - every assignment should Destroy(dst) first.
-void Destroy(Context& context, llvm::Value* ptr, TypeId type_id);
 
 // Store a value to a WriteTarget.
 // If canonical_signal_id has value, calls StoreDesignWithNotify.
