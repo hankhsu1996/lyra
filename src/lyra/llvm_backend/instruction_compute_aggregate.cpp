@@ -18,8 +18,12 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -89,11 +93,12 @@ auto LowerUnpackedStructAggregate(
 }
 
 auto LowerQueueAggregate(
-    Context& context, const mir::Compute& compute, const Type& target_type)
+    Context& context, const mir::Compute& compute, TypeId target_type_id)
     -> Result<void> {
   auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+  const Type& target_type = types[target_type_id];
 
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
   auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
@@ -138,8 +143,7 @@ auto LowerQueueAggregate(
   auto target_ptr_result = context.GetPlacePointer(compute.target);
   if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
   llvm::Value* target_ptr = *target_ptr_result;
-  auto* old = builder.CreateLoad(ptr_ty, target_ptr, "q.lit.old");
-  builder.CreateCall(context.GetLyraDynArrayRelease(), {old});
+  Destroy(context, target_ptr, target_type_id);
   builder.CreateStore(handle, target_ptr);
   return {};
 }
@@ -151,8 +155,8 @@ auto LowerAggregate(
     const mir::AggregateRvalueInfo& /*info*/) -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  const Type& target_type =
-      types[mir::TypeOfPlace(types, arena[compute.target])];
+  TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
+  const Type& target_type = types[target_type_id];
 
   switch (target_type.Kind()) {
     case TypeKind::kUnpackedArray:
@@ -160,7 +164,7 @@ auto LowerAggregate(
     case TypeKind::kUnpackedStruct:
       return LowerUnpackedStructAggregate(context, compute, target_type);
     case TypeKind::kQueue:
-      return LowerQueueAggregate(context, compute, target_type);
+      return LowerQueueAggregate(context, compute, target_type_id);
     default:
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),

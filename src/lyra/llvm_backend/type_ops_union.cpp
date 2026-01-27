@@ -1,8 +1,6 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/Constants.h>
-
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
@@ -17,9 +15,9 @@ auto AssignUnion(
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  auto target_ptr_result = context.GetPlacePointer(target);
-  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-  llvm::Value* target_ptr = *target_ptr_result;
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
 
   auto info_result = GetUnionStorageInfo(context, union_type_id);
   if (!info_result) return std::unexpected(info_result.error());
@@ -48,20 +46,11 @@ auto AssignUnion(
 
   // memcpy from source to target
   builder.CreateMemCpy(
-      target_ptr, llvm::Align(info.align), source_ptr, llvm::Align(info.align),
+      wt.ptr, llvm::Align(info.align), source_ptr, llvm::Align(info.align),
       info.size);
 
   // Notify if this is a design slot
-  if (IsDesignPlace(context, target)) {
-    auto signal_id = GetSignalId(context, target);
-    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-    builder.CreateCall(
-        context.GetLyraStorePacked(),
-        {context.GetEnginePointer(), target_ptr,
-         target_ptr,  // For unions, source = target after memcpy
-         llvm::ConstantInt::get(i32_ty, info.size),
-         llvm::ConstantInt::get(i32_ty, signal_id)});
-  }
+  NotifyUnionStore(context, wt, info.size);
   return {};
 }
 

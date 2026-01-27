@@ -1,0 +1,95 @@
+feature: hierarchy_sibling_connections
+description: Tests sibling module connections via parent wires
+
+# Sibling connections occur when one child module's output is connected to
+# another child module's input through a wire in the parent module. This is
+# a common pattern in hardware design (e.g., connecting pipeline stages,
+# CPU components like instruction memory → decoder → ALU → register file).
+#
+# Pattern:
+#   Parent has: wire w; Child1 c1(.out(w)); Child2 c2(.in(w));
+#   Data flow: Child1.out → w → Child2.in
+
+cases:
+  - name: simple_sibling_connection
+    description: One child's output connected to another child's input via parent wire
+    sv: |
+      module Source(output int data);
+        assign data = 42;
+      endmodule
+
+      module Sink(input int data);
+        int captured;
+        always_comb captured = data;
+      endmodule
+
+      module Top;
+        int wire_data;
+        Source src(.data(wire_data));
+        Sink sink(.data(wire_data));
+
+        initial begin
+          #1;
+          $display("wire_data=%0d sink.captured=%0d", wire_data, sink.captured);
+        end
+      endmodule
+    expect:
+      stdout: "wire_data=42 sink.captured=42\n"
+
+  - name: sibling_chain_three_modules
+    description: Chain of three sibling modules connected via parent wires
+    sv: |
+      module Producer(output int out);
+        assign out = 10;
+      endmodule
+
+      module Transformer(input int in, output int out);
+        assign out = in * 2;
+      endmodule
+
+      module Consumer(input int in);
+        int result;
+        always_comb result = in + 1;
+      endmodule
+
+      module Top;
+        int wire1, wire2;
+        Producer p(.out(wire1));
+        Transformer t(.in(wire1), .out(wire2));
+        Consumer c(.in(wire2));
+
+        initial begin
+          #1;
+          $display("wire1=%0d wire2=%0d result=%0d", wire1, wire2, c.result);
+        end
+      endmodule
+    expect:
+      stdout: "wire1=10 wire2=20 result=21\n"
+
+  - name: sibling_with_clocked_consumer
+    description: Producer output consumed by clocked process in sibling
+    sv: |
+      module DataSource(output int value);
+        assign value = 100;
+      endmodule
+
+      module DataSink(input logic clk, input int value);
+        int latched;
+        always_ff @(posedge clk) latched <= value;
+      endmodule
+
+      module Top;
+        logic clk = 0;
+        int wire_val;
+
+        DataSource src(.value(wire_val));
+        DataSink sink(.clk(clk), .value(wire_val));
+
+        initial begin
+          #1 clk = 1;
+          #1;
+          $display("latched=%0d", sink.latched);
+        end
+      endmodule
+    expect:
+      stdout: "latched=100\n"

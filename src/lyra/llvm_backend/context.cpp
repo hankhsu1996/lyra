@@ -1289,16 +1289,21 @@ auto Context::ResolveAliases(mir::PlaceId place_id) -> mir::Place {
 }
 
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
-  // Resolve aliases first (handles output/inout ports)
-  mir::Place place = ResolveAliases(place_id);
+  // Resolve aliases first, then delegate to the internal helper
+  mir::Place resolved = ResolveAliases(place_id);
+  return ComputePlacePointer(resolved, place_id);
+}
 
-  // Get base pointer from root
+auto Context::ComputePlacePointer(
+    const mir::Place& resolved, mir::PlaceId original_place_id)
+    -> Result<llvm::Value*> {
+  // Get base pointer from root (resolved is already alias-resolved)
   llvm::Value* ptr = nullptr;
-  if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+  if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
     if (design_ptr_ == nullptr) {
       throw common::InternalError("llvm_backend", "design pointer not set");
     }
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
     uint32_t field_index = GetDesignFieldIndex(slot_id);
     ptr = builder_.CreateStructGEP(
         GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
@@ -1307,25 +1312,25 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
     // If not found and frame_ptr_ is set, use frame (processes)
     //
     // Storage is keyed by root identity (kind + id), NOT PlaceId.
-    PlaceRootKey root_key{.kind = place.root.kind, .id = place.root.id};
+    PlaceRootKey root_key{.kind = resolved.root.kind, .id = resolved.root.id};
     auto it = place_storage_.find(root_key);
     if (it != place_storage_.end()) {
       ptr = it->second;
     } else if (frame_ptr_ != nullptr) {
-      uint32_t field_index = GetFrameFieldIndex(place_id);
+      uint32_t field_index = GetFrameFieldIndex(original_place_id);
       ptr = builder_.CreateStructGEP(
           GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
     } else {
       // User function: create alloca lazily for the root
-      auto alloca_or_err = GetOrCreatePlaceStorage(place.root);
+      auto alloca_or_err = GetOrCreatePlaceStorage(resolved.root);
       if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
       ptr = *alloca_or_err;
     }
   }
 
   // Apply projections (index into arrays, stop at BitRange)
-  TypeId current_type = place.root.type;
-  for (const auto& proj : place.projections) {
+  TypeId current_type = resolved.root.type;
+  for (const auto& proj : resolved.projections) {
     if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
       break;
     }
@@ -1426,6 +1431,38 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
   }
 
   return ptr;
+}
+
+auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
+  // Resolve aliases FIRST - all decisions based on this single resolved place
+  mir::Place resolved = ResolveAliases(place_id);
+
+  // Compute pointer directly from the resolved place (no re-resolution)
+  auto ptr_or_err = ComputePlacePointer(resolved, place_id);
+  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
+
+  // Determine canonical_signal_id from the SAME resolved root
+  std::optional<uint32_t> signal_id;
+  if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
+    signal_id = static_cast<uint32_t>(resolved.root.id);
+  }
+
+  return WriteTarget{
+      .ptr = *ptr_or_err,
+      .canonical_signal_id = signal_id,
+  };
+}
+
+auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
+    -> std::optional<uint32_t> {
+  // Resolve aliases first
+  mir::Place resolved = ResolveAliases(place_id);
+
+  // Return the resolved root's slot ID, or nullopt if not design
+  if (resolved.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    return std::nullopt;
+  }
+  return static_cast<uint32_t>(resolved.root.id);
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
@@ -1626,13 +1663,13 @@ auto Context::GetMonitorLayout(mir::FunctionId check_thunk) const
 }
 
 void Context::RegisterMonitorSetupInfo(
-    mir::FunctionId func_id, MonitorSetupInfo info) {
-  monitor_setup_infos_.emplace(func_id, std::move(info));
+    mir::FunctionId setup_thunk, MonitorSetupInfo info) {
+  monitor_setup_infos_.emplace(setup_thunk, std::move(info));
 }
 
-auto Context::GetMonitorSetupInfo(mir::FunctionId func_id) const
+auto Context::GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
     -> const MonitorSetupInfo* {
-  auto it = monitor_setup_infos_.find(func_id);
+  auto it = monitor_setup_infos_.find(setup_thunk);
   if (it == monitor_setup_infos_.end()) {
     return nullptr;
   }

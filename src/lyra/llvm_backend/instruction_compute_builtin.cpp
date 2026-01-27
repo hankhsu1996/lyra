@@ -1,7 +1,6 @@
 #include "lyra/llvm_backend/instruction_compute_builtin.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -21,7 +20,9 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -34,13 +35,13 @@ namespace {
 
 auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
     -> Result<void> {
-  const auto& arena = context.GetMirArena();
-  const auto& place = arena[receiver];
-  if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
-    return {};
+  // Use canonical signal_id (after alias resolution)
+  auto signal_id_opt = context.GetCanonicalRootSignalId(receiver);
+  if (!signal_id_opt.has_value()) {
+    return {};  // Non-design slot, no notification needed
   }
+
   auto& builder = context.GetBuilder();
-  auto signal_id = static_cast<uint32_t>(place.root.id);
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
@@ -52,7 +53,7 @@ auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
   builder.CreateCall(
       context.GetLyraStoreDynArray(),
       {context.GetEnginePointer(), recv_ptr, handle,
-       llvm::ConstantInt::get(i32_ty, signal_id)});
+       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
   return {};
 }
 
@@ -136,8 +137,9 @@ auto LowerDynArrayBuiltin(
       if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
-      auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.new.old");
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+      const auto& arena = context.GetMirArena();
+      TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
+      Destroy(context, target_ptr, target_type_id);
       builder.CreateStore(handle, target_ptr);
       return {};
     }
@@ -177,16 +179,15 @@ auto LowerDynArrayBuiltin(
       // Delete: clear contents, handle stays valid
       builder.CreateCall(context.GetLyraDynArrayDelete(), {handle});
 
-      // If receiver is a design slot, notify the engine
-      const auto& arena = context.GetMirArena();
-      const auto& recv_place = arena[*info.receiver];
-      if (recv_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        auto signal_id = static_cast<uint32_t>(recv_place.root.id);
+      // If receiver is a design slot (after alias resolution), notify the
+      // engine
+      auto signal_id_opt = context.GetCanonicalRootSignalId(*info.receiver);
+      if (signal_id_opt.has_value()) {
         auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
         builder.CreateCall(
             context.GetLyraStoreDynArray(),
             {context.GetEnginePointer(), recv_ptr, handle,
-             llvm::ConstantInt::get(i32_ty, signal_id)});
+             llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
       }
       return {};
     }
@@ -236,8 +237,16 @@ auto LowerQueueBuiltin(
       if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
       llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.del.h");
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {handle});
+      // Get receiver TypeId for typed teardown
+      const auto& arena = context.GetMirArena();
+      const auto& recv_place = arena[*info.receiver];
+      TypeId recv_type_id =
+          mir::TypeOfPlace(context.GetTypeArena(), recv_place);
+
+      // Typed teardown via lifecycle (loads handle, calls release)
+      Destroy(context, recv_ptr, recv_type_id);
+
+      // Store null handle
       builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
       return NotifyIfDesignSlot(context, *info.receiver);
     }
@@ -408,7 +417,10 @@ namespace {
 auto LowerEnumNextPrev(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-  assert(info.enum_type.has_value());
+  if (!info.enum_type.has_value()) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "enum_type must be set for enum builtin");
+  }
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -416,10 +428,16 @@ auto LowerEnumNextPrev(
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  assert(member_count > 0);
+  if (member_count == 0) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "enum must have at least one member");
+  }
 
   uint32_t bit_width = PackedBitWidth(enum_type, types);
-  assert(!IsPackedFourState(enum_type, types));
+  if (IsPackedFourState(enum_type, types)) {
+    throw common::InternalError(
+        "LowerEnumNextPrev", "4-state enums not supported");
+  }
 
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
@@ -513,7 +531,10 @@ auto LowerEnumNextPrev(
 auto LowerEnumName(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-  assert(info.enum_type.has_value());
+  if (!info.enum_type.has_value()) {
+    throw common::InternalError(
+        "LowerEnumName", "enum_type must be set for enum builtin");
+  }
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -521,7 +542,9 @@ auto LowerEnumName(
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  assert(!IsPackedFourState(enum_type, types));
+  if (IsPackedFourState(enum_type, types)) {
+    throw common::InternalError("LowerEnumName", "4-state enums not supported");
+  }
 
   // enum_name target is string (ptr), but we need the enum's integral type
   // for comparisons. Round up to power-of-2 storage size.
@@ -625,8 +648,9 @@ auto LowerEnumName(
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
-  auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "enum.name.old");
-  builder.CreateCall(context.GetLyraStringRelease(), {old_handle});
+  const auto& arena = context.GetMirArena();
+  TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
+  Destroy(context, target_ptr, target_type_id);
   builder.CreateStore(phi, target_ptr);
   return {};
 }

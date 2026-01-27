@@ -2,7 +2,6 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/Support/Casting.h>
 
@@ -37,25 +36,12 @@ auto AssignField(
   if (field_type.Kind() == TypeKind::kString) {
     auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
 
-    // 1. Load source string handle
+    // Load source string handle and store with ownership policy.
+    // Source null-out (for move) is handled at struct level, not here.
     llvm::Value* new_val =
         builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-
-    // 2. Apply ownership policy
-    if (policy == OwnershipPolicy::kClone) {
-      new_val = builder.CreateCall(context.GetLyraStringRetain(), {new_val});
-    } else {
-      // Move: null out source field to transfer ownership
-      auto* null_val =
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-      builder.CreateStore(null_val, source_field_ptr);
-    }
-
-    // 3. Destroy old target value
-    Destroy(context, target_field_ptr, field_type_id);
-
-    // 4. Store new value
-    builder.CreateStore(new_val, target_field_ptr);
+    StoreStringFieldRaw(
+        context, target_field_ptr, new_val, policy, field_type_id);
     return {};
   }
 
@@ -66,18 +52,18 @@ auto AssignField(
           context, source_field_ptr, target_field_ptr, field_type_id, policy);
       if (!result) return result;
     } else {
-      // No managed fields: aggregate load/store
+      // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      builder.CreateStore(val, target_field_ptr);
+      StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
     }
     return {};
   }
 
-  // Other fields: simple load/store (no ownership semantics)
+  // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  builder.CreateStore(val, target_field_ptr);
+  StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
   return {};
 }
 
@@ -121,16 +107,7 @@ auto AssignStructFieldByField(
 auto AssignStruct(
     Context& context, mir::PlaceId target, const mir::Operand& source,
     OwnershipPolicy policy, TypeId struct_type_id) -> Result<void> {
-  auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
-
-  auto target_ptr_result = context.GetPlacePointer(target);
-  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-  llvm::Value* target_ptr = *target_ptr_result;
-
-  auto storage_type_result = context.GetPlaceLlvmType(target);
-  if (!storage_type_result) return std::unexpected(storage_type_result.error());
-  llvm::Type* storage_type = *storage_type_result;
 
   // Container handles (dynarray/queue) require deep copy not yet implemented
   if (TypeContainsManaged(struct_type_id, types) &&
@@ -143,10 +120,15 @@ auto AssignStruct(
         UnsupportedCategory::kFeature));
   }
 
+  // Get WriteTarget for unified pointer + signal_id
+  auto wt_or_err = context.GetWriteTarget(target);
+  if (!wt_or_err) return std::unexpected(wt_or_err.error());
+  const WriteTarget& wt = *wt_or_err;
+
   // Structs with string fields require field-by-field assignment
   if (NeedsFieldByField(struct_type_id, types)) {
     // Design slots with string-containing structs not yet supported
-    if (IsDesignPlace(context, target)) {
+    if (wt.canonical_signal_id.has_value()) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
           "unpacked struct assignment to design slot with string fields "
@@ -165,19 +147,22 @@ auto AssignStruct(
     if (!source_ptr_result) return std::unexpected(source_ptr_result.error());
     llvm::Value* source_ptr = *source_ptr_result;
 
-    return AssignStructFieldByField(
-        context, source_ptr, target_ptr, struct_type_id, policy);
+    auto result = AssignStructFieldByField(
+        context, source_ptr, wt.ptr, struct_type_id, policy);
+    if (!result) return result;
+
+    // After move: null out source managed fields to prevent double-release.
+    // NullOutSourceIfMoveTemp handles gating (only kMove from temps).
+    NullOutSourceIfMoveTemp(context, source, policy, struct_type_id);
+
+    return {};
   }
 
   // No managed fields: fast aggregate load/store
   auto val_result = LowerOperandRaw(context, source);
   if (!val_result) return std::unexpected(val_result.error());
   llvm::Value* val = *val_result;
-  if (IsDesignPlace(context, target)) {
-    StoreDesignWithNotify(context, val, target_ptr, storage_type, target);
-  } else {
-    builder.CreateStore(val, target_ptr);
-  }
+  StoreToWriteTarget(context, val, wt);
   return {};
 }
 
