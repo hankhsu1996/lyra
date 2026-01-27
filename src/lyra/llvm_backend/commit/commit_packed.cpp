@@ -8,8 +8,9 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/llvm_backend/union_storage.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -87,7 +88,7 @@ void StorePackedToWriteTarget(
 
 void CommitPackedValueRaw(
     Context& ctx, mir::PlaceId target, llvm::Value* value) {
-  auto wt_or_err = ctx.GetWriteTarget(target);
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
     throw common::InternalError(
         "CommitPackedValueRaw", "failed to resolve WriteTarget for target");

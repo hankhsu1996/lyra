@@ -3,6 +3,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
@@ -27,7 +28,7 @@ auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
   // Resolve WriteTarget internally - callers pass PlaceId, not WriteTarget
-  auto wt_or_err = ctx.GetWriteTarget(target);
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) return std::unexpected(wt_or_err.error());
   const WriteTarget& wt = *wt_or_err;
 

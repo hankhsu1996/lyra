@@ -5,13 +5,14 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 void CommitNotifyUnionMemcpyIfDesignSlot(
     Context& ctx, mir::PlaceId target, uint32_t byte_size) {
-  auto wt_or_err = ctx.GetWriteTarget(target);
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
     throw common::InternalError(
         "CommitNotifyUnionMemcpyIfDesignSlot",
@@ -35,7 +36,7 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
 }
 
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
-  auto signal_id_opt = ctx.GetCanonicalRootSignalId(target);
+  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
 
   // Conditional: no-op if not design slot
   if (!signal_id_opt.has_value()) {
@@ -62,7 +63,7 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
 }
 
 auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t {
-  auto signal_id_opt = ctx.GetCanonicalRootSignalId(target);
+  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     throw common::InternalError(
         "GetSignalIdForNba", "NBA target must resolve to a design slot");

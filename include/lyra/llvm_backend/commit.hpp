@@ -7,7 +7,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/mir/place.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -52,6 +52,14 @@ auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t;
 // lifecycle::MoveCleanup.
 void CommitMoveCleanupIfTemp(
     Context& ctx, mir::PlaceId source, OwnershipPolicy policy, TypeId type_id);
+
+// Struct field-by-field assignment for structs containing string fields.
+// Handles design-slot detection internally, returning error if design slot
+// with string-containing struct (not yet supported).
+// Caller ensures NeedsFieldByField(struct_type_id, types) is true.
+auto CommitStructFieldByField(
+    Context& ctx, mir::PlaceId target, mir::PlaceId source,
+    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
 
 namespace detail {
 

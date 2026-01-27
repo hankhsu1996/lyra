@@ -1,0 +1,19 @@
+name: LLVM Backend Boundaries
+
+on:
+  pull_request:
+    paths:
+      - 'src/lyra/llvm_backend/**'
+      - 'include/lyra/llvm_backend/**'
+      - 'tools/policy/check_llvm_backend_boundaries.py'
+
+jobs:
+  check:
+    name: Check LLVM backend boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check LLVM backend boundaries
+        run: python3 tools/policy/check_llvm_backend_boundaries.py

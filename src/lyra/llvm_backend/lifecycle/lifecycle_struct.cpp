@@ -6,7 +6,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/llvm_backend/union_storage.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 

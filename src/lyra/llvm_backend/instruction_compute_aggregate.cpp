@@ -19,7 +19,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/operand.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/llvm_backend/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/instruction.hpp"

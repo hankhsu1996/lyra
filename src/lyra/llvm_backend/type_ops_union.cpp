@@ -5,7 +5,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/llvm_backend/union_storage.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
