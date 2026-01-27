@@ -68,4 +68,27 @@ auto NormalizeUnpackedIndex(
     mir::Operand index_operand, TypeId index_type, const Type& base_type,
     MirBuilder& builder) -> mir::Operand;
 
+struct Context;
+
+// Lower an HIR lvalue expression as a pure place (no instruction emission).
+// This function has no ability to emit instructions - purity is by
+// construction.
+//
+// Supports:
+// - Name references and hierarchical references
+// - Static member access (unpacked struct fields)
+// - Union member access
+// - Packed field access with constant offsets
+// - Element access with CONSTANT indices only
+//
+// Rejects (returns diagnostic at point of detection):
+// - Dynamic array indices (non-constant)
+// - Packed element select with dynamic index
+// - Indexed part-select with dynamic index
+// - Any expression requiring runtime computation
+//
+// Used for port connection targets where only design-level storage is valid.
+auto LowerPureLvaluePlace(hir::ExpressionId expr_id, const Context& ctx)
+    -> Result<mir::PlaceId>;
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -627,7 +627,14 @@ auto BuildLayout(
   }
   layout.num_init_processes = layout.process_ids.size();
 
-  // Phase 2: Collect module processes (run through scheduler)
+  // Phase 2: Collect connection processes (scheduled, always_comb semantics)
+  // These implement port drive bindings (kDriveParentToChild,
+  // kDriveChildToParent)
+  for (mir::ProcessId proc_id : design.connection_processes) {
+    layout.process_ids.push_back(proc_id);
+  }
+
+  // Phase 3: Collect module processes (run through scheduler)
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
       continue;

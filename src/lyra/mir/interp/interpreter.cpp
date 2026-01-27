@@ -270,6 +270,14 @@ auto CreateDesignState(
       }
     }
   }
+  for (ProcessId process_id : design.connection_processes) {
+    const auto& process = arena[process_id];
+    for (const BasicBlock& block : process.blocks) {
+      for (const auto& inst : block.instructions) {
+        collector.Visit(inst, arena);
+      }
+    }
+  }
 
   // Initialize design storage with default values based on types
   std::vector<RuntimeValue> storage;
@@ -347,9 +355,13 @@ auto RunSimulation(
     }
   }
 
-  // Create process states
+  // Create process states for initial and connection processes
   std::unordered_map<uint32_t, ProcessState> process_states;
   for (ProcessId proc_id : module_info->initial_processes) {
+    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    process_states.emplace(proc_id.value, std::move(state));
+  }
+  for (ProcessId proc_id : design.connection_processes) {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
     process_states.emplace(proc_id.value, std::move(state));
   }
@@ -419,6 +431,12 @@ auto RunSimulation(
 
   // Schedule initial processes
   for (ProcessId proc_id : module_info->initial_processes) {
+    engine.ScheduleInitial(
+        runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+  }
+
+  // Schedule connection processes (always_comb semantics - run once at time 0)
+  for (ProcessId proc_id : design.connection_processes) {
     engine.ScheduleInitial(
         runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
   }

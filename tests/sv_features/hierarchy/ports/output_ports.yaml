@@ -1,9 +1,9 @@
 feature: hierarchy_output_ports
 description: Tests output port binding from child to parent
 
-# Output/inout ports use storage aliasing - the child port aliases
-# the parent's variable. This means reads/writes to the child port
-# directly access the parent's storage.
+# Output variable ports: child owns its own storage, a connection process
+# propagates values to the parent. Child reads from its own storage.
+# Output/inout net ports: true aliasing (not yet implemented).
 
 cases:
   - name: output_port_updates_parent
@@ -90,3 +90,24 @@ cases:
       endmodule
     expect:
       stdout: "out=42\n"
+
+  - name: child_reads_own_output_variable
+    description: Child reads its own output port (must see child storage, not parent)
+    sv: |
+      module Child(output int result);
+        initial begin
+          result = 42;
+          $display("child=%0d", result);
+        end
+      endmodule
+
+      module Top;
+        int out = 0;
+        Child c(.result(out));
+        initial #1;
+      endmodule
+    expect:
+      stdout: "child=42\n"
+      variables:
+        out: 42
+      time: 1

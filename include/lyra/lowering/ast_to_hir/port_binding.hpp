@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 
@@ -33,30 +34,37 @@ struct InputPortBinding {
 using TransientPortBindingPlan = std::unordered_map<
     const slang::ast::InstanceSymbol*, std::vector<InputPortBinding>>;
 
-// Input port: parent rvalue expression drives child port variable.
-// These are applied at HIR->MIR as synthetic always_comb processes.
-struct DriveBinding {
-  SymbolId child_port_sym;   // Child's port backing variable
-  hir::ExpressionId rvalue;  // Parent's rvalue expression
-  SourceSpan span;
-  SymbolId
-      parent_instance_sym;  // Parent module's instance symbol (stable identity)
-};
+// Unified port binding with explicit rvalue/lvalue fields.
+// The kind determines port connection semantics:
+// - kDriveParentToChild: input ports, parent expr → child port
+// - kDriveChildToParent: output variable ports, child port → parent place
+// - kAlias: output/inout net ports, true identity (child aliases parent)
+struct PortBinding {
+  enum class Kind : int32_t {
+    kDriveParentToChild,  // input: parent expr → child port
+    kDriveChildToParent,  // output variable: child port → parent place
+    kAlias,               // output/inout net: true identity
+  };
 
-// Output/inout port: child port aliases parent's lvalue place.
-// These are applied at HIR->MIR as alias_map entries.
-struct AliasBinding {
-  SymbolId child_port_sym;   // Child's port backing variable
-  hir::ExpressionId lvalue;  // Parent's lvalue expression (must be a place)
+  Kind kind = Kind::kDriveParentToChild;
+
+  SymbolId child_port_sym;       // Child's port backing variable
+  SymbolId parent_instance_sym;  // Parent module's instance symbol
   SourceSpan span;
+
+  // Structurally explicit: different fields for different semantics.
+  // INVARIANT: exactly one is valid based on kind:
+  // - kDriveParentToChild: parent_rvalue is valid
+  // - kDriveChildToParent, kAlias: parent_lvalue is valid
+  hir::ExpressionId parent_rvalue;  // Valid for kDriveParentToChild only
+  hir::ExpressionId parent_lvalue;  // Valid for kDriveChildToParent, kAlias
 };
 
 // Design-level binding plan (persists beyond AST->HIR).
 // Expressions stored here reference only design symbols (no module locals)
 // and live in the shared HIR arena.
 struct DesignBindingPlan {
-  std::vector<DriveBinding> drives;
-  std::vector<AliasBinding> aliases;
+  std::vector<PortBinding> bindings;
 };
 
 }  // namespace lyra::lowering::ast_to_hir
