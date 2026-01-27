@@ -1,0 +1,77 @@
+feature: case_inside
+description: Tests for case inside statement (not yet supported)
+
+cases:
+  - name: case_inside_basic
+    description: Basic case inside with matching value
+    sv: |
+      module Test;
+        int val = 2;
+        int result;
+        initial begin
+          case (val) inside
+            1: result = 10;
+            2: result = 20;
+            3: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: case_inside_range
+    description: case inside with range
+    sv: |
+      module Test;
+        int val = 5;
+        int result;
+        initial begin
+          case (val) inside
+            [1:3]: result = 10;
+            [4:6]: result = 20;
+            [7:9]: result = 30;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: case_inside_mixed
+    description: case inside with values and ranges
+    sv: |
+      module Test;
+        int val = 7;
+        int result;
+        initial begin
+          case (val) inside
+            1, 2, 3: result = 10;
+            [4:6]: result = 20;
+            7: result = 30;
+            default: result = 0;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: case_inside_wildcard
+    description: case inside with wildcard pattern
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1010;
+        int result;
+        initial begin
+          case (val) inside
+            4'b00??: result = 1;
+            4'b10??: result = 2;
+            4'b11??: result = 3;
+            default: result = 0;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2

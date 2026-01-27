@@ -1,0 +1,81 @@
+feature: net_backed_ports
+description: Tests for net-backed ports (not yet supported - Lyra uses variable-only model)
+
+cases:
+  - name: input_wire_basic
+    description: Input port declared as wire
+    sv: |
+      module Child(input wire en);
+        int result;
+        initial begin
+          result = en;
+        end
+      endmodule
+
+      module Test;
+        logic en = 1;
+        Child c(.en(en));
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        c.result: 1
+
+  - name: input_wire_logic
+    description: Input port declared as wire logic
+    sv: |
+      module Child(input wire logic [7:0] data);
+        int result;
+        initial begin
+          result = data;
+        end
+      endmodule
+
+      module Test;
+        logic [7:0] data = 8'd42;
+        Child c(.data(data));
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        c.result: 42
+
+  - name: output_wire_basic
+    description: Output port declared as wire
+    sv: |
+      module Child(output wire result);
+        assign result = 1;
+      endmodule
+
+      module Test;
+        wire out;
+        Child c(.result(out));
+        int captured;
+        initial begin
+          #1;
+          captured = out;
+        end
+      endmodule
+    expect:
+      variables:
+        captured: 1
+
+  - name: inout_wire_basic
+    description: Inout port (requires wire)
+    sv: |
+      module Child(inout wire data);
+        assign data = 1'b1;
+      endmodule
+
+      module Test;
+        wire data;
+        Child c(.data(data));
+        int result;
+        initial begin
+          #1;
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
