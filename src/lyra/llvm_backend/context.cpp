@@ -902,8 +902,9 @@ auto Context::GetLyraMonitorRegister() -> llvm::Function* {
 auto Context::GetLyraReadmem() -> llvm::Function* {
   if (lyra_readmem_ == nullptr) {
     // void LyraReadmem(ptr filename, ptr target, i32 elem_width,
-    //                  i32 stride_bytes, i32 elem_count, i64 min_addr,
-    //                  i64 current_addr, i64 final_addr, i64 step, i1 is_hex)
+    //                  i32 stride_bytes, i32 value_size_bytes, i32 elem_count,
+    //                  i64 min_addr, i64 current_addr, i64 final_addr,
+    //                  i64 step, i1 is_hex, i32 element_kind)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
@@ -911,8 +912,8 @@ auto Context::GetLyraReadmem() -> llvm::Function* {
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i64_ty,
-         i1_ty},
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
+         i64_ty, i1_ty, i32_ty},
         false);
     lyra_readmem_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraReadmem",
@@ -924,8 +925,9 @@ auto Context::GetLyraReadmem() -> llvm::Function* {
 auto Context::GetLyraWritemem() -> llvm::Function* {
   if (lyra_writemem_ == nullptr) {
     // void LyraWritemem(ptr filename, ptr source, i32 elem_width,
-    //                   i32 stride_bytes, i32 elem_count, i64 min_addr,
-    //                   i64 current_addr, i64 final_addr, i64 step, i1 is_hex)
+    //                   i32 stride_bytes, i32 value_size_bytes, i32 elem_count,
+    //                   i64 min_addr, i64 current_addr, i64 final_addr,
+    //                   i64 step, i1 is_hex, i32 element_kind)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
@@ -933,8 +935,8 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i64_ty,
-         i1_ty},
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
+         i64_ty, i1_ty, i32_ty},
         false);
     lyra_writemem_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraWritemem",

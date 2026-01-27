@@ -745,39 +745,38 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   TypeId elem_type_id = arr_info.element_type;
   const Type& elem_type = types[elem_type_id];
 
-  // MVP restriction: 2-state packed integrals only
+  // Restriction: packed integrals only
   if (!IsPacked(elem_type)) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$readmem/$writemem: only packed integral elements supported",
         UnsupportedCategory::kType));
   }
-  if (IsPackedFourState(elem_type, types)) {
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(),
-        "$readmem/$writemem: 4-state elements not yet supported (use bit/int)",
-        UnsupportedCategory::kType));
-  }
+
+  // Determine if 4-state
+  bool is_four_state = IsPackedFourState(elem_type, types);
 
   // Extract type info
   auto element_width = static_cast<int32_t>(PackedBitWidth(elem_type, types));
   auto element_count = static_cast<int32_t>(arr_info.range.Size());
   auto min_addr = static_cast<int64_t>(arr_info.range.Lower());
 
-  // Compute stride_bytes from storage type (power-of-2 rounded)
-  // This matches GetIntegralStorageType logic - authoritative source for ABI
-  int32_t stride_bytes = 0;
-  if (element_width <= 8) {
-    stride_bytes = 1;
-  } else if (element_width <= 16) {
-    stride_bytes = 2;
-  } else if (element_width <= 32) {
-    stride_bytes = 4;
-  } else if (element_width <= 64) {
-    stride_bytes = 8;
-  } else {
-    stride_bytes = (element_width + 7) / 8;
+  // Compute stride_bytes and value_size_bytes from DataLayout (authoritative)
+  auto elem_ops_result = context.GetElemOpsForType(elem_type_id);
+  if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
+  llvm::Type* elem_llvm_type = elem_ops_result->elem_llvm_type;
+  int32_t stride_bytes = elem_ops_result->elem_size;
+
+  int32_t value_size_bytes = stride_bytes;
+  if (is_four_state) {
+    // For 4-state struct {value, x_mask}, value_size is half the stride
+    auto* struct_ty = llvm::cast<llvm::StructType>(elem_llvm_type);
+    const auto& dl = context.GetModule().getDataLayout();
+    value_size_bytes =
+        static_cast<int32_t>(dl.getTypeAllocSize(struct_ty->getElementType(0)));
   }
+
+  int32_t element_kind = is_four_state ? 1 : 0;
 
   // Get target pointer
   auto target_ptr_result = context.GetPlacePointer(mem_io.target);
@@ -829,12 +828,14 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
       target_ptr,
       llvm::ConstantInt::get(i32_ty, element_width),
       llvm::ConstantInt::get(i32_ty, stride_bytes),
+      llvm::ConstantInt::get(i32_ty, value_size_bytes),
       llvm::ConstantInt::get(i32_ty, element_count),
       llvm::ConstantInt::get(i64_ty, min_addr),
       current_addr,
       final_addr,
       llvm::ConstantInt::get(i64_ty, step),
       llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
+      llvm::ConstantInt::get(i32_ty, element_kind),
   };
 
   if (mem_io.is_read) {
