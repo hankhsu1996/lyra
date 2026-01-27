@@ -23,6 +23,7 @@ suites:
       - control_flow/case\.yaml
       - control_flow/case_inside\.yaml
       - hierarchy/ports/net_ports\.yaml
+      - hierarchy/refs/upward_refs\.yaml
       - operators/inside\.yaml
       - operators/replication_patterns\.yaml
 
@@ -41,5 +42,6 @@ suites:
     exclude_regex:
       - control_flow/case\.yaml
       - control_flow/case_inside\.yaml
+      - hierarchy/refs/upward_refs\.yaml
       - operators/inside\.yaml
       - operators/replication_patterns\.yaml

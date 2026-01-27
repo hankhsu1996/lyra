@@ -1,0 +1,85 @@
+feature: upward_hierarchical_refs
+description: Tests for upward hierarchical references (not yet supported)
+
+cases:
+  - name: child_reads_parent_var
+    description: Child module reads parent variable via hierarchical path
+    sv: |
+      module Child;
+        int result;
+        initial begin
+          result = Test.parent_val;
+        end
+      endmodule
+
+      module Test;
+        int parent_val = 42;
+        Child c();
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        c.result: 42
+
+  - name: child_writes_parent_var
+    description: Child module writes to parent variable
+    sv: |
+      module Child;
+        initial begin
+          Test.parent_val = 99;
+        end
+      endmodule
+
+      module Test;
+        int parent_val = 0;
+        Child c();
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        parent_val: 99
+
+  - name: child_accesses_sibling
+    description: Child module accesses sibling instance via parent path
+    sv: |
+      module Child;
+        int value;
+        int result;
+      endmodule
+
+      module Test;
+        Child a();
+        Child b();
+        initial begin
+          a.value = 10;
+          // b reads from a via upward then downward path
+          b.result = Test.a.value;
+          #1;
+        end
+      endmodule
+    expect:
+      variables:
+        b.result: 10
+
+  - name: nested_upward_ref
+    description: Deeply nested module accesses top-level variable
+    sv: |
+      module Inner;
+        int result;
+        initial begin
+          result = Test.top_val;
+        end
+      endmodule
+
+      module Middle;
+        Inner i();
+      endmodule
+
+      module Test;
+        int top_val = 123;
+        Middle m();
+        initial #1;
+      endmodule
+    expect:
+      variables:
+        m.i.result: 123

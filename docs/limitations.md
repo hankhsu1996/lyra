@@ -92,6 +92,10 @@ Supported:
 - Nested generate blocks (arbitrary nesting depth)
 - Hierarchical references through generate blocks (e.g., `outer[0].inner[1].signal`)
 
+Not yet supported:
+
+- Upward hierarchical references (child accessing parent/sibling via `Parent.var`)
+
 ## Subroutines (Tasks and Functions)
 
 Supported:
