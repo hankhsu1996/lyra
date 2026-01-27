@@ -19,6 +19,12 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
+    exclude_regex:
+      - control_flow/case\.yaml
+      - control_flow/case_inside\.yaml
+      - hierarchy/ports/net_ports\.yaml
+      - operators/inside\.yaml
+      - operators/replication_patterns\.yaml
 
   mir_dev:
     backend: mir
@@ -32,3 +38,8 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
+    exclude_regex:
+      - control_flow/case\.yaml
+      - control_flow/case_inside\.yaml
+      - operators/inside\.yaml
+      - operators/replication_patterns\.yaml

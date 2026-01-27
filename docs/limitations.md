@@ -31,7 +31,7 @@ Lyra uses a variable-only model (no `wire`/`net` types):
 
 - No net types (`wire`, `tri`, etc.)
 - No multi-driver resolution / strength
-- `inout` ports not supported (require nets)
+- Net-backed ports not supported (`input wire`, `output wire`, `inout`)
 
 ## Continuous Assignments
 
@@ -121,6 +121,7 @@ Not yet supported:
 ## Statements
 
 - `case inside` - pattern matching
+- Empty case item bodies (`case(x) 1:; endcase` - use `begin end` as workaround)
 - `foreach` - unpacked arrays, dynamic arrays, queues (multi-dimensional and skipped dimensions supported)
 - `wait(expr)` - wait statements
 - `->` - event triggers
@@ -131,6 +132,7 @@ Not yet supported:
 
 - Struct member access (`.field`)
 - `inside` operator
+- Replication assignment patterns (`'{n{val}}`)
 
 ## Operators
 

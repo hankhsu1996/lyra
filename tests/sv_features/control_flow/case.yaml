@@ -460,3 +460,64 @@ cases:
     expect:
       variables:
         result: 1
+
+  # Empty case body tests (not yet supported)
+  - name: case_empty_body_semicolon
+    description: Case item with empty body (semicolon only)
+    sv: |
+      module Test;
+        int val = 2;
+        int result;
+        initial begin
+          result = 0;
+          case (val)
+            1: result = 10;
+            2: ;
+            3: result = 30;
+          endcase
+          result = result + 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_empty_body_multiple
+    description: Multiple case items with empty bodies
+    sv: |
+      module Test;
+        int val = 3;
+        int result;
+        initial begin
+          result = 0;
+          case (val)
+            1: ;
+            2: ;
+            3: result = 30;
+            4: ;
+          endcase
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: casez_empty_body
+    description: casez with empty body item
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b0010;
+        int result;
+        initial begin
+          result = 0;
+          casez (val)
+            4'b0001: result = 1;
+            4'b0010: ;
+            4'b0100: result = 4;
+          endcase
+          result = result + 100;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100

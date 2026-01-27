@@ -1,0 +1,49 @@
+feature: replication_assignment_patterns
+description: Tests for replication assignment patterns (not yet supported)
+
+cases:
+  - name: array_replication_basic
+    description: Basic array replication pattern
+    sv: |
+      module Test;
+        logic [7:0] arr [4];
+        initial begin
+          arr = '{4{8'd5}};
+        end
+      endmodule
+    expect:
+      variables:
+        arr[0]: 5
+        arr[1]: 5
+        arr[2]: 5
+        arr[3]: 5
+
+  - name: array_replication_zero
+    description: Array replication with zero value
+    sv: |
+      module Test;
+        int arr [3];
+        initial begin
+          arr = '{3{0}};
+        end
+      endmodule
+    expect:
+      variables:
+        arr[0]: 0
+        arr[1]: 0
+        arr[2]: 0
+
+  - name: array_replication_expression
+    description: Array replication with expression
+    sv: |
+      module Test;
+        int base = 10;
+        int arr [2];
+        initial begin
+          arr = '{2{base + 5}};
+        end
+      endmodule
+    expect:
+      variables:
+        arr[0]: 15
+        arr[1]: 15

@@ -1,0 +1,54 @@
+feature: inside_operator
+description: Tests for inside set membership operator (not yet supported)
+
+cases:
+  - name: inside_basic_match
+    description: Basic inside operator with matching value
+    sv: |
+      module Test;
+        int val = 2;
+        int result;
+        initial begin
+          if (val inside {1, 2, 3})
+            result = 1;
+          else
+            result = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_no_match
+    description: inside operator with non-matching value
+    sv: |
+      module Test;
+        int val = 5;
+        int result;
+        initial begin
+          if (val inside {1, 2, 3})
+            result = 1;
+          else
+            result = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: inside_with_range
+    description: inside operator with range specification
+    sv: |
+      module Test;
+        int val = 5;
+        int result;
+        initial begin
+          if (val inside {[1:10]})
+            result = 1;
+          else
+            result = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
