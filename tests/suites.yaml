@@ -19,9 +19,6 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
-    exclude_regex:
-      # system_tf/effect - various unsupported features
-      - system_tf/effect/readmem.yaml
 
   mir_dev:
     backend: mir
