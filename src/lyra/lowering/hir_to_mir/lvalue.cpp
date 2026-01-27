@@ -573,4 +573,192 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
       expr.data);
 }
 
+namespace {
+
+// Pure lvalue lowering helper - recursively builds a Place without emission.
+// Returns diagnostic at the point of detection when purity is violated.
+auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
+    -> Result<mir::PlaceId> {
+  const hir::Expression& expr = (*ctx.hir_arena)[expr_id];
+
+  return std::visit(
+      [&](const auto& data) -> Result<mir::PlaceId> {
+        using T = std::decay_t<decltype(data)>;
+
+        if constexpr (std::is_same_v<T, hir::NameRefExpressionData>) {
+          // Pure: simple symbol lookup
+          return ctx.LookupPlace(data.symbol);
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::HierarchicalRefExpressionData>) {
+          // Pure: hierarchical symbol lookup
+          return ctx.LookupPlace(data.target);
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::MemberAccessExpressionData>) {
+          // Pure: struct field access (constant field index)
+          auto base_result = LowerPureLvaluePlaceImpl(data.base, ctx);
+          if (!base_result) return base_result;
+
+          mir::Projection proj{
+              .info = mir::FieldProjection{.field_index = data.field_index},
+              .origin = common::OriginId::Invalid(),
+          };
+          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::UnionMemberAccessExpressionData>) {
+          // Pure: union member access (constant member index)
+          auto base_result = LowerPureLvaluePlaceImpl(data.base, ctx);
+          if (!base_result) return base_result;
+
+          mir::Projection proj{
+              .info =
+                  mir::UnionMemberProjection{
+                      .member_index = static_cast<uint32_t>(data.member_index)},
+              .origin = common::OriginId::Invalid(),
+          };
+          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::PackedFieldAccessExpressionData>) {
+          // Pure: packed struct field access (constant bit offset)
+          auto base_result = LowerPureLvaluePlaceImpl(data.base, ctx);
+          if (!base_result) return base_result;
+
+          TypeId offset_type = ctx.GetOffsetType();
+          mir::Operand offset = mir::Operand::Const(
+              MakeIntegralConst(data.bit_offset, offset_type));
+
+          mir::Projection proj{
+              .info =
+                  mir::BitRangeProjection{
+                      .bit_offset = offset,
+                      .width = data.bit_width,
+                      .element_type = expr.type,
+                  },
+              .origin = common::OriginId::Invalid(),
+          };
+          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ElementAccessExpressionData>) {
+          // Element access - only pure if index is constant
+          const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+          if (index_expr.kind != hir::ExpressionKind::kConstant) {
+            return std::unexpected(
+                Diagnostic::Unsupported(
+                    index_expr.span,
+                    "port connection target requires constant array index",
+                    UnsupportedCategory::kFeature));
+          }
+
+          auto base_result = LowerPureLvaluePlaceImpl(data.base, ctx);
+          if (!base_result) return base_result;
+
+          // Get constant index value from constant arena
+          const auto& const_data =
+              std::get<hir::ConstantExpressionData>(index_expr.data);
+          const Constant& constant = (*ctx.constant_arena)[const_data.constant];
+          const auto* ic = std::get_if<IntegralConstant>(&constant.value);
+          if (ic == nullptr || ic->value.empty()) {
+            return std::unexpected(
+                Diagnostic::Unsupported(
+                    index_expr.span,
+                    "port connection target requires integral constant index",
+                    UnsupportedCategory::kFeature));
+          }
+
+          // Normalize index based on array range
+          const mir::Place& base_place = (*ctx.mir_arena)[*base_result];
+          TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
+          const Type& base_type = (*ctx.type_arena)[base_type_id];
+
+          int64_t raw_index = static_cast<int64_t>(ic->value[0]);
+          int64_t normalized = raw_index;  // Default for dynamic array/queue
+
+          if (base_type.Kind() == TypeKind::kUnpackedArray) {
+            const auto& range = base_type.AsUnpackedArray().range;
+            if (range.IsDescending()) {
+              normalized = range.Upper() - raw_index;
+            } else {
+              normalized = raw_index - range.Lower();
+            }
+          }
+
+          TypeId offset_type = ctx.GetOffsetType();
+          mir::Operand index_operand =
+              mir::Operand::Const(MakeIntegralConst(normalized, offset_type));
+
+          mir::Projection proj{
+              .info = mir::IndexProjection{.index = index_operand},
+              .origin = common::OriginId::Invalid(),
+          };
+          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::PackedElementSelectExpressionData>) {
+          // Packed element select with dynamic index - not pure
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "port connection target does not support packed element "
+                  "select "
+                  "(dynamic bit index)",
+                  UnsupportedCategory::kFeature));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::IndexedPartSelectExpressionData>) {
+          // Indexed part-select - not pure (requires runtime offset)
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "port connection target does not support indexed part-select",
+                  UnsupportedCategory::kFeature));
+
+        } else if constexpr (std::is_same_v<T, hir::BitSelectExpressionData>) {
+          // Bit select - only pure if index is constant
+          const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+          if (index_expr.kind != hir::ExpressionKind::kConstant) {
+            return std::unexpected(
+                Diagnostic::Unsupported(
+                    index_expr.span,
+                    "port connection target requires constant bit index",
+                    UnsupportedCategory::kFeature));
+          }
+          // Fall through to unsupported - bit select lowering is complex
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "port connection target does not support bit select",
+                  UnsupportedCategory::kFeature));
+
+        } else if constexpr (std::is_same_v<
+                                 T, hir::RangeSelectExpressionData>) {
+          // Range select with constant bounds could be supported, but for now
+          // reject
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "port connection target does not support range select",
+                  UnsupportedCategory::kFeature));
+
+        } else {
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "unsupported expression type for port connection target",
+                  UnsupportedCategory::kFeature));
+        }
+      },
+      expr.data);
+}
+
+}  // namespace
+
+auto LowerPureLvaluePlace(hir::ExpressionId expr_id, const Context& ctx)
+    -> Result<mir::PlaceId> {
+  return LowerPureLvaluePlaceImpl(expr_id, ctx);
+}
+
 }  // namespace lyra::lowering::hir_to_mir

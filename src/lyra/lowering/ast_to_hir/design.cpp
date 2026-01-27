@@ -67,8 +67,25 @@ void RegisterModuleDeclarations(
   }
 }
 
-// Port direction for pending bindings
-enum class PortDirection { kIn, kOut, kInOut };
+// Classify port binding kind based on port direction and net/variable type.
+// Returns nullopt for unsupported ref direction.
+auto ClassifyPortBinding(const slang::ast::PortSymbol& port)
+    -> std::optional<PortBinding::Kind> {
+  using Kind = PortBinding::Kind;
+
+  switch (port.direction) {
+    case slang::ast::ArgumentDirection::In:
+      return Kind::kDriveParentToChild;
+
+    case slang::ast::ArgumentDirection::Out:
+    case slang::ast::ArgumentDirection::InOut:
+      // Use slang's authoritative API for net vs variable classification
+      return port.isNetPort() ? Kind::kAlias : Kind::kDriveChildToParent;
+
+    default:
+      return std::nullopt;  // ref direction not supported
+  }
+}
 
 // Validate that an HIR expression only references design-level symbols.
 // Returns true if valid, false and emits diagnostic if invalid.
@@ -172,7 +189,7 @@ struct PendingPortBinding {
   const slang::ast::VariableSymbol* child_port_var;
   const slang::ast::Expression* value_expr;
   slang::SourceRange source_range;
-  PortDirection direction;
+  PortBinding::Kind kind;
 };
 
 // Collect port bindings for a parent->child instance edge.
@@ -189,22 +206,13 @@ void CollectPendingPortBindings(
     const auto& port = port_sym->as<slang::ast::PortSymbol>();
     slang::SourceRange port_range{port.location, port.location};
 
-    // Determine port direction
-    PortDirection dir = PortDirection::kIn;
-    switch (port.direction) {
-      case slang::ast::ArgumentDirection::In:
-        dir = PortDirection::kIn;
-        break;
-      case slang::ast::ArgumentDirection::Out:
-        dir = PortDirection::kOut;
-        break;
-      case slang::ast::ArgumentDirection::InOut:
-        dir = PortDirection::kInOut;
-        break;
-      default:
-        // ref direction not supported
-        continue;
+    // Classify port binding kind (single classification point)
+    auto kind_opt = ClassifyPortBinding(port);
+    if (!kind_opt) {
+      // ref direction not supported
+      continue;
     }
+    PortBinding::Kind kind = *kind_opt;
 
     if (port.internalSymbol == nullptr) {
       ctx->sink->Error(
@@ -242,7 +250,7 @@ void CollectPendingPortBindings(
     // - left is the parent's variable (the alias target)
     // - right is EmptyArgument
     // Unwrap this if present (compatibility with slang's representation).
-    if (dir != PortDirection::kIn &&
+    if (kind != PortBinding::Kind::kDriveParentToChild &&
         expr->kind == slang::ast::ExpressionKind::Assignment) {
       const auto& assign = expr->as<slang::ast::AssignmentExpression>();
       expr = &assign.left();
@@ -255,7 +263,7 @@ void CollectPendingPortBindings(
                 &port.internalSymbol->as<slang::ast::VariableSymbol>(),
             .value_expr = expr,
             .source_range = expr->sourceRange,
-            .direction = dir,
+            .kind = kind,
         });
   }
 }
@@ -280,6 +288,16 @@ auto LowerPortBindings(
       continue;
     }
 
+    // Look up the parent instance symbol (needed for all binding kinds)
+    SymbolId parent_instance_sym = registrar.Lookup(*pb.parent_instance);
+    if (!parent_instance_sym) {
+      ctx->sink->Error(
+          binding_span,
+          std::format(
+              "parent instance '{}' not registered", pb.parent_instance->name));
+      continue;
+    }
+
     // Lower the connection expression to HIR (design-level, no timescale)
     hir::ExpressionId expr_id =
         LowerDesignLevelExpression(*pb.value_expr, *ctx, registrar);
@@ -295,27 +313,22 @@ auto LowerPortBindings(
       continue;
     }
 
-    if (pb.direction == PortDirection::kIn) {
-      // Input port: create DriveBinding (rvalue drives child variable)
-      SymbolId parent_instance_sym = registrar.Lookup(*pb.parent_instance);
-      if (!parent_instance_sym) {
-        ctx->sink->Error(
-            binding_span, std::format(
-                              "parent instance '{}' not registered",
-                              pb.parent_instance->name));
-        continue;
-      }
+    // Create binding with explicit rvalue/lvalue fields based on kind
+    PortBinding binding{
+        .kind = pb.kind,
+        .child_port_sym = child_port_sym,
+        .parent_instance_sym = parent_instance_sym,
+        .span = binding_span,
+        .parent_rvalue = {},
+        .parent_lvalue = {},
+    };
 
-      plan.drives.push_back(
-          DriveBinding{
-              .child_port_sym = child_port_sym,
-              .rvalue = expr_id,
-              .span = binding_span,
-              .parent_instance_sym = parent_instance_sym,
-          });
+    if (pb.kind == PortBinding::Kind::kDriveParentToChild) {
+      // Input port: parent rvalue expression
+      binding.parent_rvalue = expr_id;
     } else {
-      // Output/inout port: create AliasBinding (child aliases parent's place)
-      // Validate that the expression is an lvalue (can be used as alias target)
+      // Output/inout port: parent lvalue expression
+      // Validate that the expression is an lvalue (can be used as target)
       const hir::Expression& hir_expr = (*ctx->hir_arena)[expr_id];
       if (!hir::IsPlaceExpressionKind(hir_expr.kind)) {
         ctx->sink->Error(
@@ -325,14 +338,10 @@ auto LowerPortBindings(
                 static_cast<int>(hir_expr.kind)));
         continue;
       }
-
-      plan.aliases.push_back(
-          AliasBinding{
-              .child_port_sym = child_port_sym,
-              .lvalue = expr_id,
-              .span = binding_span,
-          });
+      binding.parent_lvalue = expr_id;
     }
+
+    plan.bindings.push_back(std::move(binding));
   }
 
   return plan;
