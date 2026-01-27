@@ -20,20 +20,12 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-// WriteTarget bundles the information needed for a write operation.
-// All fields are derived from the same canonicalized (alias-resolved) place,
-// ensuring consistency between the pointer and the signal_id used for notify.
-//
-// Note: This struct is intentionally minimal. The byte_size for notification
-// is derived from the value being stored (value->getType()), not stored here.
-// This eliminates redundancy and the need for call-site mutation.
-struct WriteTarget {
-  llvm::Value* ptr = nullptr;  // Pointer to canonical storage
-  std::optional<uint32_t>
-      canonical_signal_id;  // Root slot ID, nullopt if not design
-};
-
 class Context;
+
+// Forward declaration for friend access
+namespace commit {
+class Access;
+}  // namespace commit
 
 // RAII guard: sets origin on construction, restores on destruction.
 // KEY INVARIANT: If origin is Invalid, do nothing (preserve outer origin).
@@ -71,8 +63,13 @@ class StatementScope {
   Context& ctx_;
 };
 
+// Forward declaration for WriteTarget (defined in commit/access.hpp)
+struct WriteTarget;
+
 // Shared context for MIR → LLVM lowering
 class Context {
+  friend class commit::Access;
+
  public:
   Context(
       const mir::Design& design, const mir::Arena& arena,
@@ -249,20 +246,6 @@ class Context {
   [[nodiscard]] auto GetPlacePointer(mir::PlaceId place_id)
       -> Result<llvm::Value*>;
 
-  // Get unified write target (pointer + signal_id + type) from a resolved
-  // place. All fields derived from the same alias-resolved place, ensuring
-  // consistency. Use StoreToWriteTarget() to perform the actual write.
-  [[nodiscard]] auto GetWriteTarget(mir::PlaceId place_id)
-      -> Result<WriteTarget>;
-
-  // Get the canonical root signal_id for NBA notification.
-  // Resolves aliases, then returns the resolved root's slot ID.
-  // Returns nullopt if the resolved root is not a design slot.
-  // Used for NBA with IndexProjection where write target differs from notify
-  // target.
-  [[nodiscard]] auto GetCanonicalRootSignalId(mir::PlaceId place_id)
-      -> std::optional<uint32_t>;
-
   // Get the LLVM type for a place's storage
   [[nodiscard]] auto GetPlaceLlvmType(mir::PlaceId place_id)
       -> Result<llvm::Type*>;
@@ -352,6 +335,19 @@ class Context {
       -> Result<llvm::FunctionType*>;
 
  private:
+  // Commit-module-only methods (accessed via friend class commit::Access)
+  // Get unified write target (pointer + signal_id) from a place.
+  // All fields derived from the same alias-resolved place, ensuring
+  // consistency.
+  [[nodiscard]] auto GetWriteTarget(mir::PlaceId place_id)
+      -> Result<WriteTarget>;
+
+  // Get the canonical root signal_id for notification.
+  // Resolves aliases, then returns the resolved root's slot ID.
+  // Returns nullopt if the resolved root is not a design slot.
+  [[nodiscard]] auto GetCanonicalRootSignalId(mir::PlaceId place_id)
+      -> std::optional<uint32_t>;
+
   // Internal helper: compute pointer from an already-resolved place.
   // The original_place_id is needed for frame field index lookup (for
   // local/temp).

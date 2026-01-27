@@ -1,10 +1,12 @@
 #include <expected>
+#include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -17,13 +19,12 @@ auto AssignString(
   llvm::Value* raw_value = *raw_or_err;
 
   // 2. Null-out source if move from temp (before store to avoid use-after-move)
-  NullOutSourceIfMoveTemp(context, source, policy, type_id);
+  if (const auto* src_place_id = std::get_if<mir::PlaceId>(&source.payload)) {
+    CommitMoveCleanupIfTemp(context, *src_place_id, policy, type_id);
+  }
 
-  // 3. Get WriteTarget and delegate to StoreRawToTarget
-  auto wt_or_err = context.GetWriteTarget(target);
-  if (!wt_or_err) return std::unexpected(wt_or_err.error());
-
-  return StoreRawToTarget(context, *wt_or_err, raw_value, type_id, policy);
+  // 3. Delegate to CommitValue (resolves WriteTarget internally)
+  return CommitValue(context, target, raw_value, type_id, policy);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

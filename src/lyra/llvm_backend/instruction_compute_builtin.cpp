@@ -18,9 +18,10 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/operand.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -32,30 +33,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-auto NotifyIfDesignSlot(Context& context, mir::PlaceId receiver)
-    -> Result<void> {
-  // Use canonical signal_id (after alias resolution)
-  auto signal_id_opt = context.GetCanonicalRootSignalId(receiver);
-  if (!signal_id_opt.has_value()) {
-    return {};  // Non-design slot, no notification needed
-  }
-
-  auto& builder = context.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-
-  auto recv_ptr_or_err = context.GetPlacePointer(receiver);
-  if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-  llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-  llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.notify.h");
-  builder.CreateCall(
-      context.GetLyraStoreDynArray(),
-      {context.GetEnginePointer(), recv_ptr, handle,
-       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
-  return {};
-}
 
 struct QueueTypeInfo {
   TypeId elem_type_id{};
@@ -179,16 +156,8 @@ auto LowerDynArrayBuiltin(
       // Delete: clear contents, handle stays valid
       builder.CreateCall(context.GetLyraDynArrayDelete(), {handle});
 
-      // If receiver is a design slot (after alias resolution), notify the
-      // engine
-      auto signal_id_opt = context.GetCanonicalRootSignalId(*info.receiver);
-      if (signal_id_opt.has_value()) {
-        auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-        builder.CreateCall(
-            context.GetLyraStoreDynArray(),
-            {context.GetEnginePointer(), recv_ptr, handle,
-             llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
-      }
+      // Notify if design slot (handle unchanged, content cleared)
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
       return {};
     }
 
@@ -248,7 +217,8 @@ auto LowerQueueBuiltin(
 
       // Store null handle
       builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueueDeleteAt: {
@@ -264,7 +234,8 @@ auto LowerQueueBuiltin(
 
       index = builder.CreateSExtOrTrunc(index, i64_ty, "q.delat.idx");
       builder.CreateCall(context.GetLyraQueueDeleteAt(), {handle, index});
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueuePushBack: {
@@ -292,7 +263,8 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueuePushFront: {
@@ -320,7 +292,8 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueuePopBack: {
@@ -344,7 +317,8 @@ auto LowerQueueBuiltin(
           llvm::Constant::getNullValue(target_type), target_ptr);
 
       builder.CreateCall(context.GetLyraQueuePopBack(), {handle, target_ptr});
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueuePopFront: {
@@ -367,7 +341,8 @@ auto LowerQueueBuiltin(
           llvm::Constant::getNullValue(target_type), target_ptr);
 
       builder.CreateCall(context.GetLyraQueuePopFront(), {handle, target_ptr});
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     case mir::BuiltinMethod::kQueueInsert: {
@@ -401,7 +376,8 @@ auto LowerQueueBuiltin(
            llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
            qi.elem_ops.destroy_fn});
 
-      return NotifyIfDesignSlot(context, *info.receiver);
+      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
+      return {};
     }
 
     default:

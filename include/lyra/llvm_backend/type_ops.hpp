@@ -1,15 +1,13 @@
 #pragma once
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
-
-// Ownership policy for assignment - determined once at entry, passed through
-enum class OwnershipPolicy { kMove, kClone };
 
 // Determine ownership from source operand (temp = move, persistent = clone)
 auto DetermineOwnership(Context& context, const mir::Operand& source)
