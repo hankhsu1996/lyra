@@ -229,6 +229,7 @@ auto LowerStrobeEffect(
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},  // Called via runtime ABI, not MIR call
           },
+      .thunk_kind = mir::ThunkKind::kStrobe,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
       .local_types = std::move(thunk_ctx.local_types),
@@ -393,6 +394,255 @@ auto LowerSFormatEffect(
   return {};
 }
 
+// Compute the snapshot buffer layout for monitor prev_values.
+// Returns total buffer size and per-operand offsets.
+struct SnapshotLayout {
+  uint32_t total_size = 0;
+  std::vector<uint32_t> offsets;
+  std::vector<uint32_t> byte_sizes;
+};
+
+auto ComputeSnapshotLayout(
+    const std::vector<mir::FormatOp>& ops, const TypeArena& types)
+    -> SnapshotLayout {
+  SnapshotLayout layout;
+  layout.offsets.reserve(ops.size());
+  layout.byte_sizes.reserve(ops.size());
+
+  uint32_t offset = 0;
+  for (const auto& op : ops) {
+    if (op.kind == FormatKind::kLiteral) {
+      // Literals don't contribute to snapshot
+      layout.offsets.push_back(0);
+      layout.byte_sizes.push_back(0);
+      continue;
+    }
+
+    const Type& ty = types[op.type];
+    uint32_t byte_size = 0;
+    uint32_t align = 1;
+
+    if (ty.Kind() == TypeKind::kReal) {
+      // double: 8 bytes, 8-byte aligned
+      byte_size = 8;
+      align = 8;
+    } else if (ty.Kind() == TypeKind::kShortReal) {
+      // float: 4 bytes, 4-byte aligned
+      byte_size = 4;
+      align = 4;
+    } else if (IsPacked(ty)) {
+      // Integral/PackedArray/PackedStruct/Enum: ceil(bits / 8), 8-byte aligned
+      auto bit_width = PackedBitWidth(ty, types);
+      byte_size = (bit_width + 7) / 8;
+      align = 8;
+    } else {
+      // Unsupported type: should be rejected by eligibility gate in AST→HIR.
+      throw common::InternalError(
+          "ComputeSnapshotLayout", "unsupported type for $monitor");
+    }
+
+    // Align offset
+    offset = (offset + align - 1) & ~(align - 1);
+    layout.offsets.push_back(offset);
+    layout.byte_sizes.push_back(byte_size);
+    offset += byte_size;
+  }
+
+  // Total size aligned to 8 bytes
+  layout.total_size = (offset + 7) & ~7;
+  return layout;
+}
+
+// Generate a synthetic check thunk function for $monitor.
+// The check thunk re-evaluates expressions and compares with prev_values.
+// If any changed, it prints and updates prev_values.
+auto LowerMonitorCheckThunk(
+    const hir::MonitorSystemCallData& data, MirBuilder& original_builder,
+    [[maybe_unused]] const SnapshotLayout& layout) -> Result<mir::FunctionId> {
+  Context& original_ctx = original_builder.GetContext();
+
+  // Create a new context for the thunk function
+  Context thunk_ctx{
+      .mir_arena = original_ctx.mir_arena,
+      .hir_arena = original_ctx.hir_arena,
+      .type_arena = original_ctx.type_arena,
+      .constant_arena = original_ctx.constant_arena,
+      .symbol_table = original_ctx.symbol_table,
+      .module_places = original_ctx.module_places,
+      .local_places = {},
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
+      .builtin_types = original_ctx.builtin_types,
+      .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+  };
+
+  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+
+  BlockIndex entry = thunk_builder.CreateBlock();
+  thunk_builder.SetCurrentBlock(entry);
+
+  // Lower format ops into thunk (re-evaluates at Postponed time)
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  if (!ops_result) return std::unexpected(ops_result.error());
+  auto [mir_ops, mir_descriptor] = std::move(*ops_result);
+
+  // Emit DisplayEffect for printing
+  mir::DisplayEffect display{
+      .print_kind = data.print_kind,
+      .ops = std::move(mir_ops),
+      .descriptor = std::move(mir_descriptor),
+  };
+  thunk_builder.EmitEffect(std::move(display));
+
+  // Emit void return
+  thunk_builder.EmitTerminate(std::nullopt);
+
+  // Build thunk function
+  // Signature: void check_thunk(DesignState*, Engine*, prev_buffer*)
+  auto blocks = thunk_builder.Finish();
+  mir::Function thunk{
+      .signature =
+          {
+              .return_type = original_ctx.builtin_types.void_type,
+              .params = {},
+          },
+      .thunk_kind = mir::ThunkKind::kMonitorCheck,
+      .entry = mir::BasicBlockId{0},
+      .blocks = std::move(blocks),
+      .local_types = std::move(thunk_ctx.local_types),
+      .temp_types = std::move(thunk_ctx.temp_types),
+      .param_local_slots = {},
+      .param_origins = {},
+  };
+  mir::FunctionId thunk_id =
+      original_ctx.mir_arena->AddFunction(std::move(thunk));
+
+  if (original_ctx.generated_functions != nullptr) {
+    original_ctx.generated_functions->push_back(thunk_id);
+  }
+
+  return thunk_id;
+}
+
+// Generate a synthetic setup thunk function for $monitor.
+// The setup thunk performs initial print and registers the check thunk.
+auto LowerMonitorSetupThunk(
+    const hir::MonitorSystemCallData& data, MirBuilder& original_builder,
+    [[maybe_unused]] mir::FunctionId check_thunk_id,
+    [[maybe_unused]] const SnapshotLayout& layout) -> Result<mir::FunctionId> {
+  Context& original_ctx = original_builder.GetContext();
+
+  Context thunk_ctx{
+      .mir_arena = original_ctx.mir_arena,
+      .hir_arena = original_ctx.hir_arena,
+      .type_arena = original_ctx.type_arena,
+      .constant_arena = original_ctx.constant_arena,
+      .symbol_table = original_ctx.symbol_table,
+      .module_places = original_ctx.module_places,
+      .local_places = {},
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
+      .builtin_types = original_ctx.builtin_types,
+      .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+  };
+
+  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+
+  BlockIndex entry = thunk_builder.CreateBlock();
+  thunk_builder.SetCurrentBlock(entry);
+
+  // Lower format ops for initial print
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  if (!ops_result) return std::unexpected(ops_result.error());
+  auto [mir_ops, mir_descriptor] = std::move(*ops_result);
+
+  // Emit DisplayEffect for initial print
+  mir::DisplayEffect display{
+      .print_kind = data.print_kind,
+      .ops = std::move(mir_ops),
+      .descriptor = std::move(mir_descriptor),
+  };
+  thunk_builder.EmitEffect(std::move(display));
+
+  // The setup thunk is called with (DesignState*, Engine*).
+  // LLVM lowering appends serialization + LyraMonitorRegister() in the
+  // epilogue.
+
+  // Emit void return
+  thunk_builder.EmitTerminate(std::nullopt);
+
+  auto blocks = thunk_builder.Finish();
+  mir::Function thunk{
+      .signature =
+          {
+              .return_type = original_ctx.builtin_types.void_type,
+              .params = {},
+          },
+      .thunk_kind = mir::ThunkKind::kMonitorSetup,
+      .entry = mir::BasicBlockId{0},
+      .blocks = std::move(blocks),
+      .local_types = std::move(thunk_ctx.local_types),
+      .temp_types = std::move(thunk_ctx.temp_types),
+      .param_local_slots = {},
+      .param_origins = {},
+  };
+  mir::FunctionId thunk_id =
+      original_ctx.mir_arena->AddFunction(std::move(thunk));
+
+  if (original_ctx.generated_functions != nullptr) {
+    original_ctx.generated_functions->push_back(thunk_id);
+  }
+
+  return thunk_id;
+}
+
+auto LowerMonitorEffect(
+    const hir::MonitorSystemCallData& data, MirBuilder& builder)
+    -> Result<void> {
+  Context& ctx = builder.GetContext();
+
+  // First, lower format ops to get MIR types for layout computation
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, builder);
+  if (!ops_result) return std::unexpected(ops_result.error());
+  auto [mir_ops, mir_descriptor] = std::move(*ops_result);
+
+  // Compute snapshot layout
+  SnapshotLayout layout = ComputeSnapshotLayout(mir_ops, *ctx.type_arena);
+
+  // Create check thunk
+  auto check_result = LowerMonitorCheckThunk(data, builder, layout);
+  if (!check_result) return std::unexpected(check_result.error());
+  mir::FunctionId check_thunk_id = *check_result;
+
+  // Create setup thunk
+  auto setup_result =
+      LowerMonitorSetupThunk(data, builder, check_thunk_id, layout);
+  if (!setup_result) return std::unexpected(setup_result.error());
+  mir::FunctionId setup_thunk_id = *setup_result;
+
+  // Emit MonitorEffect with format ops for LLVM comparison code generation
+  builder.EmitEffect(
+      mir::MonitorEffect{
+          .setup_thunk = setup_thunk_id,
+          .check_thunk = check_thunk_id,
+          .print_kind = data.print_kind,
+          .format_ops = std::move(mir_ops),
+          .offsets = layout.offsets,
+          .byte_sizes = layout.byte_sizes,
+          .prev_buffer_size = layout.total_size});
+  return {};
+}
+
+auto LowerMonitorControlEffect(
+    const hir::MonitorControlData& data, MirBuilder& builder) -> Result<void> {
+  builder.EmitEffect(mir::MonitorControlEffect{.enable = data.enable});
+  return {};
+}
+
 auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
     -> Result<void> {
   Context& ctx = builder.GetContext();
@@ -504,6 +754,10 @@ auto LowerExpressionStatement(
             } else {
               result = {};
             }
+          } else if constexpr (std::is_same_v<T, hir::MonitorSystemCallData>) {
+            result = LowerMonitorEffect(call_data, builder);
+          } else if constexpr (std::is_same_v<T, hir::MonitorControlData>) {
+            result = LowerMonitorControlEffect(call_data, builder);
           } else {
             throw common::InternalError(
                 "LowerExpressionStatement", "unhandled system call kind");

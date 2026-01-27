@@ -190,7 +190,8 @@ cases:
       stdout: "constant message\nafter delay\n"
 
   - name: monitor_single_var
-    # Explicit test for single variable monitoring
+    # Explicit test for single variable monitoring.
+    # Note: %b displays with full width including leading zeros (IEEE 1800 §21.2.1.2)
     sv: |
       module Test;
         logic [3:0] x;
@@ -202,7 +203,7 @@ cases:
         end
       endmodule
     expect:
-      stdout: "x=101\nx=1010\nx=1111\n"
+      stdout: "x=0101\nx=1010\nx=1111\n"
 
   - name: monitoron_monitoroff_multiple_cycles
     # Tests multiple enable/disable cycles.
@@ -414,3 +415,7 @@ cases:
 
   # NOTE: Shift operators in $monitor expressions have codegen issues
   # that need investigation.
+
+  # NOTE: Unsupported types (string, dynamic array, unpacked array/struct,
+  # queue) are rejected at AST→HIR lowering with diagnostic:
+  # "unsupported operand type '<type>' for $monitor at argument <N>"

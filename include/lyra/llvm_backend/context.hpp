@@ -145,6 +145,8 @@ class Context {
   [[nodiscard]] auto GetLyraFclose() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFWrite() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -290,6 +292,30 @@ class Context {
       -> llvm::Function*;
   [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
 
+  // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
+  // Keyed by check_thunk FunctionId. Contains only layout info (offsets,
+  // sizes). format_ops come from the check thunk's own DisplayEffect (correct
+  // MIR context).
+  struct MonitorLayout {
+    std::vector<uint32_t> offsets;     // Per-operand offset into buffer
+    std::vector<uint32_t> byte_sizes;  // Per-operand byte size
+    uint32_t total_size = 0;           // Total buffer size
+  };
+  void RegisterMonitorLayout(mir::FunctionId check_thunk, MonitorLayout layout);
+  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_thunk) const
+      -> const MonitorLayout*;
+
+  // Monitor setup thunk marker (codegen artifact, not stored in MIR).
+  // When present, LLVM lowering appends serialization + registration.
+  // Layout is looked up via check_thunk (single source of truth).
+  struct MonitorSetupInfo {
+    mir::FunctionId check_thunk;  // For registration and layout lookup
+  };
+  void RegisterMonitorSetupInfo(
+      mir::FunctionId setup_thunk, MonitorSetupInfo info);
+  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
+      -> const MonitorSetupInfo*;
+
   // Build LLVM function type from MIR function signature.
   // All user functions receive (DesignState*, Engine*, args...).
   [[nodiscard]] auto BuildUserFunctionType(const mir::FunctionSignature& sig)
@@ -364,6 +390,8 @@ class Context {
   llvm::Function* lyra_fclose_ = nullptr;
   llvm::Function* lyra_fwrite_ = nullptr;
   llvm::Function* lyra_schedule_postponed_ = nullptr;
+  llvm::Function* lyra_monitor_set_enabled_ = nullptr;
+  llvm::Function* lyra_monitor_register_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
@@ -397,6 +425,15 @@ class Context {
 
   // User function registry: FunctionId -> llvm::Function*
   absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
+
+  // Monitor layouts (codegen artifact, not MIR semantics).
+  // Keyed by check_thunk FunctionId - single source of truth for encoding.
+  absl::flat_hash_map<mir::FunctionId, MonitorLayout> monitor_layouts_;
+
+  // Monitor setup thunk markers (codegen artifact, not MIR semantics).
+  // Just stores check_thunk reference; layout is looked up from
+  // monitor_layouts_.
+  absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -33,6 +34,15 @@ enum class ReturnPolicy {
   kDirect,  // Return value in register/local 0
 };
 
+// Calling convention for runtime-invoked thunks.
+// Determines LLVM function signature for functions called via runtime ABI.
+enum class ThunkKind {
+  kNone,          // Regular function: (DesignState*, Engine*)
+  kStrobe,        // Strobe callback: (DesignState*, Engine*)
+  kMonitorCheck,  // Monitor check: (DesignState*, Engine*, prev_buffer*)
+  kMonitorSetup,  // Monitor setup: (DesignState*, Engine*)
+};
+
 struct FunctionParam {
   TypeId type;
   PassingKind kind = PassingKind::kValue;
@@ -48,7 +58,8 @@ struct FunctionSignature {
 // A function is a callable unit that cannot suspend.
 // Allowed terminators: Control (Jump/Branch/Switch), Return.
 struct Function {
-  FunctionSignature signature;  // Frozen at pre-allocation
+  FunctionSignature signature;              // Frozen at pre-allocation
+  ThunkKind thunk_kind = ThunkKind::kNone;  // Calling convention for thunks
 
   BasicBlockId entry;              // Local index within blocks
   std::vector<BasicBlock> blocks;  // Direct ownership

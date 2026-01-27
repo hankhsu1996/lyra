@@ -869,6 +869,36 @@ auto Context::GetLyraSchedulePostponed() -> llvm::Function* {
   return lyra_schedule_postponed_;
 }
 
+auto Context::GetLyraMonitorSetEnabled() -> llvm::Function* {
+  if (lyra_monitor_set_enabled_ == nullptr) {
+    // void LyraMonitorSetEnabled(ptr engine, i1 enable)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i1_ty}, false);
+    lyra_monitor_set_enabled_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraMonitorSetEnabled",
+        llvm_module_.get());
+  }
+  return lyra_monitor_set_enabled_;
+}
+
+auto Context::GetLyraMonitorRegister() -> llvm::Function* {
+  if (lyra_monitor_register_ == nullptr) {
+    // void LyraMonitorRegister(ptr engine, ptr check_fn, ptr design,
+    //                          ptr initial_prev, i32 size)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
+    lyra_monitor_register_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraMonitorRegister",
+        llvm_module_.get());
+  }
+  return lyra_monitor_register_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
@@ -1533,6 +1563,34 @@ auto Context::GetUserFunction(mir::FunctionId func_id) const
 
 auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
   return user_functions_.contains(func_id);
+}
+
+void Context::RegisterMonitorLayout(
+    mir::FunctionId check_thunk, MonitorLayout layout) {
+  monitor_layouts_.emplace(check_thunk, std::move(layout));
+}
+
+auto Context::GetMonitorLayout(mir::FunctionId check_thunk) const
+    -> const MonitorLayout* {
+  auto it = monitor_layouts_.find(check_thunk);
+  if (it == monitor_layouts_.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+void Context::RegisterMonitorSetupInfo(
+    mir::FunctionId func_id, MonitorSetupInfo info) {
+  monitor_setup_infos_.emplace(func_id, std::move(info));
+}
+
+auto Context::GetMonitorSetupInfo(mir::FunctionId func_id) const
+    -> const MonitorSetupInfo* {
+  auto it = monitor_setup_infos_.find(func_id);
+  if (it == monitor_setup_infos_.end()) {
+    return nullptr;
+  }
+  return &it->second;
 }
 
 auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)

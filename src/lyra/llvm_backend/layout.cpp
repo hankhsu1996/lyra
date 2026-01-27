@@ -379,6 +379,12 @@ void CollectPlacesFromEffectOp(
           [&](const mir::StrobeEffect&) {
             // StrobeEffect only has FunctionId thunk, no operands
           },
+          [&](const mir::MonitorEffect&) {
+            // MonitorEffect only has FunctionIds and buffer size, no operands
+          },
+          [&](const mir::MonitorControlEffect&) {
+            // MonitorControlEffect only has enable flag, no operands
+          },
       },
       effect);
 }

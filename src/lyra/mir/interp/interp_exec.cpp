@@ -220,6 +220,14 @@ auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
             // $strobe not supported in MIR interpreter (requires Postponed
             // region scheduling). Use LLVM backend for full $strobe semantics.
           },
+          [&](const MonitorEffect&) {
+            // $monitor not supported in MIR interpreter (requires Postponed
+            // region scheduling). Use LLVM backend for full $monitor semantics.
+          },
+          [&](const MonitorControlEffect&) {
+            // $monitoron/$monitoroff not supported in MIR interpreter.
+            // Use LLVM backend for full monitor control.
+          },
       },
       effect.op);
 

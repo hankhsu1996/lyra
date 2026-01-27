@@ -185,6 +185,12 @@ struct StorageCollector {
                       [&](const StrobeEffect&) -> void {
                         // StrobeEffect only has FunctionId thunk, no operands
                       },
+                      [&](const MonitorEffect&) -> void {
+                        // MonitorEffect only has FunctionIds and buffer size
+                      },
+                      [&](const MonitorControlEffect&) -> void {
+                        // MonitorControlEffect only has enable flag
+                      },
                   },
                   i.op);
             },

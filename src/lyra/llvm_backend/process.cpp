@@ -15,16 +15,20 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
+#include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
@@ -472,13 +476,31 @@ auto DeclareUserFunction(
     Context& context, mir::FunctionId func_id, const std::string& name)
     -> Result<llvm::Function*> {
   auto& module = context.GetModule();
+  auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
-  // Build LLVM function type from MIR signature
-  auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
-  if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
-  llvm::FunctionType* fn_type = *fn_type_or_err;
+  llvm::FunctionType* fn_type = nullptr;
+
+  // Determine LLVM function type based on thunk_kind (from MIR, not side
+  // table). MIR is the source of truth for calling convention.
+  switch (func.thunk_kind) {
+    case mir::ThunkKind::kMonitorCheck: {
+      // Monitor check: (design*, engine*, prev_buf*)
+      auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+      auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+      fn_type =
+          llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+      break;
+    }
+    default: {
+      // All other thunks use standard signature: (design*, engine*)
+      auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
+      if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
+      fn_type = *fn_type_or_err;
+      break;
+    }
+  }
 
   // Create function declaration
   auto* llvm_func = llvm::Function::Create(
@@ -577,14 +599,447 @@ struct PlaceCollector {
 
 }  // namespace
 
-auto DefineUserFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func)
-    -> Result<void> {
+// Special lowering for monitor check thunks that adds comparison logic.
+// The thunk evaluates expressions, compares against prev_buffer, and only
+// prints if values changed.
+auto DefineMonitorCheckThunk(
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
+    const Context::MonitorLayout& layout) -> Result<void> {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
   const auto& func = arena[func_id];
+
+  // Create blocks: entry -> eval -> [print -> update] -> exit
+  auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
+  auto* print_block = llvm::BasicBlock::Create(llvm_ctx, "print", llvm_func);
+  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", llvm_func);
+
+  // Create MIR basic blocks for body lowering
+  std::vector<llvm::BasicBlock*> llvm_blocks;
+  llvm_blocks.reserve(func.blocks.size());
+  for (size_t i = 0; i < func.blocks.size(); ++i) {
+    auto* bb =
+        llvm::BasicBlock::Create(llvm_ctx, std::format("bb{}", i), llvm_func);
+    llvm_blocks.push_back(bb);
+  }
+
+  builder.SetInsertPoint(entry_block);
+  context.BeginFunction(*llvm_func);
+
+  // Arguments: design*, engine*, prev_buffer*
+  auto* design_arg = llvm_func->getArg(0);
+  design_arg->setName("design");
+  context.SetDesignPointer(design_arg);
+
+  auto* engine_arg = llvm_func->getArg(1);
+  engine_arg->setName("engine");
+  context.SetEnginePointer(engine_arg);
+
+  auto* prev_buf_arg = llvm_func->getArg(2);
+  prev_buf_arg->setName("prev_buf");
+
+  // Collect local/temp places for storage allocation
+  PlaceCollector collector;
+  collector.CollectFromFunction(func, arena);
+
+  // Find the DisplayEffect from check thunk's MIR body (correct operand
+  // context). layout only provides offsets/byte_sizes; format_ops come from the
+  // thunk itself.
+  const mir::DisplayEffect* display_effect = nullptr;
+  for (const auto& block : func.blocks) {
+    for (const auto& inst : block.instructions) {
+      if (const auto* eff = std::get_if<mir::Effect>(&inst.data)) {
+        if (const auto* disp = std::get_if<mir::DisplayEffect>(&eff->op)) {
+          display_effect = disp;
+          break;
+        }
+      }
+    }
+    if (display_effect != nullptr) break;
+  }
+  if (display_effect == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        func.origin, "monitor check thunk missing DisplayEffect",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Allocate temp buffer for current values (for comparison)
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  llvm::Value* temp_buf = nullptr;
+  if (layout.total_size > 0) {
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, layout.total_size);
+    auto* alloca_inst = builder.CreateAlloca(buf_ty, nullptr, "temp_buf");
+    // Align to 8 bytes to match layout computation (offsets are 8-byte aligned)
+    alloca_inst->setAlignment(llvm::Align(8));
+    temp_buf = alloca_inst;
+
+    // Zero-initialize to avoid nondeterministic comparison from padding bytes
+    auto* memset_fn = llvm::Intrinsic::getDeclaration(
+        &context.GetModule(), llvm::Intrinsic::memset,
+        {ptr_ty, llvm::Type::getInt32Ty(llvm_ctx)});
+    builder.CreateCall(
+        memset_fn,
+        {temp_buf, llvm::ConstantInt::get(i8_ty, 0),
+         llvm::ConstantInt::get(
+             llvm::Type::getInt32Ty(llvm_ctx), layout.total_size),
+         llvm::ConstantInt::get(llvm::Type::getInt1Ty(llvm_ctx), 0)});
+  }
+
+  // Jump to first MIR block to evaluate expressions
+  builder.CreateBr(llvm_blocks[func.entry.value]);
+
+  // Lower MIR blocks, skip DisplayEffect (we'll handle it at
+  // Return/print_block).
+  for (size_t i = 0; i < func.blocks.size(); ++i) {
+    const auto& block = func.blocks[i];
+    builder.SetInsertPoint(llvm_blocks[i]);
+
+    // Lower all instructions except DisplayEffect
+    for (const auto& instruction : block.instructions) {
+      if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
+        if (std::holds_alternative<mir::DisplayEffect>(effect->op)) {
+          // Skip DisplayEffect - we'll handle it in print_block
+          continue;
+        }
+      }
+      auto result = LowerInstruction(context, instruction);
+      if (!result) return std::unexpected(result.error());
+    }
+
+    // Lower terminator - redirect to comparison instead of exit
+    OriginScope term_scope(context, block.terminator.origin);
+    auto term_result = std::visit(
+        common::Overloaded{
+            [&](const mir::Jump& t) -> Result<void> {
+              LowerJump(context, t, llvm_blocks);
+              return {};
+            },
+            [&](const mir::Branch& t) -> Result<void> {
+              return LowerBranch(context, t, llvm_blocks);
+            },
+            [&](const mir::Return&) -> Result<void> {
+              // At Return: evaluate operands from check thunk's DisplayEffect
+              // (correct MIR operand context), store to temp buffer, compare.
+              if (temp_buf != nullptr) {
+                auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+                // Evaluate each operand from the check thunk's DisplayEffect
+                for (size_t j = 0; j < display_effect->ops.size(); ++j) {
+                  const auto& op = display_effect->ops[j];
+                  if (!op.value.has_value()) continue;
+                  if (j >= layout.byte_sizes.size()) break;
+
+                  uint32_t byte_size = layout.byte_sizes[j];
+                  if (byte_size == 0) continue;  // Skip literals
+                  uint32_t offset = layout.offsets[j];
+
+                  // Evaluate the operand
+                  auto val_result = LowerOperand(context, *op.value);
+                  if (!val_result) {
+                    return std::unexpected(val_result.error());
+                  }
+                  llvm::Value* val = *val_result;
+
+                  auto* slot_ptr = builder.CreateGEP(
+                      i8_ty, temp_buf, {llvm::ConstantInt::get(i64_ty, offset)},
+                      "temp_slot");
+
+                  // Use exact-width integer type (i8, i16, i24, i32, i40, etc.)
+                  // to avoid clobbering adjacent slots for non-power-of-2
+                  // sizes.
+                  uint32_t bit_width = byte_size * 8;
+                  llvm::Type* store_ty =
+                      llvm::Type::getIntNTy(llvm_ctx, bit_width);
+
+                  llvm::Value* store_val = val;
+                  if (val->getType()->isIntegerTy() &&
+                      store_ty->isIntegerTy()) {
+                    unsigned cur_bits = val->getType()->getIntegerBitWidth();
+                    unsigned store_bits = store_ty->getIntegerBitWidth();
+                    if (cur_bits < store_bits) {
+                      store_val = builder.CreateZExt(val, store_ty);
+                    } else if (cur_bits > store_bits) {
+                      store_val = builder.CreateTrunc(val, store_ty);
+                    }
+                  } else if (val->getType()->isFloatingPointTy()) {
+                    if (val->getType()->isDoubleTy()) {
+                      store_val = builder.CreateBitCast(
+                          val, llvm::Type::getInt64Ty(llvm_ctx));
+                      store_ty = llvm::Type::getInt64Ty(llvm_ctx);
+                    } else {
+                      store_val = builder.CreateBitCast(
+                          val, llvm::Type::getInt32Ty(llvm_ctx));
+                      store_ty = llvm::Type::getInt32Ty(llvm_ctx);
+                    }
+                  }
+                  // Use explicit alignment=1 (safe for any byte size, perf not
+                  // critical)
+                  builder.CreateAlignedStore(
+                      store_val, slot_ptr, llvm::Align(1));
+                }
+
+                // Compare temp_buf with prev_buf
+                auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+                llvm::Value* any_changed = llvm::ConstantInt::get(i1_ty, 0);
+
+                for (size_t j = 0; j < layout.byte_sizes.size(); ++j) {
+                  uint32_t byte_size = layout.byte_sizes[j];
+                  if (byte_size == 0) continue;  // Skip literals
+
+                  uint32_t offset = layout.offsets[j];
+
+                  // Use exact-width integer type for comparison (matches
+                  // storage).
+                  uint32_t cmp_bits = byte_size * 8;
+                  llvm::Type* cmp_ty =
+                      llvm::Type::getIntNTy(llvm_ctx, cmp_bits);
+
+                  auto* temp_ptr = builder.CreateGEP(
+                      i8_ty, temp_buf, {llvm::ConstantInt::get(i64_ty, offset)},
+                      "t_ptr");
+                  auto* prev_ptr = builder.CreateGEP(
+                      i8_ty, prev_buf_arg,
+                      {llvm::ConstantInt::get(i64_ty, offset)}, "p_ptr");
+
+                  // Use explicit alignment=1 (safe for any byte size)
+                  llvm::Value* temp_val = builder.CreateAlignedLoad(
+                      cmp_ty, temp_ptr, llvm::Align(1), "t_val");
+                  llvm::Value* prev_val = builder.CreateAlignedLoad(
+                      cmp_ty, prev_ptr, llvm::Align(1), "p_val");
+
+                  llvm::Value* cmp =
+                      builder.CreateICmpNE(temp_val, prev_val, "cmp");
+                  any_changed = builder.CreateOr(any_changed, cmp, "changed");
+                }
+
+                builder.CreateCondBr(any_changed, print_block, exit_block);
+              } else {
+                // No values to compare - never print after initial
+                builder.CreateBr(exit_block);
+              }
+              return {};
+            },
+            [&](const mir::Finish&) -> Result<void> {
+              builder.CreateBr(exit_block);
+              return {};
+            },
+            [&](const auto&) -> Result<void> {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      "terminator not yet supported in monitor check thunk",
+                      UnsupportedCategory::kFeature));
+            },
+        },
+        block.terminator.data);
+    if (!term_result) return std::unexpected(term_result.error());
+  }
+
+  // Print block: lower DisplayEffect and update prev_buffer
+  builder.SetInsertPoint(print_block);
+
+  // Find and lower the DisplayEffect
+  for (const auto& block : func.blocks) {
+    for (const auto& instruction : block.instructions) {
+      if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
+        if (const auto* display =
+                std::get_if<mir::DisplayEffect>(&effect->op)) {
+          auto result = LowerDisplayEffect(context, *display);
+          if (!result) return std::unexpected(result.error());
+          break;
+        }
+      }
+    }
+  }
+
+  // Update prev_buffer with temp_buf values
+  if (temp_buf != nullptr && layout.total_size > 0) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+    auto* memcpy_fn = llvm::Intrinsic::getDeclaration(
+        &context.GetModule(), llvm::Intrinsic::memcpy,
+        {ptr_ty, ptr_ty, llvm::Type::getInt32Ty(llvm_ctx)});
+    auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+    builder.CreateCall(
+        memcpy_fn, {prev_buf_arg, temp_buf,
+                    llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(llvm_ctx), layout.total_size),
+                    llvm::ConstantInt::get(i1_ty, 0)});
+  }
+  builder.CreateBr(exit_block);
+
+  // Exit block
+  builder.SetInsertPoint(exit_block);
+  builder.CreateRetVoid();
+
+  context.EndFunction();
+  context.SetDesignPointer(nullptr);
+  context.SetEnginePointer(nullptr);
+
+  return {};
+}
+
+// Emit setup thunk epilogue: serialize current values + call
+// LyraMonitorRegister. Called at end of setup thunk's exit block, before
+// return.
+auto EmitMonitorSetupEpilogue(
+    Context& context, mir::FunctionId setup_thunk_id,
+    const Context::MonitorSetupInfo& info, llvm::Value* design_ptr,
+    llvm::Value* engine_ptr) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& arena = context.GetMirArena();
+
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  // Find the DisplayEffect from setup thunk's MIR body (correct operand
+  // context).
+  const mir::Function& setup_func = arena[setup_thunk_id];
+  const mir::DisplayEffect* display_effect = nullptr;
+  for (const auto& block : setup_func.blocks) {
+    for (const auto& inst : block.instructions) {
+      if (const auto* eff = std::get_if<mir::Effect>(&inst.data)) {
+        if (const auto* disp = std::get_if<mir::DisplayEffect>(&eff->op)) {
+          display_effect = disp;
+          break;
+        }
+      }
+    }
+    if (display_effect != nullptr) break;
+  }
+  if (display_effect == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        "$monitor setup thunk missing DisplayEffect",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Get check thunk function pointer for registration
+  llvm::Function* check_fn = context.GetUserFunction(info.check_thunk);
+  if (check_fn == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        "$monitor check thunk not found for setup epilogue",
+        UnsupportedCategory::kFeature));
+  }
+
+  // Look up layout via check_thunk (single source of truth)
+  const auto* layout = context.GetMonitorLayout(info.check_thunk);
+  if (layout == nullptr) {
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        "$monitor layout not found for setup epilogue",
+        UnsupportedCategory::kFeature));
+  }
+
+  llvm::Value* init_buf = nullptr;
+  if (layout->total_size > 0) {
+    // Allocate buffer on stack with 8-byte alignment (matches layout
+    // computation)
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, layout->total_size);
+    auto* alloca_inst = builder.CreateAlloca(buf_ty, nullptr, "init_buf");
+    alloca_inst->setAlignment(llvm::Align(8));
+    init_buf = alloca_inst;
+
+    // Zero-initialize the buffer
+    auto* memset_fn = llvm::Intrinsic::getDeclaration(
+        &context.GetModule(), llvm::Intrinsic::memset,
+        {ptr_ty, llvm::Type::getInt32Ty(llvm_ctx)});
+    builder.CreateCall(
+        memset_fn,
+        {init_buf, llvm::ConstantInt::get(i8_ty, 0),
+         llvm::ConstantInt::get(i32_ty, layout->total_size),
+         llvm::ConstantInt::get(llvm::Type::getInt1Ty(llvm_ctx), 0)});
+
+    // Serialize each value operand to the buffer.
+    // Use display_effect->ops (correct MIR operand context for setup thunk).
+    // The offsets/byte_sizes arrays are indexed by ops position.
+    for (size_t i = 0; i < display_effect->ops.size(); ++i) {
+      const auto& op = display_effect->ops[i];
+      if (!op.value.has_value()) continue;
+      if (i >= layout->byte_sizes.size()) break;
+
+      uint32_t byte_size = layout->byte_sizes[i];
+      if (byte_size == 0) continue;
+
+      uint32_t offset = layout->offsets[i];
+
+      // Lower the operand to get current value
+      auto val_result = LowerOperandRaw(context, *op.value);
+      if (!val_result) return std::unexpected(val_result.error());
+      llvm::Value* value = *val_result;
+
+      // Get pointer to buffer location
+      auto* buf_ptr = builder.CreateGEP(
+          i8_ty, init_buf, llvm::ConstantInt::get(i32_ty, offset));
+
+      // Use exact-width integer type (i8, i16, i24, i32, i40, etc.)
+      // to avoid clobbering adjacent slots for non-power-of-2 sizes.
+      // Must match check thunk's serialization.
+      uint32_t bit_width = byte_size * 8;
+      llvm::Type* store_ty = llvm::Type::getIntNTy(llvm_ctx, bit_width);
+
+      llvm::Type* val_type = value->getType();
+      llvm::Value* store_val = value;
+      if (val_type->isIntegerTy() && store_ty->isIntegerTy()) {
+        unsigned cur_bits = val_type->getIntegerBitWidth();
+        unsigned store_bits = store_ty->getIntegerBitWidth();
+        if (cur_bits < store_bits) {
+          store_val = builder.CreateZExt(value, store_ty);
+        } else if (cur_bits > store_bits) {
+          store_val = builder.CreateTrunc(value, store_ty);
+        }
+      } else if (val_type->isDoubleTy()) {
+        store_val =
+            builder.CreateBitCast(value, llvm::Type::getInt64Ty(llvm_ctx));
+        store_ty = llvm::Type::getInt64Ty(llvm_ctx);
+      } else if (val_type->isFloatTy()) {
+        store_val = builder.CreateBitCast(value, i32_ty);
+        store_ty = i32_ty;
+      }
+      // Use explicit alignment=1 (safe for any byte size, perf not critical)
+      builder.CreateAlignedStore(store_val, buf_ptr, llvm::Align(1));
+      // Other types (4-state, etc.) would need special handling
+    }
+  } else {
+    // No values to track - create null buffer
+    init_buf = llvm::ConstantPointerNull::get(ptr_ty);
+  }
+
+  // Call LyraMonitorRegister(engine, check_fn, design, init_buf, size)
+  builder.CreateCall(
+      context.GetLyraMonitorRegister(),
+      {engine_ptr, check_fn, design_ptr, init_buf,
+       llvm::ConstantInt::get(i32_ty, layout->total_size)});
+
+  return {};
+}
+
+auto DefineUserFunction(
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func)
+    -> Result<void> {
+  const auto& arena = context.GetMirArena();
+  const auto& func = arena[func_id];
+
+  // Monitor check thunks have special lowering with comparison logic.
+  // Use thunk_kind from MIR (source of truth), layout from side table (codegen
+  // artifact).
+  if (func.thunk_kind == mir::ThunkKind::kMonitorCheck) {
+    const auto* layout = context.GetMonitorLayout(func_id);
+    if (layout == nullptr) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          func.origin, "monitor check thunk missing layout",
+          UnsupportedCategory::kFeature));
+    }
+    return DefineMonitorCheckThunk(context, func_id, llvm_func, *layout);
+  }
+
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
 
   // Function-level origin scope for prologue errors.
   // If func.origin is Invalid, this is a no-op.
@@ -715,6 +1170,22 @@ auto DefineUserFunction(
 
   // Exit block: return the value
   builder.SetInsertPoint(exit_block);
+
+  // Setup thunks need serialization + registration before returning.
+  // Use thunk_kind from MIR (source of truth), setup_info from side table
+  // (codegen artifact).
+  if (func.thunk_kind == mir::ThunkKind::kMonitorSetup) {
+    const auto* setup_info = context.GetMonitorSetupInfo(func_id);
+    if (setup_info == nullptr) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          func.origin, "monitor setup thunk missing info",
+          UnsupportedCategory::kFeature));
+    }
+    auto result = EmitMonitorSetupEpilogue(
+        context, func_id, *setup_info, design_arg, engine_arg);
+    if (!result) return std::unexpected(result.error());
+  }
+
   if (ret_type.Kind() == TypeKind::kVoid) {
     builder.CreateRetVoid();
   } else {

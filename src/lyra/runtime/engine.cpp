@@ -65,6 +65,33 @@ void Engine::SchedulePostponed(PostponedCallback callback, void* design_state) {
       });
 }
 
+void Engine::RegisterMonitor(
+    MonitorCheckCallback check_thunk, void* design_state,
+    const void* initial_prev, uint32_t size) {
+  // Atomically replace any existing monitor
+  active_monitor_ = MonitorState{
+      .enabled = true,
+      .check_thunk = check_thunk,
+      .design_state = design_state,
+      .prev_values = {},
+  };
+
+  // Copy initial prev values if provided
+  if (initial_prev != nullptr && size > 0) {
+    auto prev_span = std::span(static_cast<const uint8_t*>(initial_prev), size);
+    active_monitor_->prev_values.assign(prev_span.begin(), prev_span.end());
+  } else {
+    active_monitor_->prev_values.resize(size, 0);
+  }
+}
+
+void Engine::SetMonitorEnabled(bool enabled) {
+  // No-op if no active monitor
+  if (active_monitor_.has_value()) {
+    active_monitor_->enabled = enabled;
+  }
+}
+
 void Engine::ScheduleNba(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
     const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id) {
@@ -246,6 +273,18 @@ void Engine::ExecutePostponedRegion() {
     record.callback(record.design_state, this);
   }
   postponed_queue_.clear();
+
+  // After all strobe callbacks, execute active monitor check
+  // IEEE 1800-2023 §21.2.3: $monitor prints at end of time slot if values
+  // changed The check wrapper compares current values against prev_buffer
+  // (initialized with actual initial values), so it will only print if values
+  // actually changed.
+  if (!finished_ && active_monitor_.has_value() && active_monitor_->enabled &&
+      active_monitor_->check_thunk != nullptr) {
+    active_monitor_->check_thunk(
+        active_monitor_->design_state, this,
+        active_monitor_->prev_values.data());
+  }
 }
 
 void Engine::ExecuteTimeSlot() {

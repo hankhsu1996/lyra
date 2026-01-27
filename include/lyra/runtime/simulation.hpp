@@ -125,4 +125,23 @@ void LyraInitRuntime(const char* fs_base_dir);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 void LyraReportTime();
+
+// Monitor check callback type: void (DesignState*, Engine*, prev_buffer*)
+using LyraMonitorCheckCallback = void (*)(void*, void*, void*);
+
+// Register a new monitor, atomically replacing any existing one.
+// The initial_prev buffer is copied to runtime-owned storage.
+// - engine_ptr: pointer to Engine
+// - check_thunk: callback for checking value changes
+// - design_state: DesignState* to pass to check_thunk
+// - initial_prev: initial prev_values buffer
+// - size: size of prev_values buffer in bytes
+void LyraMonitorRegister(
+    void* engine_ptr, LyraMonitorCheckCallback check_thunk, void* design_state,
+    const void* initial_prev, uint32_t size);
+
+// Enable/disable the active monitor. No-op if no active monitor.
+// - engine_ptr: pointer to Engine
+// - enabled: true to enable, false to disable
+void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
 }

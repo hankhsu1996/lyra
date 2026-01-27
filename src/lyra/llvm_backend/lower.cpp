@@ -25,7 +25,10 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -204,6 +207,52 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
+
+  // Pre-scan all processes for MonitorEffect instructions and register their
+  // thunk info in the context. This must happen before DeclareUserFunction
+  // because:
+  // - Check thunks have a different signature (3 args instead of 2)
+  // - Setup thunks need appended serialization + registration code
+  auto register_monitor_info = [&](mir::ProcessId proc_id) {
+    const auto& process = (*input.mir_arena)[proc_id];
+    for (const auto& block : process.blocks) {
+      for (const auto& instr : block.instructions) {
+        const auto* effect = std::get_if<mir::Effect>(&instr.data);
+        if (effect == nullptr) continue;
+        const auto* monitor = std::get_if<mir::MonitorEffect>(&effect->op);
+        if (monitor == nullptr) continue;
+
+        // Register monitor layout (offsets/sizes only - format_ops come from
+        // check thunk's own DisplayEffect to ensure correct MIR operand
+        // context)
+        Context::MonitorLayout layout{
+            .offsets = monitor->offsets,
+            .byte_sizes = monitor->byte_sizes,
+            .total_size = monitor->prev_buffer_size,
+        };
+        context.RegisterMonitorLayout(monitor->check_thunk, std::move(layout));
+
+        // Register setup thunk marker (just references check_thunk for layout)
+        Context::MonitorSetupInfo setup_info{
+            .check_thunk = monitor->check_thunk,
+        };
+        context.RegisterMonitorSetupInfo(
+            monitor->setup_thunk, std::move(setup_info));
+      }
+    }
+  };
+  // Scan module processes
+  for (const auto& element : input.design->elements) {
+    if (const auto* mod_elem = std::get_if<mir::Module>(&element)) {
+      for (mir::ProcessId proc_id : mod_elem->processes) {
+        register_monitor_info(proc_id);
+      }
+    }
+  }
+  // Scan init_processes (package variable initialization)
+  for (mir::ProcessId proc_id : input.design->init_processes) {
+    register_monitor_info(proc_id);
+  }
 
   // Two-pass user function generation for mutual recursion support
   // Collect all function IDs from modules, packages, and generated functions

@@ -79,11 +79,31 @@ struct TimeFormatEffect {
   int min_width = 20;  // Minimum field width
 };
 
+// $monitor: persistent change-triggered display (IEEE 1800 §21.2.3).
+// The setup_thunk performs initial print and registers the check_thunk with
+// runtime. The check_thunk FunctionId is passed to runtime at registration,
+// not stored in MIR.
+struct MonitorEffect {
+  FunctionId setup_thunk;            // Initial print + registration
+  FunctionId check_thunk;            // Check for changes and print
+  PrintKind print_kind;              // For print end call
+  std::vector<FormatOp> format_ops;  // For LLVM comparison code generation
+  std::vector<uint32_t> offsets;     // Per-operand offset into prev_buffer
+  std::vector<uint32_t> byte_sizes;  // Per-operand byte size
+  uint32_t prev_buffer_size = 0;     // Total size of prev_values buffer
+};
+
+// $monitoron/$monitoroff: control monitor enabled state.
+// No-op if no active monitor (graceful handling).
+struct MonitorControlEffect {
+  bool enable;  // true=$monitoron, false=$monitoroff
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
-    SystemTfEffect, StrobeEffect>;
+    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect>;
 
 }  // namespace lyra::mir

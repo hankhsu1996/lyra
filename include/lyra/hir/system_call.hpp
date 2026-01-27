@@ -105,9 +105,26 @@ struct TimeFormatData {
   auto operator==(const TimeFormatData&) const -> bool = default;
 };
 
+// $monitor/$monitorb/$monitoro/$monitorh - persistent change-triggered display
+struct MonitorSystemCallData {
+  PrintKind print_kind;
+  std::vector<FormatOp> ops;
+  std::optional<ExpressionId> descriptor;  // nullopt = stdout
+
+  auto operator==(const MonitorSystemCallData&) const -> bool = default;
+};
+
+// $monitoron/$monitoroff - control monitor enabled state
+struct MonitorControlData {
+  bool enable;  // true=$monitoron, false=$monitoroff
+
+  auto operator==(const MonitorControlData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
-    RuntimeQueryData, TimeFormatData>;
+    RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
+    MonitorControlData>;
 
 }  // namespace lyra::hir

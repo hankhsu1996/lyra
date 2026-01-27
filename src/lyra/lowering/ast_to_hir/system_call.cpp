@@ -52,6 +52,14 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
   return FormatKind::kDecimal;
 }
 
+// Check if a type is eligible for $monitor (can be snapshotted).
+// Supported: integral, packed array/struct, enum, real, shortreal.
+// Unsupported: string, unpacked array/struct/union, dynamic array, queue.
+auto IsMonitorEligibleType(const Type& ty) -> bool {
+  return IsPacked(ty) || ty.Kind() == TypeKind::kReal ||
+         ty.Kind() == TypeKind::kShortReal;
+}
+
 // Create a FormatOp for auto-formatting an argument.
 // String types use kString; other types use the provided default.
 auto MakeAutoFormatOp(
@@ -638,6 +646,68 @@ struct LowerVisitor {
             .type = result_type,
             .span = span,
             .data = std::move(data)});
+  }
+
+  auto operator()(const MonitorFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    auto args = LowerArguments(*call, view);
+    if (!args) {
+      return hir::kInvalidExpressionId;
+    }
+
+    FormatKind default_format = RadixToFormatKind(info.radix);
+
+    // Build format ops using the same logic as $display
+    std::vector<const slang::ast::Expression*> slang_ptrs;
+    slang_ptrs.reserve(call->arguments().size());
+    for (const slang::ast::Expression* arg : call->arguments()) {
+      slang_ptrs.push_back(arg);
+    }
+
+    std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
+        slang_ptrs, *args, default_format, Ctx(), GetModuleTimeunitPower(view));
+
+    // Check eligibility of each operand type for $monitor snapshotting.
+    // Track argument index for error messages.
+    size_t arg_idx = 0;
+    for (const auto& op : ops) {
+      if (!op.value.has_value()) {
+        continue;  // Literal ops have no value to snapshot
+      }
+      const hir::Expression& expr = (*Ctx()->hir_arena)[*op.value];
+      const Type& ty = (*Ctx()->type_arena)[expr.type];
+      if (!IsMonitorEligibleType(ty)) {
+        Ctx()->ErrorFmt(
+            expr.span,
+            "unsupported operand type '{}' for $monitor at argument {}",
+            ToString(ty.Kind()), arg_idx + 1);
+        return hir::kInvalidExpressionId;
+      }
+      ++arg_idx;
+    }
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::MonitorSystemCallData{
+                .print_kind = PrintKind::kDisplay,  // Always with newline
+                .ops = std::move(ops),
+                .descriptor = std::nullopt}});
+  }
+
+  auto operator()(const MonitorControlFunctionInfo& info) const
+      -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::MonitorControlData{.enable = info.enable}});
   }
 };
 
