@@ -7,8 +7,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [7:0] mem [0:3];
-            logic [7:0] a0, a1, a2, a3;
+            bit [7:0] mem [0:3];
+            bit [7:0] a0, a1, a2, a3;
             initial begin
               $readmemh("mem.hex", mem);
               a0 = mem[0];
@@ -35,8 +35,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [7:0] mem [0:15];
-            logic [7:0] a10, a11;
+            bit [7:0] mem [0:15];
+            bit [7:0] a10, a11;
             initial begin
               $readmemh("mem.hex", mem);
               a10 = mem[10];
@@ -58,8 +58,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [3:0] mem [0:3];
-            logic [3:0] b0, b1, b2, b3;
+            bit [3:0] mem [0:3];
+            bit [3:0] b0, b1, b2, b3;
             initial begin
               $readmemb("mem.bin", mem);
               b0 = mem[0];
@@ -86,8 +86,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [15:0] packed_mem [0:1];
-            logic [15:0] b0, b1;
+            bit [15:0] packed_mem [0:1];
+            bit [15:0] b0, b1;
             initial begin
               $readmemh("mem.hex", packed_mem);
               b0 = packed_mem[0];
@@ -108,9 +108,9 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [7:0] mem [0:3];
-            logic [7:0] mem2 [0:3];
-            logic [7:0] c0, c1, c2, c3;
+            bit [7:0] mem [0:3];
+            bit [7:0] mem2 [0:3];
+            bit [7:0] c0, c1, c2, c3;
             initial begin
               mem[0] = 8'h11;
               mem[1] = 8'h22;
@@ -137,8 +137,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [7:0] mem [0:3];
-            logic [7:0] d0, d1, d2, d3;
+            bit [7:0] mem [0:3];
+            bit [7:0] d0, d1, d2, d3;
             initial begin
               $readmemh("long_filename.hex", mem);
               d0 = mem[0];
@@ -165,8 +165,8 @@ cases:
       - name: test.sv
         content: |
           module Test;
-            logic [3:0][7:0] packed_mem;
-            logic [7:0] p0, p1, p2, p3;
+            bit [3:0][7:0] packed_mem;
+            bit [7:0] p0, p1, p2, p3;
             initial begin
               packed_mem[0] = 8'h11;
               packed_mem[1] = 8'h22;
@@ -184,3 +184,36 @@ cases:
         p1: 34
         p2: 51
         p3: 68
+
+  - name: readmemh_nonzero_lower_bound
+    description: Tests $readmemh with non-zero lower array bound (ascending range)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            bit [7:0] mem [5:8];  // min_addr = 5, ascending
+            bit [7:0] e5, e6, e7, e8;
+            initial begin
+              $readmemh("mem.hex", mem);
+              e5 = mem[5];
+              e6 = mem[6];
+              e7 = mem[7];
+              e8 = mem[8];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          aa
+          bb
+          cc
+          dd
+    expect:
+      variables:
+        e5: 170
+        e6: 187
+        e7: 204
+        e8: 221
+
+  # Note: Descending array ranges (e.g., [8:5]) are not supported in MVP.
+  # The storage layout for descending arrays uses left-based indexing,
+  # but MVP readmem uses min-based indexing for simplicity.

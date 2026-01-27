@@ -5,21 +5,12 @@
 #include <cctype>
 #include <cstdint>
 #include <expected>
-#include <filesystem>
 #include <format>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace lyra::common::mem_io {
-
-inline auto ResolveMemPath(std::string_view filename) -> std::filesystem::path {
-  std::filesystem::path path{std::string(filename)};
-  if (path.is_relative()) {
-    path = std::filesystem::current_path() / path;
-  }
-  return path;
-}
+namespace lyra::common {
 
 // Parse a single digit from a memory file token.
 // Returns -1 for underscore (separator), digit value otherwise.
@@ -184,13 +175,30 @@ struct ParseMemFileResult {
 
 // Parse a memory file and call store for each value.
 // Returns error if parsing fails. The store callback receives (token, address).
+//
+// Parameters:
+// - content: file content to parse
+// - is_hex: true for hex format, false for binary
+// - min_addr, max_addr: valid address bounds
+// - current_addr: where to begin (updated during parsing)
+// - final_addr: terminal address (inclusive), consistent with step
+// - step: +1 for ascending, -1 for descending progression
+// - task_name: for error messages (e.g., "$readmemh")
+// - store: callback(token, address) for each parsed value
+//
+// Caller contract:
+// - step > 0: current_addr is low end, final_addr is high end
+// - step < 0: current_addr is high end, final_addr is low end
 template <typename StoreElementFn>
 inline auto ParseMemFile(
     std::string_view content, bool is_hex, int64_t min_addr, int64_t max_addr,
-    int64_t& current_addr, int64_t final_addr, std::string_view task_name,
-    const StoreElementFn& store) -> ParseMemFileResult {
+    int64_t& current_addr, int64_t final_addr, int64_t step,
+    std::string_view task_name, const StoreElementFn& store)
+    -> ParseMemFileResult {
   size_t i = 0;
-  while (i < content.size() && current_addr <= final_addr) {
+  // Direction-aware termination condition
+  while (i < content.size() &&
+         (step > 0 ? current_addr <= final_addr : current_addr >= final_addr)) {
     char ch = content[i];
     if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
       ++i;
@@ -249,9 +257,9 @@ inline auto ParseMemFile(
     }
     auto token = std::string_view(content).substr(start, i - start);
     store(token, current_addr);
-    ++current_addr;
+    current_addr += step;
   }
   return ParseMemFileResult::Success();
 }
 
-}  // namespace lyra::common::mem_io
+}  // namespace lyra::common

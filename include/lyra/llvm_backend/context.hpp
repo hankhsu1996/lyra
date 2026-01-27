@@ -147,6 +147,8 @@ class Context {
   [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -392,6 +394,8 @@ class Context {
   llvm::Function* lyra_schedule_postponed_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;
   llvm::Function* lyra_monitor_register_ = nullptr;
+  llvm::Function* lyra_readmem_ = nullptr;
+  llvm::Function* lyra_writemem_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
