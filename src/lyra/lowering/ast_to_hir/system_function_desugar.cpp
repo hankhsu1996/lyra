@@ -20,8 +20,8 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto ClassifyPureSystemFunction(const slang::ast::CallExpression& call)
-    -> std::optional<PureSysFnClassification> {
+auto ClassifyDesugarableSystemFunction(const slang::ast::CallExpression& call)
+    -> std::optional<DesugarableClassification> {
   if (!call.isSystemCall()) {
     return std::nullopt;
   }
@@ -260,10 +260,10 @@ auto MakeIntConstant(int32_t value, SourceSpan span, Context* ctx)
 
 }  // namespace
 
-auto LowerPureSystemFunction(
+auto LowerDesugarableSystemFunction(
     const slang::ast::CallExpression& call,
-    const PureSysFnClassification& classification, ExpressionLoweringView view)
-    -> hir::ExpressionId {
+    const DesugarableClassification& classification,
+    ExpressionLoweringView view) -> hir::ExpressionId {
   auto* ctx = view.context;
   SourceSpan span = ctx->SpanOf(call.sourceRange);
 

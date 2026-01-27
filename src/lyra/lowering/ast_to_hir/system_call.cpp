@@ -6,15 +6,19 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
@@ -24,6 +28,9 @@
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/system_call_helpers.hpp"
+#include "lyra/lowering/ast_to_hir/timescale.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -52,12 +59,69 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
   return FormatKind::kDecimal;
 }
 
+auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
+  if (expr.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
+    return false;
+  }
+  return expr.as<slang::ast::ArbitrarySymbolExpression>().symbol->kind ==
+         slang::ast::SymbolKind::Root;
+}
+
 // Check if a type is eligible for $monitor (can be snapshotted).
 // Supported: integral, packed array/struct, enum, real, shortreal.
 // Unsupported: string, unpacked array/struct/union, dynamic array, queue.
 auto IsMonitorEligibleType(const Type& ty) -> bool {
   return IsPacked(ty) || ty.Kind() == TypeKind::kReal ||
          ty.Kind() == TypeKind::kShortReal;
+}
+
+// Result of extracting file-directed arguments.
+// For $f* variants: descriptor is set, args exclude first argument.
+// For non-$f variants: descriptor is nullopt, args include all arguments.
+struct FileDirectedArgs {
+  std::optional<hir::ExpressionId> descriptor;
+  std::vector<hir::ExpressionId> hir_args;
+  std::vector<const slang::ast::Expression*> slang_args;
+};
+
+// Extract file descriptor and remaining arguments for $f* system functions.
+// Returns nullopt on error (already reported via ctx->ErrorFmt).
+auto ExtractFileDirectedArgs(
+    const slang::ast::CallExpression& call, std::string_view name,
+    ExpressionLoweringView view) -> std::optional<FileDirectedArgs> {
+  Context* ctx = view.context;
+  SourceSpan span = ctx->SpanOf(call.sourceRange);
+  bool is_file_directed = name.starts_with("$f");
+  size_t arg_start = 0;
+  std::optional<hir::ExpressionId> descriptor;
+
+  if (is_file_directed) {
+    if (call.arguments().empty()) {
+      ctx->ErrorFmt(span, "{} requires at least a file descriptor", name);
+      return std::nullopt;
+    }
+    descriptor = LowerExpression(*call.arguments()[0], view);
+    if (!descriptor) {
+      return std::nullopt;
+    }
+    arg_start = 1;
+  }
+
+  std::vector<hir::ExpressionId> hir_args;
+  std::vector<const slang::ast::Expression*> slang_args;
+  for (size_t i = arg_start; i < call.arguments().size(); ++i) {
+    hir::ExpressionId arg = LowerExpression(*call.arguments()[i], view);
+    if (!arg) {
+      return std::nullopt;
+    }
+    hir_args.push_back(arg);
+    slang_args.push_back(call.arguments()[i]);
+  }
+
+  return FileDirectedArgs{
+      .descriptor = descriptor,
+      .hir_args = std::move(hir_args),
+      .slang_args = std::move(slang_args)};
 }
 
 // Create a FormatOp for auto-formatting an argument.
@@ -269,9 +333,10 @@ struct LowerVisitor {
 
   auto operator()(const DisplayFunctionInfo& info) const -> hir::ExpressionId {
     SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    std::string_view name = call->getSubroutineName();
 
-    auto args = LowerArguments(*call, view);
-    if (!args) {
+    auto fd_args = ExtractFileDirectedArgs(*call, name, view);
+    if (!fd_args) {
       return hir::kInvalidExpressionId;
     }
 
@@ -281,13 +346,11 @@ struct LowerVisitor {
 
     std::vector<hir::FormatOp> ops;
 
-    if (args->empty()) {
+    if (fd_args->hir_args.empty()) {
       // No arguments - just print newline if display
-      // ops is empty, which is fine
     } else {
-      // Check if first argument is a string literal with '%'
-      const auto& slang_args = call->arguments();
-      const slang::ast::Expression* first_arg = slang_args[0];
+      // Check if first display argument is a string literal with '%'
+      const slang::ast::Expression* first_arg = fd_args->slang_args[0];
 
       // Unwrap conversion if present (slang wraps string literals)
       if (first_arg->kind == slang::ast::ExpressionKind::Conversion) {
@@ -306,7 +369,7 @@ struct LowerVisitor {
 
       if (has_format_string && format_str.find('%') != std::string::npos) {
         // Parse format string with remaining arguments
-        std::span<const hir::ExpressionId> all_args(*args);
+        std::span<const hir::ExpressionId> all_args(fd_args->hir_args);
         auto remaining_args = all_args.subspan(1);
         auto parse_result = ParseFormatString(
             format_str, remaining_args, default_format, *Ctx()->sink, span,
@@ -315,9 +378,9 @@ struct LowerVisitor {
 
         // Auto-format any remaining arguments not consumed by format string
         size_t next_arg = 1 + parse_result.args_consumed;
-        while (next_arg < args->size()) {
-          ops.push_back(
-              MakeAutoFormatOp((*args)[next_arg], default_format, Ctx()));
+        while (next_arg < fd_args->hir_args.size()) {
+          ops.push_back(MakeAutoFormatOp(
+              fd_args->hir_args[next_arg], default_format, Ctx()));
           ++next_arg;
         }
       } else if (has_format_string) {
@@ -328,12 +391,13 @@ struct LowerVisitor {
                 .value = std::nullopt,
                 .literal = format_str,
                 .mods = {}});
-        for (size_t i = 1; i < args->size(); ++i) {
-          ops.push_back(MakeAutoFormatOp((*args)[i], default_format, Ctx()));
+        for (size_t i = 1; i < fd_args->hir_args.size(); ++i) {
+          ops.push_back(
+              MakeAutoFormatOp(fd_args->hir_args[i], default_format, Ctx()));
         }
       } else {
         // First arg is not a string - auto-format all arguments
-        for (hir::ExpressionId arg_id : *args) {
+        for (hir::ExpressionId arg_id : fd_args->hir_args) {
           ops.push_back(MakeAutoFormatOp(arg_id, default_format, Ctx()));
         }
       }
@@ -347,7 +411,7 @@ struct LowerVisitor {
             .data = hir::DisplaySystemCallData{
                 .print_kind = print_kind,
                 .ops = std::move(ops),
-                .descriptor = std::nullopt,
+                .descriptor = fd_args->descriptor,
                 .is_strobe = info.is_strobe}});
   }
 
@@ -650,26 +714,19 @@ struct LowerVisitor {
 
   auto operator()(const MonitorFunctionInfo& info) const -> hir::ExpressionId {
     SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    std::string_view name = call->getSubroutineName();
 
-    auto args = LowerArguments(*call, view);
-    if (!args) {
+    auto fd_args = ExtractFileDirectedArgs(*call, name, view);
+    if (!fd_args) {
       return hir::kInvalidExpressionId;
     }
 
     FormatKind default_format = RadixToFormatKind(info.radix);
-
-    // Build format ops using the same logic as $display
-    std::vector<const slang::ast::Expression*> slang_ptrs;
-    slang_ptrs.reserve(call->arguments().size());
-    for (const slang::ast::Expression* arg : call->arguments()) {
-      slang_ptrs.push_back(arg);
-    }
-
     std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
-        slang_ptrs, *args, default_format, Ctx(), GetModuleTimeunitPower(view));
+        fd_args->slang_args, fd_args->hir_args, default_format, Ctx(),
+        GetModuleTimeunitPower(view));
 
     // Check eligibility of each operand type for $monitor snapshotting.
-    // Track argument index for error messages.
     size_t arg_idx = 0;
     for (const auto& op : ops) {
       if (!op.value.has_value()) {
@@ -679,9 +736,8 @@ struct LowerVisitor {
       const Type& ty = (*Ctx()->type_arena)[expr.type];
       if (!IsMonitorEligibleType(ty)) {
         Ctx()->ErrorFmt(
-            expr.span,
-            "unsupported operand type '{}' for $monitor at argument {}",
-            ToString(ty.Kind()), arg_idx + 1);
+            expr.span, "unsupported operand type '{}' for {} at argument {}",
+            ToString(ty.Kind()), name, arg_idx + 1);
         return hir::kInvalidExpressionId;
       }
       ++arg_idx;
@@ -693,9 +749,9 @@ struct LowerVisitor {
             .type = result_type,
             .span = span,
             .data = hir::MonitorSystemCallData{
-                .print_kind = PrintKind::kDisplay,  // Always with newline
+                .print_kind = PrintKind::kDisplay,
                 .ops = std::move(ops),
-                .descriptor = std::nullopt}});
+                .descriptor = fd_args->descriptor}});
   }
 
   auto operator()(const MonitorControlFunctionInfo& info) const
@@ -708,6 +764,223 @@ struct LowerVisitor {
             .type = result_type,
             .span = span,
             .data = hir::MonitorControlData{.enable = info.enable}});
+  }
+
+  auto operator()(const TimeFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    const auto* frame =
+        RequireModuleFrame(call->getSubroutineName(), span, view);
+    if (frame == nullptr) {
+      return hir::kInvalidExpressionId;
+    }
+
+    uint64_t divisor = ComputeTimeDivisor(*frame);
+    hir::ExpressionId raw = EmitRawTicksQuery(span, Ctx());
+
+    switch (info.kind) {
+      case TimeKind::kTime64:
+      case TimeKind::kSTime32:
+        return EmitIntegerTimeScaling(raw, divisor, result_type, span, Ctx());
+      case TimeKind::kRealTime:
+        return EmitRealTimeScaling(raw, divisor, span, Ctx());
+    }
+    throw common::InternalError("LowerSystemCall", "unhandled TimeKind");
+  }
+
+  auto operator()(const FileIoFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    switch (info.kind) {
+      case FileIoKind::kOpen: {
+        hir::ExpressionId filename =
+            LowerExpression(*call->arguments()[0], view);
+        if (!filename) {
+          return hir::kInvalidExpressionId;
+        }
+        std::optional<hir::ExpressionId> mode;
+        if (call->arguments().size() == 2) {
+          hir::ExpressionId mode_expr =
+              LowerExpression(*call->arguments()[1], view);
+          if (!mode_expr) {
+            return hir::kInvalidExpressionId;
+          }
+          mode = mode_expr;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{
+                    hir::FopenData{.filename = filename, .mode = mode}}});
+      }
+      case FileIoKind::kClose: {
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[0], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{
+                    hir::FcloseData{.descriptor = descriptor}}});
+      }
+    }
+    throw common::InternalError("LowerSystemCall", "unhandled FileIoKind");
+  }
+
+  auto operator()(const MemIoFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+    auto [is_read, is_hex] = MemIoTraits(info.kind);
+
+    // Lower filename (arg 0)
+    hir::ExpressionId filename = LowerExpression(*call->arguments()[0], view);
+    if (!filename) {
+      return hir::kInvalidExpressionId;
+    }
+
+    // Lower target lvalue (arg 1)
+    hir::ExpressionId target = UnwrapOutputArgument(call->arguments()[1], view);
+    if (!target) {
+      return hir::kInvalidExpressionId;
+    }
+
+    // Lower optional start/end address args
+    std::optional<hir::ExpressionId> start_addr;
+    std::optional<hir::ExpressionId> end_addr;
+    if (call->arguments().size() >= 3) {
+      hir::ExpressionId addr = LowerExpression(*call->arguments()[2], view);
+      if (!addr) {
+        return hir::kInvalidExpressionId;
+      }
+      start_addr = addr;
+    }
+    if (call->arguments().size() >= 4) {
+      hir::ExpressionId addr = LowerExpression(*call->arguments()[3], view);
+      if (!addr) {
+        return hir::kInvalidExpressionId;
+      }
+      end_addr = addr;
+    }
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::SystemCallExpressionData{hir::MemIOData{
+                .is_read = is_read,
+                .is_hex = is_hex,
+                .filename = filename,
+                .target = target,
+                .start_addr = start_addr,
+                .end_addr = end_addr}}});
+  }
+
+  auto operator()(const PlusargsFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    switch (info.kind) {
+      case PlusargsKind::kTest: {
+        hir::ExpressionId query = LowerExpression(*call->arguments()[0], view);
+        if (!query) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{
+                    hir::TestPlusargsData{.query = query}}});
+      }
+      case PlusargsKind::kValue: {
+        hir::ExpressionId format_expr =
+            LowerExpression(*call->arguments()[0], view);
+        if (!format_expr) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId output_expr =
+            UnwrapOutputArgument(call->arguments()[1], view);
+        if (!output_expr) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{hir::ValuePlusargsData{
+                    .format = format_expr, .output = output_expr}}});
+      }
+    }
+    throw common::InternalError("LowerSystemCall", "unhandled PlusargsKind");
+  }
+
+  auto operator()(const PrintTimescaleFunctionInfo& /*info*/) const
+      -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    const auto& sys_info =
+        std::get<slang::ast::CallExpression::SystemCallInfo>(call->subroutine);
+
+    std::string scope_name;
+    int unit_power = kDefaultTimeScalePower;
+    int prec_power = kDefaultTimeScalePower;
+
+    if (call->arguments().empty()) {
+      const auto* body = sys_info.scope->getContainingInstance();
+      if (body == nullptr) {
+        Ctx()->ErrorFmt(
+            span, "$printtimescale must be called from module scope");
+        return hir::kInvalidExpressionId;
+      }
+      scope_name = body->getDefinition().name;
+      auto ts = body->getTimeScale();
+      if (ts) {
+        unit_power = TimeScaleValueToPower(ts->base);
+        prec_power = TimeScaleValueToPower(ts->precision);
+      }
+    } else {
+      const auto* arg_expr = call->arguments()[0];
+      if (!IsRootExpression(*arg_expr)) {
+        Ctx()->ErrorFmt(
+            span,
+            "$printtimescale argument must be $root "
+            "(hierarchical paths not supported)");
+        return hir::kInvalidExpressionId;
+      }
+      scope_name = "$root";
+      if (!Ctx()->cached_global_precision) {
+        Ctx()->cached_global_precision =
+            ComputeGlobalPrecision(sys_info.scope->getCompilation());
+      }
+      unit_power = *Ctx()->cached_global_precision;
+      prec_power = *Ctx()->cached_global_precision;
+    }
+
+    std::string message = FormatTimescale(scope_name, unit_power, prec_power);
+
+    std::vector<hir::FormatOp> ops;
+    ops.push_back(
+        hir::FormatOp{
+            .kind = FormatKind::kLiteral,
+            .value = std::nullopt,
+            .literal = message,
+            .mods = {}});
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::DisplaySystemCallData{
+                .print_kind = PrintKind::kDisplay,
+                .ops = std::move(ops),
+                .descriptor = std::nullopt}});
   }
 };
 
@@ -800,16 +1073,10 @@ auto LowerSystemCall(
     return hir::kInvalidExpressionId;
   }
 
-  // Determine return type from registry metadata (exhaustive switch)
-  TypeId result_type;
-  switch (info->return_type) {
-    case SystemFunctionReturnType::kVoid:
-      result_type = ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
-      break;
-    case SystemFunctionReturnType::kString:
-      result_type =
-          ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
-      break;
+  // Derive return type from slang's expression type (single source of truth)
+  TypeId result_type = LowerType(*call.type, span, ctx);
+  if (!result_type) {
+    return hir::kInvalidExpressionId;
   }
 
   return std::visit(
