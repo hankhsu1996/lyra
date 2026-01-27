@@ -16,13 +16,13 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute.hpp"
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -125,7 +125,7 @@ auto StoreBitRange(
     llvm::Value* packed = llvm::UndefValue::get(base_struct);
     packed = builder.CreateInsertValue(packed, result_val, 0);
     packed = builder.CreateInsertValue(packed, result_unk, 1);
-    StoreToWriteTarget(context, packed, wt);
+    detail::StorePackedToWriteTarget(context, packed, wt);
     return {};
   }
 
@@ -153,7 +153,7 @@ auto StoreBitRange(
   src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
   auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
   auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  StoreToWriteTarget(context, result, wt);
+  detail::StorePackedToWriteTarget(context, result, wt);
   return {};
 }
 
@@ -206,9 +206,6 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     auto result = StoreBitRange(context, guarded.target, source_raw);
     if (!result) return result;
   } else {
-    auto wt_or_err = context.GetWriteTarget(guarded.target);
-    if (!wt_or_err) return std::unexpected(wt_or_err.error());
-
     const auto& place = arena[guarded.target];
     TypeId type_id = mir::TypeOfPlace(types, place);
 
@@ -218,8 +215,8 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     // spec), and the source place may still be observable by other code.
     // kClone ensures no "consume source" side effects (no null-out, no
     // release). Do NOT "optimize" this to kMove.
-    auto result = StoreRawToTarget(
-        context, *wt_or_err, source_raw, type_id, OwnershipPolicy::kClone);
+    auto result = CommitValue(
+        context, guarded.target, source_raw, type_id, OwnershipPolicy::kClone);
     if (!result) return result;
   }
   builder.CreateBr(skip_bb);

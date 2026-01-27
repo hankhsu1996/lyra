@@ -2,8 +2,8 @@
 """Check that type_ops handler files follow commit-layer conventions.
 
 This script enforces the rule: runtime getter calls in type_ops_*.cpp handler
-files must go through type_ops_store.cpp (the "commit layer"), with explicit
-per-pattern exceptions for legitimate Tier-2 design choices.
+files must go through the commit module (src/lyra/llvm_backend/commit/), with
+explicit per-pattern exceptions for legitimate Tier-2 design choices.
 
 Scope: type_ops_*.cpp files only. Other files (instruction handlers, lower.cpp)
 have legitimate direct runtime calls for different purposes and are not checked.
@@ -15,21 +15,38 @@ Usage:
 import sys
 from pathlib import Path
 
-COMMIT_LAYER = "src/lyra/llvm_backend/type_ops_store.cpp"
+COMMIT_LAYER = "src/lyra/llvm_backend/commit/"
 
 ALLOWED = {
     "GetLyraStorePacked": {
-        COMMIT_LAYER,
-        # Union notify is a deliberate Tier-2 exception (memcpy + notify pattern)
-        # Currently routed through NotifyUnionStore in commit layer
+        f"{COMMIT_LAYER}commit_packed.cpp",
+        f"{COMMIT_LAYER}commit_notify.cpp",
     },
-    "GetLyraStoreDynArray": {COMMIT_LAYER},
-    "GetLyraStoreString": {COMMIT_LAYER},
-    "GetLyraStringRetain": {COMMIT_LAYER},
-    "GetLyraStringRelease": {COMMIT_LAYER},
-    "GetLyraDynArrayClone": {COMMIT_LAYER},
-    "GetLyraDynArrayRelease": {COMMIT_LAYER},
-    "GetLyraDynArrayDestroy": {COMMIT_LAYER},
+    "GetLyraStoreDynArray": {
+        f"{COMMIT_LAYER}commit_container.cpp",
+        f"{COMMIT_LAYER}commit_notify.cpp",
+    },
+    "GetLyraStoreString": {
+        f"{COMMIT_LAYER}commit_string.cpp",
+    },
+    # Lifecycle patterns - still go through lifecycle module, not commit
+    "GetLyraStringRetain": {
+        "src/lyra/llvm_backend/lifecycle/lifecycle_string.cpp",
+    },
+    "GetLyraStringRelease": {
+        f"{COMMIT_LAYER}commit_string.cpp",
+        "src/lyra/llvm_backend/lifecycle/lifecycle_string.cpp",
+    },
+    "GetLyraDynArrayClone": {
+        "src/lyra/llvm_backend/lifecycle/lifecycle_container.cpp",
+    },
+    "GetLyraDynArrayRelease": {
+        f"{COMMIT_LAYER}commit_container.cpp",
+        "src/lyra/llvm_backend/lifecycle/lifecycle_container.cpp",
+    },
+    "GetLyraDynArrayDestroy": {
+        "src/lyra/llvm_backend/lifecycle/lifecycle_container.cpp",
+    },
 }
 
 
@@ -69,7 +86,7 @@ def main() -> int:
             print(e)
         print()
         print("This script enforces commit-layer conventions for type_ops_*.cpp files.")
-        print("Runtime getters should go through type_ops_store.cpp helpers.")
+        print("Runtime getters should go through commit/ module helpers.")
         print()
         print("If this is a legitimate Tier-2 exception, add it to ALLOWED in:")
         print(f"  {Path(__file__).relative_to(repo_root)}")

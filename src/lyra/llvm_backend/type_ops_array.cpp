@@ -1,7 +1,7 @@
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
-#include "lyra/llvm_backend/type_ops_store.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -30,7 +30,7 @@ auto AssignArray(
   auto val_or_err = LowerOperandRaw(context, source);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
-  StoreToWriteTarget(context, val, wt);
+  detail::StorePackedToWriteTarget(context, val, wt);
   return {};
 }
 

@@ -7,12 +7,14 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -40,7 +42,7 @@ auto AssignField(
     // Source null-out (for move) is handled at struct level, not here.
     llvm::Value* new_val =
         builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-    StoreStringFieldRaw(
+    detail::CommitStringField(
         context, target_field_ptr, new_val, policy, field_type_id);
     return {};
   }
@@ -55,7 +57,7 @@ auto AssignField(
       // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
+      detail::CommitPlainField(context, target_field_ptr, val, field_type_id);
     }
     return {};
   }
@@ -63,7 +65,7 @@ auto AssignField(
   // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
+  detail::CommitPlainField(context, target_field_ptr, val, field_type_id);
   return {};
 }
 
@@ -152,8 +154,10 @@ auto AssignStruct(
     if (!result) return result;
 
     // After move: null out source managed fields to prevent double-release.
-    // NullOutSourceIfMoveTemp handles gating (only kMove from temps).
-    NullOutSourceIfMoveTemp(context, source, policy, struct_type_id);
+    // CommitMoveCleanupIfTemp handles gating (only kMove from temps).
+    if (const auto* src_place_id = std::get_if<mir::PlaceId>(&source.payload)) {
+      CommitMoveCleanupIfTemp(context, *src_place_id, policy, struct_type_id);
+    }
 
     return {};
   }
@@ -162,7 +166,7 @@ auto AssignStruct(
   auto val_result = LowerOperandRaw(context, source);
   if (!val_result) return std::unexpected(val_result.error());
   llvm::Value* val = *val_result;
-  StoreToWriteTarget(context, val, wt);
+  detail::StorePackedToWriteTarget(context, val, wt);
   return {};
 }
 

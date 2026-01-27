@@ -2,6 +2,7 @@
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
@@ -50,7 +51,9 @@ auto AssignUnion(
       info.size);
 
   // Notify if this is a design slot
-  NotifyUnionStore(context, wt, info.size);
+  if (wt.canonical_signal_id.has_value()) {
+    CommitNotifyUnionMemcpy(context, target, info.size);
+  }
   return {};
 }
 
