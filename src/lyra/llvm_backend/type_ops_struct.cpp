@@ -2,7 +2,6 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/Support/Casting.h>
 
@@ -14,8 +13,6 @@
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -68,48 +65,6 @@ auto AssignField(
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
   StorePlainFieldRaw(context, target_field_ptr, val, field_type_id);
   return {};
-}
-
-// Null out string fields in a struct after move.
-// Called at struct level after field-by-field move from a temp source.
-void NullOutStringFields(
-    Context& context, llvm::Value* struct_ptr, TypeId struct_type_id) {
-  auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
-  const Type& struct_type = types[struct_type_id];
-  const auto& struct_info = struct_type.AsUnpackedStruct();
-
-  auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
-  if (!llvm_struct_type_result) {
-    // Type should already be validated - this is an internal error
-    throw common::InternalError(
-        "NullOutStringFields", "failed to get LLVM type for struct");
-  }
-  llvm::Type* llvm_struct_type = *llvm_struct_type_result;
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto* null_val =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
-  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
-    const auto& field = struct_info.fields[i];
-    const Type& field_type = types[field.type];
-
-    if (field_type.Kind() == TypeKind::kString) {
-      auto field_idx = static_cast<unsigned>(i);
-      llvm::Value* field_ptr =
-          builder.CreateStructGEP(llvm_struct_type, struct_ptr, field_idx);
-      builder.CreateStore(null_val, field_ptr);
-    } else if (
-        field_type.Kind() == TypeKind::kUnpackedStruct &&
-        NeedsFieldByField(field.type, types)) {
-      // Recurse for nested structs with string fields
-      auto field_idx = static_cast<unsigned>(i);
-      llvm::Value* field_ptr =
-          builder.CreateStructGEP(llvm_struct_type, struct_ptr, field_idx);
-      NullOutStringFields(context, field_ptr, field.type);
-    }
-  }
 }
 
 // Assign struct field-by-field for structs containing string fields.
@@ -192,27 +147,13 @@ auto AssignStruct(
     if (!source_ptr_result) return std::unexpected(source_ptr_result.error());
     llvm::Value* source_ptr = *source_ptr_result;
 
-    // Determine if source is a temp - only temps can be moved from.
-    const auto& arena = context.GetMirArena();
-    const auto& src_place = arena[src_place_id];
-    bool source_is_temp = (src_place.root.kind == mir::PlaceRoot::Kind::kTemp);
-
-    // Force kClone if source is not temp (defensive: prevents corrupting
-    // non-temp sources when move semantics would null out fields).
-    OwnershipPolicy effective_policy = policy;
-    if (policy == OwnershipPolicy::kMove && !source_is_temp) {
-      effective_policy = OwnershipPolicy::kClone;
-    }
-
     auto result = AssignStructFieldByField(
-        context, source_ptr, wt.ptr, struct_type_id, effective_policy);
+        context, source_ptr, wt.ptr, struct_type_id, policy);
     if (!result) return result;
 
-    // After move from temp: null out source string fields to prevent
-    // double-release when temp is destroyed.
-    if (effective_policy == OwnershipPolicy::kMove) {
-      NullOutStringFields(context, source_ptr, struct_type_id);
-    }
+    // After move: null out source managed fields to prevent double-release.
+    // NullOutSourceIfMoveTemp handles gating (only kMove from temps).
+    NullOutSourceIfMoveTemp(context, source, policy, struct_type_id);
 
     return {};
   }

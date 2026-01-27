@@ -17,6 +17,19 @@ namespace lyra::lowering::mir_to_llvm {
 class Context;
 struct WriteTarget;
 
+// Design Note: ConstructDefault API is deliberately deferred.
+//
+// Current state:
+// - Strings/dynarray default to nullptr - no explicit construct needed
+// - Structs with all-POD fields use aggregate zero at init time (lower.cpp)
+// - Structs with managed fields: each managed field is nullptr anyway
+//
+// When to revisit and add ConstructDefault():
+// - Non-null default handles (e.g., pre-allocated empty string/array)
+// - User-defined field initializers in struct declarations
+// - Class types with constructors
+// - Associative arrays (may need non-trivial default state)
+
 // Union storage info - cached layout for union types
 struct UnionStorageInfo {
   uint32_t size;             // Storage size in bytes
@@ -130,18 +143,23 @@ auto StoreRawToTarget(
     Context& context, const WriteTarget& target, llvm::Value* raw_value,
     TypeId type_id, OwnershipPolicy policy) -> Result<void>;
 
-// Null-out source handle if this is a move from a temp place.
+// Null-out source managed fields if this is a move from a temp place.
 //
-// HARD REQUIREMENT: Only callable for managed types (string, dynarray, queue).
-// Asserts if type is non-managed. This prevents accidental misuse.
-//
-// Conditions for null-out:
+// Conditions for null-out (all must be true):
 // - policy == kMove
 // - source is a PlaceId (not a Const)
 // - source place root is kTemp
 //
-// This is a mandatory helper that all managed-type AssignXxx handlers MUST
-// call.
+// If kMove is passed but source is not temp, throws InternalError (this
+// indicates a bug in the caller or DetermineOwnership).
+//
+// Supported types:
+// - kString, kDynamicArray, kQueue: null out the handle
+// - kUnpackedStruct: recursively null out managed fields
+// - Other types: no-op (no managed content)
+//
+// This is a mandatory helper that AssignXxx handlers for managed types and
+// struct types (that may contain managed fields) MUST call after copying.
 void NullOutSourceIfMoveTemp(
     Context& context, const mir::Operand& source, OwnershipPolicy policy,
     TypeId type_id);

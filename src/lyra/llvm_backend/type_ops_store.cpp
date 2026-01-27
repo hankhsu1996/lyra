@@ -683,6 +683,63 @@ auto StoreTwoStateRaw(
 
 }  // namespace
 
+// Null out managed fields in a value at ptr.
+// Pure mechanical operation - does not check permissions.
+// Called by NullOutSourceIfMoveTemp after permission checks.
+//
+// Handles:
+// - kString, kDynamicArray, kQueue: store nullptr to ptr
+// - kUnpackedStruct: recurse for fields where TypeContainsManaged is true
+// - Other types: no-op (no managed content)
+//
+// Internal to this file - not exposed in header.
+void NullOutManagedFields(Context& context, llvm::Value* ptr, TypeId type_id) {
+  const auto& types = context.GetTypeArena();
+  const Type& type = types[type_id];
+
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  auto* null_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  switch (type.Kind()) {
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      // Managed leaf type: store nullptr
+      context.GetBuilder().CreateStore(null_val, ptr);
+      return;
+
+    case TypeKind::kUnpackedStruct: {
+      // Iterate fields, recurse for those with managed content
+      const auto& struct_info = type.AsUnpackedStruct();
+
+      auto llvm_struct_type_result = BuildLlvmTypeForTypeId(context, type_id);
+      if (!llvm_struct_type_result) {
+        throw common::InternalError(
+            "NullOutManagedFields",
+            "failed to get LLVM type for struct - type was not properly "
+            "lowered");
+      }
+      llvm::Type* llvm_struct_type = *llvm_struct_type_result;
+
+      for (size_t i = 0; i < struct_info.fields.size(); ++i) {
+        const auto& field = struct_info.fields[i];
+        if (TypeContainsManaged(field.type, types)) {
+          auto field_idx = static_cast<unsigned>(i);
+          llvm::Value* field_ptr = context.GetBuilder().CreateStructGEP(
+              llvm_struct_type, ptr, field_idx);
+          NullOutManagedFields(context, field_ptr, field.type);
+        }
+      }
+      return;
+    }
+
+    default:
+      // Non-managed type: no-op
+      return;
+  }
+}
+
 auto StoreRawToTarget(
     Context& context, const WriteTarget& target, llvm::Value* raw_value,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
@@ -715,47 +772,40 @@ auto StoreRawToTarget(
 void NullOutSourceIfMoveTemp(
     Context& context, const mir::Operand& source, OwnershipPolicy policy,
     TypeId type_id) {
-  const auto& types = context.GetTypeArena();
-  const Type& type = types[type_id];
-
-  // HARD REQUIREMENT: Only callable for managed types.
-  if (GetManagedKind(type.Kind()) == ManagedKind::kNone) {
-    throw common::InternalError(
-        "NullOutSourceIfMoveTemp", "called with non-managed type");
-  }
-
-  // Conditions for null-out:
-  // 1. Must be a move operation
+  // Gate 1: Only kMove requires null-out
   if (policy != OwnershipPolicy::kMove) {
     return;
   }
 
-  // 2. Source must be a PlaceId (not a Const)
+  // Gate 2: Source must be a PlaceId (not a Const)
+  // kMove with Const shouldn't happen (DetermineOwnership returns kClone for
+  // Const)
   if (!std::holds_alternative<mir::PlaceId>(source.payload)) {
-    return;
+    throw common::InternalError(
+        "NullOutSourceIfMoveTemp", "kMove with non-place source");
   }
 
   auto src_place_id = std::get<mir::PlaceId>(source.payload);
   const auto& arena = context.GetMirArena();
   const auto& src_place = arena[src_place_id];
 
-  // 3. Source place root must be kTemp
+  // Gate 3 + Enforcement: Source place root must be kTemp
+  // kMove from non-temp is a bug (DetermineOwnership only returns kMove for
+  // temps)
   if (src_place.root.kind != mir::PlaceRoot::Kind::kTemp) {
-    return;
+    throw common::InternalError(
+        "NullOutSourceIfMoveTemp", "kMove from non-temp source");
   }
 
-  // Null-out the source handle
+  // Get source pointer
   auto src_ptr_result = context.GetPlacePointer(src_place_id);
   if (!src_ptr_result) {
-    // If we can't get the pointer, it's an internal error (should never happen)
     throw common::InternalError(
         "NullOutSourceIfMoveTemp", "failed to get source place pointer");
   }
 
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto* null_val =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  context.GetBuilder().CreateStore(null_val, *src_ptr_result);
+  // Null out managed fields in source
+  NullOutManagedFields(context, *src_ptr_result, type_id);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
