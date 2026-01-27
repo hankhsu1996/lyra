@@ -267,7 +267,11 @@ void Dumper::Dump(StatementId id) {
           Dump(e);
         }
         *out_ << ": ";
-        Dump(item.statement);
+        if (item.statement.has_value()) {
+          Dump(*item.statement);
+        } else {
+          *out_ << ";\n";
+        }
       }
       if (data.default_statement.has_value()) {
         PrintIndent();

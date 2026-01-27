@@ -125,7 +125,6 @@ Not yet supported:
 ## Statements
 
 - `case inside` - pattern matching
-- Empty case item bodies (`case(x) 1:; endcase` - use `begin end` as workaround)
 - `foreach` - unpacked arrays, dynamic arrays, queues (multi-dimensional and skipped dimensions supported)
 - `wait(expr)` - wait statements
 - `->` - event triggers

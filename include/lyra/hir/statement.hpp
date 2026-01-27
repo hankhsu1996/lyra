@@ -77,7 +77,7 @@ struct ConditionalStatementData {
 
 struct CaseItem {
   std::vector<ExpressionId> expressions;
-  StatementId statement;
+  std::optional<StatementId> statement;  // nullopt = empty body (e.g., "2: ;")
 
   auto operator==(const CaseItem&) const -> bool = default;
 };

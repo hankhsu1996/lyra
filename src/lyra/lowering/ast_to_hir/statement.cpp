@@ -478,15 +478,11 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           expressions.push_back(e);
         }
         auto body_result = LowerStatement(*group.stmt, lowerer);
-        if (!body_result.has_value()) {
-          ctx->sink->Error(span, "case item body cannot be empty");
-          return hir::kInvalidStatementId;
-        }
-        if (!*body_result) {
+        if (body_result.has_value() && !*body_result) {
           return hir::kInvalidStatementId;
         }
         items.push_back(
-            {.expressions = std::move(expressions), .statement = *body_result});
+            {.expressions = std::move(expressions), .statement = body_result});
       }
 
       std::optional<hir::StatementId> default_statement;

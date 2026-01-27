@@ -1059,8 +1059,8 @@ auto LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder)
       });
     }
     case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
-      if (callback_result) {
-        callback_result = LowerStatement(stmt_id, builder);
+      if (callback_result && stmt_id.has_value()) {
+        callback_result = LowerStatement(*stmt_id, builder);
       }
     };
     items.push_back(std::move(case_item));
@@ -1102,8 +1102,8 @@ auto LowerCasePriority(const hir::CaseStatementData& data, MirBuilder& builder)
       });
     }
     case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
-      if (callback_result) {
-        callback_result = LowerStatement(stmt_id, builder);
+      if (callback_result && stmt_id.has_value()) {
+        callback_result = LowerStatement(*stmt_id, builder);
       }
     };
     items.push_back(std::move(case_item));
@@ -1182,8 +1182,8 @@ auto LowerCaseUnique(
   for (const auto& item : data.items) {
     bodies.emplace_back(
         [&builder, &callback_result, stmt_id = item.statement]() {
-          if (callback_result) {
-            callback_result = LowerStatement(stmt_id, builder);
+          if (callback_result && stmt_id.has_value()) {
+            callback_result = LowerStatement(*stmt_id, builder);
           }
         });
   }
