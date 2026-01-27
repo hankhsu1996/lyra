@@ -1,0 +1,125 @@
+feature: file_monitor
+description: Tests for $fmonitor system task (file-directed monitor)
+
+cases:
+  - name: fmonitor_initial_print
+    description: $fmonitor prints immediately on registration
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 10;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=10
+
+  - name: fmonitor_change_detection
+    description: $fmonitor prints on value change to file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+              #1 x = 2;
+              #1 x = 3;
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=1
+        x=2
+        x=3
+
+  - name: fmonitorh_hex
+    description: $fmonitorh uses hex format (full width for int)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 255;
+            initial begin
+              $fmonitorh(1, x);
+            end
+          endmodule
+    expect:
+      stdout: |
+        000000ff
+
+  - name: fclose_cancels_fmonitor
+    description: $fclose cancels active $fmonitor to that file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fmonitor(fd, "x=%d", x);
+              #1 x = 2;
+              $fclose(fd);
+              #1 x = 3;
+              $display("done");
+            end
+          endmodule
+    expect:
+      stdout: |
+        done
+
+  - name: fmonitor_replace
+    description: New $fmonitor replaces active one (old monitor does not print)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1, y = 10;
+            initial begin
+              $fmonitor(1, "x=%d", x);
+              #1 x = 2;
+              $fmonitor(1, "y=%d", y);
+              #1 y = 20;
+              #1 x = 3;
+            end
+          endmodule
+    expect:
+      stdout: |
+        x=1
+        y=10
+        y=20
+
+  - name: fmonitor_cancel_verified
+    description: $fclose cancels $fmonitor (no writes after close)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int x = 1;
+            int fd;
+            initial begin
+              fd = $fopen("output.txt", "w");
+              $fmonitor(fd, "x=%d", x);
+              #1 x = 2;
+              // IMPORTANT: This #1 is required for correct region ordering.
+              // $fmonitor writes in Postponed region at end of time step.
+              // Without this delay, $fclose executes in Active region of
+              // time 1 (same step as x=2), cancelling the monitor BEFORE
+              // Postponed runs. The delay ensures x=2 writes before close.
+              #1;
+              $fclose(fd);
+              #1 x = 3;  // After close - should not write
+            end
+          endmodule
+    expect:
+      files:
+        output.txt:
+          contains:
+            - "x=1"
+            - "x=2"
+          not_contains:
+            - "x=3"

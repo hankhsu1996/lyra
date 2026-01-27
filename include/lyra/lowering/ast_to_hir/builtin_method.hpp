@@ -4,7 +4,10 @@
 
 #include <slang/ast/expressions/CallExpression.h>
 
-namespace lyra::lowering {
+#include "lyra/hir/fwd.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
+
+namespace lyra::lowering::ast_to_hir {
 
 // Container type that owns the builtin method.
 enum class ContainerKind {
@@ -59,4 +62,10 @@ struct BuiltinMethodInfo {
 auto ClassifyBuiltinMethod(const slang::ast::CallExpression& call)
     -> std::optional<BuiltinMethodInfo>;
 
-}  // namespace lyra::lowering
+// Lower a builtin method call to HIR.
+// Precondition: ClassifyBuiltinMethod returned a valid classification.
+auto LowerBuiltinMethodCall(
+    const slang::ast::CallExpression& call, const BuiltinMethodInfo& info,
+    ExpressionLoweringView view) -> hir::ExpressionId;
+
+}  // namespace lyra::lowering::ast_to_hir

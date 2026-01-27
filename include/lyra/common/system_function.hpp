@@ -9,11 +9,6 @@
 
 namespace lyra {
 
-enum class SystemFunctionReturnType : uint8_t {
-  kVoid,
-  kString,
-};
-
 enum class PrintRadix : uint8_t {
   kDecimal,
   kBinary,
@@ -66,72 +61,163 @@ struct MonitorControlFunctionInfo {
   bool enable;  // true=$monitoron, false=$monitoroff
 };
 
-using CategoryPayload = std::variant<
+// Time query functions ($time, $stime, $realtime)
+enum class TimeKind : uint8_t { kTime64, kSTime32, kRealTime };
+struct TimeFunctionInfo {
+  TimeKind kind;
+};
+
+// File I/O functions ($fopen, $fclose)
+enum class FileIoKind : uint8_t { kOpen, kClose };
+struct FileIoFunctionInfo {
+  FileIoKind kind;
+};
+
+// Memory file I/O ($readmemh/b, $writememh/b)
+enum class MemIoKind : uint8_t { kReadMemH, kReadMemB, kWriteMemH, kWriteMemB };
+struct MemIoFunctionInfo {
+  MemIoKind kind;
+};
+
+struct MemIoTraitsResult {
+  bool is_read;
+  bool is_hex;
+};
+constexpr auto MemIoTraits(MemIoKind kind) -> MemIoTraitsResult {
+  switch (kind) {
+    case MemIoKind::kReadMemH:
+      return {.is_read = true, .is_hex = true};
+    case MemIoKind::kReadMemB:
+      return {.is_read = true, .is_hex = false};
+    case MemIoKind::kWriteMemH:
+      return {.is_read = false, .is_hex = true};
+    case MemIoKind::kWriteMemB:
+      return {.is_read = false, .is_hex = false};
+  }
+  // Unreachable - all enum values handled
+  return {.is_read = false, .is_hex = false};
+}
+
+// Plusargs functions ($test$plusargs, $value$plusargs)
+enum class PlusargsKind : uint8_t { kTest, kValue };
+struct PlusargsFunctionInfo {
+  PlusargsKind kind;
+};
+
+// $printtimescale
+struct PrintTimescaleFunctionInfo {};
+
+using SystemCallPayload = std::variant<
     DisplayFunctionInfo, TerminationFunctionInfo, SeverityFunctionInfo,
     FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo,
-    MonitorFunctionInfo, MonitorControlFunctionInfo>;
+    MonitorFunctionInfo, MonitorControlFunctionInfo, TimeFunctionInfo,
+    FileIoFunctionInfo, MemIoFunctionInfo, PlusargsFunctionInfo,
+    PrintTimescaleFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
   uint8_t min_args;
   uint8_t max_args;
-  SystemFunctionReturnType return_type;
-  CategoryPayload payload;
+  SystemCallPayload payload;
 };
-
-using Ret = SystemFunctionReturnType;
 
 // clang-format off
 inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>({
   // $display family (stdout, with newline)
-  {.name = "$display",  .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true}},
-  {.name = "$displayb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true}},
-  {.name = "$displayo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true}},
-  {.name = "$displayh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true}},
+  {.name = "$display",  .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true}},
+  {.name = "$displayb", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true}},
+  {.name = "$displayo", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true}},
+  {.name = "$displayh", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true}},
 
   // $write family (stdout, no newline)
-  {.name = "$write",  .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = false}},
-  {.name = "$writeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
-  {.name = "$writeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
-  {.name = "$writeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
+  {.name = "$write",  .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = false}},
+  {.name = "$writeb", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
+  {.name = "$writeo", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
+  {.name = "$writeh", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
+
+  // $fdisplay family (file-directed, with newline)
+  {.name = "$fdisplay",  .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true}},
+  {.name = "$fdisplayb", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true}},
+  {.name = "$fdisplayo", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true}},
+  {.name = "$fdisplayh", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true}},
+
+  // $fwrite family (file-directed, no newline)
+  {.name = "$fwrite",  .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = false}},
+  {.name = "$fwriteb", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
+  {.name = "$fwriteo", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
+  {.name = "$fwriteh", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
 
   // $strobe family (stdout, with newline, deferred to Postponed region)
-  {.name = "$strobe",  .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
-  {.name = "$strobeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
-  {.name = "$strobeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
-  {.name = "$strobeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
+  {.name = "$strobe",  .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeb", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeo", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
+  {.name = "$strobeh", .min_args = 0, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
+
+  // $fstrobe family (file-directed, with newline, deferred to Postponed region)
+  {.name = "$fstrobe",  .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeb", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeo", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeh", .min_args = 1, .max_args = 255, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
 
   // Simulation control tasks
-  {.name = "$finish", .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},
-  {.name = "$stop",   .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kStop,   .default_level = 1}},
-  {.name = "$exit",   .min_args = 0, .max_args = 0, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kExit,   .default_level = 1}},
+  {.name = "$finish", .min_args = 0, .max_args = 1, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},
+  {.name = "$stop",   .min_args = 0, .max_args = 1, .payload = TerminationFunctionInfo{.type = TerminationType::kStop,   .default_level = 1}},
+  {.name = "$exit",   .min_args = 0, .max_args = 0, .payload = TerminationFunctionInfo{.type = TerminationType::kExit,   .default_level = 1}},
 
   // Severity system tasks (non-terminating)
-  {.name = "$info",    .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kInfo}},
-  {.name = "$warning", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kWarning}},
-  {.name = "$error",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = SeverityFunctionInfo{.level = Severity::kError}},
+  {.name = "$info",    .min_args = 0, .max_args = 255, .payload = SeverityFunctionInfo{.level = Severity::kInfo}},
+  {.name = "$warning", .min_args = 0, .max_args = 255, .payload = SeverityFunctionInfo{.level = Severity::kWarning}},
+  {.name = "$error",   .min_args = 0, .max_args = 255, .payload = SeverityFunctionInfo{.level = Severity::kError}},
 
   // Fatal severity task (terminating)
-  {.name = "$fatal",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = FatalFunctionInfo{}},
+  {.name = "$fatal", .min_args = 0, .max_args = 255, .payload = FatalFunctionInfo{}},
 
   // $sformatf/$sformat/$swrite family (string formatting)
-  {.name = "$sformatf", .min_args = 1, .max_args = 255, .return_type = Ret::kString, .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = false}},
-  {.name = "$sformat",  .min_args = 2, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = true}},
-  {.name = "$swrite",   .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = false, .has_output_target = true}},
-  {.name = "$swriteh",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kHex,     .has_format_string = false, .has_output_target = true}},
-  {.name = "$swriteb",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kBinary,  .has_format_string = false, .has_output_target = true}},
-  {.name = "$swriteo",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid,   .payload = SFormatFunctionInfo{.radix = PrintRadix::kOctal,   .has_format_string = false, .has_output_target = true}},
+  {.name = "$sformatf", .min_args = 1, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = false}},
+  {.name = "$sformat",  .min_args = 2, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = true,  .has_output_target = true}},
+  {.name = "$swrite",   .min_args = 1, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kDecimal, .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteh",  .min_args = 1, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kHex,     .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteb",  .min_args = 1, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kBinary,  .has_format_string = false, .has_output_target = true}},
+  {.name = "$swriteo",  .min_args = 1, .max_args = 255, .payload = SFormatFunctionInfo{.radix = PrintRadix::kOctal,   .has_format_string = false, .has_output_target = true}},
 
   // Time formatting task
-  {.name = "$timeformat", .min_args = 0, .max_args = 4, .return_type = Ret::kVoid, .payload = TimeFormatFunctionInfo{}},
+  {.name = "$timeformat", .min_args = 0, .max_args = 4, .payload = TimeFormatFunctionInfo{}},
 
   // $monitor family (persistent change-triggered display)
-  {.name = "$monitor",    .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kDecimal}},
-  {.name = "$monitorb",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kBinary}},
-  {.name = "$monitoro",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kOctal}},
-  {.name = "$monitorh",   .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = MonitorFunctionInfo{.radix = PrintRadix::kHex}},
-  {.name = "$monitoron",  .min_args = 0, .max_args = 0,   .return_type = Ret::kVoid, .payload = MonitorControlFunctionInfo{.enable = true}},
-  {.name = "$monitoroff", .min_args = 0, .max_args = 0,   .return_type = Ret::kVoid, .payload = MonitorControlFunctionInfo{.enable = false}},
+  {.name = "$monitor",    .min_args = 0, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kDecimal}},
+  {.name = "$monitorb",   .min_args = 0, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kBinary}},
+  {.name = "$monitoro",   .min_args = 0, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kOctal}},
+  {.name = "$monitorh",   .min_args = 0, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kHex}},
+  {.name = "$monitoron",  .min_args = 0, .max_args = 0,   .payload = MonitorControlFunctionInfo{.enable = true}},
+  {.name = "$monitoroff", .min_args = 0, .max_args = 0,   .payload = MonitorControlFunctionInfo{.enable = false}},
+
+  // $fmonitor family (file-directed persistent change-triggered display)
+  {.name = "$fmonitor",  .min_args = 1, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kDecimal}},
+  {.name = "$fmonitorb", .min_args = 1, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kBinary}},
+  {.name = "$fmonitoro", .min_args = 1, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kOctal}},
+  {.name = "$fmonitorh", .min_args = 1, .max_args = 255, .payload = MonitorFunctionInfo{.radix = PrintRadix::kHex}},
+
+  // Time query functions
+  {.name = "$time",     .min_args = 0, .max_args = 0, .payload = TimeFunctionInfo{.kind = TimeKind::kTime64}},
+  {.name = "$stime",    .min_args = 0, .max_args = 0, .payload = TimeFunctionInfo{.kind = TimeKind::kSTime32}},
+  {.name = "$realtime", .min_args = 0, .max_args = 0, .payload = TimeFunctionInfo{.kind = TimeKind::kRealTime}},
+
+  // File I/O
+  {.name = "$fopen",  .min_args = 1, .max_args = 2, .payload = FileIoFunctionInfo{.kind = FileIoKind::kOpen}},
+  {.name = "$fclose", .min_args = 1, .max_args = 1, .payload = FileIoFunctionInfo{.kind = FileIoKind::kClose}},
+
+  // Memory file I/O
+  {.name = "$readmemh",  .min_args = 2, .max_args = 4, .payload = MemIoFunctionInfo{.kind = MemIoKind::kReadMemH}},
+  {.name = "$readmemb",  .min_args = 2, .max_args = 4, .payload = MemIoFunctionInfo{.kind = MemIoKind::kReadMemB}},
+  {.name = "$writememh", .min_args = 2, .max_args = 4, .payload = MemIoFunctionInfo{.kind = MemIoKind::kWriteMemH}},
+  {.name = "$writememb", .min_args = 2, .max_args = 4, .payload = MemIoFunctionInfo{.kind = MemIoKind::kWriteMemB}},
+
+  // Plusargs functions
+  {.name = "$test$plusargs",  .min_args = 1, .max_args = 1, .payload = PlusargsFunctionInfo{.kind = PlusargsKind::kTest}},
+  {.name = "$value$plusargs", .min_args = 2, .max_args = 2, .payload = PlusargsFunctionInfo{.kind = PlusargsKind::kValue}},
+
+  // Timescale printing
+  {.name = "$printtimescale", .min_args = 0, .max_args = 1, .payload = PrintTimescaleFunctionInfo{}},
 });
 // clang-format on
 
