@@ -9,6 +9,8 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/type_ops.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -82,5 +84,37 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
 auto BuildUnpackedUnionType(
     Context& context, TypeId union_type_id, const TypeArena& types)
     -> Result<llvm::Type*>;
+
+// Store a pre-lowered RAW value to a WriteTarget with type-appropriate
+// handling.
+//
+// Contract:
+// - raw_value MUST come from LowerOperandRaw (not LowerOperand)
+// - This function handles: ownership (retain/clone), stateness coercion,
+//   store+notify
+// - This function does NOT handle: source null-out (caller's responsibility)
+//
+// Used by:
+// - AssignXxx handlers (after LowerOperandRaw + source null-out)
+// - LowerGuardedAssign (after LowerOperandRaw, always kClone)
+auto StoreRawToTarget(
+    Context& context, const WriteTarget& target, llvm::Value* raw_value,
+    TypeId type_id, OwnershipPolicy policy) -> Result<void>;
+
+// Null-out source handle if this is a move from a temp place.
+//
+// HARD REQUIREMENT: Only callable for managed types (string, dynarray, queue).
+// Asserts if type is non-managed. This prevents accidental misuse.
+//
+// Conditions for null-out:
+// - policy == kMove
+// - source is a PlaceId (not a Const)
+// - source place root is kTemp
+//
+// This is a mandatory helper that all managed-type AssignXxx handlers MUST
+// call.
+void NullOutSourceIfMoveTemp(
+    Context& context, const mir::Operand& source, OwnershipPolicy policy,
+    TypeId type_id);
 
 }  // namespace lyra::lowering::mir_to_llvm

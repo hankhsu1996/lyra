@@ -173,13 +173,15 @@ auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
 auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     -> Result<void> {
   auto& builder = context.GetBuilder();
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
 
-  // Source is always evaluated unconditionally (per spec)
+  // Source evaluated BEFORE branch (per SystemVerilog spec)
   auto source_raw_or_err = LowerOperandRaw(context, guarded.source);
   if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
   llvm::Value* source_raw = *source_raw_or_err;
 
-  // Lower validity predicate to i1
+  // Validity check (coerce to i1)
   auto valid_or_err = LowerOperand(context, guarded.validity);
   if (!valid_or_err) return std::unexpected(valid_or_err.error());
   llvm::Value* valid = *valid_or_err;
@@ -188,87 +190,40 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     valid = builder.CreateICmpNE(valid, zero, "ga.tobool");
   }
 
-  // Branch: only write if valid
+  // Branch
   auto* func = builder.GetInsertBlock()->getParent();
   auto* do_write_bb =
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.write", func);
   auto* skip_bb =
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
-
   builder.CreateCondBr(valid, do_write_bb, skip_bb);
 
-  // Valid path: perform the assignment
+  // Write path
   builder.SetInsertPoint(do_write_bb);
+
+  // BitRangeProjection: intentional bypass (see invariant in plan)
   if (context.HasBitRangeProjection(guarded.target)) {
-    if (auto result = StoreBitRange(context, guarded.target, source_raw);
-        !result) {
-      return result;
-    }
+    auto result = StoreBitRange(context, guarded.target, source_raw);
+    if (!result) return result;
   } else {
-    // Get WriteTarget for unified pointer + signal_id
     auto wt_or_err = context.GetWriteTarget(guarded.target);
     if (!wt_or_err) return std::unexpected(wt_or_err.error());
-    const WriteTarget& wt = *wt_or_err;
 
-    // Get storage type separately for type checking
-    auto storage_type_or_err = context.GetPlaceLlvmType(guarded.target);
-    if (!storage_type_or_err)
-      return std::unexpected(storage_type_or_err.error());
-    llvm::Type* storage_type = *storage_type_or_err;
+    const auto& place = arena[guarded.target];
+    TypeId type_id = mir::TypeOfPlace(types, place);
 
-    const auto& types = context.GetTypeArena();
-    const auto& ga_place = context.GetMirArena()[guarded.target];
-    TypeId ga_type_id = mir::TypeOfPlace(types, ga_place);
-    const Type& ga_type = types[ga_type_id];
-
-    if (ga_type.Kind() == TypeKind::kDynamicArray ||
-        ga_type.Kind() == TypeKind::kQueue) {
-      // Dynamic array / queue: clone source, then store using centralized
-      // helper
-      llvm::Value* new_handle = source_raw;
-      new_handle = builder.CreateCall(
-          context.GetLyraDynArrayClone(), {new_handle}, "ga.da.clone");
-      StoreDynArrayToWriteTarget(context, new_handle, wt, ga_type_id);
-    } else if (storage_type->isStructTy()) {
-      // 4-state target
-      auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
-      auto* elem_type = struct_type->getElementType(0);
-
-      llvm::Value* val = nullptr;
-      llvm::Value* unk = nullptr;
-      if (source_raw->getType()->isStructTy()) {
-        val = builder.CreateExtractValue(source_raw, 0, "ga.val");
-        unk = builder.CreateExtractValue(source_raw, 1, "ga.unk");
-      } else {
-        val = builder.CreateZExtOrTrunc(source_raw, elem_type, "ga.val");
-        unk = llvm::ConstantInt::get(elem_type, 0);
-      }
-      val = builder.CreateZExtOrTrunc(val, elem_type, "ga.val.fit");
-      unk = builder.CreateZExtOrTrunc(unk, elem_type, "ga.unk.fit");
-
-      llvm::Value* packed = llvm::UndefValue::get(struct_type);
-      packed = builder.CreateInsertValue(packed, val, 0);
-      packed = builder.CreateInsertValue(packed, unk, 1);
-      StoreToWriteTarget(context, packed, wt);
-    } else {
-      // 2-state target
-      llvm::Value* src = source_raw;
-      if (src->getType()->isStructTy()) {
-        auto* v = builder.CreateExtractValue(src, 0, "ga.val");
-        auto* u = builder.CreateExtractValue(src, 1, "ga.unk");
-        auto* not_u = builder.CreateNot(u);
-        src = builder.CreateAnd(v, not_u);
-      }
-      if (src->getType() != storage_type && src->getType()->isIntegerTy() &&
-          storage_type->isIntegerTy()) {
-        src = builder.CreateZExtOrTrunc(src, storage_type, "ga.fit");
-      }
-      StoreToWriteTarget(context, src, wt);
-    }
+    // INVARIANT: GuardedAssign always uses kClone, never kMove.
+    // Reason: We must not mutate/clear the source *place* when the assign is
+    // conditional. The source was evaluated BEFORE the validity check (per SV
+    // spec), and the source place may still be observable by other code.
+    // kClone ensures no "consume source" side effects (no null-out, no
+    // release). Do NOT "optimize" this to kMove.
+    auto result = StoreRawToTarget(
+        context, *wt_or_err, source_raw, type_id, OwnershipPolicy::kClone);
+    if (!result) return result;
   }
   builder.CreateBr(skip_bb);
 
-  // Continue
   builder.SetInsertPoint(skip_bb);
   return {};
 }

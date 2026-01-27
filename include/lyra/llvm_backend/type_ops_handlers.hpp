@@ -38,11 +38,11 @@ auto AssignArray(
 // Packed handlers (type_ops_packed.cpp)
 auto AssignFourState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    llvm::StructType* struct_type) -> Result<void>;
+    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
 
 auto AssignTwoState(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId type_id) -> Result<void>;
+    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
 
 // Union handlers (type_ops_union.cpp)
 auto AssignUnion(

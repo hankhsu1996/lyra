@@ -93,12 +93,11 @@ auto AssignPlace(
   // Packed types: dispatch on LLVM storage type
   if (storage_type->isStructTy()) {
     // 4-state target
-    auto result = AssignFourState(
-        context, target, source, llvm::cast<llvm::StructType>(storage_type));
+    auto result = AssignFourState(context, target, source, policy, type_id);
     if (!result) return std::unexpected(result.error());
   } else {
     // 2-state target
-    auto result = AssignTwoState(context, target, source, type_id);
+    auto result = AssignTwoState(context, target, source, policy, type_id);
     if (!result) return std::unexpected(result.error());
   }
   return {};

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <variant>
 #include <vector>
 
 #include <llvm/IR/Constants.h>
@@ -14,6 +15,8 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -99,6 +102,12 @@ auto BuildLlvmTypeForTypeIdNoUnion(
       type.Kind() == TypeKind::kQueue) {
     return llvm::PointerType::getUnqual(ctx);
   }
+  if (type.Kind() == TypeKind::kReal) {
+    return llvm::Type::getDoubleTy(ctx);
+  }
+  if (type.Kind() == TypeKind::kShortReal) {
+    return llvm::Type::getFloatTy(ctx);
+  }
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
     if (IsPackedFourState(type, types)) {
@@ -141,6 +150,12 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
   if (type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue) {
     return llvm::PointerType::getUnqual(context.GetLlvmContext());
+  }
+  if (type.Kind() == TypeKind::kReal) {
+    return llvm::Type::getDoubleTy(context.GetLlvmContext());
+  }
+  if (type.Kind() == TypeKind::kShortReal) {
+    return llvm::Type::getFloatTy(context.GetLlvmContext());
   }
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
@@ -511,6 +526,196 @@ auto BuildUnpackedUnionType(
   auto result = GetUnionStorageInfo(context, union_type_id);
   if (!result) return std::unexpected(result.error());
   return result->storage_type;
+}
+
+namespace {
+
+// String: retain if clone, store, destroy old
+auto StoreStringRaw(
+    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
+    OwnershipPolicy policy, TypeId type_id) -> Result<void> {
+  if (policy == OwnershipPolicy::kClone) {
+    handle = ctx.GetBuilder().CreateCall(ctx.GetLyraStringRetain(), {handle});
+  }
+  // kMove: handle already has ownership, no retain needed
+  StoreStringToWriteTarget(ctx, handle, wt, type_id);
+  return {};
+}
+
+// Container (DynArray, Queue): clone if clone, store, destroy old
+auto StoreContainerRaw(
+    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
+    OwnershipPolicy policy, TypeId type_id) -> Result<void> {
+  const auto& types = ctx.GetTypeArena();
+  const Type& type = types[type_id];
+
+  // HARD REQUIREMENT: Only kDynamicArray and kQueue use this path.
+  // If ManagedKind::kContainer expands to other types, they need their own
+  // path.
+  if (type.Kind() != TypeKind::kDynamicArray &&
+      type.Kind() != TypeKind::kQueue) {
+    throw common::InternalError(
+        "StoreContainerRaw", "called with non-container type");
+  }
+
+  if (policy == OwnershipPolicy::kClone) {
+    handle = ctx.GetBuilder().CreateCall(ctx.GetLyraDynArrayClone(), {handle});
+  }
+  // kMove: handle already has ownership, no clone needed
+  StoreDynArrayToWriteTarget(ctx, handle, wt, type_id);
+  return {};
+}
+
+// 4-state: coerce raw to {val, unk} struct matching storage_type
+auto StoreFourStateRaw(
+    Context& ctx, const WriteTarget& wt, llvm::Value* raw,
+    llvm::StructType* storage_type) -> Result<void> {
+  auto& builder = ctx.GetBuilder();
+  auto* val_type = storage_type->getElementType(0);
+  auto* unk_type = storage_type->getElementType(1);
+
+  llvm::Value* val = nullptr;
+  llvm::Value* unk = nullptr;
+  if (raw->getType()->isStructTy()) {
+    // 4-state source: extract and coerce
+    // INVARIANT: struct-shaped raw values in this codebase are always {val,
+    // unk} pairs from LowerOperandRaw. No other struct shapes should reach
+    // here.
+    auto* raw_struct = llvm::cast<llvm::StructType>(raw->getType());
+    if (raw_struct->getNumElements() != 2) {
+      throw common::InternalError(
+          "StoreFourStateRaw",
+          "expected {val, unk} struct, got different shape");
+    }
+    val = builder.CreateExtractValue(raw, 0, "store.val");
+    unk = builder.CreateExtractValue(raw, 1, "store.unk");
+  } else {
+    // 2-state source: wrap with unk=0
+    val = raw;
+    unk = llvm::ConstantInt::get(unk_type, 0);
+  }
+  val = builder.CreateZExtOrTrunc(val, val_type, "store.val.fit");
+  unk = builder.CreateZExtOrTrunc(unk, unk_type, "store.unk.fit");
+
+  llvm::Value* packed = llvm::UndefValue::get(storage_type);
+  packed = builder.CreateInsertValue(packed, val, 0);
+  packed = builder.CreateInsertValue(packed, unk, 1);
+  StoreToWriteTarget(ctx, packed, wt);
+  return {};
+}
+
+// 2-state: coerce raw to integer matching storage_type
+// BYTE-FOR-BYTE MATCH with current AssignTwoState + LowerOperand behavior:
+// 1. LowerOperand does (val & ~unk) at SOURCE width
+// 2. AssignTwoState does sext/zext to storage_type based on destination
+// signedness
+auto StoreTwoStateRaw(
+    Context& ctx, const WriteTarget& wt, llvm::Value* raw,
+    llvm::Type* storage_type, TypeId type_id) -> Result<void> {
+  auto& builder = ctx.GetBuilder();
+  const auto& types = ctx.GetTypeArena();
+  const Type& type = types[type_id];
+
+  llvm::Value* value = raw;
+  if (raw->getType()->isStructTy()) {
+    // 4-state source → 2-state target: coerce (val & ~unk) at SOURCE width
+    // This matches LowerOperand's behavior exactly - no resize before and/not
+    auto* v = builder.CreateExtractValue(raw, 0, "coerce.val");
+    auto* u = builder.CreateExtractValue(raw, 1, "coerce.unk");
+    auto* not_u = builder.CreateNot(u, "coerce.notunk");
+    value = builder.CreateAnd(v, not_u, "coerce.known");
+    // value is now at source width, will be resized below
+  }
+
+  // Width adjustment - same logic for both 2-state source and coerced 4-state
+  // This matches AssignTwoState's resize logic exactly
+  if (value->getType() != storage_type && value->getType()->isIntegerTy() &&
+      storage_type->isIntegerTy()) {
+    if (type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_signed) {
+      value = builder.CreateSExtOrTrunc(value, storage_type);
+    } else {
+      value = builder.CreateZExtOrTrunc(value, storage_type);
+    }
+  }
+  StoreToWriteTarget(ctx, value, wt);
+  return {};
+}
+
+}  // namespace
+
+auto StoreRawToTarget(
+    Context& context, const WriteTarget& target, llvm::Value* raw_value,
+    TypeId type_id, OwnershipPolicy policy) -> Result<void> {
+  const auto& types = context.GetTypeArena();
+  const Type& type = types[type_id];
+
+  // Managed types: ownership matters
+  switch (GetManagedKind(type.Kind())) {
+    case ManagedKind::kString:
+      return StoreStringRaw(context, target, raw_value, policy, type_id);
+    case ManagedKind::kContainer:
+      return StoreContainerRaw(context, target, raw_value, policy, type_id);
+    case ManagedKind::kNone:
+      break;
+  }
+
+  // Non-managed types: ownership is no-op (kClone == kMove == plain store)
+  // Compute destination storage type from type_id (authoritative)
+  auto storage_type_or_err = BuildLlvmTypeForTypeId(context, type_id);
+  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
+  llvm::Type* storage_type = *storage_type_or_err;
+
+  if (storage_type->isStructTy()) {
+    return StoreFourStateRaw(
+        context, target, raw_value, llvm::cast<llvm::StructType>(storage_type));
+  }
+  return StoreTwoStateRaw(context, target, raw_value, storage_type, type_id);
+}
+
+void NullOutSourceIfMoveTemp(
+    Context& context, const mir::Operand& source, OwnershipPolicy policy,
+    TypeId type_id) {
+  const auto& types = context.GetTypeArena();
+  const Type& type = types[type_id];
+
+  // HARD REQUIREMENT: Only callable for managed types.
+  if (GetManagedKind(type.Kind()) == ManagedKind::kNone) {
+    throw common::InternalError(
+        "NullOutSourceIfMoveTemp", "called with non-managed type");
+  }
+
+  // Conditions for null-out:
+  // 1. Must be a move operation
+  if (policy != OwnershipPolicy::kMove) {
+    return;
+  }
+
+  // 2. Source must be a PlaceId (not a Const)
+  if (!std::holds_alternative<mir::PlaceId>(source.payload)) {
+    return;
+  }
+
+  auto src_place_id = std::get<mir::PlaceId>(source.payload);
+  const auto& arena = context.GetMirArena();
+  const auto& src_place = arena[src_place_id];
+
+  // 3. Source place root must be kTemp
+  if (src_place.root.kind != mir::PlaceRoot::Kind::kTemp) {
+    return;
+  }
+
+  // Null-out the source handle
+  auto src_ptr_result = context.GetPlacePointer(src_place_id);
+  if (!src_ptr_result) {
+    // If we can't get the pointer, it's an internal error (should never happen)
+    throw common::InternalError(
+        "NullOutSourceIfMoveTemp", "failed to get source place pointer");
+  }
+
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  auto* null_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  context.GetBuilder().CreateStore(null_val, *src_ptr_result);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
