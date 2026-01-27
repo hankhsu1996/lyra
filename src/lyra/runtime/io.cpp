@@ -203,11 +203,26 @@ extern "C" void LyraFWrite(
 
 extern "C" void LyraReadmem(
     LyraStringHandle filename_handle, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
-    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex) {
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind) {
   // Sanity checks
-  if (element_width <= 0 || stride_bytes <= 0 || element_count <= 0) {
+  if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
+      element_count <= 0) {
     std::print(stderr, "$readmem: invalid element parameters\n");
+    return;
+  }
+
+  auto elem_kind = static_cast<MemElementKind>(element_kind);
+
+  // Assert layout consistency
+  int32_t expected_stride = (elem_kind == MemElementKind::kFourState)
+                                ? 2 * value_size_bytes
+                                : value_size_bytes;
+  if (stride_bytes != expected_stride) {
+    std::print(
+        stderr, "$readmem: stride mismatch (got {}, expected {})\n",
+        stride_bytes, expected_stride);
     return;
   }
 
@@ -231,6 +246,7 @@ extern "C" void LyraReadmem(
   int64_t max_addr = min_addr + element_count - 1;
   auto bit_width = static_cast<size_t>(element_width);
   auto stride = static_cast<size_t>(stride_bytes);
+  auto value_size = static_cast<size_t>(value_size_bytes);
 
   std::string_view task_name = is_hex ? "$readmemh" : "$readmemb";
 
@@ -257,10 +273,16 @@ extern "C" void LyraReadmem(
     auto storage_index = static_cast<size_t>(addr - min_addr);
     size_t offset = storage_index * stride;
 
-    // Copy words to storage (little-endian byte order)
-    size_t bytes_to_copy = std::min(stride, words.size() * 8);
+    // Copy value (same for both 2-state and 4-state)
+    size_t bytes_to_copy = std::min(value_size, words.size() * 8);
     std::memcpy(
         target_span.subspan(offset).data(), words.data(), bytes_to_copy);
+
+    if (elem_kind == MemElementKind::kFourState) {
+      // 4-state: zero the x_mask field (all bits known, no X/Z)
+      std::memset(
+          target_span.subspan(offset + value_size).data(), 0, value_size);
+    }
   };
 
   // Forward to canonical parser (step handles direction)
@@ -274,11 +296,26 @@ extern "C" void LyraReadmem(
 
 extern "C" void LyraWritemem(
     LyraStringHandle filename_handle, const void* source, int32_t element_width,
-    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
-    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex) {
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind) {
   // Sanity checks
-  if (element_width <= 0 || stride_bytes <= 0 || element_count <= 0) {
+  if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
+      element_count <= 0) {
     std::print(stderr, "$writemem: invalid element parameters\n");
+    return;
+  }
+
+  auto elem_kind = static_cast<MemElementKind>(element_kind);
+
+  // Assert layout consistency
+  int32_t expected_stride = (elem_kind == MemElementKind::kFourState)
+                                ? 2 * value_size_bytes
+                                : value_size_bytes;
+  if (stride_bytes != expected_stride) {
+    std::print(
+        stderr, "$writemem: stride mismatch (got {}, expected {})\n",
+        stride_bytes, expected_stride);
     return;
   }
 
@@ -300,6 +337,7 @@ extern "C" void LyraWritemem(
   int64_t max_addr = min_addr + element_count - 1;
   auto bit_width = static_cast<size_t>(element_width);
   auto stride = static_cast<size_t>(stride_bytes);
+  auto value_size = static_cast<size_t>(value_size_bytes);
   size_t word_count = (bit_width + 63) / 64;
 
   // Create a span over the source storage for bounds-safe access
@@ -315,11 +353,11 @@ extern "C" void LyraWritemem(
       auto storage_index = static_cast<size_t>(addr - min_addr);
       size_t offset = storage_index * stride;
 
-      // Read words from storage
+      // Read words from value plane only (for 4-state, x_mask is ignored)
       std::vector<uint64_t> words(word_count, 0);
       std::memcpy(
           words.data(), source_span.subspan(offset).data(),
-          std::min(stride, word_count * 8));
+          std::min(value_size, word_count * 8));
 
       // Format and write
       std::string formatted =

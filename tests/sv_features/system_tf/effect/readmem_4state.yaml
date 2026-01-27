@@ -1,0 +1,114 @@
+feature: mem_io_4state
+description: Tests for $readmemh/$readmemb with 4-state (logic) elements
+
+cases:
+  - name: readmemh_logic_basic
+    description: Basic $readmemh with logic array
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] mem [0:3];
+            logic [7:0] a0, a1, a2, a3;
+            initial begin
+              $readmemh("mem.hex", mem);
+              a0 = mem[0];
+              a1 = mem[1];
+              a2 = mem[2];
+              a3 = mem[3];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          00
+          01
+          0a
+          ff
+    expect:
+      variables:
+        a0: 0
+        a1: 1
+        a2: 10
+        a3: 255
+
+  - name: readmemh_logic_32bit
+    description: $readmemh with 32-bit logic array (matches RISC-V CPU use case)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [31:0] mem [0:3];
+            logic [31:0] b0, b1, b2, b3;
+            initial begin
+              $readmemh("mem.hex", mem);
+              b0 = mem[0];
+              b1 = mem[1];
+              b2 = mem[2];
+              b3 = mem[3];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          00000093
+          00100113
+          00b00213
+          002080b3
+    expect:
+      variables:
+        b0: 147
+        b1: 1048851
+        b2: 11534867
+        b3: 2130099
+
+  - name: readmemh_logic_with_address
+    description: $readmemh with address directive on logic array
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] mem [0:15];
+            logic [7:0] c10, c11;
+            initial begin
+              $readmemh("mem.hex", mem);
+              c10 = mem[10];
+              c11 = mem[11];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          @0A
+          ab
+          cd
+    expect:
+      variables:
+        c10: 171
+        c11: 205
+
+  - name: readmemh_logic_nonzero_lower_bound
+    description: $readmemh with non-zero lower bound on logic array
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] mem [5:8];
+            logic [7:0] d5, d6, d7, d8;
+            initial begin
+              $readmemh("mem.hex", mem);
+              d5 = mem[5];
+              d6 = mem[6];
+              d7 = mem[7];
+              d8 = mem[8];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          11
+          22
+          33
+          44
+    expect:
+      variables:
+        d5: 17
+        d6: 34
+        d7: 51
+        d8: 68
