@@ -21,10 +21,9 @@ suites:
       - system_tf/
     exclude_regex:
       # system_tf/effect - various unsupported features
-      - system_tf/effect/fdisplay.yaml
       - system_tf/effect/readmem.yaml
       # system_tf/state - various unsupported features
-      - system_tf/state/fstrobe.yaml
+      - system_tf/state/fmonitor.yaml
       - system_tf/state/monitor.yaml
 
   mir_dev:

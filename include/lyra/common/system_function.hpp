@@ -95,11 +95,29 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$writeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
   {.name = "$writeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
 
+  // $fdisplay family (file-directed, with newline)
+  {.name = "$fdisplay",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true}},
+  {.name = "$fdisplayb", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true}},
+  {.name = "$fdisplayo", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true}},
+  {.name = "$fdisplayh", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true}},
+
+  // $fwrite family (file-directed, no newline)
+  {.name = "$fwrite",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = false}},
+  {.name = "$fwriteb", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = false}},
+  {.name = "$fwriteo", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = false}},
+  {.name = "$fwriteh", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = false}},
+
   // $strobe family (stdout, with newline, deferred to Postponed region)
   {.name = "$strobe",  .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
   {.name = "$strobeb", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
   {.name = "$strobeo", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
   {.name = "$strobeh", .min_args = 0, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
+
+  // $fstrobe family (file-directed, with newline, deferred to Postponed region)
+  {.name = "$fstrobe",  .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kDecimal, .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeb", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kBinary,  .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeo", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kOctal,   .append_newline = true, .is_strobe = true}},
+  {.name = "$fstrobeh", .min_args = 1, .max_args = 255, .return_type = Ret::kVoid, .payload = DisplayFunctionInfo{.radix = PrintRadix::kHex,     .append_newline = true, .is_strobe = true}},
 
   // Simulation control tasks
   {.name = "$finish", .min_args = 0, .max_args = 1, .return_type = Ret::kVoid, .payload = TerminationFunctionInfo{.type = TerminationType::kFinish, .default_level = 1}},

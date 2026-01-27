@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -36,45 +37,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Classify $fdisplay/$fwrite family system tasks.
-// Returns DisplayFunctionInfo if name matches, nullopt otherwise.
-auto ClassifyFdisplay(std::string_view name)
-    -> std::optional<DisplayFunctionInfo> {
-  if (name == "$fdisplay") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kDecimal, .append_newline = true};
-  }
-  if (name == "$fdisplayb") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kBinary, .append_newline = true};
-  }
-  if (name == "$fdisplayo") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kOctal, .append_newline = true};
-  }
-  if (name == "$fdisplayh") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kHex, .append_newline = true};
-  }
-  if (name == "$fwrite") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kDecimal, .append_newline = false};
-  }
-  if (name == "$fwriteb") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kBinary, .append_newline = false};
-  }
-  if (name == "$fwriteo") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kOctal, .append_newline = false};
-  }
-  if (name == "$fwriteh") {
-    return DisplayFunctionInfo{
-        .radix = PrintRadix::kHex, .append_newline = false};
-  }
-  return std::nullopt;
-}
-
 auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
   switch (radix) {
     case PrintRadix::kDecimal:
@@ -86,7 +48,7 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
     case PrintRadix::kHex:
       return FormatKind::kHex;
   }
-  return FormatKind::kDecimal;
+  std::unreachable();
 }
 
 auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
@@ -95,6 +57,50 @@ auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
   }
   return expr.as<slang::ast::ArbitrarySymbolExpression>().symbol->kind ==
          slang::ast::SymbolKind::Root;
+}
+
+// Unwrap output argument for system functions that expect lvalues.
+// Slang wraps output args as AssignmentExpression; this extracts the LHS.
+// Returns: HIR expression for the assignable target.
+// Contract: Caller assumes result is a valid lvalue (slang validates this).
+auto UnwrapOutputArgument(
+    const slang::ast::Expression* arg, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  if (arg->kind == slang::ast::ExpressionKind::Assignment) {
+    const auto& assign = arg->as<slang::ast::AssignmentExpression>();
+    return LowerExpression(assign.left(), view);
+  }
+  return LowerExpression(*arg, view);
+}
+
+// Compute time scaling divisor: 10^(unit_power - global_precision)
+// Throws InternalError on invariant violations (negative exponent, overflow).
+auto ComputeTimeDivisor(const LoweringFrame& frame) -> uint64_t {
+  int exponent = frame.unit_power - frame.global_precision_power;
+  if (exponent < 0) {
+    throw common::InternalError(
+        "time scaling",
+        "negative exponent - global precision coarser than timeunit");
+  }
+  if (exponent == 0) {
+    return 1;
+  }
+  auto result = IntegerPow10(exponent);
+  if (!result) {
+    throw common::InternalError("time scaling", "divisor overflow");
+  }
+  return *result;
+}
+
+auto EmitRawTicksQuery(SourceSpan span, Context* ctx) -> hir::ExpressionId {
+  TypeId tick_type = ctx->GetTickType();
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kSystemCall,
+          .type = tick_type,
+          .span = span,
+          .data = hir::SystemCallExpressionData{
+              hir::RuntimeQueryData{.kind = RuntimeQueryKind::kTimeRawTicks}}});
 }
 
 auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
@@ -109,6 +115,77 @@ auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
           .type = type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
+}
+
+// Integer floor division scaling + optional type cast
+auto EmitIntegerTimeScaling(
+    hir::ExpressionId raw_ticks, uint64_t divisor, TypeId result_type,
+    SourceSpan span, Context* ctx) -> hir::ExpressionId {
+  TypeId tick_type = ctx->GetTickType();
+  hir::ExpressionId scaled = raw_ticks;
+
+  if (divisor > 1) {
+    hir::ExpressionId divisor_expr =
+        MakeConstant(divisor, tick_type, span, ctx);
+    scaled = ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kBinaryOp,
+            .type = tick_type,
+            .span = span,
+            .data = hir::BinaryExpressionData{
+                .op = hir::BinaryOp::kDivide,
+                .lhs = raw_ticks,
+                .rhs = divisor_expr}});
+  }
+
+  if (tick_type == result_type) {
+    return scaled;
+  }
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kCast,
+          .type = result_type,
+          .span = span,
+          .data = hir::CastExpressionData{.operand = scaled}});
+}
+
+// Cast to real first, then real division (preserves fractional precision)
+auto EmitRealTimeScaling(
+    hir::ExpressionId raw_ticks, uint64_t divisor, SourceSpan span,
+    Context* ctx) -> hir::ExpressionId {
+  TypeId tick_type = ctx->GetTickType();
+  TypeId real_type = ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
+
+  // Cast raw ticks to real first
+  hir::ExpressionId raw_real = ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kCast,
+          .type = real_type,
+          .span = span,
+          .data = hir::CastExpressionData{.operand = raw_ticks}});
+
+  if (divisor == 1) {
+    return raw_real;
+  }
+
+  // Real division
+  hir::ExpressionId divisor_int = MakeConstant(divisor, tick_type, span, ctx);
+  hir::ExpressionId divisor_real = ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kCast,
+          .type = real_type,
+          .span = span,
+          .data = hir::CastExpressionData{.operand = divisor_int}});
+
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kBinaryOp,
+          .type = real_type,
+          .span = span,
+          .data = hir::BinaryExpressionData{
+              .op = hir::BinaryOp::kDivide,
+              .lhs = raw_real,
+              .rhs = divisor_real}});
 }
 
 }  // namespace
@@ -259,17 +336,7 @@ auto LowerCallExpression(
               IntegralInfo{
                   .bit_width = 32, .is_signed = true, .is_four_state = false});
           auto num_val = static_cast<uint64_t>(enum_info.members.size());
-          IntegralConstant num_ic;
-          num_ic.value = {num_val};
-          num_ic.unknown = {0};
-          ConstId num_const =
-              ctx->constant_arena->Intern(int_type, std::move(num_ic));
-          return ctx->hir_arena->AddExpression(
-              hir::Expression{
-                  .kind = hir::ExpressionKind::kConstant,
-                  .type = int_type,
-                  .span = span,
-                  .data = hir::ConstantExpressionData{.constant = num_const}});
+          return MakeConstant(num_val, int_type, span, ctx);
         }
 
         // first() and last() return the enum type
@@ -376,15 +443,8 @@ auto LowerCallExpression(
       if (!format_expr) {
         return hir::kInvalidExpressionId;
       }
-      // Output argument: slang may wrap as AssignmentExpression
-      const slang::ast::Expression* out_arg = call.arguments()[1];
-      hir::ExpressionId output_expr;
-      if (out_arg->kind == slang::ast::ExpressionKind::Assignment) {
-        const auto& assign = out_arg->as<slang::ast::AssignmentExpression>();
-        output_expr = LowerExpression(assign.left(), view);
-      } else {
-        output_expr = LowerExpression(*out_arg, view);
-      }
+      hir::ExpressionId output_expr =
+          UnwrapOutputArgument(call.arguments()[1], view);
       if (!output_expr) {
         return hir::kInvalidExpressionId;
       }
@@ -413,15 +473,9 @@ auto LowerCallExpression(
         return hir::kInvalidExpressionId;
       }
 
-      // Lower target lvalue (arg 1) - unwrap AssignmentExpression if present
-      const slang::ast::Expression* target_arg = call.arguments()[1];
-      hir::ExpressionId target;
-      if (target_arg->kind == slang::ast::ExpressionKind::Assignment) {
-        const auto& assign = target_arg->as<slang::ast::AssignmentExpression>();
-        target = LowerExpression(assign.left(), view);
-      } else {
-        target = LowerExpression(*target_arg, view);
-      }
+      // Lower target lvalue (arg 1)
+      hir::ExpressionId target =
+          UnwrapOutputArgument(call.arguments()[1], view);
       if (!target) {
         return hir::kInvalidExpressionId;
       }
@@ -507,11 +561,6 @@ auto LowerCallExpression(
                   hir::FcloseData{.descriptor = descriptor}}});
     }
     if (name == "$time") {
-      TypeId result_type = LowerType(*expr.type, span, ctx);
-
-      // $time requires a timescale context (module scope).
-      // Design-level expressions (port bindings, parameters) pass nullptr
-      // frame.
       if (frame == nullptr) {
         ctx->sink->Error(
             span,
@@ -519,77 +568,12 @@ auto LowerCallExpression(
             " or parameter contexts)");
         return hir::kInvalidExpressionId;
       }
-
-      // Compute divisor = 10^(unit_power - global_precision)
-      int exponent = frame->unit_power - frame->global_precision_power;
-      if (exponent < 0) {
-        throw common::InternalError(
-            "$time scaling",
-            "negative exponent - global precision coarser than timeunit");
-      }
-
-      uint64_t divisor = 1;
-      if (exponent > 0) {
-        auto mul = IntegerPow10(exponent);
-        if (!mul) {
-          throw common::InternalError("$time scaling", "divisor overflow");
-        }
-        divisor = *mul;
-      }
-
-      // Use canonical tick type from Context
-      TypeId tick_type = ctx->GetTickType();
-
-      // RuntimeQuery returns raw ticks
-      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kSystemCall,
-              .type = tick_type,
-              .span = span,
-              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
-                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
-
-      if (divisor == 1) {
-        // No scaling needed, but may need type conversion
-        if (tick_type == result_type) {
-          return raw_time;
-        }
-        return ctx->hir_arena->AddExpression(
-            hir::Expression{
-                .kind = hir::ExpressionKind::kCast,
-                .type = result_type,
-                .span = span,
-                .data = hir::CastExpressionData{.operand = raw_time}});
-      }
-
-      // Integer floor division: raw_ticks / divisor (SV $time semantics)
-      hir::ExpressionId divisor_expr =
-          MakeConstant(divisor, tick_type, span, ctx);
-      hir::ExpressionId divided = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kBinaryOp,
-              .type = tick_type,
-              .span = span,
-              .data = hir::BinaryExpressionData{
-                  .op = hir::BinaryOp::kDivide,
-                  .lhs = raw_time,
-                  .rhs = divisor_expr}});
-
-      // Cast to result type if different
-      if (tick_type == result_type) {
-        return divided;
-      }
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kCast,
-              .type = result_type,
-              .span = span,
-              .data = hir::CastExpressionData{.operand = divided}});
+      uint64_t divisor = ComputeTimeDivisor(*frame);
+      hir::ExpressionId raw = EmitRawTicksQuery(span, ctx);
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      return EmitIntegerTimeScaling(raw, divisor, result_type, span, ctx);
     }
     if (name == "$stime") {
-      // $stime returns 32-bit unsigned time: uint32($time)
-      // Truncation happens AFTER scaling.
-
       if (frame == nullptr) {
         ctx->sink->Error(
             span,
@@ -597,64 +581,12 @@ auto LowerCallExpression(
             " or parameter contexts)");
         return hir::kInvalidExpressionId;
       }
-
-      // Compute divisor = 10^(unit_power - global_precision)
-      int exponent = frame->unit_power - frame->global_precision_power;
-      if (exponent < 0) {
-        throw common::InternalError(
-            "$stime scaling",
-            "negative exponent - global precision coarser than timeunit");
-      }
-
-      uint64_t divisor = 1;
-      if (exponent > 0) {
-        auto mul = IntegerPow10(exponent);
-        if (!mul) {
-          throw common::InternalError("$stime scaling", "divisor overflow");
-        }
-        divisor = *mul;
-      }
-
-      TypeId tick_type = ctx->GetTickType();
-
-      // RuntimeQuery returns raw ticks (uint64)
-      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kSystemCall,
-              .type = tick_type,
-              .span = span,
-              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
-                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
-
-      // Integer floor division: raw_ticks / divisor
-      hir::ExpressionId scaled_time = raw_time;
-      if (divisor != 1) {
-        hir::ExpressionId divisor_expr =
-            MakeConstant(divisor, tick_type, span, ctx);
-        scaled_time = ctx->hir_arena->AddExpression(
-            hir::Expression{
-                .kind = hir::ExpressionKind::kBinaryOp,
-                .type = tick_type,
-                .span = span,
-                .data = hir::BinaryExpressionData{
-                    .op = hir::BinaryOp::kDivide,
-                    .lhs = raw_time,
-                    .rhs = divisor_expr}});
-      }
-
-      // Cast to 32-bit unsigned (truncate)
+      uint64_t divisor = ComputeTimeDivisor(*frame);
+      hir::ExpressionId raw = EmitRawTicksQuery(span, ctx);
       TypeId result_type = LowerType(*expr.type, span, ctx);
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kCast,
-              .type = result_type,
-              .span = span,
-              .data = hir::CastExpressionData{.operand = scaled_time}});
+      return EmitIntegerTimeScaling(raw, divisor, result_type, span, ctx);
     }
     if (name == "$realtime") {
-      // $realtime returns real-valued time with fractional precision.
-      // Uses real arithmetic: real(raw_ticks) / real(divisor)
-
       if (frame == nullptr) {
         ctx->sink->Error(
             span,
@@ -662,68 +594,9 @@ auto LowerCallExpression(
             " or parameter contexts)");
         return hir::kInvalidExpressionId;
       }
-
-      // Compute divisor = 10^(unit_power - global_precision)
-      int exponent = frame->unit_power - frame->global_precision_power;
-      if (exponent < 0) {
-        throw common::InternalError(
-            "$realtime scaling",
-            "negative exponent - global precision coarser than timeunit");
-      }
-
-      uint64_t divisor = 1;
-      if (exponent > 0) {
-        auto mul = IntegerPow10(exponent);
-        if (!mul) {
-          throw common::InternalError("$realtime scaling", "divisor overflow");
-        }
-        divisor = *mul;
-      }
-
-      TypeId tick_type = ctx->GetTickType();
-      TypeId real_type =
-          ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
-
-      // RuntimeQuery returns raw ticks (uint64)
-      hir::ExpressionId raw_time = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kSystemCall,
-              .type = tick_type,
-              .span = span,
-              .data = hir::SystemCallExpressionData{hir::RuntimeQueryData{
-                  .kind = RuntimeQueryKind::kTimeRawTicks}}});
-
-      // Cast raw_ticks to real (may lose precision for >53-bit values)
-      hir::ExpressionId raw_time_real = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kCast,
-              .type = real_type,
-              .span = span,
-              .data = hir::CastExpressionData{.operand = raw_time}});
-
-      if (divisor == 1) {
-        return raw_time_real;
-      }
-
-      // Cast divisor to real and divide
-      hir::ExpressionId divisor_int =
-          MakeConstant(divisor, tick_type, span, ctx);
-      hir::ExpressionId divisor_real = ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kCast,
-              .type = real_type,
-              .span = span,
-              .data = hir::CastExpressionData{.operand = divisor_int}});
-
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kBinaryOp,
-              .type = real_type,
-              .span = span,
-              .data = hir::BinaryExpressionData{
-                  .op = hir::BinaryOp::kDivide,
-                  .lhs = raw_time_real,
-                  .rhs = divisor_real}});
+      uint64_t divisor = ComputeTimeDivisor(*frame);
+      hir::ExpressionId raw = EmitRawTicksQuery(span, ctx);
+      return EmitRealTimeScaling(raw, divisor, span, ctx);
     }
     if (name == "$printtimescale") {
       if (call.arguments().size() > 1) {
@@ -791,50 +664,57 @@ auto LowerCallExpression(
                   .ops = std::move(ops),
                   .descriptor = std::nullopt}});
     }
-    if (auto fdisp_info = ClassifyFdisplay(name)) {
-      // $fdisplay/$fwrite family: first arg is descriptor, rest are display
-      // args
-      if (call.arguments().empty()) {
-        ctx->ErrorFmt(span, "{} requires at least a file descriptor", name);
-        return hir::kInvalidExpressionId;
-      }
-
-      // Lower descriptor (arg 0)
-      hir::ExpressionId desc_expr = LowerExpression(*call.arguments()[0], view);
-      if (!desc_expr) {
-        return hir::kInvalidExpressionId;
-      }
-
-      // Lower remaining display arguments
-      std::vector<hir::ExpressionId> display_args;
-      std::vector<const slang::ast::Expression*> slang_display_args;
-      for (size_t i = 1; i < call.arguments().size(); ++i) {
-        hir::ExpressionId arg = LowerExpression(*call.arguments()[i], view);
-        if (!arg) {
+    // File-directed display functions ($fdisplay, $fwrite, $fstrobe families)
+    // Detected by $f prefix + DisplayFunctionInfo payload in kSystemFunctions
+    const auto* sys_info = FindSystemFunction(name);
+    if (sys_info != nullptr && name.starts_with("$f")) {
+      if (const auto* disp_info =
+              std::get_if<DisplayFunctionInfo>(&sys_info->payload)) {
+        // $fdisplay/$fwrite/$fstrobe: first arg is descriptor, rest are display
+        if (call.arguments().empty()) {
+          ctx->ErrorFmt(span, "{} requires at least a file descriptor", name);
           return hir::kInvalidExpressionId;
         }
-        display_args.push_back(arg);
-        slang_display_args.push_back(call.arguments()[i]);
+
+        // Lower descriptor (arg 0)
+        hir::ExpressionId desc_expr =
+            LowerExpression(*call.arguments()[0], view);
+        if (!desc_expr) {
+          return hir::kInvalidExpressionId;
+        }
+
+        // Lower remaining display arguments
+        std::vector<hir::ExpressionId> display_args;
+        std::vector<const slang::ast::Expression*> slang_display_args;
+        for (size_t i = 1; i < call.arguments().size(); ++i) {
+          hir::ExpressionId arg = LowerExpression(*call.arguments()[i], view);
+          if (!arg) {
+            return hir::kInvalidExpressionId;
+          }
+          display_args.push_back(arg);
+          slang_display_args.push_back(call.arguments()[i]);
+        }
+
+        PrintKind print_kind =
+            disp_info->append_newline ? PrintKind::kDisplay : PrintKind::kWrite;
+        FormatKind default_format = RadixToFormatKind(disp_info->radix);
+
+        std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
+            slang_display_args, display_args, default_format, ctx);
+
+        TypeId result_type =
+            ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::DisplaySystemCallData{
+                    .print_kind = print_kind,
+                    .ops = std::move(ops),
+                    .descriptor = desc_expr,
+                    .is_strobe = disp_info->is_strobe}});
       }
-
-      PrintKind print_kind =
-          fdisp_info->append_newline ? PrintKind::kDisplay : PrintKind::kWrite;
-      FormatKind default_format = RadixToFormatKind(fdisp_info->radix);
-
-      std::vector<hir::FormatOp> ops = BuildDisplayFormatOps(
-          slang_display_args, display_args, default_format, ctx);
-
-      TypeId result_type =
-          ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kSystemCall,
-              .type = result_type,
-              .span = span,
-              .data = hir::DisplaySystemCallData{
-                  .print_kind = print_kind,
-                  .ops = std::move(ops),
-                  .descriptor = desc_expr}});
     }
     return LowerSystemCall(call, view);
   }
