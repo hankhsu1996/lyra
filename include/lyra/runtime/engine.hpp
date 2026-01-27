@@ -1,6 +1,7 @@
 #pragma once
 
-#include <cstdint>
+#include <cstddef>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -8,87 +9,18 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/time_format.hpp"
+#include "lyra/runtime/engine_scheduler.hpp"
+#include "lyra/runtime/engine_subscriptions.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
 
 namespace lyra::runtime {
-
-// Simulation time in ticks (timescale-independent).
-using SimTime = uint64_t;
-
-// Unique identifier for a process instance.
-// Combines process definition ID with instance path for hierarchical designs.
-struct ProcessHandle {
-  uint32_t process_id = 0;
-  uint32_t instance_id = 0;  // For future hierarchy support
-
-  auto operator==(const ProcessHandle&) const -> bool = default;
-};
-
-// Resume point within a process (block index + instruction index).
-// Allows processes to suspend and resume at arbitrary points.
-struct ResumePoint {
-  uint32_t block_index = 0;
-  uint32_t instruction_index = 0;
-};
-
-// Waitable signal identifier. This IS the design storage slot ID —
-// NotifyChange, Subscribe, and NBA commit all use the same ID space.
-using SignalId = uint32_t;
-
-// IEEE 1800 simulation regions (simplified).
-// Active → Inactive → NBA is the core loop for RTL simulation.
-enum class Region : uint8_t {
-  kActive,    // Blocking assignments, $display
-  kInactive,  // #0 delays (same time slot)
-  kNBA,       // Nonblocking assignment updates
-};
-
-// Scheduled event: a process ready to resume at a specific point.
-struct ScheduledEvent {
-  ProcessHandle handle;
-  ResumePoint resume;
-};
-
-// NBA queue entry: deferred write with byte-level masking.
-struct NbaEntry {
-  void* write_ptr;             // Exact write address
-  uint32_t byte_size;          // Size of write region at write_ptr
-  uint32_t notify_slot_id;     // Slot ID for trigger lookup
-  std::vector<uint8_t> value;  // New value bytes (storage layout)
-  std::vector<uint8_t> mask;   // Byte mask (0 = preserve, 0xFF = overwrite)
-};
-
-// Forward declaration for callback
-class Engine;
-
-// Callback for Postponed region ($strobe, future $monitor, etc.).
-// Called at end of time slot to re-evaluate and print with final values.
-// Matches user function ABI: void (DesignState*, Engine*)
-using PostponedCallback = void (*)(void*, void*);
-
-// Monitor check callback: evaluates expressions, compares with prev buffer.
-// void check_thunk(DesignState*, Engine*, prev_buffer*)
-using MonitorCheckCallback = void (*)(void*, void*, void*);
-
-// State for active $monitor (only one can be active at a time per IEEE 1800).
-struct MonitorState {
-  bool enabled = true;
-  MonitorCheckCallback check_thunk = nullptr;
-  void* design_state = nullptr;
-  std::vector<uint8_t> prev_values;  // Runtime-owned prev buffer
-};
-
-// Postponed queue entry: callback + captured context.
-struct PostponedRecord {
-  PostponedCallback callback;
-  void* design_state;  // DesignState*
-};
 
 // Callback type for process execution.
 // Engine calls this when a process should run; callback handles suspension.
@@ -100,7 +32,7 @@ using ProcessRunner = std::function<void(
 //
 // Design:
 // - Backend-agnostic: both MIR interpreter and LLVM-generated code can use it
-// - IEEE 1800 stratified event scheduler (Active → Inactive → NBA regions)
+// - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
 // Usage:
@@ -116,6 +48,14 @@ class Engine {
       : runner_(std::move(runner)),
         plusargs_(plusargs.begin(), plusargs.end()) {
   }
+
+  ~Engine() = default;
+
+  // Non-copyable/movable due to intrusive node pointers.
+  Engine(const Engine&) = delete;
+  auto operator=(const Engine&) -> Engine& = delete;
+  Engine(Engine&&) = delete;
+  auto operator=(Engine&&) -> Engine& = delete;
 
   // Schedule a process to start at time 0 (for initial blocks).
   void ScheduleInitial(ProcessHandle handle);
@@ -222,13 +162,28 @@ class Engine {
   void ExecuteRegion(Region region);
   void ExecutePostponedRegion();
 
+  // Subscription management
+  void ClearProcessSubscriptions(ProcessHandle handle);
+  auto AllocNode() -> SubscriptionNode*;
+  void FreeNode(SubscriptionNode* node);
+
+  // Resource limit checking
+  auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
+  void TerminateWithResourceError(
+      std::string_view reason, size_t current, size_t limit);
+  void PrintTopWaiters(size_t count);
+
+  // Edge evaluation helper
+  static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
+      -> bool;
+
   ProcessRunner runner_;
   SimTime current_time_ = 0;
   bool finished_ = false;
   int8_t global_precision_power_ = -9;   // Set once at simulation init
   common::TimeFormatState time_format_;  // Mutable via $timeformat
 
-  // Time-based scheduling: time → events
+  // Time-based scheduling: time -> events
   std::map<SimTime, std::vector<ScheduledEvent>> delay_queue_;
 
   // Region queues for current time slot
@@ -236,22 +191,31 @@ class Engine {
   std::queue<ScheduledEvent> inactive_queue_;
 
   // Next-delta queue: events scheduled for the next delta cycle
-  std::vector<ScheduledEvent> pending_queue_;
+  std::vector<ScheduledEvent> next_delta_queue_;
 
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
   std::vector<NbaEntry> nba_queue_;
 
-  // Slot ID → base pointer registry (populated lazily via ScheduleNba).
+  // Slot ID -> base pointer registry (populated lazily via ScheduleNba).
   // Pointers are read-only (used for bit0 snapshot in NBA commit).
-  std::unordered_map<uint32_t, const void*> slot_base_ptrs_;
+  absl::flat_hash_map<uint32_t, const void*> slot_base_ptrs_;
 
-  // Trigger subscriptions: signal → waiting processes
-  struct Waiter {
-    ProcessHandle handle;
-    ResumePoint resume;
-    common::EdgeKind edge = common::EdgeKind::kAnyChange;
-  };
-  std::map<SignalId, std::vector<Waiter>> waiters_;
+  // Trigger subscriptions: signal -> waiting processes (intrusive linked lists)
+  absl::flat_hash_map<SignalId, SignalWaiters> signal_waiters_;
+  absl::flat_hash_map<ProcessHandle, ProcessState, ProcessHandleHash>
+      process_states_;
+
+  // Node pool: deque owns memory (stable pointers), free_list_ tracks reusable
+  std::deque<SubscriptionNode> node_pool_;
+  std::vector<SubscriptionNode*> free_list_;
+
+  // Resource limits (0 = unlimited)
+  size_t live_subscription_count_ = 0;
+  size_t max_total_subscriptions_ = 1'000'000;
+  size_t max_subscriptions_per_process_ = 10'000;
+
+  // Termination state
+  std::optional<std::string> termination_reason_;
 
   // File manager for $fopen/$fclose
   FileManager file_manager_;

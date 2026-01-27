@@ -1,15 +1,14 @@
-#include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_scheduler.hpp"
 
 #include <algorithm>
-#include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/engine.hpp"
 
 namespace lyra::runtime {
 
@@ -38,19 +37,8 @@ void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
       });
 }
 
-void Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge) {
-  waiters_[signal].push_back(
-      Waiter{
-          .handle = handle,
-          .resume = resume,
-          .edge = edge,
-      });
-}
-
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  pending_queue_.push_back(
+  next_delta_queue_.push_back(
       ScheduledEvent{
           .handle = handle,
           .resume = resume,
@@ -68,7 +56,6 @@ void Engine::SchedulePostponed(PostponedCallback callback, void* design_state) {
 void Engine::RegisterMonitor(
     MonitorCheckCallback check_thunk, void* design_state,
     const void* initial_prev, uint32_t size) {
-  // Atomically replace any existing monitor
   active_monitor_ = MonitorState{
       .enabled = true,
       .check_thunk = check_thunk,
@@ -76,7 +63,6 @@ void Engine::RegisterMonitor(
       .prev_values = {},
   };
 
-  // Copy initial prev values if provided
   if (initial_prev != nullptr && size > 0) {
     auto prev_span = std::span(static_cast<const uint8_t*>(initial_prev), size);
     active_monitor_->prev_values.assign(prev_span.begin(), prev_span.end());
@@ -86,7 +72,6 @@ void Engine::RegisterMonitor(
 }
 
 void Engine::SetMonitorEnabled(bool enabled) {
-  // No-op if no active monitor
   if (active_monitor_.has_value()) {
     active_monitor_->enabled = enabled;
   }
@@ -101,7 +86,6 @@ void Engine::ScheduleNba(
         "Engine::ScheduleNba", "null pointer or zero byte_size");
   }
 
-  // Register slot base pointer (lazily, first call per slot teaches the engine)
   auto [it, inserted] =
       slot_base_ptrs_.emplace(notify_slot_id, notify_base_ptr);
   if (!inserted && it->second != notify_base_ptr) {
@@ -110,7 +94,6 @@ void Engine::ScheduleNba(
         "slot_id mapped to different base_ptr (codegen bug)");
   }
 
-  // Copy value and mask bytes into a new NbaEntry
   auto val_span = std::span(static_cast<const uint8_t*>(value_ptr), byte_size);
   auto mask_span = std::span(static_cast<const uint8_t*>(mask_ptr), byte_size);
   nba_queue_.push_back(
@@ -123,54 +106,9 @@ void Engine::ScheduleNba(
       });
 }
 
-void Engine::NotifyChange(
-    SignalId signal, bool old_lsb, bool new_lsb, bool value_changed) {
-  if (!value_changed) {
-    return;
-  }
-
-  auto it = waiters_.find(signal);
-  if (it == waiters_.end()) {
-    return;
-  }
-
-  std::vector<Waiter> remaining;
-  for (const auto& waiter : it->second) {
-    bool triggered = false;
-    switch (waiter.edge) {
-      case common::EdgeKind::kPosedge:
-        triggered = !old_lsb && new_lsb;
-        break;
-      case common::EdgeKind::kNegedge:
-        triggered = old_lsb && !new_lsb;
-        break;
-      case common::EdgeKind::kAnyChange:
-        triggered = true;
-        break;
-    }
-
-    if (triggered) {
-      pending_queue_.push_back(
-          ScheduledEvent{
-              .handle = waiter.handle,
-              .resume = waiter.resume,
-          });
-    } else {
-      remaining.push_back(waiter);
-    }
-  }
-
-  if (remaining.empty()) {
-    waiters_.erase(it);
-  } else {
-    it->second = std::move(remaining);
-  }
-}
-
 void Engine::ExecuteRegion(Region region) {
   switch (region) {
     case Region::kActive: {
-      // Execute all active events (may add to inactive/nba queues)
       while (!finished_ && !active_queue_.empty()) {
         auto events = std::move(active_queue_);
         active_queue_.clear();
@@ -178,13 +116,20 @@ void Engine::ExecuteRegion(Region region) {
           if (finished_) {
             break;
           }
+
+          auto proc_it = process_states_.find(event.handle);
+          if (proc_it != process_states_.end()) {
+            proc_it->second.is_enqueued = false;
+          }
+
+          ClearProcessSubscriptions(event.handle);
+
           runner_(*this, event.handle, event.resume);
         }
       }
       break;
     }
     case Region::kInactive: {
-      // Move all inactive events to active queue
       while (!inactive_queue_.empty()) {
         active_queue_.push_back(inactive_queue_.front());
         inactive_queue_.pop();
@@ -196,7 +141,6 @@ void Engine::ExecuteRegion(Region region) {
         break;
       }
 
-      // Phase 1: Gather unique slot IDs, snapshot bit0
       std::vector<uint32_t> unique_slots;
       unique_slots.reserve(nba_queue_.size());
       for (const auto& entry : nba_queue_) {
@@ -213,7 +157,6 @@ void Engine::ExecuteRegion(Region region) {
         old_bit0[i] = (*base & 1) != 0 ? 1 : 0;
       }
 
-      // Phase 2: Apply all masked writes, track which slots changed
       std::vector<uint8_t> slot_changed(unique_slots.size(), 0);
       for (const auto& entry : nba_queue_) {
         if (entry.value.size() != entry.byte_size ||
@@ -248,7 +191,6 @@ void Engine::ExecuteRegion(Region region) {
       }
       nba_queue_.clear();
 
-      // Phase 3: Notify changed slots
       for (size_t i = 0; i < unique_slots.size(); ++i) {
         if (slot_changed[i] == 0) {
           continue;
@@ -264,21 +206,12 @@ void Engine::ExecuteRegion(Region region) {
 }
 
 void Engine::ExecutePostponedRegion() {
-  // Execute all postponed callbacks in append order, then clear.
-  // IEEE 1800-2023 §4.4.2.5: Postponed region executes after all delta cycles.
-  // $strobe values reflect the final end-of-timestep state.
   for (const auto& record : postponed_queue_) {
     if (finished_) break;
-    // Call thunk with (DesignState*, Engine*) matching user function ABI
     record.callback(record.design_state, this);
   }
   postponed_queue_.clear();
 
-  // After all strobe callbacks, execute active monitor check
-  // IEEE 1800-2023 §21.2.3: $monitor prints at end of time slot if values
-  // changed The check wrapper compares current values against prev_buffer
-  // (initialized with actual initial values), so it will only print if values
-  // actually changed.
   if (!finished_ && active_monitor_.has_value() && active_monitor_->enabled &&
       active_monitor_->check_thunk != nullptr) {
     active_monitor_->check_thunk(
@@ -288,10 +221,7 @@ void Engine::ExecutePostponedRegion() {
 }
 
 void Engine::ExecuteTimeSlot() {
-  // IEEE 1800 stratified event scheduler: Active → Inactive → NBA per delta.
-  // Each iteration of the outer loop is one delta cycle.
   while (true) {
-    // Active + Inactive loop (repeat until both drained or $finish called)
     while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
       ExecuteRegion(Region::kActive);
       if (!inactive_queue_.empty()) {
@@ -299,33 +229,28 @@ void Engine::ExecuteTimeSlot() {
       }
     }
 
-    // Commit any already-enqueued NBAs even if finished_ is set.
     ExecuteRegion(Region::kNBA);
 
-    // Stop after this delta if $finish was called or no more work
-    if (finished_ || pending_queue_.empty()) {
+    if (finished_ || next_delta_queue_.empty()) {
       break;
     }
-    active_queue_ = std::move(pending_queue_);
-    pending_queue_.clear();
+    active_queue_ = std::move(next_delta_queue_);
+    next_delta_queue_.clear();
   }
 
-  // After all delta cycles complete, execute Postponed region ($strobe, etc.)
   ExecutePostponedRegion();
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
   while (!finished_ && current_time_ <= max_time) {
-    // Execute current time slot
     ExecuteTimeSlot();
 
     if (finished_) {
       break;
     }
 
-    // Advance to next scheduled time
     if (delay_queue_.empty()) {
-      break;  // No more events
+      break;
     }
 
     auto it = delay_queue_.begin();
@@ -335,7 +260,6 @@ auto Engine::Run(SimTime max_time) -> SimTime {
       break;
     }
 
-    // Move scheduled events to active queue
     for (auto& event : it->second) {
       active_queue_.push_back(std::move(event));
     }
@@ -343,106 +267,6 @@ auto Engine::Run(SimTime max_time) -> SimTime {
   }
 
   return current_time_;
-}
-
-auto Engine::TestPlusargs(std::string_view query) const -> int32_t {
-  for (const auto& arg : plusargs_) {
-    // Handle +arg vs arg (plusargs may or may not have leading +)
-    std::string_view content = arg;
-    if (!content.empty() && content.front() == '+') {
-      content = content.substr(1);
-    }
-    if (content.starts_with(query)) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
-namespace {
-
-// Parse format string: "PREFIX%<spec>" → (prefix, spec_char)
-// Handles %0d → %d by skipping leading 0.
-auto ParsePlusargsFormat(std::string_view format)
-    -> std::pair<std::string_view, char> {
-  auto percent_pos = format.find('%');
-  if (percent_pos == std::string_view::npos) {
-    return {format, '\0'};
-  }
-
-  std::string_view prefix = format.substr(0, percent_pos);
-  char spec = '\0';
-  size_t spec_pos = percent_pos + 1;
-  if (spec_pos < format.size()) {
-    spec = format[spec_pos];
-    // Skip leading '0' in format specifier (e.g., %0d → %d)
-    if (spec == '0' && spec_pos + 1 < format.size()) {
-      spec = format[spec_pos + 1];
-    }
-  }
-  return {prefix, spec};
-}
-
-}  // namespace
-
-auto Engine::ValuePlusargsInt(std::string_view format, int32_t* output) const
-    -> int32_t {
-  auto [prefix, spec] = ParsePlusargsFormat(format);
-
-  // Only %d/%D is valid for integer output
-  if (spec != 'd' && spec != 'D') {
-    return 0;
-  }
-
-  for (const auto& arg : plusargs_) {
-    std::string_view content = arg;
-    if (!content.empty() && content.front() == '+') {
-      content = content.substr(1);
-    }
-    if (!content.starts_with(prefix)) {
-      continue;
-    }
-    std::string_view remainder = content.substr(prefix.size());
-
-    int32_t parsed_value = 0;
-    auto [ptr, ec] = std::from_chars(
-        remainder.data(), remainder.data() + remainder.size(), parsed_value);
-    if (ec != std::errc{}) {
-      parsed_value = 0;  // Conversion failed - default to 0
-    }
-    if (output != nullptr) {
-      *output = parsed_value;
-    }
-    return 1;
-  }
-  return 0;
-}
-
-auto Engine::ValuePlusargsString(
-    std::string_view format, std::string* output) const -> int32_t {
-  auto [prefix, spec] = ParsePlusargsFormat(format);
-
-  // Only %s/%S is valid for string output
-  if (spec != 's' && spec != 'S') {
-    return 0;
-  }
-
-  for (const auto& arg : plusargs_) {
-    std::string_view content = arg;
-    if (!content.empty() && content.front() == '+') {
-      content = content.substr(1);
-    }
-    if (!content.starts_with(prefix)) {
-      continue;
-    }
-    std::string_view remainder = content.substr(prefix.size());
-
-    if (output != nullptr) {
-      *output = std::string(remainder);
-    }
-    return 1;
-  }
-  return 0;
 }
 
 }  // namespace lyra::runtime
