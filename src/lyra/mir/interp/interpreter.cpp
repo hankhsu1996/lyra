@@ -335,6 +335,7 @@ auto RunSimulation(
   }
   interp.SetPlusargs(
       std::vector<std::string>(plusargs.begin(), plusargs.end()));
+  interp.SetFsBaseDir(fs_base_dir);
 
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {

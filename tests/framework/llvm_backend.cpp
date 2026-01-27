@@ -410,9 +410,11 @@ auto RunLlvmBackend(
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   // Lower MIR to LLVM IR
-  // Use current working directory as base for tests (test runner sets this)
+  // Use work_directory for file I/O tests, otherwise fall back to CWD
   auto fs_base_dir =
-      std::filesystem::absolute(std::filesystem::current_path()).string();
+      work_directory.empty()
+          ? std::filesystem::absolute(std::filesystem::current_path()).string()
+          : std::filesystem::absolute(work_directory).string();
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
       .mir_arena = mir_result->mir_arena.get(),

@@ -122,6 +122,11 @@ class Interpreter {
     return simulation_time_;
   }
 
+  // Set base directory for relative file I/O resolution ($readmem, etc.)
+  void SetFsBaseDir(std::filesystem::path path) {
+    fs_base_dir_ = std::move(path);
+  }
+
   // Execute process to completion. Returns final status.
   // Returns error on suspension terminators (Delay, Wait, Repeat).
   auto Run(ProcessState& state) -> Result<ProcessStatus>;
@@ -249,6 +254,7 @@ class Interpreter {
   std::vector<std::string> plusargs_;
   runtime::FileManager file_manager_;
   uint64_t simulation_time_ = 0;
+  std::filesystem::path fs_base_dir_;
 };
 
 // Helper: Create ProcessState for a given process.

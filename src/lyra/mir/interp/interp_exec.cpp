@@ -18,7 +18,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/mem_io.hpp"
+#include "lyra/common/memfile.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
@@ -28,7 +28,6 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/format.hpp"
-#include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -366,9 +365,13 @@ auto Interpreter::ExecMemIOEffect(
   int64_t min_addr = arr_info.range.Lower();
   int64_t max_addr = min_addr + elem_count - 1;
 
+  // Determine step from array direction
+  int64_t step = arr_info.range.IsDescending() ? -1 : 1;
+
   // Evaluate optional start/end address
-  int64_t start_addr = min_addr;
-  int64_t end_addr = max_addr;
+  // Default: start from left bound, end at right bound (IEEE 1800 semantics)
+  int64_t start_addr = arr_info.range.left;
+  int64_t end_addr = arr_info.range.right;
   if (mem_io.start_addr) {
     auto addr_val_result = EvalOperand(state, *mem_io.start_addr);
     if (!addr_val_result) {
@@ -381,7 +384,6 @@ auto Interpreter::ExecMemIOEffect(
     }
     const auto& addr_int = AsIntegral(addr_val);
     if (!addr_int.IsKnown()) {
-      // TODO(hankhsu): SV semantics - should return X, not throw
       return std::unexpected(
           Diagnostic::HostError(
               "$readmem/$writemem: address contains X/Z bits"));
@@ -400,7 +402,6 @@ auto Interpreter::ExecMemIOEffect(
     }
     const auto& addr_int = AsIntegral(addr_val);
     if (!addr_int.IsKnown()) {
-      // TODO(hankhsu): SV semantics - should return X, not throw
       return std::unexpected(
           Diagnostic::HostError(
               "$readmem/$writemem: address contains X/Z bits"));
@@ -408,7 +409,17 @@ auto Interpreter::ExecMemIOEffect(
     end_addr = static_cast<int64_t>(addr_int.value[0]);
   }
 
-  auto resolved_path = common::mem_io::ResolveMemPath(filename);
+  // Compute current/final consistent with step direction
+  int64_t eff_low = std::min(start_addr, end_addr);
+  int64_t eff_high = std::max(start_addr, end_addr);
+  int64_t current_addr = step > 0 ? eff_low : eff_high;
+  int64_t final_addr = step > 0 ? eff_high : eff_low;
+
+  // Resolve path relative to fs_base_dir
+  std::filesystem::path resolved_path{filename};
+  if (resolved_path.is_relative()) {
+    resolved_path = fs_base_dir_ / resolved_path;
+  }
   auto get_task_name = [&]() -> std::string_view {
     if (mem_io.is_read) {
       return mem_io.is_hex ? "$readmemh" : "$readmemb";
@@ -443,32 +454,35 @@ auto Interpreter::ExecMemIOEffect(
     // Error captured from callback
     std::optional<Diagnostic> callback_error;
 
-    int64_t current_addr = start_addr;
-    auto result = common::mem_io::ParseMemFile(
-        content, mem_io.is_hex, min_addr, max_addr, current_addr, end_addr,
-        task_name, [&](std::string_view token, int64_t addr) {
-          if (callback_error) {
-            return;  // Already have an error
-          }
-          auto words_result = common::mem_io::ParseMemTokenToWords(
-              token, elem_width, mem_io.is_hex);
-          if (!words_result) {
-            callback_error = Diagnostic::HostError(
-                std::format("{}: {}", task_name, words_result.error()));
-            return;
-          }
-          // Convert words to RuntimeIntegral
-          IntegralConstant ic;
-          ic.value = std::move(*words_result);
-          ic.unknown.resize(ic.value.size(), 0);
-          RuntimeValue elem_val = MakeIntegralFromConstant(ic, elem_width);
+    // Store element callback
+    auto store_element = [&](std::string_view token, int64_t addr) {
+      if (callback_error) {
+        return;  // Already have an error
+      }
+      auto words_result =
+          common::ParseMemTokenToWords(token, elem_width, mem_io.is_hex);
+      if (!words_result) {
+        callback_error = Diagnostic::HostError(
+            std::format("{}: {}", task_name, words_result.error()));
+        return;
+      }
+      // Convert words to RuntimeIntegral
+      IntegralConstant ic;
+      ic.value = std::move(*words_result);
+      ic.unknown.resize(ic.value.size(), 0);
+      RuntimeValue elem_val = MakeIntegralFromConstant(ic, elem_width);
 
-          // Store to array element
-          auto index = static_cast<size_t>(addr - min_addr);
-          if (index < arr.elements.size()) {
-            arr.elements[index] = std::move(elem_val);
-          }
-        });
+      // Store to array element
+      auto index = static_cast<size_t>(addr - min_addr);
+      if (index < arr.elements.size()) {
+        arr.elements[index] = std::move(elem_val);
+      }
+    };
+
+    // Use unified ParseMemFile with step parameter (handles both directions)
+    auto result = common::ParseMemFile(
+        content, mem_io.is_hex, min_addr, max_addr, current_addr, final_addr,
+        step, task_name, store_element);
 
     if (callback_error) {
       return std::unexpected(std::move(*callback_error));
@@ -483,6 +497,7 @@ auto Interpreter::ExecMemIOEffect(
     // Write back the modified array
     return StoreToPlace(state, mem_io.target, std::move(arr_val));
   }
+
   // Write mode: read array and write to file
   auto arr_val_result = ReadPlace(state, mem_io.target);
   if (!arr_val_result) {
@@ -502,21 +517,22 @@ auto Interpreter::ExecMemIOEffect(
                 "{}: cannot open file '{}' for writing", task_name, filename)));
   }
 
-  for (int64_t addr = start_addr; addr <= end_addr; ++addr) {
+  // Write each element with direction-aware iteration
+  int64_t addr = current_addr;
+  while (step > 0 ? addr <= final_addr : addr >= final_addr) {
     auto index = static_cast<size_t>(addr - min_addr);
-    if (index >= arr.elements.size()) {
-      break;
+    if (index < arr.elements.size()) {
+      const auto& elem = arr.elements[index];
+      if (IsIntegral(elem)) {
+        const auto& integral = AsIntegral(elem);
+        std::vector<uint64_t> words = integral.value;
+        words.resize((elem_width + 63) / 64, 0);
+        std::string formatted =
+            common::FormatMemWords(words, elem_width, mem_io.is_hex);
+        file << formatted << "\n";
+      }
     }
-    const auto& elem = arr.elements[index];
-    if (!IsIntegral(elem)) {
-      continue;
-    }
-    const auto& integral = AsIntegral(elem);
-    std::vector<uint64_t> words = integral.value;
-    words.resize((elem_width + 63) / 64, 0);
-    std::string formatted =
-        common::mem_io::FormatMemWords(words, elem_width, mem_io.is_hex);
-    file << formatted << "\n";
+    addr += step;
   }
   return {};
 }

@@ -2,16 +2,20 @@
 
 #include <cstdint>
 #include <cstring>
-#include <format>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <print>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/marshal.hpp"
+#include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/string.hpp"
 
 namespace {
@@ -194,5 +198,134 @@ extern "C" void LyraFWrite(
   for (int i = 0; i < targets.file_stream_count; ++i) {
     *targets.file_streams.at(i) << msg;
     if (add_newline) *targets.file_streams.at(i) << '\n';
+  }
+}
+
+extern "C" void LyraReadmem(
+    LyraStringHandle filename_handle, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
+    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex) {
+  // Sanity checks
+  if (element_width <= 0 || stride_bytes <= 0 || element_count <= 0) {
+    std::print(stderr, "$readmem: invalid element parameters\n");
+    return;
+  }
+
+  std::string filename{LyraStringAsView(filename_handle)};
+
+  // Resolve path relative to fs_base_dir (same as $fopen)
+  std::filesystem::path path{filename};
+  if (path.is_relative()) {
+    path = lyra::runtime::GetFsBaseDir() / path;
+  }
+
+  std::ifstream file(path);
+  if (!file) {
+    std::print(stderr, "$readmem: cannot open file '{}'\n", filename);
+    return;
+  }
+
+  std::string content(
+      (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+  int64_t max_addr = min_addr + element_count - 1;
+  auto bit_width = static_cast<size_t>(element_width);
+  auto stride = static_cast<size_t>(stride_bytes);
+
+  std::string_view task_name = is_hex ? "$readmemh" : "$readmemb";
+
+  // Create a span over the target storage for bounds-safe access
+  auto total_bytes = static_cast<size_t>(element_count) * stride;
+  std::span<uint8_t> target_span(static_cast<uint8_t*>(target), total_bytes);
+
+  // Store callback - maps SV address to storage index with bounds check
+  auto store = [&](std::string_view token, int64_t addr) {
+    // Bounds check before computing storage index
+    if (addr < min_addr || addr > max_addr) {
+      return;  // Ignore out-of-bounds addresses
+    }
+
+    auto words_result =
+        lyra::common::ParseMemTokenToWords(token, bit_width, is_hex);
+    if (!words_result) {
+      std::print(stderr, "{}: {}\n", task_name, words_result.error());
+      return;
+    }
+    const auto& words = *words_result;
+
+    // Compute storage offset: (addr - min_addr) * stride
+    auto storage_index = static_cast<size_t>(addr - min_addr);
+    size_t offset = storage_index * stride;
+
+    // Copy words to storage (little-endian byte order)
+    size_t bytes_to_copy = std::min(stride, words.size() * 8);
+    std::memcpy(
+        target_span.subspan(offset).data(), words.data(), bytes_to_copy);
+  };
+
+  // Forward to canonical parser (step handles direction)
+  auto result = lyra::common::ParseMemFile(
+      content, is_hex, min_addr, max_addr, current_addr, final_addr, step,
+      task_name, store);
+  if (!result.success) {
+    std::print(stderr, "{}: {}\n", task_name, result.error);
+  }
+}
+
+extern "C" void LyraWritemem(
+    LyraStringHandle filename_handle, const void* source, int32_t element_width,
+    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
+    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex) {
+  // Sanity checks
+  if (element_width <= 0 || stride_bytes <= 0 || element_count <= 0) {
+    std::print(stderr, "$writemem: invalid element parameters\n");
+    return;
+  }
+
+  std::string filename{LyraStringAsView(filename_handle)};
+
+  // Resolve path relative to fs_base_dir
+  std::filesystem::path path{filename};
+  if (path.is_relative()) {
+    path = lyra::runtime::GetFsBaseDir() / path;
+  }
+
+  std::ofstream file(path);
+  if (!file) {
+    std::print(
+        stderr, "$writemem: cannot open file '{}' for writing\n", filename);
+    return;
+  }
+
+  int64_t max_addr = min_addr + element_count - 1;
+  auto bit_width = static_cast<size_t>(element_width);
+  auto stride = static_cast<size_t>(stride_bytes);
+  size_t word_count = (bit_width + 63) / 64;
+
+  // Create a span over the source storage for bounds-safe access
+  auto total_bytes = static_cast<size_t>(element_count) * stride;
+  std::span<const uint8_t> source_span(
+      static_cast<const uint8_t*>(source), total_bytes);
+
+  // Write each element with direction-aware iteration
+  int64_t addr = current_addr;
+  while (step > 0 ? addr <= final_addr : addr >= final_addr) {
+    // Bounds check
+    if (addr >= min_addr && addr <= max_addr) {
+      auto storage_index = static_cast<size_t>(addr - min_addr);
+      size_t offset = storage_index * stride;
+
+      // Read words from storage
+      std::vector<uint64_t> words(word_count, 0);
+      std::memcpy(
+          words.data(), source_span.subspan(offset).data(),
+          std::min(stride, word_count * 8));
+
+      // Format and write
+      std::string formatted =
+          lyra::common::FormatMemWords(words, bit_width, is_hex);
+      file << formatted << '\n';
+    }
+    addr += step;
   }
 }

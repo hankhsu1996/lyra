@@ -27,6 +27,7 @@
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/simulation.hpp"
 #include "tests/framework/llvm_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
@@ -233,11 +234,15 @@ auto RunMirInterpreter(
   interpreter.SetOutput(&output_stream);
   interpreter.SetPlusargs(test_case.plusargs);
 
-  // Change to work_directory if we have one (for file I/O tests)
-  std::optional<ScopedCurrentPath> scoped_path;
-  if (!work_directory.empty()) {
-    scoped_path.emplace(work_directory);
-  }
+  // Set base directory for file I/O (consistent with LLVM backend)
+  // Note: We set both interpreter's fs_base_dir_ (for $readmem/$writemem) and
+  // the global via LyraInitRuntime (for FileManager's $fopen/$fclose).
+  auto fs_base_dir =
+      work_directory.empty()
+          ? std::filesystem::absolute(std::filesystem::current_path())
+          : std::filesystem::absolute(work_directory);
+  interpreter.SetFsBaseDir(fs_base_dir);
+  LyraInitRuntime(fs_base_dir.c_str());
 
   // Run design init processes (package variable initialization)
   for (mir::ProcessId proc_id : mir_result->design.init_processes) {

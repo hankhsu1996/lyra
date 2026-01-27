@@ -66,4 +66,33 @@ void LyraFclose(void* engine, int32_t descriptor);
 void LyraFWrite(
     void* engine, uint32_t descriptor, LyraStringHandle message,
     bool add_newline);
+
+// $readmemh/$readmemb: read memory file into array (MVP: 2-state only)
+// - filename: string handle for filename
+// - target: pointer to array storage (contiguous 2-state elements)
+// - element_width: bit width of each element (for parsing, must be > 0)
+// - stride_bytes: storage bytes per element (from LLVM GetIntegralStorageType)
+// - element_count: number of elements in array (must be > 0)
+// - min_addr: array lower bound (= Lower() for both ascending/descending)
+// - current_addr: starting address (lowering applies defaults)
+// - final_addr: terminal address (inclusive)
+// - step: +1 for ascending, -1 for descending progression
+// - is_hex: true = hex format, false = binary format
+//
+// Storage ABI: elements are packed 2-state integrals stored in power-of-2
+// rounded bytes (8/16/32/64/N), little-endian. stride_bytes is computed by
+// LLVM lowering where the storage type is known; runtime must not guess.
+//
+// Lowering computes everything; runtime has zero semantic decisions.
+void LyraReadmem(
+    LyraStringHandle filename, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
+    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex);
+
+// $writememh/$writememb: write array to memory file (MVP: 2-state only)
+// Parameters match LyraReadmem, but source is read-only.
+void LyraWritemem(
+    LyraStringHandle filename, const void* source, int32_t element_width,
+    int32_t stride_bytes, int32_t element_count, int64_t min_addr,
+    int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex);
 }
