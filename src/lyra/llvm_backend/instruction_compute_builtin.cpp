@@ -21,7 +21,9 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/type_ops_store.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
@@ -136,8 +138,9 @@ auto LowerDynArrayBuiltin(
       if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
       llvm::Value* target_ptr = *target_ptr_or_err;
 
-      auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "da.new.old");
-      builder.CreateCall(context.GetLyraDynArrayRelease(), {old_handle});
+      const auto& arena = context.GetMirArena();
+      TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
+      Destroy(context, target_ptr, target_type_id);
       builder.CreateStore(handle, target_ptr);
       return {};
     }
@@ -624,8 +627,9 @@ auto LowerEnumName(
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
 
-  auto* old_handle = builder.CreateLoad(ptr_ty, target_ptr, "enum.name.old");
-  builder.CreateCall(context.GetLyraStringRelease(), {old_handle});
+  const auto& arena = context.GetMirArena();
+  TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
+  Destroy(context, target_ptr, target_type_id);
   builder.CreateStore(phi, target_ptr);
   return {};
 }
