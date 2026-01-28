@@ -893,26 +893,27 @@ auto InitCommand(std::optional<std::string> name, bool force) -> int {
 
       // Create starter SV file only for new projects
       std::string sv = std::format(
-          R"(module {};
+          R"(module Top;
   initial begin
-    $display("Hello from {}!");
+    $display("Hello, Lyra!");
+    $finish;
   end
 endmodule
 )",
-          project_name, project_name);
+          project_name);
       WriteFile(project_dir / (project_name + ".sv"), sv);
     }
 
     // Create lyra.toml
     std::string config = std::format(
         R"([package]
-name = "{}"
-top = "{}"
+ name = "{}"
+ top = "Top"
 
-[sources]
-files = ["{}.sv"]
+ [sources]
+ files = ["{}.sv"]
 )",
-        project_name, project_name, project_name);
+        project_name, project_name);
     WriteFile(project_dir / "lyra.toml", config);
 
     if (create_directory) {

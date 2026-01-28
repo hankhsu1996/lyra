@@ -8,22 +8,41 @@
 **Lyra** is a SystemVerilog compiler and simulator built around a multi-stage IR pipeline.
 It compiles to LLVM IR for execution, prioritizing fast iteration (compile + run + debug) over peak simulation speed.
 
-## Build
+## Prerequisites
+
+- [Bazel](https://bazel.build/) (via [bazelisk](https://github.com/bazelbuild/bazelisk))
+- Clang 20+
+- C++23-compliant standard library (GCC 14+ libstdc++ or libc++)
+- LLVM tools with `lli` available in PATH
+
+## Quick Start
 
 ```bash
-bazel build //...   # Build all targets
+# Build lyra
+bazel build //:lyra
+
+# Create a new project
+lyra init my_project    # creates lyra.toml and my_project.sv
+cd my_project
+
+# Run simulation
+lyra run
+```
+
+Ensure the built `lyra` binary is on your PATH.
+`lyra run` requires `lli` in PATH.
+
+Lyra expects a project workflow with `lyra.toml`. CLI arguments work for quick runs. See [docs/cli-design.md](docs/cli-design.md).
+
+## Tests
+
+```bash
 bazel test //...    # Run tests
 ```
 
-The `lyra` binary is at `bazel-bin/lyra`.
+## Examples
 
-## Usage
-
-```bash
-lyra run [files...]   # Run simulation
-```
-
-Lyra can also use `lyra.toml` for project configuration. See [docs/cli-design.md](docs/cli-design.md) for details.
+See [examples/README.md](examples/README.md) for sample projects and commands.
 
 ## Architecture
 
@@ -43,3 +62,15 @@ See [docs/architecture.md](docs/architecture.md) for detailed design.
 Minimize iteration time (compile + run + debug). Peak simulation speed is secondary.
 
 See [docs/philosophy.md](docs/philosophy.md) for design rationale.
+
+## Limitations
+
+Lyra supports a focused subset of SystemVerilog. See [docs/limitations.md](docs/limitations.md).
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) - component boundaries and data flow
+- [docs/cli-design.md](docs/cli-design.md) - CLI behavior and configuration
+- [docs/limitations.md](docs/limitations.md) - unsupported language features
+- [docs/design-principles.md](docs/design-principles.md) - implementation guidelines
+- [docs/philosophy.md](docs/philosophy.md) - product priorities and tradeoffs
