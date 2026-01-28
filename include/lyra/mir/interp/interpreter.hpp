@@ -90,11 +90,11 @@ struct ProcessState {
   std::optional<RuntimeValue> function_return_value;
 };
 
-// MIR Interpreter: executes a single process to completion.
+// MIR Interpreter: executes processes to completion.
 //
-// Supports single initial process, basic control flow, expressions, and
-// local/temp storage. Hard-fails on suspension terminators (Delay, Wait,
-// Repeat) as these require a scheduler/runtime.
+// Supports multiple initial processes across modules, basic control flow,
+// expressions, and local/temp storage. Suspension terminators (Delay, Wait,
+// Repeat) are handled via the runtime Engine for scheduling.
 class Interpreter {
  public:
   Interpreter(
@@ -263,9 +263,8 @@ auto CreateProcessState(
     const Arena& arena, const TypeArena& types, ProcessId process_id,
     DesignState* design_state) -> ProcessState;
 
-// Info about the initial module to run
-struct InitialModuleInfo {
-  const Module* module = nullptr;
+// Info about initial processes to run (collected from all modules)
+struct InitialProcessInfo {
   std::vector<ProcessId> initial_processes;  // All kOnce processes in order
 };
 
@@ -279,10 +278,10 @@ auto CreateDesignState(
 // 2-state integral → 0, 4-state integral → X, string → empty, etc.
 auto CreateDefaultValue(const TypeArena& types, TypeId type_id) -> RuntimeValue;
 
-// Find the first module with a kOnce process (initial block).
+// Collect all kOnce processes (initial blocks) from all modules.
 // Returns nullopt if no initial process found.
-auto FindInitialModule(const Design& design, const Arena& arena)
-    -> std::optional<InitialModuleInfo>;
+auto CollectInitialProcesses(const Design& design, const Arena& arena)
+    -> std::optional<InitialProcessInfo>;
 
 // Result of running a simulation
 struct SimulationResult {

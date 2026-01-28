@@ -23,16 +23,18 @@ MIR is correct when execution behavior is no longer inferable, only executable.
 
 ## MIR Interpreter Scope
 
-The MIR interpreter is a **process-local reference executor**. It executes a single process on an already-constructed MIR Design (no elaboration, no scheduling).
+The MIR interpreter is a **process-local reference executor**. It executes processes on an already-constructed MIR Design (no elaboration, scheduling via runtime Engine).
 
-| Handled by Interpreter  | Handled by LLVM Backend          |
-| ----------------------- | -------------------------------- |
-| Expression evaluation   | Elaboration / instance hierarchy |
-| Statement execution     | Multi-process scheduling         |
-| Control flow in process | Process coordination             |
-| Module variable access  | Timing/delay semantics           |
+| Handled by Interpreter      | Handled by LLVM Backend |
+| --------------------------- | ----------------------- |
+| Expression evaluation       | JIT compilation         |
+| Statement execution         | Native code generation  |
+| Control flow in process     | Platform-specific ABI   |
+| Module variable access      |                         |
+| Multi-module initial blocks |                         |
+| Timing/delay via Engine     |                         |
 
-Interpreter tests require single-process designs (one `initial` block). Module-level variables are supported since they're accessed within the process.
+The interpreter supports multiple modules with multiple `initial` blocks (no IO ports). Module-level variables are accessed across the shared design state. Initial blocks are collected in BFS elaboration order (same as slot table), giving deterministic init ordering.
 
 ## Core Principles
 
