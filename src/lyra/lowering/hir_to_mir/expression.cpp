@@ -137,6 +137,10 @@ auto MapBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kWildcardEqual;
     case hir::BinaryOp::kWildcardNotEqual:
       return mir::BinaryOp::kWildcardNotEqual;
+    case hir::BinaryOp::kCaseZMatch:
+      return mir::BinaryOp::kCaseZMatch;
+    case hir::BinaryOp::kCaseXMatch:
+      return mir::BinaryOp::kCaseXMatch;
     case hir::BinaryOp::kLessThan:
       return mir::BinaryOp::kLessThan;
     case hir::BinaryOp::kLessThanEqual:

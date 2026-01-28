@@ -135,26 +135,6 @@ auto ConvertBinaryOp(slang::ast::BinaryOperator op)
   return std::nullopt;
 }
 
-// Determine if inside set item should use ==? (wildcard equality).
-// SEMANTIC DEVIATION: Slang converts ? to z at parse time, so we treat
-// ANY constant with X/Z bits as a wildcard pattern.
-// NOTE: Only checks literal kinds directly. Parameters and constant expressions
-// with X/Z are not detected (they use ==). This is a limitation.
-auto InsideItemUsesWildcardEq(const slang::ast::Expression& item) -> bool {
-  // Check integer literals for unknown bits
-  if (item.kind == slang::ast::ExpressionKind::IntegerLiteral) {
-    const auto& lit = item.as<slang::ast::IntegerLiteral>();
-    return lit.getValue().hasUnknown();
-  }
-  // Check unbased unsized literals (e.g., 'x, 'z)
-  if (item.kind == slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral) {
-    const auto& lit = item.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
-    return lit.getValue().hasUnknown();
-  }
-  // Non-literal -> use == (correct SV semantics for variables)
-  return false;
-}
-
 auto LowerConstantValueExpression(
     const slang::ConstantValue& cv, const slang::ast::Type& type,
     SourceSpan span, Context* ctx) -> hir::ExpressionId {
@@ -425,6 +405,26 @@ auto TryGetConstantValue(
 }
 
 }  // namespace
+
+// Determine if inside set item should use ==? (wildcard equality).
+// SEMANTIC DEVIATION: Slang converts ? to z at parse time, so we treat
+// ANY constant with X/Z bits as a wildcard pattern.
+// NOTE: Only checks literal kinds directly. Parameters and constant expressions
+// with X/Z are not detected (they use ==). This is a limitation.
+auto InsideItemUsesWildcardEq(const slang::ast::Expression& item) -> bool {
+  // Check integer literals for unknown bits
+  if (item.kind == slang::ast::ExpressionKind::IntegerLiteral) {
+    const auto& lit = item.as<slang::ast::IntegerLiteral>();
+    return lit.getValue().hasUnknown();
+  }
+  // Check unbased unsized literals (e.g., 'x, 'z)
+  if (item.kind == slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral) {
+    const auto& lit = item.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
+    return lit.getValue().hasUnknown();
+  }
+  // Non-literal -> use == (correct SV semantics for variables)
+  return false;
+}
 
 auto LowerExpression(
     const slang::ast::Expression& expr, ExpressionLoweringView view)

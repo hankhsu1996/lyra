@@ -1003,70 +1003,38 @@ auto LowerConditional(
   return {};
 }
 
-// Helper: get comparison operator based on case condition type.
-auto GetCaseComparisonOp(hir::CaseCondition condition) -> mir::BinaryOp {
-  switch (condition) {
-    case hir::CaseCondition::kNormal:
-      return mir::BinaryOp::kEqual;
-    case hir::CaseCondition::kCaseZ:
-      return mir::BinaryOp::kCaseZMatch;
-    case hir::CaseCondition::kCaseX:
-      return mir::BinaryOp::kCaseXMatch;
-  }
-  return mir::BinaryOp::kEqual;
-}
-
-// Helper: materialize selector to a place.
-auto MaterializeSelector(hir::ExpressionId selector_id, MirBuilder& builder)
-    -> Result<mir::PlaceId> {
-  Context& ctx = builder.GetContext();
-  Result<mir::Operand> sel_result = LowerExpression(selector_id, builder);
-  if (!sel_result) return std::unexpected(sel_result.error());
-  mir::Operand sel = *sel_result;
-  if (sel.kind == mir::Operand::Kind::kUse) {
-    return std::get<mir::PlaceId>(sel.payload);
-  }
-  const hir::Expression& sel_expr = (*ctx.hir_arena)[selector_id];
-  mir::PlaceId sel_place = ctx.AllocTemp(sel_expr.type);
-  builder.EmitAssign(sel_place, std::move(sel));
-  return sel_place;
-}
-
 // Standard case lowering without qualifiers.
+// Predicates are pre-built in HIR; we just consume them with EmitPriorityChain.
 auto LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
-  if (!sel_result) return std::unexpected(sel_result.error());
-  mir::PlaceId sel_place = *sel_result;
-
-  // Use a result holder to capture errors from callbacks
   Result<void> callback_result;
 
-  // Build case items
-  std::vector<MirBuilder::CaseItem> items;
+  // Build condition lambdas from predicates
+  std::vector<std::function<mir::Operand()>> conditions;
   for (const auto& item : data.items) {
-    MirBuilder::CaseItem case_item;
-    for (auto expr_id : item.expressions) {
-      case_item.expressions.emplace_back([&builder, &callback_result,
-                                          expr_id]() {
-        Result<mir::Operand> expr_result = LowerExpression(expr_id, builder);
-        if (!expr_result) {
-          callback_result = std::unexpected(expr_result.error());
-          return mir::Operand::Const(Constant{});  // Will be ignored
-        }
-        return *expr_result;
-      });
-    }
-    case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
-      if (callback_result && stmt_id.has_value()) {
-        callback_result = LowerStatement(*stmt_id, builder);
-      }
-    };
-    items.push_back(std::move(case_item));
+    conditions.emplace_back(
+        [&builder, &callback_result, pred_id = item.predicate]() {
+          Result<mir::Operand> pred_result = LowerExpression(pred_id, builder);
+          if (!pred_result) {
+            callback_result = std::unexpected(pred_result.error());
+            return mir::Operand::Const(Constant{});
+          }
+          return *pred_result;
+        });
   }
 
-  builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
+  // Build body callbacks
+  std::vector<std::function<void()>> bodies;
+  for (const auto& item : data.items) {
+    bodies.emplace_back(
+        [&builder, &callback_result, stmt_id = item.statement]() {
+          if (callback_result && stmt_id.has_value()) {
+            callback_result = LowerStatement(*stmt_id, builder);
+          }
+        });
+  }
+
+  builder.EmitPriorityChain(conditions, bodies, [&]() {
     if (callback_result && data.default_statement.has_value()) {
       callback_result = LowerStatement(*data.default_statement, builder);
     }
@@ -1074,42 +1042,38 @@ auto LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder)
   return callback_result;
 }
 
-// Priority case: comparison cascade + warning at end if no default.
+// Priority case: priority chain + warning at end if no default.
 auto LowerCasePriority(const hir::CaseStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
-  if (!sel_result) return std::unexpected(sel_result.error());
-  mir::PlaceId sel_place = *sel_result;
   bool has_default = data.default_statement.has_value();
-
-  // Use a result holder to capture errors from callbacks
   Result<void> callback_result;
 
-  // Build case items
-  std::vector<MirBuilder::CaseItem> items;
+  // Build condition lambdas from predicates
+  std::vector<std::function<mir::Operand()>> conditions;
   for (const auto& item : data.items) {
-    MirBuilder::CaseItem case_item;
-    for (auto expr_id : item.expressions) {
-      case_item.expressions.emplace_back([&builder, &callback_result,
-                                          expr_id]() {
-        Result<mir::Operand> expr_result = LowerExpression(expr_id, builder);
-        if (!expr_result) {
-          callback_result = std::unexpected(expr_result.error());
-          return mir::Operand::Const(Constant{});  // Will be ignored
-        }
-        return *expr_result;
-      });
-    }
-    case_item.body = [&builder, &callback_result, stmt_id = item.statement]() {
-      if (callback_result && stmt_id.has_value()) {
-        callback_result = LowerStatement(*stmt_id, builder);
-      }
-    };
-    items.push_back(std::move(case_item));
+    conditions.emplace_back(
+        [&builder, &callback_result, pred_id = item.predicate]() {
+          Result<mir::Operand> pred_result = LowerExpression(pred_id, builder);
+          if (!pred_result) {
+            callback_result = std::unexpected(pred_result.error());
+            return mir::Operand::Const(Constant{});
+          }
+          return *pred_result;
+        });
   }
 
-  builder.EmitCaseCascade(sel_place, cmp_op, items, [&]() {
+  // Build body callbacks
+  std::vector<std::function<void()>> bodies;
+  for (const auto& item : data.items) {
+    bodies.emplace_back(
+        [&builder, &callback_result, stmt_id = item.statement]() {
+          if (callback_result && stmt_id.has_value()) {
+            callback_result = LowerStatement(*stmt_id, builder);
+          }
+        });
+  }
+
+  builder.EmitPriorityChain(conditions, bodies, [&]() {
     if (!callback_result) {
       return;
     }
@@ -1132,48 +1096,29 @@ auto LowerCasePriority(const hir::CaseStatementData& data, MirBuilder& builder)
   return callback_result;
 }
 
-// Unique/Unique0 case: eval all matches, emit QualifiedDispatch.
+// Unique/Unique0 case: eval all predicates upfront, emit QualifiedDispatch.
 auto LowerCaseUnique(
     const hir::CaseStatementData& data, MirBuilder& builder,
     hir::UniquePriorityCheck check) -> Result<void> {
   Context& ctx = builder.GetContext();
-  mir::BinaryOp cmp_op = GetCaseComparisonOp(data.condition);
-  Result<mir::PlaceId> sel_result = MaterializeSelector(data.selector, builder);
-  if (!sel_result) return std::unexpected(sel_result.error());
-  mir::PlaceId sel_place = *sel_result;
   bool has_default = data.default_statement.has_value();
 
-  // Evaluate all item matches upfront.
-  // For each item, OR together all its expressions to get a single condition.
+  // Evaluate all predicates upfront and materialize to places
   std::vector<mir::PlaceId> item_conditions;
   for (const auto& item : data.items) {
-    mir::PlaceId item_match = mir::kInvalidPlaceId;
+    auto pred_result = LowerExpression(item.predicate, builder);
+    if (!pred_result) return std::unexpected(pred_result.error());
+    mir::Operand pred = std::move(*pred_result);
 
-    for (const auto& expr : item.expressions) {
-      auto val_result = LowerExpression(expr, builder);
-      if (!val_result) return std::unexpected(val_result.error());
-      mir::Operand val = std::move(*val_result);
-      TypeId cmp_type = ctx.GetBitType();
-      mir::Rvalue cmp_rvalue{
-          .operands = {mir::Operand::Use(sel_place), std::move(val)},
-          .info = mir::BinaryRvalueInfo{.op = cmp_op},
-      };
-      mir::PlaceId cmp_result =
-          builder.EmitTemp(cmp_type, std::move(cmp_rvalue));
-
-      if (item_match == mir::kInvalidPlaceId) {
-        item_match = cmp_result;
-      } else {
-        // OR with previous matches (any expression matching means item matches)
-        mir::Rvalue or_rvalue{
-            .operands =
-                {mir::Operand::Use(item_match), mir::Operand::Use(cmp_result)},
-            .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kBitwiseOr},
-        };
-        item_match = builder.EmitTemp(cmp_type, std::move(or_rvalue));
-      }
+    // Materialize to place if needed
+    mir::PlaceId pred_place;
+    if (pred.kind == mir::Operand::Kind::kUse) {
+      pred_place = std::get<mir::PlaceId>(pred.payload);
+    } else {
+      pred_place = ctx.AllocTemp(ctx.GetBitType());
+      builder.EmitAssign(pred_place, std::move(pred));
     }
-    item_conditions.push_back(item_match);
+    item_conditions.push_back(pred_place);
   }
 
   // Build body callbacks with error capture
@@ -1209,15 +1154,6 @@ auto LowerCaseUnique(
 
 auto LowerCase(const hir::CaseStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  // Slang invariant: each case item has at least one expression.
-  for (const auto& item : data.items) {
-    if (item.expressions.empty()) {
-      throw common::InternalError(
-          "LowerCase",
-          "case item has no expressions (Slang invariant violated)");
-    }
-  }
-
   switch (data.check) {
     case hir::UniquePriorityCheck::kNone:
       return LowerCaseNone(data, builder);

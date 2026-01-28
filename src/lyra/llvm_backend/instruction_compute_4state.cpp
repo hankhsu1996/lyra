@@ -278,6 +278,97 @@ auto LowerBinaryRvalue4State(
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
+  // Handle case equality (===, !==) specially - always returns 0 or 1, never X
+  // Compares both value AND unknown bits exactly
+  if (IsCaseEqualityOp(info.op)) {
+    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
+    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t cmp_width = std::max(lhs_width, rhs_width);
+    auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+
+    // Coerce operands to comparison width
+    auto* cmp_lhs_val =
+        builder.CreateZExtOrTrunc(lhs.value, cmp_type, "ceq.lhs.val");
+    auto* cmp_rhs_val =
+        builder.CreateZExtOrTrunc(rhs.value, cmp_type, "ceq.rhs.val");
+    auto* cmp_lhs_unk =
+        builder.CreateZExtOrTrunc(lhs.unknown, cmp_type, "ceq.lhs.unk");
+    auto* cmp_rhs_unk =
+        builder.CreateZExtOrTrunc(rhs.unknown, cmp_type, "ceq.rhs.unk");
+
+    // Both value AND unknown bits must match exactly
+    auto* val_eq = builder.CreateICmpEQ(cmp_lhs_val, cmp_rhs_val, "ceq.val_eq");
+    auto* unk_eq = builder.CreateICmpEQ(cmp_lhs_unk, cmp_rhs_unk, "ceq.unk_eq");
+    llvm::Value* result = builder.CreateAnd(val_eq, unk_eq, "ceq.match");
+
+    // For !==, invert the result
+    if (info.op == mir::BinaryOp::kCaseNotEqual) {
+      result = builder.CreateNot(result, "ceq.ne");
+    }
+
+    // Case equality always returns 2-state (0 or 1), never X
+    return FourStateValue{
+        .value = builder.CreateZExt(result, elem_type, "ceq.val"),
+        .unknown = zero,  // Never X
+    };
+  }
+
+  // Handle casez/casex matching (kCaseZMatch, kCaseXMatch)
+  // These return 2-state result (always 0 or 1, never X)
+  if (IsCaseMatchOp(info.op)) {
+    uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
+    auto* match_type =
+        llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
+
+    auto lhs_4s = LowerOperandFourState(context, operands[0], match_type);
+    if (!lhs_4s) return std::unexpected(lhs_4s.error());
+    auto rhs_4s = LowerOperandFourState(context, operands[1], match_type);
+    if (!rhs_4s) return std::unexpected(rhs_4s.error());
+
+    lhs_4s->value =
+        builder.CreateZExtOrTrunc(lhs_4s->value, match_type, "cm.lhs.val");
+    lhs_4s->unknown =
+        builder.CreateZExtOrTrunc(lhs_4s->unknown, match_type, "cm.lhs.unk");
+    rhs_4s->value =
+        builder.CreateZExtOrTrunc(rhs_4s->value, match_type, "cm.rhs.val");
+    rhs_4s->unknown =
+        builder.CreateZExtOrTrunc(rhs_4s->unknown, match_type, "cm.rhs.unk");
+
+    llvm::Value* wildcard = nullptr;
+    if (info.op == mir::BinaryOp::kCaseXMatch) {
+      wildcard = builder.CreateOr(lhs_4s->unknown, rhs_4s->unknown, "cx.wc");
+    } else {
+      auto* lhs_z =
+          builder.CreateAnd(lhs_4s->value, lhs_4s->unknown, "cz.lhs.z");
+      auto* rhs_z =
+          builder.CreateAnd(rhs_4s->value, rhs_4s->unknown, "cz.rhs.z");
+      wildcard = builder.CreateOr(lhs_z, rhs_z, "cz.wc");
+    }
+
+    auto* not_wildcard = builder.CreateNot(wildcard, "cm.not.wc");
+    auto sem_mask = llvm::APInt::getLowBitsSet(
+        match_type->getIntegerBitWidth(), operand_width);
+    auto* mask = builder.CreateAnd(
+        not_wildcard, llvm::ConstantInt::get(match_type, sem_mask), "cm.mask");
+    auto* lhs_masked = builder.CreateAnd(lhs_4s->value, mask, "cm.lv");
+    auto* rhs_masked = builder.CreateAnd(rhs_4s->value, mask, "cm.rv");
+    llvm::Value* result =
+        builder.CreateICmpEQ(lhs_masked, rhs_masked, "cm.veq");
+
+    if (info.op == mir::BinaryOp::kCaseZMatch) {
+      auto* lhs_unk_m = builder.CreateAnd(lhs_4s->unknown, mask, "cz.lu");
+      auto* rhs_unk_m = builder.CreateAnd(rhs_4s->unknown, mask, "cz.ru");
+      auto* unk_eq = builder.CreateICmpEQ(lhs_unk_m, rhs_unk_m, "cz.ueq");
+      result = builder.CreateAnd(result, unk_eq, "cz.match");
+    }
+
+    // Case match always returns 2-state (0 or 1), never X
+    return FourStateValue{
+        .value = builder.CreateZExt(result, elem_type, "cm.val"),
+        .unknown = zero,  // Never X
+    };
+  }
+
   // Handle wildcard comparison (==?, !=?) specially - different taint rules
   if (IsWildcardComparisonOp(info.op)) {
     uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
@@ -438,6 +529,49 @@ auto LowerCaseMatchOp(
   }
 
   return builder.CreateZExt(result, storage_type, "cm.ext");
+}
+
+auto LowerCaseEqualityOp(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> Result<llvm::Value*> {
+  // === (case equality): Exact 4-state comparison.
+  // Compares both value AND unknown bits exactly, always returning 0 or 1
+  // (never X).
+  auto& builder = context.GetBuilder();
+
+  uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+  uint32_t cmp_width = std::max(lhs_width, rhs_width);
+  auto* elem_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+
+  auto lhs_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  auto lhs = *lhs_or_err;
+
+  auto rhs_or_err = LowerOperandFourState(context, operands[1], elem_type);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  auto rhs = *rhs_or_err;
+
+  // Coerce to comparison width
+  lhs.value = builder.CreateZExtOrTrunc(lhs.value, elem_type, "ceq.lhs.val");
+  lhs.unknown =
+      builder.CreateZExtOrTrunc(lhs.unknown, elem_type, "ceq.lhs.unk");
+  rhs.value = builder.CreateZExtOrTrunc(rhs.value, elem_type, "ceq.rhs.val");
+  rhs.unknown =
+      builder.CreateZExtOrTrunc(rhs.unknown, elem_type, "ceq.rhs.unk");
+
+  // Both value AND unknown bits must match exactly
+  auto* val_eq = builder.CreateICmpEQ(lhs.value, rhs.value, "ceq.val_eq");
+  auto* unk_eq = builder.CreateICmpEQ(lhs.unknown, rhs.unknown, "ceq.unk_eq");
+  llvm::Value* result = builder.CreateAnd(val_eq, unk_eq, "ceq.match");
+
+  // For !==, invert the result
+  if (info.op == mir::BinaryOp::kCaseNotEqual) {
+    result = builder.CreateNot(result, "ceq.ne");
+  }
+
+  return builder.CreateZExt(result, storage_type, "ceq.ext");
 }
 
 auto LowerCompute4State(

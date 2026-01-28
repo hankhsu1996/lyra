@@ -68,6 +68,10 @@ auto LowerBinaryRvalue(
     return LowerCaseMatchOp(context, info, operands, storage_type);
   }
 
+  if (IsCaseEqualityOp(info.op)) {
+    return LowerCaseEqualityOp(context, info, operands, storage_type);
+  }
+
   auto& builder = context.GetBuilder();
 
   auto lhs_or_err = LowerOperand(context, operands[0]);

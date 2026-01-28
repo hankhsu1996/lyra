@@ -55,6 +55,8 @@ auto IsComparisonOp(mir::BinaryOp op) -> bool {
   switch (op) {
     case mir::BinaryOp::kEqual:
     case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kCaseEqual:
+    case mir::BinaryOp::kCaseNotEqual:
     case mir::BinaryOp::kWildcardEqual:
     case mir::BinaryOp::kWildcardNotEqual:
     case mir::BinaryOp::kLessThan:
@@ -111,6 +113,10 @@ auto IsLogicalOp(mir::BinaryOp op) -> bool {
 
 auto IsCaseMatchOp(mir::BinaryOp op) -> bool {
   return op == mir::BinaryOp::kCaseZMatch || op == mir::BinaryOp::kCaseXMatch;
+}
+
+auto IsCaseEqualityOp(mir::BinaryOp op) -> bool {
+  return op == mir::BinaryOp::kCaseEqual || op == mir::BinaryOp::kCaseNotEqual;
 }
 
 auto IsReductionOp(mir::UnaryOp op) -> bool {
@@ -248,12 +254,14 @@ auto LowerBinaryComparison(
 
   switch (op) {
     case mir::BinaryOp::kEqual:
+    case mir::BinaryOp::kCaseEqual:
     case mir::BinaryOp::kWildcardEqual:
-      // In 2-state, ==? degenerates to == (no X/Z possible)
+      // In 2-state path, all equality ops degenerate to == (no X/Z possible)
       return builder.CreateICmpEQ(lhs, rhs, "eq");
     case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kCaseNotEqual:
     case mir::BinaryOp::kWildcardNotEqual:
-      // In 2-state, !=? degenerates to != (no X/Z possible)
+      // In 2-state path, all inequality ops degenerate to != (no X/Z possible)
       return builder.CreateICmpNE(lhs, rhs, "ne");
     case mir::BinaryOp::kLessThan:
       return builder.CreateICmpULT(lhs, rhs, "ult");

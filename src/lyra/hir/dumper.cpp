@@ -252,20 +252,29 @@ void Dumper::Dump(StatementId id) {
           *out_ << "priority ";
           break;
       }
-      *out_ << "case (";
+      // Print case condition
+      switch (data.condition) {
+        case CaseCondition::kNormal:
+          *out_ << "case";
+          break;
+        case CaseCondition::kCaseZ:
+          *out_ << "casez";
+          break;
+        case CaseCondition::kCaseX:
+          *out_ << "casex";
+          break;
+        case CaseCondition::kInside:
+          *out_ << "case inside";
+          break;
+      }
+      *out_ << " (";
       Dump(data.selector);
       *out_ << ") {\n";
       Indent();
       for (const auto& item : data.items) {
         PrintIndent();
-        bool first = true;
-        for (ExpressionId e : item.expressions) {
-          if (!first) {
-            *out_ << ", ";
-          }
-          first = false;
-          Dump(e);
-        }
+        // Print predicate expression
+        Dump(item.predicate);
         *out_ << ": ";
         if (item.statement.has_value()) {
           Dump(*item.statement);
@@ -537,6 +546,10 @@ void Dumper::Dump(ExpressionId id) {
             return " ==? ";
           case BinaryOp::kWildcardNotEqual:
             return " !=? ";
+          case BinaryOp::kCaseZMatch:
+            return " casez ";
+          case BinaryOp::kCaseXMatch:
+            return " casex ";
           case BinaryOp::kLessThan:
             return " < ";
           case BinaryOp::kLessThanEqual:

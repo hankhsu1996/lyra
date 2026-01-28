@@ -516,7 +516,7 @@ auto MakeUnknown1Bit() -> RuntimeIntegral {
 
 }  // namespace
 
-auto IntegralEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+auto IntegralEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral {
   if (!lhs.IsKnown() || !rhs.IsKnown()) {
     return MakeUnknown1Bit();
@@ -536,12 +536,44 @@ auto IntegralEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
   return std::get<RuntimeIntegral>(MakeIntegral(equal ? 1 : 0, 1));
 }
 
-auto IntegralNe(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+auto IntegralNotEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral {
-  auto eq = IntegralEq(lhs, rhs);
+  auto eq = IntegralEqual(lhs, rhs);
   if (eq.IsX()) {
     return eq;
   }
+  return std::get<RuntimeIntegral>(MakeIntegral(eq.IsZero() ? 1 : 0, 1));
+}
+
+auto IntegralCaseEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral {
+  // === (case equality): Exact 4-state comparison.
+  // Compares both value AND unknown bits exactly, always returning 0 or 1
+  // (never X).
+
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.unknown.size(),
+       rhs.unknown.size()});
+
+  for (size_t i = 0; i < max_words; ++i) {
+    uint64_t lhs_val = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t lhs_unk = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t rhs_val = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t rhs_unk = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
+
+    // Both value and unknown bits must match exactly
+    if (lhs_val != rhs_val || lhs_unk != rhs_unk) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // Not equal
+    }
+  }
+
+  return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Equal
+}
+
+auto IntegralCaseNotEqual(
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs) -> RuntimeIntegral {
+  // !== (case inequality): Negation of ===, always returning 0 or 1 (never X).
+  auto eq = IntegralCaseEqual(lhs, rhs);
   return std::get<RuntimeIntegral>(MakeIntegral(eq.IsZero() ? 1 : 0, 1));
 }
 
@@ -552,7 +584,7 @@ auto IntegralCaseXMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
 
   // If both are fully known, use exact equality
   if (lhs.IsKnown() && rhs.IsKnown()) {
-    return IntegralEq(lhs, rhs);
+    return IntegralEqual(lhs, rhs);
   }
 
   size_t max_words = std::max(
@@ -585,7 +617,7 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
 
   // If both are fully known, use exact equality
   if (lhs.IsKnown() && rhs.IsKnown()) {
-    return IntegralEq(lhs, rhs);
+    return IntegralEqual(lhs, rhs);
   }
 
   size_t max_words = std::max(
@@ -622,9 +654,10 @@ auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
   // This is ASYMMETRIC - different from casex which treats both sides as
   // wildcards.
 
-  // If both are fully known, use exact equality (matches IntegralEq behavior)
+  // If both are fully known, use exact equality (matches IntegralEqual
+  // behavior)
   if (lhs.IsKnown() && rhs.IsKnown()) {
-    return IntegralEq(lhs, rhs);
+    return IntegralEqual(lhs, rhs);
   }
 
   size_t max_words = std::max(
@@ -718,7 +751,7 @@ auto IntegralLe(
     return lt;
   }
 
-  auto eq = IntegralEq(lhs, rhs);
+  auto eq = IntegralEqual(lhs, rhs);
   if (eq.IsX()) {
     return eq;
   }

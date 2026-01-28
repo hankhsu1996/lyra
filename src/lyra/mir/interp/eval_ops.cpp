@@ -317,18 +317,16 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
     }
 
     case BinaryOp::kEqual:
-      return IntegralEq(lhs_int, rhs_int);
+      return IntegralEqual(lhs_int, rhs_int);
 
     case BinaryOp::kNotEqual:
-      return IntegralNe(lhs_int, rhs_int);
+      return IntegralNotEqual(lhs_int, rhs_int);
 
     case BinaryOp::kCaseEqual:
-      // === is 4-state aware equality (X matches X, Z matches Z)
-      // Simplified: treat as regular equality for now
-      return IntegralEq(lhs_int, rhs_int);
+      return IntegralCaseEqual(lhs_int, rhs_int);
 
     case BinaryOp::kCaseNotEqual:
-      return IntegralNe(lhs_int, rhs_int);
+      return IntegralCaseNotEqual(lhs_int, rhs_int);
 
     case BinaryOp::kWildcardEqual:
       return IntegralWildcardEq(lhs_int, rhs_int);

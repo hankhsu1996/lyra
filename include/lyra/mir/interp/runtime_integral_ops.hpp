@@ -52,10 +52,22 @@ auto IntegralNeg(const RuntimeIntegral& op, uint32_t width) -> RuntimeIntegral;
 auto IntegralNot(const RuntimeIntegral& op, uint32_t width) -> RuntimeIntegral;
 
 // Comparison operations (return 1-bit result)
-auto IntegralEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+auto IntegralEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral;
-auto IntegralNe(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+auto IntegralNotEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral;
+
+// Case equality operators (===, !==): Exact 4-state comparison.
+// Compares both value AND unknown bits exactly, always returning 0 or 1 (never
+// X).
+// - 1 === 1 -> 1 (values match, both known)
+// - X === X -> 1 (both value and unknown bits match exactly)
+// - X === 1 -> 0 (value 1 known vs unknown don't match)
+// - 4'b10xz === 4'b10xz -> 1 (exact bit pattern match)
+auto IntegralCaseEqual(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral;
+auto IntegralCaseNotEqual(
+    const RuntimeIntegral& lhs, const RuntimeIntegral& rhs) -> RuntimeIntegral;
 
 // Case statement matching (return 1-bit result, always 0 or 1)
 // casez: Z bits from both operands are wildcards (ignored); X bits must match

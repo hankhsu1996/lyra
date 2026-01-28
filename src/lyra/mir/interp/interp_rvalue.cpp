@@ -531,7 +531,7 @@ auto Interpreter::EvalEnumNextPrev(ProcessState& state, const Rvalue& rv)
   if (!is_invalid) {
     for (size_t i = 0; i < n; ++i) {
       auto member_ri = MakeIntegralFromConstant(members[i].value, bit_width);
-      auto eq = IntegralEq(current_int, AsIntegral(member_ri));
+      auto eq = IntegralEqual(current_int, AsIntegral(member_ri));
       if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
         current_idx = i;
         break;
@@ -581,7 +581,7 @@ auto Interpreter::EvalEnumName(ProcessState& state, const Rvalue& rv)
 
   for (const auto& member : enum_info.members) {
     auto member_ri = MakeIntegralFromConstant(member.value, bit_width);
-    auto eq = IntegralEq(current_int, AsIntegral(member_ri));
+    auto eq = IntegralEqual(current_int, AsIntegral(member_ri));
     if (eq.IsKnown() && !eq.value.empty() && eq.value[0] == 1) {
       return MakeString(member.name);
     }
