@@ -602,6 +602,45 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
   return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
 }
 
+auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral {
+  // ==? (wildcard equality): RHS X/Z bits are wildcards (match anything).
+  // LHS X/Z bits where RHS is definite → result is X.
+  // This is ASYMMETRIC - different from casex which treats both sides as
+  // wildcards.
+
+  // If both are fully known, use exact equality (matches IntegralEq behavior)
+  if (lhs.IsKnown() && rhs.IsKnown()) {
+    return IntegralEq(lhs, rhs);
+  }
+
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.unknown.size(),
+       rhs.unknown.size()});
+
+  for (size_t i = 0; i < max_words; ++i) {
+    uint64_t lhs_val = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t lhs_unk = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t rhs_val = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t rhs_unk = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
+
+    // RHS unknowns are wildcards - don't compare those positions
+    uint64_t compare_mask = ~rhs_unk;
+
+    // LHS unknowns where RHS is definite → X result
+    if ((lhs_unk & compare_mask) != 0) {
+      return MakeUnknown1Bit();
+    }
+
+    // Compare definite bits
+    if ((lhs_val & compare_mask) != (rhs_val & compare_mask)) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
+    }
+  }
+
+  return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
+}
+
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral {
