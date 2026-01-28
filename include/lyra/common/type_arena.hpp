@@ -53,10 +53,14 @@ class TypeArena final {
 // For kPackedArray: returns PackedBitWidth(element_type) * range.Size()
 // For kPackedStruct: returns total_bit_width
 // For kEnum: returns bit width of base type
-// Asserts on non-packed types.
+// Throws on non-packed types.
 inline auto PackedBitWidth(const Type& type, const TypeArena& arena)
     -> uint32_t {
-  assert(IsPacked(type));
+  if (!IsPacked(type)) {
+    throw common::InternalError(
+        "PackedBitWidth",
+        std::format("expected packed type, got {}", ToString(type.Kind())));
+  }
   if (type.Kind() == TypeKind::kIntegral) {
     return type.AsIntegral().bit_width;
   }
@@ -75,7 +79,11 @@ inline auto PackedBitWidth(const Type& type, const TypeArena& arena)
 // Returns PackedBitWidth of the element type.
 inline auto PackedArrayElementWidth(const Type& type, const TypeArena& arena)
     -> uint32_t {
-  assert(type.Kind() == TypeKind::kPackedArray);
+  if (type.Kind() != TypeKind::kPackedArray) {
+    throw common::InternalError(
+        "PackedArrayElementWidth",
+        std::format("expected PackedArray, got {}", ToString(type.Kind())));
+  }
   const auto& info = type.AsPackedArray();
   return PackedBitWidth(arena[info.element_type], arena);
 }
@@ -88,9 +96,13 @@ inline auto PackedArrayElementWidth(const Type& type, const TypeArena& arena)
 // instead).
 inline auto PackedBaseInfo(const Type& type, const TypeArena& arena)
     -> const IntegralInfo& {
-  assert(
-      type.Kind() == TypeKind::kIntegral ||
-      type.Kind() == TypeKind::kPackedArray || type.Kind() == TypeKind::kEnum);
+  if (type.Kind() != TypeKind::kIntegral &&
+      type.Kind() != TypeKind::kPackedArray && type.Kind() != TypeKind::kEnum) {
+    throw common::InternalError(
+        "PackedBaseInfo", std::format(
+                              "expected Integral/PackedArray/Enum, got {}",
+                              ToString(type.Kind())));
+  }
   if (type.Kind() == TypeKind::kIntegral) {
     return type.AsIntegral();
   }
