@@ -242,6 +242,7 @@ auto CreateProcessState(
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .pending_suspend = std::nullopt,
+      .function_return_value = std::nullopt,
   };
 }
 
@@ -293,27 +294,31 @@ auto CreateDesignState(
   return state;
 }
 
-auto FindInitialModule(const Design& design, const Arena& arena)
-    -> std::optional<InitialModuleInfo> {
+auto CollectInitialProcesses(const Design& design, const Arena& arena)
+    -> std::optional<InitialProcessInfo> {
+  // Collect kOnce processes from all modules in design element order.
+  // Design elements are ordered: packages first, then modules in BFS
+  // elaboration order. Each module's processes vector preserves source order.
+  // This gives deterministic, stable init ordering.
+  //
+  // Note: kOnce means "run exactly once per elaborated instance." Each Module
+  // in design.elements represents one elaborated instance, so collecting all
+  // kOnce processes across all modules is correct.
+  std::vector<ProcessId> initial_processes;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
-      // Collect all kOnce processes (initial blocks) in module order
-      std::vector<ProcessId> initial_processes;
       for (ProcessId process_id : module->processes) {
         const auto& process = arena[process_id];
         if (process.kind == ProcessKind::kOnce) {
           initial_processes.push_back(process_id);
         }
       }
-      if (!initial_processes.empty()) {
-        return InitialModuleInfo{
-            .module = module,
-            .initial_processes = std::move(initial_processes),
-        };
-      }
     }
   }
-  return std::nullopt;
+  if (initial_processes.empty()) {
+    return std::nullopt;
+  }
+  return InitialProcessInfo{.initial_processes = std::move(initial_processes)};
 }
 
 auto RunSimulation(
@@ -324,9 +329,9 @@ auto RunSimulation(
   // Initialize runtime state (same API as LLVM backend uses)
   LyraInitRuntime(fs_base_dir.c_str());
 
-  // Find initial module
-  auto module_info = FindInitialModule(design, mir_arena);
-  if (!module_info) {
+  // Collect initial processes from all modules
+  auto process_info = CollectInitialProcesses(design, mir_arena);
+  if (!process_info) {
     return SimulationResult{
         .exit_code = 1, .error_message = "no initial process found"};
   }
@@ -357,7 +362,7 @@ auto RunSimulation(
 
   // Create process states for initial and connection processes
   std::unordered_map<uint32_t, ProcessState> process_states;
-  for (ProcessId proc_id : module_info->initial_processes) {
+  for (ProcessId proc_id : process_info->initial_processes) {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
     process_states.emplace(proc_id.value, std::move(state));
   }
@@ -430,7 +435,7 @@ auto RunSimulation(
   });
 
   // Schedule initial processes
-  for (ProcessId proc_id : module_info->initial_processes) {
+  for (ProcessId proc_id : process_info->initial_processes) {
     engine.ScheduleInitial(
         runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
   }

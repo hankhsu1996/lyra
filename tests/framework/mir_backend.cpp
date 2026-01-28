@@ -182,10 +182,10 @@ auto RunMirInterpreter(
     }
   }
 
-  // Find initial module
-  auto module_info = mir::interp::FindInitialModule(
+  // Collect initial processes from all modules
+  auto process_info = mir::interp::CollectInitialProcesses(
       mir_result->design, *mir_result->mir_arena);
-  if (!module_info) {
+  if (!process_info) {
     result.error_message = "No initial process found (no kOnce process in MIR)";
     return result;
   }
@@ -258,7 +258,7 @@ auto RunMirInterpreter(
 
   // Create process states for all initial processes
   std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
-  for (mir::ProcessId proc_id : module_info->initial_processes) {
+  for (mir::ProcessId proc_id : process_info->initial_processes) {
     auto state = mir::interp::CreateProcessState(
         *mir_result->mir_arena, *hir_result.type_arena, proc_id, &design_state);
     process_states.emplace(proc_id.value, std::move(state));
@@ -321,7 +321,7 @@ auto RunMirInterpreter(
     });
 
     // Schedule initial processes
-    for (mir::ProcessId proc_id : module_info->initial_processes) {
+    for (mir::ProcessId proc_id : process_info->initial_processes) {
       engine.ScheduleInitial(
           runtime::ProcessHandle{
               .process_id = proc_id.value, .instance_id = 0});
