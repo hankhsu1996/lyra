@@ -5,6 +5,7 @@
 #include <format>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -13,6 +14,7 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/type.hpp"
@@ -55,6 +57,21 @@ void RegisterModuleDeclarations(
     }
   }
 
+  // Register nets (GATE: reject net initializers)
+  for (const auto* net : members.nets) {
+    if (net->getInitializer() != nullptr) {
+      ctx->sink->Error(
+          span,
+          std::format(
+              "net declaration assignment not supported: '{}'", net->name));
+      continue;
+    }
+    TypeId type = LowerType(net->getType(), span, ctx);
+    if (type) {
+      registrar.Register(*net, SymbolKind::kNet, type);
+    }
+  }
+
   for (const auto* sub : members.functions) {
     const auto& ret_type = sub->getReturnType();
     if (!ret_type.isIntegral() && !ret_type.isVoid()) {
@@ -68,7 +85,7 @@ void RegisterModuleDeclarations(
 }
 
 // Classify port binding kind based on port direction and net/variable type.
-// Returns nullopt for unsupported ref direction.
+// Returns nullopt for unsupported directions (inout, ref).
 auto ClassifyPortBinding(const slang::ast::PortSymbol& port)
     -> std::optional<PortBinding::Kind> {
   using Kind = PortBinding::Kind;
@@ -78,9 +95,12 @@ auto ClassifyPortBinding(const slang::ast::PortSymbol& port)
       return Kind::kDriveParentToChild;
 
     case slang::ast::ArgumentDirection::Out:
-    case slang::ast::ArgumentDirection::InOut:
       // Use slang's authoritative API for net vs variable classification
       return port.isNetPort() ? Kind::kAlias : Kind::kDriveChildToParent;
+
+    case slang::ast::ArgumentDirection::InOut:
+      // GATE: reject all inout for MVP (requires tri-state semantics)
+      return std::nullopt;
 
     default:
       return std::nullopt;  // ref direction not supported
@@ -182,11 +202,16 @@ auto ValidateDesignLevelExpression(
   return true;
 }
 
+// Explicit type constraint: only Variable or Net allowed as port backing.
+// Using variant forces exhaustive handling and prevents accidental widening.
+using PortBackingSymbol = std::variant<
+    const slang::ast::VariableSymbol*, const slang::ast::NetSymbol*>;
+
 // Transient struct to track port binding info during BFS traversal.
 // Holds slang pointers that are only valid during LowerDesign.
 struct PendingPortBinding {
   const slang::ast::InstanceSymbol* parent_instance;
-  const slang::ast::VariableSymbol* child_port_var;
+  PortBackingSymbol child_port_backing;
   const slang::ast::Expression* value_expr;
   slang::SourceRange source_range;
   PortBinding::Kind kind;
@@ -209,7 +234,14 @@ void CollectPendingPortBindings(
     // Classify port binding kind (single classification point)
     auto kind_opt = ClassifyPortBinding(port);
     if (!kind_opt) {
-      // ref direction not supported
+      // Emit explicit error for inout (common case), silent skip for ref
+      if (port.direction == slang::ast::ArgumentDirection::InOut) {
+        ctx->sink->Error(
+            ctx->SpanOf(port_range),
+            std::format(
+                "inout port '{}' not supported (requires tri-state semantics)",
+                port.name));
+      }
       continue;
     }
     PortBinding::Kind kind = *kind_opt;
@@ -218,16 +250,22 @@ void CollectPendingPortBindings(
       ctx->sink->Error(
           ctx->SpanOf(port_range),
           std::format(
-              "port '{}' has no backing variable (null port)", port.name));
+              "port '{}' has no backing symbol (null port)", port.name));
       continue;
     }
 
-    if (port.internalSymbol->kind != slang::ast::SymbolKind::Variable) {
+    // Accept Variable or Net as port backing (variant forces exhaustiveness)
+    PortBackingSymbol backing;
+    auto sym_kind = port.internalSymbol->kind;
+    if (sym_kind == slang::ast::SymbolKind::Variable) {
+      backing = &port.internalSymbol->as<slang::ast::VariableSymbol>();
+    } else if (sym_kind == slang::ast::SymbolKind::Net) {
+      backing = &port.internalSymbol->as<slang::ast::NetSymbol>();
+    } else {
       ctx->sink->Error(
-          ctx->SpanOf(port_range),
-          std::format(
-              "port '{}' backed by {} not supported (only variable ports)",
-              port.name, toString(port.internalSymbol->kind)));
+          ctx->SpanOf(port_range), std::format(
+                                       "port '{}' backed by {} not supported",
+                                       port.name, toString(sym_kind)));
       continue;
     }
 
@@ -259,8 +297,7 @@ void CollectPendingPortBindings(
     pending.push_back(
         PendingPortBinding{
             .parent_instance = &parent,
-            .child_port_var =
-                &port.internalSymbol->as<slang::ast::VariableSymbol>(),
+            .child_port_backing = backing,
             .value_expr = expr,
             .source_range = expr->sourceRange,
             .kind = kind,
@@ -278,13 +315,16 @@ auto LowerPortBindings(
   for (const auto& pb : pending) {
     SourceSpan binding_span = ctx->SpanOf(pb.source_range);
 
-    // Look up the child's port variable symbol
-    SymbolId child_port_sym = registrar.Lookup(*pb.child_port_var);
+    // Look up the child's port symbol (handles both Variable and Net)
+    SymbolId child_port_sym = std::visit(
+        [&registrar](auto* sym) { return registrar.Lookup(*sym); },
+        pb.child_port_backing);
     if (!child_port_sym) {
+      std::string_view port_name = std::visit(
+          [](auto* sym) { return sym->name; }, pb.child_port_backing);
       ctx->sink->Error(
-          binding_span, std::format(
-                            "port binding target '{}' not registered",
-                            pb.child_port_var->name));
+          binding_span,
+          std::format("port binding target '{}' not registered", port_name));
       continue;
     }
 
@@ -327,15 +367,14 @@ auto LowerPortBindings(
       // Input port: parent rvalue expression
       binding.parent_rvalue = expr_id;
     } else {
-      // Output/inout port: parent lvalue expression
+      // Output port: parent lvalue expression (alias target)
       // Validate that the expression is an lvalue (can be used as target)
       const hir::Expression& hir_expr = (*ctx->hir_arena)[expr_id];
       if (!hir::IsPlaceExpressionKind(hir_expr.kind)) {
         ctx->sink->Error(
-            binding_span,
-            std::format(
-                "output/inout port requires lvalue actual, got {}",
-                static_cast<int>(hir_expr.kind)));
+            binding_span, std::format(
+                              "output port requires lvalue actual, got {}",
+                              static_cast<int>(hir_expr.kind)));
         continue;
       }
       binding.parent_lvalue = expr_id;

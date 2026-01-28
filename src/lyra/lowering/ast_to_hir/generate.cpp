@@ -7,6 +7,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -21,6 +22,11 @@ void CollectScopeMembers(
       case slang::ast::SymbolKind::Variable: {
         const auto& var = member.as<slang::ast::VariableSymbol>();
         out.variables.push_back(&var);
+        break;
+      }
+      case slang::ast::SymbolKind::Net: {
+        const auto& net = member.as<slang::ast::NetSymbol>();
+        out.nets.push_back(&net);
         break;
       }
       case slang::ast::SymbolKind::Subroutine: {

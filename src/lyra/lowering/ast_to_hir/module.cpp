@@ -7,6 +7,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/hir/arena.hpp"
@@ -37,6 +38,7 @@ auto LowerModule(
       registrar.Register(instance, SymbolKind::kInstance, kInvalidTypeId);
 
   std::vector<SymbolId> variables;
+  std::vector<SymbolId> nets;
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
   std::vector<hir::TaskId> tasks;
@@ -63,6 +65,16 @@ auto LowerModule(
         if (const auto* init = var->getInitializer()) {
           var_init_refs.emplace_back(sym, init);
         }
+      }
+    }
+
+    // Phase 1b: Register module-level nets
+    // Net initializers are already rejected during Phase 0 registration
+    for (const auto* net : members.nets) {
+      TypeId type = LowerType(net->getType(), span, ctx);
+      if (type) {
+        SymbolId sym = registrar.Register(*net, SymbolKind::kNet, type);
+        nets.push_back(sym);
       }
     }
 
@@ -235,6 +247,7 @@ auto LowerModule(
       .symbol = symbol,
       .span = span,
       .variables = std::move(variables),
+      .nets = std::move(nets),
       .processes = std::move(processes),
       .functions = std::move(functions),
       .tasks = std::move(tasks),

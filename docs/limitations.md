@@ -27,11 +27,26 @@ Not yet supported:
 
 ## Nets
 
-Lyra uses a variable-only model (no `wire`/`net` types):
+Lyra supports net-backed ports in alias mode (single-driver assumed):
 
-- No net types (`wire`, `tri`, etc.)
-- No multi-driver resolution / strength
-- Net-backed ports not supported (`input wire`, `output wire`, `inout`)
+- `input wire` ports: parent expression drives child port
+- `output wire` ports: child continuous assign drives parent net via alias
+
+**Not supported (compile-time error):**
+
+- `inout` ports (all directions) - requires tri-state semantics
+- Net declaration assignments (`wire logic a = b;`)
+- Procedural writes to nets (blocking/nonblocking assignment)
+
+**Not supported (undefined behavior, not detected):**
+
+- Multi-driver scenarios (no resolution, no strength modeling)
+- If multiple sources drive the same net, behavior is undefined
+
+**Not modeled:**
+
+- Wired nets (`wand`, `wor`, `triand`, `trior`)
+- Strength/drive specifications (`supply`, `pull`, `weak`, `highz`)
 
 ## Continuous Assignments
 
@@ -135,6 +150,7 @@ Not yet supported:
 
 - Struct member access (`.field`)
 - Replication assignment patterns (`'{n{val}}`)
+- Unpacked array slicing (`arr[a:b]`, `arr[i+:w]`, `arr[i-:w]` on unpacked arrays)
 
 ## Operators
 

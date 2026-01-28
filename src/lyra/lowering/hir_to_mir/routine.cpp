@@ -38,7 +38,7 @@ auto BuildFunctionSignature(
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
-    -> mir::Function {
+    -> Result<mir::Function> {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -69,7 +69,10 @@ auto LowerFunctionBody(
   }
 
   // Lower function body
-  LowerStatement(function.body, builder);
+  Result<void> stmt_result = LowerStatement(function.body, builder);
+  if (!stmt_result) {
+    return std::unexpected(stmt_result.error());
+  }
 
   // Handle implicit return for void functions (non-void throws InternalError)
   builder.EmitImplicitReturn(function.return_type);

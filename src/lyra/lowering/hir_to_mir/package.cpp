@@ -20,7 +20,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerPackage(
     const hir::Package& package, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> mir::Package {
+    const DesignDeclarations& decls) -> Result<mir::Package> {
   mir::Package result;
 
   // Lower function bodies (IDs were pre-allocated in CollectDeclarations)
@@ -30,8 +30,12 @@ auto LowerPackage(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
     mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);
 
-    mir::Function mir_func =
+    Result<mir::Function> mir_func_result =
         LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
+    if (!mir_func_result) {
+      return std::unexpected(mir_func_result.error());
+    }
+    mir::Function mir_func = std::move(*mir_func_result);
 
     // Record function and parameter origins (caller has both IDs)
     if (origin_map != nullptr) {

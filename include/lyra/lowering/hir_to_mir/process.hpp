@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -19,6 +20,6 @@ auto LowerProcess(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
     std::vector<mir::FunctionId>* generated_functions = nullptr)
-    -> mir::ProcessId;
+    -> Result<mir::ProcessId>;
 
 }  // namespace lyra::lowering::hir_to_mir

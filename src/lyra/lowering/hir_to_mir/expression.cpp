@@ -1354,7 +1354,8 @@ auto LowerRangeSelect(
     }
     default:
       throw common::InternalError(
-          "LowerRangeSelect", "base must be packed type");
+          "LowerRangeSelect",
+          "non-packed base type should have been rejected at AST->HIR");
   }
 
   // Use 32-bit offset_type for consistency with packed element select

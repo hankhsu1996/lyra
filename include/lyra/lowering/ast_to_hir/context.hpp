@@ -74,6 +74,13 @@ struct Context {
       SourceSpan span, std::format_string<Args...> fmt, Args&&... args) {
     sink->Error(span, std::format(fmt, std::forward<Args>(args)...));
   }
+
+  template <typename... Args>
+  void UnsupportedFmt(
+      SourceSpan span, UnsupportedCategory cat, std::format_string<Args...> fmt,
+      Args&&... args) {
+    sink->Unsupported(span, std::format(fmt, std::forward<Args>(args)...), cat);
+  }
 };
 
 }  // namespace lyra::lowering::ast_to_hir

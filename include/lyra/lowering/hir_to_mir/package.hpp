@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -12,6 +13,6 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerPackage(
     const hir::Package& package, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> mir::Package;
+    const DesignDeclarations& decls) -> Result<mir::Package>;
 
 }  // namespace lyra::lowering::hir_to_mir

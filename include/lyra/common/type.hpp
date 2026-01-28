@@ -1,13 +1,14 @@
 #pragma once
 
-#include <cassert>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "lyra/common/integral_constant.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/range.hpp"
 
 namespace lyra {
@@ -29,6 +30,30 @@ struct TypeId {
 
 constexpr TypeId kInvalidTypeId{UINT32_MAX};
 
+struct FieldId {
+  uint32_t value = UINT32_MAX;
+
+  auto operator==(const FieldId&) const -> bool = default;
+  auto operator<=>(const FieldId&) const = default;
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+
+  template <typename H>
+  friend auto AbslHashValue(H h, FieldId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
+};
+
+constexpr FieldId kInvalidFieldId{UINT32_MAX};
+
+struct FieldInfo {
+  std::string name;
+  TypeId type;
+  std::optional<uint32_t> bit_offset;  // For packed fields
+  std::optional<uint32_t> bit_width;   // For packed fields
+};
+
 // Forward declaration for recursive types
 class Type;
 
@@ -47,6 +72,38 @@ enum class TypeKind {
   kQueue,
   kEnum,
 };
+
+inline auto ToString(TypeKind kind) -> std::string {
+  switch (kind) {
+    case TypeKind::kVoid:
+      return "void";
+    case TypeKind::kIntegral:
+      return "integral";
+    case TypeKind::kString:
+      return "string";
+    case TypeKind::kReal:
+      return "real";
+    case TypeKind::kShortReal:
+      return "shortreal";
+    case TypeKind::kPackedArray:
+      return "packed_array";
+    case TypeKind::kPackedStruct:
+      return "packed_struct";
+    case TypeKind::kUnpackedArray:
+      return "unpacked_array";
+    case TypeKind::kUnpackedStruct:
+      return "unpacked_struct";
+    case TypeKind::kUnpackedUnion:
+      return "unpacked_union";
+    case TypeKind::kDynamicArray:
+      return "dynamic_array";
+    case TypeKind::kQueue:
+      return "queue";
+    case TypeKind::kEnum:
+      return "enum";
+  }
+  return "unknown";
+}
 
 struct IntegralInfo {
   uint32_t bit_width;
@@ -329,46 +386,6 @@ inline auto Type::Queue(TypeId element, uint32_t max_bound) -> Type {
   return t;
 }
 
-inline auto Type::AsIntegral() const -> const IntegralInfo& {
-  assert(kind_ == TypeKind::kIntegral);
-  return std::get<IntegralInfo>(payload_);
-}
-
-inline auto Type::AsPackedArray() const -> const PackedArrayInfo& {
-  assert(kind_ == TypeKind::kPackedArray);
-  return std::get<PackedArrayInfo>(payload_);
-}
-
-inline auto Type::AsPackedStruct() const -> const PackedStructInfo& {
-  assert(kind_ == TypeKind::kPackedStruct);
-  return std::get<PackedStructInfo>(payload_);
-}
-
-inline auto Type::AsUnpackedArray() const -> const UnpackedArrayInfo& {
-  assert(kind_ == TypeKind::kUnpackedArray);
-  return std::get<UnpackedArrayInfo>(payload_);
-}
-
-inline auto Type::AsUnpackedStruct() const -> const UnpackedStructInfo& {
-  assert(kind_ == TypeKind::kUnpackedStruct);
-  return std::get<UnpackedStructInfo>(payload_);
-}
-
-inline auto Type::AsUnpackedUnion() const -> const UnpackedUnionInfo& {
-  assert(kind_ == TypeKind::kUnpackedUnion);
-  return std::get<UnpackedUnionInfo>(payload_);
-}
-
-inline auto Type::AsDynamicArray() const -> const DynamicArrayInfo& {
-  assert(kind_ == TypeKind::kDynamicArray);
-  return std::get<DynamicArrayInfo>(payload_);
-}
-
-inline auto Type::AsQueue() const -> const QueueInfo& {
-  assert(kind_ == TypeKind::kQueue);
-  return std::get<QueueInfo>(payload_);
-}
-
 inline auto Type::Enum(EnumInfo info) -> Type {
   Type t;
   t.kind_ = TypeKind::kEnum;
@@ -376,8 +393,83 @@ inline auto Type::Enum(EnumInfo info) -> Type {
   return t;
 }
 
+inline auto Type::AsIntegral() const -> const IntegralInfo& {
+  if (kind_ != TypeKind::kIntegral) {
+    throw common::InternalError(
+        "Type::AsIntegral",
+        std::format("expected Integral, got {}", ToString(kind_)));
+  }
+  return std::get<IntegralInfo>(payload_);
+}
+
+inline auto Type::AsPackedArray() const -> const PackedArrayInfo& {
+  if (kind_ != TypeKind::kPackedArray) {
+    throw common::InternalError(
+        "Type::AsPackedArray",
+        std::format("expected PackedArray, got {}", ToString(kind_)));
+  }
+  return std::get<PackedArrayInfo>(payload_);
+}
+
+inline auto Type::AsPackedStruct() const -> const PackedStructInfo& {
+  if (kind_ != TypeKind::kPackedStruct) {
+    throw common::InternalError(
+        "Type::AsPackedStruct",
+        std::format("expected PackedStruct, got {}", ToString(kind_)));
+  }
+  return std::get<PackedStructInfo>(payload_);
+}
+
+inline auto Type::AsUnpackedArray() const -> const UnpackedArrayInfo& {
+  if (kind_ != TypeKind::kUnpackedArray) {
+    throw common::InternalError(
+        "Type::AsUnpackedArray",
+        std::format("expected UnpackedArray, got {}", ToString(kind_)));
+  }
+  return std::get<UnpackedArrayInfo>(payload_);
+}
+
+inline auto Type::AsUnpackedStruct() const -> const UnpackedStructInfo& {
+  if (kind_ != TypeKind::kUnpackedStruct) {
+    throw common::InternalError(
+        "Type::AsUnpackedStruct",
+        std::format("expected UnpackedStruct, got {}", ToString(kind_)));
+  }
+  return std::get<UnpackedStructInfo>(payload_);
+}
+
+inline auto Type::AsUnpackedUnion() const -> const UnpackedUnionInfo& {
+  if (kind_ != TypeKind::kUnpackedUnion) {
+    throw common::InternalError(
+        "Type::AsUnpackedUnion",
+        std::format("expected UnpackedUnion, got {}", ToString(kind_)));
+  }
+  return std::get<UnpackedUnionInfo>(payload_);
+}
+
+inline auto Type::AsDynamicArray() const -> const DynamicArrayInfo& {
+  if (kind_ != TypeKind::kDynamicArray) {
+    throw common::InternalError(
+        "Type::AsDynamicArray",
+        std::format("expected DynamicArray, got {}", ToString(kind_)));
+  }
+  return std::get<DynamicArrayInfo>(payload_);
+}
+
+inline auto Type::AsQueue() const -> const QueueInfo& {
+  if (kind_ != TypeKind::kQueue) {
+    throw common::InternalError(
+        "Type::AsQueue",
+        std::format("expected Queue, got {}", ToString(kind_)));
+  }
+  return std::get<QueueInfo>(payload_);
+}
+
 inline auto Type::AsEnum() const -> const EnumInfo& {
-  assert(kind_ == TypeKind::kEnum);
+  if (kind_ != TypeKind::kEnum) {
+    throw common::InternalError(
+        "Type::AsEnum", std::format("expected Enum, got {}", ToString(kind_)));
+  }
   return std::get<EnumInfo>(payload_);
 }
 
@@ -386,38 +478,6 @@ inline auto IsPacked(const Type& type) -> bool {
          type.Kind() == TypeKind::kPackedArray ||
          type.Kind() == TypeKind::kPackedStruct ||
          type.Kind() == TypeKind::kEnum;
-}
-
-inline auto ToString(TypeKind kind) -> std::string {
-  switch (kind) {
-    case TypeKind::kVoid:
-      return "void";
-    case TypeKind::kIntegral:
-      return "integral";
-    case TypeKind::kString:
-      return "string";
-    case TypeKind::kReal:
-      return "real";
-    case TypeKind::kShortReal:
-      return "shortreal";
-    case TypeKind::kPackedArray:
-      return "packed_array";
-    case TypeKind::kPackedStruct:
-      return "packed_struct";
-    case TypeKind::kUnpackedArray:
-      return "unpacked_array";
-    case TypeKind::kUnpackedStruct:
-      return "unpacked_struct";
-    case TypeKind::kUnpackedUnion:
-      return "unpacked_union";
-    case TypeKind::kDynamicArray:
-      return "dynamic_array";
-    case TypeKind::kQueue:
-      return "queue";
-    case TypeKind::kEnum:
-      return "enum";
-  }
-  return "unknown";
 }
 
 inline auto ToString(const Type& type) -> std::string {

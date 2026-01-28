@@ -8,7 +8,9 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
@@ -17,6 +19,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/assign_target.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
@@ -756,6 +759,22 @@ auto LowerExpression(
     case ExpressionKind::Assignment: {
       const auto& assign = expr.as<slang::ast::AssignmentExpression>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Lower assign target to get root symbol for semantic gates
+      auto target_opt = LowerAssignTarget(assign.left(), view);
+      if (!target_opt) {
+        // Error already emitted by LowerAssignTarget
+        return hir::kInvalidExpressionId;
+      }
+
+      // GATE: reject procedural writes to nets
+      const auto& sym_info = (*ctx->symbol_table)[target_opt->root_symbol];
+      if (sym_info.kind == SymbolKind::kNet) {
+        ctx->ErrorFmt(
+            target_opt->span, "procedural assignment to net '{}' not supported",
+            sym_info.name);
+        return hir::kInvalidExpressionId;
+      }
 
       if (expr.type == nullptr) {
         return hir::kInvalidExpressionId;

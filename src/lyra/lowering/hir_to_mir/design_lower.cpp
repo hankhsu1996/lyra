@@ -1,4 +1,3 @@
-#include <type_traits>
 #include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -43,30 +42,34 @@ auto LowerDesign(
       if (pkg->init_process) {
         hir::ProcessId hir_proc_id = pkg->init_process;
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
-        mir::ProcessId mir_proc = LowerProcess(
+        Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
             &result.generated_functions);
-        result.init_processes.push_back(mir_proc);
+        if (!mir_proc_result) {
+          return std::unexpected(mir_proc_result.error());
+        }
+        result.init_processes.push_back(*mir_proc_result);
       }
     }
   }
 
   // Lower design elements (modules and packages)
   for (const auto& element : design.elements) {
-    std::visit(
-        [&](const auto& e) {
-          using T = std::decay_t<decltype(e)>;
-          if constexpr (std::is_same_v<T, hir::Module>) {
-            result.elements.emplace_back(
-                LowerModule(e, input, mir_arena, origin_map, decls));
-          } else if constexpr (std::is_same_v<T, hir::Package>) {
-            result.elements.emplace_back(
-                LowerPackage(e, input, mir_arena, origin_map, decls));
-          } else {
-            static_assert(kAlwaysFalse<T>, "unhandled hir::DesignElement");
-          }
-        },
-        element);
+    if (const auto* mod = std::get_if<hir::Module>(&element)) {
+      Result<mir::Module> mod_result =
+          LowerModule(*mod, input, mir_arena, origin_map, decls);
+      if (!mod_result) {
+        return std::unexpected(mod_result.error());
+      }
+      result.elements.emplace_back(std::move(*mod_result));
+    } else if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+      Result<mir::Package> pkg_result =
+          LowerPackage(*pkg, input, mir_arena, origin_map, decls);
+      if (!pkg_result) {
+        return std::unexpected(pkg_result.error());
+      }
+      result.elements.emplace_back(std::move(*pkg_result));
+    }
   }
 
   // Apply port drive bindings (creates synthetic always_comb processes)
