@@ -14,6 +14,7 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
@@ -440,9 +441,8 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           hir_condition = hir::CaseCondition::kCaseX;
           break;
         case slang::ast::CaseStatementCondition::Inside:
-          ctx->sink->Error(
-              span, "case inside not yet supported (range matching)");
-          return hir::kInvalidStatementId;
+          hir_condition = hir::CaseCondition::kInside;
+          break;
       }
 
       // Map slang check to HIR check
@@ -462,27 +462,190 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           break;
       }
 
+      // Lower selector expression
       hir::ExpressionId selector = lower_expr(case_stmt.expr);
       if (!selector) {
         return hir::kInvalidStatementId;
       }
 
+      // 1-bit result type for predicates
+      TypeId bit_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 1, .is_signed = false, .is_four_state = true});
+
+      // Build case items with predicates
       std::vector<hir::CaseItem> items;
       for (const auto& group : case_stmt.items) {
-        std::vector<hir::ExpressionId> expressions;
+        // Build predicate: OR together all expressions in this item
+        std::optional<hir::ExpressionId> raw_pred;
+
         for (const slang::ast::Expression* expr : group.expressions) {
-          hir::ExpressionId e = lower_expr(*expr);
-          if (!e) {
-            return hir::kInvalidStatementId;
+          hir::ExpressionId item_pred;
+
+          if (hir_condition == hir::CaseCondition::kInside) {
+            // Inside: handle ranges and wildcard equality
+            if (expr->kind == slang::ast::ExpressionKind::ValueRange) {
+              const auto& range = expr->as<slang::ast::ValueRangeExpression>();
+
+              if (range.rangeKind != slang::ast::ValueRangeKind::Simple) {
+                ctx->sink->Error(
+                    span, "tolerance ranges not supported in case inside");
+                return hir::kInvalidStatementId;
+              }
+
+              // Range: (selector >= lo) & (selector <= hi)
+              hir::ExpressionId lo = lower_expr(range.left());
+              if (!lo) {
+                return hir::kInvalidStatementId;
+              }
+              hir::ExpressionId hi = lower_expr(range.right());
+              if (!hi) {
+                return hir::kInvalidStatementId;
+              }
+
+              hir::ExpressionId ge = ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kBinaryOp,
+                      .type = bit_type,
+                      .span = span,
+                      .data = hir::BinaryExpressionData{
+                          .op = hir::BinaryOp::kGreaterThanEqual,
+                          .lhs = selector,
+                          .rhs = lo}});
+              hir::ExpressionId le = ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kBinaryOp,
+                      .type = bit_type,
+                      .span = span,
+                      .data = hir::BinaryExpressionData{
+                          .op = hir::BinaryOp::kLessThanEqual,
+                          .lhs = selector,
+                          .rhs = hi}});
+              // Use bitwise AND to preserve X propagation
+              item_pred = ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kBinaryOp,
+                      .type = bit_type,
+                      .span = span,
+                      .data = hir::BinaryExpressionData{
+                          .op = hir::BinaryOp::kBitwiseAnd,
+                          .lhs = ge,
+                          .rhs = le}});
+            } else {
+              // Discrete item: choose == or ==? based on X/Z content
+              hir::ExpressionId item_val = lower_expr(*expr);
+              if (!item_val) {
+                return hir::kInvalidStatementId;
+              }
+
+              // Use wildcard equality if constant has X/Z
+              bool use_wildcard = InsideItemUsesWildcardEq(*expr);
+              hir::BinaryOp op = use_wildcard ? hir::BinaryOp::kWildcardEqual
+                                              : hir::BinaryOp::kEqual;
+
+              item_pred = ctx->hir_arena->AddExpression(
+                  hir::Expression{
+                      .kind = hir::ExpressionKind::kBinaryOp,
+                      .type = bit_type,
+                      .span = span,
+                      .data = hir::BinaryExpressionData{
+                          .op = op, .lhs = selector, .rhs = item_val}});
+            }
+          } else {
+            // case/casez/casex: use appropriate comparison operator
+            hir::ExpressionId item_val = lower_expr(*expr);
+            if (!item_val) {
+              return hir::kInvalidStatementId;
+            }
+
+            hir::BinaryOp cmp_op = hir::BinaryOp::kEqual;
+            switch (hir_condition) {
+              case hir::CaseCondition::kNormal:
+                cmp_op = hir::BinaryOp::kCaseEqual;
+                break;
+              case hir::CaseCondition::kCaseZ:
+                cmp_op = hir::BinaryOp::kCaseZMatch;
+                break;
+              case hir::CaseCondition::kCaseX:
+                cmp_op = hir::BinaryOp::kCaseXMatch;
+                break;
+              case hir::CaseCondition::kInside:
+                break;  // Handled above
+            }
+
+            item_pred = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBinaryOp,
+                    .type = bit_type,
+                    .span = span,
+                    .data = hir::BinaryExpressionData{
+                        .op = cmp_op, .lhs = selector, .rhs = item_val}});
           }
-          expressions.push_back(e);
+
+          // Combine with OR
+          if (raw_pred) {
+            raw_pred = ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kBinaryOp,
+                    .type = bit_type,
+                    .span = span,
+                    .data = hir::BinaryExpressionData{
+                        .op = hir::BinaryOp::kBitwiseOr,
+                        .lhs = *raw_pred,
+                        .rhs = item_pred}});
+          } else {
+            raw_pred = item_pred;
+          }
         }
+
+        // Apply 2-state clamp: predicate = (raw_pred === 1'b1)
+        // This ensures the predicate is always 0 or 1, never X
+        hir::ExpressionId predicate;
+        if (raw_pred) {
+          // Create constant 1'b1
+          IntegralConstant one_const;
+          one_const.value.push_back(1);
+          one_const.unknown.push_back(0);
+          ConstId one_id =
+              ctx->constant_arena->Intern(bit_type, std::move(one_const));
+          hir::ExpressionId one_expr = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kConstant,
+                  .type = bit_type,
+                  .span = span,
+                  .data = hir::ConstantExpressionData{.constant = one_id}});
+
+          // predicate = raw_pred === 1'b1
+          predicate = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = bit_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = hir::BinaryOp::kCaseEqual,
+                      .lhs = *raw_pred,
+                      .rhs = one_expr}});
+        } else {
+          // Empty expressions list - create constant 0 (never matches)
+          IntegralConstant zero_const;
+          zero_const.value.push_back(0);
+          zero_const.unknown.push_back(0);
+          ConstId zero_id =
+              ctx->constant_arena->Intern(bit_type, std::move(zero_const));
+          predicate = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kConstant,
+                  .type = bit_type,
+                  .span = span,
+                  .data = hir::ConstantExpressionData{.constant = zero_id}});
+        }
+
         auto body_result = LowerStatement(*group.stmt, lowerer);
         if (body_result.has_value() && !*body_result) {
           return hir::kInvalidStatementId;
         }
-        items.push_back(
-            {.expressions = std::move(expressions), .statement = body_result});
+        items.push_back({.predicate = predicate, .statement = body_result});
       }
 
       std::optional<hir::StatementId> default_statement;

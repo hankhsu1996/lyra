@@ -22,4 +22,9 @@ auto LowerCaseMatchOp(
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 
+auto LowerCaseEqualityOp(
+    Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> Result<llvm::Value*>;
+
 }  // namespace lyra::lowering::mir_to_llvm

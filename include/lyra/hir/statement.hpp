@@ -76,7 +76,8 @@ struct ConditionalStatementData {
 };
 
 struct CaseItem {
-  std::vector<ExpressionId> expressions;
+  ExpressionId
+      predicate;  // Pre-built match predicate (1-bit, 2-state after clamp)
   std::optional<StatementId> statement;  // nullopt = empty body (e.g., "2: ;")
 
   auto operator==(const CaseItem&) const -> bool = default;
@@ -86,6 +87,7 @@ enum class CaseCondition : uint8_t {
   kNormal,  // case: equality comparison
   kCaseZ,   // casez: Z bits from both sides are wildcards
   kCaseX,   // casex: X and Z bits from both sides are wildcards
+  kInside,  // case inside: membership test with ranges/wildcards
 };
 
 struct CaseStatementData {

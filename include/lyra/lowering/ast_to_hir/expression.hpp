@@ -25,4 +25,8 @@ auto LowerScopedExpression(
     SymbolRegistrar& registrar, const LoweringFrame& frame)
     -> hir::ExpressionId;
 
+/// Determine if an inside set item should use ==? (wildcard equality).
+/// Returns true if the item is a constant with X/Z bits.
+auto InsideItemUsesWildcardEq(const slang::ast::Expression& item) -> bool;
+
 }  // namespace lyra::lowering::ast_to_hir

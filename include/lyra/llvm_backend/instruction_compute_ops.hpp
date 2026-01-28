@@ -19,6 +19,7 @@ auto IsWildcardComparisonOp(mir::BinaryOp op) -> bool;
 auto IsShiftOp(mir::BinaryOp op) -> bool;
 auto IsLogicalOp(mir::BinaryOp op) -> bool;
 auto IsCaseMatchOp(mir::BinaryOp op) -> bool;
+auto IsCaseEqualityOp(mir::BinaryOp op) -> bool;
 auto IsReductionOp(mir::UnaryOp op) -> bool;
 
 auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value*;

@@ -1,0 +1,171 @@
+feature: case_equality
+description: Tests for === and !== operators (case equality)
+
+cases:
+  - name: case_equal_2state_match
+    description: 2-state values that match
+    sv: |
+      module Test;
+        int a = 5;
+        int b = 5;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_equal_2state_no_match
+    description: 2-state values that don't match
+    sv: |
+      module Test;
+        int a = 5;
+        int b = 10;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_not_equal_2state_match
+    description: !== returns 0 when values match
+    sv: |
+      module Test;
+        int a = 5;
+        int b = 5;
+        int result;
+        initial result = (a !== b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_not_equal_2state_no_match
+    description: !== returns 1 when values don't match
+    sv: |
+      module Test;
+        int a = 5;
+        int b = 10;
+        int result;
+        initial result = (a !== b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_equal_x_matches_x
+    description: X === X returns 1 (key test - X matches itself exactly)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bxxxx;
+        logic [3:0] b = 4'bxxxx;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_equal_x_vs_1
+    description: X === 1 returns 0 (X doesn't match 1 exactly)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bxxxx;
+        logic [3:0] b = 4'b0001;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_equal_mixed_pattern
+    description: 4'b10xz === 4'b10xz returns 1 (exact 4-state match)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b10xz;
+        logic [3:0] b = 4'b10xz;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_equal_mixed_mismatch
+    description: 4'b10xz === 4'b10x1 returns 0 (z vs 1 mismatch)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b10xz;
+        logic [3:0] b = 4'b10x1;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_not_equal_x_vs_1
+    description: X !== 1 returns 1 (not an exact match)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bxxxx;
+        logic [3:0] b = 4'b0001;
+        int result;
+        initial result = (a !== b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_not_equal_x_matches_x
+    description: X !== X returns 0 (exact match, so negation is 0)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bxxxx;
+        logic [3:0] b = 4'bxxxx;
+        int result;
+        initial result = (a !== b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_equal_z_matches_z
+    description: Z === Z returns 1 (Z matches itself exactly)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bzzzz;
+        logic [3:0] b = 4'bzzzz;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: case_equal_x_vs_z
+    description: X === Z returns 0 (different unknown states)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bxxxx;
+        logic [3:0] b = 4'bzzzz;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: case_equal_width_mismatch
+    description: Different widths - zero-extend unsigned
+    sv: |
+      module Test;
+        logic [3:0] a = 4'd5;
+        int result;
+        initial result = (a === 32'd5) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
