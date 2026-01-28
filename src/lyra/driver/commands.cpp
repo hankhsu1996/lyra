@@ -56,23 +56,24 @@ auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
 
     std::ofstream sv_file(project_dir / (project_name + ".sv"));
     sv_file << std::format(
-        "module {};\n"
+        "module Top;\n"
         "  initial begin\n"
-        "    $display(\"Hello from {}!\");\n"
+        "    $display(\"Hello, Lyra!\");\n"
+        "    $finish;\n"
         "  end\n"
         "endmodule\n",
-        project_name, project_name);
+        project_name);
   }
 
   std::ofstream toml_file(project_dir / "lyra.toml");
   toml_file << std::format(
       "[package]\n"
       "name = \"{}\"\n"
-      "top = \"{}\"\n"
+      "top = \"Top\"\n"
       "\n"
       "[sources]\n"
       "files = [\"{}.sv\"]\n",
-      project_name, project_name, project_name);
+      project_name, project_name);
 
   std::cout << std::format("Created project '{}'\n", project_name);
   return 0;
