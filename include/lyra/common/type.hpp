@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -28,6 +29,30 @@ struct TypeId {
 };
 
 constexpr TypeId kInvalidTypeId{UINT32_MAX};
+
+struct FieldId {
+  uint32_t value = UINT32_MAX;
+
+  auto operator==(const FieldId&) const -> bool = default;
+  auto operator<=>(const FieldId&) const = default;
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+
+  template <typename H>
+  friend auto AbslHashValue(H h, FieldId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
+};
+
+constexpr FieldId kInvalidFieldId{UINT32_MAX};
+
+struct FieldInfo {
+  std::string name;
+  TypeId type;
+  std::optional<uint32_t> bit_offset;  // For packed fields
+  std::optional<uint32_t> bit_width;   // For packed fields
+};
 
 // Forward declaration for recursive types
 class Type;

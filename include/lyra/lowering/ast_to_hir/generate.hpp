@@ -5,6 +5,7 @@
 namespace slang::ast {
 class Scope;
 class VariableSymbol;
+class NetSymbol;
 class SubroutineSymbol;
 class ProceduralBlockSymbol;
 class ContinuousAssignSymbol;
@@ -16,6 +17,7 @@ class SymbolRegistrar;
 
 struct CollectedMembers {
   std::vector<const slang::ast::VariableSymbol*> variables;
+  std::vector<const slang::ast::NetSymbol*> nets;
   std::vector<const slang::ast::SubroutineSymbol*> functions;
   std::vector<const slang::ast::SubroutineSymbol*> tasks;
   std::vector<const slang::ast::ProceduralBlockSymbol*> processes;

@@ -23,6 +23,10 @@ class DiagnosticSink {
     Report(Diagnostic::Error(loc, std::move(msg)));
   }
 
+  void Unsupported(SourceSpan loc, std::string msg, UnsupportedCategory cat) {
+    Report(Diagnostic::Unsupported(loc, std::move(msg), cat));
+  }
+
   void Warning(SourceSpan loc, std::string msg) {
     Report(Diagnostic::Warning(loc, std::move(msg)));
   }

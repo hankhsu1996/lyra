@@ -30,6 +30,7 @@ enum class SymbolKind {
   kInstance,
   kPackage,
   kVariable,
+  kNet,
   kParameter,
   kFunction,
   kTask,

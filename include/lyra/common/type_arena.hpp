@@ -29,9 +29,23 @@ class TypeArena final {
 
   [[nodiscard]] auto operator[](TypeId id) const -> const Type&;
 
+  // Intern a field for a specific type and ordinal. Idempotent - returns
+  // existing FieldId if already interned, or creates a new one.
+  // Call this during type lowering after interning a struct/union type.
+  auto InternField(TypeId type, uint32_t ordinal, FieldInfo info) -> FieldId;
+
+  // Get the FieldId for a type's field by ordinal. Returns kInvalidFieldId
+  // if not found (should not happen if type was properly lowered).
+  [[nodiscard]] auto GetFieldId(TypeId type, uint32_t ordinal) const -> FieldId;
+
+  // Lookup field info by ID.
+  [[nodiscard]] auto GetField(FieldId id) const -> const FieldInfo&;
+
  private:
   std::vector<Type> types_;
   absl::flat_hash_map<TypeKey, TypeId, TypeKeyHash> map_;
+  std::vector<FieldInfo> fields_;
+  absl::flat_hash_map<std::pair<TypeId, uint32_t>, FieldId> field_id_map_;
 };
 
 // Total bit width for packed types (kIntegral, kPackedArray, kPackedStruct,

@@ -54,7 +54,7 @@ auto CollectDeclarations(
     }
   }
 
-  // Allocate module variable design places
+  // Allocate module variable and net design places
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
       for (SymbolId var : mod->variables) {
@@ -69,6 +69,21 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
+        decls.slot_table.push_back(sym.type);
+      }
+
+      for (SymbolId net : mod->nets) {
+        const Symbol& sym = (*input.symbol_table)[net];
+        mir::Place place{
+            .root =
+                mir::PlaceRoot{
+                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .id = next_slot++,
+                    .type = sym.type,
+                },
+            .projections = {},
+        };
+        decls.design_places[net] = mir_arena.AddPlace(std::move(place));
         decls.slot_table.push_back(sym.type);
       }
     }

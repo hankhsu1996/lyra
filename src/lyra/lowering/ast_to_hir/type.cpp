@@ -100,13 +100,29 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
       });
     }
 
-    return ctx->type_arena->Intern(
+    TypeId type_id = ctx->type_arena->Intern(
         TypeKind::kPackedStruct, PackedStructInfo{
                                      .name = std::move(name),
                                      .fields = std::move(fields),
                                      .total_bit_width = total_width,
                                      .is_signed = pst.isSigned,
                                      .is_four_state = pst.isFourState});
+
+    // Intern fields for O(1) lookup by (TypeId, ordinal)
+    const auto& interned_fields =
+        (*ctx->type_arena)[type_id].AsPackedStruct().fields;
+    for (uint32_t i = 0; i < interned_fields.size(); ++i) {
+      const auto& f = interned_fields[i];
+      ctx->type_arena->InternField(
+          type_id, i,
+          FieldInfo{
+              .name = f.name,
+              .type = f.type,
+              .bit_offset = f.bit_offset,
+              .bit_width = f.bit_width,
+          });
+    }
+    return type_id;
   }
 
   // Check for packed union BEFORE isIntegral - packed unions are integral in
@@ -145,13 +161,29 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
       });
     }
 
-    return ctx->type_arena->Intern(
+    TypeId type_id = ctx->type_arena->Intern(
         TypeKind::kPackedStruct, PackedStructInfo{
                                      .name = std::move(name),
                                      .fields = std::move(fields),
                                      .total_bit_width = total_width,
                                      .is_signed = put.isSigned,
                                      .is_four_state = put.isFourState});
+
+    // Intern fields for O(1) lookup by (TypeId, ordinal)
+    const auto& interned_fields =
+        (*ctx->type_arena)[type_id].AsPackedStruct().fields;
+    for (uint32_t i = 0; i < interned_fields.size(); ++i) {
+      const auto& f = interned_fields[i];
+      ctx->type_arena->InternField(
+          type_id, i,
+          FieldInfo{
+              .name = f.name,
+              .type = f.type,
+              .bit_offset = f.bit_offset,
+              .bit_width = f.bit_width,
+          });
+    }
+    return type_id;
   }
 
   // Check for enum types BEFORE isIntegral() - enums are integrals in slang
@@ -255,10 +287,26 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
       fields.push_back({.name = std::string(field->name), .type = field_type});
     }
 
-    return ctx->type_arena->Intern(
+    TypeId type_id = ctx->type_arena->Intern(
         TypeKind::kUnpackedStruct,
         UnpackedStructInfo{
             .name = std::move(name), .fields = std::move(fields)});
+
+    // Intern fields for O(1) lookup by (TypeId, ordinal)
+    const auto& interned_fields =
+        (*ctx->type_arena)[type_id].AsUnpackedStruct().fields;
+    for (uint32_t i = 0; i < interned_fields.size(); ++i) {
+      const auto& f = interned_fields[i];
+      ctx->type_arena->InternField(
+          type_id, i,
+          FieldInfo{
+              .name = f.name,
+              .type = f.type,
+              .bit_offset = std::nullopt,
+              .bit_width = std::nullopt,
+          });
+    }
+    return type_id;
   }
 
   if (canonical.isUnpackedUnion()) {
@@ -299,7 +347,7 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
       }
     }
 
-    return ctx->type_arena->Intern(
+    TypeId type_id = ctx->type_arena->Intern(
         TypeKind::kUnpackedUnion,
         UnpackedUnionInfo{
             .members = std::move(members),
@@ -307,6 +355,22 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
             .contains_float = contains_float,
             .storage_is_four_state = storage_is_four_state,
         });
+
+    // Intern members for O(1) lookup by (TypeId, ordinal)
+    const auto& interned_members =
+        (*ctx->type_arena)[type_id].AsUnpackedUnion().members;
+    for (uint32_t i = 0; i < interned_members.size(); ++i) {
+      const auto& m = interned_members[i];
+      ctx->type_arena->InternField(
+          type_id, i,
+          FieldInfo{
+              .name = m.name,
+              .type = m.type,
+              .bit_offset = std::nullopt,
+              .bit_width = std::nullopt,
+          });
+    }
+    return type_id;
   }
 
   if (canonical.isStruct()) {

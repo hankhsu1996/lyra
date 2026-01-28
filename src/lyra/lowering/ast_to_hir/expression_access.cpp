@@ -240,6 +240,21 @@ auto LowerRangeSelectExpression(
   const auto& select = expr.as<slang::ast::RangeSelectExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
+  // Early gate: reject unpacked array slicing
+  // Range/part selects are only valid on packed types (integral, packed array,
+  // packed struct, enum). Unpacked array slicing is not supported.
+  TypeId base_ty = LowerType(*select.value().type, span, ctx);
+  if (!base_ty) {
+    return hir::kInvalidExpressionId;
+  }
+  const Type& base_type = (*ctx->type_arena)[base_ty];
+  if (!IsPacked(base_type)) {
+    ctx->sink->Unsupported(
+        span, "unpacked array slicing not supported",
+        UnsupportedCategory::kFeature);
+    return hir::kInvalidExpressionId;
+  }
+
   auto selection_kind = select.getSelectionKind();
 
   if (selection_kind == slang::ast::RangeSelectionKind::Simple) {

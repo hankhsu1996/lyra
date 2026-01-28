@@ -202,27 +202,30 @@ auto RunMirInterpreter(
   // INVARIANT: MIR lowering assigns slot IDs sequentially:
   //   [0, N_pkg) = package variables, [N_pkg, N_pkg+N_mod) = module variables
   // (see hir_to_mir/design.cpp and hir_to_mir/module.cpp).
-  std::vector<SymbolId> all_design_vars;
+  std::vector<SymbolId> all_design_symbols;
   for (const auto& element : mir_input.design->elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       for (SymbolId var : pkg->variables) {
-        all_design_vars.push_back(var);
+        all_design_symbols.push_back(var);
       }
     }
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
       for (SymbolId var : mod->variables) {
-        all_design_vars.push_back(var);
+        all_design_symbols.push_back(var);
+      }
+      for (SymbolId net : mod->nets) {
+        all_design_symbols.push_back(net);
       }
     }
   }
-  if (all_design_vars.size() != design_state.storage.size()) {
+  if (all_design_symbols.size() != design_state.storage.size()) {
     result.error_message = std::format(
-        "Slot count mismatch: HIR has {} variables, MIR has {} slots",
-        all_design_vars.size(), design_state.storage.size());
+        "Slot count mismatch: HIR has {} symbols, MIR has {} slots",
+        all_design_symbols.size(), design_state.storage.size());
     return result;
   }
-  for (size_t i = 0; i < all_design_vars.size(); ++i) {
-    const auto& sym = (*mir_input.symbol_table)[all_design_vars[i]];
+  for (size_t i = 0; i < all_design_symbols.size(); ++i) {
+    const auto& sym = (*mir_input.symbol_table)[all_design_symbols[i]];
     design_state.storage[i] =
         mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
   }

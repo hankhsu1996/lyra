@@ -43,7 +43,8 @@ auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
-    std::vector<mir::FunctionId>* generated_functions) -> mir::ProcessId {
+    std::vector<mir::FunctionId>* generated_functions)
+    -> Result<mir::ProcessId> {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -66,7 +67,10 @@ auto LowerProcess(
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
 
-  LowerStatement(process.body, builder);
+  Result<void> stmt_result = LowerStatement(process.body, builder);
+  if (!stmt_result) {
+    return std::unexpected(stmt_result.error());
+  }
 
   mir::ProcessKind mir_kind = ConvertProcessKind(process.kind);
   builder.EmitProcessEpilogue(mir_kind);

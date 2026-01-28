@@ -22,7 +22,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> mir::Module {
+    const DesignDeclarations& decls) -> Result<mir::Module> {
   mir::Module result;
   result.instance_sym = module.symbol;
 
@@ -50,8 +50,12 @@ auto LowerModule(
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
-    mir::Function mir_func =
+    Result<mir::Function> mir_func_result =
         LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
+    if (!mir_func_result) {
+      return std::unexpected(mir_func_result.error());
+    }
+    mir::Function mir_func = std::move(*mir_func_result);
 
     // Record function and parameter origins (caller has both IDs)
     if (origin_map != nullptr) {
@@ -74,10 +78,13 @@ auto LowerModule(
   std::vector<mir::FunctionId> generated_functions;
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
-    mir::ProcessId mir_proc_id = LowerProcess(
+    Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, mir_arena, decl_view, origin_map,
         &generated_functions);
-    result.processes.push_back(mir_proc_id);
+    if (!mir_proc_result) {
+      return std::unexpected(mir_proc_result.error());
+    }
+    result.processes.push_back(*mir_proc_result);
   }
 
   // Merge generated functions (thunks) into module's function list

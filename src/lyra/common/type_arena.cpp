@@ -23,4 +23,29 @@ auto TypeArena::operator[](TypeId id) const -> const Type& {
   return types_[id.value];
 }
 
+auto TypeArena::InternField(TypeId type, uint32_t ordinal, FieldInfo info)
+    -> FieldId {
+  auto key = std::make_pair(type, ordinal);
+  auto it = field_id_map_.find(key);
+  if (it != field_id_map_.end()) {
+    return it->second;
+  }
+  FieldId id{static_cast<uint32_t>(fields_.size())};
+  fields_.push_back(std::move(info));
+  field_id_map_[key] = id;
+  return id;
+}
+
+auto TypeArena::GetFieldId(TypeId type, uint32_t ordinal) const -> FieldId {
+  auto it = field_id_map_.find(std::make_pair(type, ordinal));
+  if (it == field_id_map_.end()) {
+    return kInvalidFieldId;
+  }
+  return it->second;
+}
+
+auto TypeArena::GetField(FieldId id) const -> const FieldInfo& {
+  return fields_[id.value];
+}
+
 }  // namespace lyra
