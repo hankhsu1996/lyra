@@ -34,10 +34,65 @@ auto LowerAssignmentPatternExpression(
   }
   const slang::ast::Type& ct = expr.type->getCanonicalType();
 
-  // Gate: reject replication patterns for both structs and arrays
+  // Handle replication patterns: '{n{val}} -> expand to n copies
   if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
-    ctx->sink->Error(span, "replication not supported in literals");
-    return hir::kInvalidExpressionId;
+    // Only support arrays for now
+    if (!ct.isUnpackedArray()) {
+      ctx->sink->Error(span, "replication pattern not supported for structs");
+      return hir::kInvalidExpressionId;
+    }
+
+    const auto& repl =
+        expr.as<slang::ast::ReplicatedAssignmentPatternExpression>();
+
+    // Get replication count (must be compile-time constant)
+    const auto* count_cv = repl.count().getConstant();
+    if (count_cv == nullptr || !count_cv->isInteger()) {
+      SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
+      ctx->sink->Error(count_span, "variable-count replication not supported");
+      return hir::kInvalidExpressionId;
+    }
+
+    auto count = count_cv->integer().as<int64_t>();
+    if (!count || *count < 0) {
+      SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
+      ctx->sink->Error(count_span, "replication count must be non-negative");
+      return hir::kInvalidExpressionId;
+    }
+
+    // Lower each element once
+    auto elements = repl.elements();
+    std::vector<hir::ExpressionId> lowered_elements;
+    lowered_elements.reserve(elements.size());
+    for (const auto* elem : elements) {
+      hir::ExpressionId id = LowerExpression(*elem, view);
+      if (!id) {
+        return hir::kInvalidExpressionId;
+      }
+      lowered_elements.push_back(id);
+    }
+
+    // Build expanded element list: repeat elements count times
+    std::vector<hir::ExpressionId> element_ids;
+    element_ids.reserve(static_cast<size_t>(*count) * lowered_elements.size());
+    for (int64_t i = 0; i < *count; ++i) {
+      for (hir::ExpressionId id : lowered_elements) {
+        element_ids.push_back(id);
+      }
+    }
+
+    TypeId type = LowerType(*expr.type, span, ctx);
+    if (!type) {
+      return hir::kInvalidExpressionId;
+    }
+
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kArrayLiteral,
+            .type = type,
+            .span = span,
+            .data = hir::ArrayLiteralExpressionData{
+                .elements = std::move(element_ids)}});
   }
 
   // Helper to get elements from both pattern types

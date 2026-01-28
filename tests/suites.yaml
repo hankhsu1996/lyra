@@ -23,7 +23,6 @@ suites:
       - control_flow/case_inside\.yaml
       - hierarchy/ports/net_ports\.yaml
       - operators/inside\.yaml
-      - operators/replication_patterns\.yaml
 
   mir_dev:
     backend: mir
@@ -40,4 +39,3 @@ suites:
     exclude_regex:
       - control_flow/case_inside\.yaml
       - operators/inside\.yaml
-      - operators/replication_patterns\.yaml
