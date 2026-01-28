@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <variant>
 #include <vector>
 
@@ -17,14 +16,15 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/compute_result.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/operand.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -56,20 +56,29 @@ auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
 
 }  // namespace
 
-auto LowerBinaryRvalue(
+auto LowerBinaryRvalue2State(
     Context& context, const mir::BinaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type,
-    uint32_t semantic_width) -> Result<llvm::Value*> {
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+  uint32_t semantic_width = packed_context.bit_width;
+
   if (IsStringOperand(context, operands[0])) {
-    return LowerStringBinaryOp(context, info, operands, storage_type);
+    auto result = LowerStringBinaryOp(context, info, operands, storage_type);
+    if (!result) return std::unexpected(result.error());
+    return ComputeResult::TwoState(*result);
   }
 
   if (IsCaseMatchOp(info.op)) {
-    return LowerCaseMatchOp(context, info, operands, storage_type);
+    auto result = LowerCaseMatchOp(context, info, operands, storage_type);
+    if (!result) return std::unexpected(result.error());
+    return ComputeResult::TwoState(*result);
   }
 
   if (IsCaseEqualityOp(info.op)) {
-    return LowerCaseEqualityOp(context, info, operands, storage_type);
+    auto result = LowerCaseEqualityOp(context, info, operands, storage_type);
+    if (!result) return std::unexpected(result.error());
+    return ComputeResult::TwoState(*result);
   }
 
   auto& builder = context.GetBuilder();
@@ -87,7 +96,8 @@ auto LowerBinaryRvalue(
     auto cmp_or_err =
         LowerCompareToI1(context, info.op, lhs, rhs, lhs_width, rhs_width);
     if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
-    return builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
+    auto* result = builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
+    return ComputeResult::TwoState(result);
   }
 
   // For non-comparison ops, coerce to result storage type
@@ -95,23 +105,27 @@ auto LowerBinaryRvalue(
   rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
 
   if (IsShiftOp(info.op)) {
-    return LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
+    auto* result = LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
+    return ComputeResult::TwoState(result);
   }
 
   auto result_or_err = LowerBinaryArith(context, info.op, lhs, rhs);
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
   if (ReturnsI1(info.op)) {
-    return builder.CreateZExt(*result_or_err, storage_type, "bool.ext");
+    auto* result = builder.CreateZExt(*result_or_err, storage_type, "bool.ext");
+    return ComputeResult::TwoState(result);
   }
 
-  return *result_or_err;
+  return ComputeResult::TwoState(*result_or_err);
 }
 
-auto LowerUnaryRvalue(
+auto LowerUnaryRvalue2State(
     Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*> {
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
   auto& builder = context.GetBuilder();
 
   uint32_t operand_bit_width = GetOperandPackedWidth(context, operands[0]);
@@ -124,19 +138,23 @@ auto LowerUnaryRvalue(
     operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
   }
 
-  return LowerUnaryOp(
-      context, info.op, operand, storage_type, operand_bit_width);
+  auto result =
+      LowerUnaryOp(context, info.op, operand, storage_type, operand_bit_width);
+  if (!result) return std::unexpected(result.error());
+  return ComputeResult::TwoState(*result);
 }
 
-auto LowerConcatRvalue(
+auto LowerConcatRvalue2State(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*> {
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
   auto& builder = context.GetBuilder();
 
   if (operands.empty()) {
     throw common::InternalError(
-        "LowerConcatRvalue", "concat must have at least one operand");
+        "LowerConcatRvalue2State", "concat must have at least one operand");
   }
 
   uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
@@ -162,13 +180,15 @@ auto LowerConcatRvalue(
     acc = builder.CreateOr(acc, op, "concat.or");
   }
 
-  return acc;
+  return ComputeResult::TwoState(acc);
 }
 
-auto LowerIndexValidity(
+auto LowerIndexValidity2State(
     Context& context, const mir::IndexValidityRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*> {
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
   auto& builder = context.GetBuilder();
 
   auto index_or_err = LowerOperand(context, operands[0]);
@@ -196,13 +216,16 @@ auto LowerIndexValidity(
     }
   }
 
-  return builder.CreateZExt(valid, storage_type, "idx.ext");
+  auto* result = builder.CreateZExt(valid, storage_type, "idx.ext");
+  return ComputeResult::TwoState(result);
 }
 
-auto LowerGuardedUse(
+auto LowerGuardedUse2State(
     Context& context, const mir::GuardedUseRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*> {
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
   auto& builder = context.GetBuilder();
 
   auto valid_or_err = LowerOperand(context, operands[0]);
@@ -240,100 +263,58 @@ auto LowerGuardedUse(
   auto* phi = builder.CreatePHI(storage_type, 2, "gu.result");
   phi->addIncoming(read_val, do_read_end_bb);
   phi->addIncoming(oob_val, oob_bb);
-  return phi;
+  return ComputeResult::TwoState(phi);
 }
 
-auto LowerCompute2State(
-    Context& context, const mir::Compute& compute, uint32_t bit_width)
-    -> Result<void> {
+auto LowerRuntimeQuery2State(
+    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
   auto& builder = context.GetBuilder();
 
-  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-  auto storage_type_or_err = context.GetPlaceLlvmType(compute.target);
-  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
-  llvm::Type* storage_type = *storage_type_or_err;
+  switch (info.kind) {
+    case RuntimeQueryKind::kTimeRawTicks: {
+      auto* raw = builder.CreateCall(
+          context.GetLyraGetTime(), {context.GetEnginePointer()});
+      llvm::Value* result = raw;
+      if (raw->getType() != storage_type) {
+        result = builder.CreateZExtOrTrunc(raw, storage_type, "time.fit");
+      }
+      return ComputeResult::TwoState(result);
+    }
+  }
+  llvm_unreachable("unhandled RuntimeQueryKind");
+}
 
-  auto result_or_err = std::visit(
-      common::Overloaded{
-          [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
-            return LowerUnaryRvalue(
-                context, info, compute.value.operands, storage_type);
-          },
-          [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
-            return LowerBinaryRvalue(
-                context, info, compute.value.operands, storage_type, bit_width);
-          },
-          [&](const mir::ConcatRvalueInfo& info) -> Result<llvm::Value*> {
-            return LowerConcatRvalue(
-                context, info, compute.value.operands, storage_type);
-          },
-          [&](const mir::IndexValidityRvalueInfo& info)
-              -> Result<llvm::Value*> {
-            return LowerIndexValidity(
-                context, info, compute.value.operands, storage_type);
-          },
-          [&](const mir::GuardedUseRvalueInfo& info) -> Result<llvm::Value*> {
-            return LowerGuardedUse(
-                context, info, compute.value.operands, storage_type);
-          },
-          [&](const mir::RuntimeQueryRvalueInfo& info) -> Result<llvm::Value*> {
-            switch (info.kind) {
-              case RuntimeQueryKind::kTimeRawTicks: {
-                auto* raw = builder.CreateCall(
-                    context.GetLyraGetTime(), {context.GetEnginePointer()});
-                if (raw->getType() == storage_type) {
-                  return raw;
-                }
-                return builder.CreateZExtOrTrunc(raw, storage_type, "time.fit");
-              }
-            }
-            llvm_unreachable("unhandled RuntimeQueryKind");
-          },
-          [&](const mir::UserCallRvalueInfo& info) -> Result<llvm::Value*> {
-            llvm::Function* callee = context.GetUserFunction(info.callee);
+auto LowerUserCall2State(
+    Context& context, const mir::UserCallRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
 
-            std::vector<llvm::Value*> args;
-            args.push_back(context.GetDesignPointer());
-            args.push_back(context.GetEnginePointer());
+  auto& builder = context.GetBuilder();
+  llvm::Function* callee = context.GetUserFunction(info.callee);
 
-            for (const auto& operand : compute.value.operands) {
-              auto arg_or_err = LowerOperand(context, operand);
-              if (!arg_or_err) return std::unexpected(arg_or_err.error());
-              args.push_back(*arg_or_err);
-            }
+  std::vector<llvm::Value*> args;
+  args.push_back(context.GetDesignPointer());
+  args.push_back(context.GetEnginePointer());
 
-            llvm::Value* call_result =
-                builder.CreateCall(callee, args, "user_call");
+  for (const auto& operand : operands) {
+    auto arg_or_err = LowerOperand(context, operand);
+    if (!arg_or_err) return std::unexpected(arg_or_err.error());
+    args.push_back(*arg_or_err);
+  }
 
-            if (call_result->getType() != storage_type &&
-                call_result->getType()->isIntegerTy() &&
-                storage_type->isIntegerTy()) {
-              call_result = builder.CreateZExtOrTrunc(
-                  call_result, storage_type, "call.fit");
-            }
+  llvm::Value* call_result = builder.CreateCall(callee, args, "user_call");
 
-            return call_result;
-          },
-          [&](const auto& /*info*/) -> Result<llvm::Value*> {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    std::format(
-                        "unsupported rvalue kind in 2-state path: {}",
-                        mir::GetRvalueKind(compute.value.info)),
-                    UnsupportedCategory::kFeature));
-          },
-      },
-      compute.value.info);
+  if (call_result->getType() != storage_type &&
+      call_result->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
+    call_result =
+        builder.CreateZExtOrTrunc(call_result, storage_type, "call.fit");
+  }
 
-  if (!result_or_err) return std::unexpected(result_or_err.error());
-
-  llvm::Value* result = ApplyWidthMask(context, *result_or_err, bit_width);
-
-  builder.CreateStore(result, target_ptr);
-  return {};
+  return ComputeResult::TwoState(call_result);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
