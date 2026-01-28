@@ -134,14 +134,30 @@ Not yet supported:
 ## Expressions
 
 - Struct member access (`.field`)
-- `inside` operator
 - Replication assignment patterns (`'{n{val}}`)
 
 ## Operators
 
 - Case equality (`===`, `!==`)
-- Wildcard equality (`==?`, `!=?`)
 - Variable-count replication (`{n{expr}}` where `n` is not a constant)
+
+## Wildcard Equality and Inside Operator
+
+The `==?` (wildcard equality), `!=?` (wildcard inequality), and `inside` operators are supported with the following known limitations:
+
+**X/Z initialization not observable in LLVM backend**: Variables initialized with X/Z values (e.g., `logic a = 1'bx`) may not preserve 4-state values correctly in the LLVM backend. This affects X-taint propagation testing. The MIR interpreter has similar issues. Until this is fixed, X-result tests are not automated.
+
+**Coercion uses zero-extend regardless of signedness**: Per IEEE 1800-2017 §11.4.6, `==?` should use the same coercion rules as `==`, which sign-extends when both operands are signed. Current implementation always zero-extends to max width. This is an intentional deviation that matches the existing `==` implementation.
+
+**Wildcard detection limited to literals**: In `inside` expressions, only literal constants with X/Z bits (e.g., `4'b10zz`, `4'bx011`) are detected as wildcard patterns and use `==?`. Other constant expressions that evaluate to X/Z values are not detected:
+
+```systemverilog
+localparam logic [3:0] PAT = 4'b10zz;
+val inside {PAT}     // Uses == (incorrect), should use ==?
+val inside {4'b10zz} // Uses ==? (correct)
+```
+
+Non-constant expressions (variables) always use `==`, which is correct per the LRM.
 
 ## System Tasks/Functions
 

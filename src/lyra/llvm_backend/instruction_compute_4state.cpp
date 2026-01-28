@@ -278,6 +278,52 @@ auto LowerBinaryRvalue4State(
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
+  // Handle wildcard comparison (==?, !=?) specially - different taint rules
+  if (IsWildcardComparisonOp(info.op)) {
+    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
+    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t cmp_width = std::max(lhs_width, rhs_width);
+    auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+
+    // Coerce operands to comparison width
+    auto* cmp_lhs_val =
+        builder.CreateZExtOrTrunc(lhs.value, cmp_type, "wc.lhs.val");
+    auto* cmp_rhs_val =
+        builder.CreateZExtOrTrunc(rhs.value, cmp_type, "wc.rhs.val");
+    auto* cmp_lhs_unk =
+        builder.CreateZExtOrTrunc(lhs.unknown, cmp_type, "wc.lhs.unk");
+    auto* cmp_rhs_unk =
+        builder.CreateZExtOrTrunc(rhs.unknown, cmp_type, "wc.rhs.unk");
+
+    // RHS unknowns are wildcards - create mask for bits to compare
+    auto* compare_mask = builder.CreateNot(cmp_rhs_unk, "wc.compare_mask");
+
+    // Mask both values and compare
+    auto* masked_lhs =
+        builder.CreateAnd(cmp_lhs_val, compare_mask, "wc.masked_lhs");
+    auto* masked_rhs =
+        builder.CreateAnd(cmp_rhs_val, compare_mask, "wc.masked_rhs");
+    auto* values_eq =
+        builder.CreateICmpEQ(masked_lhs, masked_rhs, "wc.values_eq");
+
+    // Taint: LHS has X/Z where RHS is definite (not wildcard)
+    auto* taint_bits =
+        builder.CreateAnd(cmp_lhs_unk, compare_mask, "wc.taint_bits");
+    auto* taint = builder.CreateICmpNE(
+        taint_bits, llvm::ConstantInt::get(cmp_type, 0), "wc.taint");
+
+    // For !=?, invert the equality result
+    llvm::Value* result = values_eq;
+    if (info.op == mir::BinaryOp::kWildcardNotEqual) {
+      result = builder.CreateNot(values_eq, "wc.ne");
+    }
+
+    return FourStateValue{
+        .value = builder.CreateZExt(result, elem_type, "wc.cmp.val"),
+        .unknown = builder.CreateZExt(taint, elem_type, "wc.cmp.unk"),
+    };
+  }
+
   if (IsComparisonOp(info.op)) {
     uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
     uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);

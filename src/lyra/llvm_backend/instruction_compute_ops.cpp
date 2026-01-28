@@ -55,6 +55,8 @@ auto IsComparisonOp(mir::BinaryOp op) -> bool {
   switch (op) {
     case mir::BinaryOp::kEqual:
     case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kWildcardEqual:
+    case mir::BinaryOp::kWildcardNotEqual:
     case mir::BinaryOp::kLessThan:
     case mir::BinaryOp::kLessThanEqual:
     case mir::BinaryOp::kGreaterThan:
@@ -63,6 +65,16 @@ auto IsComparisonOp(mir::BinaryOp op) -> bool {
     case mir::BinaryOp::kLessThanEqualSigned:
     case mir::BinaryOp::kGreaterThanSigned:
     case mir::BinaryOp::kGreaterThanEqualSigned:
+      return true;
+    default:
+      return false;
+  }
+}
+
+auto IsWildcardComparisonOp(mir::BinaryOp op) -> bool {
+  switch (op) {
+    case mir::BinaryOp::kWildcardEqual:
+    case mir::BinaryOp::kWildcardNotEqual:
       return true;
     default:
       return false;
@@ -236,8 +248,12 @@ auto LowerBinaryComparison(
 
   switch (op) {
     case mir::BinaryOp::kEqual:
+    case mir::BinaryOp::kWildcardEqual:
+      // In 2-state, ==? degenerates to == (no X/Z possible)
       return builder.CreateICmpEQ(lhs, rhs, "eq");
     case mir::BinaryOp::kNotEqual:
+    case mir::BinaryOp::kWildcardNotEqual:
+      // In 2-state, !=? degenerates to != (no X/Z possible)
       return builder.CreateICmpNE(lhs, rhs, "ne");
     case mir::BinaryOp::kLessThan:
       return builder.CreateICmpULT(lhs, rhs, "ult");

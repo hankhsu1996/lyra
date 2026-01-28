@@ -1,0 +1,120 @@
+feature: wildcard_equality
+description: Tests for ==? and !=? operators (wildcard equality)
+
+cases:
+  - name: wildcard_eq_basic
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1011;
+        int result;
+        initial result = (val ==? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_eq_no_match
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b0011;
+        int result;
+        initial result = (val ==? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: wildcard_eq_lhs_x_only_in_wildcard_match
+    description: LHS X only in wildcard positions, definite bits match - result is 1
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b10xx;
+        int result;
+        initial result = (val ==? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_eq_lhs_x_only_in_wildcard_mismatch
+    description: LHS X only in wildcard positions, definite bits mismatch - result is 0
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b00xx;
+        int result;
+        initial result = (val ==? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: wildcard_eq_width_mismatch
+    description: Different widths - zero-extend unsigned
+    sv: |
+      module Test;
+        logic [3:0] val = 4'd5;
+        int result;
+        initial result = (val ==? 32'd5) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_ne_basic
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1011;
+        int result;
+        initial result = (val !=? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: wildcard_ne_no_match
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b0011;
+        int result;
+        initial result = (val !=? 4'b10zz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_eq_all_wildcard
+    description: All RHS bits are wildcard - always matches
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1010;
+        int result;
+        initial result = (val ==? 4'bzzzz) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_eq_x_wildcard
+    description: X bits in RHS are also wildcards
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1010;
+        int result;
+        initial result = (val ==? 4'b10xx) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: wildcard_eq_2state
+    description: 2-state comparison - degenerates to ==
+    sv: |
+      module Test;
+        int a = 5;
+        int b = 5;
+        int result;
+        initial result = (a ==? b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1

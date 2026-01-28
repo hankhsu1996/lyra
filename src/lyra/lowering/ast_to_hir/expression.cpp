@@ -135,6 +135,26 @@ auto ConvertBinaryOp(slang::ast::BinaryOperator op)
   return std::nullopt;
 }
 
+// Determine if inside set item should use ==? (wildcard equality).
+// SEMANTIC DEVIATION: Slang converts ? to z at parse time, so we treat
+// ANY constant with X/Z bits as a wildcard pattern.
+// NOTE: Only checks literal kinds directly. Parameters and constant expressions
+// with X/Z are not detected (they use ==). This is a limitation.
+auto InsideItemUsesWildcardEq(const slang::ast::Expression& item) -> bool {
+  // Check integer literals for unknown bits
+  if (item.kind == slang::ast::ExpressionKind::IntegerLiteral) {
+    const auto& lit = item.as<slang::ast::IntegerLiteral>();
+    return lit.getValue().hasUnknown();
+  }
+  // Check unbased unsized literals (e.g., 'x, 'z)
+  if (item.kind == slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral) {
+    const auto& lit = item.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
+    return lit.getValue().hasUnknown();
+  }
+  // Non-literal -> use == (correct SV semantics for variables)
+  return false;
+}
+
 auto LowerConstantValueExpression(
     const slang::ConstantValue& cv, const slang::ast::Type& type,
     SourceSpan span, Context* ctx) -> hir::ExpressionId {
@@ -852,6 +872,129 @@ auto LowerExpression(
               .span = span,
               .data = hir::HierarchicalRefExpressionData{.target = target},
           });
+    }
+
+    case ExpressionKind::Inside: {
+      const auto& inside = expr.as<slang::ast::InsideExpression>();
+      SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+      // Lower the left operand (value being tested)
+      hir::ExpressionId left = LowerExpression(inside.left(), view);
+      if (!left) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Get result type (should be 1-bit logic)
+      if (expr.type == nullptr) {
+        return hir::kInvalidExpressionId;
+      }
+      TypeId result_type = LowerType(*expr.type, span, ctx);
+      if (!result_type) {
+        return hir::kInvalidExpressionId;
+      }
+
+      // Build OR chain of predicates
+      std::optional<hir::ExpressionId> result;
+
+      for (const auto* item : inside.rangeList()) {
+        hir::ExpressionId predicate;
+
+        if (item->kind == ExpressionKind::ValueRange) {
+          const auto& range = item->as<slang::ast::ValueRangeExpression>();
+
+          if (range.rangeKind != slang::ast::ValueRangeKind::Simple) {
+            ctx->sink->Error(
+                span, "tolerance ranges not yet supported in inside");
+            return hir::kInvalidExpressionId;
+          }
+
+          // Range: (left >= lo) & (left <= hi)
+          hir::ExpressionId lo = LowerExpression(range.left(), view);
+          if (!lo) {
+            return hir::kInvalidExpressionId;
+          }
+          hir::ExpressionId hi = LowerExpression(range.right(), view);
+          if (!hi) {
+            return hir::kInvalidExpressionId;
+          }
+
+          hir::ExpressionId ge = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = result_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = hir::BinaryOp::kGreaterThanEqual,
+                      .lhs = left,
+                      .rhs = lo}});
+          hir::ExpressionId le = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = result_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = hir::BinaryOp::kLessThanEqual,
+                      .lhs = left,
+                      .rhs = hi}});
+          // Use bitwise AND to preserve X propagation
+          predicate = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = result_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = hir::BinaryOp::kBitwiseAnd, .lhs = ge, .rhs = le}});
+        } else {
+          // Discrete item: choose == or ==? based on whether constant has X/Z
+          hir::ExpressionId item_val = LowerExpression(*item, view);
+          if (!item_val) {
+            return hir::kInvalidExpressionId;
+          }
+
+          // SEMANTIC DEVIATION: Slang converts ? to z at parse time, so we
+          // treat ANY constant with X/Z bits as a wildcard pattern.
+          bool use_wildcard = InsideItemUsesWildcardEq(*item);
+          hir::BinaryOp op = use_wildcard ? hir::BinaryOp::kWildcardEqual
+                                          : hir::BinaryOp::kEqual;
+
+          predicate = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = result_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = op, .lhs = left, .rhs = item_val}});
+        }
+
+        // Combine with bitwise OR (preserves X)
+        if (result) {
+          result = ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kBinaryOp,
+                  .type = result_type,
+                  .span = span,
+                  .data = hir::BinaryExpressionData{
+                      .op = hir::BinaryOp::kBitwiseOr,
+                      .lhs = *result,
+                      .rhs = predicate}});
+        } else {
+          result = predicate;
+        }
+      }
+
+      // Handle empty set: inside {} -> always 0
+      if (!result) {
+        ConstId zero_const =
+            LowerIntegralConstant(slang::SVInt(1, 0, false), result_type, ctx);
+        return ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kConstant,
+                .type = result_type,
+                .span = span,
+                .data = hir::ConstantExpressionData{.constant = zero_const}});
+      }
+
+      return *result;
     }
 
     default:

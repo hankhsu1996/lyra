@@ -64,6 +64,14 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
 // casex: X and Z bits from both operands are wildcards (ignored)
 auto IntegralCaseXMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral;
+
+// Wildcard equality (==?): RHS X/Z bits are wildcards, LHS X/Z bits are not.
+// This is ASYMMETRIC - different from casex which treats both sides as
+// wildcards. Returns 1 if match, 0 if mismatch, X if LHS has X/Z where RHS is
+// definite.
+auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral;
+
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral;

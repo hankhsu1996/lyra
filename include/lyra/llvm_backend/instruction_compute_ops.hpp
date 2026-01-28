@@ -15,6 +15,7 @@ namespace lyra::lowering::mir_to_llvm {
 auto ReturnsI1(mir::BinaryOp op) -> bool;
 auto IsComparisonOp(mir::BinaryOp op) -> bool;
 auto IsSignedComparisonOp(mir::BinaryOp op) -> bool;
+auto IsWildcardComparisonOp(mir::BinaryOp op) -> bool;
 auto IsShiftOp(mir::BinaryOp op) -> bool;
 auto IsLogicalOp(mir::BinaryOp op) -> bool;
 auto IsCaseMatchOp(mir::BinaryOp op) -> bool;

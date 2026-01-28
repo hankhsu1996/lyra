@@ -331,12 +331,15 @@ auto EvalBinary(BinaryOp op, const RuntimeValue& lhs, const RuntimeValue& rhs)
       return IntegralNe(lhs_int, rhs_int);
 
     case BinaryOp::kWildcardEqual:
-      throw common::InternalError(
-          "EvalBinary", "wildcard equality not supported");
+      return IntegralWildcardEq(lhs_int, rhs_int);
 
-    case BinaryOp::kWildcardNotEqual:
-      throw common::InternalError(
-          "EvalBinary", "wildcard inequality not supported");
+    case BinaryOp::kWildcardNotEqual: {
+      auto eq = IntegralWildcardEq(lhs_int, rhs_int);
+      if (eq.IsX()) {
+        return eq;
+      }
+      return std::get<RuntimeIntegral>(MakeIntegral(eq.IsZero() ? 1 : 0, 1));
+    }
 
     case BinaryOp::kCaseZMatch:
       return IntegralCaseZMatch(lhs_int, rhs_int);

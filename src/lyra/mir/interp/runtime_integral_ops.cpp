@@ -1,7 +1,6 @@
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -67,7 +66,10 @@ struct DivModResult {
 auto DivModMultiWord(
     const RuntimeIntegral& dividend, const RuntimeIntegral& divisor,
     uint32_t bit_width) -> DivModResult {
-  assert(bit_width > 0 && "DivModMultiWord: bit_width must be positive");
+  if (bit_width == 0) {
+    throw common::InternalError(
+        "DivModMultiWord", "bit_width must be positive");
+  }
 
   auto quotient = MakeKnownIntegral(bit_width);
   auto remainder = MakeKnownIntegral(bit_width);
@@ -75,7 +77,9 @@ auto DivModMultiWord(
   // Normalize both inputs (self-contained, no caller assumptions)
   auto dividend_n = NormalizeToWidth(dividend, bit_width);
   auto divisor_n = NormalizeToWidth(divisor, bit_width);
-  assert(!divisor_n.IsZero() && "DivModMultiWord: division by zero");
+  if (divisor_n.IsZero()) {
+    throw common::InternalError("DivModMultiWord", "division by zero");
+  }
 
   // Shift amount for left shift by 1
   auto one = MakeKnownIntegral(bit_width);
@@ -106,7 +110,9 @@ auto DivModMultiWord(
 // correct magnitude. Do NOT check GetSignBit on the result.
 auto AbsoluteValue(const RuntimeIntegral& val, uint32_t bit_width)
     -> RuntimeIntegral {
-  assert(val.IsKnown() && "AbsoluteValue requires 2-state input");
+  if (!val.IsKnown()) {
+    throw common::InternalError("AbsoluteValue", "requires 2-state input");
+  }
   AssertNormalized(val, bit_width);
 
   if (!GetSignBit(val, bit_width)) {
@@ -120,7 +126,10 @@ auto AbsoluteValue(const RuntimeIntegral& val, uint32_t bit_width)
 auto DivModMultiWordSigned(
     const RuntimeIntegral& dividend, const RuntimeIntegral& divisor,
     uint32_t bit_width) -> DivModResult {
-  assert(bit_width > 0 && "DivModMultiWordSigned: bit_width must be positive");
+  if (bit_width == 0) {
+    throw common::InternalError(
+        "DivModMultiWordSigned", "bit_width must be positive");
+  }
   AssertNormalized(dividend, bit_width);
   AssertNormalized(divisor, bit_width);
 
@@ -272,7 +281,9 @@ auto IntegralMul(
 auto IntegralDiv(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
     bool is_signed) -> RuntimeIntegral {
-  assert(width > 0 && "IntegralDiv: width must be positive");
+  if (width == 0) {
+    throw common::InternalError("IntegralDiv", "width must be positive");
+  }
 
   if (!lhs.IsKnown() || !rhs.IsKnown() || rhs.IsZero()) {
     return MakeUnknownIntegral(width);
@@ -324,7 +335,9 @@ auto IntegralDiv(
 auto IntegralMod(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
     bool is_signed) -> RuntimeIntegral {
-  assert(width > 0 && "IntegralMod: width must be positive");
+  if (width == 0) {
+    throw common::InternalError("IntegralMod", "width must be positive");
+  }
 
   if (!lhs.IsKnown() || !rhs.IsKnown() || rhs.IsZero()) {
     return MakeUnknownIntegral(width);
@@ -602,12 +615,51 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
   return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
 }
 
+auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
+    -> RuntimeIntegral {
+  // ==? (wildcard equality): RHS X/Z bits are wildcards (match anything).
+  // LHS X/Z bits where RHS is definite → result is X.
+  // This is ASYMMETRIC - different from casex which treats both sides as
+  // wildcards.
+
+  // If both are fully known, use exact equality (matches IntegralEq behavior)
+  if (lhs.IsKnown() && rhs.IsKnown()) {
+    return IntegralEq(lhs, rhs);
+  }
+
+  size_t max_words = std::max(
+      {lhs.value.size(), rhs.value.size(), lhs.unknown.size(),
+       rhs.unknown.size()});
+
+  for (size_t i = 0; i < max_words; ++i) {
+    uint64_t lhs_val = (i < lhs.value.size()) ? lhs.value[i] : 0;
+    uint64_t lhs_unk = (i < lhs.unknown.size()) ? lhs.unknown[i] : 0;
+    uint64_t rhs_val = (i < rhs.value.size()) ? rhs.value[i] : 0;
+    uint64_t rhs_unk = (i < rhs.unknown.size()) ? rhs.unknown[i] : 0;
+
+    // RHS unknowns are wildcards - don't compare those positions
+    uint64_t compare_mask = ~rhs_unk;
+
+    // LHS unknowns where RHS is definite → X result
+    if ((lhs_unk & compare_mask) != 0) {
+      return MakeUnknown1Bit();
+    }
+
+    // Compare definite bits
+    if ((lhs_val & compare_mask) != (rhs_val & compare_mask)) {
+      return std::get<RuntimeIntegral>(MakeIntegral(0, 1));  // No match
+    }
+  }
+
+  return std::get<RuntimeIntegral>(MakeIntegral(1, 1));  // Match
+}
+
 auto IntegralLt(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, bool is_signed)
     -> RuntimeIntegral {
-  assert(
-      lhs.bit_width > 0 && rhs.bit_width > 0 &&
-      "IntegralLt: bit_width must be positive");
+  if (lhs.bit_width == 0 || rhs.bit_width == 0) {
+    throw common::InternalError("IntegralLt", "bit_width must be positive");
+  }
 
   if (!lhs.IsKnown() || !rhs.IsKnown()) {
     return MakeUnknown1Bit();
@@ -769,8 +821,9 @@ auto IntegralShl(
 auto IntegralShr(
     const RuntimeIntegral& lhs, const RuntimeIntegral& rhs, uint32_t width,
     bool is_signed) -> RuntimeIntegral {
-  assert(
-      width > 0 && lhs.bit_width > 0 && "IntegralShr: width must be positive");
+  if (width == 0 || lhs.bit_width == 0) {
+    throw common::InternalError("IntegralShr", "width must be positive");
+  }
 
   if (!lhs.IsKnown() || !rhs.IsKnown()) {
     return MakeUnknownIntegral(width);
@@ -834,9 +887,10 @@ auto IntegralShr(
 auto IntegralResize2State(
     const RuntimeIntegral& src, bool src_is_signed, uint32_t target_width)
     -> RuntimeIntegral {
-  assert(
-      src.bit_width > 0 &&
-      "IntegralResize2State: src.bit_width must be positive");
+  if (src.bit_width == 0) {
+    throw common::InternalError(
+        "IntegralResize2State", "src.bit_width must be positive");
+  }
 
   if (!src.IsKnown()) {
     return MakeUnknownIntegral(target_width);

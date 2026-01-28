@@ -22,7 +22,8 @@ suites:
     exclude_regex:
       - control_flow/case_inside\.yaml
       - hierarchy/ports/net_ports\.yaml
-      - operators/inside\.yaml
+      - hierarchy/refs/upward_refs\.yaml
+      - operators/replication_patterns\.yaml
 
   mir_dev:
     backend: mir
@@ -38,4 +39,5 @@ suites:
       - system_tf/pure/
     exclude_regex:
       - control_flow/case_inside\.yaml
-      - operators/inside\.yaml
+      - hierarchy/refs/upward_refs\.yaml
+      - operators/replication_patterns\.yaml

@@ -1,5 +1,5 @@
 feature: inside_operator
-description: Tests for inside set membership operator (not yet supported)
+description: Tests for inside set membership operator
 
 cases:
   - name: inside_basic_match
@@ -52,3 +52,146 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: inside_range_no_match
+    sv: |
+      module Test;
+        int val = 15;
+        int result;
+        initial result = (val inside {[1:10]}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: inside_mixed
+    sv: |
+      module Test;
+        int val = 7;
+        int result;
+        initial result = (val inside {1, [5:10], 20}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_wildcard_pattern
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1010;
+        int result;
+        initial result = (val inside {4'b10zz}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_xz_literal_as_wildcard
+    description: |
+      SEMANTIC DEVIATION: X/Z literals treated as wildcard patterns.
+      Slang converts ? to z at parse time, so we cannot distinguish
+      4'b10?? from 4'b10zz. We intentionally treat both as wildcards.
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1011;
+        int r1, r2;
+        initial begin
+          r1 = (val inside {4'b10zz}) ? 1 : 0;
+          r2 = (val inside {4'b10xx}) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 1
+
+  - name: inside_non_wildcard_uses_eq
+    description: Non-wildcard items use == not ==?
+    sv: |
+      module Test;
+        int val = 2;
+        int result;
+        initial result = (val inside {1, 2, 3}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_signed_range
+    sv: |
+      module Test;
+        int val = -5;
+        int result;
+        initial result = (val inside {[-10:-1]}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_width_coercion
+    description: Mixed widths - ensure proper coercion
+    sv: |
+      module Test;
+        logic [3:0] v = 4'd1;
+        int result;
+        initial result = (v inside {1}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_variable_item
+    description: Non-constant items use == (not ==?)
+    sv: |
+      module Test;
+        int val = 5;
+        int item = 5;
+        int result;
+        initial result = (val inside {item}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_as_expression
+    description: inside can be used as an expression
+    sv: |
+      module Test;
+        int val = 3;
+        int result;
+        initial result = (val inside {1, 2, 3}) + (val inside {4, 5, 6});
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_single_item
+    description: Single item in set
+    sv: |
+      module Test;
+        int val = 42;
+        int result;
+        initial result = (val inside {42}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_range_boundary
+    description: Test range boundaries
+    sv: |
+      module Test;
+        int r1, r2, r3, r4;
+        initial begin
+          r1 = (5 inside {[5:10]}) ? 1 : 0;
+          r2 = (10 inside {[5:10]}) ? 1 : 0;
+          r3 = (4 inside {[5:10]}) ? 1 : 0;
+          r4 = (11 inside {[5:10]}) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 1
+        r3: 0
+        r4: 0
