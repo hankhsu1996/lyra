@@ -1,12 +1,12 @@
 #pragma once
 
-#include <cstdint>
 #include <map>
 #include <optional>
 #include <ostream>
 #include <string>
-#include <variant>
 #include <vector>
+
+#include "tests/framework/test_value.hpp"
 
 namespace lyra::test {
 
@@ -24,27 +24,6 @@ struct ExpectedOutput {
     return exact.has_value();
   }
 };
-
-// Hex string for wide values (>64 bits), stored as lowercase without 0x prefix
-// e.g., "ffffffffffffffffffffffffffffffff" for 128-bit all-ones
-struct HexValue {
-  std::string hex;
-};
-
-// 4-state value with dual-plane encoding for X/Z support in assertions.
-// Encoding per bit: unknown=0,value=0→0; unknown=0,value=1→1;
-//                   unknown=1,value=0→X; unknown=1,value=1→Z
-// Word ordering: word[0] = least significant 64 bits (LSB-first).
-// Within a word: bit 0 = LSB.
-struct FourStateValue {
-  uint32_t width;
-  std::vector<uint64_t> value;    // Value/Z bits
-  std::vector<uint64_t> unknown;  // Unknown bits (0 = known)
-};
-
-// Expected value type: integers, floating-point, hex strings, or 4-state values
-// shortreal (float) is stored as double since YAML parsing produces double
-using ExpectedValue = std::variant<int64_t, double, HexValue, FourStateValue>;
 
 struct TestCase {
   std::string name;

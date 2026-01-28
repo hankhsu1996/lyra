@@ -13,7 +13,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xc800000000000000000000000000000064
+        data: "256'hc800000000000000000000000000000064"
 
   - name: wide_2d_element_arithmetic
     sv: |
@@ -30,7 +30,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x96000000000000000000000000000000514
+        c: "256'h96000000000000000000000000000000514"
 
   - name: wide_2d_element_overwrite
     sv: |
@@ -44,7 +44,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xc8000000000000000000000000000003e7
+        data: "256'hc8000000000000000000000000000003e7"
 
   - name: wide_2d_variable_index_read
     sv: |
@@ -61,7 +61,7 @@ cases:
       endmodule
     expect:
       variables:
-        elem: 0x54
+        elem: "128'h54"
 
   - name: wide_2d_variable_index_write
     sv: |
@@ -77,7 +77,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xde0000000000000000000000000000006f
+        data: "256'hde0000000000000000000000000000006f"
 
   - name: wide_2d_65bit_boundary
     sv: |
@@ -90,7 +90,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xb3a73cfe766800000b3a73ce2ff2
+        data: "130'hb3a73cfe766800000b3a73ce2ff2"
 
   - name: wide_2d_65bit_variable_index
     sv: |
@@ -107,7 +107,7 @@ cases:
       endmodule
     expect:
       variables:
-        elem: 0x2a
+        elem: "65'h2a"
 
   - name: wide_2d_whole_array_assignment
     sv: |
@@ -139,8 +139,8 @@ cases:
       endmodule
     expect:
       variables:
-        e0: 0xCD
-        e1: 0xAB
+        e0: "16'hCD"
+        e1: "16'hAB"
 
   - name: ascending_dimension_read
     description: Ascending [0:1] has element 0 at MSB
@@ -156,8 +156,8 @@ cases:
       endmodule
     expect:
       variables:
-        e0: 0xAB
-        e1: 0xCD
+        e0: "16'hAB"
+        e1: "16'hCD"
 
   - name: ascending_nonzero_lower_bound
     description: Ascending [1:2] with nonzero lower bound
@@ -173,8 +173,8 @@ cases:
       endmodule
     expect:
       variables:
-        e1: 0xAB
-        e2: 0xCD
+        e1: "16'hAB"
+        e2: "16'hCD"
 
   - name: descending_lvalue_preserves_other
     description: Lvalue write preserves other elements (descending)
@@ -192,8 +192,8 @@ cases:
       endmodule
     expect:
       variables:
-        e1_after: 0xAB
-        data_after: 0xAB00
+        e1_after: "16'hAB"
+        data_after: "32'hAB00"
 
   - name: ascending_lvalue_preserves_other
     description: Lvalue write preserves other elements (ascending)
@@ -211,8 +211,8 @@ cases:
       endmodule
     expect:
       variables:
-        e1_after: 0xCD
-        data_after: 0x00CD
+        e1_after: "16'hCD"
+        data_after: "16'h00CD"
 
   - name: ascending_negative_lower_bound
     description: Ascending [-1:0] with negative lower bound
@@ -228,8 +228,8 @@ cases:
       endmodule
     expect:
       variables:
-        e_neg1: 0xAB
-        e_0: 0xCD
+        e_neg1: "16'hAB"
+        e_0: "16'hCD"
 
   - name: ascending_wide_element_boundary
     description: Ascending with 65-bit elements crossing word boundary
@@ -246,5 +246,5 @@ cases:
       endmodule
     expect:
       variables:
-        e0: 0xb3a73ce2ff2
-        e1: 0x59d39e7f3b34
+        e0: "65'hb3a73ce2ff2"
+        e1: "65'h59d39e7f3b34"

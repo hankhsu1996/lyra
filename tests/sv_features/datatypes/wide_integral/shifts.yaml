@@ -13,7 +13,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0x10
+        b: "128'h10"
 
   - name: wide_128_shift_left_cross_word
     sv: |
@@ -26,7 +26,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0x10000000000000000
+        b: "128'h10000000000000000"
 
   - name: wide_128_shift_left_large
     sv: |
@@ -39,7 +39,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0x10000000000000000000000000
+        b: "128'h10000000000000000000000000"
 
   - name: wide_128_shift_right_small
     sv: |
@@ -52,7 +52,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0x10
+        b: "128'h10"
 
   - name: wide_128_shift_right_cross_word
     sv: |
@@ -65,7 +65,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0x1
+        b: "128'h1"
 
   - name: wide_128_shift_chain
     sv: |
@@ -79,4 +79,4 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x100000000
+        c: "128'h100000000"

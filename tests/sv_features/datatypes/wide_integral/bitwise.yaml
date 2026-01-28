@@ -14,7 +14,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xf
+        c: "128'hf"
 
   - name: wide_128_bitwise_or
     sv: |
@@ -28,7 +28,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xff
+        c: "128'hff"
 
   - name: wide_128_bitwise_xor
     sv: |
@@ -42,7 +42,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xf0
+        c: "128'hf0"
 
   - name: wide_128_bitwise_not
     sv: |
@@ -55,7 +55,7 @@ cases:
       endmodule
     expect:
       variables:
-        b: 0xffffffffffffffffffffffffffffffff
+        b: "128'hffffffffffffffffffffffffffffffff"
 
   - name: wide_128_bitwise_and_high_bits
     sv: |
@@ -69,4 +69,4 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xf0f0f0f000000000000000000000000
+        c: "128'hf0f0f0f000000000000000000000000"

@@ -5,8 +5,8 @@
 #include <map>
 #include <string>
 
-#include "tests/framework/llvm_backend.hpp"
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/test_value.hpp"
 
 namespace lyra::test {
 
@@ -23,7 +23,7 @@ void AssertFiles(
 
 // Assert variable values match expected values
 void AssertVariables(
-    const std::map<std::string, ExtractedValue>& actual,
+    const std::map<std::string, TestValue>& actual,
     const std::map<std::string, ExpectedValue>& expected,
     const std::string& test_name);
 

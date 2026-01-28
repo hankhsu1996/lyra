@@ -143,34 +143,95 @@ auto BuildTrackedVariables(
   return variables;
 }
 
+// Parse hex string into IntegralValue (unknown bits are all 0)
+auto HexToIntegral(const std::string& hex, uint32_t width) -> IntegralValue {
+  IntegralValue result;
+  result.width = width;
+  size_t num_words = (width + 63) / 64;
+  result.value.resize(num_words, 0);
+  result.unknown.resize(num_words, 0);  // No X/Z from LLVM backend
+
+  // Parse hex string from LSB (rightmost) to MSB
+  size_t hex_len = hex.size();
+  for (size_t i = 0; i < hex_len; ++i) {
+    char c = hex[hex_len - 1 - i];
+    uint64_t nibble = 0;
+    if (c >= '0' && c <= '9') {
+      nibble = c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+      nibble = 10 + (c - 'a');
+    } else if (c >= 'A' && c <= 'F') {
+      nibble = 10 + (c - 'A');
+    }
+
+    size_t bit_pos = i * 4;
+    size_t word_idx = bit_pos / 64;
+    size_t bit_in_word = bit_pos % 64;
+
+    if (word_idx < num_words) {
+      result.value[word_idx] |= nibble << bit_in_word;
+    }
+  }
+
+  // Mask top word to actual width
+  if (width > 0 && width % 64 != 0) {
+    uint64_t mask = (uint64_t{1} << (width % 64)) - 1;
+    result.value.back() &= mask;
+  }
+
+  return result;
+}
+
 // Parse a single __LYRA_VAR entry and extract variable value.
 void ParseLyraVarEntry(
-    std::string_view entry, std::map<std::string, ExtractedValue>& variables) {
-  // Format: "i:name=value" or "h:name=hex" or "r:name=value"
+    std::string_view entry, std::map<std::string, TestValue>& variables) {
+  // Format: "i:width:name=value" or "h:width:name=hex" or "r:name=value"
   if (entry.size() >= 2 && entry[1] == ':') {
     char type_tag = entry[0];
-    auto name_value = entry.substr(2);  // Skip "X:"
-    auto eq_pos = name_value.find('=');
-    if (eq_pos != std::string::npos) {
+    auto rest = entry.substr(2);  // Skip "X:"
+
+    if (type_tag == 'i' || type_tag == 'h') {
+      // Parse width:name=value
+      auto colon_pos = rest.find(':');
+      if (colon_pos == std::string::npos) {
+        return;
+      }
+      uint32_t width = static_cast<uint32_t>(
+          std::stoul(std::string(rest.substr(0, colon_pos))));
+      auto name_value = rest.substr(colon_pos + 1);
+      auto eq_pos = name_value.find('=');
+      if (eq_pos == std::string::npos) {
+        return;
+      }
       std::string name(name_value.substr(0, eq_pos));
       std::string value_str(name_value.substr(eq_pos + 1));
 
-      if (type_tag == 'i') {  // Integral (signed decimal)
-        int64_t value = std::stoll(value_str);
-        variables[name] = value;
-      } else if (type_tag == 'h') {  // Wide integral (hex)
-        std::string hex(value_str);
-        // Strip 0x/0X prefix if present
-        if (hex.size() >= 2 && hex[0] == '0' &&
-            (hex[1] == 'x' || hex[1] == 'X')) {
-          hex = hex.substr(2);
+      if (type_tag == 'i') {
+        // Narrow integral - parse as unsigned and create IntegralValue
+        uint64_t raw = std::stoull(value_str);
+        IntegralValue fs;
+        fs.width = width;
+        fs.value = {raw};
+        fs.unknown = {0};
+        if (width > 0 && width < 64) {
+          fs.value[0] &= (uint64_t{1} << width) - 1;
         }
+        variables[name] = fs;
+      } else {
+        // Wide integral (hex)
+        std::string hex(value_str);
         // Normalize to lowercase
-        std::transform(
-            hex.begin(), hex.end(), hex.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        variables[name] = HexValue{std::move(hex)};
-      } else if (type_tag == 'r') {  // Real
+        std::ranges::transform(hex, hex.begin(), [](unsigned char c) {
+          return static_cast<char>(std::tolower(c));
+        });
+        variables[name] = HexToIntegral(hex, width);
+      }
+    } else if (type_tag == 'r') {
+      // Real: r:name=value (no width)
+      auto eq_pos = rest.find('=');
+      if (eq_pos != std::string::npos) {
+        std::string name(rest.substr(0, eq_pos));
+        std::string value_str(rest.substr(eq_pos + 1));
         double value = std::stod(value_str);
         variables[name] = value;
       }
@@ -180,7 +241,7 @@ void ParseLyraVarEntry(
 
 struct ParsedOutput {
   std::string clean;
-  std::map<std::string, ExtractedValue> variables;
+  std::map<std::string, TestValue> variables;
   uint64_t final_time = 0;
 };
 
@@ -191,7 +252,7 @@ struct ParsedOutput {
 auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
   ParsedOutput parsed;
   std::string& clean_output = parsed.clean;
-  std::map<std::string, ExtractedValue>& variables = parsed.variables;
+  std::map<std::string, TestValue>& variables = parsed.variables;
 
   // Check if original output ends with newline - we need this to know
   // whether to add a trailing newline to the clean output

@@ -15,7 +15,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xABCD
+        c: "16'hABCD"
 
   - name: concat_two_nibbles
     sv: |
@@ -30,7 +30,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0xF3
+        c: "8'hF3"
 
   - name: concat_with_literals
     sv: |
@@ -44,7 +44,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x1234
+        c: "16'h1234"
 
   - name: concat_three_operands
     sv: |
@@ -60,7 +60,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xABC
+        result: "12'hABC"
 
   - name: concat_four_bytes
     sv: |
@@ -77,7 +77,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0x12345678
+        result: "32'h12345678"
 
   - name: concat_single_bits
     sv: |
@@ -110,7 +110,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xFAB
+        result: "12'hFAB"
 
   - name: concat_in_expression
     sv: |
@@ -127,8 +127,8 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x0102
-        sum: 0x0103
+        c: "16'h0102"
+        sum: "32'h0103"
 
   - name: concat_wide_result_72bit
     sv: |
@@ -165,7 +165,7 @@ cases:
       endmodule
     expect:
       variables:
-        lo: 0x2222222233333333
+        lo: "64'h2222222233333333"
 
   - name: concat_nested
     sv: |
@@ -182,7 +182,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0x1234
+        result: "16'h1234"
 
   - name: concat_all_literals
     sv: |
@@ -194,7 +194,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xABCD
+        result: "16'hABCD"
 
   - name: concat_assign_to_wider
     sv: |
@@ -209,7 +209,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xFFEE
+        result: "32'hFFEE"
 
   # Code review tests: sign-extension, boundaries, edge cases
 
@@ -227,7 +227,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xFFFE
+        result: "16'hFFFE"
 
   - name: concat_64bit_boundary
     description: Test exact 64-bit result (narrow/wide threshold)
@@ -277,7 +277,7 @@ cases:
       endmodule
     expect:
       variables:
-        lo: 0x0123456789ABCDEF
+        lo: "64'h0123456789ABCDEF"
         hi: -81985529216486896 # 0xFEDCBA9876543210 as signed
 
   - name: concat_x_propagation

@@ -109,8 +109,8 @@ void AssertFiles(
   }
 }
 
-// Format FourStateValue as SV-style binary string for error messages
-auto FormatFourState(const FourStateValue& v) -> std::string {
+// Format IntegralValue as SV-style binary string for error messages
+auto FormatIntegral(const IntegralValue& v) -> std::string {
   std::string result;
   result.reserve(v.width);
   for (uint32_t i = v.width; i > 0; --i) {
@@ -132,14 +132,14 @@ auto FormatFourState(const FourStateValue& v) -> std::string {
   return std::format("{}'b{}", v.width, result);
 }
 
-// Check if FourStateValue has any unknown bits
-auto HasUnknownBits(const FourStateValue& v) -> bool {
+// Check if IntegralValue has any unknown bits
+auto HasUnknownBits(const IntegralValue& v) -> bool {
   return std::ranges::any_of(
       v.unknown, [](uint64_t word) { return word != 0; });
 }
 
-// Compare two FourStateValues for equality (same width, same planes)
-auto FourStateEqual(const FourStateValue& a, const FourStateValue& b) -> bool {
+// Compare two IntegralValues for equality (same width, same planes)
+auto IntegralEqual(const IntegralValue& a, const IntegralValue& b) -> bool {
   if (a.width != b.width) {
     return false;
   }
@@ -156,9 +156,9 @@ auto FourStateEqual(const FourStateValue& a, const FourStateValue& b) -> bool {
   return true;
 }
 
-// Convert int64_t to FourStateValue for comparison
-auto Int64ToFourState(int64_t val, uint32_t width) -> FourStateValue {
-  FourStateValue result;
+// Convert int64_t to IntegralValue for comparison
+auto Int64ToIntegral(int64_t val, uint32_t width) -> IntegralValue {
+  IntegralValue result;
   result.width = width;
   size_t num_words = (width + 63) / 64;
   result.value.resize(num_words, 0);
@@ -180,39 +180,8 @@ auto Int64ToFourState(int64_t val, uint32_t width) -> FourStateValue {
   return result;
 }
 
-// Convert ExtractedValue to hex string for comparison
-auto ExtractedToHex(const ExtractedValue& val) -> std::string {
-  return std::visit(
-      [](auto&& v) -> std::string {
-        using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T, HexValue>) {
-          return v.hex;
-        } else if constexpr (std::is_same_v<T, int64_t>) {
-          return std::format("{:x}", static_cast<uint64_t>(v));
-        } else if constexpr (std::is_same_v<T, FourStateValue>) {
-          std::string hex;
-          bool leading = true;
-          for (uint64_t word : std::views::reverse(v.value)) {
-            if (leading && word == 0) {
-              continue;
-            }
-            if (leading) {
-              hex = std::format("{:x}", word);
-              leading = false;
-            } else {
-              hex += std::format("{:016x}", word);
-            }
-          }
-          return hex.empty() ? "0" : hex;
-        } else {
-          return std::format("{}", v);
-        }
-      },
-      val);
-}
-
 void AssertVariables(
-    const std::map<std::string, ExtractedValue>& actual,
+    const std::map<std::string, TestValue>& actual,
     const std::map<std::string, ExpectedValue>& expected,
     const std::string& test_name) {
   for (const auto& [name, expected_val] : expected) {
@@ -220,9 +189,9 @@ void AssertVariables(
     ASSERT_NE(it, actual.end())
         << "[" << test_name << "] Missing variable: " << name;
 
-    const ExtractedValue& actual_val = it->second;
+    const TestValue& actual_val = it->second;
 
-    // Double comparison: type-safe
+    // Double comparison
     if (std::holds_alternative<double>(expected_val)) {
       const auto* actual_ptr = std::get_if<double>(&actual_val);
       ASSERT_NE(actual_ptr, nullptr)
@@ -233,76 +202,39 @@ void AssertVariables(
       continue;
     }
 
-    // FourStateValue expected: compare planes directly
-    // Both MIR and LLVM backends can extract FourStateValue
-    if (std::holds_alternative<FourStateValue>(expected_val)) {
-      const auto* actual_fs = std::get_if<FourStateValue>(&actual_val);
-      ASSERT_NE(actual_fs, nullptr)
-          << "[" << test_name << "] Variable " << name
-          << " expected 4-state but got 2-state extraction";
+    // Integral comparison - both backends extract as IntegralValue
+    const auto* actual_fs = std::get_if<IntegralValue>(&actual_val);
+    ASSERT_NE(actual_fs, nullptr)
+        << "[" << test_name << "] Type mismatch for variable " << name
+        << " (expected integral)";
 
-      const auto& expected_fs = std::get<FourStateValue>(expected_val);
+    // Convert expected to IntegralValue for uniform comparison
+    IntegralValue expected_fs;
+    if (std::holds_alternative<IntegralValue>(expected_val)) {
+      expected_fs = std::get<IntegralValue>(expected_val);
+    } else {
+      // int64_t expected - convert using actual's width
+      int64_t expected_int = std::get<int64_t>(expected_val);
+      expected_fs = Int64ToIntegral(expected_int, actual_fs->width);
+    }
 
-      // Width must match exactly
+    // Check for unexpected X/Z bits
+    if (!HasUnknownBits(expected_fs) && HasUnknownBits(*actual_fs)) {
+      FAIL() << "[" << test_name << "] Variable " << name
+             << " has X/Z bits but expected 2-state value\n"
+             << "  Actual: " << FormatIntegral(*actual_fs);
+    }
+
+    // Width must match for IntegralValue expected
+    if (std::holds_alternative<IntegralValue>(expected_val)) {
       ASSERT_EQ(actual_fs->width, expected_fs.width)
           << "[" << test_name << "] Variable " << name << " width mismatch";
-
-      EXPECT_TRUE(FourStateEqual(*actual_fs, expected_fs))
-          << "[" << test_name << "] Variable " << name << "\n"
-          << "  Expected: " << FormatFourState(expected_fs) << "\n"
-          << "  Actual:   " << FormatFourState(*actual_fs);
-      continue;
     }
 
-    // 2-state expected (int64_t or HexValue): compare via hex strings
-    // Actual can be FourStateValue (MIR) or int64_t/HexValue (LLVM)
-    if (const auto* actual_fs = std::get_if<FourStateValue>(&actual_val)) {
-      // MIR backend: check for unknown bits
-      EXPECT_FALSE(HasUnknownBits(*actual_fs))
-          << "[" << test_name << "] Variable " << name
-          << " has X/Z bits but expected 2-state value\n"
-          << "  Actual: " << FormatFourState(*actual_fs);
-
-      if (std::holds_alternative<int64_t>(expected_val)) {
-        int64_t expected_int = std::get<int64_t>(expected_val);
-        FourStateValue expected_fs =
-            Int64ToFourState(expected_int, actual_fs->width);
-
-        EXPECT_TRUE(FourStateEqual(*actual_fs, expected_fs))
-            << "[" << test_name << "] Variable " << name << "\n"
-            << "  Expected: " << expected_int << " (0x"
-            << std::format("{:x}", static_cast<uint64_t>(expected_int)) << ")\n"
-            << "  Actual:   " << FormatFourState(*actual_fs);
-      } else if (std::holds_alternative<HexValue>(expected_val)) {
-        const auto& expected_hex = std::get<HexValue>(expected_val).hex;
-        std::string actual_hex = ExtractedToHex(actual_val);
-
-        EXPECT_EQ(actual_hex, expected_hex)
-            << "[" << test_name << "] Variable " << name;
-      }
-    } else {
-      // LLVM backend: compare via hex strings (2-state only)
-      std::string expected_hex;
-      if (std::holds_alternative<int64_t>(expected_val)) {
-        int64_t val = std::get<int64_t>(expected_val);
-        expected_hex = std::format("{:x}", static_cast<uint64_t>(val));
-      } else if (std::holds_alternative<HexValue>(expected_val)) {
-        expected_hex = std::get<HexValue>(expected_val).hex;
-      }
-
-      std::string actual_hex = ExtractedToHex(actual_val);
-
-      // Handle negative expected values: trim expected_hex to match actual
-      if (std::holds_alternative<int64_t>(expected_val) &&
-          std::get<int64_t>(expected_val) < 0 &&
-          expected_hex.size() > actual_hex.size()) {
-        expected_hex =
-            expected_hex.substr(expected_hex.size() - actual_hex.size());
-      }
-
-      EXPECT_EQ(actual_hex, expected_hex)
-          << "[" << test_name << "] Variable " << name;
-    }
+    EXPECT_TRUE(IntegralEqual(*actual_fs, expected_fs))
+        << "[" << test_name << "] Variable " << name << "\n"
+        << "  Expected: " << FormatIntegral(expected_fs) << "\n"
+        << "  Actual:   " << FormatIntegral(*actual_fs);
   }
 }
 

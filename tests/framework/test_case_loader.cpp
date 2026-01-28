@@ -118,11 +118,11 @@ auto Trim(std::string_view sv) -> std::string_view {
   return sv;
 }
 
-// Parse SV literal format: N'b..., N'h..., N'o... into FourStateValue
+// Parse SV literal format: N'b..., N'h..., N'o... into IntegralValue
 // Returns std::nullopt if not in SV literal format.
 // Enforces exact width matching: effective_bits must not exceed width (no
 // truncation). Zero-extension (fewer bits than width) is allowed.
-auto ParseSvLiteral(const std::string& str) -> std::optional<FourStateValue> {
+auto ParseSvLiteral(const std::string& str) -> std::optional<IntegralValue> {
   // Trim whitespace
   std::string_view trimmed = Trim(str);
   if (trimmed.empty()) {
@@ -184,7 +184,7 @@ auto ParseSvLiteral(const std::string& str) -> std::optional<FourStateValue> {
   // Calculate number of words needed
   size_t num_words = (width + 63) / 64;
 
-  FourStateValue result;
+  IntegralValue result;
   result.width = width;
   result.value.resize(num_words, 0);
   result.unknown.resize(num_words, 0);
@@ -254,35 +254,13 @@ auto ParseSvLiteral(const std::string& str) -> std::optional<FourStateValue> {
   return result;
 }
 
-// Parse numeric value: hex string for wide values, integer, double, or SV
-// literal
+// Parse numeric value: integer, double, or SV literal
 auto ParseNumericValue(const YAML::Node& node) -> ExpectedValue {
   auto str = node.as<std::string>();
 
-  // Try SV literal format first: N'b..., N'h..., N'o...
+  // Try SV literal format: N'b..., N'h..., N'o...
   if (auto sv_literal = ParseSvLiteral(str)) {
     return *sv_literal;
-  }
-
-  // Check for hex prefix (0x or 0X)
-  if (str.starts_with("0x") || str.starts_with("0X")) {
-    std::string hex = str.substr(2);
-    std::ranges::transform(hex, hex.begin(), ::tolower);
-
-    // Remove leading zeros for canonical form
-    auto first_nonzero = hex.find_first_not_of('0');
-    if (first_nonzero != std::string::npos) {
-      hex = hex.substr(first_nonzero);
-    } else {
-      hex = "0";
-    }
-
-    // If fits in 64 bits (16 hex digits or less), parse as int64_t
-    if (hex.size() <= 16) {
-      return static_cast<int64_t>(std::stoull(hex, nullptr, 16));
-    }
-    // Wide value: store as HexValue
-    return HexValue{hex};
   }
 
   bool has_decimal = str.find('.') != std::string::npos;

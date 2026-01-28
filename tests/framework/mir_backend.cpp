@@ -35,18 +35,18 @@ namespace lyra::test {
 namespace {
 
 // Extract numeric value from RuntimeValue for assertion comparison.
-// All integrals are returned as FourStateValue (unknown all zeros for 2-state)
+// All integrals are returned as IntegralValue (unknown all zeros for 2-state)
 // to keep comparison logic uniform.
 auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
-    -> std::expected<ExtractedValue, std::string> {
+    -> std::expected<TestValue, std::string> {
   if (mir::interp::IsIntegral(value)) {
     const auto& integral = mir::interp::AsIntegral(value);
     if (integral.value.empty()) {
       return std::unexpected("Empty integral value");
     }
 
-    // Always extract as FourStateValue for uniform comparison
-    FourStateValue result;
+    // Always extract as IntegralValue for uniform comparison
+    IntegralValue result;
     result.width = integral.bit_width;
     result.value = integral.value;
     result.unknown = integral.unknown;

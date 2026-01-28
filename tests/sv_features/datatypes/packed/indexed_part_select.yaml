@@ -245,7 +245,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xFF00
+        data: "32'hFF00"
 
   - name: write_ascending_variable
     sv: |
@@ -260,7 +260,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xFF0
+        data: "32'hFF0"
 
   - name: write_descending_constant
     sv: |
@@ -273,7 +273,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xAB00
+        data: "32'hAB00"
 
   - name: write_descending_variable
     sv: |
@@ -288,7 +288,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xCD0000
+        data: "32'hCD0000"
 
   - name: write_nibble
     sv: |
@@ -302,7 +302,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xB0A0
+        data: "16'hB0A0"
 
   - name: write_loop
     sv: |
@@ -317,7 +317,7 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0x04030201
+        data: "32'h04030201"
 
   - name: write_nonzero_based
     sv: |
@@ -330,4 +330,4 @@ cases:
       endmodule
     expect:
       variables:
-        data: 0xAB00
+        data: "32'hAB00"

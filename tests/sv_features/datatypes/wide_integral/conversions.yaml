@@ -14,7 +14,7 @@ cases:
       endmodule
     expect:
       variables:
-        wide: 0x12345678
+        wide: "128'h12345678"
 
   - name: narrow_to_wide_sign_extend
     sv: |
@@ -28,7 +28,7 @@ cases:
       endmodule
     expect:
       variables:
-        wide: 0xffffffffffffffffffffffffffffffff
+        wide: "128'hffffffffffffffffffffffffffffffff"
 
   - name: wide_to_narrow_truncation
     sv: |
@@ -42,7 +42,7 @@ cases:
       endmodule
     expect:
       variables:
-        narrow: 0x12345678
+        narrow: "32'h12345678"
 
   - name: wide_to_narrow_signed
     sv: |
@@ -72,5 +72,5 @@ cases:
       endmodule
     expect:
       variables:
-        wide: 0x123456789abcdef0
-        result: 0x123456789abcdef0
+        wide: "128'h123456789abcdef0"
+        result: "64'h123456789abcdef0"
