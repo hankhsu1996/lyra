@@ -1,53 +1,55 @@
 #pragma once
 
-#include <cstdint>
 #include <vector>
 
-#include <llvm/IR/Type.h>
-#include <llvm/IR/Value.h>
-
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/compute_result.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/mir/instruction.hpp"
+#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-// Lower 2-state compute instruction.
-// Dispatches to appropriate rvalue lowering based on rvalue kind.
-auto LowerCompute2State(
-    Context& context, const mir::Compute& compute, uint32_t bit_width)
-    -> Result<void>;
-
-// Lower binary rvalue (arithmetic, comparison, shift, etc).
-auto LowerBinaryRvalue(
+// Lower 2-state binary rvalue (arithmetic, comparison, shift, etc).
+auto LowerBinaryRvalue2State(
     Context& context, const mir::BinaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type,
-    uint32_t semantic_width) -> Result<llvm::Value*>;
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower unary rvalue (negation, reduction, etc).
-auto LowerUnaryRvalue(
+// Lower 2-state unary rvalue (negation, reduction, etc).
+auto LowerUnaryRvalue2State(
     Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*>;
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower packed concatenation rvalue.
-auto LowerConcatRvalue(
+// Lower 2-state packed concatenation rvalue.
+auto LowerConcatRvalue2State(
     Context& context, const mir::ConcatRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*>;
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower index validity check (bounds checking).
-auto LowerIndexValidity(
+// Lower 2-state index validity check (bounds checking).
+auto LowerIndexValidity2State(
     Context& context, const mir::IndexValidityRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*>;
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower guarded use (bounds-checked array read).
-auto LowerGuardedUse(
+// Lower 2-state guarded use (bounds-checked array read).
+auto LowerGuardedUse2State(
     Context& context, const mir::GuardedUseRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
-    -> Result<llvm::Value*>;
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+// Lower 2-state runtime query (e.g., $time).
+auto LowerRuntimeQuery2State(
+    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+// Lower 2-state user call (function call).
+auto LowerUserCall2State(
+    Context& context, const mir::UserCallRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 }  // namespace lyra::lowering::mir_to_llvm

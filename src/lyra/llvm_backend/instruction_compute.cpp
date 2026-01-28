@@ -14,14 +14,12 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction_compute_2state.hpp"
-#include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_aggregate.hpp"
 #include "lyra/llvm_backend/instruction_compute_builtin.hpp"
 #include "lyra/llvm_backend/instruction_compute_cast.hpp"
+#include "lyra/llvm_backend/instruction_compute_driver.hpp"
 #include "lyra/llvm_backend/instruction_compute_math.hpp"
 #include "lyra/llvm_backend/instruction_compute_real.hpp"
-#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
@@ -89,18 +87,6 @@ auto LowerPlusargsCompute(
   return {};
 }
 
-// Dispatch to 2-state or 4-state based on target type.
-auto LowerIntegral(Context& context, const mir::Compute& compute)
-    -> Result<void> {
-  auto type_info_or_err = ValidateAndGetTypeInfo(context, compute.target);
-  if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
-  PlaceTypeInfo type_info = *type_info_or_err;
-  if (type_info.is_four_state) {
-    return LowerCompute4State(context, compute, type_info.bit_width);
-  }
-  return LowerCompute2State(context, compute, type_info.bit_width);
-}
-
 // Handle void user call (side effects only, no result).
 auto LowerVoidUserCall(
     Context& context, const mir::Compute& compute,
@@ -153,7 +139,7 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
             if (IsRealMathCompute(context, compute)) {
               return LowerRealCompute(context, compute);
             }
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::UnaryRvalueInfo&) -> Result<void> {
             if (IsMathCompute(context, compute)) {
@@ -162,30 +148,30 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
             if (IsRealMathCompute(context, compute)) {
               return LowerRealCompute(context, compute);
             }
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::ConcatRvalueInfo& info) -> Result<void> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
               return LowerStringConcat(
                   context, info, compute.value.operands, compute.target);
             }
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::UserCallRvalueInfo& info) -> Result<void> {
             llvm::Function* callee = context.GetUserFunction(info.callee);
             if (callee->getReturnType()->isVoidTy()) {
               return LowerVoidUserCall(context, compute, info);
             }
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::RuntimeQueryRvalueInfo&) -> Result<void> {
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::IndexValidityRvalueInfo&) -> Result<void> {
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::GuardedUseRvalueInfo&) -> Result<void> {
-            return LowerIntegral(context, compute);
+            return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::MathCallRvalueInfo&) -> Result<void> {
             return LowerMathCompute(context, compute);
