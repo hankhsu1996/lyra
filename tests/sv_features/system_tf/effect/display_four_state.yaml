@@ -1,0 +1,183 @@
+feature: display_four_state
+description: $display formatting of 4-state (X/Z) values
+
+cases:
+  - name: binary_all_x
+    description: Binary format with all X bits
+    sv: |
+      module Test;
+        logic [3:0] v = 4'bxxxx;
+        initial $display("%b", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x"
+
+  - name: binary_all_z
+    description: Binary format with all Z bits
+    sv: |
+      module Test;
+        logic [3:0] v = 4'bzzzz;
+        initial $display("%b", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "z"
+
+  - name: binary_mixed_xz
+    description: Binary format with mixed X/Z/0/1 bits
+    sv: |
+      module Test;
+        logic [7:0] v = 8'b10x0z011;
+        initial $display("%b", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "10x0z011"
+
+  - name: hex_all_x_nibble
+    description: Hex format with all-X nibble (lowercase x)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bxxxx0101;
+        initial $display("%h", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x5"
+
+  - name: hex_all_z_nibble
+    description: Hex format with all-Z nibble (lowercase z)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bzzzz0101;
+        initial $display("%h", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "z5"
+
+  - name: hex_mixed_unknown_nibble
+    description: Hex format with mixed unknown nibble (uppercase X)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bx01z0101;
+        initial $display("%h", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "X5"
+
+  - name: hex_known_value
+    description: Hex format with fully known value
+    sv: |
+      module Test;
+        logic [7:0] v = 8'hAB;
+        initial $display("%h", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "ab"
+
+  - name: octal_all_x
+    description: Octal format with all-X octet (lowercase x)
+    sv: |
+      module Test;
+        logic [5:0] v = 6'bxxx101;
+        initial $display("%o", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x5"
+
+  - name: octal_all_z
+    description: Octal format with all-Z octet (lowercase z)
+    sv: |
+      module Test;
+        logic [5:0] v = 6'bzzz101;
+        initial $display("%o", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "z5"
+
+  - name: octal_mixed_unknown
+    description: Octal format with mixed unknown octet (uppercase X)
+    sv: |
+      module Test;
+        logic [5:0] v = 6'bx0z101;
+        initial $display("%o", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "X5"
+
+  - name: decimal_all_x
+    description: Decimal format with all X (lowercase x per LRM)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bxxxxxxxx;
+        initial $display("%d", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x"
+
+  - name: decimal_all_z
+    description: Decimal format with all Z (lowercase z per LRM)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bzzzzzzzz;
+        initial $display("%d", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "z"
+
+  - name: decimal_partial_x
+    description: Decimal format with partial X (uppercase X per LRM)
+    sv: |
+      module Test;
+        logic [7:0] v = 8'bxxxx0101;
+        initial $display("%d", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "X"
+
+  - name: single_bit_x_display
+    description: Single-bit X value in binary format
+    sv: |
+      module Test;
+        logic v = 1'bx;
+        initial $display("%b", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x"
+
+  - name: single_bit_z_display
+    description: Single-bit Z value in binary format
+    sv: |
+      module Test;
+        logic v = 1'bz;
+        initial $display("%b", v);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "z"

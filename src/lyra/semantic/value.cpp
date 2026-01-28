@@ -512,69 +512,193 @@ auto ToDecimalString(const RuntimeIntegral& v, bool is_signed) -> std::string {
   return result;
 }
 
+// Helper to get bit at position from multi-word vector
+auto GetBit(const std::vector<uint64_t>& words, uint32_t bit_pos) -> bool {
+  size_t word_idx = bit_pos / 64;
+  uint32_t bit_in_word = bit_pos % 64;
+  if (word_idx >= words.size()) {
+    return false;
+  }
+  return ((words[word_idx] >> bit_in_word) & 1) != 0;
+}
+
 auto ToHexString(const RuntimeIntegral& v) -> std::string {
-  if (v.IsX()) {
-    return "x";
-  }
-  if (v.IsZ()) {
-    return "z";
+  if (v.bit_width == 0) {
+    return "0";
   }
 
-  if (v.bit_width <= 64) {
-    uint64_t val = v.value.empty() ? 0 : v.value[0];
-    return std::format("{:x}", val);
+  // Shortcut: if no unknown bits, use fast path
+  if (v.IsKnown()) {
+    if (v.bit_width <= 64) {
+      uint64_t val = v.value.empty() ? 0 : v.value[0];
+      return std::format("{:x}", val);
+    }
+    // Multi-word: skip leading zero words, keep at least one
+    std::string result;
+    bool started = false;
+    for (uint64_t word : std::ranges::reverse_view(v.value)) {
+      if (!started && word == 0) {
+        continue;  // Skip leading zero words
+      }
+      if (!started) {
+        result = std::format("{:x}", word);
+        started = true;
+      } else {
+        result += std::format("{:016x}", word);
+      }
+    }
+    return result.empty() ? "0" : result;
   }
 
+  // 4-state path: process nibble by nibble (LRM 21.2.1.3)
+  // All-X nibble → 'x', all-Z nibble → 'z', mixed unknown → 'X'
   std::string result;
-  for (uint64_t word : std::ranges::reverse_view(v.value)) {
-    if (result.empty()) {
-      result = std::format("{:x}", word);
+  uint32_t num_nibbles = (v.bit_width + 3) / 4;
+
+  for (uint32_t n = num_nibbles; n > 0; --n) {
+    uint32_t nibble_start = (n - 1) * 4;
+    uint32_t nibble_bits = std::min(4U, v.bit_width - nibble_start);
+
+    uint32_t nibble_val = 0;
+    uint32_t nibble_unk = 0;
+    for (uint32_t b = 0; b < nibble_bits; ++b) {
+      if (GetBit(v.value, nibble_start + b)) {
+        nibble_val |= (1U << b);
+      }
+      if (GetBit(v.unknown, nibble_start + b)) {
+        nibble_unk |= (1U << b);
+      }
+    }
+
+    // Mask for valid bits in this nibble
+    uint32_t nibble_mask = (1U << nibble_bits) - 1;
+
+    if (nibble_unk == 0) {
+      // Known: output hex digit
+      constexpr std::string_view kHexDigits = "0123456789abcdef";
+      result += kHexDigits[nibble_val];
+    } else if (nibble_unk == nibble_mask && nibble_val == 0) {
+      // All X (unk=1, val=0 for all bits)
+      result += 'x';
+    } else if (nibble_unk == nibble_mask && nibble_val == nibble_mask) {
+      // All Z (unk=1, val=1 for all bits)
+      result += 'z';
     } else {
-      result += std::format("{:016x}", word);
+      // Mixed unknown: uppercase X
+      result += 'X';
     }
   }
-  return result;
+
+  // Strip leading zeros (but keep at least one digit)
+  auto first_nonzero = result.find_first_not_of('0');
+  if (first_nonzero != std::string::npos && first_nonzero > 0) {
+    result = result.substr(first_nonzero);
+  }
+  return result.empty() ? "0" : result;
 }
 
 auto ToBinaryString(const RuntimeIntegral& v) -> std::string {
-  if (v.IsX()) {
-    return "x";
-  }
-  if (v.IsZ()) {
-    return "z";
+  if (v.bit_width == 0) {
+    return "0";
   }
 
-  if (v.bit_width <= 64) {
-    uint64_t val = v.value.empty() ? 0 : v.value[0];
-    return std::format("{:b}", val);
+  // Shortcut: if no unknown bits, use fast path
+  if (v.IsKnown()) {
+    if (v.bit_width <= 64) {
+      uint64_t val = v.value.empty() ? 0 : v.value[0];
+      return std::format("{:b}", val);
+    }
+    std::string result;
+    for (uint64_t word : std::ranges::reverse_view(v.value)) {
+      if (result.empty()) {
+        result = std::format("{:b}", word);
+      } else {
+        result += std::format("{:064b}", word);
+      }
+    }
+    return result;
   }
 
+  // 4-state path: process bit by bit
   std::string result;
-  for (uint64_t word : std::ranges::reverse_view(v.value)) {
-    if (result.empty()) {
-      result = std::format("{:b}", word);
+  result.reserve(v.bit_width);
+
+  for (uint32_t i = v.bit_width; i > 0; --i) {
+    uint32_t bit_pos = i - 1;
+    bool val_bit = GetBit(v.value, bit_pos);
+    bool unk_bit = GetBit(v.unknown, bit_pos);
+
+    if (!unk_bit) {
+      result += val_bit ? '1' : '0';
     } else {
-      result += std::format("{:064b}", word);
+      result += val_bit ? 'z' : 'x';
     }
   }
-  return result;
+
+  // Strip leading zeros (but keep at least one digit)
+  auto first_nonzero = result.find_first_not_of('0');
+  if (first_nonzero != std::string::npos && first_nonzero > 0) {
+    result = result.substr(first_nonzero);
+  }
+  return result.empty() ? "0" : result;
 }
 
 auto ToOctalString(const RuntimeIntegral& v) -> std::string {
-  if (v.IsX()) {
-    return "x";
-  }
-  if (v.IsZ()) {
-    return "z";
+  if (v.bit_width == 0) {
+    return "0";
   }
 
-  if (v.bit_width <= 64) {
+  // Shortcut: if no unknown bits and fits in 64 bits, use fast path
+  if (v.IsKnown() && v.bit_width <= 64) {
     uint64_t val = v.value.empty() ? 0 : v.value[0];
     return std::format("{:o}", val);
   }
 
-  // Multi-word: convert to decimal for simplicity
-  return ToDecimalString(v, false);
+  // Process 3 bits at a time (octal digit)
+  // For known values, octet_unk is always 0
+  // For 4-state: All-X → 'x', all-Z → 'z', mixed unknown → 'X'
+  std::string result;
+  uint32_t num_octets = (v.bit_width + 2) / 3;
+
+  for (uint32_t n = num_octets; n > 0; --n) {
+    uint32_t octet_start = (n - 1) * 3;
+    uint32_t octet_bits = std::min(3U, v.bit_width - octet_start);
+
+    uint32_t octet_val = 0;
+    uint32_t octet_unk = 0;
+    for (uint32_t b = 0; b < octet_bits; ++b) {
+      if (GetBit(v.value, octet_start + b)) {
+        octet_val |= (1U << b);
+      }
+      if (GetBit(v.unknown, octet_start + b)) {
+        octet_unk |= (1U << b);
+      }
+    }
+
+    // Mask for valid bits in this octet
+    uint32_t octet_mask = (1U << octet_bits) - 1;
+
+    if (octet_unk == 0) {
+      // Known: output octal digit
+      result += static_cast<char>('0' + octet_val);
+    } else if (octet_unk == octet_mask && octet_val == 0) {
+      // All X
+      result += 'x';
+    } else if (octet_unk == octet_mask && octet_val == octet_mask) {
+      // All Z
+      result += 'z';
+    } else {
+      // Mixed unknown: uppercase X
+      result += 'X';
+    }
+  }
+
+  // Strip leading zeros (but keep at least one digit)
+  auto first_nonzero = result.find_first_not_of('0');
+  if (first_nonzero != std::string::npos && first_nonzero > 0) {
+    result = result.substr(first_nonzero);
+  }
+  return result.empty() ? "0" : result;
 }
 
 }  // namespace lyra::semantic

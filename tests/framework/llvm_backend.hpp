@@ -10,8 +10,10 @@
 
 namespace lyra::test {
 
-// Extracted value type for variable assertions
-using ExtractedValue = std::variant<int64_t, double, HexValue>;
+// Extracted value type for variable assertions.
+// For integrals, we always extract as FourStateValue (unknown all zeros for
+// 2-state) to keep comparison logic uniform.
+using ExtractedValue = std::variant<int64_t, double, HexValue, FourStateValue>;
 
 // Result from running a test backend
 struct TestResult {

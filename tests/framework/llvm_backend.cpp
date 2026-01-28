@@ -146,7 +146,7 @@ auto BuildTrackedVariables(
 // Parse a single __LYRA_VAR entry and extract variable value.
 void ParseLyraVarEntry(
     std::string_view entry, std::map<std::string, ExtractedValue>& variables) {
-  // Format: "i:name=value" or "r:name=value"
+  // Format: "i:name=value" or "h:name=hex" or "r:name=value"
   if (entry.size() >= 2 && entry[1] == ':') {
     char type_tag = entry[0];
     auto name_value = entry.substr(2);  // Skip "X:"
@@ -166,9 +166,9 @@ void ParseLyraVarEntry(
           hex = hex.substr(2);
         }
         // Normalize to lowercase
-        std::ranges::transform(hex, hex.begin(), [](unsigned char c) {
-          return static_cast<char>(std::tolower(c));
-        });
+        std::transform(
+            hex.begin(), hex.end(), hex.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         variables[name] = HexValue{std::move(hex)};
       } else if (type_tag == 'r') {  // Real
         double value = std::stod(value_str);
