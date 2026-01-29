@@ -1,0 +1,226 @@
+feature: bitwise_four_state
+description: 4-state (X/Z) semantics for bitwise operations
+
+cases:
+  - name: and_with_zero_dominates
+    description: AND with 0 produces 0 regardless of X/Z
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b0000;
+        logic [3:0] result;
+        initial result = a & b;
+      endmodule
+    expect:
+      variables:
+        result: "4'b0000"
+
+  - name: and_with_one_propagates
+    description: AND with 1 preserves X/Z (X&1=X, Z&1=X per truth table)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b1111;
+        logic [3:0] result;
+        initial result = a & b;
+      endmodule
+    expect:
+      variables:
+        result: "4'bx01x"
+
+  - name: or_with_one_dominates
+    description: OR with 1 produces 1 regardless of X/Z
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b1111;
+        logic [3:0] result;
+        initial result = a | b;
+      endmodule
+    expect:
+      variables:
+        result: "4'b1111"
+
+  - name: or_with_zero_propagates
+    description: OR with 0 preserves X, Z becomes X (unknown value | 0 = unknown)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b0000;
+        logic [3:0] result;
+        initial result = a | b;
+      endmodule
+    expect:
+      variables:
+        result: "4'bx01x"
+
+  - name: xor_propagates_unknown
+    description: XOR with X or Z produces X (bit 3 is x^1=x, bit 2 is 0^0=0, bit 1 is 1^1=0, bit 0 is z^0=x)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b1010;
+        logic [3:0] result;
+        initial result = a ^ b;
+      endmodule
+    expect:
+      variables:
+        result: "4'bx00x"
+
+  - name: not_propagates_unknown
+    description: NOT of X/Z produces X
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] result;
+        initial result = ~a;
+      endmodule
+    expect:
+      variables:
+        result: "4'bx10x"
+
+  - name: default_initialization_logic
+    description: Uninitialized 4-state (logic) defaults to X
+    sv: |
+      module Test;
+        logic [3:0] a;
+        logic [3:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "4'bxxxx"
+
+  - name: default_initialization_bit
+    description: 2-state types (bit) default to 0, not X
+    sv: |
+      module Test;
+        bit [3:0] a;
+        bit [3:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: comparison_with_x_yields_x
+    description: Equality comparison with X operand yields 1-bit X
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b0010;
+        logic cmp;
+        initial cmp = (a == b);
+      endmodule
+    expect:
+      variables:
+        cmp: "1'bx"
+
+  - name: comparison_with_x_not_equal
+    description: Inequality comparison with X operand yields 1-bit X
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] b = 4'b0010;
+        logic cmp;
+        initial cmp = (a != b);
+      endmodule
+    expect:
+      variables:
+        cmp: "1'bx"
+
+  - name: wide_crossing_boundary_x
+    description: X in wide value crossing 64-bit boundary
+    sv: |
+      module Test;
+        logic [67:0] a = {4'bxxxx, 64'hFFFFFFFFFFFFFFFF};
+        logic [67:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "68'hxffffffffffffffff"
+
+  - name: wide_crossing_boundary_z
+    description: Z in wide value crossing 64-bit boundary
+    sv: |
+      module Test;
+        logic [67:0] a = {4'bzzzz, 64'hFFFFFFFFFFFFFFFF};
+        logic [67:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "68'hzffffffffffffffff"
+
+  - name: single_bit_x
+    description: Single-bit X value
+    sv: |
+      module Test;
+        logic a = 1'bx;
+        logic result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: single_bit_z
+    description: Single-bit Z value
+    sv: |
+      module Test;
+        logic a = 1'bz;
+        logic result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bz"
+
+  - name: reduction_and_with_x
+    description: Reduction AND with X produces X (current behavior - dominating 0 not implemented)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b1x11;
+        logic result;
+        initial result = &a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: reduction_and_all_ones
+    description: Reduction AND with all 1s produces 1
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b1111;
+        logic result;
+        initial result = &a;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_with_x
+    description: Reduction OR with X produces X (current behavior - dominating 1 not implemented)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b0x00;
+        logic result;
+        initial result = |a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: reduction_or_all_zeros
+    description: Reduction OR with all 0s produces 0
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b0000;
+        logic result;
+        initial result = |a;
+      endmodule
+    expect:
+      variables:
+        result: 0

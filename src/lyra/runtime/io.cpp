@@ -67,7 +67,8 @@ void SnapshotWideIntegral(const VarEntry& var) {
   if (hex.empty()) {
     hex = "0";
   }
-  std::print("__LYRA_VAR:h:{}={}\n", var.name, hex);
+  // Format: h:width:name=hex (width included for FourStateValue reconstruction)
+  std::print("__LYRA_VAR:h:{}:{}={}\n", var.width, var.name, hex);
 }
 
 void SnapshotIntegral(const VarEntry& var) {
@@ -84,19 +85,10 @@ void SnapshotIntegral(const VarEntry& var) {
     raw &= (1ULL << var.width) - 1;
   }
 
-  if (var.is_signed) {
-    // Sign-extend if MSB is set
-    auto value = static_cast<int64_t>(raw);
-    if (var.width < 64) {
-      uint64_t sign_bit = 1ULL << (var.width - 1);
-      if ((raw & sign_bit) != 0) {
-        value = static_cast<int64_t>(raw | ~((1ULL << var.width) - 1));
-      }
-    }
-    std::print("__LYRA_VAR:i:{}={}\n", var.name, value);
-  } else {
-    std::print("__LYRA_VAR:i:{}={}\n", var.name, raw);
-  }
+  // Format: i:width:name=value (width included for FourStateValue
+  // reconstruction) Always output unsigned raw value - signedness is for
+  // comparison semantics, not storage
+  std::print("__LYRA_VAR:i:{}:{}={}\n", var.width, var.name, raw);
 }
 
 void SnapshotReal(const VarEntry& var) {

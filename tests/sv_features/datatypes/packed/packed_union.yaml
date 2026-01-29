@@ -20,8 +20,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43707 # 0xAABB
-        result_bits: 43707 # 0xAABB (same value, different view)
+        result_word: "0xaabb"
+        result_bits: "0xaabb"
 
   - name: hard_union_type_punning
     description: Hard packed union - write one member, read another
@@ -40,7 +40,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 57005 # 0xDEAD
+        result: "0xdead"
 
   - name: hard_union_signed_unsigned
     description: Hard packed union - same bits, different signedness interpretation
@@ -81,7 +81,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 22136 # 0x5678 - view2 overwrote view1
+        result: "0x5678" # view2 overwrote view1
 
   - name: hard_union_arithmetic
     description: Hard packed union used in arithmetic expression
@@ -125,9 +125,9 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43981 # 0xABCD
-        result_high: 171 # 0xAB
-        result_low: 205 # 0xCD
+        result_word: "0xabcd"
+        result_high: "0xab"
+        result_low: "0xcd"
 
   - name: hard_union_copy
     description: Hard packed union - copy one union to another
@@ -147,7 +147,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 48879 # 0xBEEF
+        result: "0xbeef"
 
   - name: hard_union_comparison
     description: Hard packed union equality comparison
@@ -185,7 +185,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 51966 # 0xCAFE
+        result: "0xcafe"
 
   - name: hard_union_bitwise_ops
     description: Hard packed union - bitwise operations
@@ -224,8 +224,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_word: 43707 # 0xAABB
-        result_byte: 187 # 0xBB (low 8 bits)
+        result_word: "0xaabb"
+        result_byte: "0xbb"
 
   - name: soft_union_write_narrow_read_wide
     description: Soft packed union - write narrow member preserves MSBs
@@ -245,7 +245,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 65451 # 0xFFAB - MSBs preserved, LSBs overwritten
+        result: "0xffab" # MSBs preserved, LSBs overwritten
 
   - name: union_bit_select
     description: Bit select directly on packed union value
@@ -291,9 +291,9 @@ cases:
       endmodule
     expect:
       variables:
-        result_low_nibble: 13
-        result_mid_byte: 188
-        result_high_nibble: 10
+        result_low_nibble: "0xd"
+        result_mid_byte: "0xbc"
+        result_high_nibble: "0xa"
 
   - name: union_indexed_part_select_ascending
     description: Indexed ascending part select on packed union
@@ -313,8 +313,8 @@ cases:
       endmodule
     expect:
       variables:
-        result_low: 205
-        result_high: 171
+        result_low: "0xcd"
+        result_high: "0xab"
 
   - name: union_indexed_part_select_descending
     description: Indexed descending part select on packed union
@@ -334,5 +334,5 @@ cases:
       endmodule
     expect:
       variables:
-        result_low: 205
-        result_high: 171
+        result_low: "0xcd"
+        result_high: "0xab"

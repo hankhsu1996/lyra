@@ -6,7 +6,6 @@
 #include <expected>
 #include <filesystem>
 #include <format>
-#include <iterator>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -35,56 +34,36 @@
 namespace lyra::test {
 namespace {
 
-// Convert multi-word integral to lowercase hex string (no prefix)
-auto IntegralToHex(const mir::interp::RuntimeIntegral& integral)
-    -> std::string {
-  std::string result;
-  // Process words from most significant to least significant
-  bool leading = true;
-  for (auto it = integral.value.rbegin(); it != integral.value.rend(); ++it) {
-    if (leading && *it == 0 && std::next(it) != integral.value.rend()) {
-      // Skip leading zero words (but keep at least one word)
-      continue;
-    }
-    if (leading) {
-      // First non-zero word: no padding
-      result += std::format("{:x}", *it);
-      leading = false;
-    } else {
-      // Subsequent words: pad to 16 hex digits
-      result += std::format("{:016x}", *it);
-    }
-  }
-  return result.empty() ? "0" : result;
-}
-
 // Extract numeric value from RuntimeValue for assertion comparison.
-// Returns int64_t for integers <= 64 bits, HexValue for integers > 64 bits,
-// or double for reals.
-//
-// Note: RuntimeIntegral doesn't carry signedness info. The raw value is
-// returned without sign-extension. The caller (assertion code) handles
-// sign-extension when comparing against negative expected values.
+// All integrals are returned as IntegralValue (unknown all zeros for 2-state)
+// to keep comparison logic uniform.
 auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
-    -> std::expected<ExtractedValue, std::string> {
+    -> std::expected<TestValue, std::string> {
   if (mir::interp::IsIntegral(value)) {
     const auto& integral = mir::interp::AsIntegral(value);
-    if (integral.IsX() || integral.IsZ()) {
-      return std::unexpected("X/Z values not supported in assertions");
-    }
     if (integral.value.empty()) {
       return std::unexpected("Empty integral value");
     }
-    // Wide values (>64 bits): return as hex string
-    if (integral.bit_width > 64) {
-      return HexValue{IntegralToHex(integral)};
+
+    // Always extract as IntegralValue for uniform comparison
+    IntegralValue result;
+    result.width = integral.bit_width;
+    result.value = integral.value;
+    result.unknown = integral.unknown;
+
+    // Ensure vectors have correct size for width
+    size_t num_words = (integral.bit_width + 63) / 64;
+    result.value.resize(num_words, 0);
+    result.unknown.resize(num_words, 0);
+
+    // Mask high bits above width to prevent garbage bit mismatches
+    if (integral.bit_width > 0 && integral.bit_width % 64 != 0) {
+      uint64_t mask = (uint64_t{1} << (integral.bit_width % 64)) - 1;
+      result.value.back() &= mask;
+      result.unknown.back() &= mask;
     }
-    // Return raw value masked to bit_width. No sign-extension here.
-    uint64_t raw = integral.value[0];
-    if (integral.bit_width < 64) {
-      raw &= (uint64_t{1} << integral.bit_width) - 1;
-    }
-    return static_cast<int64_t>(raw);
+
+    return result;
   }
   if (mir::interp::IsReal(value)) {
     return mir::interp::AsReal(value).value;

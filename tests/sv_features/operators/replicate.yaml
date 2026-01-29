@@ -14,7 +14,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xABABABAB
+        result: "32'hABABABAB"
 
   - name: replicate_nibble_4_times
     sv: |
@@ -28,7 +28,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xFFFF
+        result: "16'hFFFF"
 
   - name: replicate_single_bit
     sv: |
@@ -54,7 +54,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xCDCDCDCD
+        result: "32'hCDCDCDCD"
 
   - name: replicate_twice
     sv: |
@@ -68,7 +68,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0x5A5A
+        result: "16'h5A5A"
 
   - name: replicate_in_concatenation
     description: Replication inside a concatenation
@@ -84,7 +84,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xAABBBBBBAA
+        result: "40'hAABBBBBBAA"
 
   - name: replicate_nested_concat
     description: Replication of a concatenation
@@ -100,7 +100,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xABAB
+        result: "16'hABAB"
 
   - name: replicate_multiple_in_concat
     description: Multiple replications in same concatenation
@@ -149,7 +149,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xFFFFFFFF
+        result: "32'hFFFFFFFF"
 
   - name: replicate_once
     description: Replication with count 1 (identity)
@@ -164,7 +164,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0x42
+        result: "8'h42"
 
   - name: replicate_zero_in_concat
     description: Zero replication inside concatenation (LRM allows this)
@@ -177,7 +177,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xABCD
+        result: "16'hABCD"
 
   - name: replicate_nested
     description: Nested replication (replication of replication)
@@ -190,4 +190,4 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xAAAAAA
+        result: "24'hAAAAAA"

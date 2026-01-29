@@ -12,7 +12,7 @@ cases:
       endmodule
     expect:
       variables:
-        a: 0x75bcd15
+        a: "65'h75bcd15"
 
   - name: wide_65_add_no_overflow
     sv: |
@@ -26,7 +26,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x12c
+        c: "65'h12c"
 
   - name: wide_96_basic
     sv: |
@@ -38,7 +38,7 @@ cases:
       endmodule
     expect:
       variables:
-        a: 0x24cb016ea
+        a: "96'h24cb016ea"
 
   - name: wide_128_add
     sv: |
@@ -52,7 +52,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x2ba7def3000
+        c: "128'h2ba7def3000"
 
   - name: wide_128_subtract
     sv: |
@@ -66,7 +66,7 @@ cases:
       endmodule
     expect:
       variables:
-        c: 0x2ba7def3000
+        c: "128'h2ba7def3000"
 
   - name: wide_128_multiply_max
     sv: |
@@ -82,7 +82,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 0xfffffffffffffffe0000000000000001
+        result: "128'hfffffffffffffffe0000000000000001"
 
   - name: wide_128_signed_basic
     sv: |
@@ -94,7 +94,7 @@ cases:
       endmodule
     expect:
       variables:
-        a: 0x3039
+        a: "128'h3039"
 
   - name: wide_200_basic
     sv: |
@@ -106,4 +106,4 @@ cases:
       endmodule
     expect:
       variables:
-        a: 0x2a
+        a: "200'h2a"
