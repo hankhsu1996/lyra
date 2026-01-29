@@ -204,8 +204,22 @@ class Context {
   // Allocas are always inserted in the entry block via alloca_builder_.
   // Key insight: storage is per-root, NOT per-PlaceId. Multiple PlaceIds with
   // the same root (but different projections) share the same storage.
+  // NOTE: This is PURE allocation - no initialization. Call
+  // InitializePlaceStorage explicitly at function entry for default-value
+  // initialization.
   auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       -> Result<llvm::AllocaInst*>;
+
+  // Default value creation per SystemVerilog semantics:
+  // - 2-state types: 0
+  // - 4-state types: X (unknown bits set)
+  // - Real types: 0.0
+  // - Pointer types (string, dynamic array, queue): nullptr
+  auto CreateLlvmDefaultValue(TypeId type_id) -> llvm::Constant*;
+
+  // Initialize an allocated place with its default value.
+  // Must be called at function entry, not at first-use.
+  void InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id);
 
   // FieldIndex accessors (encapsulate map lookups)
   [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;

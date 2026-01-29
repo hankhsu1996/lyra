@@ -7,6 +7,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -643,6 +644,16 @@ auto DefineMonitorCheckThunk(
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
 
+  // Allocate and initialize all collected places at function entry.
+  // INVARIANT: Thunks must follow the same allocate-all + init-all policy as
+  // user functions; no lazy storage creation is allowed. ComputePlacePointer
+  // will throw InternalError if storage is missing.
+  for (const auto& [key, root] : collector.roots) {
+    auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
+    if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
+    context.InitializePlaceStorage(*alloca_or_err, root.type);
+  }
+
   // Find the DisplayEffect from check thunk's MIR body (correct operand
   // context). layout only provides offsets/byte_sizes; format_ops come from the
   // thunk itself.
@@ -1084,11 +1095,25 @@ auto DefineUserFunction(
     return_value_ptr = builder.CreateAlloca(ret_llvm_type, nullptr, "retval");
   }
 
-  // Pre-allocate storage for parameter locals and store arg values.
+  // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
+  // entry. This matches MIR interpreter semantics and ensures deterministic
+  // behavior. Order: 1) allocate all, 2) initialize all, 3) store parameters
+  std::vector<std::pair<llvm::AllocaInst*, TypeId>> all_allocas;
+  for (const auto& [key, root] : collector.roots) {
+    auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
+    if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
+    all_allocas.emplace_back(*alloca_or_err, root.type);
+  }
+
+  // Initialize all locals/temps with default values per SystemVerilog semantics
+  for (const auto& [alloca, type_id] : all_allocas) {
+    context.InitializePlaceStorage(alloca, type_id);
+  }
+
+  // Store argument values into parameter locals (overwriting default init).
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
   // Arguments start at index 2 (after design and engine pointers).
   for (size_t i = 0; i < func.signature.params.size(); ++i) {
-    // Set parameter-specific origin for prologue errors
     common::OriginId param_origin = (i < func.param_origins.size())
                                         ? func.param_origins[i]
                                         : common::OriginId::Invalid();
@@ -1100,12 +1125,10 @@ auto DefineUserFunction(
         .id = static_cast<int>(local_slot)};
     auto it = collector.roots.find(key);
     if (it != collector.roots.end()) {
-      // Create alloca for this parameter local
       auto alloca_or_err = context.GetOrCreatePlaceStorage(it->second);
       if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
       llvm::AllocaInst* alloca = *alloca_or_err;
 
-      // Store argument value into the alloca (offset by 2 for design+engine)
       llvm::Value* arg_val = llvm_func->getArg(static_cast<unsigned>(i + 2));
       arg_val->setName(std::format("arg{}", i));
       builder.CreateStore(arg_val, alloca);

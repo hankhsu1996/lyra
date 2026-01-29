@@ -196,6 +196,8 @@ auto LowerStrobeEffect(
       .temp_types = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+      .return_slot = std::nullopt,
+      .return_type = original_ctx.builtin_types.void_type,
   };
 
   // Create builder for the thunk function
@@ -476,6 +478,8 @@ auto LowerMonitorCheckThunk(
       .temp_types = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+      .return_slot = std::nullopt,
+      .return_type = original_ctx.builtin_types.void_type,
   };
 
   MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
@@ -548,6 +552,8 @@ auto LowerMonitorSetupThunk(
       .temp_types = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+      .return_slot = std::nullopt,
+      .return_type = original_ctx.builtin_types.void_type,
   };
 
   MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
@@ -1543,20 +1549,26 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
                   .kind = mir_kind, .level = data.level, .message = message});
           // After emitting a terminator, subsequent code is unreachable (no-op)
         } else if constexpr (std::is_same_v<T, hir::ReturnStatementData>) {
-          // Purely structural return lowering:
-          // - `return expr;` → Return(value)
-          // - `return;` → Return(nullopt)
-          // Invariants (void vs non-void) are enforced by MIR verifier.
-          // After emitting a terminator, IsReachable() returns false and
-          // subsequent Emit* calls are no-ops.
+          // Single-exit form: all returns branch to exit block.
+          // For non-void: store value to return_slot, then jump.
+          // For void: just jump (no return_slot).
+          Context& ctx = builder.GetContext();
           if (data.value != hir::kInvalidExpressionId) {
             auto value_result = LowerExpression(data.value, builder);
             if (!value_result) {
               result = std::unexpected(value_result.error());
               return;
             }
-            builder.EmitReturn(std::move(*value_result));
+            if (ctx.return_slot.has_value()) {
+              builder.EmitAssign(*ctx.return_slot, std::move(*value_result));
+            }
+          }
+          // Jump to exit block (processes don't use single-exit form)
+          BlockIndex exit_block = builder.GetExitBlock();
+          if (exit_block != kInvalidBlockIndex) {
+            builder.EmitJump(exit_block);
           } else {
+            // Legacy path for processes or thunks without single-exit form
             builder.EmitTerminate(std::nullopt);
           }
         } else if constexpr (std::is_same_v<T, hir::DelayStatementData>) {

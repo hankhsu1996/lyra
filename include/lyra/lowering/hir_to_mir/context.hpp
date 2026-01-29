@@ -105,6 +105,12 @@ struct Context {
   // Caller merges these into the parent element's functions list.
   std::vector<mir::FunctionId>* generated_functions = nullptr;
 
+  // Single-exit form for functions: return_slot holds the return value,
+  // exit_block is the common exit point where return_slot is loaded/returned.
+  // Set by LowerFunctionBody for non-void functions; used by return lowering.
+  std::optional<mir::PlaceId> return_slot;
+  TypeId return_type = kInvalidTypeId;
+
   auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
 

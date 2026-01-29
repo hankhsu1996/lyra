@@ -704,4 +704,12 @@ auto MirBuilder::CurrentLoop() const -> const LoopContext* {
   return loop_stack_.empty() ? nullptr : &loop_stack_.back();
 }
 
+void MirBuilder::SetExitBlock(BlockIndex block) {
+  exit_block_ = block;
+}
+
+auto MirBuilder::GetExitBlock() const -> BlockIndex {
+  return exit_block_;
+}
+
 }  // namespace lyra::lowering::hir_to_mir
