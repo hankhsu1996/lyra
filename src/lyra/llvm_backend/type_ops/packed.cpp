@@ -6,7 +6,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/llvm_backend/type_ops_handlers.hpp"
+#include "lyra/llvm_backend/type_ops/handlers.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 

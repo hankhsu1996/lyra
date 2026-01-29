@@ -2,7 +2,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/llvm_backend/type_ops.hpp"
+#include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 

@@ -24,7 +24,7 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/llvm_backend/type_ops.hpp"
+#include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"

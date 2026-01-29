@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/layout.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 
 #include <algorithm>
 #include <cstddef>

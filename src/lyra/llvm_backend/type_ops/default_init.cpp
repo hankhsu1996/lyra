@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/default_init.hpp"
+#include "lyra/llvm_backend/type_ops/default_init.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/union_storage.hpp"
+#include "lyra/llvm_backend/layout/union_storage.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

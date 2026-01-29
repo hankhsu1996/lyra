@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/type_ops_managed.hpp"
+#include "lyra/llvm_backend/type_ops/managed.hpp"
 
 #include <algorithm>
 
