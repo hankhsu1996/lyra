@@ -1,11 +1,11 @@
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
 #include <cstdint>
-#include <limits>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/timescale_format.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/delay_scaler.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 
@@ -55,28 +55,21 @@ ScopeLowerer::ScopeLowerer(
 }
 
 auto ScopeLowerer::ScaleDelayTicks(uint64_t literal_ticks) const -> uint64_t {
-  int exponent = frame_.unit_power - frame_.global_precision_power;
-
-  if (exponent < 0) {
-    throw common::InternalError(
-        "delay scaling",
-        "negative exponent - global precision coarser than timeunit");
+  DelayScaler scaler(frame_.unit_power, frame_.global_precision_power);
+  auto result = scaler.ScaleInteger(literal_ticks);
+  if (!result) {
+    throw common::InternalError("delay scaling", result.error());
   }
+  return *result;
+}
 
-  if (exponent == 0) {
-    return literal_ticks;
+auto ScopeLowerer::ScaleDelayReal(double value) const -> uint64_t {
+  DelayScaler scaler(frame_.unit_power, frame_.global_precision_power);
+  auto result = scaler.ScaleReal(value);
+  if (!result) {
+    throw common::InternalError("delay scaling", result.error());
   }
-
-  auto multiplier = IntegerPow10(exponent);
-  if (!multiplier) {
-    throw common::InternalError("delay scaling", "multiplier overflow");
-  }
-
-  if (literal_ticks > std::numeric_limits<uint64_t>::max() / *multiplier) {
-    throw common::InternalError("delay scaling", "ticks overflow");
-  }
-
-  return literal_ticks * *multiplier;
+  return *result;
 }
 
 }  // namespace lyra::lowering::ast_to_hir
