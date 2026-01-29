@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), AskUserQuestion
 ---
 
 # Commit
@@ -26,7 +26,7 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ## Pre-commit Checks
 
-Before committing, format ALL files in the codebase (format is fast, so we run it on everything):
+Before committing, format ALL files and run policy checks:
 
 1. **C++ files** - Format all source files:
 
@@ -45,6 +45,17 @@ Before committing, format ALL files in the codebase (format is fast, so we run i
    ```bash
    buildifier -r .
    ```
+
+4. **Exception policy** - Verify exception handling rules:
+
+   ```bash
+   python3 tools/policy/check_exceptions.py --diff-base origin/main
+   ```
+
+   If this fails, fix violations before committing. Key rules:
+   - No `std::runtime_error` in `src/lyra/` - use `InternalError`
+   - No `catch(...)` except in `src/lyra/driver/`
+   - No `assert()` - use `InternalError` for invariants
 
 ## Commit Format
 
@@ -85,7 +96,8 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
 2. Format all files (C++, markdown, Bazel)
-3. Stage files with `git add <files>` (do NOT use `git add -A`)
-4. Run `git commit` as a separate command (do NOT chain with add)
+3. Run exception policy check - fix any violations before proceeding
+4. Stage files with `git add <files>` (do NOT use `git add -A`)
+5. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.
