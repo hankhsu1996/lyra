@@ -1,6 +1,11 @@
 #include "lyra/lowering/ast_to_hir/expression_aggregate.hpp"
 
+#include <cstdint>
 #include <format>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
@@ -10,6 +15,7 @@
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -19,228 +25,295 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerAssignmentPatternExpression(
-    const slang::ast::Expression& expr, ExpressionLoweringView view)
+namespace {
+
+using slang::ast::ExpressionKind;
+
+auto IsPackedContainer(const slang::ast::Type& ct) -> bool {
+  if (ct.kind == slang::ast::SymbolKind::PackedStructType ||
+      ct.kind == slang::ast::SymbolKind::PackedUnionType) {
+    return false;
+  }
+  return ct.isPackedArray() ||
+         (ct.isIntegral() && ct.kind != slang::ast::SymbolKind::ScalarType);
+}
+
+auto IsPackedStruct(const slang::ast::Type& ct) -> bool {
+  return ct.kind == slang::ast::SymbolKind::PackedStructType;
+}
+
+auto GetElements(const slang::ast::Expression& expr)
+    -> std::span<const slang::ast::Expression* const> {
+  if (expr.kind == ExpressionKind::SimpleAssignmentPattern) {
+    return expr.as<slang::ast::SimpleAssignmentPatternExpression>().elements();
+  }
+  return expr.as<slang::ast::StructuredAssignmentPatternExpression>()
+      .elements();
+}
+
+auto LowerElementList(
+    std::span<const slang::ast::Expression* const> elements,
+    ExpressionLoweringView view)
+    -> std::optional<std::vector<hir::ExpressionId>> {
+  std::vector<hir::ExpressionId> result;
+  result.reserve(elements.size());
+  for (const auto* elem : elements) {
+    hir::ExpressionId id = LowerExpression(*elem, view);
+    if (!id) {
+      return std::nullopt;
+    }
+    result.push_back(id);
+  }
+  return result;
+}
+
+auto MakeArrayLiteral(
+    std::vector<hir::ExpressionId> elements, TypeId type, SourceSpan span,
+    Context* ctx) -> hir::ExpressionId {
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kArrayLiteral,
+          .type = type,
+          .span = span,
+          .data = hir::ArrayLiteralExpressionData{
+              .elements = std::move(elements)}});
+}
+
+auto LowerReplicatedAssignmentPattern(
+    const slang::ast::ReplicatedAssignmentPatternExpression& repl,
+    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
     -> hir::ExpressionId {
-  using slang::ast::ExpressionKind;
-
   auto* ctx = view.context;
-  SourceSpan span = ctx->SpanOf(expr.sourceRange);
 
-  // Validate type exists
-  if (expr.type == nullptr) {
-    ctx->sink->Error(span, "assignment pattern has no resolved type");
+  if (!ct.isUnpackedArray()) {
+    ctx->sink->Error(span, "replication pattern not supported for structs");
     return hir::kInvalidExpressionId;
   }
-  const slang::ast::Type& ct = expr.type->getCanonicalType();
 
-  // Handle replication patterns: '{n{val}} -> expand to n copies
-  if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
-    // Only support arrays for now
-    if (!ct.isUnpackedArray()) {
-      ctx->sink->Error(span, "replication pattern not supported for structs");
-      return hir::kInvalidExpressionId;
-    }
-
-    const auto& repl =
-        expr.as<slang::ast::ReplicatedAssignmentPatternExpression>();
-
-    // Get replication count (must be compile-time constant)
-    const auto* count_cv = repl.count().getConstant();
-    if (count_cv == nullptr || !count_cv->isInteger()) {
-      SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
-      ctx->sink->Error(count_span, "variable-count replication not supported");
-      return hir::kInvalidExpressionId;
-    }
-
-    auto count = count_cv->integer().as<int64_t>();
-    if (!count || *count < 0) {
-      SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
-      ctx->sink->Error(count_span, "replication count must be non-negative");
-      return hir::kInvalidExpressionId;
-    }
-
-    // Lower each element once
-    auto elements = repl.elements();
-    std::vector<hir::ExpressionId> lowered_elements;
-    lowered_elements.reserve(elements.size());
-    for (const auto* elem : elements) {
-      hir::ExpressionId id = LowerExpression(*elem, view);
-      if (!id) {
-        return hir::kInvalidExpressionId;
-      }
-      lowered_elements.push_back(id);
-    }
-
-    // Build expanded element list: repeat elements count times
-    std::vector<hir::ExpressionId> element_ids;
-    element_ids.reserve(static_cast<size_t>(*count) * lowered_elements.size());
-    for (int64_t i = 0; i < *count; ++i) {
-      for (hir::ExpressionId id : lowered_elements) {
-        element_ids.push_back(id);
-      }
-    }
-
-    TypeId type = LowerType(*expr.type, span, ctx);
-    if (!type) {
-      return hir::kInvalidExpressionId;
-    }
-
-    return ctx->hir_arena->AddExpression(
-        hir::Expression{
-            .kind = hir::ExpressionKind::kArrayLiteral,
-            .type = type,
-            .span = span,
-            .data = hir::ArrayLiteralExpressionData{
-                .elements = std::move(element_ids)}});
+  const auto* count_cv = repl.count().getConstant();
+  if (count_cv == nullptr || !count_cv->isInteger()) {
+    SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
+    ctx->sink->Error(count_span, "variable-count replication not supported");
+    return hir::kInvalidExpressionId;
   }
 
-  // Helper to get elements from both pattern types
-  auto get_elements = [&]() {
-    if (expr.kind == ExpressionKind::SimpleAssignmentPattern) {
-      return expr.as<slang::ast::SimpleAssignmentPatternExpression>()
-          .elements();
-    }
-    return expr.as<slang::ast::StructuredAssignmentPatternExpression>()
-        .elements();
-  };
+  auto count = count_cv->integer().as<int64_t>();
+  if (!count || *count < 0) {
+    SourceSpan count_span = ctx->SpanOf(repl.count().sourceRange);
+    ctx->sink->Error(count_span, "replication count must be non-negative");
+    return hir::kInvalidExpressionId;
+  }
 
-  // Handle array/queue literals
-  bool is_dynamic = ct.kind == slang::ast::SymbolKind::DynamicArrayType;
-  bool is_queue = ct.isQueue();
-  if (ct.isUnpackedArray() || is_dynamic || is_queue) {
-    auto elements = get_elements();
+  auto lowered = LowerElementList(repl.elements(), view);
+  if (!lowered) {
+    return hir::kInvalidExpressionId;
+  }
 
-    if (expr.kind == ExpressionKind::StructuredAssignmentPattern &&
-        ct.isUnpackedArray() && !is_dynamic && !is_queue) {
-      const auto& structured =
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>();
-      if (structured.defaultSetter != nullptr &&
-          structured.typeSetters.empty()) {
-        const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
-        auto expected_size = arr.range.width();
-        hir::ExpressionId default_id =
-            LowerExpression(*structured.defaultSetter, view);
-        if (!default_id) {
-          return hir::kInvalidExpressionId;
-        }
-
-        std::vector<hir::ExpressionId> element_ids(expected_size, default_id);
-        for (const auto& setter : structured.indexSetters) {
-          SourceSpan index_span = ctx->SpanOf(setter.index->sourceRange);
-          const auto* index_cv = setter.index->getConstant();
-          if (index_cv == nullptr || !index_cv->isInteger()) {
-            ctx->sink->Error(
-                index_span,
-                "array index in assignment pattern must be constant");
-            return hir::kInvalidExpressionId;
-          }
-          const auto& sv_int = index_cv->integer();
-          if (sv_int.hasUnknown()) {
-            ctx->sink->Error(
-                index_span,
-                "array index in assignment pattern has unknown bits");
-            return hir::kInvalidExpressionId;
-          }
-          auto maybe_index = sv_int.as<int32_t>();
-          if (!maybe_index) {
-            ctx->sink->Error(
-                index_span, "array index in assignment pattern out of range");
-            return hir::kInvalidExpressionId;
-          }
-          int32_t index_value = *maybe_index;
-          if (!arr.range.containsPoint(index_value)) {
-            ctx->sink->Error(
-                index_span, "array index in assignment pattern out of range");
-            return hir::kInvalidExpressionId;
-          }
-          int32_t translated = arr.range.translateIndex(index_value);
-          if (translated < 0 ||
-              static_cast<size_t>(translated) >= element_ids.size()) {
-            ctx->sink->Error(
-                index_span, "array index in assignment pattern out of range");
-            return hir::kInvalidExpressionId;
-          }
-
-          hir::ExpressionId value_id = LowerExpression(*setter.expr, view);
-          if (!value_id) {
-            return hir::kInvalidExpressionId;
-          }
-          element_ids[static_cast<size_t>(translated)] = value_id;
-        }
-
-        TypeId type = LowerType(*expr.type, span, ctx);
-        if (!type) {
-          return hir::kInvalidExpressionId;
-        }
-        return ctx->hir_arena->AddExpression(
-            hir::Expression{
-                .kind = hir::ExpressionKind::kArrayLiteral,
-                .type = type,
-                .span = span,
-                .data = hir::ArrayLiteralExpressionData{
-                    .elements = std::move(element_ids)}});
-      }
-    }
-
-    // For fixed unpacked arrays: validate size matches
-    if (ct.isUnpackedArray() && !is_dynamic && !is_queue) {
-      const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
-      auto expected_size = arr.range.width();
-      if (elements.size() != expected_size) {
-        ctx->sink->Error(span, "array literal size mismatch");
-        return hir::kInvalidExpressionId;
-      }
-    }
-
-    // Lower elements
-    std::vector<hir::ExpressionId> element_ids;
-    element_ids.reserve(elements.size());
-    for (const auto* elem : elements) {
-      hir::ExpressionId id = LowerExpression(*elem, view);
-      if (!id) {
-        return hir::kInvalidExpressionId;
-      }
+  std::vector<hir::ExpressionId> element_ids;
+  element_ids.reserve(static_cast<size_t>(*count) * lowered->size());
+  for (int64_t i = 0; i < *count; ++i) {
+    for (hir::ExpressionId id : *lowered) {
       element_ids.push_back(id);
     }
-
-    TypeId type = LowerType(*expr.type, span, ctx);
-    if (!type) {
-      return hir::kInvalidExpressionId;
-    }
-
-    return ctx->hir_arena->AddExpression(
-        hir::Expression{
-            .kind = hir::ExpressionKind::kArrayLiteral,
-            .type = type,
-            .span = span,
-            .data = hir::ArrayLiteralExpressionData{
-                .elements = std::move(element_ids)}});
   }
 
-  // Handle struct literals (packed and unpacked)
-  bool is_unpacked_struct = ct.isUnpackedStruct();
-  bool is_packed_struct = ct.kind == slang::ast::SymbolKind::PackedStructType;
-  if (!is_unpacked_struct && !is_packed_struct) {
-    ctx->sink->Error(span, "assignment pattern requires struct type");
+  TypeId type = LowerType(*repl.type, span, ctx);
+  if (!type) {
     return hir::kInvalidExpressionId;
   }
 
-  auto elements = get_elements();
+  return MakeArrayLiteral(std::move(element_ids), type, span, ctx);
+}
 
-  // Gate: full literal only (all fields must be specified)
-  // slang validates this and elements() returns fields in declaration order
-  size_t field_count = 0;
-  if (is_unpacked_struct) {
-    field_count = ct.as<slang::ast::UnpackedStructType>().fields.size();
-  } else {
-    // Packed struct - count fields via Scope interface
-    for ([[maybe_unused]] const auto& _ :
-         ct.as<slang::ast::PackedStructType>()
-             .membersOfType<slang::ast::FieldSymbol>()) {
-      ++field_count;
+auto LowerUnpackedArrayWithSetters(
+    const slang::ast::StructuredAssignmentPatternExpression& structured,
+    const slang::ast::FixedSizeUnpackedArrayType& arr, SourceSpan span,
+    ExpressionLoweringView view) -> hir::ExpressionId {
+  auto* ctx = view.context;
+
+  hir::ExpressionId default_id =
+      LowerExpression(*structured.defaultSetter, view);
+  if (!default_id) {
+    return hir::kInvalidExpressionId;
+  }
+
+  auto expected_size = arr.range.width();
+  std::vector<hir::ExpressionId> element_ids(expected_size, default_id);
+
+  for (const auto& setter : structured.indexSetters) {
+    SourceSpan index_span = ctx->SpanOf(setter.index->sourceRange);
+    const auto* index_cv = setter.index->getConstant();
+    if (index_cv == nullptr || !index_cv->isInteger()) {
+      ctx->sink->Error(
+          index_span, "array index in assignment pattern must be constant");
+      return hir::kInvalidExpressionId;
+    }
+
+    const auto& sv_int = index_cv->integer();
+    if (sv_int.hasUnknown()) {
+      ctx->sink->Error(
+          index_span, "array index in assignment pattern has unknown bits");
+      return hir::kInvalidExpressionId;
+    }
+
+    auto maybe_index = sv_int.as<int32_t>();
+    if (!maybe_index) {
+      ctx->sink->Error(
+          index_span, "array index in assignment pattern out of range");
+      return hir::kInvalidExpressionId;
+    }
+
+    int32_t index_value = *maybe_index;
+    if (!arr.range.containsPoint(index_value)) {
+      ctx->sink->Error(
+          index_span, "array index in assignment pattern out of range");
+      return hir::kInvalidExpressionId;
+    }
+
+    int32_t translated = arr.range.translateIndex(index_value);
+    if (translated < 0 ||
+        static_cast<size_t>(translated) >= element_ids.size()) {
+      ctx->sink->Error(
+          index_span, "array index in assignment pattern out of range");
+      return hir::kInvalidExpressionId;
+    }
+
+    hir::ExpressionId value_id = LowerExpression(*setter.expr, view);
+    if (!value_id) {
+      return hir::kInvalidExpressionId;
+    }
+    element_ids[static_cast<size_t>(translated)] = value_id;
+  }
+
+  TypeId type = LowerType(*structured.type, span, ctx);
+  if (!type) {
+    return hir::kInvalidExpressionId;
+  }
+
+  return MakeArrayLiteral(std::move(element_ids), type, span, ctx);
+}
+
+auto LowerSimpleArrayLiteral(
+    std::span<const slang::ast::Expression* const> elements,
+    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
+
+  bool is_dynamic = ct.kind == slang::ast::SymbolKind::DynamicArrayType;
+  bool is_queue = ct.isQueue();
+
+  if (ct.isUnpackedArray() && !is_dynamic && !is_queue) {
+    const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
+    auto expected_size = arr.range.width();
+    if (elements.size() != expected_size) {
+      ctx->sink->Error(span, "array literal size mismatch");
+      return hir::kInvalidExpressionId;
     }
   }
+
+  auto lowered = LowerElementList(elements, view);
+  if (!lowered) {
+    return hir::kInvalidExpressionId;
+  }
+
+  TypeId type = LowerType(ct, span, ctx);
+  if (!type) {
+    return hir::kInvalidExpressionId;
+  }
+
+  return MakeArrayLiteral(std::move(*lowered), type, span, ctx);
+}
+
+auto LowerPackedDefaultPattern(
+    const slang::ast::StructuredAssignmentPatternExpression& structured,
+    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
+
+  if (!structured.indexSetters.empty() || !structured.typeSetters.empty()) {
+    ctx->sink->Error(
+        span,
+        "packed assignment pattern with index/type setters not supported");
+    return hir::kInvalidExpressionId;
+  }
+  if (structured.defaultSetter == nullptr) {
+    ctx->sink->Error(span, "packed assignment pattern requires default setter");
+    return hir::kInvalidExpressionId;
+  }
+
+  const auto& setter_type = *structured.defaultSetter->type;
+  if (!setter_type.isIntegral() || setter_type.getBitWidth() != 1) {
+    ctx->sink->Error(
+        span, "packed default pattern currently only supports 1-bit values");
+    return hir::kInvalidExpressionId;
+  }
+
+  // Behavior chosen to match slang+Verilator for 1-bit default values:
+  // Fill packed container at the bit level by replicating a 1-bit element
+  // across the total bit width.
+  TypeId elem_type = ctx->type_arena->Intern(
+      TypeKind::kIntegral, IntegralInfo{
+                               .bit_width = 1,
+                               .is_signed = false,
+                               .is_four_state = ct.isFourState()});
+  size_t count = ct.getBitWidth();
+
+  if (!elem_type) {
+    return hir::kInvalidExpressionId;
+  }
+  if (count == 0) {
+    throw common::InternalError(
+        "LowerPackedDefaultPattern", "packed container has zero bits");
+  }
+
+  hir::ExpressionId default_id =
+      LowerExpression(*structured.defaultSetter, view);
+  if (!default_id) {
+    return hir::kInvalidExpressionId;
+  }
+
+  hir::ExpressionId casted_id = ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kCast,
+          .type = elem_type,
+          .span = span,
+          .data = hir::CastExpressionData{.operand = default_id}});
+
+  std::vector<hir::ExpressionId> operands(count, casted_id);
+
+  TypeId result_type = LowerType(*structured.type, span, ctx);
+  if (!result_type) {
+    return hir::kInvalidExpressionId;
+  }
+
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kConcat,
+          .type = result_type,
+          .span = span,
+          .data = hir::ConcatExpressionData{.operands = std::move(operands)}});
+}
+
+auto GetStructFieldCount(const slang::ast::Type& ct) -> size_t {
+  if (ct.isUnpackedStruct()) {
+    return ct.as<slang::ast::UnpackedStructType>().fields.size();
+  }
+  size_t count = 0;
+  for ([[maybe_unused]] const auto& _ :
+       ct.as<slang::ast::PackedStructType>()
+           .membersOfType<slang::ast::FieldSymbol>()) {
+    ++count;
+  }
+  return count;
+}
+
+auto LowerStructLiteral(
+    std::span<const slang::ast::Expression* const> elements,
+    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
+
+  size_t field_count = GetStructFieldCount(ct);
   if (elements.size() != field_count) {
     ctx->sink->Error(
         span, std::format(
@@ -250,18 +323,12 @@ auto LowerAssignmentPatternExpression(
     return hir::kInvalidExpressionId;
   }
 
-  // Lower field values
-  std::vector<hir::ExpressionId> field_values;
-  field_values.reserve(elements.size());
-  for (const auto* elem : elements) {
-    hir::ExpressionId field_id = LowerExpression(*elem, view);
-    if (!field_id) {
-      return hir::kInvalidExpressionId;
-    }
-    field_values.push_back(field_id);
+  auto lowered = LowerElementList(elements, view);
+  if (!lowered) {
+    return hir::kInvalidExpressionId;
   }
 
-  TypeId type = LowerType(*expr.type, span, ctx);
+  TypeId type = LowerType(ct, span, ctx);
   if (!type) {
     return hir::kInvalidExpressionId;
   }
@@ -272,14 +339,73 @@ auto LowerAssignmentPatternExpression(
           .type = type,
           .span = span,
           .data = hir::StructLiteralExpressionData{
-              .field_values = std::move(field_values)}});
+              .field_values = std::move(*lowered)}});
+}
+
+auto LowerArrayAssignmentPattern(
+    const slang::ast::Expression& expr, const slang::ast::Type& ct,
+    SourceSpan span, ExpressionLoweringView view) -> hir::ExpressionId {
+  bool is_dynamic = ct.kind == slang::ast::SymbolKind::DynamicArrayType;
+  bool is_queue = ct.isQueue();
+  bool is_fixed = ct.isUnpackedArray() && !is_dynamic && !is_queue;
+
+  // Handle structured pattern with default+index setters on fixed arrays
+  if (expr.kind == ExpressionKind::StructuredAssignmentPattern && is_fixed) {
+    const auto& structured =
+        expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+    if (structured.defaultSetter != nullptr && structured.typeSetters.empty()) {
+      const auto& arr = ct.as<slang::ast::FixedSizeUnpackedArrayType>();
+      return LowerUnpackedArrayWithSetters(structured, arr, span, view);
+    }
+  }
+
+  return LowerSimpleArrayLiteral(GetElements(expr), ct, span, view);
+}
+
+}  // namespace
+
+auto LowerAssignmentPatternExpression(
+    const slang::ast::Expression& expr, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
+  SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+  if (expr.type == nullptr) {
+    ctx->sink->Error(span, "assignment pattern has no resolved type");
+    return hir::kInvalidExpressionId;
+  }
+  const slang::ast::Type& ct = expr.type->getCanonicalType();
+
+  // Dispatch by expression kind and target type
+  if (expr.kind == ExpressionKind::ReplicatedAssignmentPattern) {
+    const auto& repl =
+        expr.as<slang::ast::ReplicatedAssignmentPatternExpression>();
+    return LowerReplicatedAssignmentPattern(repl, ct, span, view);
+  }
+
+  bool is_dynamic = ct.kind == slang::ast::SymbolKind::DynamicArrayType;
+  if (ct.isUnpackedArray() || is_dynamic || ct.isQueue()) {
+    return LowerArrayAssignmentPattern(expr, ct, span, view);
+  }
+
+  if (IsPackedContainer(ct) &&
+      expr.kind == ExpressionKind::StructuredAssignmentPattern) {
+    const auto& structured =
+        expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+    return LowerPackedDefaultPattern(structured, ct, span, view);
+  }
+
+  if (ct.isUnpackedStruct() || IsPackedStruct(ct)) {
+    return LowerStructLiteral(GetElements(expr), ct, span, view);
+  }
+
+  ctx->sink->Error(span, "assignment pattern requires struct type");
+  return hir::kInvalidExpressionId;
 }
 
 auto LowerReplicationExpression(
     const slang::ast::Expression& expr, ExpressionLoweringView view)
     -> hir::ExpressionId {
-  using slang::ast::ExpressionKind;
-
   auto* ctx = view.context;
   const auto& repl = expr.as<slang::ast::ReplicationExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
@@ -325,8 +451,6 @@ auto LowerReplicationExpression(
 auto LowerConcatenationExpression(
     const slang::ast::Expression& expr, ExpressionLoweringView view)
     -> hir::ExpressionId {
-  using slang::ast::ExpressionKind;
-
   auto* ctx = view.context;
   const auto& concat = expr.as<slang::ast::ConcatenationExpression>();
   SourceSpan span = ctx->SpanOf(expr.sourceRange);
