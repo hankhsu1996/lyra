@@ -24,6 +24,7 @@ Not yet supported:
 - `class` types
 - Dynamic arrays: `new` copy constructor (`new[size](source)`) preserves size but not contents
 - Associative arrays
+- LLVM backend: default initialization of unpacked aggregates containing 4-state fields fails with `InternalError` (search: `CreateLlvmDefaultValue`)
 
 ## Nets
 

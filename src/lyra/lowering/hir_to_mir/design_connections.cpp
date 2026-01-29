@@ -41,6 +41,8 @@ auto MakeDesignContext(
       .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = &decls.functions,
+      .return_slot = std::nullopt,
+      .return_type = input.builtin_types.void_type,
   };
 }
 

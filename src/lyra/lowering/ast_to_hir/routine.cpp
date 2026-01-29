@@ -116,9 +116,19 @@ auto LowerFunction(
   }
 
   std::vector<SymbolId> parameters;
+  std::optional<SymbolId> return_var;
   std::optional<hir::StatementId> body_result;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kFunction);
+
+    // Register return variable for non-void functions BEFORE lowering body
+    // so name lookup works for return-by-name assignment (e.g., `foo = 1;`).
+    // slang provides returnValVar for non-void functions.
+    if (!ret_type.isVoid() && func.returnValVar != nullptr) {
+      return_var = registrar.Register(
+          *func.returnValVar, SymbolKind::kVariable, return_type,
+          StorageClass::kLocalStorage);
+    }
 
     for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
       TypeId arg_type = LowerType(arg->getType(), span, ctx);
@@ -155,6 +165,7 @@ auto LowerFunction(
           .return_type = return_type,
           .parameters = std::move(parameters),
           .body = body,
+          .return_var = return_var,
       });
 }
 

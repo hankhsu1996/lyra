@@ -53,10 +53,14 @@ auto LowerFunctionBody(
       .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
+      .return_slot = std::nullopt,
+      .return_type = function.return_type,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);
   BlockIndex entry_idx = builder.CreateBlock();
+  BlockIndex exit_idx = builder.CreateBlock();
+  builder.SetExitBlock(exit_idx);
   builder.SetCurrentBlock(entry_idx);
 
   // Allocate parameters as locals and record their slot indices
@@ -68,14 +72,32 @@ auto LowerFunctionBody(
     param_local_slots.push_back(alloc.local_slot);
   }
 
+  // For non-void functions, allocate return_slot (the implicit return
+  // variable). This must be done AFTER parameters since HIR return_var is
+  // already registered as a local with the function name in scope.
+  if (function.return_var.has_value()) {
+    auto alloc = ctx.AllocLocal(*function.return_var, function.return_type);
+    ctx.return_slot = alloc.place;
+  }
+
   // Lower function body
   Result<void> stmt_result = LowerStatement(function.body, builder);
   if (!stmt_result) {
     return std::unexpected(stmt_result.error());
   }
 
-  // Handle implicit return for void functions (non-void throws InternalError)
-  builder.EmitImplicitReturn(function.return_type);
+  // If body falls through, branch to exit
+  if (builder.IsReachable()) {
+    builder.EmitJump(exit_idx);
+  }
+
+  // Emit exit block: load from return_slot and return, or void return
+  builder.SetCurrentBlock(exit_idx);
+  if (ctx.return_slot.has_value()) {
+    builder.EmitReturn(mir::Operand::Use(*ctx.return_slot));
+  } else {
+    builder.EmitTerminate(std::nullopt);
+  }
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
 

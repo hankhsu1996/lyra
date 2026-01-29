@@ -170,3 +170,139 @@ cases:
       variables:
         global_counter: 11
         result: 11
+
+  - name: function_return_by_name
+    sv: |
+      module Test;
+        int result;
+
+        function int foo();
+          foo = 42;
+        endfunction
+
+        initial begin
+          result = foo();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: function_return_by_name_mixed
+    sv: |
+      module Test;
+        int result;
+
+        function int bar(int x);
+          if (x > 0)
+            return x;
+          else
+            bar = -x;
+        endfunction
+
+        initial begin
+          result = bar(5) + bar(-3);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+
+  - name: function_return_by_name_readback
+    sv: |
+      module Test;
+        int result;
+
+        function int baz();
+          baz = 3;
+          baz = baz + 1;
+        endfunction
+
+        initial begin
+          result = baz();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4
+
+  - name: function_return_by_name_recursive
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int factorial(int n);
+          if (n <= 1)
+            factorial = 1;
+          else
+            factorial = n * factorial(n - 1);
+        endfunction
+
+        initial begin
+          result = factorial(5);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 120
+
+  - name: function_implicit_default_return
+    sv: |
+      module Test;
+        int result;
+
+        // Function with no assignment and no return - should return default (0)
+        function int no_assignment();
+          // empty body
+        endfunction
+
+        initial begin
+          result = no_assignment();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: function_uninitialized_local_default
+    sv: |
+      module Test;
+        int result;
+
+        // Uninitialized local should have default value (0 for int)
+        function int uninit_local();
+          int local_var;
+          return local_var;
+        endfunction
+
+        initial begin
+          result = uninit_local();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: function_uninitialized_4state_local_default
+    description: Uninitialized 4-state local should be X (not 0)
+    sv: |
+      module Test;
+        int result;
+
+        // Uninitialized 4-state local (logic) should be X
+        // Use case equality to test: if x === 4'bxxxx, return 1
+        function automatic int f();
+          logic [3:0] x;
+          if (x === 4'bxxxx)
+            f = 1;
+          else
+            f = 0;
+        endfunction
+
+        initial begin
+          result = f();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

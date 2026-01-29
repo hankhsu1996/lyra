@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "lyra/common/source_span.hpp"
@@ -30,6 +31,8 @@ struct Function {
   TypeId return_type;
   std::vector<SymbolId> parameters;
   StatementId body;
+  // Implicit local variable for return-by-name assignment (absent for void)
+  std::optional<SymbolId> return_var;
 };
 
 struct Task {

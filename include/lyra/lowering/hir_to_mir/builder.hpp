@@ -181,6 +181,10 @@ class MirBuilder {
   void PopLoop();
   [[nodiscard]] auto CurrentLoop() const -> const LoopContext*;
 
+  // Single-exit form for functions: set exit block for return lowering.
+  void SetExitBlock(BlockIndex block);
+  [[nodiscard]] auto GetExitBlock() const -> BlockIndex;
+
   // Origin tracking for error reporting.
   // SetCurrentHirSource sets the HIR source for subsequent instructions/
   // terminators. Recording happens at emit time with proper MIR references.
@@ -200,11 +204,12 @@ class MirBuilder {
   // Used by lvalue lowering to attach origins to projections.
   auto RecordProjectionOrigin(hir::ExpressionId expr_id) -> common::OriginId;
 
- private:
   // Returns true if there is a valid insertion point (current block exists
-  // and has no terminator yet). Used internally by control flow primitives.
+  // and has no terminator yet). Used for fallthrough detection and control
+  // flow decisions.
   [[nodiscard]] auto IsReachable() const -> bool;
 
+ private:
   // Clear the insertion point, making subsequent emissions no-ops.
   // Used structurally when all branches of a control flow construct terminate.
   void ClearInsertionPoint();
@@ -240,6 +245,7 @@ class MirBuilder {
   std::optional<InstructionHirSource>
       current_hir_source_;  // For deferred recording
   bool finished_ = false;
+  BlockIndex exit_block_ = kInvalidBlockIndex;  // Single-exit form
 };
 
 }  // namespace lyra::lowering::hir_to_mir
