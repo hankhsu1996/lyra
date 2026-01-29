@@ -38,6 +38,27 @@ auto IsSignedIntegral(const TypeArena& types, TypeId type_id) -> bool {
   return IsPackedSigned(type, types);
 }
 
+// Sign-extend from semantic bit width (not storage width).
+// For a signed N-bit value stored in M-bit storage (M >= N), the sign bit is at
+// position N-1, not M-1. This function sign-extends from the semantic width.
+auto SignExtendFromSemanticWidth(
+    llvm::IRBuilderBase& builder, llvm::Value* val, llvm::Type* dst_type,
+    uint32_t semantic_bits) -> llvm::Value* {
+  auto dst_bits = dst_type->getIntegerBitWidth();
+  // First zero-extend to target width
+  llvm::Value* extended = builder.CreateZExtOrTrunc(val, dst_type);
+  if (semantic_bits == 0 || semantic_bits >= dst_bits) {
+    // No sign extension needed
+    return extended;
+  }
+  // Shift left to put sign bit at MSB, then arithmetic shift right to replicate
+  uint32_t shift_amount = dst_bits - semantic_bits;
+  auto* shift_const = llvm::ConstantInt::get(dst_type, shift_amount);
+  llvm::Value* shifted_left = builder.CreateShl(extended, shift_const);
+  return builder.CreateAShr(shifted_left, shift_const);
+}
+
+// Extend or truncate using storage-width signedness (legacy helper).
 auto ExtOrTrunc(
     llvm::IRBuilderBase& builder, llvm::Value* val, llvm::Type* dst_type,
     bool is_signed) -> llvm::Value* {
@@ -47,6 +68,46 @@ auto ExtOrTrunc(
   return builder.CreateZExtOrTrunc(val, dst_type, "cast.zext");
 }
 
+// Extend or truncate a value to destination type.
+// For signed values, uses semantic_bits to determine the sign bit position.
+// If semantic_bits is 0, falls back to storage-width sign extension.
+auto ExtOrTruncSemantic(
+    llvm::IRBuilderBase& builder, llvm::Value* val, llvm::Type* dst_type,
+    bool is_signed, uint32_t semantic_bits) -> llvm::Value* {
+  if (is_signed && semantic_bits > 0) {
+    return SignExtendFromSemanticWidth(builder, val, dst_type, semantic_bits);
+  }
+  if (is_signed) {
+    return builder.CreateSExtOrTrunc(val, dst_type, "cast.sext");
+  }
+  return builder.CreateZExtOrTrunc(val, dst_type, "cast.zext");
+}
+
+// Resize 4-state planes to target element type.
+// INVARIANT: Value plane uses source signedness from semantic width;
+// unknown plane ALWAYS zero-extends (it's a mask, signedness doesn't apply).
+auto ResizeFourStatePlanes(
+    llvm::IRBuilderBase& builder, FourStateValue fs, llvm::Type* dst_type,
+    bool is_signed, uint32_t source_semantic_bits) -> FourStateValue {
+  llvm::Value* val =
+      is_signed ? SignExtendFromSemanticWidth(
+                      builder, fs.value, dst_type, source_semantic_bits)
+                : builder.CreateZExtOrTrunc(fs.value, dst_type);
+  // Unknown plane: ALWAYS zero-extend (mask semantics, never sign-extend)
+  llvm::Value* unk = builder.CreateZExtOrTrunc(fs.unknown, dst_type);
+  return FourStateValue{.value = val, .unknown = unk};
+}
+
+// Get the semantic bit width of a packed type.
+// Returns 0 for non-packed types (e.g., real/shortreal).
+auto GetSemanticBitWidth(const TypeArena& types, TypeId type_id) -> uint32_t {
+  const Type& type = types[type_id];
+  if (!IsPacked(type)) {
+    return 0;
+  }
+  return PackedBitWidth(type, types);
+}
+
 // Get the semantic bit width of a packed target place.
 // Returns 0 for non-packed types (e.g., real/shortreal).
 auto GetTargetBitWidth(Context& context, mir::PlaceId target) -> uint32_t {
@@ -54,18 +115,12 @@ auto GetTargetBitWidth(Context& context, mir::PlaceId target) -> uint32_t {
   const auto& types = context.GetTypeArena();
   const auto& place = arena[target];
   TypeId type_id = mir::TypeOfPlace(types, place);
-  const Type& type = types[type_id];
-
-  if (!IsPacked(type)) {
-    return 0;
-  }
-  return PackedBitWidth(type, types);
+  return GetSemanticBitWidth(types, type_id);
 }
 
-// Load a 4-state operand, returning FourStateValue with planes adjusted to
-// target element type.
-auto LoadFourStateOperand(
-    Context& context, const mir::Operand& operand, llvm::Type* elem_type)
+// Load a 4-state operand at its natural width (no resizing).
+// Returns FourStateValue with planes at source storage width.
+auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
     -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
@@ -87,21 +142,14 @@ auto LoadFourStateOperand(
   if (is_four_state) {
     auto loaded_or_err = LowerOperandRaw(context, operand);
     if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
-    llvm::Value* loaded = *loaded_or_err;
-    auto fs = ExtractFourState(builder, loaded);
-    return FourStateValue{
-        .value = builder.CreateZExtOrTrunc(fs.value, elem_type, "cast4.val"),
-        .unknown =
-            builder.CreateZExtOrTrunc(fs.unknown, elem_type, "cast4.unk"),
-    };
+    return ExtractFourState(builder, *loaded_or_err);
   }
 
-  // 2-state operand -> extend to 4-state element type, unknown = 0
+  // 2-state operand -> wrap as 4-state (unknown = 0, no resize)
   auto loaded_val_or_err = LowerOperand(context, operand);
   if (!loaded_val_or_err) return std::unexpected(loaded_val_or_err.error());
-  llvm::Value* loaded_val = *loaded_val_or_err;
-  auto* val = builder.CreateZExtOrTrunc(loaded_val, elem_type, "cast2to4.val");
-  auto* unk = llvm::ConstantInt::get(elem_type, 0);
+  llvm::Value* val = *loaded_val_or_err;
+  auto* unk = llvm::ConstantInt::get(val->getType(), 0);
   return FourStateValue{.value = val, .unknown = unk};
 }
 
@@ -188,8 +236,11 @@ auto LowerCast4sTo2s(
   if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
   llvm::Type* target_type = *target_type_or_err;
 
+  // Use source semantic width for sign extension
   bool is_signed = IsSignedIntegral(types, info.source_type);
-  llvm::Value* result = ExtOrTrunc(builder, fs.value, target_type, is_signed);
+  uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
+  llvm::Value* result = ExtOrTruncSemantic(
+      builder, fs.value, target_type, is_signed, source_bits);
 
   // Apply width mask to handle semantic width < storage width
   uint32_t bit_width = GetTargetBitWidth(context, target);
@@ -205,9 +256,10 @@ auto LowerCast4sTo2s(
 
 // Cast 4-state int -> 4-state int
 auto LowerCast4sTo4s(
-    Context& context, const mir::CastRvalueInfo& /*info*/,
+    Context& context, const mir::CastRvalueInfo& info,
     const mir::Operand& source_operand, mir::PlaceId target) -> Result<void> {
   auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
 
   auto storage_type_or_err = context.GetPlaceLlvmType(target);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
@@ -216,9 +268,15 @@ auto LowerCast4sTo4s(
   auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
   auto* elem_type = GetFourStateElemIntType(struct_type);
 
-  auto fs_or_err = LoadFourStateOperand(context, source_operand, elem_type);
+  // Load at natural width
+  auto fs_or_err = LoadFourStateOperand(context, source_operand);
   if (!fs_or_err) return std::unexpected(fs_or_err.error());
   auto fs = *fs_or_err;
+
+  // Resize to target element type using SOURCE signedness and semantic width
+  bool is_signed = IsSignedIntegral(types, info.source_type);
+  uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
+  fs = ResizeFourStatePlanes(builder, fs, elem_type, is_signed, source_bits);
 
   // Apply width mask to both planes
   uint32_t bit_width = GetTargetBitWidth(context, target);
