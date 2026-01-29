@@ -210,15 +210,10 @@ class Context {
   auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       -> Result<llvm::AllocaInst*>;
 
-  // Default value creation per SystemVerilog semantics:
-  // - 2-state types: 0
-  // - 4-state types: X (unknown bits set)
-  // - Real types: 0.0
-  // - Pointer types (string, dynamic array, queue): nullptr
-  auto CreateLlvmDefaultValue(TypeId type_id) -> llvm::Constant*;
-
   // Initialize an allocated place with its default value.
   // Must be called at function entry, not at first-use.
+  // Uses EmitSVDefaultInit which handles all types including unpacked
+  // aggregates with 4-state fields.
   void InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id);
 
   // FieldIndex accessors (encapsulate map lookups)

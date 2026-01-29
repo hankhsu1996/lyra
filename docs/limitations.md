@@ -19,12 +19,10 @@ Supported:
 
 Not yet supported:
 
-- `struct` (packed and unpacked)
-- `union` (packed and unpacked)
 - `class` types
 - Dynamic arrays: `new` copy constructor (`new[size](source)`) preserves size but not contents
 - Associative arrays
-- LLVM backend: default initialization of unpacked aggregates containing 4-state fields fails with `InternalError` (search: `CreateLlvmDefaultValue`)
+- Unpacked unions with 4-state fields: default initialization uses zero-fill instead of X encoding
 
 ## Nets
 

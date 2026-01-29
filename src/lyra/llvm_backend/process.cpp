@@ -19,6 +19,7 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
+#include <llvm/Support/Alignment.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -541,6 +542,55 @@ struct PlaceCollector {
     }
   }
 
+  // Collect places from an effect operation.
+  // Each effect type has different operand/place fields - this centralizes
+  // the handling to make coverage auditable.
+  void CollectFromEffect(
+      const mir::EffectOp& effect_op, const mir::Arena& arena) {
+    std::visit(
+        [&](const auto& eff) {
+          using E = std::decay_t<decltype(eff)>;
+
+          if constexpr (std::is_same_v<E, mir::DisplayEffect>) {
+            for (const auto& fop : eff.ops) {
+              if (fop.value.has_value()) {
+                CollectFromOperand(*fop.value, arena);
+              }
+            }
+            if (eff.descriptor.has_value()) {
+              CollectFromOperand(*eff.descriptor, arena);
+            }
+          } else if constexpr (std::is_same_v<E, mir::SeverityEffect>) {
+            for (const auto& fop : eff.ops) {
+              if (fop.value.has_value()) {
+                CollectFromOperand(*fop.value, arena);
+              }
+            }
+          } else if constexpr (std::is_same_v<E, mir::MonitorEffect>) {
+            for (const auto& fop : eff.format_ops) {
+              if (fop.value.has_value()) {
+                CollectFromOperand(*fop.value, arena);
+              }
+            }
+          } else if constexpr (std::is_same_v<E, mir::MemIOEffect>) {
+            CollectFromPlace(eff.target, arena);
+            CollectFromOperand(eff.filename, arena);
+            if (eff.start_addr.has_value()) {
+              CollectFromOperand(*eff.start_addr, arena);
+            }
+            if (eff.end_addr.has_value()) {
+              CollectFromOperand(*eff.end_addr, arena);
+            }
+          } else if constexpr (std::is_same_v<E, mir::SystemTfEffect>) {
+            for (const auto& op : eff.args) {
+              CollectFromOperand(op, arena);
+            }
+          }
+          // StrobeEffect, TimeFormatEffect, MonitorControlEffect: no operands
+        },
+        effect_op);
+  }
+
   void CollectFromFunction(const mir::Function& func, const mir::Arena& arena) {
     for (const auto& block : func.blocks) {
       for (const auto& inst : block.instructions) {
@@ -560,16 +610,7 @@ struct PlaceCollector {
                 CollectFromOperand(data.source, arena);
                 CollectFromOperand(data.validity, arena);
               } else if constexpr (std::is_same_v<T, mir::Effect>) {
-                // Effects may have operands too
-                std::visit(
-                    [&](const auto& eff) {
-                      if constexpr (requires { eff.operands; }) {
-                        for (const auto& eop : eff.operands) {
-                          CollectFromOperand(eop, arena);
-                        }
-                      }
-                    },
-                    data.op);
+                CollectFromEffect(data.op, arena);
               } else if constexpr (std::is_same_v<T, mir::NonBlockingAssign>) {
                 CollectFromPlace(data.target, arena);
                 CollectFromOperand(data.source, arena);
@@ -582,12 +623,15 @@ struct PlaceCollector {
           [&](const auto& term) {
             using T = std::decay_t<decltype(term)>;
             if constexpr (std::is_same_v<T, mir::Branch>) {
+              // Branch::condition is PlaceId
               CollectFromPlace(term.condition, arena);
             } else if constexpr (std::is_same_v<T, mir::Return>) {
+              // Return::value is optional<Operand>
               if (term.value.has_value()) {
                 CollectFromOperand(*term.value, arena);
               }
             } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
+              // QualifiedDispatch::conditions is vector<PlaceId>
               for (auto cond : term.conditions) {
                 CollectFromPlace(cond, arena);
               }
@@ -1006,10 +1050,8 @@ auto EmitMonitorSetupEpilogue(
       } else if (val_type->isDoubleTy()) {
         store_val =
             builder.CreateBitCast(value, llvm::Type::getInt64Ty(llvm_ctx));
-        store_ty = llvm::Type::getInt64Ty(llvm_ctx);
       } else if (val_type->isFloatTy()) {
         store_val = builder.CreateBitCast(value, i32_ty);
-        store_ty = i32_ty;
       }
       // Use explicit alignment=1 (safe for any byte size, perf not critical)
       builder.CreateAlignedStore(store_val, buf_ptr, llvm::Align(1));
