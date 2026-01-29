@@ -21,8 +21,9 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/default_init.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/effect.hpp"
@@ -33,23 +34,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-// Store X-encoded value ({value=0, unknown=semantic_mask}) to a 4-state pointer
-void StoreFourStateX(
-    llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::StructType* struct_type,
-    uint32_t semantic_width) {
-  auto* elem_type = struct_type->getElementType(0);
-  auto* zero = llvm::ConstantInt::get(elem_type, 0);
-  uint32_t storage_width = elem_type->getIntegerBitWidth();
-  auto unk_mask = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
-  auto* unk_val = llvm::ConstantInt::get(elem_type, unk_mask);
-
-  // Build {value=0, unknown=semantic_mask}
-  llvm::Value* init = llvm::UndefValue::get(struct_type);
-  init = builder.CreateInsertValue(init, zero, 0);
-  init = builder.CreateInsertValue(init, unk_val, 1);
-  builder.CreateStore(init, ptr);
-}
 
 // Initialize DesignState: zero everything, then overwrite 4-state slots with X
 void InitializeDesignState(
@@ -63,19 +47,15 @@ void InitializeDesignState(
   auto* zero = llvm::ConstantAggregateZero::get(design_type);
   builder.CreateStore(zero, design_state);
 
-  // Overwrite 4-state slots with X encoding (scalar packed types only)
+  // Overwrite slots containing 4-state fields with proper X encoding
   for (const auto& slot : slots) {
-    const Type& type = types[slot.type_id];
-    if (!IsPacked(type) || !IsPackedFourState(type, types)) {
-      continue;
+    if (!IsFourStateType(slot.type_id, types)) {
+      continue;  // Zero-init is correct for pure 2-state types
     }
     uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
-    auto* field_type = design_type->getElementType(field_index);
-    auto* struct_type = llvm::cast<llvm::StructType>(field_type);
-    uint32_t semantic_width = PackedBitWidth(type, types);
     auto* slot_ptr =
         builder.CreateStructGEP(design_type, design_state, field_index);
-    StoreFourStateX(builder, slot_ptr, struct_type, semantic_width);
+    EmitSVDefaultInit(context, slot_ptr, slot.type_id);
   }
 }
 
@@ -100,23 +80,18 @@ void InitializeProcessState(
   auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
   builder.CreateStore(design_state, design_ptr_ptr);
 
-  // Overwrite 4-state frame places with X encoding
+  // Overwrite slots containing 4-state fields with proper X encoding
   auto* frame_type = proc_layout.frame.llvm_type;
   auto* frame_ptr = builder.CreateStructGEP(state_type, process_state, 1);
   const auto& frame_layout = proc_layout.frame;
 
   for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
     TypeId type_id = frame_layout.root_types[i];
-    const Type& type = types[type_id];
-    // Only scalar packed types get X initialization; aggregates use zero
-    if (!IsPacked(type) || !IsPackedFourState(type, types)) {
-      continue;
+    if (!IsFourStateType(type_id, types)) {
+      continue;  // Zero-init is correct for pure 2-state types
     }
-    auto* field_type = frame_type->getElementType(i);
-    auto* struct_type = llvm::cast<llvm::StructType>(field_type);
-    uint32_t semantic_width = PackedBitWidth(type, types);
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
-    StoreFourStateX(builder, field_ptr, struct_type, semantic_width);
+    EmitSVDefaultInit(context, field_ptr, type_id);
   }
 }
 

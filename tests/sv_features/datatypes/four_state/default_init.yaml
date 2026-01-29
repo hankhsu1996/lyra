@@ -1,0 +1,92 @@
+cases:
+  # Test 1: 2-state function locals (should be 0)
+  - name: function_local_2state
+    sv: |
+      module Test;
+        function automatic void test_func();
+          automatic int a;
+          automatic bit [15:0] b;
+          $display("a = %d, b = %d", a, b);
+        endfunction
+        initial test_func();
+      endmodule
+    expect:
+      stdout: "a = 0, b = 0\n"
+
+  # Test 2: 2-state unpacked struct function local (should be 0)
+  - name: function_local_struct_2state
+    sv: |
+      module Test;
+        function automatic void test_func();
+          automatic struct { int a; bit [7:0] b; } s;
+          $display("a = %d, b = %d", s.a, s.b);
+        endfunction
+        initial test_func();
+      endmodule
+    expect:
+      stdout: "a = 0, b = 0\n"
+
+  # Test 3: 2-state unpacked array function local (should be 0)
+  - name: function_local_array_2state
+    sv: |
+      module Test;
+        function automatic void test_func();
+          automatic int arr [3];
+          $display("arr[0] = %d, arr[2] = %d", arr[0], arr[2]);
+        endfunction
+        initial test_func();
+      endmodule
+    expect:
+      stdout: "arr[0] = 0, arr[2] = 0\n"
+
+  # Test 4: 2-state initial block local (should be 0)
+  - name: process_local_2state
+    sv: |
+      module Test;
+        initial begin
+          automatic int x;
+          automatic struct { int a; bit [7:0] b; } s;
+          $display("x = %d, s.a = %d, s.b = %d", x, s.a, s.b);
+        end
+      endmodule
+    expect:
+      stdout: "x = 0, s.a = 0, s.b = 0\n"
+
+  # Test 5: Module-level 2-state unpacked struct (should be 0)
+  - name: module_level_struct_2state
+    sv: |
+      module Test;
+        struct { int a; bit [7:0] b; } s;
+        initial $display("s.a = %d, s.b = %d", s.a, s.b);
+      endmodule
+    expect:
+      stdout: "s.a = 0, s.b = 0\n"
+
+  # Test 6: Nested 2-state struct (should be 0)
+  - name: nested_struct_2state
+    sv: |
+      module Test;
+        function automatic void test_func();
+          automatic struct {
+            int x;
+            struct { int a; int b; } inner;
+          } s;
+          $display("x = %d, inner.a = %d, inner.b = %d", s.x, s.inner.a, s.inner.b);
+        endfunction
+        initial test_func();
+      endmodule
+    expect:
+      stdout: "x = 0, inner.a = 0, inner.b = 0\n"
+
+  # Test 7: 2-state unpacked array of structs (should be 0)
+  - name: array_of_struct_2state
+    sv: |
+      module Test;
+        function automatic void test_func();
+          automatic struct { int x; int y; } arr [2];
+          $display("arr[0].x = %d, arr[1].y = %d", arr[0].x, arr[1].y);
+        endfunction
+        initial test_func();
+      endmodule
+    expect:
+      stdout: "arr[0].x = 0, arr[1].y = 0\n"

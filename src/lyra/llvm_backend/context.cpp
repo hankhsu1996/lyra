@@ -28,8 +28,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
+#include "lyra/llvm_backend/default_init.hpp"
 #include "lyra/llvm_backend/layout.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
@@ -1157,78 +1157,15 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   return alloca;
 }
 
-auto Context::CreateLlvmDefaultValue(TypeId type_id) -> llvm::Constant* {
-  const Type& type = types_[type_id];
-
-  // Determine the LLVM type for this TypeId
-  llvm::Type* llvm_type = nullptr;
-  if (type.Kind() == TypeKind::kIntegral) {
-    uint32_t bit_width = type.AsIntegral().bit_width;
-    if (type.AsIntegral().is_four_state) {
-      llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
-    } else {
-      llvm_type = GetIntegralStorageType(*llvm_context_, bit_width);
-    }
-  } else if (type.Kind() == TypeKind::kReal) {
-    llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
-  } else if (type.Kind() == TypeKind::kShortReal) {
-    llvm_type = llvm::Type::getFloatTy(*llvm_context_);
-  } else if (
-      type.Kind() == TypeKind::kString ||
-      type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
-    // Pointer types: nullptr
-    return llvm::ConstantPointerNull::get(
-        llvm::PointerType::getUnqual(*llvm_context_));
-  } else if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types_);
-    if (IsPackedFourState(type, types_)) {
-      llvm_type = GetFourStateStructType(*llvm_context_, width);
-    } else {
-      llvm_type = GetIntegralStorageType(*llvm_context_, width);
-    }
-  } else if (
-      type.Kind() == TypeKind::kUnpackedStruct ||
-      type.Kind() == TypeKind::kUnpackedArray ||
-      type.Kind() == TypeKind::kUnpackedUnion) {
-    // Unpacked aggregates containing 4-state fields require recursive
-    // initialization (each 4-state field must be set to X). This is not
-    // yet implemented.
-    if (IsFourStateType(type_id, types_)) {
-      throw common::InternalError(
-          "CreateLlvmDefaultValue",
-          "default initialization of unpacked aggregates containing 4-state "
-          "fields is not yet implemented");
-    }
-    // 2-state only: zero-initialize
-    auto llvm_type_result = BuildLlvmTypeForTypeId(*this, type_id);
-    if (!llvm_type_result) {
-      throw common::InternalError(
-          "CreateLlvmDefaultValue", "failed to build LLVM type for aggregate");
-    }
-    return llvm::Constant::getNullValue(*llvm_type_result);
-  } else {
-    throw common::InternalError(
-        "CreateLlvmDefaultValue", "unsupported type for default value");
-  }
-
-  // For 4-state types: {value=0, unknown=all-ones} represents X
-  if ((type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_four_state) ||
-      (IsPacked(type) && IsPackedFourState(type, types_))) {
-    auto* struct_ty = llvm::cast<llvm::StructType>(llvm_type);
-    auto* elem_ty = struct_ty->getElementType(0);
-    auto* zero = llvm::Constant::getNullValue(elem_ty);
-    auto* all_ones = llvm::Constant::getAllOnesValue(elem_ty);
-    return llvm::ConstantStruct::get(struct_ty, {zero, all_ones});
-  }
-
-  // For 2-state types: zero
-  return llvm::Constant::getNullValue(llvm_type);
-}
-
 void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
-  llvm::Constant* default_val = CreateLlvmDefaultValue(type_id);
-  alloca_builder_->CreateStore(default_val, alloca);
+  // Use unified EmitSVDefaultInit which handles all types including unpacked
+  // aggregates with 4-state fields. The builder_ is used for the IR emission.
+  // Save current insert point and temporarily switch to alloca_builder_'s
+  // insert point (in entry block, after allocas) for initialization.
+  auto saved_point = builder_.saveIP();
+  builder_.restoreIP(alloca_builder_->saveIP());
+  EmitSVDefaultInit(*this, alloca, type_id);
+  builder_.restoreIP(saved_point);
 }
 
 auto Context::GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t {
