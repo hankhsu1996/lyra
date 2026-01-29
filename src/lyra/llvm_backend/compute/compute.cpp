@@ -22,7 +22,7 @@
 #include "lyra/llvm_backend/compute/real.hpp"
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction_system_tf.hpp"
+#include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/rvalue.hpp"
 

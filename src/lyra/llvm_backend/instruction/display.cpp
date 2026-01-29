@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_display.hpp"
+#include "lyra/llvm_backend/instruction/display.hpp"
 
 #include <cstddef>
 #include <cstdint>

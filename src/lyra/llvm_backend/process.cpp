@@ -27,7 +27,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction.hpp"
-#include "lyra/llvm_backend/instruction_display.hpp"
+#include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
