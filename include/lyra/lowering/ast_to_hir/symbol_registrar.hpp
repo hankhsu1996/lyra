@@ -1,10 +1,12 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 
 #include <slang/ast/Symbol.h>
 
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 
@@ -16,7 +18,9 @@ class SymbolRegistrar {
 
   auto Register(
       const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type,
-      StorageClass storage_class = StorageClass::kDesignStorage) -> SymbolId;
+      StorageClass storage_class = StorageClass::kDesignStorage,
+      std::optional<std::string> unsupported_reason = std::nullopt,
+      SourceSpan definition_span = {}) -> SymbolId;
 
   // Register a synthetic (compiler-generated) symbol with no slang backing
   auto RegisterSynthetic(

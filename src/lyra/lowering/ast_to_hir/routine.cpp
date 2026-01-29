@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 
+#include <format>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -97,6 +98,16 @@ auto LowerFunction(
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(func));
 
+  // Check if symbol was pre-registered as unsupported (two-phase lowering).
+  // If so, skip lowering - the error was already emitted at registration.
+  SymbolId symbol = registrar.Lookup(func);
+  if (symbol) {
+    const Symbol& sym = (*ctx->symbol_table)[symbol];
+    if (sym.unsupported_reason.has_value()) {
+      return hir::kInvalidFunctionId;
+    }
+  }
+
   // Check for DPI-C imports (not supported)
   if (func.flags.has(slang::ast::MethodFlags::DPIImport) ||
       func.flags.has(slang::ast::MethodFlags::DPIContext)) {
@@ -106,7 +117,7 @@ auto LowerFunction(
     return hir::kInvalidFunctionId;
   }
 
-  // Reject non-integral/void return types
+  // Reject non-integral/void return types (for functions not pre-registered)
   const auto& ret_type = func.getReturnType();
   if (!ret_type.isIntegral() && !ret_type.isVoid()) {
     ctx->sink->Error(span, "only integral or void return types supported");
@@ -126,8 +137,7 @@ auto LowerFunction(
     }
   }
 
-  // Check if symbol was pre-registered (two-phase lowering)
-  SymbolId symbol = registrar.Lookup(func);
+  // Register symbol if not already pre-registered
   if (!symbol) {
     symbol = registrar.Register(func, SymbolKind::kFunction, return_type);
   }

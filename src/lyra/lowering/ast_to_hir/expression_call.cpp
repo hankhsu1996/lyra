@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
 
+#include <format>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -7,6 +8,7 @@
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
@@ -49,6 +51,22 @@ auto LowerUserCall(
   SymbolId callee = registrar.Lookup(**user_sub);
   if (!callee) {
     ctx->ErrorFmt(span, "undefined function '{}'", (*user_sub)->name);
+    return hir::kInvalidExpressionId;
+  }
+
+  // Check if the function was registered but marked as unsupported
+  const Symbol& callee_sym = (*ctx->symbol_table)[callee];
+  if (callee_sym.unsupported_reason.has_value()) {
+    Diagnostic diag = Diagnostic::Error(
+        span, std::format(
+                  "cannot call function '{}': {}", callee_sym.name,
+                  *callee_sym.unsupported_reason));
+    // Add note pointing to definition if available
+    if (callee_sym.definition_span.file_id) {
+      diag = std::move(diag).WithNote(
+          callee_sym.definition_span, "function declared here");
+    }
+    ctx->sink->Report(std::move(diag));
     return hir::kInvalidExpressionId;
   }
 

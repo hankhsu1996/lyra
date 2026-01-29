@@ -1,11 +1,13 @@
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
@@ -17,7 +19,8 @@ SymbolRegistrar::SymbolRegistrar(Context* ctx) : ctx_(ctx) {
 
 auto SymbolRegistrar::Register(
     const slang::ast::Symbol& slang_sym, SymbolKind kind, TypeId type,
-    StorageClass storage_class) -> SymbolId {
+    StorageClass storage_class, std::optional<std::string> unsupported_reason,
+    SourceSpan definition_span) -> SymbolId {
   auto it = slang_to_id_.find(&slang_sym);
   if (it != slang_to_id_.end()) {
     return it->second;
@@ -39,6 +42,8 @@ auto SymbolRegistrar::Register(
           .type = type,
           .scope = current_scope_,
           .storage_class = storage_class,
+          .unsupported_reason = std::move(unsupported_reason),
+          .definition_span = definition_span,
       });
   slang_to_id_.emplace(&slang_sym, id);
   return id;
@@ -54,6 +59,8 @@ auto SymbolRegistrar::RegisterSynthetic(
           .type = type,
           .scope = current_scope_,
           .storage_class = storage_class,
+          .unsupported_reason = std::nullopt,
+          .definition_span = {},
       });
 }
 

@@ -1,5 +1,7 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 
+#include <format>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -85,13 +87,26 @@ auto LowerModule(
     }
 
     // Phase 2: Register function symbols (before processes that call them)
-    // Store references to lower their bodies later
+    // Store references to lower their bodies later.
+    // Always register even if unsupported, so call sites get clear errors.
     for (const auto* sub : members.functions) {
       const auto& ret_type = sub->getReturnType();
+      SourceSpan func_span = ctx->SpanOf(GetSourceRange(*sub));
+
+      // Check for unsupported return types
       if (!ret_type.isIntegral() && !ret_type.isVoid()) {
-        ctx->sink->Error(span, "only integral or void return types supported");
+        std::string reason = std::format(
+            "function return type '{}' is not supported (only integral or void "
+            "return types are supported)",
+            std::string(ret_type.toString()));
+        ctx->sink->Error(func_span, reason);
+        // Register as unsupported so call sites get clear errors
+        registrar.Register(
+            *sub, SymbolKind::kFunction, kInvalidTypeId,
+            StorageClass::kDesignStorage, std::move(reason), func_span);
         continue;
       }
+
       TypeId return_type = LowerType(ret_type, span, ctx);
       if (!return_type) {
         continue;
