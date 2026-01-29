@@ -1,0 +1,69 @@
+feature: packed_integral_default
+description: "Tests for packed integral types with '{default: value} assignment patterns"
+
+cases:
+  - name: logic_default_zero
+    sv: |
+      module Test;
+        logic [1:0] a = '{default: '0};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: logic_default_one
+    sv: |
+      module Test;
+        logic [7:0] a = '{default: '1};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 255
+
+  - name: bit_default_zero
+    sv: |
+      module Test;
+        bit [3:0] a = '{default: 1'b0};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: bit_default_one
+    sv: |
+      module Test;
+        bit [3:0] a = '{default: 1'b1};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: multidim_packed_default
+    sv: |
+      module Test;
+        logic [1:0][3:0] a = '{default: '1};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 255
+
+  - name: multidim_packed_default_zero
+    sv: |
+      module Test;
+        logic [1:0][3:0] a = '{default: '0};
+        int result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 0
