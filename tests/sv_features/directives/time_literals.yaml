@@ -1,0 +1,164 @@
+feature: time_literals
+description: Tests for time literals with unit suffixes (#10ns, #1.5us, etc.)
+
+cases:
+  - name: time_literal_10ns
+    description: "#10ns = 10,000 precision ticks with 1ps precision"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial #10ns;
+      endmodule
+    expect:
+      time: 10000
+
+  - name: time_literal_10ns_unit
+    description: "#5us with 10ns/1ps timescale"
+    sv: |
+      `timescale 10ns / 1ps
+      module Test;
+        initial #5us;
+      endmodule
+    expect:
+      # 5us = 500 in 10ns units (slang does this conversion)
+      # ratio = 10^(-8 - (-12)) = 10^4 = 10,000
+      # ticks = 500 * 10,000 = 5,000,000
+      time: 5000000
+
+  - name: time_literal_fractional
+    description: "#1.5us = 1500ns = 1,500,000ps"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial #1.5us;
+      endmodule
+    expect:
+      time: 1500000
+
+  - name: time_literal_rounding_up
+    description: "#0.7ns rounds to 1 tick at 1ns precision"
+    sv: |
+      `timescale 1ns / 1ns
+      module Test;
+        initial #0.7ns;
+      endmodule
+    expect:
+      time: 1
+
+  - name: time_literal_rounding_down
+    description: "#0.3ns rounds to 0 ticks at 1ns precision"
+    sv: |
+      `timescale 1ns / 1ns
+      module Test;
+        initial #0.3ns;
+      endmodule
+    expect:
+      time: 0
+
+  - name: time_literal_tie_rounds_away
+    description: "#0.5ns rounds to 1 tick (ties away from zero)"
+    sv: |
+      `timescale 1ns / 1ns
+      module Test;
+        initial #0.5ns;
+      endmodule
+    expect:
+      time: 1
+
+  - name: mixed_integer_and_time_literals
+    description: "Mix #10 (integer) with #100ns (time literal) sequentially"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          #10;
+          #100ns;
+        end
+      endmodule
+    expect:
+      time: 110000
+
+  - name: equivalent_representations
+    description: "#100 and #100ns produce identical elapsed time"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        longint t1, t2, start;
+        initial begin
+          start = $time;
+          #100;
+          t1 = $time - start;
+          start = $time;
+          #100ns;
+          t2 = $time - start;
+        end
+      endmodule
+    expect:
+      time: 200000
+      variables:
+        t1: 100
+        t2: 100
+
+  - name: all_unit_suffixes
+    description: "Test ns, us, ms unit suffixes"
+    sv: |
+      `timescale 1ns / 1ns
+      module Test;
+        initial begin
+          #1ns;
+          #1us;
+          #1ms;
+        end
+      endmodule
+    expect:
+      time: 1001001
+
+  - name: time_literal_100ps_precision
+    description: "10ns/100ps timescale with time literal"
+    sv: |
+      `timescale 10ns / 100ps
+      module Test;
+        initial #1us;
+      endmodule
+    expect:
+      # 1us = 100 in 10ns units (slang conversion)
+      # ratio = 10^(-8 - (-10)) = 10^2 = 100
+      # ticks = 100 * 100 = 10,000
+      time: 10000
+
+  - name: time_literal_ps_suffix
+    description: "Picosecond suffix"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial #500ps;
+      endmodule
+    expect:
+      # 500ps = 0.5 in 1ns units
+      # ratio = 10^(-9 - (-12)) = 10^3 = 1000
+      # ticks = 0.5 * 1000 = 500
+      time: 500
+
+  - name: time_literal_seconds
+    description: "Seconds suffix"
+    sv: |
+      `timescale 1ms / 1us
+      module Test;
+        initial #1s;
+      endmodule
+    expect:
+      # 1s = 1000 in 1ms units
+      # ratio = 10^(-3 - (-6)) = 10^3 = 1000
+      # ticks = 1000 * 1000 = 1,000,000
+      time: 1000000
+
+  - name: time_literal_large_delay
+    description: "Large delay (>1M ticks) with 1us time literal"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial #10us;
+      endmodule
+    expect:
+      # 10us = 10,000ns = 10,000,000 ticks
+      time: 10000000

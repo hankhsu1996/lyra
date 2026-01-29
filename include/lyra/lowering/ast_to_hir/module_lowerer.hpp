@@ -44,9 +44,14 @@ class ScopeLowerer {
     return registrar_;
   }
 
-  /// Scale a delay literal from scope timeunit to global precision ticks.
+  /// Scale an integer delay literal from scope timeunit to global precision.
   /// Throws InternalError on overflow or invalid exponent.
   [[nodiscard]] auto ScaleDelayTicks(uint64_t literal_ticks) const -> uint64_t;
+
+  /// Scale a time literal (floating-point) from scope timeunit to global
+  /// precision. The value is already converted to module timeunits by slang.
+  /// Throws InternalError on overflow, negative, or non-finite value.
+  [[nodiscard]] auto ScaleDelayReal(double value) const -> uint64_t;
 
   /// Get the lowering frame (for testing/debugging)
   [[nodiscard]] auto Frame() const -> const LoweringFrame& {

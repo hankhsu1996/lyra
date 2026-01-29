@@ -1306,30 +1306,35 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
       if (timed.timing.kind == slang::ast::TimingControlKind::Delay) {
         const auto& delay_ctrl = timed.timing.as<slang::ast::DelayControl>();
-
-        // Extract delay value - must be a constant integer literal
         const slang::ast::Expression& delay_expr = delay_ctrl.expr;
-        if (delay_expr.kind != slang::ast::ExpressionKind::IntegerLiteral) {
-          ctx->sink->Error(span, "only constant integer delays are supported");
+
+        uint64_t ticks = 0;
+
+        if (delay_expr.kind == slang::ast::ExpressionKind::IntegerLiteral) {
+          // Integer literal path: #10, #100, etc.
+          const auto& literal = delay_expr.as<slang::ast::IntegerLiteral>();
+          auto val = literal.getValue();
+          if (val.hasUnknown()) {
+            ctx->sink->Error(span, "delay value cannot contain X or Z");
+            return hir::kInvalidStatementId;
+          }
+          if (val.isSigned() && val.isNegative()) {
+            ctx->sink->Error(span, "delay value cannot be negative");
+            return hir::kInvalidStatementId;
+          }
+          auto literal_value =
+              static_cast<uint64_t>(val.as<uint64_t>().value());
+          ticks = lowerer.ScaleDelayTicks(literal_value);
+        } else if (delay_expr.kind == slang::ast::ExpressionKind::TimeLiteral) {
+          // Time literal path: #10ns, #1.5us, etc.
+          // Slang already converts to module's timeunit as a double
+          const auto& literal = delay_expr.as<slang::ast::TimeLiteral>();
+          double value = literal.getValue();
+          ticks = lowerer.ScaleDelayReal(value);
+        } else {
+          ctx->sink->Error(span, "only constant delays are supported");
           return hir::kInvalidStatementId;
         }
-
-        const auto& literal = delay_expr.as<slang::ast::IntegerLiteral>();
-        auto val = literal.getValue();
-        if (val.hasUnknown()) {
-          ctx->sink->Error(span, "delay value cannot contain X or Z");
-          return hir::kInvalidStatementId;
-        }
-
-        if (val.isSigned() && val.isNegative()) {
-          ctx->sink->Error(span, "delay value cannot be negative");
-          return hir::kInvalidStatementId;
-        }
-
-        auto literal_ticks = static_cast<uint64_t>(val.as<uint64_t>().value());
-
-        // Scale delay from module timeunit to global precision
-        uint64_t ticks = lowerer.ScaleDelayTicks(literal_ticks);
 
         hir::StatementId delay_stmt = ctx->hir_arena->AddStatement(
             hir::Statement{
