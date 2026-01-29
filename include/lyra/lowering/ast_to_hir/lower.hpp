@@ -14,6 +14,7 @@
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
+#include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -27,6 +28,7 @@ struct LoweringResult {
   std::unique_ptr<SourceManager> source_manager;
   std::unique_ptr<SourceMapper> source_mapper;
   DesignBindingPlan binding_plan;
+  mir::InstanceTable instance_table;  // For %m support
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
 };

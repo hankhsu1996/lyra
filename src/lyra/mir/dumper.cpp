@@ -572,11 +572,21 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
                 case FormatKind::kTime:
                   kind_str = "%t";
                   break;
+                case FormatKind::kChar:
+                  kind_str = "%c";
+                  break;
+                case FormatKind::kModulePath:
+                  kind_str = "%m";
+                  break;
                 case FormatKind::kLiteral:
                   break;  // Already handled above
               }
-              result +=
-                  std::format("{}:{}", kind_str, FormatOperand(*op.value));
+              if (op.value.has_value()) {
+                result +=
+                    std::format("{}:{}", kind_str, FormatOperand(*op.value));
+              } else {
+                result += kind_str;
+              }
             }
           }
           result += ")";
@@ -623,8 +633,19 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
               case FormatKind::kTime:
                 kind_str = "t";
                 break;
+              case FormatKind::kChar:
+                kind_str = "c";
+                break;
+              case FormatKind::kModulePath:
+                kind_str = "m";
+                break;
             }
-            result += std::format("{}:{}", kind_str, FormatOperand(*op.value));
+            if (op.value.has_value()) {
+              result +=
+                  std::format("{}:{}", kind_str, FormatOperand(*op.value));
+            } else {
+              result += kind_str;
+            }
           }
           result += ")";
           return result;

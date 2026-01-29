@@ -162,6 +162,10 @@ auto SpecToFormatKind(char spec) -> std::optional<FormatKind> {
       return FormatKind::kReal;
     case 't':
       return FormatKind::kTime;
+    case 'c':
+      return FormatKind::kChar;
+    case 'm':
+      return FormatKind::kModulePath;
     default:
       return std::nullopt;
   }
@@ -283,7 +287,16 @@ auto ParseFormatString(
     flush_literal();
 
     // Create format op for this specifier
-    if (arg_idx < args.size()) {
+    // %m does not consume an argument - it uses the current instance path
+    if (*format_kind == FormatKind::kModulePath) {
+      result.ops.push_back(
+          hir::FormatOp{
+              .kind = FormatKind::kModulePath,
+              .value = std::nullopt,  // %m has no argument
+              .literal = {},
+              .mods = {},
+              .module_timeunit_power = module_timeunit_power});
+    } else if (arg_idx < args.size()) {
       result.ops.push_back(
           hir::FormatOp{
               .kind = *format_kind,

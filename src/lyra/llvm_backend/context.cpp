@@ -306,6 +306,14 @@ auto Context::GetCurrentProcessIndex() const -> size_t {
   return current_process_index_;
 }
 
+void Context::SetCurrentInstanceId(uint32_t instance_id) {
+  current_instance_id_ = instance_id;
+}
+
+auto Context::GetCurrentInstanceId() const -> uint32_t {
+  return current_instance_id_;
+}
+
 void Context::SetStatePointer(llvm::Value* state_ptr) {
   state_ptr_ = state_ptr;
 }

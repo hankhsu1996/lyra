@@ -112,6 +112,8 @@ auto RunMirInterpreter(
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
       .binding_plan = &hir_result.binding_plan,
+      .global_precision_power = hir_result.global_precision_power,
+      .instance_table = &hir_result.instance_table,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
@@ -216,6 +218,14 @@ auto RunMirInterpreter(
   interpreter.SetOutput(&output_stream);
   interpreter.SetPlusargs(test_case.plusargs);
 
+  // Extract instance paths for %m support
+  std::vector<std::string> instance_paths;
+  instance_paths.reserve(mir_result->design.instance_table.entries.size());
+  for (const auto& entry : mir_result->design.instance_table.entries) {
+    instance_paths.push_back(entry.full_path);
+  }
+  interpreter.SetInstancePaths(std::move(instance_paths));
+
   // Set base directory for file I/O (consistent with LLVM backend)
   // Note: We set both interpreter's fs_base_dir_ (for $readmem/$writemem) and
   // the global via LyraInitRuntime (for FileManager's $fopen/$fclose).
@@ -304,9 +314,11 @@ auto RunMirInterpreter(
 
     // Schedule initial processes
     for (mir::ProcessId proc_id : process_info->initial_processes) {
+      const auto& proc = (*mir_result->mir_arena)[proc_id];
       engine.ScheduleInitial(
           runtime::ProcessHandle{
-              .process_id = proc_id.value, .instance_id = 0});
+              .process_id = proc_id.value,
+              .instance_id = proc.owner_instance_id});
     }
 
     // Run simulation

@@ -4,6 +4,7 @@
 
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
+#include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -13,6 +14,7 @@ class SymbolRegistrar;
 struct DesignLoweringResult {
   hir::Design design;
   DesignBindingPlan binding_plan;
+  mir::InstanceTable instance_table;  // For %m support
 };
 
 auto LowerDesign(

@@ -76,13 +76,20 @@ auto LowerModule(
   }
 
   // Phase 3: Lower module processes (can reference functions)
+  // Look up instance index for %m support
+  uint32_t owner_instance_id = UINT32_MAX;
+  auto it = decls.instance_indices.find(module.symbol);
+  if (it != decls.instance_indices.end()) {
+    owner_instance_id = it->second;
+  }
+
   // Collect dynamically generated functions (e.g., strobe thunks)
   std::vector<mir::FunctionId> generated_functions;
   for (hir::ProcessId proc_id : module.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, mir_arena, decl_view, origin_map,
-        &generated_functions);
+        owner_instance_id, &generated_functions);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
     }

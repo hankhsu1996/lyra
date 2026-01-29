@@ -1,0 +1,48 @@
+feature: display_hierarchy
+description: Tests for %m format specifier (hierarchical path)
+
+cases:
+  - name: m_top_level
+    sv: |
+      module Test;
+        initial $display("%m");
+      endmodule
+    expect:
+      stdout: "Test\n"
+
+  - name: m_nested_instance
+    sv: |
+      module Inner;
+        initial $display("%m");
+      endmodule
+      module Test;
+        Inner u_inner();
+      endmodule
+    expect:
+      stdout: "Test.u_inner\n"
+
+  - name: m_deeply_nested
+    sv: |
+      module Leaf;
+        initial $display("%m");
+      endmodule
+      module Middle;
+        Leaf u_leaf();
+      endmodule
+      module Test;
+        Middle u_mid();
+      endmodule
+    expect:
+      stdout: "Test.u_mid.u_leaf\n"
+
+  - name: m_mixed_with_values
+    description: Verify argument consumption is correct when %m appears mid-format
+    sv: |
+      module Inner;
+        initial $display("a=%0d m=%m b=%0d", 1, 2);
+      endmodule
+      module Test;
+        Inner u();
+      endmodule
+    expect:
+      stdout: "a=1 m=Test.u b=2\n"

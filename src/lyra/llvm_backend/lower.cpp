@@ -278,6 +278,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     mir::ProcessId proc_id = layout.process_ids[i];
     const auto& mir_process = (*input.mir_arena)[proc_id];
 
+    // Set instance_id for %m support
+    context.SetCurrentInstanceId(mir_process.owner_instance_id);
+
     auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
     if (!func_result) return std::unexpected(func_result.error());
@@ -389,12 +392,33 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
           llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     }
 
+    // Build instance paths array for %m support
+    const auto& instance_entries = input.design->instance_table.entries;
+    auto num_instance_paths = static_cast<uint32_t>(instance_entries.size());
+    llvm::Value* instance_paths_array = nullptr;
+    if (num_instance_paths > 0) {
+      instance_paths_array = builder.CreateAlloca(
+          ptr_ty, llvm::ConstantInt::get(i32_ty, num_instance_paths),
+          "instance_paths");
+      for (uint32_t i = 0; i < num_instance_paths; ++i) {
+        auto* path_str = builder.CreateGlobalStringPtr(
+            instance_entries[i].full_path, std::format("inst_path_{}", i));
+        auto* slot = builder.CreateGEP(
+            ptr_ty, instance_paths_array, {builder.getInt32(i)});
+        builder.CreateStore(path_str, slot);
+      }
+    } else {
+      instance_paths_array =
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    }
+
     // Call multi-process scheduler
     builder.CreateCall(
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
-         llvm::ConstantInt::get(i32_ty, num_plusargs)});
+         llvm::ConstantInt::get(i32_ty, num_plusargs), instance_paths_array,
+         llvm::ConstantInt::get(i32_ty, num_instance_paths)});
   }
 
   // Branch to exit block

@@ -47,6 +47,9 @@ using SymbolToMirFunctionMap =
 //     (written by ReserveFunction at pre-allocation time)
 //   - slot_table.size() == num_design_slots
 //   - No later phase may mutate any of the above
+// Map module instance symbol → index into InstanceTable (for %m support)
+using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
+
 struct DesignDeclarations {
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
@@ -55,6 +58,9 @@ struct DesignDeclarations {
   // Ordering is ABI: packages first (in element order), then all module
   // instances (in BFS elaboration order).
   std::vector<TypeId> slot_table;
+  // Reverse lookup: module instance symbol → instance table index.
+  // Built from LoweringInput::instance_table during CollectDeclarations.
+  InstanceIndexMap instance_indices;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers

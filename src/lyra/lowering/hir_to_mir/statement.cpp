@@ -155,6 +155,16 @@ auto LowerFormatOps(
               .type = TypeId{},
               .mods = {},
               .module_timeunit_power = hir_op.module_timeunit_power});
+    } else if (hir_op.kind == FormatKind::kModulePath) {
+      // %m: no value operand, uses current instance path at runtime
+      mir_ops.push_back(
+          mir::FormatOp{
+              .kind = FormatKind::kModulePath,
+              .value = std::nullopt,
+              .literal = {},
+              .type = TypeId{},
+              .mods = {},
+              .module_timeunit_power = hir_op.module_timeunit_power});
     } else {
       // Lower the value expression and get its type
       Result<mir::Operand> operand_result =

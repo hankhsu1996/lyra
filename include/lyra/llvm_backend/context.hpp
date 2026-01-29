@@ -128,6 +128,7 @@ class Context {
   [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPrintModulePath() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -192,6 +193,10 @@ class Context {
   // Per-process setup (set before generating each process function)
   void SetCurrentProcess(size_t process_index);
   [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
+
+  // Per-process instance_id for %m support
+  void SetCurrentInstanceId(uint32_t instance_id);
+  [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
 
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
@@ -407,6 +412,7 @@ class Context {
   llvm::Function* lyra_readmem_ = nullptr;
   llvm::Function* lyra_writemem_ = nullptr;
   llvm::Function* lyra_notify_signal_ = nullptr;
+  llvm::Function* lyra_print_module_path_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
@@ -422,6 +428,9 @@ class Context {
 
   // Current process index (set before generating each process)
   size_t current_process_index_ = 0;
+
+  // Current instance_id for %m support (set before generating each process)
+  uint32_t current_instance_id_ = UINT32_MAX;
 
   // Cached pointers for current process function
   llvm::Value* state_ptr_ = nullptr;

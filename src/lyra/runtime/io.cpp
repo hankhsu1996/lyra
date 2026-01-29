@@ -315,6 +315,11 @@ extern "C" void LyraReadmem(
   }
 }
 
+extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::print("{}", engine->GetInstancePath(instance_id));
+}
+
 extern "C" void LyraWritemem(
     LyraStringHandle filename_handle, const void* source, int32_t element_width,
     int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,

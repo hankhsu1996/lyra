@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
@@ -46,6 +48,7 @@ auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
+    uint32_t owner_instance_id,
     std::vector<mir::FunctionId>* generated_functions)
     -> Result<mir::ProcessId> {
   Context ctx{
@@ -109,16 +112,20 @@ auto LowerProcess(
   // Pre-allocate the ProcessId so we can record origin before adding
   mir::ProcessId mir_proc_id = mir_arena.ReserveProcess();
 
+  // Record process origin (must be done before creating Process struct due to
+  // designated initializer ordering requirements)
+  common::OriginId origin = common::OriginId::Invalid();
+  if (origin_map != nullptr) {
+    origin = origin_map->Record(mir_proc_id, hir_proc_id);
+  }
+
   mir::Process mir_process{
       .kind = mir_kind,
       .entry = mir::BasicBlockId{entry_idx.value},  // Local index
       .blocks = std::move(blocks),
+      .origin = origin,
+      .owner_instance_id = owner_instance_id,
   };
-
-  // Record process origin before finalizing
-  if (origin_map != nullptr) {
-    mir_process.origin = origin_map->Record(mir_proc_id, hir_proc_id);
-  }
 
   mir_arena.SetProcessBody(mir_proc_id, std::move(mir_process));
   return mir_proc_id;

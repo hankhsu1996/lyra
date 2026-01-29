@@ -242,6 +242,7 @@ auto CreateProcessState(
       .frame = Frame(std::move(locals), std::move(temps)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
+      .instance_id = process.owner_instance_id,
       .pending_suspend = std::nullopt,
       .function_return_value = std::nullopt,
   };
@@ -350,6 +351,18 @@ auto RunSimulation(
   interp.SetPlusargs(
       std::vector<std::string>(plusargs.begin(), plusargs.end()));
   interp.SetFsBaseDir(fs_base_dir);
+
+  // Extract instance paths for %m support (needed before running any processes)
+  // Only the interpreter needs instance paths for MIR backend; Engine's
+  // instance_paths_ are only used by LyraPrintModulePath (LLVM runtime).
+  {
+    std::vector<std::string> instance_paths;
+    instance_paths.reserve(design.instance_table.entries.size());
+    for (const auto& entry : design.instance_table.entries) {
+      instance_paths.push_back(entry.full_path);
+    }
+    interp.SetInstancePaths(std::move(instance_paths));
+  }
 
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {
