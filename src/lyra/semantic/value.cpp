@@ -211,6 +211,52 @@ auto MakeIntegralWide(
   return RuntimeValue{std::move(result)};
 }
 
+auto MakeIntegralWide(
+    const uint64_t* value_words, const uint64_t* unknown_words,
+    size_t num_words, uint32_t bit_width) -> RuntimeValue {
+  if (value_words == nullptr) {
+    throw lyra::common::InternalError(
+        "MakeIntegralWide (4-state)", "value_words is null");
+  }
+  if (unknown_words == nullptr) {
+    throw lyra::common::InternalError(
+        "MakeIntegralWide (4-state)", "unknown_words is null");
+  }
+
+  size_t expected = WordsNeeded(bit_width);
+  if (num_words != expected) {
+    throw lyra::common::InternalError(
+        "MakeIntegralWide (4-state)",
+        std::format(
+            "word count mismatch: got {}, expected {}", num_words, expected));
+  }
+
+  std::span<const uint64_t> value_span(value_words, num_words);
+  std::span<const uint64_t> unknown_span(unknown_words, num_words);
+
+  // Validate top word has no garbage padding bits (caller must mask)
+  uint32_t top_bits = bit_width % kBitsPerWord;
+  if (top_bits != 0) {
+    uint64_t top_mask = (uint64_t{1} << top_bits) - 1;
+    if ((value_span.back() & ~top_mask) != 0) {
+      throw lyra::common::InternalError(
+          "MakeIntegralWide (4-state)",
+          "value top word has nonzero padding bits (caller must mask)");
+    }
+    if ((unknown_span.back() & ~top_mask) != 0) {
+      throw lyra::common::InternalError(
+          "MakeIntegralWide (4-state)",
+          "unknown top word has nonzero padding bits (caller must mask)");
+    }
+  }
+
+  RuntimeIntegral result;
+  result.bit_width = bit_width;
+  result.value.assign(value_span.begin(), value_span.end());
+  result.unknown.assign(unknown_span.begin(), unknown_span.end());
+  return RuntimeValue{std::move(result)};
+}
+
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue {
   RuntimeIntegral result;

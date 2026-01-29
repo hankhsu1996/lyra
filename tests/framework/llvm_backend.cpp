@@ -42,6 +42,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/test_value.hpp"
 
 namespace lyra::test {
 namespace {
@@ -130,15 +131,7 @@ auto BuildTrackedVariables(
       continue;
     }
 
-    uint32_t width = PackedBitWidth(type, *hir_result.type_arena);
-    bool is_signed = IsPackedSigned(type, *hir_result.type_arena);
-
-    // Add to variables for inspection (only types we can parse back)
-    // Skip: width 0, or unsigned 64-bit (would overflow int64_t)
-    // >64-bit uses 'h:' hex format, ≤64-bit uses 'i:' decimal format
-    if (width > 64 || (width > 0 && width <= 64 && (width < 64 || is_signed))) {
-      variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
-    }
+    variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
   }
   return variables;
 }
@@ -185,56 +178,84 @@ auto HexToIntegral(const std::string& hex, uint32_t width) -> IntegralValue {
 // Parse a single __LYRA_VAR entry and extract variable value.
 void ParseLyraVarEntry(
     std::string_view entry, std::map<std::string, TestValue>& variables) {
-  // Format: "i:width:name=value" or "h:width:name=hex" or "r:name=value"
-  if (entry.size() >= 2 && entry[1] == ':') {
-    char type_tag = entry[0];
-    auto rest = entry.substr(2);  // Skip "X:"
+  // New format: "v:i:name=literal" or "v:r:name=value"
+  // Old format (deprecated): "i:width:name=value" or "h:width:name=hex" or
+  // "r:name=value"
+  if (entry.size() < 2 || entry[1] != ':') {
+    return;
+  }
 
-    if (type_tag == 'i' || type_tag == 'h') {
-      // Parse width:name=value
-      auto colon_pos = rest.find(':');
-      if (colon_pos == std::string::npos) {
-        return;
-      }
-      uint32_t width = static_cast<uint32_t>(
-          std::stoul(std::string(rest.substr(0, colon_pos))));
-      auto name_value = rest.substr(colon_pos + 1);
-      auto eq_pos = name_value.find('=');
-      if (eq_pos == std::string::npos) {
-        return;
-      }
-      std::string name(name_value.substr(0, eq_pos));
-      std::string value_str(name_value.substr(eq_pos + 1));
+  char type_tag = entry[0];
+  auto rest = entry.substr(2);  // Skip "X:"
 
-      if (type_tag == 'i') {
-        // Narrow integral - parse as unsigned and create IntegralValue
-        uint64_t raw = std::stoull(value_str);
-        IntegralValue fs;
-        fs.width = width;
-        fs.value = {raw};
-        fs.unknown = {0};
-        if (width > 0 && width < 64) {
-          fs.value[0] &= (uint64_t{1} << width) - 1;
-        }
-        variables[name] = fs;
-      } else {
-        // Wide integral (hex)
-        std::string hex(value_str);
-        // Normalize to lowercase
-        std::ranges::transform(hex, hex.begin(), [](unsigned char c) {
-          return static_cast<char>(std::tolower(c));
-        });
-        variables[name] = HexToIntegral(hex, width);
+  if (type_tag == 'v') {
+    // New v: protocol: v:kind:name=literal
+    // kind is 'i' for integral (SV literal), 'r' for real (plain decimal)
+    if (rest.size() < 2 || rest[1] != ':') {
+      return;
+    }
+    char var_kind = rest[0];
+    auto name_literal = rest.substr(2);
+    auto eq_pos = name_literal.find('=');
+    if (eq_pos == std::string::npos) {
+      return;
+    }
+    std::string name(name_literal.substr(0, eq_pos));
+    std::string_view literal = name_literal.substr(eq_pos + 1);
+
+    if (var_kind == 'i') {
+      // Integral: parse SV literal (N'b... or N'h...)
+      auto result = ParseSvLiteral(literal);
+      if (result) {
+        variables[name] = *result;
       }
-    } else if (type_tag == 'r') {
-      // Real: r:name=value (no width)
-      auto eq_pos = rest.find('=');
-      if (eq_pos != std::string::npos) {
-        std::string name(rest.substr(0, eq_pos));
-        std::string value_str(rest.substr(eq_pos + 1));
-        double value = std::stod(value_str);
-        variables[name] = value;
+    } else if (var_kind == 'r') {
+      // Real: parse as double (not an SV literal)
+      variables[name] = std::stod(std::string(literal));
+    }
+  } else if (type_tag == 'i' || type_tag == 'h') {
+    // Old format: i:width:name=value or h:width:name=hex
+    auto colon_pos = rest.find(':');
+    if (colon_pos == std::string::npos) {
+      return;
+    }
+    auto width = static_cast<uint32_t>(
+        std::stoul(std::string(rest.substr(0, colon_pos))));
+    auto name_value = rest.substr(colon_pos + 1);
+    auto eq_pos = name_value.find('=');
+    if (eq_pos == std::string::npos) {
+      return;
+    }
+    std::string name(name_value.substr(0, eq_pos));
+    std::string value_str(name_value.substr(eq_pos + 1));
+
+    if (type_tag == 'i') {
+      // Narrow integral - parse as unsigned and create IntegralValue
+      uint64_t raw = std::stoull(value_str);
+      IntegralValue fs;
+      fs.width = width;
+      fs.value = {raw};
+      fs.unknown = {0};
+      if (width > 0 && width < 64) {
+        fs.value[0] &= (uint64_t{1} << width) - 1;
       }
+      variables[name] = fs;
+    } else {
+      // Wide integral (hex)
+      std::string hex(value_str);
+      // Normalize to lowercase
+      std::ranges::transform(hex, hex.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+      variables[name] = HexToIntegral(hex, width);
+    }
+  } else if (type_tag == 'r') {
+    // Old format: r:name=value (no width)
+    auto eq_pos = rest.find('=');
+    if (eq_pos != std::string::npos) {
+      std::string name(rest.substr(0, eq_pos));
+      std::string value_str(rest.substr(eq_pos + 1));
+      variables[name] = std::stod(value_str);
     }
   }
 }

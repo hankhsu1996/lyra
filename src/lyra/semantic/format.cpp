@@ -294,6 +294,29 @@ auto RealToDisplayIntegral(double value) -> RuntimeIntegral {
 
 }  // namespace
 
+auto FormatAsSvLiteral(const RuntimeValue& value, SvLiteralFormatSpec spec)
+    -> std::string {
+  if (!IsIntegral(value)) {
+    // Real: return decimal representation (no N'... prefix)
+    if (IsReal(value)) {
+      return std::format("{:g}", AsReal(value).value);
+    }
+    if (IsShortReal(value)) {
+      return std::format("{:g}", static_cast<double>(AsShortReal(value).value));
+    }
+    // For other types, return a placeholder
+    return ToString(value);
+  }
+
+  const auto& integral = AsIntegral(value);
+  std::string digits = (spec.radix == LiteralRadix::kBinary)
+                           ? ToBinaryString(integral)
+                           : ToHexString(integral);
+  char radix_char = (spec.radix == LiteralRadix::kBinary) ? 'b' : 'h';
+
+  return std::format("{}'{}{}", integral.bit_width, radix_char, digits);
+}
+
 auto PackedToStringBytes(const RuntimeIntegral& val) -> std::string {
   if (val.IsX() || val.IsZ()) {
     // X/Z values can't be meaningfully converted to ASCII
@@ -347,7 +370,7 @@ auto FormatValue(
   }
 
   if (IsShortReal(value)) {
-    double dval = static_cast<double>(AsShortReal(value).value);
+    auto dval = static_cast<double>(AsShortReal(value).value);
     // Same conversion rule applies to shortreal
     if (IsIntegerFormat(spec.kind)) {
       auto integral = RealToDisplayIntegral(dval);
