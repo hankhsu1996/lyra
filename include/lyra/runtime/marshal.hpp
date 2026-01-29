@@ -35,15 +35,18 @@ enum class RuntimeValueKind : int32_t {
 //   precision: decimal precision for reals (-1 = default)
 //   zero_pad, left_align: formatting flags
 //   engine_ptr: pointer to Engine (required for kTime, can be nullptr for
-//   others) module_timeunit_power: timeunit of the value (for kTime: e.g., -9
-//   for ns)
+//     others)
+//   module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
+//   unknown_data: pointer to unknown plane (null for 2-state). When set, bit i
+//     is X if unknown[i]=1 && data[i]=0, Z if unknown[i]=1 && data[i]=1.
 //
 // Returns the formatted string.
 inline auto FormatRuntimeValue(
     FormatKind kind, RuntimeValueKind value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
     bool zero_pad, bool left_align, void* engine_ptr = nullptr,
-    int8_t module_timeunit_power = -9) -> std::string {
+    int8_t module_timeunit_power = -9, const void* unknown_data = nullptr)
+    -> std::string {
   // Handle string specially - data IS the string pointer
   if (kind == FormatKind::kString) {
     return static_cast<const char*>(data);
@@ -111,7 +114,27 @@ inline auto FormatRuntimeValue(
       if (width < 64) {
         raw_value &= (1ULL << width) - 1;
       }
-      value = semantic::MakeIntegral(raw_value, static_cast<uint32_t>(width));
+
+      if (unknown_data != nullptr) {
+        // 4-state: read unknown plane and create with both planes
+        uint64_t raw_unknown = 0;
+        if (width <= 8) {
+          raw_unknown = *static_cast<const uint8_t*>(unknown_data);
+        } else if (width <= 16) {
+          raw_unknown = *static_cast<const uint16_t*>(unknown_data);
+        } else if (width <= 32) {
+          raw_unknown = *static_cast<const uint32_t*>(unknown_data);
+        } else {
+          raw_unknown = *static_cast<const uint64_t*>(unknown_data);
+        }
+        if (width < 64) {
+          raw_unknown &= (1ULL << width) - 1;
+        }
+        value = semantic::MakeIntegralWide(
+            &raw_value, &raw_unknown, 1, static_cast<uint32_t>(width));
+      } else {
+        value = semantic::MakeIntegral(raw_value, static_cast<uint32_t>(width));
+      }
       break;
     }
     case RuntimeValueKind::kWideIntegral: {
@@ -124,9 +147,18 @@ inline auto FormatRuntimeValue(
             "FormatRuntimeValue", "kWideIntegral requires non-null data");
       }
       size_t num_words = (static_cast<size_t>(width) + 63) / 64;
-      value = semantic::MakeIntegralWide(
-          static_cast<const uint64_t*>(data), num_words,
-          static_cast<uint32_t>(width));
+
+      if (unknown_data != nullptr) {
+        // 4-state wide: both value and unknown planes provided
+        value = semantic::MakeIntegralWide(
+            static_cast<const uint64_t*>(data),
+            static_cast<const uint64_t*>(unknown_data), num_words,
+            static_cast<uint32_t>(width));
+      } else {
+        value = semantic::MakeIntegralWide(
+            static_cast<const uint64_t*>(data), num_words,
+            static_cast<uint32_t>(width));
+      }
       break;
     }
   }

@@ -227,9 +227,10 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
-  // Determine type info: width, signedness, value_kind
+  // Determine type info: width, signedness, value_kind, four_state
   int32_t width = 32;
   bool is_signed = false;
+  bool is_four_state = false;
   auto value_kind = runtime::RuntimeValueKind::kIntegral;
 
   if (op.type) {
@@ -237,6 +238,7 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
     if (ty.Kind() == TypeKind::kIntegral) {
       width = static_cast<int32_t>(ty.AsIntegral().bit_width);
       is_signed = ty.AsIntegral().is_signed;
+      is_four_state = ty.AsIntegral().is_four_state;
     } else if (ty.Kind() == TypeKind::kReal) {
       value_kind = runtime::RuntimeValueKind::kReal64;
       width = 64;
@@ -246,34 +248,65 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
     } else if (IsPacked(ty)) {
       width = static_cast<int32_t>(PackedBitWidth(ty, types));
       is_signed = IsPackedSigned(ty, types);
+      is_four_state = IsPackedFourState(ty, types);
     }
   }
 
-  // Create storage for the value
+  // Create storage for the value (and unknown plane for 4-state)
   llvm::Value* data_ptr = null_ptr;
-  if (op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, *op.value);
-    if (!value_or_err) return std::unexpected(value_or_err.error());
-    llvm::Value* value = *value_or_err;
+  llvm::Value* unknown_ptr = null_ptr;
 
+  if (op.value.has_value()) {
     if (value_kind != runtime::RuntimeValueKind::kIntegral) {
-      // Real types: store directly
-      auto* alloca = builder.CreateAlloca(value->getType());
-      builder.CreateStore(value, alloca);
+      // Real types: store directly (always 2-state)
+      auto value_or_err = LowerOperand(context, *op.value);
+      if (!value_or_err) return std::unexpected(value_or_err.error());
+      auto* alloca = builder.CreateAlloca((*value_or_err)->getType());
+      builder.CreateStore(*value_or_err, alloca);
       data_ptr = alloca;
-    } else if (width > 64) {
-      // Wide integral: decompose to [n x i64] array
-      value_kind = runtime::RuntimeValueKind::kWideIntegral;
-      data_ptr = EmitStoreWideToTemp(
-          builder, value, static_cast<uint32_t>(width), llvm_ctx);
+    } else if (is_four_state) {
+      // 4-state integral: use LowerOperandRaw to preserve struct
+      auto raw_or_err = LowerOperandRaw(context, *op.value);
+      if (!raw_or_err) return std::unexpected(raw_or_err.error());
+      llvm::Value* raw = *raw_or_err;
+
+      // Extract value and unknown planes from {iN, iN} struct
+      llvm::Value* value_plane = builder.CreateExtractValue(raw, 0, "disp.val");
+      llvm::Value* unknown_plane =
+          builder.CreateExtractValue(raw, 1, "disp.unk");
+
+      if (width > 64) {
+        // Wide 4-state: decompose both planes to [n x i64] arrays
+        value_kind = runtime::RuntimeValueKind::kWideIntegral;
+        data_ptr = EmitStoreWideToTemp(
+            builder, value_plane, static_cast<uint32_t>(width), llvm_ctx);
+        unknown_ptr = EmitStoreWideToTemp(
+            builder, unknown_plane, static_cast<uint32_t>(width), llvm_ctx);
+      } else {
+        // Narrow 4-state: store both planes to appropriately-sized temps
+        data_ptr = EmitStoreNarrowToTemp(
+            builder, value_plane, width, is_signed, llvm_ctx);
+        unknown_ptr = EmitStoreNarrowToTemp(
+            builder, unknown_plane, width, false, llvm_ctx);
+      }
     } else {
-      // Narrow integral: store to appropriately-sized temp
-      data_ptr =
-          EmitStoreNarrowToTemp(builder, value, width, is_signed, llvm_ctx);
+      // 2-state integral
+      auto value_or_err = LowerOperand(context, *op.value);
+      if (!value_or_err) return std::unexpected(value_or_err.error());
+      llvm::Value* value = *value_or_err;
+
+      if (width > 64) {
+        value_kind = runtime::RuntimeValueKind::kWideIntegral;
+        data_ptr = EmitStoreWideToTemp(
+            builder, value, static_cast<uint32_t>(width), llvm_ctx);
+      } else {
+        data_ptr =
+            EmitStoreNarrowToTemp(builder, value, width, is_signed, llvm_ctx);
+      }
     }
   }
 
-  // Call LyraPrintValue
+  // Call LyraPrintValue (unknown_ptr passed as x_mask parameter)
   builder.CreateCall(
       context.GetLyraPrintValue(),
       {null_ptr, llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
@@ -283,7 +316,7 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
        llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
        llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
        llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
-       llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
+       llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), unknown_ptr,
        null_ptr, llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
 
   return {};
