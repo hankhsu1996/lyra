@@ -23,6 +23,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/compute_result.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/four_state_utils.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
@@ -34,18 +35,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-struct FourStateValue {
-  llvm::Value* value;
-  llvm::Value* unknown;
-};
-
-auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
-    -> FourStateValue {
-  auto* val = builder.CreateExtractValue(struct_val, 0, "fs.val");
-  auto* unk = builder.CreateExtractValue(struct_val, 1, "fs.unk");
-  return {.value = val, .unknown = unk};
-}
 
 auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
   const auto& arena = context.GetMirArena();
@@ -167,8 +156,8 @@ auto LowerUnaryRvalue4State(
     }
 
     case mir::UnaryOp::kBitwiseNot: {
-      auto* not_val = builder.CreateNot(src.value, "un4.not");
-      return ComputeResult::FourState(not_val, src.unknown);
+      auto result = FourStateNot(builder, src);
+      return ComputeResult::FourState(result.value, result.unknown);
     }
 
     case mir::UnaryOp::kLogicalNot: {
@@ -436,6 +425,25 @@ auto LowerBinaryRvalue4State(
       builder.CreateZExtOrTrunc(lhs.unknown, elem_type, "bin4.lhs.unk");
   rhs.unknown =
       builder.CreateZExtOrTrunc(rhs.unknown, elem_type, "bin4.rhs.unk");
+
+  // Bitwise operations with correct 4-state propagation (IEEE 1800 truth
+  // tables)
+  switch (info.op) {
+    case mir::BinaryOp::kBitwiseAnd: {
+      auto result = FourStateAnd(builder, lhs, rhs);
+      return ComputeResult::FourState(result.value, result.unknown);
+    }
+    case mir::BinaryOp::kBitwiseOr: {
+      auto result = FourStateOr(builder, lhs, rhs);
+      return ComputeResult::FourState(result.value, result.unknown);
+    }
+    case mir::BinaryOp::kBitwiseXor: {
+      auto result = FourStateXor(builder, lhs, rhs);
+      return ComputeResult::FourState(result.value, result.unknown);
+    }
+    default:
+      break;  // Fall through to existing paths
+  }
 
   auto* combined_unk = builder.CreateOr(lhs.unknown, rhs.unknown, "bin4.unk");
 
