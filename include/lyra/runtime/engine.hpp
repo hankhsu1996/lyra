@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <format>
 #include <functional>
 #include <map>
 #include <optional>
@@ -14,6 +16,7 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
@@ -41,12 +44,12 @@ using ProcessRunner = std::function<void(
 // 3. Call Run() to execute until completion or time limit
 class Engine {
  public:
-  explicit Engine(ProcessRunner runner) : runner_(std::move(runner)) {
-  }
-
-  Engine(ProcessRunner runner, std::span<const std::string> plusargs)
+  explicit Engine(
+      ProcessRunner runner, std::span<const std::string> plusargs = {},
+      std::vector<std::string> instance_paths = {})
       : runner_(std::move(runner)),
-        plusargs_(plusargs.begin(), plusargs.end()) {
+        plusargs_(plusargs.begin(), plusargs.end()),
+        instance_paths_(std::move(instance_paths)) {
   }
 
   ~Engine() = default;
@@ -138,6 +141,20 @@ class Engine {
   // Get file manager for $fopen/$fclose operations.
   [[nodiscard]] auto GetFileManager() -> FileManager& {
     return file_manager_;
+  }
+
+  // Get hierarchical path for an instance (%m support).
+  // Throws InternalError for invalid instance_id (compiler/runtime bug).
+  [[nodiscard]] auto GetInstancePath(uint32_t instance_id) const
+      -> std::string_view {
+    if (instance_id >= instance_paths_.size()) {
+      throw common::InternalError(
+          "Engine::GetInstancePath",
+          std::format(
+              "invalid instance_id {} (have {} instances)", instance_id,
+              instance_paths_.size()));
+    }
+    return instance_paths_[instance_id];
   }
 
   // Plusargs query interface for $test$plusargs and $value$plusargs.
@@ -237,6 +254,9 @@ class Engine {
 
   // Plusargs for $test$plusargs and $value$plusargs queries.
   std::vector<std::string> plusargs_;
+
+  // Instance paths for %m support (hierarchical path lookup by instance_id).
+  std::vector<std::string> instance_paths_;
 
   // Active monitor state ($monitor). Only one can be active at a time.
   // Checked after all strobe callbacks complete in ExecutePostponedRegion.

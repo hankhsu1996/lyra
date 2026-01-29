@@ -246,23 +246,56 @@ auto Interpreter::FormatDisplayOps(
   FormatContext ctx{};
 
   for (const auto& op : ops) {
-    if (op.kind == FormatKind::kLiteral) {
-      result += op.literal;
-    } else {
-      auto value_result = EvalOperand(state, *op.value);
-      if (!value_result) {
-        return std::unexpected(std::move(value_result).error());
+    switch (op.kind) {
+      case FormatKind::kLiteral:
+        result += op.literal;
+        break;
+
+      case FormatKind::kModulePath: {
+        // %m: emit hierarchical instance path (no argument consumed)
+        if (state.instance_id >= instance_paths_.size()) {
+          throw common::InternalError(
+              "FormatDisplayOps",
+              std::format(
+                  "invalid instance_id {} (max {})", state.instance_id,
+                  instance_paths_.size()));
+        }
+        result += instance_paths_[state.instance_id];
+        break;
       }
-      TypedValue typed{.value = std::move(*value_result), .type = op.type};
 
-      FormatSpec spec{
-          .kind = op.kind,
-          .width = op.mods.width,
-          .precision = op.mods.precision,
-          .zero_pad = op.mods.zero_pad,
-          .left_align = op.mods.left_align};
+      case FormatKind::kDecimal:
+      case FormatKind::kHex:
+      case FormatKind::kBinary:
+      case FormatKind::kOctal:
+      case FormatKind::kString:
+      case FormatKind::kReal:
+      case FormatKind::kTime:
+      case FormatKind::kChar: {
+        // Value-consuming format kinds
+        if (!op.value.has_value()) {
+          throw common::InternalError(
+              "FormatDisplayOps",
+              std::format(
+                  "format kind {} requires operand but has none",
+                  static_cast<int>(op.kind)));
+        }
+        auto value_result = EvalOperand(state, *op.value);
+        if (!value_result) {
+          return std::unexpected(std::move(value_result).error());
+        }
+        TypedValue typed{.value = std::move(*value_result), .type = op.type};
 
-      result += FormatValue(typed, spec, *types_, ctx);
+        FormatSpec spec{
+            .kind = op.kind,
+            .width = op.mods.width,
+            .precision = op.mods.precision,
+            .zero_pad = op.mods.zero_pad,
+            .left_align = op.mods.left_align};
+
+        result += FormatValue(typed, spec, *types_, ctx);
+        break;
+      }
     }
   }
 

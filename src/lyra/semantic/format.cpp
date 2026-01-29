@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/semantic/value.hpp"
 
 namespace lyra::semantic {
@@ -108,6 +109,12 @@ auto ParseFormatSpec(std::string_view str) -> std::pair<FormatSpec, size_t> {
       case 'g':
         spec.kind = FormatKind::kReal;
         break;
+      case 'c':
+        spec.kind = FormatKind::kChar;
+        break;
+      case 'm':
+        spec.kind = FormatKind::kModulePath;
+        break;
       default:
         // Unknown specifier - will be caught by caller
         spec.kind = FormatKind::kDecimal;
@@ -183,6 +190,26 @@ auto GetAutoPadChar(const RuntimeIntegral& val) -> char {
   return '0';
 }
 
+// Format an integral value as a character (%c).
+// Extracts low 8 bits and applies X/Z collapse rules:
+// - Any X in low 8 bits -> 'x'
+// - Any Z in low 8 bits -> 'z'
+// - Otherwise -> static_cast<char>(value & 0xFF)
+auto FormatChar(const RuntimeIntegral& val) -> std::string {
+  uint8_t char_val = val.value.empty() ? 0 : (val.value[0] & 0xFF);
+  uint8_t char_unk = val.unknown.empty() ? 0 : (val.unknown[0] & 0xFF);
+
+  // X bit: unknown=1, value=0
+  if ((char_unk & ~char_val) != 0) {
+    return "x";
+  }
+  // Z bit: unknown=1, value=1
+  if (char_unk != 0) {
+    return "z";
+  }
+  return std::string(1, static_cast<char>(char_val));
+}
+
 // Format an integral value according to spec.
 auto FormatIntegral(
     const RuntimeIntegral& val, const FormatSpec& spec, bool is_signed)
@@ -207,6 +234,14 @@ auto FormatIntegral(
       // LRM 21.2.1.7: %s interprets bits as ASCII characters
       result = PackedToStringBytes(val);
       break;
+    case FormatKind::kChar:
+      // %c: low 8 bits as character, no width/padding applied
+      return FormatChar(val);
+    case FormatKind::kModulePath:
+      // %m is a runtime-context specifier, not a value formatter.
+      // It should be handled by the runtime layer, not semantic formatting.
+      throw common::InternalError(
+          "FormatIntegral", "%m should not reach value formatting path");
     case FormatKind::kReal:
     case FormatKind::kLiteral:
       result = ToDecimalString(val, false);
@@ -256,7 +291,8 @@ auto AutoFormatIntegral(const RuntimeIntegral& val, bool is_signed)
 // Check if a format kind is an integer format (requires real-to-int conversion)
 auto IsIntegerFormat(FormatKind kind) -> bool {
   return kind == FormatKind::kDecimal || kind == FormatKind::kHex ||
-         kind == FormatKind::kBinary || kind == FormatKind::kOctal;
+         kind == FormatKind::kBinary || kind == FormatKind::kOctal ||
+         kind == FormatKind::kChar;
 }
 
 // Convert real to RuntimeIntegral for display formatting.

@@ -322,6 +322,19 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
   return {};
 }
 
+void LowerModulePathOp(Context& context) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  auto* engine_ptr = context.GetEnginePointer();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* instance_id =
+      llvm::ConstantInt::get(i32_ty, context.GetCurrentInstanceId());
+
+  builder.CreateCall(
+      context.GetLyraPrintModulePath(), {engine_ptr, instance_id});
+}
+
 // Lower a sequence of FormatOps to LLVM IR (shared by display and severity)
 auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
     -> Result<void> {
@@ -336,6 +349,9 @@ auto LowerFormatOps(Context& context, std::span<const mir::FormatOp> ops)
         break;
       case FormatKind::kTime:
         result = LowerTimeOp(context, op);
+        break;
+      case FormatKind::kModulePath:
+        LowerModulePathOp(context);
         break;
       default:
         result = LowerValueOp(context, op);

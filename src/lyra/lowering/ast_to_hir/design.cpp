@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -478,9 +479,22 @@ auto LowerDesign(
     elements.emplace_back(LowerModule(*instance, registrar, ctx));
   }
 
+  // Build instance table for %m support.
+  // Index order matches all_instances (sorted by hierarchical path).
+  mir::InstanceTable instance_table;
+  instance_table.entries.reserve(all_instances.size());
+  for (const auto* instance : all_instances) {
+    instance_table.entries.push_back(
+        mir::InstanceEntry{
+            .full_path = std::string(instance->getHierarchicalPath()),
+            .instance_sym = registrar.Lookup(*instance),
+        });
+  }
+
   return DesignLoweringResult{
       .design = hir::Design{.elements = std::move(elements)},
       .binding_plan = std::move(binding_plan),
+      .instance_table = std::move(instance_table),
   };
 }
 

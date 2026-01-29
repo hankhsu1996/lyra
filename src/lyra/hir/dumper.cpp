@@ -645,11 +645,20 @@ void Dumper::Dump(ExpressionId id) {
                     case FormatKind::kTime:
                       kind_str = "%t";
                       break;
+                    case FormatKind::kChar:
+                      kind_str = "%c";
+                      break;
+                    case FormatKind::kModulePath:
+                      kind_str = "%m";
+                      break;
                     case FormatKind::kLiteral:
                       break;  // Already handled above
                   }
-                  *out_ << kind_str << ":";
-                  Dump(*op.value);
+                  *out_ << kind_str;
+                  if (op.value.has_value()) {
+                    *out_ << ":";
+                    Dump(*op.value);
+                  }
                 }
               }
               *out_ << ")";
@@ -697,11 +706,20 @@ void Dumper::Dump(ExpressionId id) {
                     case FormatKind::kTime:
                       kind_str = "%t";
                       break;
+                    case FormatKind::kChar:
+                      kind_str = "%c";
+                      break;
+                    case FormatKind::kModulePath:
+                      kind_str = "%m";
+                      break;
                     case FormatKind::kLiteral:
                       break;  // Already handled above
                   }
-                  *out_ << kind_str << ":";
-                  Dump(*op.value);
+                  *out_ << kind_str;
+                  if (op.value.has_value()) {
+                    *out_ << ":";
+                    Dump(*op.value);
+                  }
                 }
               }
               *out_ << ")";

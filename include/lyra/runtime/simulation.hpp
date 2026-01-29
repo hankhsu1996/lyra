@@ -32,9 +32,12 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 // - num_processes: number of processes
 // - plusargs: optional array of C strings for $plusargs (nullptr if none)
 // - num_plusargs: number of plusargs (0 if none)
+// - instance_paths: optional array of C strings for %m (nullptr if none)
+// - num_instance_paths: number of instance paths (0 if none)
 void LyraRunSimulation(
     LyraProcessFunc* processes, void** states, uint32_t num_processes,
-    const char** plusargs, uint32_t num_plusargs);
+    const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
+    uint32_t num_instance_paths);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).

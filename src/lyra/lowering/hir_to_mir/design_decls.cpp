@@ -95,6 +95,14 @@ auto CollectDeclarations(
   }
 
   decls.num_design_slots = static_cast<size_t>(next_slot);
+
+  // Build reverse lookup: instance symbol → instance table index (for %m)
+  if (input.instance_table != nullptr) {
+    for (uint32_t i = 0; i < input.instance_table->entries.size(); ++i) {
+      decls.instance_indices[input.instance_table->entries[i].instance_sym] = i;
+    }
+  }
+
   return decls;
 }
 

@@ -82,6 +82,7 @@ struct ProcessState {
   Frame frame;
   DesignState* design_state = nullptr;
   ProcessStatus status = ProcessStatus::kRunning;
+  uint32_t instance_id = UINT32_MAX;  // For %m: index into instance paths
   // Set by ExecTerminator when process suspends (Delay, Wait, Repeat).
   // RunUntilSuspend checks this before returning.
   std::optional<SuspendReason> pending_suspend;
@@ -125,6 +126,11 @@ class Interpreter {
   // Set base directory for relative file I/O resolution ($readmem, etc.)
   void SetFsBaseDir(std::filesystem::path path) {
     fs_base_dir_ = std::move(path);
+  }
+
+  // Set instance paths for %m formatting
+  void SetInstancePaths(std::vector<std::string> paths) {
+    instance_paths_ = std::move(paths);
   }
 
   // Execute process to completion. Returns final status.
@@ -252,6 +258,7 @@ class Interpreter {
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
   std::ostream* output_ = nullptr;
   std::vector<std::string> plusargs_;
+  std::vector<std::string> instance_paths_;  // For %m formatting
   runtime::FileManager file_manager_;
   uint64_t simulation_time_ = 0;
   std::filesystem::path fs_base_dir_;

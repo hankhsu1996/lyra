@@ -74,6 +74,7 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
       .source_manager = std::move(source_manager),
       .source_mapper = std::move(source_mapper),
       .binding_plan = std::move(design_result.binding_plan),
+      .instance_table = std::move(design_result.instance_table),
       .global_precision_power = global_precision,
   };
 }

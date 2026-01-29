@@ -16,6 +16,8 @@ enum class FormatKind : int32_t {
   kString = 4,    // %s
   kReal = 5,      // %f
   kTime = 6,      // %t
+  kChar = 7,      // %c
+  kModulePath = 8,  // %m (no argument, emits hierarchical path)
 };
 
 // Print kind for display/write operations.
@@ -54,6 +56,10 @@ constexpr auto FormatKindToSpecChar(FormatKind kind) -> char {
       return 'f';
     case FormatKind::kTime:
       return 't';
+    case FormatKind::kChar:
+      return 'c';
+    case FormatKind::kModulePath:
+      return 'm';
     case FormatKind::kLiteral:
       return '\0';
   }

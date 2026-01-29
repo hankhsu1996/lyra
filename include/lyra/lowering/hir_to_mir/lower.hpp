@@ -14,6 +14,7 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -27,6 +28,7 @@ struct LoweringInput {
   const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
+  const mir::InstanceTable* instance_table = nullptr;  // For %m support
 };
 
 struct LoweringResult {

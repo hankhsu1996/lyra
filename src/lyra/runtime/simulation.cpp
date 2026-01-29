@@ -209,7 +209,8 @@ void SetupAndRunSimulation(
 
 extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
-    const char** plusargs_raw, uint32_t num_plusargs) {
+    const char** plusargs_raw, uint32_t num_plusargs,
+    const char** instance_paths_raw, uint32_t num_instance_paths) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -223,8 +224,19 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  // Convert instance paths to vector<string> for Engine (%m support)
+  std::vector<std::string> instance_paths_vec;
+  if (instance_paths_raw != nullptr && num_instance_paths > 0) {
+    auto paths_span = std::span(instance_paths_raw, num_instance_paths);
+    instance_paths_vec.reserve(num_instance_paths);
+    for (const char* path : paths_span) {
+      instance_paths_vec.emplace_back(path != nullptr ? path : "");
+    }
+  }
+
   lyra::runtime::Engine engine(
-      MakeProcessRunner(procs, states), std::span(plusargs_vec));
+      MakeProcessRunner(procs, states), std::span(plusargs_vec),
+      std::move(instance_paths_vec));
   SetupAndRunSimulation(engine, states, num_processes);
 }
 

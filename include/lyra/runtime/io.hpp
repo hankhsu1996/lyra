@@ -109,4 +109,9 @@ void LyraWritemem(
     int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
     int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
     bool is_hex, int32_t element_kind);
+
+// Print hierarchical module path (%m format specifier)
+// - engine: pointer to Engine (for instance path lookup)
+// - instance_id: index into instance_paths (from process's owner_instance_id)
+void LyraPrintModulePath(void* engine, uint32_t instance_id);
 }

@@ -39,6 +39,9 @@ auto LowerDesign(
   result.num_design_slots = decls.num_design_slots;
   result.slot_table = decls.slot_table;
   result.global_precision_power = input.global_precision_power;
+  if (input.instance_table != nullptr) {
+    result.instance_table = *input.instance_table;
+  }
 
   // Lower package init processes
   // Collect dynamically generated functions (e.g., strobe thunks)
@@ -49,9 +52,10 @@ auto LowerDesign(
       if (pkg->init_process) {
         hir::ProcessId hir_proc_id = pkg->init_process;
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
+        // Package init processes have no owning instance (UINT32_MAX sentinel)
         Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            &result.generated_functions);
+            UINT32_MAX, &result.generated_functions);
         if (!mir_proc_result) {
           return std::unexpected(mir_proc_result.error());
         }

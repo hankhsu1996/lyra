@@ -9,6 +9,7 @@
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/instance.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
 
@@ -66,6 +67,10 @@ struct Design {
   // Key: child port's SlotId (must be kDesign root with no projections)
   // Value: parent's PlaceId (may have projections, must resolve to kDesign)
   absl::flat_hash_map<SlotId, PlaceId> alias_map;
+
+  // Instance table for %m support.
+  // Index = instance_id, same order as all_instances during elaboration.
+  InstanceTable instance_table;
 };
 
 }  // namespace lyra::mir
