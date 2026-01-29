@@ -271,3 +271,149 @@ cases:
     expect:
       variables:
         x: 0x0080  # 5 + 3 = 8
+
+  - name: indexed_partselect_dynamic_add_assign
+    description: Compound assignment to indexed part-select with dynamic index
+    sv: |
+      module Test;
+        logic [15:0] x;
+        int i;
+        initial begin
+          x = 16'h0000;
+          i = 4;
+          x[i+:4] += 4'd5;  // bits [7:4] get 5 added
+        end
+      endmodule
+    expect:
+      variables:
+        x: 0x0050
+
+  - name: indexed_partselect_local_var
+    description: Compound assignment to indexed part-select on local variable
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [15:0] data;
+          int idx;
+          data = 16'h0000;
+          idx = 8;
+          data[idx+:4] += 4'd10;  // bits [11:8] get 10 added
+          result = data;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0A00
+
+  - name: packed_element_dynamic_add_assign
+    description: Compound assignment to packed array element with dynamic index
+    sv: |
+      module Test;
+        logic [7:0] x;
+        int i;
+        initial begin
+          x = 8'b00000000;
+          i = 3;
+          x[i] += 1'b1;  // bit 3 gets 1 added
+        end
+      endmodule
+    expect:
+      variables:
+        x: 0x08
+
+  - name: indexed_partselect_read_in_function
+    description: Read from indexed part-select with dynamic index in user function (GuardedUse)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int read_slice(input int idx);
+          logic [15:0] data;
+          data = 16'hABCD;
+          return data[idx+:4];  // dynamic indexed part-select read -> GuardedUse
+        endfunction
+
+        initial begin
+          result = read_slice(4);  // reads bits [7:4] = 0xC
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0C
+
+  - name: packed_element_read_in_function
+    description: Read from packed element with dynamic index in user function (GuardedUse)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int read_bit(input int idx);
+          logic [7:0] data;
+          data = 8'b10101010;
+          return data[idx];  // dynamic packed element read -> GuardedUse
+        endfunction
+
+        initial begin
+          result = read_bit(3);  // bit 3 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: indexed_partselect_on_int_parameter
+    description: Read indexed part-select from int function parameter (tests PlaceCollector for RvalueInfo)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int read_param_slice(input int data, input int idx);
+          return data[idx+:4];  // parameter accessed ONLY via indexed part-select
+        endfunction
+
+        initial begin
+          result = read_param_slice(32'hDEADBEEF, 4);  // bits [7:4] = 0xE
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0E
+
+  - name: packed_element_on_int_parameter
+    description: Read packed element from int function parameter (tests PlaceCollector for RvalueInfo)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int read_param_bit(input int data, input int idx);
+          return data[idx];  // parameter accessed ONLY via packed element select
+        endfunction
+
+        initial begin
+          result = read_param_bit(32'b10101010, 3);  // bit 3 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: queue_pop_in_function
+    description: Queue pop_front on local queue inside user function
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int pop_local();
+          int q[$];  // Local queue in function
+          q = '{10, 20, 30};
+          return q.pop_front();  // pop from local queue
+        endfunction
+
+        initial begin
+          result = pop_local();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10

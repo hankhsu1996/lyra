@@ -36,6 +36,7 @@
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
@@ -542,6 +543,58 @@ struct PlaceCollector {
     }
   }
 
+  // Collect places from an Rvalue (operands + RvalueInfo).
+  // Uses exhaustive std::visit to ensure new RvalueInfo types with embedded
+  // PlaceIds cause compilation errors until handled.
+  void CollectFromRvalue(const mir::Rvalue& rvalue, const mir::Arena& arena) {
+    for (const auto& op : rvalue.operands) {
+      CollectFromOperand(op, arena);
+    }
+
+    std::visit(
+        [&](const auto& info) {
+          using T = std::decay_t<decltype(info)>;
+
+          if constexpr (std::is_same_v<T, mir::GuardedUseRvalueInfo>) {
+            CollectFromPlace(info.place, arena);
+          } else if constexpr (std::is_same_v<T, mir::BuiltinCallRvalueInfo>) {
+            if (info.receiver) {
+              CollectFromPlace(*info.receiver, arena);
+            }
+          } else if constexpr (std::is_same_v<T, mir::PlusargsRvalueInfo>) {
+            if (info.output) {
+              CollectFromPlace(*info.output, arena);
+            }
+          } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
+            for (const auto& fop : info.ops) {
+              if (fop.value) {
+                CollectFromOperand(*fop.value, arena);
+              }
+            }
+          } else if constexpr (
+              std::is_same_v<T, mir::UnaryRvalueInfo> ||
+              std::is_same_v<T, mir::BinaryRvalueInfo> ||
+              std::is_same_v<T, mir::CastRvalueInfo> ||
+              std::is_same_v<T, mir::BitCastRvalueInfo> ||
+              std::is_same_v<T, mir::UserCallRvalueInfo> ||
+              std::is_same_v<T, mir::AggregateRvalueInfo> ||
+              std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
+              std::is_same_v<T, mir::ConcatRvalueInfo> ||
+              std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
+              std::is_same_v<T, mir::MathCallRvalueInfo> ||
+              std::is_same_v<T, mir::SystemTfRvalueInfo>) {
+            // These RvalueInfo types have no embedded PlaceIds or Operands
+            // beyond what's in Rvalue::operands (already collected above)
+          } else {
+            static_assert(
+                !sizeof(T),
+                "Unhandled RvalueInfo type in PlaceCollector - if this type "
+                "has embedded PlaceIds or Operands, add handling above");
+          }
+        },
+        rvalue.info);
+  }
+
   // Collect places from an effect operation.
   // Each effect type has different operand/place fields - this centralizes
   // the handling to make coverage auditable.
@@ -602,9 +655,7 @@ struct PlaceCollector {
                 CollectFromOperand(data.source, arena);
               } else if constexpr (std::is_same_v<T, mir::Compute>) {
                 CollectFromPlace(data.target, arena);
-                for (const auto& op : data.value.operands) {
-                  CollectFromOperand(op, arena);
-                }
+                CollectFromRvalue(data.value, arena);
               } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
                 CollectFromPlace(data.target, arena);
                 CollectFromOperand(data.source, arena);

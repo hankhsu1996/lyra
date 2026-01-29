@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -314,7 +315,9 @@ void CollectPlaceFromOperand(
   }
 }
 
-// Collect PlaceIds from an Rvalue
+// Collect PlaceIds from an Rvalue (operands + RvalueInfo).
+// Uses exhaustive std::visit to ensure new RvalueInfo types with embedded
+// PlaceIds cause compilation errors until handled.
 void CollectPlacesFromRvalue(
     const mir::Rvalue& rvalue,
     std::unordered_set<mir::PlaceId, PlaceIdHash>& places) {
@@ -322,17 +325,48 @@ void CollectPlacesFromRvalue(
     CollectPlaceFromOperand(operand, places);
   }
 
-  if (const auto* guarded_use =
-          std::get_if<mir::GuardedUseRvalueInfo>(&rvalue.info)) {
-    places.insert(guarded_use->place);
-  }
+  std::visit(
+      [&](const auto& info) {
+        using T = std::decay_t<decltype(info)>;
 
-  if (const auto* builtin_call =
-          std::get_if<mir::BuiltinCallRvalueInfo>(&rvalue.info)) {
-    if (builtin_call->receiver) {
-      places.insert(*builtin_call->receiver);
-    }
-  }
+        if constexpr (std::is_same_v<T, mir::GuardedUseRvalueInfo>) {
+          places.insert(info.place);
+        } else if constexpr (std::is_same_v<T, mir::BuiltinCallRvalueInfo>) {
+          if (info.receiver) {
+            places.insert(*info.receiver);
+          }
+        } else if constexpr (std::is_same_v<T, mir::PlusargsRvalueInfo>) {
+          if (info.output) {
+            places.insert(*info.output);
+          }
+        } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
+          for (const auto& fop : info.ops) {
+            if (fop.value) {
+              CollectPlaceFromOperand(*fop.value, places);
+            }
+          }
+        } else if constexpr (
+            std::is_same_v<T, mir::UnaryRvalueInfo> ||
+            std::is_same_v<T, mir::BinaryRvalueInfo> ||
+            std::is_same_v<T, mir::CastRvalueInfo> ||
+            std::is_same_v<T, mir::BitCastRvalueInfo> ||
+            std::is_same_v<T, mir::UserCallRvalueInfo> ||
+            std::is_same_v<T, mir::AggregateRvalueInfo> ||
+            std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
+            std::is_same_v<T, mir::ConcatRvalueInfo> ||
+            std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
+            std::is_same_v<T, mir::MathCallRvalueInfo> ||
+            std::is_same_v<T, mir::SystemTfRvalueInfo>) {
+          // These RvalueInfo types have no embedded PlaceIds or Operands
+          // beyond what's in Rvalue::operands (already collected above)
+        } else {
+          static_assert(
+              !sizeof(T),
+              "Unhandled RvalueInfo type - if this type has embedded PlaceIds "
+              "or Operands, add handling above");
+        }
+      },
+      rvalue.info);
 }
 
 // Collect PlaceIds from an EffectOp
