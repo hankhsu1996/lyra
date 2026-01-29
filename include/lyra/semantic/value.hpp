@@ -67,7 +67,11 @@ auto MakeIntegralX(uint32_t bit_width) -> RuntimeValue;  // All bits unknown (X)
 auto MakeIntegralWide(
     const uint64_t* words, size_t num_words, uint32_t bit_width)
     -> RuntimeValue;  // From multi-word array (little-endian: word[0] = bits
-                      // 0-63)
+                      // 0-63), 2-state (unknown defaults to zero)
+auto MakeIntegralWide(
+    const uint64_t* value_words, const uint64_t* unknown_words,
+    size_t num_words, uint32_t bit_width)
+    -> RuntimeValue;  // 4-state: explicit value and unknown planes
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;

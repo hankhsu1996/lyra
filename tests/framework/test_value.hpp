@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -16,6 +18,11 @@ struct IntegralValue {
   std::vector<uint64_t> value;    // Value/Z bits
   std::vector<uint64_t> unknown;  // Unknown bits (0 = known)
 };
+
+// Parse SV literal format: N'b..., N'h..., N'o... into IntegralValue.
+// Returns std::nullopt if not in SV literal format or invalid.
+// Supports underscores, X/Z digits, and all standard bases.
+auto ParseSvLiteral(std::string_view str) -> std::optional<IntegralValue>;
 
 // Canonical test value - what backends extract after simulation.
 // All integrals are represented as IntegralValue (with proper width).

@@ -104,8 +104,9 @@ enum class VarTypeKind : uint8_t {
 // Type info for a design slot (for layout and initialization)
 struct SlotTypeInfo {
   VarTypeKind kind;
-  uint32_t width;  // Bit width (64 for real)
-  bool is_signed;  // Signedness (integral only)
+  uint32_t width;      // Bit width (64 for real)
+  bool is_signed;      // Signedness (integral only)
+  bool is_four_state;  // 4-state (logic, reg) vs 2-state (bit, int)
 };
 
 // Input for slot type information (provided by caller)

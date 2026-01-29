@@ -572,20 +572,24 @@ auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
           .kind = VarTypeKind::kReal,
           .width = 64,
           .is_signed = true,
+          .is_four_state = false,
       };
     } else if (type.Kind() == TypeKind::kString) {
       type_info = {
           .kind = VarTypeKind::kString,
           .width = 0,
           .is_signed = false,
+          .is_four_state = false,
       };
     } else if (IsPacked(type)) {
       uint32_t width = PackedBitWidth(type, types);
       bool is_signed = IsPackedSigned(type, types);
+      bool is_four_state = IsPackedFourState(type, types);
       type_info = {
           .kind = VarTypeKind::kIntegral,
           .width = width > 0 ? width : 32,
           .is_signed = is_signed,
+          .is_four_state = is_four_state,
       };
     } else {
       // Unsupported type - use placeholder for SlotTypeInfo
@@ -594,6 +598,7 @@ auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
           .kind = VarTypeKind::kIntegral,
           .width = 32,
           .is_signed = false,
+          .is_four_state = false,
       };
     }
 

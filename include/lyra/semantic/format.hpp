@@ -14,6 +14,22 @@
 
 namespace lyra::semantic {
 
+// Radix for SV literal formatting
+enum class LiteralRadix { kBinary, kHex };
+
+// Format specification for SV literal output (e.g., "8'bx01z0011")
+struct SvLiteralFormatSpec {
+  LiteralRadix radix = LiteralRadix::kBinary;
+};
+
+// Format RuntimeValue as SV literal (e.g., "8'bx01z0011" or "8'hF5")
+// This is the ONLY producer of N'... literals - no caller should
+// concatenate width + 'b/'h manually.
+// For integrals: returns N'b... or N'h... syntax
+// For reals: returns plain decimal representation (no N'... prefix)
+auto FormatAsSvLiteral(const RuntimeValue& value, SvLiteralFormatSpec spec = {})
+    -> std::string;
+
 // Unified format specification for all formatting operations.
 // This is the semantic layer's definition - both MIR interpreter and LLVM
 // runtime delegate to this.

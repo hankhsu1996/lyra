@@ -44,8 +44,11 @@ void LyraPrintEnd(int32_t kind);
 
 // Register a variable for snapshot. Called at program init.
 // kind: 0 = integral, 1 = real
+// is_four_state: true for 4-state types (logic, reg), slot layout is
+//                {value_plane, unknown_plane}
 void LyraRegisterVar(
-    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed);
+    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed,
+    bool is_four_state);
 
 // Output all registered variables. Called before exit.
 void LyraSnapshotVars();

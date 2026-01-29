@@ -150,9 +150,11 @@ void EmitVariableInspection(
     auto* width_val = llvm::ConstantInt::get(i32_ty, type_info.width);
     auto* signed_val =
         llvm::ConstantInt::get(i1_ty, type_info.is_signed ? 1 : 0);
+    auto* four_state_val =
+        llvm::ConstantInt::get(i1_ty, type_info.is_four_state ? 1 : 0);
     builder.CreateCall(
         context.GetLyraRegisterVar(),
-        {name_ptr, slot_ptr, kind_val, width_val, signed_val});
+        {name_ptr, slot_ptr, kind_val, width_val, signed_val, four_state_val});
   }
 
   builder.CreateCall(context.GetLyraSnapshotVars());

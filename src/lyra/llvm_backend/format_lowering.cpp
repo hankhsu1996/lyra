@@ -66,21 +66,7 @@ auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
                 width),
             UnsupportedCategory::kType));
       }
-      // Check 4-state (would need x/z masks)
-      if (ty.Kind() == TypeKind::kIntegral && ty.AsIntegral().is_four_state) {
-        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-            context.GetCurrentOrigin(),
-            "format op with 4-state operand not supported in LLVM backend (use "
-            "2-state)",
-            UnsupportedCategory::kType));
-      }
-      if (IsPacked(ty) && IsPackedFourState(ty, types)) {
-        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-            context.GetCurrentOrigin(),
-            "format op with 4-state operand not supported in LLVM backend (use "
-            "2-state)",
-            UnsupportedCategory::kType));
-      }
+      // 4-state types use the value plane directly for display formatting.
     }
   }
   return {};

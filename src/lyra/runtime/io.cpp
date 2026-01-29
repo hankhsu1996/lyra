@@ -21,6 +21,8 @@
 #include "lyra/runtime/marshal.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/string.hpp"
+#include "lyra/semantic/format.hpp"
+#include "lyra/semantic/value.hpp"
 
 namespace {
 
@@ -35,72 +37,93 @@ struct VarEntry {
   VarKind kind;
   int32_t width;
   bool is_signed;
+  bool is_four_state;
 };
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
 std::vector<VarEntry> g_registered_vars;
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
 
-void SnapshotWideIntegral(const VarEntry& var) {
-  const size_t num_words = (static_cast<size_t>(var.width) + 63) / 64;
-  std::vector<uint64_t> words(num_words);
-
-  // memcpy avoids alignment/aliasing UB
-  std::memcpy(words.data(), var.addr, num_words * sizeof(uint64_t));
-
-  // Mask MSW to semantic width (high bits may be garbage)
-  const uint32_t rem = static_cast<uint32_t>(var.width) % 64;
-  if (rem != 0) {
-    words.back() &= (uint64_t{1} << rem) - 1;
+// Compute storage size for an integral type per ABI contract.
+// Narrow types use power-of-2 rounding; wide types use 64-bit words.
+auto GetIntegralStorageBytes(uint32_t width) -> size_t {
+  if (width <= 8) {
+    return 1;
   }
-
-  // Format as hex (MSB first, matching MIR's IntegralToHex)
-  std::string hex;
-  bool leading = true;
-  for (size_t i = num_words; i-- > 0;) {
-    if (leading && words[i] == 0 && i > 0) {
-      continue;
-    }
-    if (leading) {
-      hex += std::format("{:x}", words[i]);
-      leading = false;
-    } else {
-      hex += std::format("{:016x}", words[i]);
-    }
+  if (width <= 16) {
+    return 2;
   }
-  if (hex.empty()) {
-    hex = "0";
+  if (width <= 32) {
+    return 4;
   }
-  // Format: h:width:name=hex (width included for FourStateValue reconstruction)
-  std::print("__LYRA_VAR:h:{}:{}={}\n", var.width, var.name, hex);
+  if (width <= 64) {
+    return 8;
+  }
+  // Wide types: 64-bit words, 8-byte aligned
+  return ((width + 63) / 64) * 8;
 }
 
-void SnapshotIntegral(const VarEntry& var) {
-  if (var.width > 64) {
-    SnapshotWideIntegral(var);
-    return;
+// Read a packed integral from a slot. All ABI layout knowledge lives here.
+auto ReadPackedIntegralFromSlot(
+    const void* addr, uint32_t width, bool is_four_state)
+    -> lyra::semantic::RuntimeValue {
+  size_t num_words = (static_cast<size_t>(width) + 63) / 64;
+  std::vector<uint64_t> value_words(num_words, 0);
+  std::vector<uint64_t> unknown_words(num_words, 0);
+
+  size_t storage_bytes = GetIntegralStorageBytes(width);
+
+  // Use span for bounds-safe access (avoids pointer arithmetic)
+  size_t total_bytes = is_four_state ? storage_bytes * 2 : storage_bytes;
+  std::span<const uint8_t> data_span(
+      static_cast<const uint8_t*>(addr), total_bytes);
+
+  // memcpy avoids alignment/aliasing UB
+  // For narrow types, only copy storage_bytes (not num_words * 8)
+  std::memcpy(value_words.data(), data_span.data(), storage_bytes);
+
+  if (is_four_state) {
+    // Layout: {value_storage, unknown_storage} - struct with two elements
+    std::memcpy(
+        unknown_words.data(), data_span.subspan(storage_bytes).data(),
+        storage_bytes);
   }
 
-  uint64_t raw = 0;
-  std::memcpy(&raw, var.addr, static_cast<size_t>((var.width + 7) / 8));
-
-  // Mask to actual width
-  if (var.width < 64) {
-    raw &= (1ULL << var.width) - 1;
+  // Mask top words to semantic width (high bits may be garbage)
+  const uint32_t rem = width % 64;
+  if (rem != 0) {
+    uint64_t mask = (uint64_t{1} << rem) - 1;
+    value_words.back() &= mask;
+    unknown_words.back() &= mask;
   }
 
-  // Format: i:width:name=value (width included for FourStateValue
-  // reconstruction) Always output unsigned raw value - signedness is for
-  // comparison semantics, not storage
-  std::print("__LYRA_VAR:i:{}:{}={}\n", var.width, var.name, raw);
+  if (is_four_state) {
+    return lyra::semantic::MakeIntegralWide(
+        value_words.data(), unknown_words.data(), num_words, width);
+  }
+  return lyra::semantic::MakeIntegralWide(value_words.data(), num_words, width);
+}
+
+void SnapshotIntegralSemantic(const VarEntry& var) {
+  // ABI layer: build RuntimeValue from memory
+  auto value = ReadPackedIntegralFromSlot(
+      var.addr, static_cast<uint32_t>(var.width), var.is_four_state);
+
+  // Format layer: get SV literal (FormatAsSvLiteral owns all N'...
+  // construction)
+  std::string literal = lyra::semantic::FormatAsSvLiteral(value);
+
+  // New protocol: v:i:name=literal
+  std::print("__LYRA_VAR:v:i:{}={}\n", var.name, literal);
 }
 
 void SnapshotReal(const VarEntry& var) {
   double value = 0.0;
   std::memcpy(&value, var.addr, sizeof(double));
+  // New protocol: v:r:name=value (plain decimal, not SV literal)
   // Use max_digits10 (17 for double) to ensure round-trip precision
   std::print(
-      "__LYRA_VAR:r:{}={:.{}g}\n", var.name, value,
+      "__LYRA_VAR:v:r:{}={:.{}g}\n", var.name, value,
       std::numeric_limits<double>::max_digits10);
 }
 
@@ -131,16 +154,18 @@ extern "C" void LyraPrintEnd(int32_t kind) {
 }
 
 extern "C" void LyraRegisterVar(
-    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed) {
+    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed,
+    bool is_four_state) {
   g_registered_vars.push_back(
-      {name, addr, static_cast<VarKind>(kind), width, is_signed});
+      {name, addr, static_cast<VarKind>(kind), width, is_signed,
+       is_four_state});
 }
 
 extern "C" void LyraSnapshotVars() {
   for (const auto& var : g_registered_vars) {
     switch (var.kind) {
       case VarKind::kIntegral:
-        SnapshotIntegral(var);
+        SnapshotIntegralSemantic(var);
         break;
       case VarKind::kReal:
         SnapshotReal(var);
