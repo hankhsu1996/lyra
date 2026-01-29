@@ -35,29 +35,6 @@ npx prettier --write <files>                   # Format docs
 buildifier -r .                                # Format Bazel files
 ```
 
-## Linting
-
-Run clang-tidy for static analysis. First generate `compile_commands.json`:
-
-```bash
-bazel run //:refresh_compile_commands
-```
-
-Then run clang-tidy on specific files:
-
-```bash
-clang-tidy -p . <files>                # Single file (~20s each)
-run-clang-tidy -p . -j 8 <files>      # Multiple files in parallel
-```
-
-Or run on all files (update path when new code is added):
-
-```bash
-run-clang-tidy -p . -header-filter='^.*(src|include)/lyra/.*' -j 8 src/lyra/
-```
-
-**Note:** When using Bash tool, avoid `$(...)` subshell substitution (it gets escaped incorrectly). Use hardcoded values instead of `$(nproc)`.
-
 ## Lyra CLI
 
 ```bash
