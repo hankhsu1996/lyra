@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <variant>
 #include <vector>
 
@@ -127,32 +128,39 @@ auto LowerConcatRvalue4State(
   return ComputeResult::FourState(acc_val, acc_unk);
 }
 
-auto LowerUnaryRvalue4State(
-    Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  llvm::Type* elem_type = packed_context.element_type;
+// Lower regular (non-reduction) unary ops at carrier width.
+//
+// Contract:
+// - Operates entirely at carrier width (elem_type)
+// - Returns planes at carrier width
+// - Handles: Plus, Minus, BitwiseNot, LogicalNot
+auto LowerRegularUnary4State(
+    Context& context, mir::UnaryOp op, const FourStateValue& operand,
+    const PackedComputeContext& packed_context) -> ComputeResult {
+  llvm::Type* carrier_type = packed_context.element_type;
   uint32_t semantic_width = packed_context.bit_width;
 
   auto& builder = context.GetBuilder();
-  auto* zero = llvm::ConstantInt::get(elem_type, 0);
+  auto* zero = llvm::ConstantInt::get(carrier_type, 0);
 
-  auto src_or_err = LowerOperandFourState(context, operands[0], elem_type);
-  if (!src_or_err) return std::unexpected(src_or_err.error());
-  auto src = *src_or_err;
-  src.value = builder.CreateZExtOrTrunc(src.value, elem_type, "un4.val");
-  src.unknown = builder.CreateZExtOrTrunc(src.unknown, elem_type, "un4.unk");
+  // Coerce operand to carrier width
+  auto src = FourStateValue{
+      .value =
+          builder.CreateZExtOrTrunc(operand.value, carrier_type, "reg4.val"),
+      .unknown =
+          builder.CreateZExtOrTrunc(operand.unknown, carrier_type, "reg4.unk"),
+  };
 
-  switch (info.op) {
+  switch (op) {
     case mir::UnaryOp::kPlus:
       return ComputeResult::FourState(src.value, src.unknown);
 
     case mir::UnaryOp::kMinus: {
-      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
-      auto* sem_mask = GetSemanticMask(elem_type, semantic_width);
-      auto* neg_val = builder.CreateNeg(src.value, "un4.neg");
+      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "reg4.anyunk");
+      auto* sem_mask = GetSemanticMask(carrier_type, semantic_width);
+      auto* neg_val = builder.CreateNeg(src.value, "reg4.neg");
       auto* neg_unk =
-          builder.CreateSelect(any_unk, sem_mask, zero, "un4.neg.unk");
+          builder.CreateSelect(any_unk, sem_mask, zero, "reg4.neg.unk");
       return ComputeResult::FourState(neg_val, neg_unk);
     }
 
@@ -163,33 +171,100 @@ auto LowerUnaryRvalue4State(
 
     case mir::UnaryOp::kLogicalNot: {
       auto* known = builder.CreateAnd(
-          src.value, builder.CreateNot(src.unknown), "un4.known");
-      auto* is_nonzero = builder.CreateICmpNE(known, zero, "un4.nz");
-      auto* negated = builder.CreateNot(is_nonzero, "un4.lnot");
-      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "un4.anyunk");
-      auto* val = builder.CreateZExt(negated, elem_type, "un4.lnot.val");
-      auto* unk = builder.CreateZExt(any_unk, elem_type, "un4.lnot.unk");
+          src.value, builder.CreateNot(src.unknown), "reg4.known");
+      auto* is_nonzero = builder.CreateICmpNE(known, zero, "reg4.nz");
+      auto* negated = builder.CreateNot(is_nonzero, "reg4.lnot");
+      auto* any_unk = builder.CreateICmpNE(src.unknown, zero, "reg4.anyunk");
+      auto* val = builder.CreateZExt(negated, carrier_type, "reg4.lnot.val");
+      auto* unk = builder.CreateZExt(any_unk, carrier_type, "reg4.lnot.unk");
       return ComputeResult::FourState(val, unk);
     }
 
-    default: {
-      // For reduction operators, use the operand width (not result width)
-      uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
-      auto* masked_val = ApplyWidthMask(context, src.value, operand_width);
-      auto* masked_unk = ApplyWidthMask(context, src.unknown, operand_width);
-      auto* known = builder.CreateAnd(
-          masked_val, builder.CreateNot(masked_unk), "un4.red.known");
-
-      auto red_result_or_err =
-          LowerUnaryOp(context, info.op, known, elem_type, operand_width);
-      if (!red_result_or_err) return std::unexpected(red_result_or_err.error());
-
-      auto* any_unk = builder.CreateICmpNE(masked_unk, zero, "un4.red.taint");
-      auto* val = *red_result_or_err;
-      auto* unk = builder.CreateZExt(any_unk, elem_type, "un4.red.unk");
-      return ComputeResult::FourState(val, unk);
-    }
+    default:
+      throw common::InternalError(
+          "LowerRegularUnary4State",
+          std::format("not a regular unary op: {}", mir::ToString(op)));
   }
+}
+
+// Lower reduction unary ops at operand semantic width.
+//
+// Contract:
+// - Operates at operand semantic width (NOT carrier width)
+// - Produces 1-bit semantic result
+// - Packs to carrier width at the very end before returning
+// - Handles: ReductionAnd, ReductionNand, ReductionOr, ReductionNor,
+//            ReductionXor, ReductionXnor
+auto LowerReduction4State(
+    Context& context, mir::UnaryOp op, const FourStateValue& operand,
+    uint32_t operand_semantic_width, const PackedComputeContext& packed_context)
+    -> Result<ComputeResult> {
+  llvm::Type* carrier_type = packed_context.element_type;
+
+  auto& builder = context.GetBuilder();
+
+  // Create working type at operand semantic width
+  auto* working_type =
+      llvm::Type::getIntNTy(builder.getContext(), operand_semantic_width);
+
+  // Coerce operand planes to working width (operand semantic width)
+  auto* working_val =
+      builder.CreateZExtOrTrunc(operand.value, working_type, "red4.val");
+  auto* working_unk =
+      builder.CreateZExtOrTrunc(operand.unknown, working_type, "red4.unk");
+
+  // Create mask at working width for semantic bits
+  auto working_mask = llvm::APInt::getLowBitsSet(
+      operand_semantic_width, operand_semantic_width);
+  auto* mask = llvm::ConstantInt::get(working_type, working_mask);
+
+  // Apply semantic mask at working width
+  auto* masked_val = builder.CreateAnd(working_val, mask, "red4.val.masked");
+  auto* masked_unk = builder.CreateAnd(working_unk, mask, "red4.unk.masked");
+
+  // Compute known bits (value & ~unknown)
+  auto* known = builder.CreateAnd(
+      masked_val, builder.CreateNot(masked_unk), "red4.known");
+
+  // Perform reduction at working width, producing 1-bit result
+  auto red_result_or_err =
+      LowerUnaryOp(context, op, known, carrier_type, operand_semantic_width);
+  if (!red_result_or_err) return std::unexpected(red_result_or_err.error());
+
+  // Check if any unknown bits exist (at working width)
+  auto* working_zero = llvm::ConstantInt::get(working_type, 0);
+  auto* any_unk = builder.CreateICmpNE(masked_unk, working_zero, "red4.taint");
+
+  // Pack to carrier width: val is already at carrier (from LowerUnaryOp),
+  // unk needs to be extended from i1
+  auto* val = *red_result_or_err;
+  auto* unk = builder.CreateZExt(any_unk, carrier_type, "red4.unk.ext");
+
+  return ComputeResult::FourState(val, unk);
+}
+
+// Dispatcher for 4-state unary operations.
+//
+// Routes to:
+// - LowerRegularUnary4State for shape-preserving ops (N-bit -> N-bit)
+// - LowerReduction4State for reducing ops (N-bit -> 1-bit)
+auto LowerUnaryRvalue4State(
+    Context& context, const mir::UnaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* carrier_type = packed_context.element_type;
+
+  // Load operand at carrier width (standard contract for LowerOperandFourState)
+  auto src_or_err = LowerOperandFourState(context, operands[0], carrier_type);
+  if (!src_or_err) return std::unexpected(src_or_err.error());
+
+  if (IsReductionOp(info.op)) {
+    uint32_t operand_semantic_width =
+        GetOperandPackedWidth(context, operands[0]);
+    return LowerReduction4State(
+        context, info.op, *src_or_err, operand_semantic_width, packed_context);
+  }
+  return LowerRegularUnary4State(context, info.op, *src_or_err, packed_context);
 }
 
 auto LowerGuardedUse4State(

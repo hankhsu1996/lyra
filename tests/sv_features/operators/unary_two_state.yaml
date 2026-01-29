@@ -1,5 +1,5 @@
-feature: unary_operators
-description: Tests for unary operators (+, -, !, ~, ++, --)
+feature: unary_two_state
+description: 2-state unary operators (+, -, !, ~, ++, --, reductions)
 
 cases:
   - name: unary_plus
@@ -286,3 +286,48 @@ cases:
     expect:
       variables:
         r: 1
+
+  - name: reduction_or_wide_upper_bit
+    description: Reduction OR where only upper bit (>8) is set - verifies no silent truncation
+    sv: |
+      module Test;
+        bit [15:0] wide_val;
+        bit result;
+        initial begin
+          wide_val = 16'h0100;  // Only bit 8 set (above 8-bit truncation point)
+          result = |wide_val;   // Must be 1, not 0
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_and_wide_upper_bit
+    description: Reduction AND where upper bits (>8) matter - all 16 bits must be 1
+    sv: |
+      module Test;
+        bit [15:0] wide_val;
+        bit result;
+        initial begin
+          wide_val = 16'h00FF;  // Only lower 8 bits set
+          result = &wide_val;   // Must be 0, not 1 (upper bits are 0)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: reduction_xor_wide_upper_bit
+    description: Reduction XOR where only upper bit (>8) is set
+    sv: |
+      module Test;
+        bit [15:0] wide_val;
+        bit result;
+        initial begin
+          wide_val = 16'h0100;  // Only bit 8 set
+          result = ^wide_val;   // Must be 1 (odd number of 1s)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

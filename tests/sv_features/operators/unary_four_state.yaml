@@ -1,0 +1,138 @@
+feature: unary_four_state
+description: 4-state (X/Z) semantics for unary operators
+
+cases:
+  - name: not_propagates_unknown
+    description: NOT of X/Z produces X
+    sv: |
+      module Test;
+        logic [3:0] a = 4'bx01z;
+        logic [3:0] result;
+        initial result = ~a;
+      endmodule
+    expect:
+      variables:
+        result: "4'bx10x"
+
+  - name: reduction_and_with_x
+    description: Reduction AND with X produces X (current behavior - dominating 0 not implemented)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b1x11;
+        logic result;
+        initial result = &a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: reduction_and_all_ones
+    description: Reduction AND with all 1s produces 1
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b1111;
+        logic result;
+        initial result = &a;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_with_x
+    description: Reduction OR with X produces X (current behavior - dominating 1 not implemented)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b0x00;
+        logic result;
+        initial result = |a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: reduction_or_all_zeros
+    description: Reduction OR with all 0s produces 0
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b0000;
+        logic result;
+        initial result = |a;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: reduction_and_wide_operand
+    description: Reduction AND on wide (>8 bit) 4-state operand
+    sv: |
+      module Test;
+        logic [21:0] wide_val;
+        logic result;
+        initial begin
+          wide_val = 22'h3FFFFF;  // All 1s
+          result = &wide_val;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_wide_operand
+    description: Reduction OR on wide (>8 bit) 4-state operand
+    sv: |
+      module Test;
+        logic [21:0] wide_val;
+        logic result;
+        initial begin
+          wide_val = 22'h000001;  // Single bit set
+          result = |wide_val;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_xor_wide_operand
+    description: Reduction XOR on wide (>8 bit) 4-state operand
+    sv: |
+      module Test;
+        logic [21:0] wide_val;
+        logic result;
+        initial begin
+          wide_val = 22'h155555;  // 010101... pattern = odd number of 1s
+          result = ^wide_val;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_or_wide_upper_bit
+    description: Reduction OR where only upper bit (>8) is set - verifies no silent truncation
+    sv: |
+      module Test;
+        logic [15:0] wide_val;
+        logic result;
+        initial begin
+          wide_val = 16'h0100;  // Only bit 8 set (above 8-bit truncation point)
+          result = |wide_val;   // Must be 1, not 0
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: reduction_and_wide_upper_bit
+    description: Reduction AND where upper bits (>8) matter - all 16 bits must be 1
+    sv: |
+      module Test;
+        logic [15:0] wide_val;
+        logic result;
+        initial begin
+          wide_val = 16'h00FF;  // Only lower 8 bits set
+          result = &wide_val;   // Must be 0, not 1 (upper bits are 0)
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0

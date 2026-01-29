@@ -1,5 +1,5 @@
-feature: binary_operators
-description: Tests for binary arithmetic, comparison, and logical operators
+feature: binary_two_state
+description: 2-state binary operators (arithmetic, comparison, bitwise, logical)
 
 cases:
   - name: addition_basic
