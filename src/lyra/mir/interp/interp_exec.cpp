@@ -596,6 +596,26 @@ auto Interpreter::ExecSystemTfEffect(
       file_manager_.Fclose(descriptor);
       return {};
     }
+    case SystemTfOpcode::kFflush: {
+      if (effect.args.empty()) {
+        // Flush all
+        file_manager_.Fflush(std::nullopt);
+      } else {
+        auto desc_val_result = EvalOperand(state, effect.args[0]);
+        if (!desc_val_result) {
+          return std::unexpected(std::move(desc_val_result).error());
+        }
+        auto& desc_val = *desc_val_result;
+        if (!IsIntegral(desc_val)) {
+          return {};  // Invalid descriptor: no-op
+        }
+        const auto& desc_int = AsIntegral(desc_val);
+        auto descriptor = static_cast<int32_t>(
+            desc_int.value.empty() ? 0 : desc_int.value[0]);
+        file_manager_.Fflush(descriptor);
+      }
+      return {};
+    }
     case SystemTfOpcode::kFopen:
       throw common::InternalError(
           "ExecSystemTfEffect", "$fopen is an rvalue, not an effect");

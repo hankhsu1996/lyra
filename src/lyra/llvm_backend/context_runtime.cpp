@@ -789,6 +789,21 @@ auto Context::GetLyraFclose() -> llvm::Function* {
   return lyra_fclose_;
 }
 
+auto Context::GetLyraFflush() -> llvm::Function* {
+  if (lyra_fflush_ == nullptr) {
+    // void LyraFflush(ptr engine, i1 has_desc, i32 descriptor)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i1_ty, i32_ty}, false);
+    lyra_fflush_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFflush",
+        llvm_module_.get());
+  }
+  return lyra_fflush_;
+}
+
 auto Context::GetLyraFWrite() -> llvm::Function* {
   if (lyra_fwrite_ == nullptr) {
     // void LyraFWrite(ptr engine, i32 descriptor, ptr message, i1 add_newline)

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
@@ -194,6 +195,16 @@ extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
 extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->GetFileManager().Fclose(descriptor);
+}
+
+extern "C" void LyraFflush(
+    void* engine_ptr, bool has_desc, int32_t descriptor) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  if (has_desc) {
+    engine->GetFileManager().Fflush(descriptor);
+  } else {
+    engine->GetFileManager().Fflush(std::nullopt);
+  }
 }
 
 extern "C" void LyraFWrite(

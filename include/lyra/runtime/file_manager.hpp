@@ -50,6 +50,10 @@ class FileManager {
   // no-op.
   void Fclose(int32_t descriptor);
 
+  // Flush descriptor(s). nullopt = flush all open files + stdout.
+  // With descriptor: flush specific file(s) per MCD/FD encoding.
+  void Fflush(std::optional<int32_t> descriptor);
+
   // Decode descriptor and collect target output streams.
   // MCD bit 0 = stdout; bits 1-30 = MCD channels; bit 31 = FD mode.
   auto CollectStreams(uint32_t descriptor) -> StreamTargets;

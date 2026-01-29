@@ -29,6 +29,7 @@ enum class SystemTfOpcode : uint16_t {
   // File I/O
   kFopen = 0,
   kFclose = 1,
+  kFflush = 2,
 };
 
 // Functional category for grouping related system TFs.

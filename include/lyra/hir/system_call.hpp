@@ -88,6 +88,12 @@ struct FcloseData {
   auto operator==(const FcloseData&) const -> bool = default;
 };
 
+struct FflushData {
+  std::optional<ExpressionId> descriptor;  // nullopt = flush all
+
+  auto operator==(const FflushData&) const -> bool = default;
+};
+
 struct RuntimeQueryData {
   RuntimeQueryKind kind;
 
@@ -124,7 +130,7 @@ struct MonitorControlData {
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
-    RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
+    FflushData, RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
     MonitorControlData>;
 
 }  // namespace lyra::hir

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -74,6 +75,48 @@ void FileManager::Fclose(int32_t descriptor) {
     for (int bit = 1; bit <= kMaxMcdBit; ++bit) {
       if ((udesc & (1U << bit)) != 0) {
         mcd_channels_.erase(bit);
+      }
+    }
+  }
+}
+
+void FileManager::Fflush(std::optional<int32_t> descriptor) {
+  if (!descriptor) {
+    // Flush all open files + stdout
+    std::cout.flush();
+    for (auto& [bit, stream] : mcd_channels_) {
+      if (stream && stream->is_open()) {
+        stream->flush();
+      }
+    }
+    for (auto& [index, stream] : fd_table_) {
+      if (stream && stream->is_open()) {
+        stream->flush();
+      }
+    }
+    return;
+  }
+
+  auto udesc = static_cast<uint32_t>(*descriptor);
+
+  if ((udesc & kFdBit) != 0) {
+    // FD mode: flush single file
+    auto index = static_cast<int32_t>(udesc & ~kFdBit);
+    auto it = fd_table_.find(index);
+    if (it != fd_table_.end() && it->second && it->second->is_open()) {
+      it->second->flush();
+    }
+  } else {
+    // MCD mode: bit 0 = stdout, bits 1-30 = file channels
+    if ((udesc & 1U) != 0) {
+      std::cout.flush();
+    }
+    for (int bit = 1; bit <= kMaxMcdBit; ++bit) {
+      if ((udesc & (1U << bit)) != 0) {
+        auto it = mcd_channels_.find(bit);
+        if (it != mcd_channels_.end() && it->second && it->second->is_open()) {
+          it->second->flush();
+        }
       }
     }
   }
