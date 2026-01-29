@@ -97,6 +97,15 @@ auto LowerFunction(
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(func));
 
+  // Check for DPI-C imports (not supported)
+  if (func.flags.has(slang::ast::MethodFlags::DPIImport) ||
+      func.flags.has(slang::ast::MethodFlags::DPIContext)) {
+    ctx->sink->Error(
+        span,
+        std::format("DPI-C import function '{}' not supported", func.name));
+    return hir::kInvalidFunctionId;
+  }
+
   // Reject non-integral/void return types
   const auto& ret_type = func.getReturnType();
   if (!ret_type.isIntegral() && !ret_type.isVoid()) {
@@ -183,6 +192,14 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
   auto* ctx = &lowerer.Ctx();
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(task));
+
+  // Check for DPI-C imports (not supported)
+  if (task.flags.has(slang::ast::MethodFlags::DPIImport) ||
+      task.flags.has(slang::ast::MethodFlags::DPIContext)) {
+    ctx->sink->Error(
+        span, std::format("DPI-C import task '{}' not supported", task.name));
+    return hir::kInvalidTaskId;
+  }
 
   SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
 
