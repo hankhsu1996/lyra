@@ -1,9 +1,12 @@
 #include <format>
 
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/lifecycle/lifecycle_array.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -48,8 +51,8 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
       return;
 
     case TypeKind::kUnpackedArray:
-      throw common::InternalError(
-          "Destroy", "unpacked arrays with managed elements not yet supported");
+      detail::DestroyArray(ctx, ptr, type_id);
+      return;
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
@@ -127,9 +130,8 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
       return;
 
     case TypeKind::kUnpackedArray:
-      throw common::InternalError(
-          "MoveCleanup",
-          "unpacked arrays with managed elements not yet supported");
+      detail::MoveCleanupArray(ctx, src_ptr, type_id);
+      return;
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.

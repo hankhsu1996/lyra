@@ -29,7 +29,7 @@ class Context;
 // - DynamicArray, Queue: release the handle
 // - UnpackedStruct: recurse for managed fields
 // - UnpackedUnion: no-op (2-state only, no managed content)
-// - UnpackedArray with managed elements: InternalError (NYI)
+// - UnpackedArray: recurse for managed elements
 // - Void: InternalError
 void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
 
@@ -51,7 +51,7 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
 // - String, DynamicArray, Queue: store nullptr
 // - UnpackedStruct: recurse for managed fields
 // - UnpackedUnion: no-op (2-state only)
-// - UnpackedArray with managed elements: InternalError (NYI)
+// - UnpackedArray: recurse for managed elements
 // - Void: InternalError
 void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id);
 

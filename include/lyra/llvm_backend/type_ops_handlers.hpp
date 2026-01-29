@@ -33,7 +33,7 @@ auto AssignStruct(
 // Array handler (type_ops_array.cpp)
 auto AssignArray(
     Context& context, mir::PlaceId target, const mir::Operand& source,
-    TypeId array_type_id) -> Result<void>;
+    OwnershipPolicy policy, TypeId array_type_id) -> Result<void>;
 
 // Packed handlers (type_ops_packed.cpp)
 auto AssignFourState(
