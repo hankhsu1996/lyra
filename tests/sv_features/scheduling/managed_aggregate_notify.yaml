@@ -1,0 +1,121 @@
+feature: managed_aggregate_notify
+description: |
+  Tests for signal notification on aggregates containing managed types (strings).
+  Level-sensitive re-evaluation (always_comb) is guaranteed; edge-sensitive events
+  (posedge/negedge) on aggregates are NOT supported.
+
+cases:
+  - name: struct_with_string_via_always_comb
+    description: Struct assignment to design slot triggers always_comb re-eval
+    sv: |
+      module Test;
+        typedef struct { string s; int x; } my_struct;
+        my_struct sig;
+        int seen;
+
+        always_comb seen = sig.x;
+
+        initial begin
+          sig = '{"hello", 42};
+          #1;
+          if (seen != 42) $fatal(1, "expected seen=42, got %0d", seen);
+          sig = '{"world", 100};
+          #1;
+          if (seen != 100) $fatal(1, "expected seen=100, got %0d", seen);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: string_array_via_always_comb
+    description: String array assignment to design slot triggers always_comb re-eval
+    sv: |
+      module Test;
+        string arr[2];
+        int len;
+
+        always_comb begin
+          if (arr[0] == "") len = 0;
+          else if (arr[1] == "") len = 1;
+          else len = 2;
+        end
+
+        initial begin
+          if (len != 0) $fatal(1, "expected len=0 initially, got %0d", len);
+          arr[0] = "first";
+          #1;
+          if (len != 1) $fatal(1, "expected len=1 after arr[0], got %0d", len);
+          arr[1] = "second";
+          #1;
+          if (len != 2) $fatal(1, "expected len=2 after arr[1], got %0d", len);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: struct_with_string_bulk_assign
+    description: Bulk struct assignment triggers single notification
+    sv: |
+      module Test;
+        typedef struct { string s; int x; } my_struct;
+        my_struct sig;
+        int result;
+
+        always_comb result = sig.x * 2;
+
+        initial begin
+          sig = '{"test", 21};
+          #1;
+          if (result != 42) $fatal(1, "expected result=42, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: nested_struct_with_string
+    description: Nested struct with string field triggers notification
+    sv: |
+      module Test;
+        typedef struct { string name; } inner_t;
+        typedef struct { inner_t data; int id; } outer_t;
+        outer_t sig;
+        int result;
+
+        always_comb result = sig.id + 1;
+
+        initial begin
+          sig = '{'{default: "nested"}, 42};
+          #1;
+          if (result != 43) $fatal(1, "expected result=43, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: local_struct_no_spurious_comb
+    description: Local struct assignment does NOT trigger always_comb
+    sv: |
+      module Test;
+        typedef struct { string s; int x; } my_struct;
+        my_struct sig;
+        int result;
+
+        always_comb result = sig.x;
+
+        initial begin
+          automatic my_struct local_var;
+          sig = '{"initial", 1};
+          #1;
+          if (result != 1) $fatal(1, "expected result=1, got %0d", result);
+          local_var = '{"local", 999};
+          #1;
+          if (result != 1) $fatal(1, "local assign affected result, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"

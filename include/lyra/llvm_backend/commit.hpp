@@ -41,6 +41,14 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
 // Conditional: no-op if target is not a design slot.
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target);
 
+// Notify after aggregate (struct/array) field-by-field assignment.
+// Precondition: target is the aggregate root place (not a subplace).
+// Conditional: no-op if target is not a design slot.
+// Semantics: guarantees level-sensitive re-evaluation (always_comb, always
+// @(*)); edge-sensitive events (posedge/negedge) on aggregates are NOT
+// supported.
+void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target);
+
 // NBA-specific signal_id extraction.
 // NBA always targets design slots, so fail-fast is correct behavior.
 // Throws InternalError if target is not a design slot.

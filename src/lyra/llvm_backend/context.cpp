@@ -948,6 +948,20 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
   return lyra_writemem_;
 }
 
+auto Context::GetLyraNotifySignal() -> llvm::Function* {
+  if (lyra_notify_signal_ == nullptr) {
+    // void LyraNotifySignal(ptr engine, ptr slot, i32 signal_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
+    lyra_notify_signal_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraNotifySignal",
+        llvm_module_.get());
+  }
+  return lyra_notify_signal_;
+}
+
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   const Type& type = types_[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

@@ -144,4 +144,15 @@ void LyraMonitorRegister(
 // - engine_ptr: pointer to Engine
 // - enabled: true to enable, false to disable
 void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
+
+// Signal notification for aggregate assignments (struct/array with managed
+// fields). Used after field-by-field assignment to design slots. Guarantees
+// level-sensitive re-evaluation (always_comb, always @(*), always @(sig));
+// edge-sensitive events (posedge/negedge) on aggregates are NOT supported.
+// - engine_ptr: pointer to Engine
+// - slot_ptr: pointer to the aggregate's storage (used for best-effort LSB
+// read)
+// - signal_id: slot ID for notification
+void LyraNotifySignal(
+    void* engine_ptr, const void* slot_ptr, uint32_t signal_id);
 }
