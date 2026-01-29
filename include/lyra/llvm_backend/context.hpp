@@ -86,6 +86,8 @@ class Context {
   [[nodiscard]] auto GetLyraSuspendDelay() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendWait() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
@@ -363,6 +365,8 @@ class Context {
   llvm::Function* lyra_suspend_delay_ = nullptr;
   llvm::Function* lyra_suspend_wait_ = nullptr;
   llvm::Function* lyra_suspend_repeat_ = nullptr;
+  llvm::Function* lyra_alloc_triggers_ = nullptr;
+  llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_store_packed_ = nullptr;
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;

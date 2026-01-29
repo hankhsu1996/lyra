@@ -55,7 +55,13 @@ void HandleSuspendRecord(
       break;
 
     case lyra::runtime::SuspendTag::kWait: {
-      auto triggers = std::span(suspend->triggers).first(suspend->num_triggers);
+      // Debug invariant: triggers_ptr must be valid if num_triggers > 0
+      if (suspend->num_triggers > 0 && suspend->triggers_ptr == nullptr) {
+        throw lyra::common::InternalError(
+            "HandleSuspendRecord",
+            "triggers_ptr null with non-zero num_triggers");
+      }
+      auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
       for (const auto& trigger : triggers) {
         eng.Subscribe(
             handle, resume, trigger.signal_id,
@@ -71,15 +77,40 @@ void HandleSuspendRecord(
   }
 }
 
+// Release heap-allocated triggers if any (call before overwriting
+// SuspendRecord) Resets num_triggers and triggers_ptr to make non-wait states
+// trivially safe.
+void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
+  if (suspend->triggers_ptr != nullptr &&
+      suspend->triggers_ptr != suspend->inline_triggers.data()) {
+    delete[] suspend->triggers_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+  }
+  suspend->num_triggers = 0;
+  suspend->triggers_ptr = nullptr;
+}
+
 void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
+  ReleaseTriggerOverflow(suspend);
   suspend->tag = lyra::runtime::SuspendTag::kFinished;
 }
 
 }  // namespace
 
+// Runtime allocation for large trigger lists (called from LLVM-generated code)
+extern "C" auto LyraAllocTriggers(uint32_t count)
+    -> lyra::runtime::WaitTriggerRecord* {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  return new lyra::runtime::WaitTriggerRecord[count];
+}
+
+extern "C" void LyraFreeTriggers(lyra::runtime::WaitTriggerRecord* ptr) {
+  delete[] ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+}
+
 extern "C" void LyraSuspendDelay(
     void* state, uint64_t ticks, uint32_t resume_block) {
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
   suspend->tag = lyra::runtime::SuspendTag::kDelay;
   suspend->delay_ticks = ticks;
   suspend->resume_block = resume_block;
@@ -88,20 +119,32 @@ extern "C" void LyraSuspendDelay(
 extern "C" void LyraSuspendWait(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers) {
-  if (num_triggers > lyra::runtime::kMaxInlineTriggers) {
-    std::abort();
-  }
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
+
   suspend->tag = lyra::runtime::SuspendTag::kWait;
   suspend->resume_block = resume_block;
   suspend->num_triggers = num_triggers;
-  std::memcpy(
-      suspend->triggers.data(), triggers,
-      num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
+
+  // Always set triggers_ptr for invariant consistency (even if num_triggers ==
+  // 0)
+  if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
+    suspend->triggers_ptr = suspend->inline_triggers.data();
+  } else {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    suspend->triggers_ptr = new lyra::runtime::WaitTriggerRecord[num_triggers];
+  }
+
+  if (num_triggers > 0) {
+    std::memcpy(
+        suspend->triggers_ptr, triggers,
+        num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
+  }
 }
 
 extern "C" void LyraSuspendRepeat(void* state) {
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
   suspend->tag = lyra::runtime::SuspendTag::kRepeat;
   suspend->resume_block = 0;
 }

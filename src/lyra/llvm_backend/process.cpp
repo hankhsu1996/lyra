@@ -144,19 +144,35 @@ void LowerDelay(
   builder.CreateBr(exit_block);
 }
 
+// Helper to fill trigger array at a given base pointer
+void FillTriggerArray(
+    Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
+    llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  for (uint32_t i = 0; i < triggers.size(); ++i) {
+    auto* elem_ptr = builder.CreateConstGEP2_32(array_type, base_ptr, 0, i);
+
+    // Write signal_id (field 0)
+    auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i32_ty, triggers[i].signal.value), signal_ptr);
+
+    // Write edge (field 1)
+    auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
+        edge_ptr);
+  }
+}
+
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block)
     -> Result<void> {
   static_assert(sizeof(runtime::WaitTriggerRecord) == 8);
-
-  if (wait.triggers.size() > runtime::kMaxInlineTriggers) {
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(),
-        std::format(
-            "too many wait triggers ({}, max {})", wait.triggers.size(),
-            runtime::kMaxInlineTriggers),
-        UnsupportedCategory::kFeature));
-  }
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -169,36 +185,43 @@ auto LowerWait(
   // WaitTriggerRecord layout: {i32 signal_id, i8 edge, [3 x i8] padding}
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx, {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3)});
-  auto* array_type = llvm::ArrayType::get(trigger_type, num_triggers);
 
-  // Create local alloca for trigger array
-  auto* triggers_alloca = builder.CreateAlloca(array_type, nullptr, "triggers");
+  // Compile-time branching: different codegen for small vs large trigger counts
+  if (num_triggers <= runtime::kInlineTriggerCapacity) {
+    // Small path: fixed-size stack allocation (never dynamic alloca)
+    auto* fixed_array_type =
+        llvm::ArrayType::get(trigger_type, runtime::kInlineTriggerCapacity);
+    auto* triggers_alloca =
+        builder.CreateAlloca(fixed_array_type, nullptr, "triggers");
 
-  // Fill each trigger element
-  for (uint32_t i = 0; i < num_triggers; ++i) {
-    auto* elem_ptr =
-        builder.CreateConstGEP2_32(array_type, triggers_alloca, 0, i);
+    FillTriggerArray(
+        context, triggers_alloca, trigger_type, fixed_array_type,
+        wait.triggers);
 
-    // Write signal_id (field 0)
-    auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, wait.triggers[i].signal.value),
-        signal_ptr);
+    builder.CreateCall(
+        context.GetLyraSuspendWait(),
+        {context.GetStatePointer(),
+         llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
+         llvm::ConstantInt::get(i32_ty, num_triggers)});
+  } else {
+    // Large path: runtime allocates scratch buffer, we fill it, runtime copies
+    auto* heap_ptr = builder.CreateCall(
+        context.GetLyraAllocTriggers(),
+        {llvm::ConstantInt::get(i32_ty, num_triggers)}, "heap_triggers");
 
-    // Write edge (field 1)
-    auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
-    builder.CreateStore(
-        llvm::ConstantInt::get(
-            i8_ty, static_cast<uint8_t>(wait.triggers[i].edge)),
-        edge_ptr);
+    auto* array_type = llvm::ArrayType::get(trigger_type, num_triggers);
+    FillTriggerArray(
+        context, heap_ptr, trigger_type, array_type, wait.triggers);
+
+    builder.CreateCall(
+        context.GetLyraSuspendWait(),
+        {context.GetStatePointer(),
+         llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
+         llvm::ConstantInt::get(i32_ty, num_triggers)});
+
+    // Free scratch buffer (runtime already copied to SuspendRecord storage)
+    builder.CreateCall(context.GetLyraFreeTriggers(), {heap_ptr});
   }
-
-  // Call LyraSuspendWait(state, resume_block, triggers, num_triggers)
-  builder.CreateCall(
-      context.GetLyraSuspendWait(),
-      {context.GetStatePointer(),
-       llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
-       llvm::ConstantInt::get(i32_ty, num_triggers)});
 
   builder.CreateBr(exit_block);
   return {};

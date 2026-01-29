@@ -289,6 +289,32 @@ auto Context::GetLyraSuspendRepeat() -> llvm::Function* {
   return lyra_suspend_repeat_;
 }
 
+auto Context::GetLyraAllocTriggers() -> llvm::Function* {
+  if (lyra_alloc_triggers_ == nullptr) {
+    // ptr LyraAllocTriggers(i32 count)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {i32_ty}, false);
+    lyra_alloc_triggers_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAllocTriggers",
+        llvm_module_.get());
+  }
+  return lyra_alloc_triggers_;
+}
+
+auto Context::GetLyraFreeTriggers() -> llvm::Function* {
+  if (lyra_free_triggers_ == nullptr) {
+    // void LyraFreeTriggers(ptr triggers)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_free_triggers_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFreeTriggers",
+        llvm_module_.get());
+  }
+  return lyra_free_triggers_;
+}
+
 auto Context::GetLyraStorePacked() -> llvm::Function* {
   if (lyra_store_packed_ == nullptr) {
     // void LyraStorePacked(ptr engine, ptr slot, ptr new_value,
