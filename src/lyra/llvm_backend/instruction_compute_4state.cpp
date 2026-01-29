@@ -173,13 +173,15 @@ auto LowerUnaryRvalue4State(
     }
 
     default: {
-      auto* masked_val = ApplyWidthMask(context, src.value, semantic_width);
-      auto* masked_unk = ApplyWidthMask(context, src.unknown, semantic_width);
+      // For reduction operators, use the operand width (not result width)
+      uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
+      auto* masked_val = ApplyWidthMask(context, src.value, operand_width);
+      auto* masked_unk = ApplyWidthMask(context, src.unknown, operand_width);
       auto* known = builder.CreateAnd(
           masked_val, builder.CreateNot(masked_unk), "un4.red.known");
 
       auto red_result_or_err =
-          LowerUnaryOp(context, info.op, known, elem_type, semantic_width);
+          LowerUnaryOp(context, info.op, known, elem_type, operand_width);
       if (!red_result_or_err) return std::unexpected(red_result_or_err.error());
 
       auto* any_unk = builder.CreateICmpNE(masked_unk, zero, "un4.red.taint");
@@ -415,7 +417,10 @@ auto LowerBinaryRvalue4State(
     auto* taint = builder.CreateICmpNE(
         combined_unk, llvm::ConstantInt::get(cmp_type, 0), "bin4.taint");
 
-    auto* val = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp.val");
+    // When tainted, result is X (val=0, unk=1), not (cmp_result, 1) which
+    // could be Z if cmp_result=1
+    auto* cmp_ext = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp");
+    auto* val = builder.CreateSelect(taint, zero, cmp_ext, "bin4.cmp.val");
     auto* unk = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk");
     return ComputeResult::FourState(val, unk);
   }
