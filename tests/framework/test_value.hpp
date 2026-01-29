@@ -22,10 +22,20 @@ struct IntegralValue {
 using TestValue = std::variant<double, IntegralValue>;
 
 // Expected value - what YAML tests specify.
-// Extends TestValue with int64_t for convenience (e.g., "result: 42").
-// int64_t: narrow integer literals (width inferred from actual during
-// comparison) double: real/shortreal IntegralValue: SV literal format (e.g.,
-// "8'hFF", "4'bx01z")
-using ExpectedValue = std::variant<int64_t, double, IntegralValue>;
+//
+// uint64_t: Untyped integer (width inferred from actual during comparison).
+//   Interpreted as a 64-bit bit pattern, masked to actual.width before
+//   comparison. This is NOT mathematical integer equality - no sign extension.
+//   Supported formats:
+//     - YAML numbers: 42, -2 (negatives stored as 2's complement)
+//     - C-style strings: "0xff", "0b1010", "0o377", "0xff_ff"
+//   Note: Combining negatives with C-style bases (e.g., "-0xff") is not
+//   supported.
+//
+// double: real/shortreal
+//
+// IntegralValue: SV literal (e.g., "8'hFF", "4'bx01z") - requires exact width
+//   match with actual.
+using ExpectedValue = std::variant<uint64_t, double, IntegralValue>;
 
 }  // namespace lyra::test

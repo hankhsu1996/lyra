@@ -118,6 +118,85 @@ auto Trim(std::string_view sv) -> std::string_view {
   return sv;
 }
 
+// Parse C-style integer format: 0x..., 0b..., 0o..., or decimal
+// Returns std::nullopt if not a valid integer or if negative.
+// Supports underscore separators (e.g., "0xff_ff").
+auto ParseCStyleInteger(const std::string& str) -> std::optional<uint64_t> {
+  std::string_view sv = Trim(str);
+  if (sv.empty()) {
+    return std::nullopt;
+  }
+
+  // Reject negative values
+  if (sv[0] == '-') {
+    return std::nullopt;
+  }
+
+  // Skip optional leading '+'
+  if (sv[0] == '+') {
+    sv.remove_prefix(1);
+    if (sv.empty()) {
+      return std::nullopt;
+    }
+  }
+
+  int base = 10;
+  if (sv.size() >= 2 && sv[0] == '0') {
+    char c = static_cast<char>(std::tolower(static_cast<unsigned char>(sv[1])));
+    if (c == 'x') {
+      base = 16;
+      sv.remove_prefix(2);
+    } else if (c == 'b') {
+      base = 2;
+      sv.remove_prefix(2);
+    } else if (c == 'o') {
+      base = 8;
+      sv.remove_prefix(2);
+    }
+  }
+
+  if (sv.empty()) {
+    return std::nullopt;
+  }
+
+  uint64_t result = 0;
+  bool has_digit = false;
+  for (char c : sv) {
+    // Skip underscores (e.g., "0xff_ff")
+    if (c == '_') {
+      continue;
+    }
+
+    int digit = -1;
+    if (c >= '0' && c <= '9') {
+      digit = c - '0';
+    } else {
+      char lower =
+          static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      if (lower >= 'a' && lower <= 'f') {
+        digit = 10 + (lower - 'a');
+      }
+    }
+
+    if (digit < 0 || digit >= base) {
+      return std::nullopt;  // Invalid digit for this base
+    }
+
+    // Check for overflow
+    if (result > (UINT64_MAX - digit) / base) {
+      return std::nullopt;  // Overflow
+    }
+    result = result * base + digit;
+    has_digit = true;
+  }
+
+  if (!has_digit) {
+    return std::nullopt;
+  }
+
+  return result;
+}
+
 // Parse SV literal format: N'b..., N'h..., N'o... into IntegralValue
 // Returns std::nullopt if not in SV literal format.
 // Enforces exact width matching: effective_bits must not exceed width (no
@@ -263,6 +342,12 @@ auto ParseNumericValue(const YAML::Node& node) -> ExpectedValue {
     return *sv_literal;
   }
 
+  // Try C-style integer format: 0x..., 0b..., 0o..., or decimal
+  if (auto c_int = ParseCStyleInteger(str)) {
+    return *c_int;
+  }
+
+  // Check for floating point
   bool has_decimal = str.find('.') != std::string::npos;
   bool has_exponent =
       str.find('e') != std::string::npos || str.find('E') != std::string::npos;
@@ -270,7 +355,12 @@ auto ParseNumericValue(const YAML::Node& node) -> ExpectedValue {
   if (has_decimal || has_exponent) {
     return node.as<double>();
   }
-  return node.as<int64_t>();
+
+  // Fallback: use YAML's int64 parsing
+  // Negative values are stored as-is; at comparison time they are reinterpreted
+  // as 2's complement at the actual's width.
+  auto int_val = node.as<int64_t>();
+  return static_cast<uint64_t>(int_val);
 }
 
 // Parse ExpectedOutput from scalar (exact match) or map (contains/not_contains)

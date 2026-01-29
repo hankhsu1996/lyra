@@ -149,7 +149,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 32 # 0xABC & 0x123 = 0x020
+        result: "0x20" # 0xABC & 0x123
 
   - name: bit_24_basic
     sv: |
@@ -163,7 +163,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 13303314 # 0xCAFE12
+        result: "0xcafe12"
 
   - name: bit_48_basic
     sv: |
@@ -177,7 +177,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 244837814047284 # 0xDEADBEEF1234
+        result: "0xdeadbeef1234"
 
   - name: bit_63_basic
     sv: |
@@ -191,7 +191,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 9223372036854775792 # 0x7FFFFFFFFFFFFFF0
+        result: "0x7ffffffffffffff0"
 
   - name: bit_7_shift
     sv: |
@@ -206,7 +206,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 84 # (85 << 2) & 0x7F = 340 & 127 = 84
+        result: 84 # (85 << 2) & 0x7F
 
   - name: byte_type
     sv: |
@@ -265,7 +265,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 15 # 255 & 0xF = 15
+        result: 15
 
   - name: size_cast_extension
     sv: |
@@ -370,7 +370,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 10 # 0xA
+        result: "0xa"
 
   - name: range_select_low
     sv: |
@@ -384,7 +384,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 11 # 0xB
+        result: "0xb"
 
   - name: range_select_middle
     sv: |
@@ -398,7 +398,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 188 # 0xBC
+        result: "0xbc"
 
   - name: range_select_single_bit
     sv: |
@@ -426,7 +426,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 202 # 0xCA
+        result: "0xca"
 
   # Non-zero-based range tests
   - name: nonzero_base_declaration
@@ -497,7 +497,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 18 # 0x12 = bits [15:8] of 0xABCD1234
+        result: "0x12"
 
   - name: nonzero_base_variable_index
     sv: |
@@ -571,7 +571,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 2 # 0b0010
+        result: 2
 
   - name: negative_range_2d_element_access
     sv: |
@@ -589,9 +589,9 @@ cases:
       endmodule
     expect:
       variables:
-        r1: 170 # 0xAA
-        r0: 187 # 0xBB
-        r_neg1: 204 # 0xCC
+        r1: "0xaa"
+        r0: "0xbb"
+        r_neg1: "0xcc"
 
   # Element assignment tests
   - name: element_assign_set_bit
@@ -607,7 +607,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 8 # bit 3 set = 0b00001000
+        result: 8 # bit 3 set
 
   - name: element_assign_clear_bit
     sv: |
@@ -622,7 +622,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 223 # 0xFF with bit 5 clear = 0b11011111
+        result: "0xdf" # 0xFF with bit 5 clear
 
   - name: element_assign_multiple_bits
     sv: |
@@ -672,4 +672,4 @@ cases:
       endmodule
     expect:
       variables:
-        result: 4 # bit 2 of storage set = 0b000100
+        result: 4 # bit 2 of storage set

@@ -28,7 +28,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 239
+        result: "0xef"
 
   - name: 2d_packed_element_read_high
     sv: |
@@ -42,7 +42,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 222
+        result: "0xde"
 
   - name: 2d_packed_element_write
     sv: |
@@ -57,7 +57,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 43776 # 0x0000AB00
+        result: "0xab00"
 
   - name: 2d_packed_element_write_high
     sv: |
@@ -90,7 +90,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 1144201745 # 0x44332211
+        result: "0x44332211"
 
   - name: 2d_packed_read_write
     sv: |
@@ -105,7 +105,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: -889275650 # 0xCAFEBAFE
+        result: -889275650 # 0xCAFEBAFE as signed
 
   - name: 2d_packed_nonzero_lower
     sv: |
@@ -120,7 +120,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 21760 # 0x00005500
+        result: "0x5500"
 
   - name: 2d_packed_variable_index
     sv: |
@@ -136,7 +136,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 173 # Element 2 = 0xAD
+        result: "0xad"
 
   - name: 2d_packed_bit_select
     sv: |
@@ -164,7 +164,7 @@ cases:
       endmodule
     expect:
       variables:
-        result: 10 # Element 2 = 0xAD, upper nibble = 0xA = 10
+        result: "0xa"
 
   # 64-bit boundary tests - exactly 64 bits per element (narrow path boundary)
   - name: 2d_packed_64bit_element_boundary
@@ -260,7 +260,7 @@ cases:
       endmodule
     expect:
       variables:
-        elem5: 10 # 0xA
-        elem2: 13 # 0xD
+        elem5: "0xa"
+        elem2: "0xd"
         bit9: 1 # MSB of 0xA
         bit6: 0 # LSB of 0xA

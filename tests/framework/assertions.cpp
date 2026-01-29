@@ -156,20 +156,16 @@ auto IntegralEqual(const IntegralValue& a, const IntegralValue& b) -> bool {
   return true;
 }
 
-// Convert int64_t to IntegralValue for comparison
-auto Int64ToIntegral(int64_t val, uint32_t width) -> IntegralValue {
+// Convert uint64_t to IntegralValue for comparison
+auto Uint64ToIntegral(uint64_t val, uint32_t width) -> IntegralValue {
   IntegralValue result;
   result.width = width;
   size_t num_words = (width + 63) / 64;
   result.value.resize(num_words, 0);
   result.unknown.resize(num_words, 0);
 
-  // Handle sign extension for negative values
-  if (val < 0 && num_words > 1) {
-    std::ranges::fill(result.value, ~uint64_t{0});
-  }
   if (!result.value.empty()) {
-    result.value[0] = static_cast<uint64_t>(val);
+    result.value[0] = val;
   }
 
   // Mask top word to actual width
@@ -213,9 +209,9 @@ void AssertVariables(
     if (std::holds_alternative<IntegralValue>(expected_val)) {
       expected_fs = std::get<IntegralValue>(expected_val);
     } else {
-      // int64_t expected - convert using actual's width
-      int64_t expected_int = std::get<int64_t>(expected_val);
-      expected_fs = Int64ToIntegral(expected_int, actual_fs->width);
+      // uint64_t expected - convert using actual's width
+      uint64_t expected_int = std::get<uint64_t>(expected_val);
+      expected_fs = Uint64ToIntegral(expected_int, actual_fs->width);
     }
 
     // Check for unexpected X/Z bits
