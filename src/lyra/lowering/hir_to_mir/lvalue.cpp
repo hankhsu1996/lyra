@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <expected>
@@ -488,6 +489,76 @@ auto LowerPackedFieldAccessLvalue(
   };
 }
 
+auto LowerRangeSelectLvalue(
+    const hir::RangeSelectExpressionData& data, hir::ExpressionId expr_id,
+    const hir::Expression& expr, MirBuilder& builder) -> Result<LvalueResult> {
+  Context& ctx = builder.GetContext();
+
+  // Lower base as lvalue (recursive)
+  Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
+  if (!base_result) return std::unexpected(base_result.error());
+  LvalueResult base = *base_result;
+
+  // Get base type info
+  const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+  // Compute width from select bounds
+  int32_t select_lower = std::min(data.left, data.right);
+  int32_t select_upper = std::max(data.left, data.right);
+  auto width = static_cast<uint32_t>(select_upper - select_lower + 1);
+
+  // Compute bit offset based on base type direction
+  // Physical bit layout: bit at Lower() is at physical position 0
+  int32_t bit_offset = 0;
+  switch (base_type.Kind()) {
+    case TypeKind::kIntegral:
+    case TypeKind::kPackedStruct:
+      // kIntegral and kPackedStruct have implicit descending [bit_width-1:0]
+      bit_offset = select_lower;
+      break;
+    case TypeKind::kPackedArray: {
+      const auto& packed = base_type.AsPackedArray();
+      if (packed.range.IsDescending()) {
+        bit_offset = select_lower - packed.range.Lower();
+      } else {
+        // Ascending: higher logical index = lower physical position
+        bit_offset = packed.range.Upper() - select_upper;
+      }
+      break;
+    }
+    default:
+      throw common::InternalError(
+          "LowerRangeSelectLvalue",
+          "non-packed base type should have been rejected at AST->HIR");
+  }
+
+  // Create constant offset operand
+  TypeId offset_type = ctx.GetOffsetType();
+  mir::Operand offset =
+      mir::Operand::Const(MakeIntegralConst(bit_offset, offset_type));
+
+  // Create BitRangeProjection
+  common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
+  mir::Projection proj{
+      .info =
+          mir::BitRangeProjection{
+              .bit_offset = offset,
+              .width = width,
+              .element_type = expr.type,
+          },
+      .origin = origin,
+  };
+  mir::PlaceId result_place =
+      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+
+  // Range select with constant bounds is always valid - inherit base validity
+  return LvalueResult{
+      .place = result_place,
+      .validity = base.validity,
+  };
+}
+
 }  // namespace
 
 auto NormalizeUnpackedIndex(
@@ -556,6 +627,9 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
           return LowerPackedFieldAccessLvalue(data, expr_id, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::RangeSelectExpressionData>) {
+          return LowerRangeSelectLvalue(data, expr_id, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           return LvalueResult{

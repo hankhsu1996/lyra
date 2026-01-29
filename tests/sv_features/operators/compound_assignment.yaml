@@ -227,3 +227,47 @@ cases:
         r1: 250 # arr[1] = 200 + 50
         r2: 300 # arr[2] unchanged
         i: 1 # i incremented once
+
+  - name: range_select_xor_assign
+    description: Compound assignment to constant range select (x[a:b] ^= ...)
+    sv: |
+      module Test;
+        logic [19:0] key_out;
+        logic [4:0] round_idx;
+        initial begin
+          key_out = 20'h12345;
+          round_idx = 5'b10101;
+          key_out[19:15] ^= round_idx;
+        end
+      endmodule
+    expect:
+      variables:
+        key_out: 0xBA345
+
+  - name: range_select_or_assign
+    description: Compound OR assignment to range select
+    sv: |
+      module Test;
+        logic [15:0] x;
+        initial begin
+          x = 16'h0030;
+          x[7:4] |= 4'b1010;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 0x00B0  # 0011 | 1010 = 1011
+
+  - name: range_select_add_assign
+    description: Compound add assignment to range select
+    sv: |
+      module Test;
+        logic [15:0] x;
+        initial begin
+          x = 16'h0050;
+          x[7:4] += 4'd3;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 0x0080  # 5 + 3 = 8
