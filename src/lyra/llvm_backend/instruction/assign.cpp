@@ -10,7 +10,6 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/commit.hpp"
@@ -18,7 +17,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place.hpp"
@@ -33,26 +31,6 @@ namespace {
 auto StoreBitRange(
     Context& context, mir::PlaceId target, llvm::Value* source_raw)
     -> Result<void> {
-  // Check for unsupported case: part-select on local/temp in user functions.
-  // User functions don't have frame_ptr_ set, and locals use alloca storage.
-  const auto& arena = context.GetMirArena();
-  const auto& place = arena[target];
-  if ((place.root.kind == mir::PlaceRoot::Kind::kLocal ||
-       place.root.kind == mir::PlaceRoot::Kind::kTemp) &&
-      context.GetFramePointer() == nullptr) {
-    // Find the BitRangeProjection for error origin
-    for (const auto& proj : place.projections) {
-      if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
-        common::OriginId blame =
-            proj.origin.IsValid() ? proj.origin : context.GetCurrentOrigin();
-        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-            blame,
-            "part-select as assignment target in function not yet supported",
-            UnsupportedCategory::kFeature));
-      }
-    }
-  }
-
   auto& builder = context.GetBuilder();
   auto br_result = context.ComposeBitRange(target);
   if (!br_result) return std::unexpected(br_result.error());

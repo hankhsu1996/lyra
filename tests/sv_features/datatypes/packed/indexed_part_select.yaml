@@ -331,3 +331,111 @@ cases:
     expect:
       variables:
         data: "32'hAB00"
+
+  # Function scope write tests
+  - name: write_in_function_constant_index
+    description: Write to indexed part-select with constant index in function
+    sv: |
+      module Test;
+        int result;
+
+        function automatic logic [15:0] set_nibble();
+          logic [15:0] data;
+          data = 16'h0000;
+          data[4+:4] = 4'hA;  // Set second nibble
+          return data;
+        endfunction
+
+        initial begin
+          result = set_nibble();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x00A0
+
+  - name: write_in_function_variable_index
+    description: Write to indexed part-select with variable index in function (like prim_cipher_pkg.sv)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic logic [15:0] write_at_idx(input int idx, input logic [3:0] val);
+          logic [15:0] data;
+          data = 16'h0000;
+          data[idx+:4] = val;  // Dynamic indexed part-select write
+          return data;
+        endfunction
+
+        initial begin
+          result = write_at_idx(8, 4'hB);  // Set bits [11:8] to 0xB
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0B00
+
+  - name: write_bit_in_function
+    description: Write to single bit select in function
+    sv: |
+      module Test;
+        int result;
+
+        function automatic logic [7:0] set_bit(input int idx);
+          logic [7:0] data;
+          data = 8'h00;
+          data[idx] = 1'b1;  // Set single bit
+          return data;
+        endfunction
+
+        initial begin
+          result = set_bit(3);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x08
+
+  - name: write_range_in_function
+    description: Write to constant range select in function
+    sv: |
+      module Test;
+        int result;
+
+        function automatic logic [15:0] set_range();
+          logic [15:0] data;
+          data = 16'h0000;
+          data[11:8] = 4'hC;  // Set bits [11:8]
+          return data;
+        endfunction
+
+        initial begin
+          result = set_range();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0C00
+
+  - name: write_loop_in_function
+    description: Loop writing to indexed part-select in function (common cipher pattern)
+    sv: |
+      module Test;
+        int result;
+
+        function automatic logic [31:0] build_word();
+          logic [31:0] data;
+          data = 32'h00000000;
+          for (int i = 0; i < 4; i = i + 1) begin
+            data[i*8+:8] = i + 1;  // Set bytes to 1, 2, 3, 4
+          end
+          return data;
+        endfunction
+
+        initial begin
+          result = build_word();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x04030201
