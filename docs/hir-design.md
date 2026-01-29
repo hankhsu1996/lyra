@@ -6,8 +6,6 @@ HIR (High-level IR) is the semantic model of SystemVerilog.
 
 ```
 SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
-                               |
-                               +-> C++ (secondary)
 ```
 
 The frontend (slang) is used only during lowering, then discarded. HIR freezes _what the language means_, not _how it runs_.
@@ -185,16 +183,6 @@ HIR maintains source locations for diagnostics:
 - Use HIR-owned `SourceSpan` (file ID + range)
 - Never depend on frontend lifetime
 - Only for error messages and debugging
-
-## HIR to C++ Codegen
-
-Direct HIR -> C++ codegen is allowed as a semantic validation tool. It is:
-
-- Secondary to the MIR -> LLVM path
-- Useful for debugging and readable output
-- Disposable if it becomes a maintenance burden
-
-C++ codegen must not influence HIR design decisions.
 
 ## Summary
 

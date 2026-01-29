@@ -86,6 +86,6 @@ See [error-handling.md](error-handling.md) for details.
 ## Guiding Principle
 
 > Build **one correct execution path first**.
-> Everything else (C++ codegen, interpreter, optimizations) comes later.
+> Everything else (optimizations, additional features) comes later.
 
 This minimizes debugging surface area and prevents semantic drift.

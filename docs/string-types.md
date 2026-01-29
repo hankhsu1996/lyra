@@ -55,15 +55,11 @@ We normalize string literals at the AST→MIR boundary, but the solution is inco
 - `arguments` - format arguments
 - `display_props` - structured properties from `common/display_variant.hpp`
 
-**LIR Level**: Still has `format_string_is_literal` flag, now computed from type-based detection at MIR→LIR lowering.
-
 ### Known Issues
 
 1. **Normalization is ad-hoc**: `NormalizeFormatExpression()` is called only at specific call sites. The correct rule should be: "Any string literal becomes a string-typed constant in MIR, regardless of usage context."
 
-2. **LIR flag still exists**: The `format_string_is_literal` flag violates the semantic-lowering-boundary contract which states "No backend capability flags." We recompute it at MIR→LIR instead of propagating from AST, but it still exists.
-
-3. **Semantic conflation**: We represent two distinct concepts as the same `String` type:
+2. **Semantic conflation**: We represent two distinct concepts as the same `String` type:
    - **String data** — bytes to print (e.g., a string variable)
    - **Format template** — a mini-language with `%d`, `%s` specifiers to parse
 
@@ -90,5 +86,4 @@ This would eliminate the flag because the distinction becomes structural, not an
 - `common/constant.hpp`: `is_string_literal` flag definition
 - `common/display_variant.hpp`: Unified `DisplayVariantProps` for display-like calls
 - `mir/expression.hpp`: `format_expr` and `display_props` in SystemCallExpression
-- `lir/instruction.hpp`: `format_operand` and `format_string_is_literal` in Instruction
 - `common/format_string.hpp`: Format string detection utilities

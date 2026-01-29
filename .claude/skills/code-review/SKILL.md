@@ -30,9 +30,9 @@ Early-stage C++ compiler project. Primary goal: keep architecture clean and exte
 
 Check `docs/error-handling.md` for correct error type usage:
 
-- `DiagnosticException` only in AST→MIR (with source location)
-- `InternalError` for compiler bugs (MIR→LIR, codegen, unreachable code)
-- `std::runtime_error` for interpreter/SDK runtime failures
+- `DiagnosticException` only in AST→HIR (with source location)
+- `InternalError` for compiler bugs (HIR→MIR, LLVM lowering, unreachable code)
+- `std::runtime_error` for runtime failures
 - Never use `std::unreachable()` or `DiagnosticException({})`
 
 ### 5. Design Principles Alignment
@@ -46,14 +46,6 @@ Read `docs/design-principles.md` and check:
 - Follow Established Patterns
 - Use Domain Vocabulary
 - Comments Explain Why, Not What
-
-### 6. LIR Design (if touching LIR)
-
-Check that LIR changes follow the correct mental model (see `docs/architecture.md`):
-
-- **Variable access**: uses slang's flat symbol model (symbol = unique address, no instance traversal)
-- **Operations**: RISC-V assembly style (register-based, explicit data flow)
-- **Method calls on complex types**: RISC-V function call style (object pointer as `this`)
 
 ## Output Format
 

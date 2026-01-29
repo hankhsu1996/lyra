@@ -19,7 +19,7 @@ This reflects real pain with tools like Verilator: compile times reaching hours,
 
 ## Key Architectural Decisions
 
-### LLVM IR Backend (Primary)
+### LLVM IR Backend
 
 Primary backend generates LLVM IR.
 
@@ -30,35 +30,15 @@ Reasons:
 - No dependency on external C++ compiler
 - IR designed for LLVM lowering (no function pointers, no VM bytecode)
 
-### C++ Code Generation (Secondary)
+### Elaboration Model
 
-Secondary path generates C++ for debugging and exploration.
-
-Reasons:
-
-- Human-readable output for understanding generated code
-- Useful during development and debugging
-- Does not drive architecture decisions
-
-### Elaboration Models
-
-Lyra has two execution paths with different elaboration strategies:
-
-**Codegen Path (Runtime Elaboration):**
-
-- Hierarchy is constructed at runtime
-- All non-type parameters are constructor arguments
-- `generate for/if` becomes constructor logic
-- Variable access: member traversal through hierarchy
-
-**Interpreter Path (Compile-time Elaboration via Slang):**
+Lyra uses compile-time elaboration via slang:
 
 - Slang elaborates hierarchy at compile time
 - Each variable gets a unique symbol pointer
 - Variable access: flat lookup by symbol (no instance traversal)
-- Reference implementation only, must not influence IR design
 
-Slang performs legality checks, name resolution, and validation for both paths.
+Slang performs legality checks, name resolution, and validation.
 
 ### HIR/MIR Role
 
@@ -76,17 +56,6 @@ They do not encode:
 - Static per-instance specialization
 
 HIR is the high-level IR close to SystemVerilog semantics. MIR is the mid-level IR suitable for LLVM lowering.
-
-### Readable C++ Output (Secondary Path)
-
-For the C++ secondary path, explicitly rejects Verilator's tradeoff of speed over readability.
-
-Rules:
-
-- Preserve original signal and parameter names
-- One function per always block
-- Readable runtime APIs, no macro soup
-- Debug/readable mode as default
 
 ### Event-Driven Simulation (Default)
 
