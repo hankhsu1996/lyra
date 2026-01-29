@@ -86,13 +86,13 @@ auto Context::GetLyraPrintEnd() -> llvm::Function* {
 
 auto Context::GetLyraRegisterVar() -> llvm::Function* {
   if (lyra_register_var_ == nullptr) {
-    // void LyraRegisterVar(const char*, void*, int32_t, int32_t, bool)
+    // void LyraRegisterVar(const char*, void*, int32_t, int32_t, bool, bool)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty}, false);
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty, i1_ty}, false);
     lyra_register_var_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRegisterVar",
         llvm_module_.get());
