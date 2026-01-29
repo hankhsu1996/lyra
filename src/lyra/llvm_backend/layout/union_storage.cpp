@@ -15,26 +15,10 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
-    -> llvm::Type* {
-  if (bit_width <= 8) {
-    return llvm::Type::getInt8Ty(ctx);
-  }
-  if (bit_width <= 16) {
-    return llvm::Type::getInt16Ty(ctx);
-  }
-  if (bit_width <= 32) {
-    return llvm::Type::getInt32Ty(ctx);
-  }
-  if (bit_width <= 64) {
-    return llvm::Type::getInt64Ty(ctx);
-  }
-  return llvm::Type::getIntNTy(ctx, bit_width);
-}
 
 namespace {
 

@@ -116,6 +116,14 @@ struct SlotInfo {
   SlotTypeInfo type_info{};  // For variable registration (width, signedness)
 };
 
+// Get the LLVM storage type for an integral type, rounding up to power-of-2.
+auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+    -> llvm::Type*;
+
+// Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
+auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
+    -> llvm::StructType*;
+
 // Build SlotInfo list from design's slot_table.
 // This derives type metadata (kind, width, signedness) for
 // runtime/initialization.

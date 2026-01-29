@@ -33,8 +33,6 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-namespace {
-
 // Get the LLVM storage type for an integral type, rounding up to power-of-2.
 auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type* {
@@ -59,6 +57,8 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
   auto* elem = GetLlvmStorageType(ctx, bit_width);
   return llvm::StructType::get(ctx, {elem, elem});
 }
+
+namespace {
 
 // Forward declaration for recursive call in BuildUnpackedStructType
 auto GetLlvmTypeForTypeId(
