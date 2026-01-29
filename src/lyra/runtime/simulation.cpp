@@ -225,7 +225,7 @@ extern "C" void LyraStorePacked(
 
   if (value_changed && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->NotifyChange(signal_id, old_lsb, new_lsb, true);
+    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
   }
 }
 
@@ -241,7 +241,7 @@ extern "C" void LyraStoreString(
     bool old_lsb = (old_str != nullptr);
     bool new_lsb = (new_str != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->NotifyChange(signal_id, old_lsb, new_lsb, true);
+    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
   }
 }
 

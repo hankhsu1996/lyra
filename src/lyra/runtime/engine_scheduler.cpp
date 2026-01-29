@@ -198,7 +198,7 @@ void Engine::ExecuteRegion(Region region) {
         const auto* base =
             static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
         bool new_bit0 = (*base & 1) != 0;
-        NotifyChange(unique_slots[i], old_bit0[i] != 0, new_bit0, true);
+        RecordSignalUpdate(unique_slots[i], old_bit0[i] != 0, new_bit0, true);
       }
       break;
     }
@@ -229,7 +229,11 @@ void Engine::ExecuteTimeSlot() {
       }
     }
 
+    FlushSignalUpdates();  // Flush blocking assignment edges
+
     ExecuteRegion(Region::kNBA);
+
+    FlushSignalUpdates();  // Flush NBA edges
 
     if (finished_ || next_delta_queue_.empty()) {
       break;
