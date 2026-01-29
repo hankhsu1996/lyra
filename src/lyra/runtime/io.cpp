@@ -1,9 +1,12 @@
 #include "lyra/runtime/io.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <print>
 #include <span>
@@ -14,6 +17,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/marshal.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/string.hpp"

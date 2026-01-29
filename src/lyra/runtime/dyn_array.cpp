@@ -1,6 +1,8 @@
 #include "lyra/runtime/dyn_array.hpp"
 
 #include <algorithm>
+#include <climits>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 

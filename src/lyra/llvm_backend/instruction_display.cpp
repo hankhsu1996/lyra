@@ -1,13 +1,16 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
+#include <llvm/Support/Alignment.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"

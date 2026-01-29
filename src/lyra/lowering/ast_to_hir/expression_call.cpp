@@ -1,14 +1,19 @@
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
 
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/builtin_method.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"

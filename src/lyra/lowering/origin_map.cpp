@@ -1,6 +1,10 @@
 #include "lyra/lowering/origin_map.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <utility>
+
+#include "lyra/common/origin_id.hpp"
 
 namespace lyra::lowering {
 

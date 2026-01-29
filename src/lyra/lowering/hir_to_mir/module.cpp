@@ -1,9 +1,11 @@
 #include "lyra/lowering/hir_to_mir/module.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <utility>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/routine.hpp"

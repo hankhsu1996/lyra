@@ -1,7 +1,7 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 
-#include <format>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -10,8 +10,14 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"

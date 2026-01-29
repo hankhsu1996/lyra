@@ -1,6 +1,9 @@
 #include "lyra/common/type_arena.hpp"
 
+#include <cstdint>
 #include <utility>
+
+#include "lyra/common/type.hpp"
 
 namespace lyra {
 

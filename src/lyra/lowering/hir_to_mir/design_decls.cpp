@@ -1,16 +1,21 @@
 #include <cstddef>
+#include <utility>
 #include <variant>
 
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 

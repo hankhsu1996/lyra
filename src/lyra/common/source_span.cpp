@@ -1,6 +1,10 @@
 #include "lyra/common/source_span.hpp"
 
+#include <cstdint>
 #include <format>
+#include <string>
+
+#include "lyra/common/source_manager.hpp"
 
 namespace lyra {
 

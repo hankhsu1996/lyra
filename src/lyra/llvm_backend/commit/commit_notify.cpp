@@ -1,12 +1,15 @@
 #include <cstdint>
+#include <optional>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Type.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

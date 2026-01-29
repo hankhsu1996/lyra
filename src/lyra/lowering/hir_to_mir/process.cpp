@@ -1,9 +1,12 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 
+#include <expected>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"

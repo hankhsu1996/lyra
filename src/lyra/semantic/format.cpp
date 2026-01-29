@@ -347,7 +347,7 @@ auto FormatValue(
   }
 
   if (IsShortReal(value)) {
-    double dval = static_cast<double>(AsShortReal(value).value);
+    auto dval = static_cast<double>(AsShortReal(value).value);
     // Same conversion rule applies to shortreal
     if (IsIntegerFormat(spec.kind)) {
       auto integral = RealToDisplayIntegral(dval);

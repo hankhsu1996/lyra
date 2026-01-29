@@ -1,8 +1,14 @@
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 
+#include <format>
 #include <string>
+#include <utility>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/scope_types.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/lowering/ast_to_hir/context.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

@@ -2,11 +2,14 @@
 
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -19,11 +22,13 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"

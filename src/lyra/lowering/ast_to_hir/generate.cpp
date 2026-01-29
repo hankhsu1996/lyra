@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/generate.hpp"
 
+#include <cstddef>
 #include <format>
 #include <string>
 
@@ -10,6 +11,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/scope_types.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 
 namespace lyra::lowering::ast_to_hir {

@@ -1,11 +1,16 @@
 #include <expected>
 #include <variant>
 
+#include <llvm/IR/Value.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {

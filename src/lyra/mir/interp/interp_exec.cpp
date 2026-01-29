@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -21,6 +23,7 @@
 #include "lyra/common/memfile.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/severity.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"

@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction_compute_4state.hpp"
 #include "lyra/llvm_backend/instruction_compute_ops.hpp"
+#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 #include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"

@@ -1,12 +1,20 @@
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"

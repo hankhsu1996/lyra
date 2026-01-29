@@ -52,6 +52,10 @@ inline auto FormatRuntimeValue(
   // Handle time format - requires engine for formatting state
   if (kind == FormatKind::kTime) {
     auto* engine = static_cast<Engine*>(engine_ptr);
+    if (engine == nullptr) {
+      throw common::InternalError(
+          "FormatRuntimeValue", "kTime format requires non-null engine_ptr");
+    }
     auto time_value = *static_cast<const uint64_t*>(data);
     const auto& tf = engine->GetTimeFormat();
 

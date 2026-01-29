@@ -1,9 +1,14 @@
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 
+#include <cstdint>
 #include <span>
+#include <utility>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 
 namespace lyra::lowering::ast_to_hir {

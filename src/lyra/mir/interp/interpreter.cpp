@@ -31,6 +31,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/simulation.hpp"
 
 namespace lyra::mir::interp {

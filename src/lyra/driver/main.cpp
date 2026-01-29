@@ -8,6 +8,8 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 #include "check.hpp"
 #include "commands.hpp"
