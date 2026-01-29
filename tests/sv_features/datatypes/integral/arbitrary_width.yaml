@@ -673,3 +673,38 @@ cases:
     expect:
       variables:
         result: 4 # bit 2 of storage set
+
+  # 4-state signed widening tests (regression for sign-extension bug)
+  - name: logic_signed_4s_to_4s_widen
+    description: "4-state signed widen: value plane sign-extends, unknown stays zero"
+    sv: |
+      module Test;
+        logic signed [3:0] a;
+        logic signed [31:0] b;
+        int result;
+        initial begin
+          a = -5;  // 4-bit: 1011
+          b = a;   // 4s->4s widen path
+          result = b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -5
+
+  - name: logic_unsigned_4s_to_4s_widen
+    description: "4-state unsigned widen: value plane zero-extends"
+    sv: |
+      module Test;
+        logic [3:0] a;
+        logic [31:0] b;
+        int result;
+        initial begin
+          a = 4'b1011;  // 11 unsigned
+          b = a;        // 4s->4s widen path
+          result = b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
