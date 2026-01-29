@@ -83,22 +83,6 @@ void LyraSubscribe(ProcessState* state, SignalId signal, EdgeKind edge);
 
 Process state is passed by pointer; generated code stores/restores locals to the state struct at suspension points.
 
-## Legacy Reference
-
-The legacy Lyra codebase (`lyra-2`) has a complete simulation engine:
-
-| Component          | Location                            | Relevant For                             |
-| ------------------ | ----------------------------------- | ---------------------------------------- |
-| `Scheduler`        | `sdk/scheduler.hpp`                 | Stratified regions, coroutine awaitables |
-| `SimulationRunner` | `interpreter/simulation_runner.cpp` | Event loop, region execution             |
-| `TriggerManager`   | `interpreter/trigger_manager.cpp`   | Edge detection, waiter management        |
-
-Key patterns from legacy:
-
-- **Centralized ownership**: SimulationRunner owns ProcessFrames; queues hold handles
-- **Effect recording**: Processes record side effects; scheduler processes them after
-- **Two-phase NBA**: Active phase records updates, NBA phase commits
-
 ## Not In Scope
 
 - VPI/DPI interface

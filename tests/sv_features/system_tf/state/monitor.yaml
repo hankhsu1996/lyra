@@ -1,8 +1,6 @@
 feature: monitor
 description: Tests for $monitor system task
 
-# Supports both interpreter and C++ codegen backends.
-#
 # Limitations:
 # 1. Same-time-slot: When $monitor is replaced or $monitoroff is called in the
 #    same time slot as a value change, the old monitor's change may not be
