@@ -1,0 +1,51 @@
+feature: four_state_representation
+description: 4-state (X/Z) value representation and storage
+
+cases:
+  - name: single_bit_x
+    description: Single-bit X value
+    sv: |
+      module Test;
+        logic a = 1'bx;
+        logic result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bx"
+
+  - name: single_bit_z
+    description: Single-bit Z value
+    sv: |
+      module Test;
+        logic a = 1'bz;
+        logic result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "1'bz"
+
+  - name: wide_crossing_boundary_x
+    description: X in wide value crossing 64-bit boundary
+    sv: |
+      module Test;
+        logic [67:0] a = {4'bxxxx, 64'hFFFFFFFFFFFFFFFF};
+        logic [67:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "68'hxffffffffffffffff"
+
+  - name: wide_crossing_boundary_z
+    description: Z in wide value crossing 64-bit boundary
+    sv: |
+      module Test;
+        logic [67:0] a = {4'bzzzz, 64'hFFFFFFFFFFFFFFFF};
+        logic [67:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "68'hzffffffffffffffff"

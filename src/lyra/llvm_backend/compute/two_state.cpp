@@ -28,6 +28,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -121,26 +122,69 @@ auto LowerBinaryRvalue2State(
   return ComputeResult::TwoState(*result_or_err);
 }
 
+// Lower regular (non-reduction) unary ops at storage width.
+//
+// Contract:
+// - Operates entirely at storage width
+// - Handles: Plus, Minus, BitwiseNot, LogicalNot
+auto LowerRegularUnary2State(
+    Context& context, mir::UnaryOp op, llvm::Value* operand,
+    const PackedComputeContext& packed_context) -> Result<llvm::Value*> {
+  llvm::Type* storage_type = packed_context.storage_type;
+  uint32_t semantic_width = packed_context.bit_width;
+
+  auto& builder = context.GetBuilder();
+
+  // Coerce operand to storage width
+  auto* coerced =
+      builder.CreateZExtOrTrunc(operand, storage_type, "reg2.coerce");
+
+  return LowerUnaryOp(context, op, coerced, storage_type, semantic_width);
+}
+
+// Lower reduction unary ops at operand semantic width.
+//
+// Contract:
+// - Operates at operand semantic width (NOT storage width)
+// - Produces 1-bit semantic result, extended to storage width
+// - Handles: ReductionAnd, ReductionNand, ReductionOr, ReductionNor,
+//            ReductionXor, ReductionXnor
+auto LowerReduction2State(
+    Context& context, mir::UnaryOp op, llvm::Value* operand,
+    uint32_t operand_semantic_width, const PackedComputeContext& packed_context)
+    -> Result<llvm::Value*> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
+  // Keep operand at its semantic width - LowerUnaryOp uses
+  // operand_semantic_width for mask creation (e.g., all-ones mask for
+  // ReductionAnd)
+  return LowerUnaryOp(
+      context, op, operand, storage_type, operand_semantic_width);
+}
+
+// Dispatcher for 2-state unary operations.
+//
+// Routes to:
+// - LowerRegularUnary2State for shape-preserving ops (N-bit -> N-bit)
+// - LowerReduction2State for reducing ops (N-bit -> 1-bit)
 auto LowerUnaryRvalue2State(
     Context& context, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  llvm::Type* storage_type = packed_context.storage_type;
-
-  auto& builder = context.GetBuilder();
-
-  uint32_t operand_bit_width = GetOperandPackedWidth(context, operands[0]);
-
   auto operand_or_err = LowerOperand(context, operands[0]);
   if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
 
-  if (!IsReductionOp(info.op)) {
-    operand = builder.CreateZExtOrTrunc(operand, storage_type, "op.coerce");
+  Result<llvm::Value*> result;
+  if (IsReductionOp(info.op)) {
+    uint32_t operand_semantic_width =
+        GetOperandPackedWidth(context, operands[0]);
+    result = LowerReduction2State(
+        context, info.op, operand, operand_semantic_width, packed_context);
+  } else {
+    result = LowerRegularUnary2State(context, info.op, operand, packed_context);
   }
 
-  auto result =
-      LowerUnaryOp(context, info.op, operand, storage_type, operand_bit_width);
   if (!result) return std::unexpected(result.error());
   return ComputeResult::TwoState(*result);
 }

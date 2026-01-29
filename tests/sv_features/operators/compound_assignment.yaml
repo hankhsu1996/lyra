@@ -256,7 +256,7 @@ cases:
       endmodule
     expect:
       variables:
-        x: 0x00B0  # 0011 | 1010 = 1011
+        x: 0x00B0 # 0011 | 1010 = 1011
 
   - name: range_select_add_assign
     description: Compound add assignment to range select
@@ -270,7 +270,7 @@ cases:
       endmodule
     expect:
       variables:
-        x: 0x0080  # 5 + 3 = 8
+        x: 0x0080 # 5 + 3 = 8
 
   - name: indexed_partselect_dynamic_add_assign
     description: Compound assignment to indexed part-select with dynamic index

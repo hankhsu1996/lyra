@@ -1,4 +1,31 @@
+feature: four_state_default_init
+description: Default initialization for 2-state (0) and 4-state (X) types
+
 cases:
+  - name: module_level_logic_defaults_to_x
+    description: Uninitialized 4-state (logic) defaults to X
+    sv: |
+      module Test;
+        logic [3:0] a;
+        logic [3:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: "4'bxxxx"
+
+  - name: module_level_bit_defaults_to_zero
+    description: 2-state types (bit) default to 0, not X
+    sv: |
+      module Test;
+        bit [3:0] a;
+        bit [3:0] result;
+        initial result = a;
+      endmodule
+    expect:
+      variables:
+        result: 0
+
   # Test 1: 2-state function locals (should be 0)
   - name: function_local_2state
     sv: |
