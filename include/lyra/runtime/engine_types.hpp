@@ -2,11 +2,16 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 
 namespace lyra::runtime {
 
 // Simulation time in ticks (timescale-independent).
 using SimTime = uint64_t;
+
+// Constant representing unlimited simulation time.
+// Use as max_time argument to Run() for "run until natural completion".
+inline constexpr SimTime kNoTimeLimit = std::numeric_limits<SimTime>::max();
 
 // Unique identifier for a process instance.
 // Combines process definition ID with instance path for hierarchical designs.

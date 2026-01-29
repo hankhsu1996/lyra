@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -22,6 +24,14 @@ void Engine::ScheduleInitial(ProcessHandle handle) {
 }
 
 void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
+  // Checked addition to prevent overflow
+  if (ticks > kNoTimeLimit - current_time_) {
+    throw std::runtime_error(
+        std::format(
+            "delay overflow: current_time={} + ticks={} exceeds maximum "
+            "simulation time",
+            current_time_, ticks));
+  }
   SimTime wake_time = current_time_ + ticks;
   delay_queue_[wake_time].push_back(
       ScheduledEvent{

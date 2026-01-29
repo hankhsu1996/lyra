@@ -97,7 +97,9 @@ class Engine {
 
   // Run simulation until completion or time limit.
   // Returns final simulation time.
-  auto Run(SimTime max_time = 1'000'000) -> SimTime;
+  // By default, runs until the design naturally finishes ($finish, no more
+  // events). Pass a specific max_time to cap the simulation.
+  auto Run(SimTime max_time = kNoTimeLimit) -> SimTime;
 
   // Stop the simulation ($finish semantics).
   void Finish() {
