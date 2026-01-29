@@ -112,26 +112,18 @@ auto ApplyWidthMaskToResult(
 }
 
 auto FinalizeCompute(
-    Context& context, mir::PlaceId target, const ComputeResult& result,
-    uint32_t semantic_width, llvm::StructType* struct_type) -> Result<void> {
+    Context& context, const ComputeResult& result, uint32_t semantic_width,
+    llvm::StructType* struct_type) -> llvm::Value* {
   auto& builder = context.GetBuilder();
 
   // Apply width mask
   auto masked = ApplyWidthMaskToResult(context, result, semantic_width);
 
-  // Get target pointer
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-
   // Pack if 4-state target
   if (struct_type != nullptr) {
-    auto* packed =
-        PackFourState(builder, struct_type, masked.value, masked.unknown);
-    builder.CreateStore(packed, *target_ptr_or_err);
-  } else {
-    builder.CreateStore(masked.value, *target_ptr_or_err);
+    return PackFourState(builder, struct_type, masked.value, masked.unknown);
   }
-  return {};
+  return masked.value;
 }
 
 auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
@@ -207,9 +199,16 @@ auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
-  return FinalizeCompute(
-      context, compute.target, *result_or_err, type_info.bit_width,
-      struct_type);
+  // Finalize the compute result (mask and pack)
+  llvm::Value* final_value = FinalizeCompute(
+      context, *result_or_err, type_info.bit_width, struct_type);
+
+  // Get target pointer and store
+  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
+  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+
+  context.GetBuilder().CreateStore(final_value, *target_ptr_or_err);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
