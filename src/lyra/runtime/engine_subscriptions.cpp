@@ -180,35 +180,77 @@ void Engine::Subscribe(
   ++live_subscription_count_;
 }
 
-void Engine::NotifyChange(
+void Engine::RecordSignalUpdate(
     SignalId signal, bool old_lsb, bool new_lsb, bool value_changed) {
-  // EvaluateEdge returns true for kAnyChange unconditionally, so we must
-  // check value_changed here to avoid spurious wakeups on no-op writes.
-  if (!value_changed || finished_) {
+  if (finished_) {
     return;
   }
 
-  auto it = signal_waiters_.find(signal);
-  if (it == signal_waiters_.end()) {
+  auto& record = pending_edges_[signal];
+
+  if (!record.initialized) {
+    // First update for this signal in this delta: capture initial LSB
+    record.initialized = true;
+    record.prev_lsb = old_lsb;
+  }
+
+  // Detect edge from prev_lsb to new_lsb
+  if (!record.prev_lsb && new_lsb) {
+    record.saw_posedge = true;
+  }
+  if (record.prev_lsb && !new_lsb) {
+    record.saw_negedge = true;
+  }
+
+  // Update prev_lsb for next update in this delta
+  record.prev_lsb = new_lsb;
+
+  // Accumulate value_changed (never invent change events)
+  record.value_changed |= value_changed;
+}
+
+auto Engine::EvaluateEdgeFromRecord(
+    common::EdgeKind edge, const EdgeRecord& record) -> bool {
+  switch (edge) {
+    case common::EdgeKind::kPosedge:
+      return record.saw_posedge;
+    case common::EdgeKind::kNegedge:
+      return record.saw_negedge;
+    case common::EdgeKind::kAnyChange:
+      return record.value_changed;
+  }
+  std::unreachable();
+}
+
+void Engine::FlushSignalUpdates() {
+  if (pending_edges_.empty() || finished_) {
     return;
   }
 
-  for (auto* node = it->second.head; node != nullptr;) {
-    auto* next = node->signal_next;
-
-    bool triggered = EvaluateEdge(node->edge, old_lsb, new_lsb);
-    if (triggered) {
-      auto& proc_state = process_states_[node->handle];
-
-      if (!proc_state.is_enqueued) {
-        next_delta_queue_.push_back(
-            ScheduledEvent{.handle = node->handle, .resume = node->resume});
-        proc_state.is_enqueued = true;
-      }
+  for (const auto& [signal, record] : pending_edges_) {
+    auto it = signal_waiters_.find(signal);
+    if (it == signal_waiters_.end()) {
+      continue;
     }
 
-    node = next;
+    for (auto* node = it->second.head; node != nullptr;) {
+      auto* next = node->signal_next;
+
+      if (EvaluateEdgeFromRecord(node->edge, record)) {
+        auto& proc_state = process_states_[node->handle];
+
+        if (!proc_state.is_enqueued) {
+          next_delta_queue_.push_back(
+              ScheduledEvent{.handle = node->handle, .resume = node->resume});
+          proc_state.is_enqueued = true;
+        }
+      }
+
+      node = next;
+    }
   }
+
+  pending_edges_.clear();
 }
 
 }  // namespace lyra::runtime

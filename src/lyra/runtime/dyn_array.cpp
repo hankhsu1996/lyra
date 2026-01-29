@@ -224,11 +224,16 @@ extern "C" void LyraDynArrayRelease(LyraDynArrayHandle arr) {
 extern "C" void LyraStoreDynArray(
     void* engine_ptr, void* slot_ptr, void* new_handle, uint32_t signal_id) {
   auto** handle_slot = static_cast<void**>(slot_ptr);
+  void* old_handle = *handle_slot;
+  bool value_changed = (old_handle != new_handle);
+
   *handle_slot = new_handle;
 
-  if (engine_ptr != nullptr) {
+  if (value_changed && engine_ptr != nullptr) {
+    bool old_lsb = (old_handle != nullptr);
+    bool new_lsb = (new_handle != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->NotifyChange(signal_id, false, new_handle != nullptr, true);
+    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
   }
 }
 

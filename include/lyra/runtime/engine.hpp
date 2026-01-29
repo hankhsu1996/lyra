@@ -86,10 +86,14 @@ class Engine {
   // Callback executes at end of time slot with final signal values.
   void SchedulePostponed(PostponedCallback callback, void* design_state);
 
-  // Notify that a signal changed (called after stores).
-  // Wakes up subscribed processes into the next delta cycle.
-  void NotifyChange(
+  // Record a signal update for delta-level coalescing.
+  // Edge detection is deferred until FlushSignalUpdates() at delta boundary.
+  void RecordSignalUpdate(
       SignalId signal, bool old_lsb, bool new_lsb, bool value_changed);
+
+  // Flush all pending signal updates, waking subscribed processes.
+  // Called at delta boundaries (after active/inactive regions, after NBA).
+  void FlushSignalUpdates();
 
   // Run simulation until completion or time limit.
   // Returns final simulation time.
@@ -173,9 +177,11 @@ class Engine {
       std::string_view reason, size_t current, size_t limit);
   void PrintTopWaiters(size_t count);
 
-  // Edge evaluation helper
+  // Edge evaluation helpers
   static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
       -> bool;
+  static auto EvaluateEdgeFromRecord(
+      common::EdgeKind edge, const EdgeRecord& record) -> bool;
 
   ProcessRunner runner_;
   SimTime current_time_ = 0;
@@ -204,6 +210,9 @@ class Engine {
   absl::flat_hash_map<SignalId, SignalWaiters> signal_waiters_;
   absl::flat_hash_map<ProcessHandle, ProcessState, ProcessHandleHash>
       process_states_;
+
+  // Delta-level edge coalescing: signal -> accumulated edges this delta
+  absl::flat_hash_map<SignalId, EdgeRecord> pending_edges_;
 
   // Node pool: deque owns memory (stable pointers), free_list_ tracks reusable
   std::deque<SubscriptionNode> node_pool_;
