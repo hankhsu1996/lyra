@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute.hpp"
+#include "lyra/llvm_backend/compute/compute.hpp"
 
 #include <expected>
 #include <variant>
@@ -13,16 +13,16 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/compute/aggregate.hpp"
+#include "lyra/llvm_backend/compute/builtin.hpp"
+#include "lyra/llvm_backend/compute/cast.hpp"
+#include "lyra/llvm_backend/compute/driver.hpp"
+#include "lyra/llvm_backend/compute/math.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/compute/real.hpp"
+#include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction_compute_aggregate.hpp"
-#include "lyra/llvm_backend/instruction_compute_builtin.hpp"
-#include "lyra/llvm_backend/instruction_compute_cast.hpp"
-#include "lyra/llvm_backend/instruction_compute_driver.hpp"
-#include "lyra/llvm_backend/instruction_compute_math.hpp"
-#include "lyra/llvm_backend/instruction_compute_real.hpp"
-#include "lyra/llvm_backend/instruction_compute_string.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/rvalue.hpp"
 

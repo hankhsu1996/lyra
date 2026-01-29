@@ -6,7 +6,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/llvm_backend/compute_result.hpp"
+#include "lyra/llvm_backend/compute/result.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/instruction.hpp"
 

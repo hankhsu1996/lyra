@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/four_state_utils.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>

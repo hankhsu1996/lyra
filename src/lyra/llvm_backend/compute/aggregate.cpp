@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_aggregate.hpp"
+#include "lyra/llvm_backend/compute/aggregate.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,9 +16,9 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"

@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_driver.hpp"
+#include "lyra/llvm_backend/compute/driver.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -13,13 +13,13 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
-#include "lyra/llvm_backend/compute_result.hpp"
+#include "lyra/llvm_backend/compute/four_state.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
+#include "lyra/llvm_backend/compute/ops.hpp"
+#include "lyra/llvm_backend/compute/result.hpp"
+#include "lyra/llvm_backend/compute/rvalue.hpp"
+#include "lyra/llvm_backend/compute/two_state.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/four_state_utils.hpp"
-#include "lyra/llvm_backend/instruction_compute_2state.hpp"
-#include "lyra/llvm_backend/instruction_compute_4state.hpp"
-#include "lyra/llvm_backend/instruction_compute_ops.hpp"
-#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"

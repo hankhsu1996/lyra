@@ -9,8 +9,8 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/system_tf.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/instruction.hpp"
 

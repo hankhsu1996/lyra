@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_ops.hpp"
+#include "lyra/llvm_backend/compute/ops.hpp"
 
 #include <algorithm>
 #include <cstdint>

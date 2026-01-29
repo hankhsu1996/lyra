@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_cast.hpp"
+#include "lyra/llvm_backend/compute/cast.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -18,10 +18,10 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/four_state_utils.hpp"
-#include "lyra/llvm_backend/instruction_compute_ops.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"

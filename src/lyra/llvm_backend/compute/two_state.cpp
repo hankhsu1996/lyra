@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_2state.hpp"
+#include "lyra/llvm_backend/compute/two_state.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,13 +19,13 @@
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/llvm_backend/compute_result.hpp"
+#include "lyra/llvm_backend/compute/four_state.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/compute/ops.hpp"
+#include "lyra/llvm_backend/compute/result.hpp"
+#include "lyra/llvm_backend/compute/rvalue.hpp"
+#include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction_compute_4state.hpp"
-#include "lyra/llvm_backend/instruction_compute_ops.hpp"
-#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
-#include "lyra/llvm_backend/instruction_compute_string.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"

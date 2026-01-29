@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_rvalue.hpp"
+#include "lyra/llvm_backend/compute/rvalue.hpp"
 
 #include <expected>
 #include <format>

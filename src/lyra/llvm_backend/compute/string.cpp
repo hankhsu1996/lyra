@@ -1,4 +1,4 @@
-#include "lyra/llvm_backend/instruction_compute_string.hpp"
+#include "lyra/llvm_backend/compute/string.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,10 +17,10 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
-#include "lyra/llvm_backend/instruction_compute_ops.hpp"
-#include "lyra/llvm_backend/operand.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
