@@ -755,6 +755,22 @@ auto LowerExpressionStatement(
                       .args = {*desc_result}});
               result = {};
             }
+          } else if constexpr (std::is_same_v<T, hir::FflushData>) {
+            std::vector<mir::Operand> args;
+            if (call_data.descriptor) {
+              Result<mir::Operand> desc_result =
+                  LowerExpression(*call_data.descriptor, builder);
+              if (!desc_result) {
+                result = std::unexpected(desc_result.error());
+                return;
+              }
+              args.push_back(*desc_result);
+            }
+            builder.EmitEffect(
+                mir::SystemTfEffect{
+                    .opcode = SystemTfOpcode::kFflush,
+                    .args = std::move(args)});
+            result = {};
           } else if constexpr (std::is_same_v<T, hir::TimeFormatData>) {
             builder.EmitEffect(
                 mir::TimeFormatEffect{

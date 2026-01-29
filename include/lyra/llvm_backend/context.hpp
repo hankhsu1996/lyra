@@ -121,6 +121,7 @@ class Context {
   [[nodiscard]] auto GetLyraFopenFd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFopenMcd() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFclose() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFflush() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFWrite() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
@@ -405,6 +406,7 @@ class Context {
   llvm::Function* lyra_fopen_fd_ = nullptr;
   llvm::Function* lyra_fopen_mcd_ = nullptr;
   llvm::Function* lyra_fclose_ = nullptr;
+  llvm::Function* lyra_fflush_ = nullptr;
   llvm::Function* lyra_fwrite_ = nullptr;
   llvm::Function* lyra_schedule_postponed_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;

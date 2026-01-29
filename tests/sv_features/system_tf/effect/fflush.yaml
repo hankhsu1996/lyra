@@ -1,0 +1,118 @@
+feature: file_io
+description: Tests for $fflush system task
+
+cases:
+  - name: fflush_no_args
+    description: $fflush() with no args flushes all (should not crash)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            initial begin
+              $fflush();
+              result = 1;
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: fflush_after_fwrite
+    description: $fflush(fd) after $fwrite ensures data is written
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int result;
+            initial begin
+              fd = $fopen("flush_test.txt", "w");
+              $fwrite(fd, "hello");
+              $fflush(fd);
+              result = (fd != 0) ? 1 : 0;
+              $fclose(fd);
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: fflush_invalid_fd
+    description: $fflush with invalid descriptor is a no-op
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            initial begin
+              // Flush invalid descriptor - should be a no-op
+              $fflush(0);
+              $fflush(999);
+              result = 1;
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: fflush_mcd
+    description: $fflush(mcd) flushes MCD channel
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            int result;
+            initial begin
+              mcd = $fopen("mcd_flush_test.txt");
+              $fwrite(mcd, "mcd data");
+              $fflush(mcd);
+              result = (mcd != 0) ? 1 : 0;
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: fflush_stdout
+    description: $fflush(1) flushes stdout (MCD bit 0)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            initial begin
+              $write("hello");
+              $fflush(1);  // MCD bit 0 = stdout
+              result = 1;
+            end
+          endmodule
+    expect:
+      stdout: hello
+      variables:
+        result: 1
+
+  - name: fflush_all_with_open_files
+    description: $fflush() flushes all open files
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd1, fd2;
+            int result;
+            initial begin
+              fd1 = $fopen("flush1.txt", "w");
+              fd2 = $fopen("flush2.txt", "w");
+              $fwrite(fd1, "data1");
+              $fwrite(fd2, "data2");
+              $fflush();  // Flush all
+              result = (fd1 != 0 && fd2 != 0) ? 1 : 0;
+              $fclose(fd1);
+              $fclose(fd2);
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1

@@ -38,6 +38,17 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
     .max_args = 1,
     .out_arg_index = -1,
   },
+  // kFflush: $fflush() or $fflush(fd)
+  {
+    .opcode = SystemTfOpcode::kFflush,
+    .name = "$fflush",
+    .family = SystemTfFamily::kFileIO,
+    .role = SystemTfRole::kEffect,
+    .result_conv = ResultConvention::kNone,
+    .min_args = 0,
+    .max_args = 1,
+    .out_arg_index = -1,
+  },
 });
 // clang-format on
 
@@ -45,6 +56,7 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
 // clang-format off
 constexpr std::array kNameTable = std::to_array<std::pair<std::string_view, SystemTfOpcode>>({
   {"$fclose", SystemTfOpcode::kFclose},
+  {"$fflush", SystemTfOpcode::kFflush},
   {"$fopen", SystemTfOpcode::kFopen},
 });
 // clang-format on
@@ -77,6 +89,8 @@ auto ToString(SystemTfOpcode op) -> const char* {
       return "$fopen";
     case SystemTfOpcode::kFclose:
       return "$fclose";
+    case SystemTfOpcode::kFflush:
+      return "$fflush";
   }
   return "?";
 }

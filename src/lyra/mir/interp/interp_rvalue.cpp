@@ -328,6 +328,9 @@ auto Interpreter::EvalRvalue(
               case SystemTfOpcode::kFclose:
                 throw common::InternalError(
                     "EvalRvalue:SystemTf", "$fclose is an effect, not rvalue");
+              case SystemTfOpcode::kFflush:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf", "$fflush is an effect, not rvalue");
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");

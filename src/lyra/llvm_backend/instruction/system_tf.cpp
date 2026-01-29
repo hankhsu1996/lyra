@@ -3,6 +3,7 @@
 #include <expected>
 #include <format>
 
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
@@ -13,6 +14,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/instruction.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -56,6 +58,9 @@ auto LowerSystemTfRvalue(
     case SystemTfOpcode::kFclose:
       throw common::InternalError(
           "LowerSystemTfRvalue", "$fclose is an effect, not an rvalue");
+    case SystemTfOpcode::kFflush:
+      throw common::InternalError(
+          "LowerSystemTfRvalue", "$fflush is an effect, not an rvalue");
   }
   throw common::InternalError(
       "LowerSystemTfRvalue", "unhandled SystemTfOpcode");
@@ -75,6 +80,26 @@ auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       builder.CreateCall(
           context.GetLyraFclose(), {context.GetEnginePointer(), *desc_or_err});
+      return {};
+    }
+    case SystemTfOpcode::kFflush: {
+      auto& builder = context.GetBuilder();
+      auto* i1_ty = llvm::Type::getInt1Ty(context.GetLlvmContext());
+      auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+      llvm::Value* has_desc = nullptr;
+      llvm::Value* desc_val = nullptr;
+      if (effect.args.empty()) {
+        has_desc = llvm::ConstantInt::get(i1_ty, 0);
+        desc_val = llvm::ConstantInt::get(i32_ty, 0);
+      } else {
+        has_desc = llvm::ConstantInt::get(i1_ty, 1);
+        auto desc_or_err = LowerOperand(context, effect.args[0]);
+        if (!desc_or_err) return std::unexpected(desc_or_err.error());
+        desc_val = *desc_or_err;
+      }
+      builder.CreateCall(
+          context.GetLyraFflush(),
+          {context.GetEnginePointer(), has_desc, desc_val});
       return {};
     }
     case SystemTfOpcode::kFopen:
