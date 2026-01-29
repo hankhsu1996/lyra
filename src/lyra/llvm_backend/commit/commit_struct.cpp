@@ -14,7 +14,6 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -109,15 +108,6 @@ auto AssignStructFieldByField(
 auto CommitStructFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
-  // Design slots with string-containing structs not yet supported
-  if (commit::Access::IsDesignSlot(ctx, target)) {
-    return std::unexpected(ctx.GetDiagnosticContext().MakeUnsupported(
-        ctx.GetCurrentOrigin(),
-        "unpacked struct assignment to design slot with string fields "
-        "not yet supported",
-        UnsupportedCategory::kFeature));
-  }
-
   // Get target pointer
   auto target_ptr_or_err = ctx.GetPlacePointer(target);
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
@@ -131,6 +121,9 @@ auto CommitStructFieldByField(
   auto result = AssignStructFieldByField(
       ctx, source_ptr, target_ptr, struct_type_id, policy);
   if (!result) return result;
+
+  // Notify if design slot (after stores complete, before source cleanup)
+  CommitNotifyAggregateIfDesignSlot(ctx, target);
 
   // After move: null out source managed fields to prevent double-release.
   // CommitMoveCleanupIfTemp handles gating (only kMove from temps).

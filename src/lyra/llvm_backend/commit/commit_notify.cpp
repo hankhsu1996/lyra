@@ -71,4 +71,26 @@ auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t {
   return *signal_id_opt;
 }
 
+void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
+  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
+  if (!signal_id_opt.has_value()) {
+    return;  // No-op for non-design slots
+  }
+
+  auto target_ptr_or_err = ctx.GetPlacePointer(target);
+  if (!target_ptr_or_err) {
+    throw common::InternalError(
+        "CommitNotifyAggregateIfDesignSlot",
+        "failed to get target place pointer");
+  }
+
+  auto& builder = ctx.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
+
+  builder.CreateCall(
+      ctx.GetLyraNotifySignal(),
+      {ctx.GetEnginePointer(), *target_ptr_or_err,
+       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

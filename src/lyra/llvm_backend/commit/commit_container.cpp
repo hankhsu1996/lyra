@@ -1,5 +1,3 @@
-#include <expected>
-
 #include <llvm/IR/DerivedTypes.h>
 
 #include "lyra/common/internal_error.hpp"

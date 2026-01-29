@@ -354,3 +354,16 @@ extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->SetMonitorEnabled(enabled);
 }
+
+extern "C" void LyraNotifySignal(
+    void* engine_ptr, const void* slot_ptr, uint32_t signal_id) {
+  if (engine_ptr == nullptr || slot_ptr == nullptr) return;
+
+  // Read LSB from first byte for best-effort edge detection
+  const auto* bytes = static_cast<const uint8_t*>(slot_ptr);
+  bool lsb = (*bytes & 1) != 0;
+
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  // Value-changed notify only: old_lsb = new_lsb = lsb (no edge)
+  engine->RecordSignalUpdate(signal_id, lsb, lsb, true);
+}

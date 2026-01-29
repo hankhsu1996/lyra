@@ -17,7 +17,6 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -216,14 +215,6 @@ auto AssignArrayFieldByFieldInternal(
 auto CommitArrayFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void> {
-  if (commit::Access::IsDesignSlot(ctx, target)) {
-    return std::unexpected(ctx.GetDiagnosticContext().MakeUnsupported(
-        ctx.GetCurrentOrigin(),
-        "unpacked array assignment to design slot with managed elements "
-        "not yet supported",
-        UnsupportedCategory::kFeature));
-  }
-
   auto target_ptr_or_err = ctx.GetPlacePointer(target);
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
@@ -235,6 +226,9 @@ auto CommitArrayFieldByField(
   auto result = AssignArrayFieldByFieldInternal(
       ctx, source_ptr, target_ptr, array_type_id, policy);
   if (!result) return result;
+
+  // Notify if design slot (after stores complete, before source cleanup)
+  CommitNotifyAggregateIfDesignSlot(ctx, target);
 
   CommitMoveCleanupIfTemp(ctx, source, policy, array_type_id);
 
