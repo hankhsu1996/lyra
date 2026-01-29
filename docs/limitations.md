@@ -126,6 +126,7 @@ Supported:
 
 Not yet supported:
 
+- Non-integral return types (`string`, `real`, structs) - only `void` and integral types supported
 - `task` definitions (require timing controls)
 - `output`, `inout`, `ref` arguments
 - Default argument values (`arg = default`)

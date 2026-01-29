@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 
 namespace lyra {
@@ -56,6 +58,12 @@ struct Symbol {
   TypeId type;
   ScopeId scope;
   StorageClass storage_class = StorageClass::kDesignStorage;
+
+  // For symbols that are registered but not fully supported (e.g., functions
+  // with non-integral return types). If set, calls to this symbol will produce
+  // a clear error referencing the definition rather than "undefined".
+  std::optional<std::string> unsupported_reason;
+  SourceSpan definition_span{};
 };
 
 }  // namespace lyra
