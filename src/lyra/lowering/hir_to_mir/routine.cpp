@@ -1,9 +1,12 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 
 #include <cstdint>
+#include <expected>
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/routine.hpp"
@@ -15,6 +18,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {

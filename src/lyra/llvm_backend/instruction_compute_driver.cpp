@@ -4,6 +4,7 @@
 #include <expected>
 #include <format>
 #include <variant>
+#include <vector>
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>

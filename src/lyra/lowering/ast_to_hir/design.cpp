@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <optional>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -17,9 +19,13 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"

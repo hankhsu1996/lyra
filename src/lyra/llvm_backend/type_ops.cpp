@@ -3,15 +3,18 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/Support/Casting.h>
+#include <llvm/IR/Type.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops_handlers.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 

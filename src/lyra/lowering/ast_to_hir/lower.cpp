@@ -1,8 +1,22 @@
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
+
+#include "lyra/common/constant_arena.hpp"
+#include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/scope_table.hpp"
+#include "lyra/common/scope_types.hpp"
+#include "lyra/common/source_manager.hpp"
+#include "lyra/common/symbol_table.hpp"
+#include "lyra/common/type_arena.hpp"
+#include "lyra/hir/arena.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/design.hpp"
+#include "lyra/lowering/ast_to_hir/source_mapper.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"

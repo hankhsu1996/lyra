@@ -1,12 +1,18 @@
 #include "lyra/mir/verify.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
+#include <string_view>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {

@@ -674,7 +674,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
           TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
           const Type& base_type = (*ctx.type_arena)[base_type_id];
 
-          int64_t raw_index = static_cast<int64_t>(ic->value[0]);
+          auto raw_index = static_cast<int64_t>(ic->value[0]);
           int64_t normalized = raw_index;  // Default for dynamic array/queue
 
           if (base_type.Kind() == TypeKind::kUnpackedArray) {

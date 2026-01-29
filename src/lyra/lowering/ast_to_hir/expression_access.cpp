@@ -1,16 +1,24 @@
 #include "lyra/lowering/ast_to_hir/expression_access.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"

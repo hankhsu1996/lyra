@@ -1,10 +1,14 @@
+#include <expected>
+#include <utility>
 #include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -14,6 +18,9 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/handle.hpp"
+#include "lyra/mir/module.hpp"
+#include "lyra/mir/package.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 

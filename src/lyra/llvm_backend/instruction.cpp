@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <variant>
+#include <vector>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -22,6 +23,7 @@
 #include "lyra/llvm_backend/instruction_display.hpp"
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"

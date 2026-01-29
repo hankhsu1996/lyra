@@ -1,5 +1,6 @@
 #include "lyra/runtime/format_spec_abi.hpp"
 
+#include <cstdint>
 #include <optional>
 
 #include "lyra/common/format.hpp"

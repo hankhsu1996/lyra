@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression_aggregate.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -19,6 +20,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"

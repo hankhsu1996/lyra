@@ -1,15 +1,26 @@
 #include "lyra/lowering/ast_to_hir/system_call_helpers.hpp"
 
+#include <cstdint>
+#include <string_view>
+#include <utility>
 #include <variant>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/runtime_query_kind.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/operator.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 

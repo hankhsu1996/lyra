@@ -1,11 +1,18 @@
 #include "lyra/llvm_backend/instruction_system_tf.hpp"
 
+#include <expected>
 #include <format>
 
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/system_tf.hpp"
+#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/operand.hpp"
+#include "lyra/mir/effect.hpp"
+#include "lyra/mir/instruction.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

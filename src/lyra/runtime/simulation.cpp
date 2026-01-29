@@ -16,6 +16,8 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 

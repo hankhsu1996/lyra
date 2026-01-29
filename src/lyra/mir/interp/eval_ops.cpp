@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <span>
+#include <utility>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
@@ -741,7 +742,7 @@ auto EvalMathCall(
     [[maybe_unused]] const TypeArena& types) -> RuntimeValue {
   // Validate arity
   int expected_arity = GetMathFnArity(fn);
-  if (static_cast<int>(args.size()) != expected_arity) {
+  if (std::cmp_not_equal(args.size(), expected_arity)) {
     throw common::InternalError(
         "EvalMathCall", std::format(
                             "arity mismatch for {}: expected {}, got {}",

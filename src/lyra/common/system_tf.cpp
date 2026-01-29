@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <optional>
+#include <string_view>
+#include <utility>
 
 #include "lyra/common/internal_error.hpp"
 

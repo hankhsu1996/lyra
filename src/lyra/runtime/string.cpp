@@ -4,14 +4,17 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"
 #include "lyra/semantic/format.hpp"
 #include "lyra/semantic/value.hpp"

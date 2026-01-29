@@ -1,7 +1,10 @@
 #include "lyra/llvm_backend/instruction_compute_cast.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <format>
+#include <type_traits>
+#include <variant>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -10,6 +13,8 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/ErrorHandling.h>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -19,6 +24,7 @@
 #include "lyra/llvm_backend/operand.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 

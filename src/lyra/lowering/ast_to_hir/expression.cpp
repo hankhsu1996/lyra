@@ -1,7 +1,12 @@
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 
+#include <cstddef>
+#include <format>
 #include <optional>
 #include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
@@ -14,11 +19,17 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
+#include "lyra/hir/operator.hpp"
 #include "lyra/lowering/ast_to_hir/assign_target.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"

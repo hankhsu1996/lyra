@@ -16,6 +16,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
 

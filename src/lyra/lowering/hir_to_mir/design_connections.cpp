@@ -1,5 +1,8 @@
 #include <cstdint>
+#include <expected>
+#include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"

@@ -1,9 +1,12 @@
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
+#include <cstdint>
 #include <limits>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/timescale_format.hpp"
+#include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 
 namespace lyra::lowering::ast_to_hir {

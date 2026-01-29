@@ -1,6 +1,10 @@
 #include "lyra/common/constant_arena.hpp"
 
+#include <cstdint>
 #include <utility>
+
+#include "lyra/common/constant.hpp"
+#include "lyra/common/type.hpp"
 
 namespace lyra {
 

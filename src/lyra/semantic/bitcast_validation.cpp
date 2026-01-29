@@ -1,7 +1,11 @@
 #include "lyra/semantic/bitcast_validation.hpp"
 
+#include <cstdint>
 #include <format>
+#include <optional>
+#include <string>
 
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 
 namespace lyra::semantic {

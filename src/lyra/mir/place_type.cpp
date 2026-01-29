@@ -1,11 +1,13 @@
 #include "lyra/mir/place_type.hpp"
 
+#include <cstddef>
 #include <format>
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::mir {
 

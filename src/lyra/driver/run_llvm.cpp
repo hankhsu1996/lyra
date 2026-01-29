@@ -9,8 +9,9 @@
 #include <utility>
 #include <vector>
 
-// POSIX headers
+// POSIX headers - provide mkstemps, close, WIFEXITED, WEXITSTATUS
 #include <spawn.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

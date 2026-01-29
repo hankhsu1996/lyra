@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -321,7 +322,7 @@ auto LowerMathCall(
   auto& builder = context.GetBuilder();
 
   int expected_arity = GetMathFnArity(info.fn);
-  if (static_cast<int>(operands.size()) != expected_arity) {
+  if (std::cmp_not_equal(operands.size(), expected_arity)) {
     throw common::InternalError(
         "LowerMathCall",
         std::format(

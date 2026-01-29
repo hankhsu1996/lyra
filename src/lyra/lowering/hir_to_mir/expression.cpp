@@ -18,6 +18,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -1601,7 +1602,7 @@ auto LowerMathCall(
     const hir::MathCallExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> Result<mir::Operand> {
   int expected_arity = GetMathFnArity(data.fn);
-  if (static_cast<int>(data.args.size()) != expected_arity) {
+  if (std::cmp_not_equal(data.args.size(), expected_arity)) {
     throw common::InternalError(
         "LowerMathCall",
         std::format(

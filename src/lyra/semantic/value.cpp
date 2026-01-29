@@ -8,11 +8,13 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 
 namespace lyra::semantic {

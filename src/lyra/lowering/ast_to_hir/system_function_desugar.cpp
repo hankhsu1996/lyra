@@ -1,16 +1,30 @@
 #include "lyra/lowering/ast_to_hir/system_function_desugar.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/numeric/Time.h>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/integral_constant.hpp"
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/source_span.hpp"
+#include "lyra/common/timescale_format.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
@@ -392,7 +406,7 @@ auto LowerDesugarableSystemFunction(
           },
           [&](MathSysFn fn) -> hir::ExpressionId {
             int expected_arity = GetMathFnArity(fn.fn);
-            if (static_cast<int>(call.arguments().size()) != expected_arity) {
+            if (std::cmp_not_equal(call.arguments().size(), expected_arity)) {
               ctx->ErrorFmt(
                   span, "{}() requires exactly {} argument(s)",
                   call.getSubroutineName(), expected_arity);

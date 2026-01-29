@@ -1,6 +1,13 @@
 #include "lyra/semantic/signedness_cast.hpp"
 
+#include <cstdint>
+#include <expected>
 #include <format>
+#include <string>
+#include <utility>
+
+#include "lyra/common/type.hpp"
+#include "lyra/common/type_arena.hpp"
 
 namespace lyra::semantic {
 

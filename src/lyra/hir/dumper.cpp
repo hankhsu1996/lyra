@@ -12,6 +12,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/math_fn.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/symbol_table.hpp"
 #include "lyra/common/symbol_types.hpp"

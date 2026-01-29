@@ -1,8 +1,10 @@
 #include "lyra/lowering/hir_to_mir/package.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <utility>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"

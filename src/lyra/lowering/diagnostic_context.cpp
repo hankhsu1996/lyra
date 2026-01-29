@@ -1,6 +1,8 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"

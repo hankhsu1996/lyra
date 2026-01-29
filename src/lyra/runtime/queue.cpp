@@ -1,5 +1,6 @@
 #include "lyra/runtime/queue.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 

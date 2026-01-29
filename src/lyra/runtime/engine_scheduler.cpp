@@ -9,6 +9,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_types.hpp"
 
 namespace lyra::runtime {
 
