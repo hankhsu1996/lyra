@@ -22,8 +22,6 @@ suites:
     exclude_regex:
       # 4-state operator semantics (reduction/comparison with X) not implemented
       - operators/bitwise_four_state\.yaml
-      # $display 4-state formatting not implemented (unknown plane not passed)
-      - system_tf/effect/display_four_state\.yaml
 
   mir_dev:
     backend: mir

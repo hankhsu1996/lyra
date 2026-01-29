@@ -30,14 +30,15 @@ void LyraPrintLiteral(const char* str);
 // - precision: precision for real formats (-1 means default)
 // - zero_pad: pad with zeros instead of spaces (from %0Nd syntax)
 // - left_align: left-align within field width (from %-Nd syntax)
-// - x_mask: pointer to X bits (null for 2-state)
-// - z_mask: pointer to Z bits (null for 2-state)
+// - unknown_data: pointer to unknown plane (null for 2-state). When set, bit i
+//     is X if unknown[i]=1 && data[i]=0, Z if unknown[i]=1 && data[i]=1.
+// - z_mask: unused (reserved for future)
 // - module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
 void LyraPrintValue(
     void* engine, int32_t format, int32_t value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
-    bool zero_pad, bool left_align, const void* x_mask, const void* z_mask,
-    int8_t module_timeunit_power);
+    bool zero_pad, bool left_align, const void* unknown_data,
+    const void* z_mask, int8_t module_timeunit_power);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(int32_t kind);
