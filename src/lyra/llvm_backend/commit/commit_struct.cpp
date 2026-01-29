@@ -2,16 +2,20 @@
 #include <expected>
 
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops_managed.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -39,8 +43,7 @@ auto AssignField(
     // Source null-out (for move) is handled at struct level, not here.
     llvm::Value* new_val =
         builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-    detail::CommitStringField(
-        context, target_field_ptr, new_val, policy, field_type_id);
+    detail::CommitStringField(context, target_field_ptr, new_val, policy);
     return {};
   }
 
@@ -54,7 +57,7 @@ auto AssignField(
       // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      detail::CommitPlainField(context, target_field_ptr, val, field_type_id);
+      detail::CommitPlainField(context, target_field_ptr, val);
     }
     return {};
   }
@@ -62,7 +65,7 @@ auto AssignField(
   // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  detail::CommitPlainField(context, target_field_ptr, val, field_type_id);
+  detail::CommitPlainField(context, target_field_ptr, val);
   return {};
 }
 

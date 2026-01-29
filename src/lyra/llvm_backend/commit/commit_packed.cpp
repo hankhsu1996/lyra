@@ -1,16 +1,20 @@
+#include <cstdint>
 #include <expected>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/union_storage.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -59,12 +63,8 @@ namespace detail {
 
 // Store a plain (non-managed) value to a field pointer.
 // For field-by-field assignment - no design-slot notify (fields don't have
-// WriteTarget). Future extension point if we need field-level notify for design
-// slots with struct fields.
-void CommitPlainField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* value, TypeId /*type_id*/) {
-  // For non-managed fields, just store. type_id reserved for future use
-  // (e.g., if we need field-level notify for design slots with struct fields).
+// WriteTarget).
+void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value) {
   ctx.GetBuilder().CreateStore(value, ptr);
 }
 

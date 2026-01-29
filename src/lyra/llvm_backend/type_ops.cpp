@@ -77,7 +77,7 @@ auto AssignPlace(
       return {};
     }
     case TypeKind::kUnpackedArray: {
-      auto result = AssignArray(context, target, source, type_id);
+      auto result = AssignArray(context, target, source, policy, type_id);
       if (!result) return std::unexpected(result.error());
       return {};
     }

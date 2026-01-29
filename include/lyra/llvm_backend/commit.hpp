@@ -61,16 +61,23 @@ auto CommitStructFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
 
+// Array element-by-element assignment for arrays containing managed elements.
+// Handles design-slot detection internally, returning error if design slot
+// with managed-containing array (not yet supported).
+// Caller ensures NeedsFieldByField(array_type_id, types) is true.
+auto CommitArrayFieldByField(
+    Context& ctx, mir::PlaceId target, mir::PlaceId source,
+    TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
+
 namespace detail {
 
 // Field-level store for struct field-by-field assignment.
 // No WriteTarget (fields don't have signal_id), no notify.
 void CommitStringField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* handle, OwnershipPolicy policy,
-    TypeId type_id);
+    Context& ctx, llvm::Value* ptr, llvm::Value* handle,
+    OwnershipPolicy policy);
 
-void CommitPlainField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* value, TypeId type_id);
+void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value);
 
 }  // namespace detail
 

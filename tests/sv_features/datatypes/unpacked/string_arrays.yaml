@@ -1,0 +1,192 @@
+feature: string_arrays
+description: Unpacked arrays of strings with proper lifecycle semantics
+
+cases:
+  - name: string_array_basic
+    description: Basic declaration, assignment, and display
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[3];
+          arr[0] = "hello";
+          arr[1] = "world";
+          arr[2] = "!";
+          $display("%s %s%s", arr[0], arr[1], arr[2]);
+        end
+      endmodule
+    expect:
+      stdout: "hello world!\n"
+
+  - name: string_array_overwrite_loop
+    description: Overwriting array elements in a loop (no leaks)
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[4];
+          automatic int i;
+          arr[0] = "old0";
+          arr[1] = "old1";
+          arr[2] = "old2";
+          arr[3] = "old3";
+          for (i = 0; i < 4; i++) begin
+            arr[i] = "new";
+          end
+          $display("%s %s %s %s", arr[0], arr[1], arr[2], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "new new new new\n"
+
+  - name: string_array_copy
+    description: Copying array creates independent copies
+    sv: |
+      module Test;
+        initial begin
+          automatic string a[2];
+          automatic string b[2];
+          a[0] = "first";
+          a[1] = "second";
+          b = a;
+          a[0] = "modified";
+          $display("%s %s", b[0], b[1]);
+        end
+      endmodule
+    expect:
+      stdout: "first second\n"
+
+  - name: string_array_self_assign_element
+    description: Self-assignment of single element is safe
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[2];
+          arr[0] = "keep";
+          arr[1] = "other";
+          arr[0] = arr[0];
+          $display("%s", arr[0]);
+        end
+      endmodule
+    expect:
+      stdout: "keep\n"
+
+  - name: string_array_cross_assign
+    description: Cross-element assignment within same array
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[3];
+          arr[0] = "zero";
+          arr[1] = "one";
+          arr[2] = "two";
+          arr[0] = arr[1];
+          $display("%s %s %s", arr[0], arr[1], arr[2]);
+        end
+      endmodule
+    expect:
+      stdout: "one one two\n"
+
+  - name: string_array_self_assign_loop
+    description: Self-assignment in a loop (alias stress test)
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[3];
+          automatic int i;
+          arr[0] = "zero";
+          arr[1] = "one";
+          arr[2] = "two";
+          for (i = 0; i < 3; i++) begin
+            arr[i] = arr[i];
+          end
+          $display("%s %s %s", arr[0], arr[1], arr[2]);
+        end
+      endmodule
+    expect:
+      stdout: "zero one two\n"
+
+  - name: string_array_ordering_detector
+    description: Detects wrong commit ordering - both should equal original a[1]
+    sv: |
+      module Test;
+        initial begin
+          automatic string a[2];
+          automatic string b[2];
+          a[0] = "first";
+          a[1] = "second";
+          b = a;
+          a[0] = b[1];
+          a[1] = b[0];
+          $display("%s %s", a[0], a[1]);
+        end
+      endmodule
+    expect:
+      stdout: "second first\n"
+
+  - name: string_array_in_struct
+    description: Struct containing string array field
+    sv: |
+      module Test;
+        typedef struct {
+          string names[2];
+          int count;
+        } Container;
+        initial begin
+          automatic Container c;
+          c.names[0] = "alice";
+          c.names[1] = "bob";
+          c.count = 2;
+          $display("%s %s %0d", c.names[0], c.names[1], c.count);
+        end
+      endmodule
+    expect:
+      stdout: "alice bob 2\n"
+
+  - name: string_array_2d
+    description: 2D array of strings
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[2][2];
+          arr[0][0] = "00";
+          arr[0][1] = "01";
+          arr[1][0] = "10";
+          arr[1][1] = "11";
+          $display("%s %s %s %s", arr[0][0], arr[0][1], arr[1][0], arr[1][1]);
+        end
+      endmodule
+    expect:
+      stdout: "00 01 10 11\n"
+
+  - name: string_array_2d_copy
+    description: 2D array copy creates independent copies
+    sv: |
+      module Test;
+        initial begin
+          automatic string a[2][2];
+          automatic string b[2][2];
+          a[0][0] = "orig00";
+          a[0][1] = "orig01";
+          a[1][0] = "orig10";
+          a[1][1] = "orig11";
+          b = a;
+          a[0][0] = "modified";
+          $display("%s", b[0][0]);
+        end
+      endmodule
+    expect:
+      stdout: "orig00\n"
+
+  - name: string_array_element_reassign
+    description: Multiple reassignments to same element
+    sv: |
+      module Test;
+        initial begin
+          automatic string arr[2];
+          arr[0] = "first";
+          arr[0] = "second";
+          arr[0] = "third";
+          $display("%s", arr[0]);
+        end
+      endmodule
+    expect:
+      stdout: "third\n"
