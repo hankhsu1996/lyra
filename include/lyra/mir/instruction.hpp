@@ -1,8 +1,11 @@
 #pragma once
 
+#include <optional>
 #include <variant>
+#include <vector>
 
 #include "lyra/common/origin_id.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -44,9 +47,41 @@ struct NonBlockingAssign {
   Operand source;
 };
 
+// Call: user function invocation
+//
+// `dest` is the place written by this call (ABI-agnostic):
+// - If ABI returns in registers -> result is written to `dest`
+// - If ABI is sret/out-param -> callee writes to `dest` directly
+// - If `dest == nullopt` -> call is for side effects (void return)
+//
+// The lowering layer determines the actual calling convention based on
+// RequiresSret(return_type). MIR doesn't distinguish - it just specifies
+// where the result goes.
+struct Call {
+  std::optional<PlaceId> dest;
+  FunctionId callee;
+  std::vector<Operand> args;
+};
+
+// BuiltinCall: container-mutating builtin operations
+//
+// Covers push/pop/delete/insert - operations that mutate a receiver container.
+// Pop operations have dest (return popped value), others have nullopt.
+//
+// INVARIANT: receiver is always an assignable lvalue (PlaceId).
+// Container methods are only valid on assignable containers in SystemVerilog.
+// HIR->MIR lowering asserts this; temporary receivers are not allowed.
+struct BuiltinCall {
+  std::optional<PlaceId> dest;
+  BuiltinMethod method;
+  PlaceId receiver;
+  std::vector<Operand> args;
+};
+
 // Instruction data variant.
-using InstructionData =
-    std::variant<Assign, Compute, GuardedAssign, Effect, NonBlockingAssign>;
+using InstructionData = std::variant<
+    Assign, Compute, GuardedAssign, Effect, NonBlockingAssign, Call,
+    BuiltinCall>;
 
 // An instruction that does not affect control flow.
 // - Assign, Compute, and GuardedAssign write to a Place

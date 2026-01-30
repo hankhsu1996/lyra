@@ -31,6 +31,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/format.hpp"
+#include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
@@ -724,6 +725,207 @@ auto Interpreter::ExecGuardedAssign(
   return StoreToPlace(state, guarded.target, std::move(*value_result));
 }
 
+auto Interpreter::ExecCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Evaluate arguments
+  std::vector<RuntimeValue> args;
+  args.reserve(call.args.size());
+  for (const auto& operand : call.args) {
+    auto arg_result = EvalOperand(state, operand);
+    if (!arg_result) {
+      return std::unexpected(std::move(arg_result).error());
+    }
+    args.push_back(std::move(*arg_result));
+  }
+
+  // Call the function
+  auto result = RunFunction(call.callee, args, state.design_state);
+  if (!result) {
+    return std::unexpected(std::move(result).error());
+  }
+
+  // Store result if dest exists
+  if (call.dest.has_value()) {
+    return StoreToPlace(state, *call.dest, std::move(*result));
+  }
+
+  return {};
+}
+
+namespace {
+
+// Truncate queue to max_bound if specified (0 = unbounded).
+// In SystemVerilog, [$:N] means indices 0 to N (inclusive), so max capacity is
+// N+1.
+void TruncateToBound(std::vector<RuntimeValue>& elements, uint32_t max_bound) {
+  if (max_bound > 0) {
+    while (elements.size() > max_bound + 1) {
+      elements.pop_back();  // Discard from back
+    }
+  }
+}
+
+}  // namespace
+
+auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
+    -> Result<void> {
+  switch (call.method) {
+    case BuiltinMethod::kQueuePopBack: {
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      RuntimeValue result;
+      if (elements.empty()) {
+        TypeId elem_type =
+            (*types_)[TypeOfPlace(*types_, (*arena_)[call.receiver])]
+                .AsQueue()
+                .element_type;
+        result = CreateDefaultValue(*types_, elem_type);
+      } else {
+        result = std::move(elements.back());
+        elements.pop_back();
+      }
+      if (call.dest.has_value()) {
+        return StoreToPlace(state, *call.dest, std::move(result));
+      }
+      return {};
+    }
+
+    case BuiltinMethod::kQueuePopFront: {
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      RuntimeValue result;
+      if (elements.empty()) {
+        TypeId elem_type =
+            (*types_)[TypeOfPlace(*types_, (*arena_)[call.receiver])]
+                .AsQueue()
+                .element_type;
+        result = CreateDefaultValue(*types_, elem_type);
+      } else {
+        result = std::move(elements.front());
+        elements.erase(elements.begin());
+      }
+      if (call.dest.has_value()) {
+        return StoreToPlace(state, *call.dest, std::move(result));
+      }
+      return {};
+    }
+
+    case BuiltinMethod::kQueuePushBack: {
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto operand_result = EvalOperand(state, call.args[0]);
+      if (!operand_result) {
+        return std::unexpected(std::move(operand_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      elements.push_back(std::move(*operand_result));
+      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[call.receiver]);
+      const auto& type = (*types_)[receiver_type];
+      if (type.Kind() == TypeKind::kQueue) {
+        TruncateToBound(elements, type.AsQueue().max_bound);
+      }
+      return {};
+    }
+
+    case BuiltinMethod::kQueuePushFront: {
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto operand_result = EvalOperand(state, call.args[0]);
+      if (!operand_result) {
+        return std::unexpected(std::move(operand_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      elements.insert(elements.begin(), std::move(*operand_result));
+      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[call.receiver]);
+      const auto& type = (*types_)[receiver_type];
+      if (type.Kind() == TypeKind::kQueue) {
+        TruncateToBound(elements, type.AsQueue().max_bound);
+      }
+      return {};
+    }
+
+    case BuiltinMethod::kQueueInsert: {
+      TypeId idx_type = TypeOfOperand(call.args[0], *arena_, *types_);
+      auto idx_val_result = EvalOperand(state, call.args[0]);
+      if (!idx_val_result) {
+        return std::unexpected(std::move(idx_val_result).error());
+      }
+      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
+      if (!idx_opt) {
+        return {};  // X/Z -> no-op
+      }
+      auto idx = *idx_opt;
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      if (idx < 0 || std::cmp_greater(idx, elements.size())) {
+        return {};  // Invalid index -> no-op
+      }
+      auto val_result = EvalOperand(state, call.args[1]);
+      if (!val_result) {
+        return std::unexpected(std::move(val_result).error());
+      }
+      elements.insert(elements.begin() + idx, std::move(*val_result));
+      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[call.receiver]);
+      const auto& type = (*types_)[receiver_type];
+      if (type.Kind() == TypeKind::kQueue) {
+        TruncateToBound(elements, type.AsQueue().max_bound);
+      }
+      return {};
+    }
+
+    case BuiltinMethod::kArrayDelete:
+    case BuiltinMethod::kQueueDelete: {
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      AsArray(write_result->get()).elements.clear();
+      return {};
+    }
+
+    case BuiltinMethod::kQueueDeleteAt: {
+      TypeId idx_type = TypeOfOperand(call.args[0], *arena_, *types_);
+      auto idx_val_result = EvalOperand(state, call.args[0]);
+      if (!idx_val_result) {
+        return std::unexpected(std::move(idx_val_result).error());
+      }
+      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
+      if (!idx_opt) {
+        return {};  // X/Z -> no-op
+      }
+      auto idx = *idx_opt;
+      auto write_result = WritePlace(state, call.receiver);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      auto& elements = AsArray(write_result->get()).elements;
+      if (idx >= 0 && std::cmp_less(idx, elements.size())) {
+        elements.erase(elements.begin() + idx);
+      }
+      return {};
+    }
+
+    default:
+      throw common::InternalError(
+          "ExecBuiltinCall",
+          std::format(
+              "unexpected builtin method: {}", static_cast<int>(call.method)));
+  }
+}
+
 auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
     -> Result<void> {
   std::optional<Diagnostic> error;
@@ -751,6 +953,16 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           }
         } else if constexpr (std::is_same_v<T, Effect>) {
           auto result = ExecEffect(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
+        } else if constexpr (std::is_same_v<T, Call>) {
+          auto result = ExecCall(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
+        } else if constexpr (std::is_same_v<T, BuiltinCall>) {
+          auto result = ExecBuiltinCall(state, i);
           if (!result) {
             error = std::move(result).error();
           }

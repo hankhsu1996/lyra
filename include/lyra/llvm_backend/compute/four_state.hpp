@@ -42,12 +42,6 @@ auto LowerRuntimeQuery4State(
     Context& context, const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower 4-state user call (function call).
-auto LowerUserCall4State(
-    Context& context, const mir::UserCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
-
 // Lower case match op (casez/casex) - returns 2-state result.
 // Used by both 2-state and 4-state paths.
 auto LowerCaseMatchOp(

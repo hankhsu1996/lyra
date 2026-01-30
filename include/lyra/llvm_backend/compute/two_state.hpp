@@ -46,10 +46,4 @@ auto LowerRuntimeQuery2State(
     Context& context, const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower 2-state user call (function call).
-auto LowerUserCall2State(
-    Context& context, const mir::UserCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
-
 }  // namespace lyra::lowering::mir_to_llvm

@@ -332,34 +332,4 @@ auto LowerRuntimeQuery2State(
   llvm_unreachable("unhandled RuntimeQueryKind");
 }
 
-auto LowerUserCall2State(
-    Context& context, const mir::UserCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  llvm::Type* storage_type = packed_context.storage_type;
-
-  auto& builder = context.GetBuilder();
-  llvm::Function* callee = context.GetUserFunction(info.callee);
-
-  std::vector<llvm::Value*> args;
-  args.push_back(context.GetDesignPointer());
-  args.push_back(context.GetEnginePointer());
-
-  for (const auto& operand : operands) {
-    auto arg_or_err = LowerOperand(context, operand);
-    if (!arg_or_err) return std::unexpected(arg_or_err.error());
-    args.push_back(*arg_or_err);
-  }
-
-  llvm::Value* call_result = builder.CreateCall(callee, args, "user_call");
-
-  if (call_result->getType() != storage_type &&
-      call_result->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
-    call_result =
-        builder.CreateZExtOrTrunc(call_result, storage_type, "call.fit");
-  }
-
-  return ComputeResult::TwoState(call_result);
-}
-
 }  // namespace lyra::lowering::mir_to_llvm

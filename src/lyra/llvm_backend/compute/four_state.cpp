@@ -577,45 +577,6 @@ auto LowerRuntimeQuery4State(
   llvm_unreachable("unhandled RuntimeQueryKind");
 }
 
-auto LowerUserCall4State(
-    Context& context, const mir::UserCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  llvm::Type* elem_type = packed_context.element_type;
-
-  auto& builder = context.GetBuilder();
-
-  // Get the LLVM function for this MIR function
-  llvm::Function* callee = context.GetUserFunction(info.callee);
-
-  // Build argument list: design pointer, engine pointer, then user args
-  std::vector<llvm::Value*> args;
-  args.push_back(context.GetDesignPointer());
-  args.push_back(context.GetEnginePointer());
-
-  // Add user arguments (lower as 4-state if needed)
-  for (const auto& operand : operands) {
-    auto arg_or_err = LowerOperandRaw(context, operand);
-    if (!arg_or_err) return std::unexpected(arg_or_err.error());
-    args.push_back(*arg_or_err);
-  }
-
-  // Call the function
-  llvm::Value* call_result = builder.CreateCall(callee, args, "user_call");
-
-  // Unpack 4-state result
-  llvm::Value* val = builder.CreateExtractValue(call_result, 0, "call.val");
-  llvm::Value* unk = builder.CreateExtractValue(call_result, 1, "call.unk");
-
-  // Coerce to expected element type if needed
-  if (val->getType() != elem_type) {
-    val = builder.CreateZExtOrTrunc(val, elem_type, "call.val.fit");
-    unk = builder.CreateZExtOrTrunc(unk, elem_type, "call.unk.fit");
-  }
-
-  return ComputeResult::FourState(val, unk);
-}
-
 auto LowerCaseMatchOp(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)

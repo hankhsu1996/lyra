@@ -23,7 +23,6 @@
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
-#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -42,19 +41,15 @@ auto GetPlusargsOutputKind(const TypeArena& types, TypeId output_type)
   return PlusargsOutputKind::kInt32;
 }
 
-auto LowerPlusargsCompute(
-    Context& context, const mir::Compute& compute,
-    const mir::PlusargsRvalueInfo& info) -> Result<void> {
+auto LowerPlusargsRvalue(
+    Context& context, const mir::Rvalue& rvalue,
+    [[maybe_unused]] mir::PlaceId target, const mir::PlusargsRvalueInfo& info)
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
-  // Lower query/format string operand (already LyraStringHandle via
-  // LowerOperand)
-  auto query_or_err = LowerOperand(context, compute.value.operands[0]);
+  auto query_or_err = LowerOperand(context, rvalue.operands[0]);
   if (!query_or_err) return std::unexpected(query_or_err.error());
-
-  auto target_ptr = context.GetPlacePointer(compute.target);
-  if (!target_ptr) return std::unexpected(target_ptr.error());
 
   llvm::Value* result = nullptr;
 
@@ -66,7 +61,7 @@ auto LowerPlusargsCompute(
     // kValue: output must be present (MIR invariant)
     if (!info.output) {
       throw common::InternalError(
-          "LowerPlusargsCompute", "kValue without output place");
+          "LowerPlusargsRvalue", "kValue without output place");
     }
 
     auto output_ptr = context.GetPlacePointer(*info.output);
@@ -84,150 +79,86 @@ auto LowerPlusargsCompute(
     }
   }
 
-  builder.CreateStore(result, *target_ptr);
-  return {};
-}
-
-// Handle void user call (side effects only, no result).
-auto LowerVoidUserCall(
-    Context& context, const mir::Compute& compute,
-    const mir::UserCallRvalueInfo& info) -> Result<void> {
-  auto& builder = context.GetBuilder();
-  llvm::Function* callee = context.GetUserFunction(info.callee);
-
-  std::vector<llvm::Value*> args;
-  args.push_back(context.GetDesignPointer());
-  args.push_back(context.GetEnginePointer());
-  for (const auto& operand : compute.value.operands) {
-    auto val_result = LowerOperand(context, operand);
-    if (!val_result) return std::unexpected(val_result.error());
-    args.push_back(*val_result);
-  }
-  builder.CreateCall(callee, args);
-  return {};
-}
-
-// Handle out-param user call (managed return type).
-// Caller provides output pointer; callee writes directly to it.
-auto LowerOutParamUserCall(
-    Context& context, const mir::Compute& compute,
-    const mir::UserCallRvalueInfo& info, const mir::Arena& arena)
-    -> Result<void> {
-  auto& builder = context.GetBuilder();
-  llvm::Function* callee = context.GetUserFunction(info.callee);
-  const auto& func = arena[info.callee];
-
-  // Get target pointer for out-param output
-  auto target_ptr = context.GetPlacePointer(compute.target);
-  if (!target_ptr) return std::unexpected(target_ptr.error());
-
-  // CONTRACT: Out-param calling convention for managed returns.
-  // - Caller (here): Destroy() any existing value, making out slot
-  // uninitialized
-  // - Callee: MUST fully initialize the out slot via MoveInit before returning
-  // - Valid values include nullptr (represents empty string/container)
-  // Do NOT remove this Destroy - callee assumes uninitialized destination.
-  Destroy(context, *target_ptr, func.signature.return_type);
-
-  // Build args: [out_ptr, design_ptr, engine_ptr, user_args...]
-  std::vector<llvm::Value*> args;
-  args.push_back(*target_ptr);  // out-param
-  args.push_back(context.GetDesignPointer());
-  args.push_back(context.GetEnginePointer());
-  for (const auto& operand : compute.value.operands) {
-    auto val_result = LowerOperand(context, operand);
-    if (!val_result) return std::unexpected(val_result.error());
-    args.push_back(*val_result);
-  }
-
-  // Void call - callee writes directly to out-param
-  builder.CreateCall(callee, args);
-  return {};
+  return result;
 }
 
 }  // namespace
 
-auto LowerCompute(Context& context, const mir::Compute& compute)
-    -> Result<void> {
+auto LowerRvalue(
+    Context& context, const mir::Rvalue& rvalue, mir::PlaceId target,
+    [[maybe_unused]] TypeId result_type, llvm::Value** unknown_out)
+    -> Result<llvm::Value*> {
   const auto& types = context.GetTypeArena();
+
+  // Initialize unknown_out to nullptr (will be set for 4-state packed)
+  if (unknown_out != nullptr) {
+    *unknown_out = nullptr;
+  }
+
+  // Create a temporary Compute to pass to handlers that still use old API
+  mir::Compute compute{.target = target, .value = rvalue};
 
   return std::visit(
       common::Overloaded{
-          [&](const mir::CastRvalueInfo&) -> Result<void> {
-            LowerCastUnified(context, compute);
-            return {};
+          [&](const mir::CastRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerCastRvalue(context, compute, unknown_out);
           },
-          [&](const mir::BitCastRvalueInfo&) -> Result<void> {
-            LowerBitCastUnified(context, compute);
-            return {};
+          [&](const mir::BitCastRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerBitCastRvalue(context, compute, unknown_out);
           },
-          [&](const mir::AggregateRvalueInfo& info) -> Result<void> {
-            return LowerAggregate(context, compute, info);
+          [&](const mir::AggregateRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerAggregateRvalue(context, compute, info);
           },
-          [&](const mir::SFormatRvalueInfo& info) -> Result<void> {
-            return LowerSFormatRvalue(
-                context, info, compute.value.operands, compute.target);
+          [&](const mir::SFormatRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerSFormatRvalueValue(context, info, rvalue.operands);
           },
-          [&](const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-            return LowerBuiltin(context, compute, info);
+          [&](const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerBuiltinRvalue(context, compute, info);
           },
-          [&](const mir::BinaryRvalueInfo&) -> Result<void> {
+          [&](const mir::BinaryRvalueInfo&) -> Result<llvm::Value*> {
             if (IsMathCompute(context, compute)) {
-              return LowerMathCompute(context, compute);
+              return LowerMathRvalue(context, compute, unknown_out);
             }
             if (IsRealMathCompute(context, compute)) {
-              return LowerRealCompute(context, compute);
+              return LowerRealRvalue(context, compute);
             }
-            return LowerPackedCoreRvalue(context, compute);
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::UnaryRvalueInfo&) -> Result<void> {
+          [&](const mir::UnaryRvalueInfo&) -> Result<llvm::Value*> {
             if (IsMathCompute(context, compute)) {
-              return LowerMathCompute(context, compute);
+              return LowerMathRvalue(context, compute, unknown_out);
             }
             if (IsRealMathCompute(context, compute)) {
-              return LowerRealCompute(context, compute);
+              return LowerRealRvalue(context, compute);
             }
-            return LowerPackedCoreRvalue(context, compute);
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::ConcatRvalueInfo& info) -> Result<void> {
+          [&](const mir::ConcatRvalueInfo& info) -> Result<llvm::Value*> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
-              return LowerStringConcat(
-                  context, info, compute.value.operands, compute.target);
+              return LowerStringConcatValue(context, info, rvalue.operands);
             }
-            return LowerPackedCoreRvalue(context, compute);
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::UserCallRvalueInfo& info) -> Result<void> {
-            // Check if this is an out-param call (managed return type)
-            if (context.FunctionUsesSret(info.callee)) {
-              return LowerOutParamUserCall(
-                  context, compute, info, context.GetMirArena());
-            }
-            llvm::Function* callee = context.GetUserFunction(info.callee);
-            if (callee->getReturnType()->isVoidTy()) {
-              return LowerVoidUserCall(context, compute, info);
-            }
-            return LowerPackedCoreRvalue(context, compute);
+          [&](const mir::RuntimeQueryRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::RuntimeQueryRvalueInfo&) -> Result<void> {
-            return LowerPackedCoreRvalue(context, compute);
+          [&](const mir::IndexValidityRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::IndexValidityRvalueInfo&) -> Result<void> {
-            return LowerPackedCoreRvalue(context, compute);
+          [&](const mir::GuardedUseRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerPackedCoreRvalueValue(context, compute, unknown_out);
           },
-          [&](const mir::GuardedUseRvalueInfo&) -> Result<void> {
-            return LowerPackedCoreRvalue(context, compute);
+          [&](const mir::MathCallRvalueInfo&) -> Result<llvm::Value*> {
+            return LowerMathRvalue(context, compute, unknown_out);
           },
-          [&](const mir::MathCallRvalueInfo&) -> Result<void> {
-            return LowerMathCompute(context, compute);
+          [&](const mir::PlusargsRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerPlusargsRvalue(context, rvalue, target, info);
           },
-          [&](const mir::PlusargsRvalueInfo& info) -> Result<void> {
-            return LowerPlusargsCompute(context, compute, info);
-          },
-          [&](const mir::SystemTfRvalueInfo& info) -> Result<void> {
-            return LowerSystemTfRvalue(context, compute, info);
+          [&](const mir::SystemTfRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerSystemTfRvalueValue(context, compute, info);
           },
       },
-      compute.value.info);
+      rvalue.info);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

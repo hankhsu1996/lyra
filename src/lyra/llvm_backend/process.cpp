@@ -606,7 +606,6 @@ struct PlaceCollector {
               std::is_same_v<T, mir::BinaryRvalueInfo> ||
               std::is_same_v<T, mir::CastRvalueInfo> ||
               std::is_same_v<T, mir::BitCastRvalueInfo> ||
-              std::is_same_v<T, mir::UserCallRvalueInfo> ||
               std::is_same_v<T, mir::AggregateRvalueInfo> ||
               std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
               std::is_same_v<T, mir::ConcatRvalueInfo> ||
@@ -695,6 +694,21 @@ struct PlaceCollector {
               } else if constexpr (std::is_same_v<T, mir::NonBlockingAssign>) {
                 CollectFromPlace(data.target, arena);
                 CollectFromOperand(data.source, arena);
+              } else if constexpr (std::is_same_v<T, mir::Call>) {
+                if (data.dest) {
+                  CollectFromPlace(*data.dest, arena);
+                }
+                for (const auto& arg : data.args) {
+                  CollectFromOperand(arg, arena);
+                }
+              } else if constexpr (std::is_same_v<T, mir::BuiltinCall>) {
+                if (data.dest) {
+                  CollectFromPlace(*data.dest, arena);
+                }
+                CollectFromPlace(data.receiver, arena);
+                for (const auto& arg : data.args) {
+                  CollectFromOperand(arg, arena);
+                }
               }
             },
             inst.data);

@@ -28,7 +28,9 @@ auto FinalizeCompute(
 
 // Lower packed core rvalues (binary, unary, concat) with unified dispatch.
 // Routes to 2-state or 4-state implementations based on target stateness.
-auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
-    -> Result<void>;
+// Returns the computed value (width-masked) and sets *unknown_out for 4-state.
+auto LowerPackedCoreRvalueValue(
+    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
+    -> Result<llvm::Value*>;
 
 }  // namespace lyra::lowering::mir_to_llvm

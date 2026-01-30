@@ -7,7 +7,6 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -20,18 +19,16 @@ auto LowerStringBinaryOp(
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*>;
 
-// Lower string concatenation to target place.
-// Calls LyraStringConcat runtime function.
-auto LowerStringConcat(
+// Evaluate string concatenation and return the new string handle.
+// Does NOT store to any place - caller must handle storage.
+auto LowerStringConcatValue(
     Context& context, const mir::ConcatRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
-    -> Result<void>;
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
-// Lower $sformatf/$sformat/$swrite to target place.
-// Uses compile-time format parsing via LyraStringFormat* runtime functions.
-auto LowerSFormatRvalue(
+// Evaluate $sformatf/$sformat/$swrite and return the new string handle.
+// Does NOT store to any place - caller must handle storage.
+auto LowerSFormatRvalueValue(
     Context& context, const mir::SFormatRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
-    -> Result<void>;
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 }  // namespace lyra::lowering::mir_to_llvm
