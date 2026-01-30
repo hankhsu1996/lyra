@@ -3,10 +3,11 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction/assign.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
+#include "lyra/llvm_backend/instruction/deferred_assign.hpp"
 #include "lyra/llvm_backend/instruction/effect.hpp"
+#include "lyra/llvm_backend/instruction/immediate_assign.hpp"
 #include "lyra/llvm_backend/statement.hpp"
 #include "lyra/mir/statement.hpp"
 
