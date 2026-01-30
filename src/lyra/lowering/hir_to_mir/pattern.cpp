@@ -28,7 +28,9 @@ auto LowerPattern(
     if (fill_data.is_bit_fill) {
       // Unbased-unsized literal: use 1-bit fill value directly
       // The fill value is already 1-bit; replicate it across all bits
-      mir::PlaceId fill_temp = ctx.AllocTemp(ctx.GetBitType());
+      // Use the fill expression's actual type to preserve 4-state (X/Z)
+      const hir::Expression& fill_expr = (*ctx.hir_arena)[fill_data.fill_expr];
+      mir::PlaceId fill_temp = ctx.AllocTemp(fill_expr.type);
       builder.EmitAssign(fill_temp, *fill_result);
       fill_operand = mir::Operand::Use(fill_temp);
     } else {
@@ -56,9 +58,12 @@ auto LowerPattern(
       fill_operand = mir::Operand::Use(fill_temp);
     }
 
-    // Emit FillPacked effect operation
+    // Emit FillPacked effect operation with explicit fill kind
+    mir::FillKind kind = fill_data.is_bit_fill ? mir::FillKind::kBitFill
+                                               : mir::FillKind::kElementFill;
     builder.EmitEffect(
-        mir::FillPackedEffect{.target = target, .fill_value = fill_operand});
+        mir::FillPackedEffect{
+            .target = target, .fill_value = fill_operand, .kind = kind});
 
     return {};
   }

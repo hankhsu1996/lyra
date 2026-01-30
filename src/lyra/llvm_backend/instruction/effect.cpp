@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
@@ -14,13 +15,16 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
+#include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -114,6 +118,130 @@ auto LowerMonitorControlEffect(
        llvm::ConstantInt::get(
            llvm::Type::getInt1Ty(llvm_ctx), control.enable ? 1 : 0)});
 
+  return {};
+}
+
+auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
+  const auto& arena = context.GetMirArena();
+
+  // Get target type structure
+  const mir::Place& place = arena[fill.target];
+  TypeId target_type_id = mir::TypeOfPlace(types, place);
+  const Type& target_type = types[target_type_id];
+  uint32_t target_width = PackedBitWidth(target_type, types);
+  bool is_four_state = IsPackedFourState(target_type, types);
+
+  // Get target storage type
+  auto storage_type_result = BuildLlvmTypeForTypeId(context, target_type_id);
+  if (!storage_type_result) {
+    return std::unexpected(storage_type_result.error());
+  }
+  llvm::Type* storage_type = *storage_type_result;
+
+  // Lower fill value operand (already context-typed by HIR→MIR lowering)
+  auto fill_value_result = LowerOperandRaw(context, fill.fill_value);
+  if (!fill_value_result) {
+    return std::unexpected(fill_value_result.error());
+  }
+  llvm::Value* fill_raw = *fill_value_result;
+
+  // Extract fill value and unknown mask from raw LLVM value
+  llvm::Value* fill_val = nullptr;
+  llvm::Value* fill_unk = nullptr;
+  if (fill_raw->getType()->isStructTy()) {
+    fill_val = builder.CreateExtractValue(fill_raw, 0, "fill.val");
+    fill_unk = builder.CreateExtractValue(fill_raw, 1, "fill.unk");
+  } else {
+    fill_val = fill_raw;
+    fill_unk = llvm::ConstantInt::get(fill_val->getType(), 0);
+  }
+
+  llvm::Value* filled_val = nullptr;
+  llvm::Value* filled_unk = nullptr;
+  llvm::Type* target_int_type = llvm::Type::getIntNTy(llvm_ctx, target_width);
+
+  // Switch on explicit FillKind (no guessing from width)
+  switch (fill.kind) {
+    case mir::FillKind::kBitFill: {
+      // Fill every leaf bit with a single bit value
+      // SExt from i1 fills all bits with the same value
+      auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+      llvm::Value* val_bit =
+          builder.CreateTrunc(fill_val, i1_ty, "fill.val.bit");
+      llvm::Value* unk_bit =
+          builder.CreateTrunc(fill_unk, i1_ty, "fill.unk.bit");
+      filled_val = builder.CreateSExt(val_bit, target_int_type, "filled.val");
+      filled_unk = builder.CreateSExt(unk_bit, target_int_type, "filled.unk");
+      break;
+    }
+
+    case mir::FillKind::kElementFill: {
+      // Fill outer elements with element-typed value
+      if (target_type.Kind() != TypeKind::kPackedArray) {
+        throw common::InternalError(
+            "LowerFillPackedEffect",
+            "kElementFill requires packed array target");
+      }
+      const auto& arr_info = target_type.AsPackedArray();
+      uint32_t element_width =
+          PackedBitWidth(types[arr_info.element_type], types);
+      uint32_t element_count = arr_info.range.Size();
+
+      auto* elem_ty = llvm::Type::getIntNTy(llvm_ctx, element_width);
+      llvm::Value* fill_val_elem =
+          builder.CreateZExtOrTrunc(fill_val, elem_ty, "fill.val.elem");
+      llvm::Value* fill_unk_elem =
+          builder.CreateZExtOrTrunc(fill_unk, elem_ty, "fill.unk.elem");
+      llvm::Value* fill_val_ext =
+          builder.CreateZExt(fill_val_elem, target_int_type, "fill.val.ext");
+      llvm::Value* fill_unk_ext =
+          builder.CreateZExt(fill_unk_elem, target_int_type, "fill.unk.ext");
+
+      filled_val = llvm::ConstantInt::get(target_int_type, 0);
+      filled_unk = llvm::ConstantInt::get(target_int_type, 0);
+      for (uint32_t i = 0; i < element_count; ++i) {
+        uint32_t shift = i * element_width;
+        llvm::Value* shift_amt = llvm::ConstantInt::get(target_int_type, shift);
+        llvm::Value* shifted_val =
+            builder.CreateShl(fill_val_ext, shift_amt, "elem.val");
+        llvm::Value* shifted_unk =
+            builder.CreateShl(fill_unk_ext, shift_amt, "elem.unk");
+        filled_val = builder.CreateOr(filled_val, shifted_val, "filled.val");
+        filled_unk = builder.CreateOr(filled_unk, shifted_unk, "filled.unk");
+      }
+      break;
+    }
+  }
+
+  // Build the final value based on stateness
+  llvm::Value* final_value = nullptr;
+  if (is_four_state) {
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+    auto* val_type = struct_type->getElementType(0);
+    auto* unk_type = struct_type->getElementType(1);
+
+    llvm::Value* store_val =
+        builder.CreateZExtOrTrunc(filled_val, val_type, "store.val");
+    llvm::Value* store_unk =
+        builder.CreateZExtOrTrunc(filled_unk, unk_type, "store.unk");
+
+    final_value = llvm::UndefValue::get(struct_type);
+    final_value = builder.CreateInsertValue(final_value, store_val, 0);
+    final_value = builder.CreateInsertValue(final_value, store_unk, 1);
+  } else {
+    // 2-state target: X/Z collapses to 0 (val & ~unk)
+    llvm::Value* not_unk = builder.CreateNot(filled_unk, "filled.notunk");
+    llvm::Value* known_val =
+        builder.CreateAnd(filled_val, not_unk, "filled.known");
+    final_value =
+        builder.CreateZExtOrTrunc(known_val, storage_type, "store.val");
+  }
+
+  CommitPackedValueRaw(context, fill.target, final_value);
   return {};
 }
 
@@ -265,14 +393,8 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           [&context](const mir::MonitorControlEffect& control) -> Result<void> {
             return LowerMonitorControlEffect(context, control);
           },
-          [&context](const mir::FillPackedEffect& /*fill*/) -> Result<void> {
-            // TODO(hankhsu): Implement FillPacked lowering
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    "assignment pattern fill not yet implemented in LLVM "
-                    "backend",
-                    UnsupportedCategory::kType));
+          [&context](const mir::FillPackedEffect& fill) -> Result<void> {
+            return LowerFillPackedEffect(context, fill);
           },
       },
       effect_op);

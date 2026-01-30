@@ -641,74 +641,51 @@ auto Interpreter::ExecFillPackedEffect(
   }
   RuntimeValue fill_value = std::move(*fill_value_result);
 
+  if (!IsIntegral(fill_value)) {
+    throw common::InternalError(
+        "ExecFillPackedEffect", "fill value must be integral");
+  }
+  const auto& fill_int = AsIntegral(fill_value);
+
   // Get target place info
   const Place& place = (*arena_)[fill.target];
   TypeId target_type_id = TypeOfPlace(*types_, place);
   const Type& target_type = (*types_)[target_type_id];
+  uint32_t total_width = PackedBitWidth(target_type, *types_);
 
-  // Create filled value based on target type
+  // Create filled value based on explicit FillKind (no guessing from width)
   RuntimeValue filled_value;
 
-  if (target_type.Kind() == TypeKind::kIntegral) {
-    // Simple packed integral: fill all bits with the 1-bit value
-    if (!IsIntegral(fill_value)) {
-      throw common::InternalError(
-          "ExecFillPackedEffect", "fill value must be integral");
-    }
-    const auto& fill_int = AsIntegral(fill_value);
-
-    // Validate that fill value is exactly 1-bit (context-typed conversion
-    // should have ensured this)
-    if (fill_int.value.size() != 1 || (fill_int.value[0] & ~1ULL) != 0) {
-      throw common::InternalError(
-          "ExecFillPackedEffect",
-          "fill value for integral must be exactly 1-bit");
-    }
-
-    uint32_t bit_width = PackedBitWidth(target_type, *types_);
-    bool value_bit = (fill_int.value[0] & 1) != 0;
-    bool unknown_bit =
-        !fill_int.unknown.empty() && ((fill_int.unknown[0] & 1) != 0);
-
-    // Use factory to ensure invariants (bit_width, word count, masking)
-    filled_value =
-        semantic::MakeIntegralFilled(bit_width, value_bit, unknown_bit);
-  } else if (target_type.Kind() == TypeKind::kPackedArray) {
-    // Packed array: stored as integral with elements at bit offsets
-    const auto& arr_info = target_type.AsPackedArray();
-    uint32_t elem_count = arr_info.range.Size();
-    TypeId elem_type_id = arr_info.element_type;
-    uint32_t elem_width = PackedBitWidth((*types_)[elem_type_id], *types_);
-
-    if (!IsIntegral(fill_value)) {
-      throw common::InternalError(
-          "ExecFillPackedEffect",
-          "fill value for packed array must be integral");
-    }
-    const auto& fill_int = AsIntegral(fill_value);
-
-    // Total width of the packed array
-    uint32_t total_width = elem_width * elem_count;
-
-    // Check if fill is 1-bit (bit-level fill from unbased-unsized literal)
-    bool is_1bit_fill =
-        (fill_int.value.size() == 1 && (fill_int.value[0] & ~1ULL) == 0);
-
-    if (is_1bit_fill) {
-      // Bit-level fill: use factory to ensure invariants
+  switch (fill.kind) {
+    case FillKind::kBitFill: {
+      // Fill every leaf bit with a single bit value
       bool value_bit = (fill_int.value[0] & 1) != 0;
       bool unknown_bit =
           !fill_int.unknown.empty() && ((fill_int.unknown[0] & 1) != 0);
       filled_value =
           semantic::MakeIntegralFilled(total_width, value_bit, unknown_bit);
-    } else {
-      // Element-level fill: copy fill value to each element position
+      break;
+    }
+
+    case FillKind::kElementFill: {
+      // Fill outer elements with element-typed value
+      if (target_type.Kind() != TypeKind::kPackedArray) {
+        throw common::InternalError(
+            "ExecFillPackedEffect",
+            "kElementFill requires packed array target");
+      }
+      const auto& arr_info = target_type.AsPackedArray();
+      uint32_t elem_count = arr_info.range.Size();
+      uint32_t elem_width =
+          PackedBitWidth((*types_)[arr_info.element_type], *types_);
+
       uint32_t word_count = (total_width + 63) / 64;
       RuntimeIntegral target_int;
       target_int.bit_width = total_width;
       target_int.value.resize(word_count, 0);
       target_int.unknown.resize(word_count, 0);
 
+      // Copy fill value to each element position
       for (uint32_t i = 0; i < elem_count; ++i) {
         uint32_t bit_offset = i * elem_width;
 
@@ -738,13 +715,8 @@ auto Interpreter::ExecFillPackedEffect(
         }
       }
       filled_value = std::move(target_int);
+      break;
     }
-  } else {
-    // Unsupported type
-    throw common::InternalError(
-        "ExecFillPackedEffect", std::format(
-                                    "unsupported target type: {}",
-                                    static_cast<int>(target_type.Kind())));
   }
 
   // Store the filled value to the target place
