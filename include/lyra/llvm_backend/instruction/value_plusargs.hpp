@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

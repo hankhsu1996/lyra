@@ -24,7 +24,6 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -33,6 +32,7 @@
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {
@@ -227,7 +227,7 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
   *out_ << std::format("bb{}: {{\n", index);
   Indent();
 
-  for (const Instruction& instr : bb.instructions) {
+  for (const Statement& stmt : bb.statements) {
     PrintIndent();
     std::visit(
         [this](const auto& i) {
@@ -278,7 +278,7 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                 FormatOperand(i.query), FormatPlace(i.output));
           }
         },
-        instr.data);
+        stmt.data);
   }
 
   PrintIndent();

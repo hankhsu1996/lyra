@@ -26,19 +26,19 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/instruction.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/statement.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
@@ -476,8 +476,8 @@ auto GenerateProcessFunction(
     builder.SetInsertPoint(llvm_blocks[i]);
 
     // Lower all instructions
-    for (const auto& instruction : block.instructions) {
-      auto result = LowerInstruction(context, instruction);
+    for (const auto& instruction : block.statements) {
+      auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -682,7 +682,7 @@ struct PlaceCollector {
 
   void CollectFromFunction(const mir::Function& func, const mir::Arena& arena) {
     for (const auto& block : func.blocks) {
-      for (const auto& inst : block.instructions) {
+      for (const auto& inst : block.statements) {
         std::visit(
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
@@ -806,7 +806,7 @@ auto DefineMonitorCheckThunk(
   // thunk itself.
   const mir::DisplayEffect* display_effect = nullptr;
   for (const auto& block : func.blocks) {
-    for (const auto& inst : block.instructions) {
+    for (const auto& inst : block.statements) {
       if (const auto* eff = std::get_if<mir::Effect>(&inst.data)) {
         if (const auto* disp = std::get_if<mir::DisplayEffect>(&eff->op)) {
           display_effect = disp;
@@ -855,14 +855,14 @@ auto DefineMonitorCheckThunk(
     builder.SetInsertPoint(llvm_blocks[i]);
 
     // Lower all instructions except DisplayEffect
-    for (const auto& instruction : block.instructions) {
+    for (const auto& instruction : block.statements) {
       if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
         if (std::holds_alternative<mir::DisplayEffect>(effect->op)) {
           // Skip DisplayEffect - we'll handle it in print_block
           continue;
         }
       }
-      auto result = LowerInstruction(context, instruction);
+      auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -1000,7 +1000,7 @@ auto DefineMonitorCheckThunk(
 
   // Find and lower the DisplayEffect
   for (const auto& block : func.blocks) {
-    for (const auto& instruction : block.instructions) {
+    for (const auto& instruction : block.statements) {
       if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
         if (const auto* display =
                 std::get_if<mir::DisplayEffect>(&effect->op)) {
@@ -1058,7 +1058,7 @@ auto EmitMonitorSetupEpilogue(
   const mir::Function& setup_func = arena[setup_thunk_id];
   const mir::DisplayEffect* display_effect = nullptr;
   for (const auto& block : setup_func.blocks) {
-    for (const auto& inst : block.instructions) {
+    for (const auto& inst : block.statements) {
       if (const auto* eff = std::get_if<mir::Effect>(&inst.data)) {
         if (const auto* disp = std::get_if<mir::DisplayEffect>(&eff->op)) {
           display_effect = disp;
@@ -1314,8 +1314,8 @@ auto DefineUserFunction(
     builder.SetInsertPoint(llvm_blocks[i]);
 
     // Lower all instructions
-    for (const auto& instruction : block.instructions) {
-      auto result = LowerInstruction(context, instruction);
+    for (const auto& instruction : block.statements) {
+      auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
     }
 

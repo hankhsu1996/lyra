@@ -85,16 +85,16 @@ struct ValuePlusargs {
   Operand query;       // Format string operand
 };
 
-// Instruction data variant.
-using InstructionData = std::variant<
+// Statement data variant.
+using StatementData = std::variant<
     Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
     ValuePlusargs>;
 
-// An instruction that does not affect control flow.
+// A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place
 // - Effect produces side effects but no value
-struct Instruction {
-  InstructionData data;
+struct Statement {
+  StatementData data;
   common::OriginId origin = common::OriginId::Invalid();
 };
 

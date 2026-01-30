@@ -1,5 +1,3 @@
-#include "lyra/llvm_backend/instruction.hpp"
-
 #include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -10,15 +8,16 @@
 #include "lyra/llvm_backend/instruction/call.hpp"
 #include "lyra/llvm_backend/instruction/effect.hpp"
 #include "lyra/llvm_backend/instruction/value_plusargs.hpp"
-#include "lyra/mir/instruction.hpp"
+#include "lyra/llvm_backend/statement.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerInstruction(Context& context, const mir::Instruction& instruction)
+auto LowerStatement(Context& context, const mir::Statement& statement)
     -> Result<void> {
   // Set origin for error reporting.
-  // OriginScope preserves outer origin if instruction.origin is Invalid.
-  OriginScope origin_scope(context, instruction.origin);
+  // OriginScope preserves outer origin if statement.origin is Invalid.
+  OriginScope origin_scope(context, statement.origin);
 
   // RAII guard for statement-scoped cleanup of owned string temps
   StatementScope scope(context);
@@ -47,7 +46,7 @@ auto LowerInstruction(Context& context, const mir::Instruction& instruction)
             return LowerValuePlusargs(context, vp);
           },
       },
-      instruction.data);
+      statement.data);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
