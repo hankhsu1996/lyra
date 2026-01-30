@@ -1,0 +1,99 @@
+feature: nba_packed
+description: Non-blocking assignment to packed types (structs, arrays)
+
+cases:
+  - name: whole_packed_struct
+    description: NBA to whole packed struct
+    sv: |
+      module Test;
+        typedef struct packed { logic [7:0] a; logic [7:0] b; } Inner;
+        Inner s;
+        int result;
+        initial begin
+          s = '0;
+          s <= '{a: 8'h12, b: 8'h34};
+          #0;
+          result = s.a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 18
+
+  - name: unpacked_array_element_const_index
+    description: NBA to element of unpacked array with constant index
+    sv: |
+      module Test;
+        typedef struct packed { logic [7:0] a; logic [7:0] b; } Elem;
+        Elem arr[4];
+        int result;
+        initial begin
+          arr[0] = '0;
+          arr[0] <= '{a: 8'h55, b: 8'hAA};
+          #0;
+          result = arr[0].a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 85
+
+  - name: unpacked_array_element_dynamic_index
+    description: NBA to element of unpacked array with dynamic index
+    sv: |
+      module Test;
+        logic [63:0] arr[10];
+        int idx;
+        longint result;
+        initial begin
+          arr[0] = '0;
+          idx = 0;
+          arr[idx] <= 64'hDEADBEEFCAFEBABE;
+          #0;
+          result = arr[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xDEADBEEFCAFEBABE"
+
+  - name: unpacked_2d_array_dynamic_first_index
+    description: NBA to element of 2D unpacked array with dynamic outer index
+    sv: |
+      module Test;
+        logic [31:0] arr[4][10];
+        int i;
+        int result;
+        initial begin
+          arr[0][0] = '0;
+          i = 0;
+          arr[i][0] <= 32'hCAFEBABE;
+          #0;
+          result = arr[0][0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xCAFEBABE"
+
+  - name: unpacked_2d_array_nba_inner_array
+    description: NBA to inner array of 2D unpacked array
+    sv: |
+      module Test;
+        logic [31:0] arr[4][10];
+        int i;
+        int result0, result9;
+        initial begin
+          arr[0][0] = 32'hDEADBEEF;
+          arr[0][9] = 32'hCAFEBABE;
+          i = 0;
+          arr[i] <= '{default: '0};  // NBA to whole inner array
+          #0;
+          result0 = arr[0][0];
+          result9 = arr[0][9];
+        end
+      endmodule
+    expect:
+      variables:
+        result0: 0
+        result9: 0
