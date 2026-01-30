@@ -69,6 +69,7 @@ The `run`, `check`, and `dump` commands accept these options:
 
 | Option                    | Description                                  |
 | ------------------------- | -------------------------------------------- |
+| `--no-project`            | Skip lyra.toml, use CWD-relative paths       |
 | `--top <module>`          | Top module name                              |
 | `-I, --include-directory` | Add include search path (repeatable)         |
 | `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)  |
@@ -77,28 +78,28 @@ The `run`, `check`, and `dump` commands accept these options:
 | `-F <file>`               | Command file (paths relative to file itself) |
 | `<files...>`              | Source files (positional)                    |
 
-### CLI Mode
+### CLI Arguments
 
-Commands work without `lyra.toml` when source files are provided:
+CLI arguments override or merge with lyra.toml settings:
 
 ```bash
-# Check syntax without lyra.toml
-lyra check --top Top file.sv
+# Override top module from lyra.toml
+lyra run --top Testbench
 
-# Run simulation with MIR interpreter
-lyra run --backend=mir --top Testbench pkg.sv dut.sv tb.sv
+# Add include directories (merges with lyra.toml)
+lyra run -I extra/include/
 
-# Include directories
-lyra check --top Top -I include/ src/*.sv
+# Define macros (merges with lyra.toml)
+lyra run -DDEBUG -DWIDTH=32
 
-# Define macros
-lyra run --top Top -DDEBUG -DWIDTH=32 design.sv
+# Use command file
+lyra run -f sources.f
+```
 
-# Command file with paths relative to CWD
-lyra run --top Top -f sources.f
+For ad-hoc runs without a project, use `--no-project`:
 
-# Command file with paths relative to file itself (like slang -F)
-lyra run --top Top -F lib/sources.f
+```bash
+lyra run --no-project --top Top file.sv
 ```
 
 ### Plusargs
