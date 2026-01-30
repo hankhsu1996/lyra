@@ -205,10 +205,16 @@ struct StorageCollector {
               Visit(i.rhs, arena);
             },
             [&](const Call& i) {
-              if (i.dest) {
-                Visit(arena[*i.dest], arena);
+              // Visit return tmp (not dest - we're collecting places to init)
+              if (i.ret) {
+                Visit(arena[i.ret->tmp], arena);
               }
-              for (const auto& arg : i.args) {
+              // Visit writeback tmps
+              for (const auto& wb : i.writebacks) {
+                Visit(arena[wb.tmp], arena);
+              }
+              // Visit input args
+              for (const auto& arg : i.in_args) {
                 Visit(arg, arena);
               }
             },
@@ -220,11 +226,6 @@ struct StorageCollector {
               for (const auto& arg : i.args) {
                 Visit(arg, arena);
               }
-            },
-            [&](const ValuePlusargs& i) {
-              Visit(arena[i.dest], arena);
-              Visit(arena[i.output], arena);
-              Visit(i.query, arena);
             },
         },
         stmt.data);

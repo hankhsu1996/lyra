@@ -192,16 +192,27 @@ auto MirBuilder::EmitCall(
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
-  if (is_void) {
-    EmitInst(
-        mir::Call{
-            .dest = std::nullopt, .callee = callee, .args = std::move(args)});
-    return mir::Operand::Poison();
+  std::optional<mir::CallReturn> ret;
+  mir::PlaceId ret_tmp;
+
+  if (!is_void) {
+    ret_tmp = ctx_->AllocTemp(return_type);
+    ret = mir::CallReturn{
+        .tmp = ret_tmp,
+        .dest = std::nullopt,  // Expression form: caller handles commit
+        .type = return_type,
+    };
   }
 
-  mir::PlaceId temp = ctx_->AllocTemp(return_type);
-  EmitInst(mir::Call{.dest = temp, .callee = callee, .args = std::move(args)});
-  return mir::Operand::Use(temp);
+  EmitInst(
+      mir::Call{
+          .callee = callee,
+          .in_args = std::move(args),
+          .ret = ret,
+          .writebacks = {},
+      });
+
+  return is_void ? mir::Operand::Poison() : mir::Operand::Use(ret_tmp);
 }
 
 auto MirBuilder::EmitBuiltinCall(
@@ -230,17 +241,51 @@ auto MirBuilder::EmitBuiltinCall(
   return mir::Operand::Use(temp);
 }
 
-auto MirBuilder::EmitValuePlusargs(
-    mir::Operand query, mir::PlaceId output, TypeId output_type,
-    TypeId result_type) -> mir::Operand {
-  mir::PlaceId dest = ctx_->AllocTemp(result_type);
+auto MirBuilder::EmitSystemTfCallExpr(
+    SystemTfOpcode opcode, std::vector<mir::Operand> in_args,
+    TypeId return_type,
+    std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks)
+    -> mir::Operand {
+  // Validate no Ref mode
+  for (const auto& [dest, type, mode] : writebacks) {
+    if (mode == mir::PassMode::kRef) {
+      throw common::InternalError(
+          "EmitSystemTfCallExpr", "Ref parameters not yet supported");
+    }
+  }
+
+  // Build return output (expression form: no dest, caller assigns)
+  mir::PlaceId ret_tmp = ctx_->AllocTemp(return_type);
+  mir::CallReturn ret{
+      .tmp = ret_tmp,
+      .dest = std::nullopt,  // Expression form
+      .type = return_type,
+  };
+
+  // Build writebacks with staging temps
+  std::vector<mir::CallWriteback> wb_outputs;
+  for (size_t i = 0; i < writebacks.size(); ++i) {
+    auto [dest, type, mode] = writebacks[i];
+    mir::PlaceId tmp = ctx_->AllocTemp(type);
+    wb_outputs.push_back(
+        mir::CallWriteback{
+            .tmp = tmp,
+            .dest = dest,
+            .type = type,
+            .mode = mode,
+            .arg_index = static_cast<int32_t>(i),
+        });
+  }
+
   EmitInst(
-      mir::ValuePlusargs{
-          .dest = dest,
-          .output = output,
-          .output_type = output_type,
-          .query = std::move(query)});
-  return mir::Operand::Use(dest);
+      mir::Call{
+          .callee = opcode,
+          .in_args = std::move(in_args),
+          .ret = ret,
+          .writebacks = std::move(wb_outputs),
+      });
+
+  return mir::Operand::Use(ret_tmp);
 }
 
 auto MirBuilder::EmitUnary(

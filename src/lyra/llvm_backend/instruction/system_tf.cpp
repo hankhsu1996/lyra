@@ -56,6 +56,10 @@ auto LowerSystemTfRvalue(
     case SystemTfOpcode::kFflush:
       throw common::InternalError(
           "LowerSystemTfRvalue", "$fflush is an effect, not an rvalue");
+    case SystemTfOpcode::kValuePlusargs:
+      throw common::InternalError(
+          "LowerSystemTfRvalue",
+          "$value$plusargs should be lowered via Call, not SystemTfRvalueInfo");
   }
   throw common::InternalError(
       "LowerSystemTfRvalue", "unhandled SystemTfOpcode");
@@ -100,6 +104,10 @@ auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
     case SystemTfOpcode::kFopen:
       throw common::InternalError(
           "LowerSystemTfEffect", "$fopen is an rvalue, not an effect");
+    case SystemTfOpcode::kValuePlusargs:
+      throw common::InternalError(
+          "LowerSystemTfEffect",
+          "$value$plusargs should be lowered via Call, not SystemTfEffect");
   }
   throw common::InternalError(
       "LowerSystemTfEffect", "unhandled SystemTfOpcode");

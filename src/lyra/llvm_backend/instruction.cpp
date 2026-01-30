@@ -7,7 +7,6 @@
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
 #include "lyra/llvm_backend/instruction/effect.hpp"
-#include "lyra/llvm_backend/instruction/value_plusargs.hpp"
 #include "lyra/llvm_backend/statement.hpp"
 #include "lyra/mir/statement.hpp"
 
@@ -41,9 +40,6 @@ auto LowerStatement(Context& context, const mir::Statement& statement)
           },
           [&context](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, call);
-          },
-          [&context](const mir::ValuePlusargs& vp) -> Result<void> {
-            return LowerValuePlusargs(context, vp);
           },
       },
       statement.data);

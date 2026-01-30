@@ -130,3 +130,25 @@ cases:
       variables:
         value: 123
         matched: 1
+
+  - name: value_plusargs_string_no_match
+    description: |
+      When $value$plusargs has no match, the output variable must be unchanged.
+      Tests managed type (string) lifecycle correctness on no-match path.
+    sv: |
+      module Test;
+        string name;
+        int matched;
+        initial begin
+          name = "keep";
+          matched = $value$plusargs("NAME=%s", name);
+          $display("name=%s", name);
+          $finish(0);
+        end
+      endmodule
+    expect:
+      variables:
+        matched: 0
+      stdout:
+        contains:
+          - "name=keep"

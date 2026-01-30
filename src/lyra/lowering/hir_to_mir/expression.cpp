@@ -28,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/builtin.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -646,7 +647,7 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
-  // $value$plusargs → ValuePlusargs statement (has side effects)
+  // $value$plusargs → unified Call with SystemTfOpcode
   if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
     Result<mir::Operand> format_result =
         LowerExpression(val_pa->format, builder);
@@ -661,9 +662,10 @@ auto LowerSystemCall(
     const hir::Expression& out_expr = (*ctx.hir_arena)[val_pa->output];
     TypeId output_type = out_expr.type;
 
-    // Emit ValuePlusargs statement - returns success boolean
-    return builder.EmitValuePlusargs(
-        format_op, output_lv.place, output_type, expr.type);
+    // Emit unified Call - returns success boolean via staging temp
+    return builder.EmitSystemTfCallExpr(
+        SystemTfOpcode::kValuePlusargs, {format_op}, expr.type,
+        {{output_lv.place, output_type, mir::PassMode::kOut}});
   }
 
   // $fopen → SystemTfRvalueInfo

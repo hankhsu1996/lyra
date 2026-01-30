@@ -700,11 +700,19 @@ struct PlaceCollector {
                 CollectFromPlace(data.dest, arena);
                 CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::Call>) {
-                if (data.dest) {
-                  CollectFromPlace(*data.dest, arena);
-                }
-                for (const auto& arg : data.args) {
+                // Scan input arguments
+                for (const auto& arg : data.in_args) {
                   CollectFromOperand(arg, arena);
+                }
+                // Scan return tmp ONLY (not dest - dest may be design slot)
+                if (data.ret) {
+                  CollectFromPlace(data.ret->tmp, arena);
+                  // DO NOT: CollectFromPlace(data.ret->dest, arena);
+                }
+                // Scan writeback tmps ONLY (not dests)
+                for (const auto& wb : data.writebacks) {
+                  CollectFromPlace(wb.tmp, arena);
+                  // DO NOT: CollectFromPlace(wb.dest, arena);
                 }
               } else if constexpr (std::is_same_v<T, mir::BuiltinCall>) {
                 if (data.dest) {
@@ -714,10 +722,6 @@ struct PlaceCollector {
                 for (const auto& arg : data.args) {
                   CollectFromOperand(arg, arena);
                 }
-              } else if constexpr (std::is_same_v<T, mir::ValuePlusargs>) {
-                CollectFromPlace(data.dest, arena);
-                CollectFromPlace(data.output, arena);
-                CollectFromOperand(data.query, arena);
               }
             },
             inst.data);

@@ -49,6 +49,17 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
     .max_args = 1,
     .out_arg_index = -1,
   },
+  // kValuePlusargs: $value$plusargs(format, output) -> int32 success
+  {
+    .opcode = SystemTfOpcode::kValuePlusargs,
+    .name = "$value$plusargs",
+    .family = SystemTfFamily::kQuery,
+    .role = SystemTfRole::kMixed,  // Has side effects (writes output) + return
+    .result_conv = ResultConvention::kIntegral,  // Returns int32 success
+    .min_args = 2,
+    .max_args = 2,
+    .out_arg_index = 1,  // Second arg is output (first is format string)
+  },
 });
 // clang-format on
 
@@ -58,6 +69,7 @@ constexpr std::array kNameTable = std::to_array<std::pair<std::string_view, Syst
   {"$fclose", SystemTfOpcode::kFclose},
   {"$fflush", SystemTfOpcode::kFflush},
   {"$fopen", SystemTfOpcode::kFopen},
+  {"$value$plusargs", SystemTfOpcode::kValuePlusargs},
 });
 // clang-format on
 
@@ -91,6 +103,8 @@ auto ToString(SystemTfOpcode op) -> const char* {
       return "$fclose";
     case SystemTfOpcode::kFflush:
       return "$fflush";
+    case SystemTfOpcode::kValuePlusargs:
+      return "$value$plusargs";
   }
   return "?";
 }
