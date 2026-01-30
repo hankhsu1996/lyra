@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -223,14 +224,34 @@ class Interpreter {
   // Execute Effect instruction
   auto ExecEffect(ProcessState& state, const Effect& effect) -> Result<void>;
 
-  // Execute Call instruction (user function call)
+  // Execute Call instruction (unified call handling)
   auto ExecCall(ProcessState& state, const Call& call) -> Result<void>;
+
+  // Execute user function call
+  auto ExecUserCall(ProcessState& state, const Call& call, FunctionId func_id)
+      -> Result<void>;
+
+  // Execute system TF call (dispatch by opcode)
+  auto ExecSystemTfCall(
+      ProcessState& state, const Call& call, SystemTfOpcode opcode)
+      -> Result<void>;
+
+  // Execute $value$plusargs via unified Call
+  auto ExecValuePlusargsCall(ProcessState& state, const Call& call)
+      -> Result<void>;
+
+  // Helper to commit $value$plusargs results with staging
+  auto CommitValuePlusargsResult(
+      ProcessState& state, const Call& call, RuntimeValue success,
+      std::optional<RuntimeValue> parsed_value, PlaceId output_tmp,
+      PlaceId output_dest) -> Result<void>;
 
   // Execute BuiltinCall instruction (container-mutating builtins)
   auto ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
       -> Result<void>;
 
   // Execute ValuePlusargs instruction ($value$plusargs with side effects)
+  // DEPRECATED: Being replaced by ExecValuePlusargsCall via unified Call
   auto ExecValuePlusargs(ProcessState& state, const ValuePlusargs& vp)
       -> Result<void>;
 

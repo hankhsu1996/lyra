@@ -125,7 +125,7 @@ void CollectFromStatement(
             CollectFromRhs(da.rhs, arena, seen);
           },
           [&](const Call& call) {
-            for (const auto& arg : call.args) {
+            for (const auto& arg : call.in_args) {
               CollectFromOperand(arg, arena, seen);
             }
           },

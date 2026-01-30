@@ -635,6 +635,10 @@ auto Interpreter::ExecSystemTfEffect(
     case SystemTfOpcode::kFopen:
       throw common::InternalError(
           "ExecSystemTfEffect", "$fopen is an rvalue, not an effect");
+    case SystemTfOpcode::kValuePlusargs:
+      throw common::InternalError(
+          "ExecSystemTfEffect",
+          "$value$plusargs should be lowered via Call, not SystemTfEffect");
   }
   throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
 }
@@ -727,10 +731,32 @@ auto Interpreter::ExecGuardedAssign(
 
 auto Interpreter::ExecCall(ProcessState& state, const Call& call)
     -> Result<void> {
-  // Evaluate arguments
+  // Dispatch based on callee type
+  return std::visit(
+      common::Overloaded{
+          [&](FunctionId func_id) -> Result<void> {
+            return ExecUserCall(state, call, func_id);
+          },
+          [&](SystemTfOpcode opcode) -> Result<void> {
+            return ExecSystemTfCall(state, call, opcode);
+          },
+      },
+      call.callee);
+}
+
+auto Interpreter::ExecUserCall(
+    ProcessState& state, const Call& call, FunctionId func_id) -> Result<void> {
+  // User function writebacks not yet supported - fail loud to match LLVM
+  // backend
+  if (!call.writebacks.empty()) {
+    throw common::InternalError(
+        "ExecUserCall", "User function writebacks not yet supported");
+  }
+
+  // Evaluate input arguments
   std::vector<RuntimeValue> args;
-  args.reserve(call.args.size());
-  for (const auto& operand : call.args) {
+  args.reserve(call.in_args.size());
+  for (const auto& operand : call.in_args) {
     auto arg_result = EvalOperand(state, operand);
     if (!arg_result) {
       return std::unexpected(std::move(arg_result).error());
@@ -739,14 +765,163 @@ auto Interpreter::ExecCall(ProcessState& state, const Call& call)
   }
 
   // Call the function
-  auto result = RunFunction(call.callee, args, state.design_state);
+  auto result = RunFunction(func_id, args, state.design_state);
   if (!result) {
     return std::unexpected(std::move(result).error());
   }
 
-  // Store result if dest exists
-  if (call.dest.has_value()) {
-    return StoreToPlace(state, *call.dest, std::move(*result));
+  // Stage return to tmp, then commit to dest (if statement form)
+  if (call.ret) {
+    // Store to tmp first (staging parity requirement)
+    auto store_result = StoreToPlace(state, call.ret->tmp, Clone(*result));
+    if (!store_result) {
+      return std::unexpected(std::move(store_result).error());
+    }
+
+    // Commit to dest if statement form - reuse same value
+    if (call.ret->dest.has_value()) {
+      return StoreToPlace(state, *call.ret->dest, std::move(*result));
+    }
+    // Expression form: outer Assign reads from tmp (which now holds the value)
+  }
+
+  return {};
+}
+
+auto Interpreter::ExecSystemTfCall(
+    ProcessState& state, const Call& call, SystemTfOpcode opcode)
+    -> Result<void> {
+  switch (opcode) {
+    case SystemTfOpcode::kValuePlusargs:
+      return ExecValuePlusargsCall(state, call);
+    default:
+      throw common::InternalError(
+          "ExecSystemTfCall", std::format(
+                                  "Unhandled system TF opcode in Call: {}",
+                                  static_cast<int>(opcode)));
+  }
+}
+
+auto Interpreter::ExecValuePlusargsCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Shape: in_args[0]=query, ret=success, writebacks[0]=output
+
+  // Evaluate query operand (always a string)
+  auto query_val_result = EvalOperand(state, call.in_args[0]);
+  if (!query_val_result) {
+    return std::unexpected(std::move(query_val_result).error());
+  }
+  auto& query_val = *query_val_result;
+  if (!IsString(query_val)) {
+    throw common::InternalError(
+        "ExecValuePlusargsCall", "query operand is not a string");
+  }
+  std::string_view query = AsString(query_val).value;
+
+  // Helper: strip '+' prefix from a plusarg
+  auto get_content = [](std::string_view arg) -> std::string_view {
+    if (arg.starts_with('+')) {
+      return arg.substr(1);
+    }
+    return arg;
+  };
+
+  // Parse format string: "PREFIX%<spec>" -> prefix + spec char
+  auto percent_pos = query.find('%');
+
+  // Get output writeback info
+  const auto& wb = call.writebacks[0];
+  PlaceId output_tmp = wb.tmp;
+  PlaceId output_dest = wb.dest;
+
+  if (percent_pos == std::string_view::npos) {
+    // No format specifier, treat as test (no match)
+    for (const auto& arg : plusargs_) {
+      std::string_view content = get_content(arg);
+      if (content.starts_with(query)) {
+        return CommitValuePlusargsResult(
+            state, call, MakeIntegralSigned(1, 32), std::nullopt, output_tmp,
+            output_dest);
+      }
+    }
+    return CommitValuePlusargsResult(
+        state, call, MakeIntegralSigned(0, 32), std::nullopt, output_tmp,
+        output_dest);
+  }
+
+  std::string_view prefix = query.substr(0, percent_pos);
+  char spec = '\0';
+  size_t spec_pos = percent_pos + 1;
+  if (spec_pos < query.size()) {
+    spec = query[spec_pos];
+    // Skip leading '0' in format specifier (e.g., %0d -> %d)
+    if (spec == '0' && spec_pos + 1 < query.size()) {
+      spec = query[spec_pos + 1];
+    }
+  }
+
+  for (const auto& arg : plusargs_) {
+    std::string_view content = get_content(arg);
+    if (!content.starts_with(prefix)) {
+      continue;
+    }
+    std::string_view remainder = content.substr(prefix.size());
+
+    // Parse based on format specifier
+    if (spec == 'd' || spec == 'D') {
+      int32_t parsed_value = 0;
+      auto [ptr, ec] = std::from_chars(
+          remainder.data(), remainder.data() + remainder.size(), parsed_value);
+      if (ec != std::errc{}) {
+        parsed_value = 0;  // Conversion failed
+      }
+      return CommitValuePlusargsResult(
+          state, call, MakeIntegralSigned(1, 32),
+          MakeIntegralSigned(parsed_value, 32), output_tmp, output_dest);
+    }
+    if (spec == 's' || spec == 'S') {
+      return CommitValuePlusargsResult(
+          state, call, MakeIntegralSigned(1, 32),
+          MakeString(std::string(remainder)), output_tmp, output_dest);
+    }
+
+    // Unsupported format spec - match but don't write
+    return CommitValuePlusargsResult(
+        state, call, MakeIntegralSigned(1, 32), std::nullopt, output_tmp,
+        output_dest);
+  }
+
+  // No match found
+  return CommitValuePlusargsResult(
+      state, call, MakeIntegralSigned(0, 32), std::nullopt, output_tmp,
+      output_dest);
+}
+
+auto Interpreter::CommitValuePlusargsResult(
+    ProcessState& state, const Call& call, RuntimeValue success,
+    std::optional<RuntimeValue> parsed_value, PlaceId output_tmp,
+    PlaceId output_dest) -> Result<void> {
+  // 1. Stage return (success) to tmp, then commit if statement form
+  if (call.ret) {
+    auto store_result = StoreToPlace(state, call.ret->tmp, Clone(success));
+    if (!store_result) {
+      return std::unexpected(std::move(store_result).error());
+    }
+    if (call.ret->dest.has_value()) {
+      store_result = StoreToPlace(state, *call.ret->dest, std::move(success));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+    }
+  }
+
+  // 2. Stage writeback (output) to tmp, then commit to dest
+  if (parsed_value) {
+    auto store_result = StoreToPlace(state, output_tmp, Clone(*parsed_value));
+    if (!store_result) {
+      return std::unexpected(std::move(store_result).error());
+    }
+    return StoreToPlace(state, output_dest, std::move(*parsed_value));
   }
 
   return {};

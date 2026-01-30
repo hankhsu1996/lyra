@@ -245,18 +245,55 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
             *out_ << std::format(
                 "{} <= {}\n", FormatPlace(i.dest), FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, Call>) {
+            // Format callee (user function or system TF)
+            std::string callee_str = std::visit(
+                [](const auto& c) -> std::string {
+                  using C = std::decay_t<decltype(c)>;
+                  if constexpr (std::is_same_v<C, FunctionId>) {
+                    return std::format("@fn{}", c.value);
+                  } else {
+                    return ToString(c);
+                  }
+                },
+                i.callee);
+
+            // Format input args
             std::string args;
-            for (size_t idx = 0; idx < i.args.size(); ++idx) {
+            for (size_t idx = 0; idx < i.in_args.size(); ++idx) {
               if (idx > 0) args += ", ";
-              args += FormatOperand(i.args[idx]);
+              args += FormatOperand(i.in_args[idx]);
             }
-            if (i.dest) {
-              *out_ << std::format(
-                  "{} = call @fn{}({})\n", FormatPlace(*i.dest), i.callee.value,
-                  args);
-            } else {
-              *out_ << std::format("call @fn{}({})\n", i.callee.value, args);
+
+            // Format output: ret.tmp -> ret.dest (if present)
+            std::string output;
+            if (i.ret) {
+              output = FormatPlace(i.ret->tmp);
+              if (i.ret->dest) {
+                output += std::format(" -> {}", FormatPlace(*i.ret->dest));
+              }
             }
+
+            // Format writebacks
+            std::string writebacks;
+            for (const auto& wb : i.writebacks) {
+              if (!writebacks.empty()) writebacks += ", ";
+              const char* mode_str = "out";
+              if (wb.mode == PassMode::kInOut) mode_str = "inout";
+              if (wb.mode == PassMode::kRef) mode_str = "ref";
+              writebacks += std::format(
+                  "{}[{}]: {} -> {}", mode_str, wb.arg_index,
+                  FormatPlace(wb.tmp), FormatPlace(wb.dest));
+            }
+
+            // Build output string
+            if (!output.empty()) {
+              *out_ << output << " = ";
+            }
+            *out_ << "call " << callee_str << "(" << args << ")";
+            if (!writebacks.empty()) {
+              *out_ << " writebacks=[" << writebacks << "]";
+            }
+            *out_ << "\n";
           } else if constexpr (std::is_same_v<T, BuiltinCall>) {
             std::string args;
             for (size_t idx = 0; idx < i.args.size(); ++idx) {
@@ -273,6 +310,7 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                   FormatPlace(i.receiver), args);
             }
           } else if constexpr (std::is_same_v<T, ValuePlusargs>) {
+            // DEPRECATED: legacy ValuePlusargs handling
             *out_ << std::format(
                 "{} = value_plusargs({}, {})\n", FormatPlace(i.dest),
                 FormatOperand(i.query), FormatPlace(i.output));

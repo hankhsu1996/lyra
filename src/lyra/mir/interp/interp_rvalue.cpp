@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -7,7 +6,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -285,6 +283,11 @@ auto Interpreter::EvalRvalue(
               case SystemTfOpcode::kFflush:
                 throw common::InternalError(
                     "EvalRvalue:SystemTf", "$fflush is an effect, not rvalue");
+              case SystemTfOpcode::kValuePlusargs:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$value$plusargs should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");

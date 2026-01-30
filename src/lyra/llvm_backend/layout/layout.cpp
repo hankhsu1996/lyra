@@ -468,10 +468,16 @@ auto CollectProcessPlaces(const mir::Process& process)
                 CollectPlacesFromRhs(da.rhs, places);
               },
               [&](const mir::Call& call) {
-                if (call.dest) {
-                  places.insert(*call.dest);
+                // Collect return tmp (not dest - dest may be design slot)
+                if (call.ret) {
+                  places.insert(call.ret->tmp);
                 }
-                for (const auto& arg : call.args) {
+                // Collect writeback tmps (not dests)
+                for (const auto& wb : call.writebacks) {
+                  places.insert(wb.tmp);
+                }
+                // Collect input args
+                for (const auto& arg : call.in_args) {
                   CollectPlaceFromOperand(arg, places);
                 }
               },

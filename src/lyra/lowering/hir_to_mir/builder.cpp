@@ -192,16 +192,27 @@ auto MirBuilder::EmitCall(
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
-  if (is_void) {
-    EmitInst(
-        mir::Call{
-            .dest = std::nullopt, .callee = callee, .args = std::move(args)});
-    return mir::Operand::Poison();
+  std::optional<mir::CallReturn> ret;
+  mir::PlaceId ret_tmp;
+
+  if (!is_void) {
+    ret_tmp = ctx_->AllocTemp(return_type);
+    ret = mir::CallReturn{
+        .tmp = ret_tmp,
+        .dest = std::nullopt,  // Expression form: caller handles commit
+        .type = return_type,
+    };
   }
 
-  mir::PlaceId temp = ctx_->AllocTemp(return_type);
-  EmitInst(mir::Call{.dest = temp, .callee = callee, .args = std::move(args)});
-  return mir::Operand::Use(temp);
+  EmitInst(
+      mir::Call{
+          .callee = callee,
+          .in_args = std::move(args),
+          .ret = ret,
+          .writebacks = {},
+      });
+
+  return is_void ? mir::Operand::Poison() : mir::Operand::Use(ret_tmp);
 }
 
 auto MirBuilder::EmitBuiltinCall(
