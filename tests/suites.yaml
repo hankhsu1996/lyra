@@ -21,8 +21,6 @@ suites:
       - scheduling/
       - system_tf/
     exclude_regex:
-      # $display 4-state formatting not implemented (unknown plane not passed)
-      - system_tf/effect/display_four_state\.yaml
       # Aggregate function returns not yet implemented
       - lifecycle/move_aggregate\.yaml
 
