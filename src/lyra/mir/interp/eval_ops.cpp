@@ -11,7 +11,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"

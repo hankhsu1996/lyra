@@ -30,7 +30,7 @@
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"

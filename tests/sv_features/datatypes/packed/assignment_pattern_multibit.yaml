@@ -111,3 +111,161 @@ cases:
       endmodule
     expect:
       stdout: "ff\n"
+
+  - name: unbased_unsized_1_2x4
+    description: "'1 on logic [1:0][3:0] - verify whole aggregate is 0xFF"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] a = '{default: '1};
+          $display("%h", a);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"
+
+  - name: based_unsized_b1_multidim
+    description: "'b1 is numeric 1, cast to 8-bit element -> 0x01"
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 'b1};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "01 01\n"
+
+  - name: based_unsized_b1_2x4
+    description: "'b1 on logic [1:0][3:0] -> two 4-bit elements of 0x1 -> 0x11"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] a = '{default: 'b1};
+          $display("%h", a);
+        end
+      endmodule
+    expect:
+      stdout: "11\n"
+
+  - name: unbased_unsized_1_3d
+    description: "'1 on 3D packed: unit is 2D packed array"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][1:0][3:0] arr = '{default: '1};
+          // 2 elements of 8-bit each, all ones
+          $display("%h", arr);
+        end
+      endmodule
+    expect:
+      stdout: "ffff\n"
+
+  - name: based_unsized_b1_3d
+    description: "'b1 on 3D packed: unit is 8-bit, fills with 0x01"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][1:0][3:0] arr = '{default: 'b1};
+          // 2 elements of 8-bit each, each is 0x01 (cast 'b1 to 8-bit)
+          $display("%h", arr);
+        end
+      endmodule
+    expect:
+      stdout: "0101\n"
+
+  - name: expression_context_rhs_b0
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x;
+          x = '{default: 'b0};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "00000000\n"
+
+  - name: expression_context_rhs_tick1
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr;
+          arr = '{default: '1};
+          $display("%h", arr[0]);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"
+
+  - name: unbased_x_multidim
+    description: "'x fills each 4-bit element with X"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] arr = '{default: 'x};
+          if (arr[0] === 4'bxxxx && arr[1] === 4'bxxxx)
+            $display("PASS");
+          else
+            $display("FAIL");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: unbased_z_multidim
+    description: "'z fills each 4-bit element with Z"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] arr = '{default: 'z};
+          if (arr[0] === 4'bzzzz && arr[1] === 4'bzzzz)
+            $display("PASS");
+          else
+            $display("FAIL");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: unbased_x_to_2state
+    description: "'x coerced to 2-state becomes 0"
+    sv: |
+      module Test;
+        initial begin
+          bit [7:0] x = '{default: 'x};
+          // X->0 in 2-state context
+          if (x == 8'h00)
+            $display("PASS");
+          else
+            $display("FAIL");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: tick_literal_direct_assignment
+    description: "'1 assigned directly (not in pattern)"
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x = '1;
+          $display("%h", x);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"
+
+  - name: tick_literal_conditional
+    description: "'1 in conditional expression"
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x;
+          logic sel = 1;
+          x = sel ? '1 : '0;
+          $display("%h", x);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"

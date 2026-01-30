@@ -21,7 +21,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"

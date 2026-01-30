@@ -42,6 +42,7 @@ enum class ExpressionKind {
   kConcat,             // {a, b, c} packed concatenation
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
   kMathCall,         // IEEE 1800 §20.8 math function call
+  kMaterializeInitializer,  // Initializer pattern materialized as expression
 };
 
 // Returns true if the expression kind can appear as an assignment target.
@@ -260,6 +261,17 @@ struct MathCallExpressionData {
   auto operator==(const MathCallExpressionData&) const -> bool = default;
 };
 
+// Materialize an initializer pattern as an expression value.
+// This is the only way initializers appear in expression position.
+// At HIR->MIR lowering, creates a temp, calls LowerPattern, returns Use(temp).
+struct MaterializeInitializerExpressionData {
+  PatternId pattern;
+  // target_type comes from expr.type
+
+  auto operator==(const MaterializeInitializerExpressionData&) const
+      -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, BitCastExpressionData,
@@ -271,8 +283,8 @@ using ExpressionData = std::variant<
     BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
     PackedFieldAccessExpressionData, BitSelectExpressionData,
     RangeSelectExpressionData, IndexedPartSelectExpressionData,
-    ConcatExpressionData, HierarchicalRefExpressionData,
-    MathCallExpressionData>;
+    ConcatExpressionData, HierarchicalRefExpressionData, MathCallExpressionData,
+    MaterializeInitializerExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

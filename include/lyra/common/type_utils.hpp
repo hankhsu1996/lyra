@@ -8,7 +8,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 
 namespace lyra {
 

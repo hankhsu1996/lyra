@@ -14,7 +14,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -315,7 +315,14 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   const auto& types = context.GetTypeArena();
   const auto& arena = context.GetMirArena();
 
-  // Build target info
+  // Validate effect invariants
+  if (fill.total_bits != fill.unit_bits * fill.count) {
+    throw common::InternalError(
+        "LowerFillPackedEffect",
+        "invariant violation: total_bits != unit_bits * count");
+  }
+
+  // Build target info from effect's semantic payload (destination-driven)
   const mir::Place& place = arena[fill.target];
   TypeId target_type_id = mir::TypeOfPlace(types, place);
   const Type& target_type = types[target_type_id];
@@ -328,19 +335,12 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   FillTargetInfo t{
       .place_id = fill.target,
       .type_id = target_type_id,
-      .total_bits = PackedBitWidth(target_type, types),
-      .element_bits = 0,
-      .element_count = 0,
+      .total_bits = fill.total_bits,
+      .element_bits = fill.unit_bits,
+      .element_count = fill.count,
       .is_four_state = IsPackedFourState(target_type, types),
       .storage_type = *storage_type_result,
   };
-
-  // Fill element info for packed arrays
-  if (target_type.Kind() == TypeKind::kPackedArray) {
-    const auto& arr_info = target_type.AsPackedArray();
-    t.element_bits = PackedBitWidth(types[arr_info.element_type], types);
-    t.element_count = arr_info.range.Size();
-  }
 
   // Lower fill value operand
   auto fill_value_result = LowerOperandRaw(context, fill.fill_value);
@@ -349,26 +349,19 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   }
   auto fs = ExtractFourStateOrZero(builder, *fill_value_result);
 
-  // Dispatch based on fill kind
-  switch (fill.kind) {
-    case mir::FillKind::kBitFill:
-      LowerBitFill(context, t, fs);
-      return {};
-
-    case mir::FillKind::kElementFill:
-      if (target_type.Kind() != TypeKind::kPackedArray) {
-        throw common::InternalError(
-            "LowerFillPackedEffect",
-            "kElementFill requires packed array target");
-      }
-      if (UseShiftOr(t.element_count, t.total_bits)) {
-        LowerElementFillShiftOr(context, t, fs);
-        return {};
-      }
-      return LowerElementFillRuntime(context, t, fs);
+  // Select optimization based on unit_bits (destination-driven)
+  if (fill.unit_bits == 1) {
+    // Bit fill: replicate single bit to all positions using SExt
+    LowerBitFill(context, t, fs);
+    return {};
   }
 
-  return {};
+  // Element fill: replicate unit_bits-wide value count times
+  if (UseShiftOr(t.element_count, t.total_bits)) {
+    LowerElementFillShiftOr(context, t, fs);
+    return {};
+  }
+  return LowerElementFillRuntime(context, t, fs);
 }
 
 auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)

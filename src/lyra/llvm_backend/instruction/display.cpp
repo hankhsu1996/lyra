@@ -16,7 +16,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"

@@ -7,7 +7,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

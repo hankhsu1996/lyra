@@ -25,7 +25,7 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -641,7 +641,14 @@ auto Interpreter::ExecSystemTfEffect(
 
 auto Interpreter::ExecFillPackedEffect(
     ProcessState& state, const FillPackedEffect& fill) -> Result<void> {
-  // Evaluate the fill value once (context-typed conversion already applied)
+  // Validate effect invariants
+  if (fill.total_bits != fill.unit_bits * fill.count) {
+    throw common::InternalError(
+        "ExecFillPackedEffect",
+        "invariant violation: total_bits != unit_bits * count");
+  }
+
+  // Evaluate the fill value once (already exactly unit_bits wide)
   auto fill_value_result = EvalOperand(state, fill.fill_value);
   if (!fill_value_result) {
     return std::unexpected(std::move(fill_value_result).error());
@@ -654,46 +661,25 @@ auto Interpreter::ExecFillPackedEffect(
   }
   const auto& fill_int = AsIntegral(fill_value);
 
-  // Get target place info
-  const Place& place = (*arena_)[fill.target];
-  TypeId target_type_id = TypeOfPlace(*types_, place);
-  const Type& target_type = (*types_)[target_type_id];
-  uint32_t total_width = PackedBitWidth(target_type, *types_);
-
-  // Create filled value based on explicit FillKind (no guessing from width)
+  // Create filled value based on unit_bits (destination-driven semantics)
   RuntimeValue filled_value;
 
-  switch (fill.kind) {
-    case FillKind::kBitFill: {
-      // Fill every leaf bit with a single bit value
-      bool value_bit = (fill_int.value[0] & 1) != 0;
-      bool unknown_bit =
-          !fill_int.unknown.empty() && ((fill_int.unknown[0] & 1) != 0);
-      filled_value =
-          semantic::MakeIntegralFilled(total_width, value_bit, unknown_bit);
-      break;
+  if (fill.unit_bits == 1) {
+    // Bit fill: replicate single bit to all positions
+    bool value_bit = (fill_int.value[0] & 1) != 0;
+    bool unknown_bit =
+        !fill_int.unknown.empty() && ((fill_int.unknown[0] & 1) != 0);
+    filled_value =
+        semantic::MakeIntegralFilled(fill.total_bits, value_bit, unknown_bit);
+  } else {
+    // Element fill: replicate unit_bits-wide value count times
+    RuntimeIntegral target_int = MakeKnownIntegral(fill.total_bits);
+    for (uint32_t i = 0; i < fill.count; ++i) {
+      uint32_t bit_offset = i * fill.unit_bits;
+      IntegralInsertSlice4StateInPlace(
+          target_int, fill_int, bit_offset, fill.unit_bits);
     }
-
-    case FillKind::kElementFill: {
-      if (target_type.Kind() != TypeKind::kPackedArray) {
-        throw common::InternalError(
-            "ExecFillPackedEffect",
-            "kElementFill requires packed array target");
-      }
-      const auto& arr_info = target_type.AsPackedArray();
-      uint32_t elem_count = arr_info.range.Size();
-      uint32_t elem_width =
-          PackedBitWidth((*types_)[arr_info.element_type], *types_);
-
-      RuntimeIntegral target_int = MakeKnownIntegral(total_width);
-      for (uint32_t i = 0; i < elem_count; ++i) {
-        uint32_t bit_offset = i * elem_width;
-        IntegralInsertSlice4StateInPlace(
-            target_int, fill_int, bit_offset, elem_width);
-      }
-      filled_value = std::move(target_int);
-      break;
-    }
+    filled_value = std::move(target_int);
   }
 
   // Store the filled value to the target place

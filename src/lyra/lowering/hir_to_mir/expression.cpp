@@ -20,12 +20,13 @@
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/operator.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -1608,6 +1609,24 @@ auto LowerElementAccessRvalue(
   return mir::Operand::Use(result_place);
 }
 
+auto LowerMaterializeInitializer(
+    const hir::MaterializeInitializerExpressionData& data,
+    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+  Context& ctx = builder.GetContext();
+
+  // Create a temp to hold the materialized initializer value
+  mir::PlaceId temp = ctx.AllocTemp(expr.type);
+
+  // Use LowerPattern to emit the fill effect into the temp
+  auto result = LowerPattern(data.pattern, temp, builder);
+  if (!result) {
+    return std::unexpected(result.error());
+  }
+
+  // Return use of the temp as the expression value
+  return mir::Operand::Use(temp);
+}
+
 }  // namespace
 
 auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
@@ -1707,6 +1726,10 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
           return LowerMathCall(data, expr, builder);
+        } else if constexpr (std::is_same_v<
+                                 T,
+                                 hir::MaterializeInitializerExpressionData>) {
+          return LowerMaterializeInitializer(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");

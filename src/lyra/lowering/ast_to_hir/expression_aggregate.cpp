@@ -24,6 +24,7 @@
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
+#include "lyra/lowering/ast_to_hir/pattern.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -279,72 +280,33 @@ auto LowerStructLiteral(
 
 auto LowerPackedDefaultPattern(
     const slang::ast::StructuredAssignmentPatternExpression& structured,
-    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
-    -> hir::ExpressionId {
+    const slang::ast::Type& /*ct*/, SourceSpan span,
+    ExpressionLoweringView view) -> hir::ExpressionId {
   auto* ctx = view.context;
 
-  if (!structured.indexSetters.empty() || !structured.typeSetters.empty()) {
-    ctx->sink->Error(
-        span,
-        "packed assignment pattern with index/type setters not supported");
-    return hir::kInvalidExpressionId;
-  }
-  if (structured.defaultSetter == nullptr) {
-    ctx->sink->Error(span, "packed assignment pattern requires default setter");
+  // Lower target type first
+  TypeId target_type = LowerType(*structured.type, span, ctx);
+  if (!target_type) {
     return hir::kInvalidExpressionId;
   }
 
-  const auto& setter_type = *structured.defaultSetter->type;
-  if (!setter_type.isIntegral() || setter_type.getBitWidth() != 1) {
-    ctx->sink->Error(
-        span, "packed default pattern currently only supports 1-bit values");
+  // Use LowerPattern to create the pattern, then wrap in
+  // kMaterializeInitializer
+  hir::PatternId pattern_id = LowerPattern(structured, target_type, span, view);
+  if (!pattern_id) {
     return hir::kInvalidExpressionId;
   }
 
-  // Behavior chosen to match slang+Verilator for 1-bit default values:
-  // Fill packed container at the bit level by replicating a 1-bit element
-  // across the total bit width.
-  TypeId elem_type = ctx->type_arena->Intern(
-      TypeKind::kIntegral, IntegralInfo{
-                               .bit_width = 1,
-                               .is_signed = false,
-                               .is_four_state = ct.isFourState()});
-  size_t count = ct.getBitWidth();
-
-  if (!elem_type) {
-    return hir::kInvalidExpressionId;
-  }
-  if (count == 0) {
-    throw common::InternalError(
-        "LowerPackedDefaultPattern", "packed container has zero bits");
-  }
-
-  hir::ExpressionId default_id =
-      LowerExpression(*structured.defaultSetter, view);
-  if (!default_id) {
-    return hir::kInvalidExpressionId;
-  }
-
-  hir::ExpressionId casted_id = ctx->hir_arena->AddExpression(
-      hir::Expression{
-          .kind = hir::ExpressionKind::kCast,
-          .type = elem_type,
-          .span = span,
-          .data = hir::CastExpressionData{.operand = default_id}});
-
-  std::vector<hir::ExpressionId> operands(count, casted_id);
-
-  TypeId result_type = LowerType(*structured.type, span, ctx);
-  if (!result_type) {
-    return hir::kInvalidExpressionId;
-  }
-
+  // Wrap pattern in kMaterializeInitializer expression
+  // At HIR->MIR lowering, this creates a temp, emits FillPackedEffect, returns
+  // Use(temp)
   return ctx->hir_arena->AddExpression(
       hir::Expression{
-          .kind = hir::ExpressionKind::kConcat,
-          .type = result_type,
+          .kind = hir::ExpressionKind::kMaterializeInitializer,
+          .type = target_type,
           .span = span,
-          .data = hir::ConcatExpressionData{.operands = std::move(operands)}});
+          .data = hir::MaterializeInitializerExpressionData{
+              .pattern = pattern_id}});
 }
 
 auto LowerArrayAssignmentPattern(
