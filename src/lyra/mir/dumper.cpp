@@ -309,11 +309,6 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                   "builtin_call {}({}, {})\n", static_cast<int>(i.method),
                   FormatPlace(i.receiver), args);
             }
-          } else if constexpr (std::is_same_v<T, ValuePlusargs>) {
-            // DEPRECATED: legacy ValuePlusargs handling
-            *out_ << std::format(
-                "{} = value_plusargs({}, {})\n", FormatPlace(i.dest),
-                FormatOperand(i.query), FormatPlace(i.output));
           }
         },
         stmt.data);

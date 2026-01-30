@@ -1101,91 +1101,6 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
   }
 }
 
-auto Interpreter::ExecValuePlusargs(
-    ProcessState& state, const ValuePlusargs& vp) -> Result<void> {
-  // Evaluate query operand (always a string)
-  auto query_val_result = EvalOperand(state, vp.query);
-  if (!query_val_result) {
-    return std::unexpected(std::move(query_val_result).error());
-  }
-  auto& query_val = *query_val_result;
-  if (!IsString(query_val)) {
-    throw common::InternalError(
-        "ExecValuePlusargs", "query operand is not a string");
-  }
-  std::string_view query = AsString(query_val).value;
-
-  // Helper: strip '+' prefix from a plusarg
-  auto get_content = [](std::string_view arg) -> std::string_view {
-    if (arg.starts_with('+')) {
-      return arg.substr(1);
-    }
-    return arg;
-  };
-
-  // Parse format string: "PREFIX%<spec>" -> prefix + spec char
-  auto percent_pos = query.find('%');
-  if (percent_pos == std::string_view::npos) {
-    // No format specifier, treat as test (no match)
-    for (const auto& arg : plusargs_) {
-      std::string_view content = get_content(arg);
-      if (content.starts_with(query)) {
-        return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
-      }
-    }
-    return StoreToPlace(state, vp.dest, MakeIntegralSigned(0, 32));
-  }
-
-  std::string_view prefix = query.substr(0, percent_pos);
-  char spec = '\0';
-  size_t spec_pos = percent_pos + 1;
-  if (spec_pos < query.size()) {
-    spec = query[spec_pos];
-    // Skip leading '0' in format specifier (e.g., %0d -> %d)
-    if (spec == '0' && spec_pos + 1 < query.size()) {
-      spec = query[spec_pos + 1];
-    }
-  }
-
-  for (const auto& arg : plusargs_) {
-    std::string_view content = get_content(arg);
-    if (!content.starts_with(prefix)) {
-      continue;
-    }
-    std::string_view remainder = content.substr(prefix.size());
-
-    // Parse based on format specifier
-    if (spec == 'd' || spec == 'D') {
-      int32_t parsed_value = 0;
-      auto [ptr, ec] = std::from_chars(
-          remainder.data(), remainder.data() + remainder.size(), parsed_value);
-      if (ec != std::errc{}) {
-        parsed_value = 0;  // Conversion failed
-      }
-      auto store_result =
-          StoreToPlace(state, vp.output, MakeIntegralSigned(parsed_value, 32));
-      if (!store_result) {
-        return std::unexpected(std::move(store_result).error());
-      }
-      return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
-    }
-    if (spec == 's' || spec == 'S') {
-      auto store_result =
-          StoreToPlace(state, vp.output, MakeString(std::string(remainder)));
-      if (!store_result) {
-        return std::unexpected(std::move(store_result).error());
-      }
-      return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
-    }
-
-    // Unsupported format spec - match but don't write
-    return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
-  }
-
-  // No match found
-  return StoreToPlace(state, vp.dest, MakeIntegralSigned(0, 32));
-}
-
 auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
     -> Result<void> {
   std::optional<Diagnostic> error;
@@ -1218,11 +1133,6 @@ auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
           }
         } else if constexpr (std::is_same_v<T, BuiltinCall>) {
           auto result = ExecBuiltinCall(state, i);
-          if (!result) {
-            error = std::move(result).error();
-          }
-        } else if constexpr (std::is_same_v<T, ValuePlusargs>) {
-          auto result = ExecValuePlusargs(state, i);
           if (!result) {
             error = std::move(result).error();
           }

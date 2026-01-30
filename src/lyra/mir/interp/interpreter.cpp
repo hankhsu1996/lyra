@@ -227,11 +227,6 @@ struct StorageCollector {
                 Visit(arg, arena);
               }
             },
-            [&](const ValuePlusargs& i) {
-              Visit(arena[i.dest], arena);
-              Visit(arena[i.output], arena);
-              Visit(i.query, arena);
-            },
         },
         stmt.data);
   }

@@ -134,9 +134,6 @@ void CollectFromStatement(
               CollectFromOperand(arg, arena, seen);
             }
           },
-          [&](const ValuePlusargs& vp) {
-            CollectFromOperand(vp.query, arena, seen);
-          },
       },
       stmt.data);
 }

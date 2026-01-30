@@ -490,11 +490,6 @@ auto CollectProcessPlaces(const mir::Process& process)
                   CollectPlaceFromOperand(arg, places);
                 }
               },
-              [&](const mir::ValuePlusargs& vp) {
-                places.insert(vp.dest);
-                places.insert(vp.output);
-                CollectPlaceFromOperand(vp.query, places);
-              },
           },
           instr.data);
     }

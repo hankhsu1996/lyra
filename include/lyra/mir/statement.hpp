@@ -90,27 +90,9 @@ struct BuiltinCall {
   std::vector<Operand> args;
 };
 
-// ValuePlusargs: $value$plusargs system function (has side effects + result)
-//
-// DEPRECATED: Being migrated to unified Call with
-// SystemTfOpcode::kValuePlusargs. Will be removed once HIR->MIR lowering and
-// backends are migrated.
-//
-// Semantics: parse format string from plusargs, write parsed value to output,
-// store success (1/0) to dest.
-// Unlike $test$plusargs (pure rvalue), this has side effects (writes to
-// output).
-struct ValuePlusargs {
-  PlaceId dest;        // Where to store success boolean (1 or 0)
-  PlaceId output;      // Place to write parsed value
-  TypeId output_type;  // Type of output for runtime dispatch (string/int)
-  Operand query;       // Format string operand
-};
-
 // Statement data variant.
 using StatementData = std::variant<
-    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
-    ValuePlusargs>;
+    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall>;
 
 // A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place

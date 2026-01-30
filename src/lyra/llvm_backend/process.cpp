@@ -722,11 +722,6 @@ struct PlaceCollector {
                 for (const auto& arg : data.args) {
                   CollectFromOperand(arg, arena);
                 }
-              } else if constexpr (std::is_same_v<T, mir::ValuePlusargs>) {
-                // DEPRECATED: legacy ValuePlusargs handling
-                CollectFromPlace(data.dest, arena);
-                CollectFromPlace(data.output, arena);
-                CollectFromOperand(data.query, arena);
               }
             },
             inst.data);

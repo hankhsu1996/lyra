@@ -250,11 +250,6 @@ class Interpreter {
   auto ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
       -> Result<void>;
 
-  // Execute ValuePlusargs instruction ($value$plusargs with side effects)
-  // DEPRECATED: Being replaced by ExecValuePlusargsCall via unified Call
-  auto ExecValuePlusargs(ProcessState& state, const ValuePlusargs& vp)
-      -> Result<void>;
-
   // Format display ops to string (no newline appended).
   auto FormatDisplayOps(
       const ProcessState& state, std::span<const FormatOp> ops)
