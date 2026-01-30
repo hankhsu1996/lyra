@@ -196,6 +196,12 @@ Supported:
 - `$fstrobe`, `$fstrobeb`, `$fstrobeo`, `$fstrobeh` - postponed file output
 - `$fmonitor`, `$fmonitorb`, `$fmonitoro`, `$fmonitorh` - file value change monitoring
 - `$test$plusargs`, `$value$plusargs` - plusargs command-line arguments
+- `$fatal`, `$error`, `$warning`, `$info` - severity system tasks
+- `$signed`, `$unsigned` - sign casting
+- `$itor`, `$rtoi` - integer/real conversion
+- `$realtobits`, `$bitstoreal` - real to 64-bit bitcast
+- `$shortrealtobits`, `$bitstoshortreal` - shortreal to 32-bit bitcast
+- Math functions (20.8): `$clog2`, `$ln`, `$log10`, `$exp`, `$sqrt`, `$pow`, `$floor`, `$ceil`, `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`, `$atan2`, `$hypot`, `$sinh`, `$cosh`, `$tanh`, `$asinh`, `$acosh`, `$atanh`
 
 Not yet supported:
 
@@ -206,6 +212,10 @@ Not yet supported:
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
 - `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
+- `$cast` - dynamic type casting
+- Data query functions (20.6): `$bits`, `$isunbounded`, `$typename`
+- Array query functions (20.7): `$unpacked_dimensions`, `$dimensions`, `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`
+- Bit vector functions (20.9): `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`
 
 ## Timescale
 
