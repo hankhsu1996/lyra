@@ -25,6 +25,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -1309,12 +1310,19 @@ auto DefineUserFunction(
   // Store argument values into parameter locals (overwriting default init).
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
   // Arguments start at index arg_offset + 2 (after sret/design/engine).
+  //
+  // For output/inout params, the argument is a pointer to caller's storage.
+  // We track these pointers for writing back at function exit.
+  std::vector<std::tuple<llvm::Value*, llvm::AllocaInst*, TypeId>>
+      output_param_ptrs;  // (caller_ptr, local_alloca, type)
+
   for (size_t i = 0; i < func.signature.params.size(); ++i) {
     common::OriginId param_origin = (i < func.param_origins.size())
                                         ? func.param_origins[i]
                                         : common::OriginId::Invalid();
     OriginScope param_scope(context, param_origin);
 
+    const auto& param = func.signature.params[i];
     uint32_t local_slot = func.param_local_slots[i];
     PlaceRootKey key{
         .kind = mir::PlaceRoot::Kind::kLocal,
@@ -1328,7 +1336,62 @@ auto DefineUserFunction(
       llvm::Value* arg_val =
           llvm_func->getArg(static_cast<unsigned>(i + arg_offset + 2));
       arg_val->setName(std::format("arg{}", i));
-      builder.CreateStore(arg_val, alloca);
+
+      switch (param.kind) {
+        case mir::PassingKind::kValue:
+          // Input parameter: store value into local
+          builder.CreateStore(arg_val, alloca);
+          break;
+
+        case mir::PassingKind::kInOut: {
+          // Inout parameter: arg_val is pointer to caller's storage.
+          // For managed types (queue/dynarray/string): use alias semantics.
+          // Operations on the local directly modify caller's storage.
+          // For other types: use copy-in/copy-out semantics.
+          const Type& param_type = types[param.type];
+          bool is_managed = param_type.Kind() == TypeKind::kQueue ||
+                            param_type.Kind() == TypeKind::kDynamicArray ||
+                            param_type.Kind() == TypeKind::kString;
+
+          if (is_managed) {
+            // Alias the local to caller's storage - no copy, no writeback.
+            // Store the aliased pointer so GetPlacePointer returns arg_val.
+            context.SetPlaceAlias(it->second, arg_val);
+          } else {
+            // Copy-in at entry, writeback at exit
+            auto local_type = GetLlvmTypeForType(context, param.type);
+            if (!local_type) return std::unexpected(local_type.error());
+            llvm::Value* initial_val =
+                builder.CreateLoad(*local_type, arg_val, "inout_init");
+            builder.CreateStore(initial_val, alloca);
+            // Track for writeback at exit
+            output_param_ptrs.emplace_back(arg_val, alloca, param.type);
+          }
+          break;
+        }
+
+        case mir::PassingKind::kOut: {
+          // Output parameter: arg_val is pointer to caller's storage.
+          // For managed types: alias the local to caller's storage.
+          // For aggregates: use staging + writeback.
+          const Type& param_type = types[param.type];
+          bool is_managed = param_type.Kind() == TypeKind::kQueue ||
+                            param_type.Kind() == TypeKind::kDynamicArray ||
+                            param_type.Kind() == TypeKind::kString;
+
+          if (is_managed) {
+            // Alias the local to caller's storage - writes go directly there.
+            // Caller's slot may contain old handle; callee must Destroy before
+            // overwriting. Since we alias, CommitValue's Destroy will handle
+            // it.
+            context.SetPlaceAlias(it->second, arg_val);
+          } else {
+            // Non-managed: local is default-initialized, writeback at exit
+            output_param_ptrs.emplace_back(arg_val, alloca, param.type);
+          }
+          break;
+        }
+      }
     }
   }
 
@@ -1404,6 +1467,15 @@ auto DefineUserFunction(
     auto result = EmitMonitorSetupEpilogue(
         context, func_id, *setup_info, design_arg, engine_arg);
     if (!result) return std::unexpected(result.error());
+  }
+
+  // Write back output/inout parameters to caller's storage
+  // For managed types: use MoveAssign (destroy old in caller, move new)
+  // For aggregates: use CopyAssign (field-by-field copy)
+  for (const auto& [caller_ptr, local_alloca, type_id] : output_param_ptrs) {
+    // Load from local and assign to caller's storage
+    // MoveAssign handles destroying old value in caller's storage
+    MoveAssign(context, caller_ptr, local_alloca, type_id);
   }
 
   if (ret_type.Kind() == TypeKind::kVoid) {

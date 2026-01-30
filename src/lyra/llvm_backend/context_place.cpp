@@ -119,27 +119,34 @@ auto Context::ComputePlacePointer(
     ptr = builder_.CreateStructGEP(
         GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
   } else {
-    // Local/Temp places: check place_storage_ first (user functions)
-    // If not found and frame_ptr_ is set, use frame (processes)
+    // Local/Temp places: check place_alias_ first (inout managed params),
+    // then place_storage_ (regular allocas), then frame (processes).
     //
     // Storage is keyed by root identity (kind + id), NOT PlaceId.
     PlaceRootKey root_key{.kind = resolved.root.kind, .id = resolved.root.id};
-    auto it = place_storage_.find(root_key);
-    if (it != place_storage_.end()) {
-      ptr = it->second;
-    } else if (frame_ptr_ != nullptr) {
-      uint32_t field_index = GetFrameFieldIndex(original_place_id);
-      ptr = builder_.CreateStructGEP(
-          GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
+
+    // Check for aliased storage first (inout managed params)
+    auto alias_it = place_alias_.find(root_key);
+    if (alias_it != place_alias_.end()) {
+      ptr = alias_it->second;
     } else {
-      // User function: PlaceCollector/prologue must preallocate all storage.
-      // If we reach here, the storage was never allocated.
-      throw common::InternalError(
-          "GetPlacePointer",
-          std::format(
-              "missing preallocated storage for PlaceId {} in user function; "
-              "PlaceCollector/prologue must allocate all locals/temps",
-              original_place_id.value));
+      auto it = place_storage_.find(root_key);
+      if (it != place_storage_.end()) {
+        ptr = it->second;
+      } else if (frame_ptr_ != nullptr) {
+        uint32_t field_index = GetFrameFieldIndex(original_place_id);
+        ptr = builder_.CreateStructGEP(
+            GetProcessFrameType(), frame_ptr_, field_index, "frame_slot_ptr");
+      } else {
+        // User function: PlaceCollector/prologue must preallocate all storage.
+        // If we reach here, the storage was never allocated.
+        throw common::InternalError(
+            "GetPlacePointer",
+            std::format(
+                "missing preallocated storage for PlaceId {} in user function; "
+                "PlaceCollector/prologue must allocate all locals/temps",
+                original_place_id.value));
+      }
     }
   }
 

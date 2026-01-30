@@ -50,6 +50,21 @@ auto ConvertProcessKind(slang::ast::ProceduralBlockKind kind)
       "routine lowering", "unknown procedural block kind");
 }
 
+auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
+    -> hir::ParameterDirection {
+  switch (dir) {
+    case slang::ast::ArgumentDirection::In:
+      return hir::ParameterDirection::kInput;
+    case slang::ast::ArgumentDirection::Out:
+      return hir::ParameterDirection::kOutput;
+    case slang::ast::ArgumentDirection::InOut:
+      return hir::ParameterDirection::kInOut;
+    case slang::ast::ArgumentDirection::Ref:
+      return hir::ParameterDirection::kRef;
+  }
+  throw common::InternalError("routine lowering", "unknown argument direction");
+}
+
 }  // namespace
 
 auto LowerProcess(
@@ -117,34 +132,17 @@ auto LowerFunction(
     return hir::kInvalidFunctionId;
   }
 
-  // Check return type is supported.
-  // Supported: void, integral, string, unpacked struct, fixed-element-count
-  // unpacked array. Not supported: dynamic array, queue, associative array,
-  // class. Use canonical type's kind for array check (isFixedSize checks
-  // element types recursively, but we want any unpacked array with fixed
-  // element count, even if elements are strings).
+  // Lower return type (all types now supported)
   const auto& ret_type = func.getReturnType();
-  const auto& canonical_ret = ret_type.getCanonicalType();
-  bool is_fixed_count_unpacked_array =
-      canonical_ret.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType;
-  bool is_supported_return_type =
-      canonical_ret.isIntegral() || canonical_ret.isVoid() ||
-      canonical_ret.isString() || canonical_ret.isUnpackedStruct() ||
-      is_fixed_count_unpacked_array;
-  if (!is_supported_return_type) {
-    ctx->sink->Error(span, "unsupported return type");
-    return hir::kInvalidFunctionId;
-  }
-
   TypeId return_type = LowerType(ret_type, span, ctx);
   if (!return_type) {
     return hir::kInvalidFunctionId;
   }
 
-  // Check parameter directions before registering function symbol
+  // Check for unsupported parameter directions (ref not yet supported)
   for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
-    if (arg->direction != slang::ast::ArgumentDirection::In) {
-      ctx->sink->Error(span, "only input parameters supported");
+    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
+      ctx->sink->Error(span, "ref parameters not yet supported");
       return hir::kInvalidFunctionId;
     }
   }
@@ -154,7 +152,7 @@ auto LowerFunction(
     symbol = registrar.Register(func, SymbolKind::kFunction, return_type);
   }
 
-  std::vector<SymbolId> parameters;
+  std::vector<hir::FunctionParam> parameters;
   std::optional<SymbolId> return_var;
   std::optional<hir::StatementId> body_result;
   {
@@ -176,7 +174,8 @@ auto LowerFunction(
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      parameters.push_back(arg_sym);
+      hir::ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 
     body_result = LowerStatement(func.getBody(), lowerer);
@@ -223,9 +222,17 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
     return hir::kInvalidTaskId;
   }
 
+  // Check for unsupported parameter directions (ref not yet supported)
+  for (const slang::ast::FormalArgumentSymbol* arg : task.getArguments()) {
+    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
+      ctx->sink->Error(span, "ref parameters not yet supported");
+      return hir::kInvalidTaskId;
+    }
+  }
+
   SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
 
-  std::vector<SymbolId> parameters;
+  std::vector<hir::FunctionParam> parameters;
   std::optional<hir::StatementId> body_result;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kTask);
@@ -237,7 +244,8 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      parameters.push_back(arg_sym);
+      hir::ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 
     body_result = LowerStatement(task.getBody(), lowerer);

@@ -5,8 +5,10 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -70,11 +72,30 @@ auto LowerUserCall(
     return hir::kInvalidExpressionId;
   }
 
-  // Lower arguments
+  // Lower arguments, handling output/inout parameter wrapping.
+  // slang wraps output/inout arguments in Assignment expressions where:
+  // - left = the caller's lvalue (writeback target)
+  // - right = EmptyArgument (for output) or the actual input value (for inout)
+  // We extract the left side for output/inout args, the actual expression for
+  // input.
+  const auto& formal_args = (*user_sub)->getArguments();
   std::vector<hir::ExpressionId> args;
   args.reserve(call.arguments().size());
-  for (const auto* arg_expr : call.arguments()) {
-    hir::ExpressionId arg = LowerExpression(*arg_expr, view);
+  for (size_t i = 0; i < call.arguments().size(); ++i) {
+    const auto* arg_expr = call.arguments()[i];
+    const auto* formal = formal_args[i];
+    const slang::ast::Expression* to_lower = arg_expr;
+
+    // For output/inout params, slang wraps in Assignment - extract left side
+    if (formal->direction == slang::ast::ArgumentDirection::Out ||
+        formal->direction == slang::ast::ArgumentDirection::InOut) {
+      if (arg_expr->kind == slang::ast::ExpressionKind::Assignment) {
+        const auto& assign = arg_expr->as<slang::ast::AssignmentExpression>();
+        to_lower = &assign.left();
+      }
+    }
+
+    hir::ExpressionId arg = LowerExpression(*to_lower, view);
     if (!arg) {
       return hir::kInvalidExpressionId;
     }

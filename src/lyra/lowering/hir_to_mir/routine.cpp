@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -29,8 +30,11 @@ namespace {
 
 // Determine return policy based on return type.
 // - void: kVoid
-// - scalar/integral/packed/enum: kDirect
-// - string/unpacked struct/unpacked array: kSretOutParam
+// - scalar/integral/packed/enum/managed handles: kDirect
+// - value aggregates (unpacked struct/array/union): kSretOutParam
+//
+// Managed handles (string, dynamic array, queue) are single-pointer types
+// that can be returned directly in a register.
 auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     -> mir::ReturnPolicy {
   const Type& type = types[return_type];
@@ -39,19 +43,21 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kVoid:
       return mir::ReturnPolicy::kVoid;
 
+    // Direct return: scalars and managed handles (single-word values)
     case TypeKind::kIntegral:
     case TypeKind::kReal:
     case TypeKind::kShortReal:
     case TypeKind::kPackedArray:
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum:
-      return mir::ReturnPolicy::kDirect;
-
     case TypeKind::kString:
-    case TypeKind::kUnpackedStruct:
-    case TypeKind::kUnpackedArray:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+      return mir::ReturnPolicy::kDirect;
+
+    // Sret: value aggregates (multi-word, copied by value)
+    case TypeKind::kUnpackedStruct:
+    case TypeKind::kUnpackedArray:
     case TypeKind::kUnpackedUnion:
       return mir::ReturnPolicy::kSretOutParam;
   }
@@ -68,9 +74,25 @@ auto BuildFunctionSignature(
   sig.return_policy = ComputeReturnPolicy(function.return_type, type_arena);
 
   sig.params.reserve(function.parameters.size());
-  for (SymbolId param : function.parameters) {
-    const Symbol& sym = symbol_table[param];
-    sig.params.push_back({.type = sym.type, .kind = mir::PassingKind::kValue});
+  for (const hir::FunctionParam& param : function.parameters) {
+    const Symbol& sym = symbol_table[param.symbol];
+    mir::PassingKind kind = mir::PassingKind::kValue;
+    switch (param.direction) {
+      case hir::ParameterDirection::kInput:
+        kind = mir::PassingKind::kValue;
+        break;
+      case hir::ParameterDirection::kOutput:
+        kind = mir::PassingKind::kOut;
+        break;
+      case hir::ParameterDirection::kInOut:
+        kind = mir::PassingKind::kInOut;
+        break;
+      case hir::ParameterDirection::kRef:
+        // Should have been rejected at HIR lowering
+        throw common::InternalError(
+            "BuildFunctionSignature", "ref parameters not supported");
+    }
+    sig.params.push_back({.type = sym.type, .kind = kind});
   }
 
   return sig;
@@ -107,9 +129,9 @@ auto LowerFunctionBody(
   // Allocate parameters as locals and record their slot indices
   std::vector<uint32_t> param_local_slots;
   param_local_slots.reserve(function.parameters.size());
-  for (SymbolId param : function.parameters) {
-    const Symbol& sym = (*input.symbol_table)[param];
-    auto alloc = ctx.AllocLocal(param, sym.type);
+  for (const hir::FunctionParam& param : function.parameters) {
+    const Symbol& sym = (*input.symbol_table)[param.symbol];
+    auto alloc = ctx.AllocLocal(param.symbol, sym.type);
     param_local_slots.push_back(alloc.local_slot);
   }
 

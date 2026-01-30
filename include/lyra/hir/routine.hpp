@@ -25,11 +25,26 @@ struct Process {
   StatementId body;
 };
 
+// Parameter direction for subroutine arguments.
+// Maps directly to SystemVerilog argument directions (IEEE 1800-2017 13.5).
+enum class ParameterDirection {
+  kInput,   // Input only (pass by value semantics)
+  kOutput,  // Output only (callee writes, caller receives)
+  kInOut,  // Bidirectional (caller passes initialized value, callee may modify)
+  kRef,    // Reference (alias to caller's variable) - not yet supported
+};
+
+// HIR representation of a subroutine parameter.
+struct FunctionParam {
+  SymbolId symbol;
+  ParameterDirection direction = ParameterDirection::kInput;
+};
+
 struct Function {
   SymbolId symbol;
   SourceSpan span;
   TypeId return_type;
-  std::vector<SymbolId> parameters;
+  std::vector<FunctionParam> parameters;
   StatementId body;
   // Implicit local variable for return-by-name assignment (absent for void)
   std::optional<SymbolId> return_var;
@@ -38,7 +53,7 @@ struct Function {
 struct Task {
   SymbolId symbol;
   SourceSpan span;
-  std::vector<SymbolId> parameters;
+  std::vector<FunctionParam> parameters;
   StatementId body;
 };
 

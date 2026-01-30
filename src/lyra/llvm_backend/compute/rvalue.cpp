@@ -20,9 +20,13 @@ auto GetTypeInfoFromType(Context& context, TypeId type_id)
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
-  if (type.Kind() == TypeKind::kString) {
+  // Managed handle types: string, dynamic array, queue
+  // These are all represented as opaque pointers at the LLVM level.
+  if (type.Kind() == TypeKind::kString ||
+      type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
     return PlaceTypeInfo{
-        .kind = PlaceKind::kString,
+        .kind = PlaceKind::kString,  // Reuse kString for all managed handles
         .bit_width = 0,
         .is_four_state = false,
     };

@@ -179,6 +179,12 @@ void Context::EndFunction() {
   // Clear place storage for next function. With PlaceRootKey keying, different
   // functions' locals with the same ID would otherwise collide.
   place_storage_.clear();
+  place_alias_.clear();
+}
+
+void Context::SetPlaceAlias(const mir::PlaceRoot& root, llvm::Value* ptr) {
+  PlaceRootKey key{.kind = root.kind, .id = root.id};
+  place_alias_[key] = ptr;
 }
 
 auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
@@ -450,9 +456,15 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
           "BuildUserFunctionType", "void parameter type not allowed");
     }
 
-    if (type.Kind() == TypeKind::kString ||
+    // Output/inout parameters: always pass as pointer to destination
+    if (param.kind == mir::PassingKind::kOut ||
+        param.kind == mir::PassingKind::kInOut) {
+      param_ty = ptr_ty;  // Pointer to destination (direct passing)
+    } else if (
+        type.Kind() == TypeKind::kString ||
         type.Kind() == TypeKind::kDynamicArray ||
         type.Kind() == TypeKind::kQueue) {
+      // Input managed types: pass handle by value
       param_ty = ptr_ty;
     } else if (type.Kind() == TypeKind::kReal) {
       param_ty = llvm::Type::getDoubleTy(*llvm_context_);
@@ -488,6 +500,12 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
 
     if (ret_type.Kind() == TypeKind::kVoid) {
       llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
+    } else if (
+        ret_type.Kind() == TypeKind::kString ||
+        ret_type.Kind() == TypeKind::kDynamicArray ||
+        ret_type.Kind() == TypeKind::kQueue) {
+      // Managed handles return directly as ptr (the handle value)
+      llvm_ret_type = ptr_ty;
     } else if (ret_type.Kind() == TypeKind::kReal) {
       llvm_ret_type = llvm::Type::getDoubleTy(*llvm_context_);
     } else if (ret_type.Kind() == TypeKind::kShortReal) {

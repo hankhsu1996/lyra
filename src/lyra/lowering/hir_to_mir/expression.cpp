@@ -839,17 +839,49 @@ auto LowerCall(
         "LowerCall", "argument count mismatch with frozen signature");
   }
 
-  // Lower arguments
-  std::vector<mir::Operand> args;
-  args.reserve(data.arguments.size());
-  for (hir::ExpressionId arg_id : data.arguments) {
-    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
-    if (!arg_result) return std::unexpected(arg_result.error());
-    args.push_back(*arg_result);
+  // Lower arguments - handle input vs output/inout differently
+  std::vector<mir::Operand> in_args;
+  std::vector<mir::CallWriteback> writebacks;
+
+  for (size_t i = 0; i < data.arguments.size(); ++i) {
+    hir::ExpressionId arg_id = data.arguments[i];
+    const mir::FunctionParam& param = sig.params[i];
+
+    switch (param.kind) {
+      case mir::PassingKind::kValue: {
+        // Input parameter: lower as expression (by value)
+        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        if (!arg_result) return std::unexpected(arg_result.error());
+        in_args.push_back(*arg_result);
+        break;
+      }
+      case mir::PassingKind::kOut:
+      case mir::PassingKind::kInOut: {
+        // Output/inout parameter: lower as lvalue to get destination PlaceId.
+        // Callee receives a pointer to the destination; for inout, callee reads
+        // the initial value from that pointer. We do NOT add to in_args here.
+        Result<LvalueResult> lv_result = LowerLvalue(arg_id, builder);
+        if (!lv_result) return std::unexpected(lv_result.error());
+
+        // Create writeback entry - pass destination directly (no staging temp)
+        mir::PassMode mode = (param.kind == mir::PassingKind::kOut)
+                                 ? mir::PassMode::kOut
+                                 : mir::PassMode::kInOut;
+        writebacks.push_back({
+            .tmp = lv_result->place,   // Use dest as tmp (direct passing)
+            .dest = lv_result->place,  // Final destination
+            .type = param.type,
+            .mode = mode,
+            .arg_index = static_cast<int32_t>(i),
+        });
+        break;
+      }
+    }
   }
 
-  // Emit Call instruction (returns Use of result or Poison for void)
-  return builder.EmitCall(callee, std::move(args), expr.type);
+  // Emit Call instruction with writebacks
+  return builder.EmitCallWithWritebacks(
+      callee, std::move(in_args), std::move(writebacks), expr.type);
 }
 
 auto LowerNewArray(
@@ -1535,10 +1567,10 @@ auto LowerConcat(
   const auto& types = *ctx.type_arena;
 
   // Single-operand concat with packed result and non-packed operand is actually
-  // a type conversion (e.g., string → packed). Slang uses concat for implicit
+  // a type conversion (e.g., string -> packed). Slang uses concat for implicit
   // conversions, but backends expect packed concat operands to be packed.
   // Emit Cast to make the conversion explicit. We use Cast (not BitCast)
-  // because string↔packed is a semantic conversion with padding/truncation
+  // because string<->packed is a semantic conversion with padding/truncation
   // rules, not a bit-level reinterpretation.
   if (data.operands.size() == 1) {
     const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operands[0]];

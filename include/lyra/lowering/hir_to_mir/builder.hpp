@@ -58,6 +58,14 @@ class MirBuilder {
       mir::FunctionId callee, std::vector<mir::Operand> args,
       TypeId return_type) -> mir::Operand;
 
+  // Emit a Call instruction with writebacks for output/inout parameters.
+  // writebacks: list of output/inout parameter destinations.
+  // For direct destination passing, dest is passed directly to callee.
+  auto EmitCallWithWritebacks(
+      mir::FunctionId callee, std::vector<mir::Operand> in_args,
+      std::vector<mir::CallWriteback> writebacks, TypeId return_type)
+      -> mir::Operand;
+
   // Emit a BuiltinCall instruction for container-mutating builtins.
   // For pop methods that return a value, returns Use of result place.
   // For void methods (push/delete/insert), returns Poison operand.

@@ -91,9 +91,7 @@ void RegisterModuleDeclarations(
 
   for (const auto* sub : members.functions) {
     const auto& ret_type = sub->getReturnType();
-    if (!ret_type.isIntegral() && !ret_type.isVoid()) {
-      continue;
-    }
+    // Let LowerType determine if the return type is supported
     TypeId return_type = LowerType(ret_type, span, ctx);
     if (return_type) {
       registrar.Register(*sub, SymbolKind::kFunction, return_type);

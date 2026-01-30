@@ -323,7 +323,7 @@ auto LowerBitCastRvalue(
            type.Kind() == TypeKind::kPackedArray;
   };
 
-  // String → packed is handled by Cast (semantic conversion with
+  // String -> packed is handled by Cast (semantic conversion with
   // padding/truncation), not BitCast (bit-level reinterpretation).
   // If we get here with string source, it's a bug in lowering.
   if (src_type.Kind() == TypeKind::kString) {

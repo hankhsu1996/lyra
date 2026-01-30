@@ -20,7 +20,6 @@ Supported:
 Not yet supported:
 
 - `class` types
-- Dynamic arrays: `new` copy constructor (`new[size](source)`) preserves size but not contents
 - Associative arrays
 - Unpacked unions with 4-state fields: default initialization uses zero-fill instead of X encoding
 
@@ -118,7 +117,11 @@ Supported:
 - Function definitions inside packages
 - `automatic` lifetime (default for functions)
 - `input` arguments (pass by value)
+- `output` arguments (callee writes to caller's storage)
+- `inout` arguments (read and modify caller's storage)
 - Return values via `return` statement or function name assignment
+- Return types: integral, `string`, dynamic arrays, queues
+- Container parameters: `string`, dynamic arrays, queues as input/output/inout
 - Void functions (called as statements)
 - Recursive functions
 - Nested function calls (function calling another function)
@@ -126,9 +129,8 @@ Supported:
 
 Not yet supported:
 
-- Non-integral return types (`string`, `real`, structs) - only `void` and integral types supported
+- `ref` arguments
 - `task` definitions (require timing controls)
-- `output`, `inout`, `ref` arguments
 - Default argument values (`arg = default`)
 - Named argument binding (`.arg(value)`)
 - `static` lifetime functions
@@ -136,6 +138,8 @@ Not yet supported:
 - Interface functions
 - Constant functions (elaboration-time evaluation)
 - DPI import/export functions
+- `real`, `shortreal` return types
+- Struct/union return types
 
 ## Statements
 

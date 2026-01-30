@@ -37,4 +37,3 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
-    exclude_regex: []

@@ -62,13 +62,23 @@ auto NeedsDestroy(TypeId type_id, const TypeArena& types) -> bool {
   return TypeContainsManaged(type_id, types);
 }
 
+auto IsManagedHandle(TypeId type_id, const TypeArena& types) -> bool {
+  const Type& type = types[type_id];
+  return type.Kind() == TypeKind::kString ||
+         type.Kind() == TypeKind::kDynamicArray ||
+         type.Kind() == TypeKind::kQueue;
+}
+
 auto RequiresSret(TypeId type_id, const TypeArena& types) -> bool {
-  const auto& type = types[type_id];
-  // All aggregates require sret (out-param calling convention)
-  if (type.Kind() == TypeKind::kUnpackedStruct) return true;
-  if (type.Kind() == TypeKind::kUnpackedArray) return true;
-  // Managed types (string, containers) also require sret
-  return NeedsDestroy(type_id, types);
+  // Managed handles (string, dynarray, queue) return directly via `ret ptr`.
+  // Only value aggregates (unpacked struct/array) use sret convention.
+  if (IsManagedHandle(type_id, types)) {
+    return false;
+  }
+  // Value aggregates use sret (including those with managed fields)
+  const Type& type = types[type_id];
+  return type.Kind() == TypeKind::kUnpackedStruct ||
+         type.Kind() == TypeKind::kUnpackedArray;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
