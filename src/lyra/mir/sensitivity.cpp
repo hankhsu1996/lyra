@@ -114,15 +114,15 @@ void CollectFromInstruction(
   std::visit(
       common::Overloaded{
           [&](const Assign& assign) {
-            CollectFromRhs(assign.source, arena, seen);
+            CollectFromRhs(assign.rhs, arena, seen);
           },
-          [&](const GuardedStore& gs) {
-            CollectFromRhs(gs.source, arena, seen);
-            CollectFromOperand(gs.validity, arena, seen);
+          [&](const GuardedAssign& ga) {
+            CollectFromRhs(ga.rhs, arena, seen);
+            CollectFromOperand(ga.guard, arena, seen);
           },
           [](const Effect&) {},
-          [&](const NonBlockingAssign& nba) {
-            CollectFromOperand(nba.source, arena, seen);
+          [&](const DeferredAssign& da) {
+            CollectFromRhs(da.rhs, arena, seen);
           },
           [&](const Call& call) {
             for (const auto& arg : call.args) {

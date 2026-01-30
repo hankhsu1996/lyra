@@ -13,21 +13,20 @@
 
 namespace lyra::mir {
 
-// Assign: unified data movement and computation (Place <- RightHandSide).
-// RightHandSide can be either Operand (simple value) or Rvalue (computation).
+// Assign: immediate write (dest := rhs).
+// RightHandSide can be Operand (simple value) or Rvalue (computation).
 struct Assign {
-  PlaceId target;
-  RightHandSide source;
+  PlaceId dest;
+  RightHandSide rhs;
 };
 
-// GuardedStore: conditional write with OOB safety.
-// Semantics: if (validity) Assign(target, source); else no-op
-// The source is always evaluated; only the write is guarded.
-// For short-circuit semantics (source has side effects), use control flow.
-struct GuardedStore {
-  PlaceId target;
-  RightHandSide source;
-  Operand validity;  // 1-bit 2-state bool
+// GuardedAssign: conditional write (if guard then dest := rhs).
+// Semantics: rhs is always evaluated; only the write is gated by guard.
+// For short-circuit semantics (rhs has side effects), use control flow.
+struct GuardedAssign {
+  PlaceId dest;
+  RightHandSide rhs;
+  Operand guard;  // 1-bit 2-state bool
 };
 
 // Effect: side-effect operation with no result value
@@ -35,11 +34,11 @@ struct Effect {
   EffectOp op;
 };
 
-// NonBlockingAssign: deferred data movement (NBA region).
-// Semantics: schedule target <= source for commit in the NBA region.
-struct NonBlockingAssign {
-  PlaceId target;
-  Operand source;
+// DeferredAssign: scheduled write (dest := rhs in NBA region).
+// Semantics: enqueue write for commit in a later region (NBA semantics).
+struct DeferredAssign {
+  PlaceId dest;
+  RightHandSide rhs;
 };
 
 // Call: user function invocation
@@ -88,11 +87,11 @@ struct ValuePlusargs {
 
 // Instruction data variant.
 using InstructionData = std::variant<
-    Assign, GuardedStore, Effect, NonBlockingAssign, Call, BuiltinCall,
+    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
     ValuePlusargs>;
 
 // An instruction that does not affect control flow.
-// - Assign and GuardedStore write to a Place
+// - Assign, GuardedAssign, DeferredAssign write to a Place
 // - Effect produces side effects but no value
 struct Instruction {
   InstructionData data;

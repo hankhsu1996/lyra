@@ -372,10 +372,10 @@ auto LowerRhsRaw(
 
 auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
   // BitRangeProjection targets use read-modify-write
-  if (context.HasBitRangeProjection(assign.target)) {
-    auto source_raw_or_err = LowerRhsRaw(context, assign.source, assign.target);
+  if (context.HasBitRangeProjection(assign.dest)) {
+    auto source_raw_or_err = LowerRhsRaw(context, assign.rhs, assign.dest);
     if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
-    return StoreBitRange(context, assign.target, *source_raw_or_err);
+    return StoreBitRange(context, assign.dest, *source_raw_or_err);
   }
 
   // Dispatch on RightHandSide: Operand or Rvalue
@@ -383,62 +383,62 @@ auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<void> {
             // Delegate all value semantics to the TypeOps layer
-            return AssignPlace(context, assign.target, operand);
+            return AssignPlace(context, assign.dest, operand);
           },
           [&](const mir::Rvalue& rvalue) -> Result<void> {
-            return LowerRvalueAssign(context, assign.target, rvalue);
+            return LowerRvalueAssign(context, assign.dest, rvalue);
           },
       },
-      assign.source);
+      assign.rhs);
 }
 
-auto LowerGuardedStore(Context& context, const mir::GuardedStore& guarded)
+auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
-  // Source evaluated BEFORE branch (per SystemVerilog spec)
-  auto source_raw_or_err = LowerRhsRaw(context, guarded.source, guarded.target);
-  if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
-  llvm::Value* source_raw = *source_raw_or_err;
+  // rhs evaluated BEFORE branch (per SystemVerilog spec)
+  auto rhs_raw_or_err = LowerRhsRaw(context, guarded.rhs, guarded.dest);
+  if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+  llvm::Value* rhs_raw = *rhs_raw_or_err;
 
-  // Validity check (coerce to i1)
-  auto valid_or_err = LowerOperand(context, guarded.validity);
-  if (!valid_or_err) return std::unexpected(valid_or_err.error());
-  llvm::Value* valid = *valid_or_err;
-  if (valid->getType()->getIntegerBitWidth() > 1) {
-    auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
-    valid = builder.CreateICmpNE(valid, zero, "gs.tobool");
+  // Guard check (coerce to i1)
+  auto guard_or_err = LowerOperand(context, guarded.guard);
+  if (!guard_or_err) return std::unexpected(guard_or_err.error());
+  llvm::Value* guard = *guard_or_err;
+  if (guard->getType()->getIntegerBitWidth() > 1) {
+    auto* zero = llvm::ConstantInt::get(guard->getType(), 0);
+    guard = builder.CreateICmpNE(guard, zero, "ga.tobool");
   }
 
   // Branch
   auto* func = builder.GetInsertBlock()->getParent();
   auto* do_write_bb =
-      llvm::BasicBlock::Create(context.GetLlvmContext(), "gs.write", func);
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.write", func);
   auto* skip_bb =
-      llvm::BasicBlock::Create(context.GetLlvmContext(), "gs.skip", func);
-  builder.CreateCondBr(valid, do_write_bb, skip_bb);
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
+  builder.CreateCondBr(guard, do_write_bb, skip_bb);
 
   // Write path
   builder.SetInsertPoint(do_write_bb);
 
   // BitRangeProjection: intentional bypass
-  if (context.HasBitRangeProjection(guarded.target)) {
-    auto result = StoreBitRange(context, guarded.target, source_raw);
+  if (context.HasBitRangeProjection(guarded.dest)) {
+    auto result = StoreBitRange(context, guarded.dest, rhs_raw);
     if (!result) return result;
   } else {
-    const auto& place = arena[guarded.target];
+    const auto& place = arena[guarded.dest];
     TypeId type_id = mir::TypeOfPlace(types, place);
 
-    // INVARIANT: GuardedStore always uses kClone, never kMove.
-    // Reason: We must not mutate/clear the source *place* when the assign is
-    // conditional. The source was evaluated BEFORE the validity check (per SV
-    // spec), and the source place may still be observable by other code.
+    // INVARIANT: GuardedAssign always uses kClone, never kMove.
+    // Reason: We must not mutate/clear the rhs *place* when the assign is
+    // conditional. The rhs was evaluated BEFORE the guard check (per SV
+    // spec), and the rhs place may still be observable by other code.
     // kClone ensures no "consume source" side effects (no null-out, no
     // release). Do NOT "optimize" this to kMove.
     auto result = CommitValue(
-        context, guarded.target, source_raw, type_id, OwnershipPolicy::kClone);
+        context, guarded.dest, rhs_raw, type_id, OwnershipPolicy::kClone);
     if (!result) return result;
   }
   builder.CreateBr(skip_bb);
@@ -447,27 +447,27 @@ auto LowerGuardedStore(Context& context, const mir::GuardedStore& guarded)
   return {};
 }
 
-auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
+auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  const auto& place = arena[nba.target];
+  const auto& place = arena[deferred.dest];
 
   // Use canonical signal_id (after alias resolution) for notification
   // NBA is only valid for design places (GetSignalIdForNba throws if not)
-  uint32_t signal_id = GetSignalIdForNba(context, nba.target);
+  uint32_t signal_id = GetSignalIdForNba(context, deferred.dest);
 
   // Case 1: BitRangeProjection — shifted value and mask
-  if (context.HasBitRangeProjection(nba.target)) {
-    auto br_result = context.ComposeBitRange(nba.target);
+  if (context.HasBitRangeProjection(deferred.dest)) {
+    auto br_result = context.ComposeBitRange(deferred.dest);
     if (!br_result) return std::unexpected(br_result.error());
     auto [offset, width] = *br_result;
-    auto ptr_or_err = context.GetPlacePointer(nba.target);
+    auto ptr_or_err = context.GetPlacePointer(deferred.dest);
     if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
     llvm::Value* ptr = *ptr_or_err;
-    auto base_type_result = context.GetPlaceBaseType(nba.target);
+    auto base_type_result = context.GetPlaceBaseType(deferred.dest);
     if (!base_type_result) return std::unexpected(base_type_result.error());
     llvm::Type* base_type = *base_type_result;
     llvm::Value* notify_base_ptr = ptr;  // BitRange shares root pointer
@@ -475,7 +475,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     // If there's an IndexProjection before the BitRange, notify_base is root
     for (const auto& proj : place.projections) {
       if (std::holds_alternative<mir::IndexProjection>(proj.info)) {
-        notify_base_ptr = GetDesignRootPointer(context, nba.target);
+        notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
         break;
       }
     }
@@ -492,10 +492,10 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
       auto* mask_val = llvm::ConstantInt::get(plane_type, mask_ap);
       auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
 
-      // Evaluate source
-      auto source_raw_or_err = LowerOperandRaw(context, nba.source);
-      if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
-      llvm::Value* source_raw = *source_raw_or_err;
+      // Evaluate rhs
+      auto rhs_raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+      if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+      llvm::Value* source_raw = *rhs_raw_or_err;
       llvm::Value* src_val = nullptr;
       llvm::Value* src_unk = nullptr;
       if (source_raw->getType()->isStructTy()) {
@@ -534,10 +534,10 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
       auto* mask_val = llvm::ConstantInt::get(base_type, mask_ap);
       auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
 
-      // Evaluate source, coerce to base width, shift into position
-      auto src_or_err = LowerOperand(context, nba.source);
-      if (!src_or_err) return std::unexpected(src_or_err.error());
-      llvm::Value* src = *src_or_err;
+      // Evaluate rhs, coerce to base width, shift into position
+      auto rhs_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+      if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+      llvm::Value* src = *rhs_or_err;
       src = builder.CreateZExtOrTrunc(src, base_type, "nba.src.ext");
       auto* val_shifted = builder.CreateShl(src, shift_amt, "nba.val.shl");
 
@@ -588,23 +588,23 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
 
     // Schedule block: compute pointers, value, mask, call
     builder.SetInsertPoint(schedule_bb);
-    auto write_ptr_or_err = context.GetPlacePointer(nba.target);
+    auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
     if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
     llvm::Value* write_ptr = *write_ptr_or_err;
-    llvm::Value* notify_base_ptr = GetDesignRootPointer(context, nba.target);
-    auto storage_type_or_err = context.GetPlaceLlvmType(nba.target);
+    llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
+    auto storage_type_or_err = context.GetPlaceLlvmType(deferred.dest);
     if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());
     llvm::Type* storage_type = *storage_type_or_err;
 
-    // Evaluate source and coerce to storage type
+    // Evaluate rhs and coerce to storage type
     llvm::Value* source_value = nullptr;
     llvm::Value* mask_value = nullptr;
     if (storage_type->isStructTy()) {
       // 4-state element
       auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
       auto* elem_type = struct_type->getElementType(0);
-      auto raw_or_err = LowerOperandRaw(context, nba.source);
+      auto raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
       if (!raw_or_err) return std::unexpected(raw_or_err.error());
       llvm::Value* raw = *raw_or_err;
       llvm::Value* val = nullptr;
@@ -629,10 +629,9 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
       mask_value = builder.CreateInsertValue(mask_value, all_ones, 1);
     } else {
       // 2-state element
-      auto source_value_or_err = LowerOperand(context, nba.source);
-      if (!source_value_or_err)
-        return std::unexpected(source_value_or_err.error());
-      source_value = *source_value_or_err;
+      auto rhs_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+      if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+      source_value = *rhs_or_err;
       if (source_value->getType() != storage_type) {
         source_value = builder.CreateZExtOrTrunc(source_value, storage_type);
       }
@@ -651,11 +650,11 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   }
 
   // Case 3: Simple full-width write (no projections)
-  auto write_ptr_or_err = context.GetPlacePointer(nba.target);
+  auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
   llvm::Value* notify_base_ptr = write_ptr;
-  auto storage_type_or_err = context.GetPlaceLlvmType(nba.target);
+  auto storage_type_or_err = context.GetPlaceLlvmType(deferred.dest);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
@@ -665,7 +664,7 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
     // 4-state target
     auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
     auto* elem_type = struct_type->getElementType(0);
-    auto raw_or_err = LowerOperandRaw(context, nba.source);
+    auto raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
     if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     llvm::Value* val = nullptr;
@@ -691,10 +690,9 @@ auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
   } else {
     // 2-state target
     const Type& type = types[mir::TypeOfPlace(types, place)];
-    auto source_value_or_err = LowerOperand(context, nba.source);
-    if (!source_value_or_err)
-      return std::unexpected(source_value_or_err.error());
-    source_value = *source_value_or_err;
+    auto rhs_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+    if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+    source_value = *rhs_or_err;
     if (source_value->getType() != storage_type &&
         source_value->getType()->isIntegerTy() && storage_type->isIntegerTy()) {
       if (type.Kind() == TypeKind::kIntegral && type.AsIntegral().is_signed) {

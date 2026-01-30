@@ -452,20 +452,20 @@ auto CollectProcessPlaces(const mir::Process& process)
       std::visit(
           common::Overloaded{
               [&](const mir::Assign& a) {
-                places.insert(a.target);
-                CollectPlacesFromRhs(a.source, places);
+                places.insert(a.dest);
+                CollectPlacesFromRhs(a.rhs, places);
               },
-              [&](const mir::GuardedStore& g) {
-                places.insert(g.target);
-                CollectPlacesFromRhs(g.source, places);
-                CollectPlaceFromOperand(g.validity, places);
+              [&](const mir::GuardedAssign& ga) {
+                places.insert(ga.dest);
+                CollectPlacesFromRhs(ga.rhs, places);
+                CollectPlaceFromOperand(ga.guard, places);
               },
               [&](const mir::Effect& e) {
                 CollectPlacesFromEffectOp(e.op, places);
               },
-              [&](const mir::NonBlockingAssign& nba) {
-                places.insert(nba.target);
-                CollectPlaceFromOperand(nba.source, places);
+              [&](const mir::DeferredAssign& da) {
+                places.insert(da.dest);
+                CollectPlacesFromRhs(da.rhs, places);
               },
               [&](const mir::Call& call) {
                 if (call.dest) {

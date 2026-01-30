@@ -216,8 +216,8 @@ class Interpreter {
   // Execute Assign instruction (handles both Operand and Rvalue sources)
   auto ExecAssign(ProcessState& state, const Assign& assign) -> Result<void>;
 
-  // Execute GuardedStore instruction (handles both Operand and Rvalue sources)
-  auto ExecGuardedStore(ProcessState& state, const GuardedStore& guarded)
+  // Execute GuardedAssign instruction (handles both Operand and Rvalue sources)
+  auto ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded)
       -> Result<void>;
 
   // Execute Effect instruction
