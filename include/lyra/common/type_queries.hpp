@@ -43,41 +43,39 @@ inline auto PackedArrayElementWidth(const Type& type, const TypeArena& arena)
   return PackedBitWidth(arena[info.element_type], arena);
 }
 
-// Get the base IntegralInfo for kIntegral, kPackedArray, or kEnum.
-// Does NOT support kPackedStruct.
-inline auto PackedBaseInfo(const Type& type, const TypeArena& arena)
-    -> const IntegralInfo& {
-  if (type.Kind() != TypeKind::kIntegral &&
-      type.Kind() != TypeKind::kPackedArray && type.Kind() != TypeKind::kEnum) {
-    throw common::InternalError(
-        "PackedBaseInfo", std::format(
-                              "expected Integral/PackedArray/Enum, got {}",
-                              ToString(type.Kind())));
-  }
-  if (type.Kind() == TypeKind::kIntegral) {
-    return type.AsIntegral();
-  }
-  if (type.Kind() == TypeKind::kEnum) {
-    const auto& enum_info = type.AsEnum();
-    return PackedBaseInfo(arena[enum_info.base_type], arena);
-  }
-  const auto& info = type.AsPackedArray();
-  return PackedBaseInfo(arena[info.element_type], arena);
-}
-
 inline auto IsPackedSigned(const Type& type, const TypeArena& arena) -> bool {
-  if (type.Kind() == TypeKind::kPackedStruct) {
-    return type.AsPackedStruct().is_signed;
+  switch (type.Kind()) {
+    case TypeKind::kIntegral:
+      return type.AsIntegral().is_signed;
+    case TypeKind::kPackedStruct:
+      return type.AsPackedStruct().is_signed;
+    case TypeKind::kEnum:
+      return IsPackedSigned(arena[type.AsEnum().base_type], arena);
+    case TypeKind::kPackedArray:
+      return IsPackedSigned(arena[type.AsPackedArray().element_type], arena);
+    default:
+      throw common::InternalError(
+          "IsPackedSigned",
+          std::format("expected packed type, got {}", ToString(type.Kind())));
   }
-  return PackedBaseInfo(type, arena).is_signed;
 }
 
 inline auto IsPackedFourState(const Type& type, const TypeArena& arena)
     -> bool {
-  if (type.Kind() == TypeKind::kPackedStruct) {
-    return type.AsPackedStruct().is_four_state;
+  switch (type.Kind()) {
+    case TypeKind::kIntegral:
+      return type.AsIntegral().is_four_state;
+    case TypeKind::kPackedStruct:
+      return type.AsPackedStruct().is_four_state;
+    case TypeKind::kEnum:
+      return IsPackedFourState(arena[type.AsEnum().base_type], arena);
+    case TypeKind::kPackedArray:
+      return IsPackedFourState(arena[type.AsPackedArray().element_type], arena);
+    default:
+      throw common::InternalError(
+          "IsPackedFourState",
+          std::format("expected packed type, got {}", ToString(type.Kind())));
   }
-  return PackedBaseInfo(type, arena).is_four_state;
 }
 
 // Predicate for packed integral-like types eligible for fill operations.
