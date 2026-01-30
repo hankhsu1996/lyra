@@ -7,7 +7,7 @@
 namespace lyra::mir {
 
 struct ProcessId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const ProcessId&) const -> bool = default;
   auto operator<=>(const ProcessId&) const = default;
@@ -24,7 +24,7 @@ struct ProcessId {
 constexpr ProcessId kInvalidProcessId{UINT32_MAX};
 
 struct FunctionId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const FunctionId&) const -> bool = default;
   auto operator<=>(const FunctionId&) const = default;
@@ -43,7 +43,7 @@ constexpr FunctionId kInvalidFunctionId{UINT32_MAX};
 // BasicBlockId is a function-local index into Function::blocks or
 // Process::blocks, NOT a global arena index.
 struct BasicBlockId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const BasicBlockId&) const -> bool = default;
   auto operator<=>(const BasicBlockId&) const = default;
@@ -60,7 +60,7 @@ struct BasicBlockId {
 constexpr BasicBlockId kInvalidBasicBlockId{UINT32_MAX};
 
 struct PlaceId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const PlaceId&) const -> bool = default;
   auto operator<=>(const PlaceId&) const = default;
@@ -77,7 +77,7 @@ struct PlaceId {
 constexpr PlaceId kInvalidPlaceId{UINT32_MAX};
 
 struct SlotId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const SlotId&) const -> bool = default;
   auto operator<=>(const SlotId&) const = default;

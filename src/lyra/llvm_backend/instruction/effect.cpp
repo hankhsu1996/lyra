@@ -265,6 +265,15 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           [&context](const mir::MonitorControlEffect& control) -> Result<void> {
             return LowerMonitorControlEffect(context, control);
           },
+          [&context](const mir::FillPackedEffect& /*fill*/) -> Result<void> {
+            // TODO(hankhsu): Implement FillPacked lowering
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    "assignment pattern fill not yet implemented in LLVM "
+                    "backend",
+                    UnsupportedCategory::kType));
+          },
       },
       effect_op);
 }

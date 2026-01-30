@@ -192,6 +192,10 @@ struct StorageCollector {
                       [&](const MonitorControlEffect&) -> void {
                         // MonitorControlEffect only has enable flag
                       },
+                      [&](const FillPackedEffect& f) -> void {
+                        Visit(arena[f.target], arena);
+                        Visit(f.fill_value, arena);
+                      },
                   },
                   i.op);
             },

@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/pattern.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 
@@ -33,6 +34,9 @@ class Arena final {
   }
   void ReserveTasks(size_t capacity) {
     tasks_.reserve(capacity);
+  }
+  void ReservePatterns(size_t capacity) {
+    patterns_.reserve(capacity);
   }
 
   auto AddExpression(Expression expr) -> ExpressionId {
@@ -65,6 +69,12 @@ class Arena final {
     return id;
   }
 
+  auto AddPattern(Pattern pattern) -> PatternId {
+    PatternId id{static_cast<uint32_t>(patterns_.size())};
+    patterns_.push_back(std::move(pattern));
+    return id;
+  }
+
   [[nodiscard]] auto operator[](ExpressionId id) const -> const Expression& {
     return expressions_[id.value];
   }
@@ -85,12 +95,17 @@ class Arena final {
     return tasks_[id.value];
   }
 
+  [[nodiscard]] auto operator[](PatternId id) const -> const Pattern& {
+    return patterns_[id.value];
+  }
+
  private:
   std::vector<Expression> expressions_;
   std::vector<Statement> statements_;
   std::vector<Process> processes_;
   std::vector<Function> functions_;
   std::vector<Task> tasks_;
+  std::vector<Pattern> patterns_;
 };
 
 }  // namespace lyra::hir

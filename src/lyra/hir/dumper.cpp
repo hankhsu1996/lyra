@@ -187,9 +187,14 @@ void Dumper::Dump(StatementId id) {
       const auto& data = std::get<VariableDeclarationStatementData>(stmt.data);
       const Symbol& sym = (*symbols_)[data.symbol];
       *out_ << std::format("var {} : {}", sym.name, TypeString(sym.type));
-      if (data.init) {
+      if (data.initializer.has_value()) {
         *out_ << " = ";
-        Dump(data.init);
+        const auto& rvalue = *data.initializer;
+        if (rvalue.IsExpression()) {
+          Dump(rvalue.AsExpression());
+        } else {
+          *out_ << "<pattern>";
+        }
       }
       *out_ << ";\n";
       break;
@@ -311,9 +316,14 @@ void Dumper::Dump(StatementId id) {
             std::get<VariableDeclarationStatementData>(var_stmt.data);
         const Symbol& sym = (*symbols_)[var_data.symbol];
         *out_ << std::format("var {} : {}", sym.name, TypeString(sym.type));
-        if (var_data.init) {
+        if (var_data.initializer.has_value()) {
           *out_ << " = ";
-          Dump(var_data.init);
+          const auto& rvalue = *var_data.initializer;
+          if (rvalue.IsExpression()) {
+            Dump(rvalue.AsExpression());
+          } else {
+            *out_ << "<pattern>";
+          }
         }
       }
 

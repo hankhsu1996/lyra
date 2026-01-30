@@ -1,0 +1,69 @@
+feature: assignment_pattern_fill
+description: "Assignment pattern fill tests ('{default: ...})"
+
+cases:
+  - name: unbased_unsized_0
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x = '{default: '0};
+          $display("%08b", x);
+        end
+      endmodule
+    expect:
+      stdout: "00000000\n"
+
+  - name: unbased_unsized_1
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: '1};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "1111\n"
+
+  - name: unbased_unsized_x
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'x};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "xxxx\n"
+
+  - name: unbased_unsized_z
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'z};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "zzzz\n"
+
+  - name: packed_array_element_fill
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 8'hAA};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "aa aa\n"
+
+  - name: packed_array_1bit_elements
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][1:0] x = '{default: '1};
+          $display("%b %b", x[0], x[3]);
+        end
+      endmodule
+    expect:
+      stdout: "11 11\n"

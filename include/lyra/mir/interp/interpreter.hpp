@@ -244,6 +244,10 @@ class Interpreter {
   auto ExecMemIOEffect(ProcessState& state, const MemIOEffect& mem_io)
       -> Result<void>;
 
+  // Execute FillPackedEffect (assignment pattern fill)
+  auto ExecFillPackedEffect(ProcessState& state, const FillPackedEffect& fill)
+      -> Result<void>;
+
   // Execute instruction
   auto ExecInstruction(ProcessState& state, const Instruction& inst)
       -> Result<void>;

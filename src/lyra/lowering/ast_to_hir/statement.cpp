@@ -35,10 +35,12 @@
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
+#include "lyra/hir/rvalue.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/pattern.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
@@ -200,11 +202,46 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       SymbolId sym = registrar.Register(
           var_sym, SymbolKind::kVariable, type, StorageClass::kLocalStorage);
 
-      hir::ExpressionId init = hir::kInvalidExpressionId;
+      std::optional<hir::RValue> initializer;
       if (const slang::ast::Expression* init_expr = var_sym.getInitializer()) {
-        init = lower_expr(*init_expr);
-        if (!init) {
-          return hir::kInvalidStatementId;
+        // Check if initializer is a structured assignment pattern
+        if (init_expr->kind ==
+            slang::ast::ExpressionKind::StructuredAssignmentPattern) {
+          const auto& pattern_expr =
+              init_expr
+                  ->as<slang::ast::StructuredAssignmentPatternExpression>();
+
+          // Check if target type is a packed container
+          const Type& var_type = (*ctx->type_arena)[type];
+          if (var_type.Kind() == TypeKind::kPackedArray ||
+              var_type.Kind() == TypeKind::kIntegral) {
+            // Lower as Pattern
+            ExpressionLoweringView view{
+                .context = ctx, .registrar = &registrar, .frame = frame};
+            hir::PatternId pattern_id =
+                LowerPattern(pattern_expr, type, span, view);
+
+            if (!pattern_id) {
+              return hir::kInvalidStatementId;
+            }
+
+            // Store as Pattern RValue
+            initializer = hir::RValue::Pattern(pattern_id);
+          } else {
+            // Unpacked containers still use expression path for now
+            hir::ExpressionId init_id = lower_expr(*init_expr);
+            if (!init_id) {
+              return hir::kInvalidStatementId;
+            }
+            initializer = hir::RValue::Expression(init_id);
+          }
+        } else {
+          // Regular expression initialization
+          hir::ExpressionId init_id = lower_expr(*init_expr);
+          if (!init_id) {
+            return hir::kInvalidStatementId;
+          }
+          initializer = hir::RValue::Expression(init_id);
         }
       }
 
@@ -213,7 +250,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
               .kind = hir::StatementKind::kVariableDeclaration,
               .span = span,
               .data = hir::VariableDeclarationStatementData{
-                  .symbol = sym, .init = init}});
+                  .symbol = sym, .initializer = initializer}});
     }
 
     case StatementKind::ExpressionStatement: {
@@ -704,13 +741,17 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
             }
           }
 
+          std::optional<hir::RValue> initializer;
+          if (init) {
+            initializer = hir::RValue::Expression(init);
+          }
           hir::StatementId var_decl = ctx->hir_arena->AddStatement(
               hir::Statement{
                   .kind = hir::StatementKind::kVariableDeclaration,
                   .span = span,
                   .data =
                       hir::VariableDeclarationStatementData{
-                          .symbol = sym, .init = init},
+                          .symbol = sym, .initializer = initializer},
               });
           var_decls.push_back(var_decl);
         }
@@ -1008,7 +1049,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
                 .span = span,
                 .data =
                     hir::VariableDeclarationStatementData{
-                        .symbol = sym, .init = hir::kInvalidExpressionId},
+                        .symbol = sym, .initializer = std::nullopt},
             });
         var_decls.push_back(var_decl);
       }
@@ -1035,7 +1076,8 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
               .span = span,
               .data =
                   hir::VariableDeclarationStatementData{
-                      .symbol = array_temp_sym, .init = array_expr},
+                      .symbol = array_temp_sym,
+                      .initializer = hir::RValue::Expression(array_expr)},
           });
       var_decls.push_back(temp_decl);
 

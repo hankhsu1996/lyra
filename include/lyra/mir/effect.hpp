@@ -99,11 +99,35 @@ struct MonitorControlEffect {
   bool enable;  // true=$monitoron, false=$monitoroff
 };
 
+// FillPacked: fill a packed container with a replicated value.
+//
+// Contract:
+// - target: PlaceId of an Integral or PackedArray type
+// - fill_value: 1-bit integral for bit-fill (unbased-unsized literal), or
+//               element-width integral for element-fill (sized literal)
+//
+// Fill strategy (determined by interpreter/codegen from fill_value width):
+// - Bit-fill (fill_value is 1-bit): replicate single bit across all bits of
+//   target. Used for unbased-unsized literals ('0, '1, 'x, 'z).
+// - Element-fill (fill_value matches element width): copy fill_value to each
+//   element position. Used for sized literals (8'hAA for [N:0][7:0] arrays).
+//
+// Output invariants (for interpreter):
+// - RuntimeIntegral.bit_width == PackedBitWidth(target_type)
+// - RuntimeIntegral.value.size() == ceil(bit_width / 64)
+// - RuntimeIntegral.unknown.size() == ceil(bit_width / 64)
+// - Padding bits in top word are masked to zero
+struct FillPackedEffect {
+  PlaceId target;      // The container to fill (type derived from place)
+  Operand fill_value;  // The value to replicate
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
-    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect>;
+    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect,
+    FillPackedEffect>;
 
 }  // namespace lyra::mir
