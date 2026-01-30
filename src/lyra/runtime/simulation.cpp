@@ -18,6 +18,7 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
@@ -329,10 +330,11 @@ extern "C" void LyraTerminate(
     switch (kind) {
       case 0:  // kFinish
       default:
-        std::print("$finish called at time {}\n", time);
+        lyra::runtime::WriteOutput(
+            std::format("$finish called at time {}\n", time));
         break;
       case 1:  // kFatal - "fatal: <msg>\n", NOT "called at time"
-        std::print("fatal: ");
+        lyra::runtime::WriteOutput("fatal: ");
         if (message != nullptr) {
           // No width/align for fatal message
           lyra::runtime::LyraFormatSpec spec{
@@ -343,15 +345,17 @@ extern "C" void LyraTerminate(
               .reserved = {}};
           LyraPrintString(message, &spec);
         }
-        std::print("\n");
+        lyra::runtime::WriteOutput("\n");
         break;
       case 2:  // kStop
         // MVP: same as finish. Future: may pause for interactive debugger.
-        std::print("$stop called at time {}\n", time);
+        lyra::runtime::WriteOutput(
+            std::format("$stop called at time {}\n", time));
         break;
       case 3:  // kExit
         // MVP: same as finish. Future: may have program-block semantics.
-        std::print("$exit called at time {}\n", time);
+        lyra::runtime::WriteOutput(
+            std::format("$exit called at time {}\n", time));
         break;
     }
     std::fflush(stdout);
@@ -396,7 +400,7 @@ auto GetFsBaseDir() -> const std::filesystem::path& {
 }  // namespace lyra::runtime
 
 extern "C" void LyraReportTime() {
-  std::print("__LYRA_TIME__={}\n", FinalTime());
+  lyra::runtime::WriteOutput(std::format("__LYRA_TIME__={}\n", FinalTime()));
   std::fflush(stdout);
 }
 

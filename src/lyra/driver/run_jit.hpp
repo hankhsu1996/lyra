@@ -4,6 +4,7 @@ namespace lyra::driver {
 
 struct CompilationInput;
 
-auto RunLlvm(const CompilationInput& input) -> int;
+// Run simulation using in-process ORC JIT.
+auto RunJit(const CompilationInput& input) -> int;
 
 }  // namespace lyra::driver
