@@ -19,7 +19,7 @@ Guiding question when designing MIR:
 
 MIR is correct when execution behavior is no longer inferable, only executable.
 
-"Executable" means semantics are fully determined, not that constructs are expanded into implementation patterns. Language-level constructs with specific control-flow or diagnostic semantics should remain first-class MIR concepts. Implementation strategies—boolean materialization, temporary allocation, branch structuring—belong in backend lowering, not HIR-to-MIR.
+"Executable" means semantics are fully determined, not that constructs are expanded into implementation patterns. Language-level constructs with specific control-flow or diagnostic semantics should remain first-class MIR concepts. Implementation strategies - boolean materialization, temporary allocation, branch structuring - belong in backend lowering, not HIR-to-MIR.
 
 ## MIR Interpreter Scope
 
@@ -67,8 +67,8 @@ Design
 
 A variant over Module and Package. Currently supports:
 
-- `Module` — contains processes and functions
-- `Package` — placeholder for package contents
+- `Module` - contains processes and functions
+- `Package` - placeholder for package contents
 
 ### Process
 
@@ -76,8 +76,8 @@ A coroutine unit that may suspend and resume. Composed of basic blocks with an e
 
 Two kinds (HIR's 6 process kinds normalize to these 2 during lowering):
 
-- `kOnce` — `initial`, `final`
-- `kLooping` — `always`, `always_comb`, `always_ff`, `always_latch`
+- `kOnce` - `initial`, `final`
+- `kLooping` - `always`, `always_comb`, `always_ff`, `always_latch`
 
 Looping processes are **not** expanded to `while(true)` in MIR. Repetition is expressed via process semantics and the `Repeat` terminator.
 
@@ -130,7 +130,7 @@ A readable operand. Three kinds only:
 - **Use**: read from a Place (implicit load)
 - **Poison**: invalid / unreachable value (trap policy: any use is an internal error)
 
-Place-read is implicit—there is no explicit Load statement. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
+Place-read is implicit - there is no explicit Load statement. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
 
 All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
@@ -244,7 +244,7 @@ Not expanded into a loop at MIR level. Backend decides the implementation strate
 | Elaborated instances       | Runtime        |
 | Synthesized implementation | Backend        |
 
-"Synthesized implementation" means expanding a semantic construct into a pattern of primitives. If a language feature has specific evaluation or diagnostic rules, those rules should be expressed as MIR metadata or a dedicated construct—not as a procedural recipe of boolean operations, temporaries, and branches.
+"Synthesized implementation" means expanding a semantic construct into a pattern of primitives. If a language feature has specific evaluation or diagnostic rules, those rules should be expressed as MIR metadata or a dedicated construct - not as a procedural recipe of boolean operations, temporaries, and branches.
 
 ## Invariants
 
@@ -266,7 +266,7 @@ These must hold for well-formed MIR:
 **Index Projections:**
 
 - IndexProjection stores 0-based storage offset, not declaration-space index
-- HIR→MIR lowering normalizes array indices (e.g., `arr[2]` for `int arr[2:5]` becomes offset 0)
+- HIR->MIR lowering normalizes array indices (e.g., `arr[2]` for `int arr[2:5]` becomes offset 0)
 - IndexValidity retains logical bounds for diagnostic purposes
 
 **System Subroutines:**
@@ -302,7 +302,7 @@ These must hold for well-formed MIR:
 
 **Core fixed semantics:**
 
-- Statement writes RightHandSide to Place (no explicit Load — Use is implicit)
+- Statement writes RightHandSide to Place (no explicit Load - Use is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition

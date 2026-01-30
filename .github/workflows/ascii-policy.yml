@@ -1,0 +1,20 @@
+name: ASCII Policy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Check ASCII-only policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check ASCII policy
+        run: python3 tools/policy/check_ascii.py --diff-base origin/main

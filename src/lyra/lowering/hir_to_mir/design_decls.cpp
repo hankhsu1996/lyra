@@ -26,7 +26,7 @@ auto CollectDeclarations(
   int next_slot = 0;
 
   // Ordering contract: packages first (in element order), then all module
-  // instances (in BFS elaboration order from LowerDesign). This order is ABI —
+  // instances (in BFS elaboration order from LowerDesign). This order is ABI -
   // do not change without updating all consumers (LLVM layout, MIR interpreter,
   // dump).
 
@@ -96,7 +96,7 @@ auto CollectDeclarations(
 
   decls.num_design_slots = static_cast<size_t>(next_slot);
 
-  // Build reverse lookup: instance symbol → instance table index (for %m)
+  // Build reverse lookup: instance symbol -> instance table index (for %m)
   if (input.instance_table != nullptr) {
     for (uint32_t i = 0; i < input.instance_table->entries.size(); ++i) {
       decls.instance_indices[input.instance_table->entries[i].instance_sym] = i;

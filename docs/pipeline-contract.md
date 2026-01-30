@@ -1,6 +1,6 @@
 # Pipeline Contract
 
-This document defines the behavioral boundaries between pipeline stages. It is not an architecture doc (which describes structure)—it enforces rules and guardrails.
+This document defines the behavioral boundaries between pipeline stages. It is not an architecture doc (which describes structure) - it enforces rules and guardrails.
 
 ## Correctness Authority
 

@@ -461,7 +461,7 @@ auto ComputeSnapshotLayout(
       byte_size = (bit_width + 7) / 8;
       align = 8;
     } else {
-      // Unsupported type: should be rejected by eligibility gate in AST→HIR.
+      // Unsupported type: should be rejected by eligibility gate in AST->HIR.
       throw common::InternalError(
           "ComputeSnapshotLayout", "unsupported type for $monitor");
     }

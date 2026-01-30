@@ -21,8 +21,8 @@ using DesignElement = std::variant<Module, Package>;
 // Source of truth for all port connections - alias_map is derived from this.
 struct PortConnection {
   enum class Kind : int32_t {
-    kDriveParentToChild,  // input: parent expr → child port (via process)
-    kDriveChildToParent,  // output variable: child port → parent place
+    kDriveParentToChild,  // input: parent expr -> child port (via process)
+    kDriveChildToParent,  // output variable: child port -> parent place
     kAlias,               // output/inout net: true identity
   };
 

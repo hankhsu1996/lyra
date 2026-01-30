@@ -19,10 +19,10 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
 // Lower a MIR operand as a storage representation matching target_type exactly.
 // Used for aggregate element insertion where LLVM demands type-exact values.
 //
-// Allowed conversions (all unsigned/zero-extended — storage is typeless bits):
-//   - 2-state iN → 2-state iM  (ZExtOrTrunc for storage width rounding)
-//   - 2-state iN → 4-state {iM, iM}  (wrap as {zext(val), 0})
-//   - 4-state {iN, iN} → 4-state {iM, iM}  (ZExtOrTrunc both planes)
+// Allowed conversions (all unsigned/zero-extended - storage is typeless bits):
+//   - 2-state iN -> 2-state iM  (ZExtOrTrunc for storage width rounding)
+//   - 2-state iN -> 4-state {iM, iM}  (wrap as {zext(val), 0})
+//   - 4-state {iN, iN} -> 4-state {iM, iM}  (ZExtOrTrunc both planes)
 // Any other combination throws InternalError.
 auto LowerOperandAsStorage(
     Context& context, const mir::Operand& operand, llvm::Type* target_type)

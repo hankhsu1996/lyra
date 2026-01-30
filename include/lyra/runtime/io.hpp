@@ -23,10 +23,10 @@ void LyraPrintLiteral(const char* str);
 // - width: bit width for integrals (must be <= 64 for kIntegral)
 // - is_signed: true for signed interpretation
 // - output_width: encodes FormatModifiers.width (optional<int>) as int32_t:
-//     -1 = nullopt (no width specified) → auto-size hex/binary/octal to
+//     -1 = nullopt (no width specified) -> auto-size hex/binary/octal to
 //     bit-width
-//      0 = explicit %0h/%0b style → minimal output, no leading zeros
-//     >0 = explicit width → pad/truncate to exactly N digits
+//      0 = explicit %0h/%0b style -> minimal output, no leading zeros
+//     >0 = explicit width -> pad/truncate to exactly N digits
 // - precision: precision for real formats (-1 means default)
 // - zero_pad: pad with zeros instead of spaces (from %0Nd syntax)
 // - left_align: left-align within field width (from %-Nd syntax)

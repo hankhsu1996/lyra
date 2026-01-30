@@ -28,8 +28,8 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
 // Result of lvalue lowering: place to write and validity predicate.
 //
 // Per IEEE 1800-2023, OOB array access semantics:
-// - OOB read → returns unknown value (X for 4-state, 0 for 2-state)
-// - OOB write → no-op
+// - OOB read -> returns unknown value (X for 4-state, 0 for 2-state)
+// - OOB write -> no-op
 //
 // For packed element select with dynamic index, validity may be false if:
 // - Index is out of bounds

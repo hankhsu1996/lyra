@@ -43,11 +43,11 @@ Without tracking, `$display("x=%d", 42)` would not be recognized as having a for
 
 ## Current Solution (Incomplete)
 
-We normalize string literals at the AST→MIR boundary, but the solution is incomplete.
+We normalize string literals at the AST->MIR boundary, but the solution is incomplete.
 
 ### What We Do
 
-**AST→MIR Normalization**: Bit-packed integral constants with `is_string_literal=true` are converted to string-typed constants. This is done ad-hoc at specific call sites (display tasks, mem_io tasks) rather than universally.
+**AST->MIR Normalization**: Bit-packed integral constants with `is_string_literal=true` are converted to string-typed constants. This is done ad-hoc at specific call sites (display tasks, mem_io tasks) rather than universally.
 
 **MIR Level**: Display-like system calls have:
 
@@ -60,8 +60,8 @@ We normalize string literals at the AST→MIR boundary, but the solution is inco
 1. **Normalization is ad-hoc**: `NormalizeFormatExpression()` is called only at specific call sites. The correct rule should be: "Any string literal becomes a string-typed constant in MIR, regardless of usage context."
 
 2. **Semantic conflation**: We represent two distinct concepts as the same `String` type:
-   - **String data** — bytes to print (e.g., a string variable)
-   - **Format template** — a mini-language with `%d`, `%s` specifiers to parse
+   - **String data** - bytes to print (e.g., a string variable)
+   - **Format template** - a mini-language with `%d`, `%s` specifiers to parse
 
    The flag exists to disambiguate these, which is a design smell.
 

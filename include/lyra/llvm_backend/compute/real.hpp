@@ -9,7 +9,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 // Check if rvalue is a real-typed math operation (unary or binary).
-// Does NOT match casts — casts are handled by LowerCastUnified.
+// Does NOT match casts - casts are handled by LowerCastUnified.
 auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool;
 
 // Evaluate a real-typed math rvalue and return the computed value.

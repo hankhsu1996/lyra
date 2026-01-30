@@ -111,12 +111,12 @@ struct SystemTfRvalueInfo {
 };
 
 // Engine-state queries ($time, $stime, $realtime).
-// No operands — reads from engine pointer at runtime.
+// No operands - reads from engine pointer at runtime.
 struct RuntimeQueryRvalueInfo {
   RuntimeQueryKind kind;
 };
 
-// MathCallRvalueInfo: IEEE 1800 §20.8 math function call.
+// MathCallRvalueInfo: IEEE 1800 20.8 math function call.
 // Operands from Rvalue::operands (validated: size == GetMathFnArity(fn)).
 struct MathCallRvalueInfo {
   MathFn fn;

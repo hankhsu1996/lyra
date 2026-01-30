@@ -37,7 +37,7 @@ auto EvalBitCast(
     const RuntimeValue& operand, TypeId source_type, TypeId target_type,
     const TypeArena& arena) -> RuntimeValue;
 
-// Evaluate a math function call (IEEE 1800 §20.8).
+// Evaluate a math function call (IEEE 1800 20.8).
 // Operands must match the arity of the function (GetMathFnArity(fn)).
 // Operand types: real/shortreal for most functions, integral for $clog2.
 auto EvalMathCall(

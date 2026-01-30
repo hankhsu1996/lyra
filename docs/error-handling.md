@@ -2,11 +2,11 @@
 
 This document defines the **one true** error-handling model in Lyra. The goals are:
 
-- **User-facing errors are never thrown** — they are returned as `std::expected`.
-- **Compiler bugs are the only exceptions** — `InternalError` only.
-- **No information loss** — spans, categories, and notes must survive across all stages.
-- **No internal handles leak** — `OriginId` never crosses a stage boundary; it must be resolved to `SourceSpan` at the point the `Diagnostic` is produced.
-- **Smallest responsible node** — diagnostics must point to the most precise syntax that caused the issue (projection/select/operator), with structured fallback only when precision is unavailable.
+- **User-facing errors are never thrown** - they are returned as `std::expected`.
+- **Compiler bugs are the only exceptions** - `InternalError` only.
+- **No information loss** - spans, categories, and notes must survive across all stages.
+- **No internal handles leak** - `OriginId` never crosses a stage boundary; it must be resolved to `SourceSpan` at the point the `Diagnostic` is produced.
+- **Smallest responsible node** - diagnostics must point to the most precise syntax that caused the issue (projection/select/operator), with structured fallback only when precision is unavailable.
 
 ---
 
@@ -36,11 +36,11 @@ This document defines the **one true** error-handling model in Lyra. The goals a
 
 ```
 Is this user-facing? (invalid SV / unsupported / host failure)
-│
-├─ Yes → return std::unexpected(Diagnostic{...})
-│
-└─ No (compiler bug / invariant violated)
-    └─ throw common::InternalError("context", "message")
+|
++-- Yes -> return std::unexpected(Diagnostic{...})
+|
++-- No (compiler bug / invariant violated)
+    +-- throw common::InternalError("context", "message")
 ```
 
 ---
@@ -74,8 +74,8 @@ struct Diagnostic {
 
 ### Hard Rules
 
-- For `primary.kind in {kError, kUnsupported}` → `primary.span` **must be present**.
-- For `primary.kind == kHostError` → `primary.span` **may be absent**.
+- For `primary.kind in {kError, kUnsupported}` -> `primary.span` **must be present**.
+- For `primary.kind == kHostError` -> `primary.span` **may be absent**.
 - Notes:
   - `notes[i].kind` should be `kNote` (or `kWarning` for warnings).
   - `notes[i].span` is optional but recommended when applicable.
@@ -214,9 +214,9 @@ auto ResolveOriginToSpan(common::OriginId id,
 
 ### Stage Responsibility
 
-- AST→HIR: you already have slang source ranges → produce `SourceSpan` directly.
-- HIR→MIR: you have HIR nodes + source manager → produce `SourceSpan` directly (preferred).
-- MIR→LLVM / Execution: you must have `origin_map + hir_arena + source_manager` available in the stage context so you can resolve and return `Diagnostic`.
+- AST->HIR: you already have slang source ranges -> produce `SourceSpan` directly.
+- HIR->MIR: you have HIR nodes + source manager -> produce `SourceSpan` directly (preferred).
+- MIR->LLVM / Execution: you must have `origin_map + hir_arena + source_manager` available in the stage context so you can resolve and return `Diagnostic`.
 
 ### Forbidden Pattern
 
@@ -243,8 +243,8 @@ Many SystemVerilog "edge cases" are not errors; they have LRM-defined behavior. 
 
 Examples (non-exhaustive):
 
-- out-of-bounds read → X-filled value (with correct width)
-- invalid select → X
+- out-of-bounds read -> X-filled value (with correct width)
+- invalid select -> X
 - etc.
 
 If the LRM defines behavior, implement it.
@@ -334,7 +334,7 @@ Use `InternalError` instead.
 
 | Stage       | Invalid SV          | Unsupported         | Compiler Bug          | Host Failure        | SV Semantics |
 | ----------- | ------------------- | ------------------- | --------------------- | ------------------- | ------------ |
-| AST→HIR     | return `Diagnostic` | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
-| HIR→MIR     | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
-| MIR→LLVM    | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| AST->HIR    | return `Diagnostic` | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| HIR->MIR    | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
+| MIR->LLVM   | N/A                 | return `Diagnostic` | throw `InternalError` | N/A                 | N/A          |
 | Interpreter | N/A                 | return `Diagnostic` | throw `InternalError` | return `Diagnostic` | no error     |

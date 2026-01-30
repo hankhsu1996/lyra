@@ -103,7 +103,7 @@ void RecordConnection(mir::Design& design, mir::PortConnection connection) {
   design.port_connections.push_back(std::move(connection));
 }
 
-// Apply kDriveParentToChild binding: parent rvalue → child place via process.
+// Apply kDriveParentToChild binding: parent rvalue -> child place via process.
 auto ApplyDriveParentToChild(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
@@ -132,12 +132,12 @@ auto ApplyDriveParentToChild(
   return {};
 }
 
-// Apply kDriveChildToParent binding: child place → parent place via process.
+// Apply kDriveChildToParent binding: child place -> parent place via process.
 auto ApplyDriveChildToParent(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
     mir::Arena& mir_arena, mir::Design& design) -> Result<void> {
-  // Lower parent lvalue → place (pure by construction - no MirBuilder)
+  // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
   if (!parent_lv) {
@@ -181,7 +181,7 @@ auto ApplyAlias(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
     mir::Arena& mir_arena, mir::Design& design) -> Result<void> {
-  // Lower parent lvalue → place (pure by construction - no MirBuilder)
+  // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
   if (!parent_lv) {

@@ -455,7 +455,7 @@ auto IntegralXor(
     // XOR: any unknown propagates
     result.unknown[i] = b1 | b2;
     result.value[i] =
-        (a1 ^ a2) & ~result.unknown[i];  // known bits XORed; unknown→X
+        (a1 ^ a2) & ~result.unknown[i];  // known bits XORed; unknown->X
   }
 
   MaskTopWord(result.value, width);
@@ -494,7 +494,7 @@ auto IntegralNot(const RuntimeIntegral& op, uint32_t width) -> RuntimeIntegral {
 
     // NOT: invert known bits; unknown stays unknown (X)
     result.value[i] =
-        ~av & ~bv;           // known 0→1, known 1→0, unknown→0 (X encoding)
+        ~av & ~bv;           // known 0->1, known 1->0, unknown->0 (X encoding)
     result.unknown[i] = bv;  // unknowns propagate
   }
 
@@ -650,7 +650,7 @@ auto IntegralCaseZMatch(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
 auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     -> RuntimeIntegral {
   // ==? (wildcard equality): RHS X/Z bits are wildcards (match anything).
-  // LHS X/Z bits where RHS is definite → result is X.
+  // LHS X/Z bits where RHS is definite -> result is X.
   // This is ASYMMETRIC - different from casex which treats both sides as
   // wildcards.
 
@@ -673,7 +673,7 @@ auto IntegralWildcardEq(const RuntimeIntegral& lhs, const RuntimeIntegral& rhs)
     // RHS unknowns are wildcards - don't compare those positions
     uint64_t compare_mask = ~rhs_unk;
 
-    // LHS unknowns where RHS is definite → X result
+    // LHS unknowns where RHS is definite -> X result
     if ((lhs_unk & compare_mask) != 0) {
       return MakeUnknown1Bit();
     }

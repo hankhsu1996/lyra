@@ -41,7 +41,7 @@ enum class ExpressionKind {
   kIndexedPartSelect,  // x[i +: w] or x[i -: w]
   kConcat,             // {a, b, c} packed concatenation
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
-  kMathCall,         // IEEE 1800 §20.8 math function call
+  kMathCall,         // IEEE 1800 20.8 math function call
   kMaterializeInitializer,  // Initializer pattern materialized as expression
 };
 

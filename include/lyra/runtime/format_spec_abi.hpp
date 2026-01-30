@@ -5,7 +5,7 @@
 namespace lyra::runtime {
 
 // C-ABI stable format specification for runtime calls.
-// This is the wire format passed across the LLVM→runtime boundary.
+// This is the wire format passed across the LLVM->runtime boundary.
 // Sentinel: -1 means "unspecified" for width/precision.
 //
 // Layout is explicitly fixed for ABI stability between LLVM codegen and

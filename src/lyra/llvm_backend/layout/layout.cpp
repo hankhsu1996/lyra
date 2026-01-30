@@ -545,7 +545,7 @@ auto CollectFrameRoots(
   return result;
 }
 
-// Build SuspendRecord as opaque blob — suspend helpers own the layout.
+// Build SuspendRecord as opaque blob - suspend helpers own the layout.
 auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   static_assert(
       alignof(lyra::runtime::SuspendRecord) >= 8,

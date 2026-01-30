@@ -1,5 +1,5 @@
 feature: math_system_functions
-description: Tests for IEEE 1800-2023 §20.8 math system functions
+description: Tests for IEEE 1800-2023 20.8 math system functions
 
 cases:
   - name: ln_e

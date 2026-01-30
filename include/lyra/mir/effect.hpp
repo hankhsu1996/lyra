@@ -62,7 +62,7 @@ struct SystemTfEffect {
   std::vector<Operand> args;
 };
 
-// StrobeEffect: $strobe system task (IEEE 1800-2023 §21.2.2).
+// StrobeEffect: $strobe system task (IEEE 1800-2023 21.2.2).
 // Unlike $display (immediate output), $strobe defers printing to the Postponed
 // region and re-evaluates expressions using end-of-timestep values.
 // The thunk is a synthetic MIR function that reads fresh values and prints.
@@ -79,7 +79,7 @@ struct TimeFormatEffect {
   int min_width = 20;  // Minimum field width
 };
 
-// $monitor: persistent change-triggered display (IEEE 1800 §21.2.3).
+// $monitor: persistent change-triggered display (IEEE 1800 21.2.3).
 // The setup_thunk performs initial print and registers the check_thunk with
 // runtime. The check_thunk FunctionId is passed to runtime at registration,
 // not stored in MIR.
@@ -99,6 +99,34 @@ struct MonitorControlEffect {
   bool enable;  // true=$monitoron, false=$monitoroff
 };
 
+// Fill strategy for FillPackedEffect.
+// Decided at HIR->MIR lowering from source-level syntax (unbased-unsized vs
+// sized literal). Backends must not re-derive this from value width.
+enum class FillKind : uint8_t {
+  // Fill every leaf bit with a single bit value (with unknown mask if 4-state).
+  // Used for unbased-unsized literals ('0, '1, 'x, 'z).
+  // fill_value must be 1-bit.
+  kBitFill,
+
+  // Fill outer elements with an element-typed value.
+  // For nested packed arrays, backends should recurse into element types.
+  // Used for sized literals (e.g., 8'hAA for [N:0][7:0] arrays).
+  // fill_value width must match target's element width.
+  kElementFill,
+};
+
+// FillPacked: fill a packed container with a replicated value.
+//
+// Contract:
+// - target: PlaceId of an Integral or PackedArray type
+// - fill_value: 1-bit for kBitFill, element-width for kElementFill
+// - kind: explicit fill strategy (set by HIR->MIR, not inferred by backends)
+//
+// Output invariants (for interpreter):
+// - RuntimeIntegral.bit_width == PackedBitWidth(target_type)
+// - RuntimeIntegral.value.size() == ceil(bit_width / 64)
+// - RuntimeIntegral.unknown.size() == ceil(bit_width / 64)
+// - Padding bits in top word are masked to zero
 struct FillPackedEffect {
   PlaceId target;
   Operand fill_value;

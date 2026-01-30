@@ -147,7 +147,7 @@ auto LowerStringConcatValue(
 
   auto count = static_cast<int64_t>(operands.size());
 
-  // Lower each operand → string handle
+  // Lower each operand -> string handle
   std::vector<llvm::Value*> handles;
   handles.reserve(operands.size());
   for (const auto& operand : operands) {

@@ -108,11 +108,11 @@ Path is relative to `tests/sv_features/`. `--backend` is required with `--test_f
 
 See `docs/error-handling.md` for full details.
 
-| Error Type            | When to Use                            |
-| --------------------- | -------------------------------------- |
-| `DiagnosticException` | AST→HIR lowering only (has source loc) |
-| `InternalError`       | Compiler bugs (invariant violations)   |
-| `std::runtime_error`  | Runtime errors                         |
+| Error Type            | When to Use                             |
+| --------------------- | --------------------------------------- |
+| `DiagnosticException` | AST->HIR lowering only (has source loc) |
+| `InternalError`       | Compiler bugs (invariant violations)    |
+| `std::runtime_error`  | Runtime errors                          |
 
 For shared code, return `std::expected<T, std::string>` and let callers convert to `std::runtime_error`.
 

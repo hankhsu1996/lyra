@@ -279,10 +279,10 @@ auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
 auto MakeIntegralFilled(uint32_t bit_width, bool value_bit, bool unknown_bit)
     -> RuntimeValue {
   // Contract: creates an integral with all bits set to the same 4-state value
-  // value_bit=0, unknown_bit=0 → all 0
-  // value_bit=1, unknown_bit=0 → all 1
-  // value_bit=0, unknown_bit=1 → all X
-  // value_bit=1, unknown_bit=1 → all Z
+  // value_bit=0, unknown_bit=0 -> all 0
+  // value_bit=1, unknown_bit=0 -> all 1
+  // value_bit=0, unknown_bit=1 -> all X
+  // value_bit=1, unknown_bit=1 -> all Z
   if (bit_width == 0) {
     throw lyra::common::InternalError(
         "MakeIntegralFilled", "bit_width must be > 0");
@@ -625,7 +625,7 @@ auto ToHexString(const RuntimeIntegral& v) -> std::string {
   }
 
   // 4-state path: process nibble by nibble (LRM 21.2.1.3)
-  // All-X nibble → 'x', all-Z nibble → 'z', mixed unknown → 'X'
+  // All-X nibble -> 'x', all-Z nibble -> 'z', mixed unknown -> 'X'
   std::string result;
   uint32_t num_nibbles = (v.bit_width + 3) / 4;
 
@@ -730,7 +730,7 @@ auto ToOctalString(const RuntimeIntegral& v) -> std::string {
 
   // Process 3 bits at a time (octal digit)
   // For known values, octet_unk is always 0
-  // For 4-state: All-X → 'x', all-Z → 'z', mixed unknown → 'X'
+  // For 4-state: All-X -> 'x', all-Z -> 'z', mixed unknown -> 'X'
   std::string result;
   uint32_t num_octets = (v.bit_width + 2) / 3;
 
