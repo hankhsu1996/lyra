@@ -71,3 +71,29 @@ cases:
       endmodule
     expect:
       stdout: "foobar\n"
+
+  - name: string_return_in_loop
+    description: |
+      Tests sret string return across multiple iterations.
+      Verifies tmp storage is correctly managed (no leaks/double-free).
+      The staging temp must be properly destroyed before each MoveInit.
+    sv: |
+      module Test;
+        function string make_msg(int i);
+          string result;
+          result = $sformatf("iter%0d", i);
+          return result;
+        endfunction
+        initial begin
+          for (int i = 0; i < 3; i++) begin
+            string s;
+            s = make_msg(i);
+            $display("%s", s);
+          end
+        end
+      endmodule
+    expect:
+      stdout: |
+        iter0
+        iter1
+        iter2
