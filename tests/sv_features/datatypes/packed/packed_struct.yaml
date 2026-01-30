@@ -453,3 +453,46 @@ cases:
     expect:
       variables:
         result: 4095
+
+  - name: unpacked_struct_array
+    description: Unpacked array of packed structs
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        my_struct_t arr [4];
+        int result_a, result_b;
+        initial begin
+          arr[0] = '{8'hAA, 8'hBB};
+          arr[1] = '{8'hCC, 8'hDD};
+          result_a = arr[0].a;
+          result_b = arr[1].b;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: "0xaa"
+        result_b: "0xdd"
+
+  - name: packed_struct_array
+    description: Packed array of packed structs
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [7:0] b;
+        } my_struct_t;
+        typedef my_struct_t [1:0] pair_t;  // Packed array of structs
+        pair_t p;
+        int result;
+        initial begin
+          p[0] = '{8'hAA, 8'hBB};
+          p[1] = '{8'hCC, 8'hDD};
+          result = p[0].a + p[1].b;  // 0xAA + 0xDD
+        end
+      endmodule
+    expect:
+      variables:
+        result: 391
