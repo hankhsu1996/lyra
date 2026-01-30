@@ -68,10 +68,11 @@ auto LowerPackage(
         SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
 
         // Check for unsupported return types
-        if (!ret_type.isIntegral() && !ret_type.isVoid()) {
+        if (!ret_type.isIntegral() && !ret_type.isVoid() &&
+            !ret_type.isString()) {
           std::string reason = std::format(
-              "function return type '{}' is not supported (only integral or "
-              "void return types are supported)",
+              "function return type '{}' is not supported (only integral, "
+              "void, or string return types are supported)",
               std::string(ret_type.toString()));
           ctx->sink->Error(func_span, reason);
           // Register as unsupported so call sites get clear errors

@@ -55,4 +55,18 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
 // - Void: InternalError
 void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id);
 
+// Move-initialize dst_ptr from src_ptr.
+// Transfers ownership: loads from src, stores to dst, nulls out src.
+// More efficient than CloneValue (no retain/release).
+//
+// CONTRACT:
+// - Pre-condition: dst_ptr is UNINITIALIZED (no live value to destroy).
+//   Caller must Destroy() any previous value before calling this.
+// - Post-condition: dst_ptr holds the value, src_ptr is nulled out.
+//
+// This is NOT MoveAssign (which would destroy dst internally). The caller
+// is responsible for ensuring dst is clean before the move.
+void MoveInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
 }  // namespace lyra::lowering::mir_to_llvm

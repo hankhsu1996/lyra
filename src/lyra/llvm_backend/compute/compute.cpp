@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
+#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -106,6 +107,44 @@ auto LowerVoidUserCall(
   return {};
 }
 
+// Handle out-param user call (managed return type).
+// Caller provides output pointer; callee writes directly to it.
+auto LowerOutParamUserCall(
+    Context& context, const mir::Compute& compute,
+    const mir::UserCallRvalueInfo& info, const mir::Arena& arena)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  llvm::Function* callee = context.GetUserFunction(info.callee);
+  const auto& func = arena[info.callee];
+
+  // Get target pointer for out-param output
+  auto target_ptr = context.GetPlacePointer(compute.target);
+  if (!target_ptr) return std::unexpected(target_ptr.error());
+
+  // CONTRACT: Out-param calling convention for managed returns.
+  // - Caller (here): Destroy() any existing value, making out slot
+  // uninitialized
+  // - Callee: MUST fully initialize the out slot via MoveInit before returning
+  // - Valid values include nullptr (represents empty string/container)
+  // Do NOT remove this Destroy - callee assumes uninitialized destination.
+  Destroy(context, *target_ptr, func.signature.return_type);
+
+  // Build args: [out_ptr, design_ptr, engine_ptr, user_args...]
+  std::vector<llvm::Value*> args;
+  args.push_back(*target_ptr);  // out-param
+  args.push_back(context.GetDesignPointer());
+  args.push_back(context.GetEnginePointer());
+  for (const auto& operand : compute.value.operands) {
+    auto val_result = LowerOperand(context, operand);
+    if (!val_result) return std::unexpected(val_result.error());
+    args.push_back(*val_result);
+  }
+
+  // Void call - callee writes directly to out-param
+  builder.CreateCall(callee, args);
+  return {};
+}
+
 }  // namespace
 
 auto LowerCompute(Context& context, const mir::Compute& compute)
@@ -158,6 +197,11 @@ auto LowerCompute(Context& context, const mir::Compute& compute)
             return LowerPackedCoreRvalue(context, compute);
           },
           [&](const mir::UserCallRvalueInfo& info) -> Result<void> {
+            // Check if this is an out-param call (managed return type)
+            if (context.FunctionUsesSret(info.callee)) {
+              return LowerOutParamUserCall(
+                  context, compute, info, context.GetMirArena());
+            }
             llvm::Function* callee = context.GetUserFunction(info.callee);
             if (callee->getReturnType()->isVoidTy()) {
               return LowerVoidUserCall(context, compute, info);

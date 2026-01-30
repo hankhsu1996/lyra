@@ -29,6 +29,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
+#include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -418,10 +419,17 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
     -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
 
-  // First two parameters are DesignState* and Engine*
-  // DesignState* is for accessing design variables
-  // Engine* is for write notification when modifying design state
+  // Check if return type requires sret calling convention
+  bool uses_sret = RequiresSret(sig.return_type, types_);
+
   std::vector<llvm::Type*> param_types;
+
+  // For sret: first parameter is the output pointer
+  if (uses_sret) {
+    param_types.push_back(ptr_ty);  // sret ptr
+  }
+
+  // DesignState* and Engine* follow
   param_types.push_back(ptr_ty);  // DesignState*
   param_types.push_back(ptr_ty);  // Engine*
 
@@ -462,38 +470,44 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
     param_types.push_back(param_ty);
   }
 
-  // Return type from signature
-  const Type& ret_type = types_[sig.return_type];
+  // Return type: void for sret, otherwise derive from signature
   llvm::Type* llvm_ret_type = nullptr;
 
-  if (ret_type.Kind() == TypeKind::kVoid) {
+  if (uses_sret) {
+    // Sret functions return void - the result is written to the sret pointer
     llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
-  } else if (
-      ret_type.Kind() == TypeKind::kString ||
-      ret_type.Kind() == TypeKind::kDynamicArray ||
-      ret_type.Kind() == TypeKind::kQueue) {
-    llvm_ret_type = ptr_ty;
-  } else if (ret_type.Kind() == TypeKind::kReal) {
-    llvm_ret_type = llvm::Type::getDoubleTy(*llvm_context_);
-  } else if (ret_type.Kind() == TypeKind::kShortReal) {
-    llvm_ret_type = llvm::Type::getFloatTy(*llvm_context_);
-  } else if (IsPacked(ret_type)) {
-    auto width = PackedBitWidth(ret_type, types_);
-    if (IsPackedFourState(ret_type, types_)) {
-      llvm_ret_type = GetFourStateStructType(*llvm_context_, width);
-    } else {
-      llvm_ret_type = GetLlvmStorageType(*llvm_context_, width);
-    }
   } else {
-    return std::unexpected(
-        GetDiagnosticContext().MakeUnsupported(
-            current_origin_,
-            std::format(
-                "unsupported return type: {}", ToString(ret_type.Kind())),
-            UnsupportedCategory::kType));
+    const Type& ret_type = types_[sig.return_type];
+
+    if (ret_type.Kind() == TypeKind::kVoid) {
+      llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
+    } else if (ret_type.Kind() == TypeKind::kReal) {
+      llvm_ret_type = llvm::Type::getDoubleTy(*llvm_context_);
+    } else if (ret_type.Kind() == TypeKind::kShortReal) {
+      llvm_ret_type = llvm::Type::getFloatTy(*llvm_context_);
+    } else if (IsPacked(ret_type)) {
+      auto width = PackedBitWidth(ret_type, types_);
+      if (IsPackedFourState(ret_type, types_)) {
+        llvm_ret_type = GetFourStateStructType(*llvm_context_, width);
+      } else {
+        llvm_ret_type = GetLlvmStorageType(*llvm_context_, width);
+      }
+    } else {
+      return std::unexpected(
+          GetDiagnosticContext().MakeUnsupported(
+              current_origin_,
+              std::format(
+                  "unsupported return type: {}", ToString(ret_type.Kind())),
+              UnsupportedCategory::kType));
+    }
   }
 
   return llvm::FunctionType::get(llvm_ret_type, param_types, false);
+}
+
+auto Context::FunctionUsesSret(mir::FunctionId func_id) const -> bool {
+  const auto& func = arena_[func_id];
+  return RequiresSret(func.signature.return_type, types_);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

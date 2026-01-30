@@ -62,4 +62,8 @@ auto NeedsDestroy(TypeId type_id, const TypeArena& types) -> bool {
   return TypeContainsManaged(type_id, types);
 }
 
+auto RequiresSret(TypeId type_id, const TypeArena& types) -> bool {
+  return NeedsDestroy(type_id, types);
+}
+
 }  // namespace lyra::lowering::mir_to_llvm
