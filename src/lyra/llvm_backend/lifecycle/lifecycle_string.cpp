@@ -34,4 +34,14 @@ void MoveCleanupString(Context& ctx, llvm::Value* ptr) {
   ctx.GetBuilder().CreateStore(null_val, ptr);
 }
 
+void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
+  auto& builder = ctx.GetBuilder();
+  auto* handle_ty = GetStringHandleType(ctx);
+
+  // Load source handle, clone/retain it, store to dst
+  auto* src_handle = builder.CreateLoad(handle_ty, src_ptr, "copy.str.src");
+  auto* cloned = builder.CreateCall(ctx.GetLyraStringRetain(), {src_handle});
+  builder.CreateStore(cloned, dst_ptr);
+}
+
 }  // namespace lyra::lowering::mir_to_llvm::detail

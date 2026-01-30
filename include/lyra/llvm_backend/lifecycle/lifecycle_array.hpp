@@ -31,5 +31,12 @@ void DestroyArray(Context& ctx, llvm::Value* array_ptr, TypeId array_type_id);
 void MoveCleanupArray(
     Context& ctx, llvm::Value* array_ptr, TypeId array_type_id);
 
+// Copy-initialize dst array from src array (element-by-element).
+// Recursively calls top-level CopyInit() for each element.
+// Note: Uses element-by-element copy even for POD arrays (no memcpy fast-path).
+void CopyInitArray(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr,
+    TypeId array_type_id);
+
 }  // namespace detail
 }  // namespace lyra::lowering::mir_to_llvm

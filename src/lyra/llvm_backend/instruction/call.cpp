@@ -37,12 +37,18 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
     if (!dest_ptr) return std::unexpected(dest_ptr.error());
 
     // CONTRACT: Out-param calling convention for managed returns.
-    // - Caller (here): Destroy() any existing value, making out slot
-    //   uninitialized
-    // - Callee: MUST fully initialize the out slot via MoveInit before
-    //   returning
-    // - Valid values include nullptr (represents empty string/container)
-    // Do NOT remove this Destroy - callee assumes uninitialized destination.
+    //
+    // Caller (here):
+    //   Destroy() any existing value, making the out slot uninitialized.
+    //   This is the ONLY place where we deliberately create uninitialized
+    //   storage at an ABI boundary.
+    //
+    // Callee (DefineUserFunction exit block):
+    //   MUST fully initialize the out slot via MoveInit before returning.
+    //   Valid values include nullptr (represents empty string/container).
+    //
+    // Do NOT remove this Destroy - callee uses MoveInit which requires dst
+    // to be uninitialized.
     Destroy(context, *dest_ptr, return_type);
     args.push_back(*dest_ptr);
   }

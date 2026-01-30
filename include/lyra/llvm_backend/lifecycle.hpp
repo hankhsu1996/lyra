@@ -8,6 +8,29 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 
+// Lifecycle API Contracts
+//
+// CopyInit(dst, src):
+//   PRE:  dst is uninitialized storage (no live value)
+//   POST: dst becomes a clone of src; src unchanged
+//
+// CopyAssign(dst, src):
+//   PRE:  dst is initialized (may hold a live value)
+//   POST: Destroy(dst) then CopyInit(dst, src)
+//
+// MoveInit(dst, src):
+//   PRE:  dst is uninitialized storage (no live value)
+//   POST: dst owns src's value; src is nulled/empty (moved-from)
+//
+// MoveAssign(dst, src):
+//   PRE:  dst is initialized (may hold a live value)
+//   POST: Destroy(dst) then MoveInit(dst, src)
+//
+// Important: The storage initialization invariant (all locals/temps/return
+// slots are default-initialized at function entry) makes Destroy() safe on
+// first access. But Init vs Assign semantics matter for correctness - misusing
+// Init on an initialized slot leaks the old value.
+
 // Design Note: ConstructDefault is deliberately deferred.
 //
 // Current state:
@@ -33,40 +56,47 @@ class Context;
 // - Void: InternalError
 void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
 
+// Copy-initialize dst_ptr from src_ptr (dst is uninitialized).
+//
+// Per-TypeKind semantics:
+// - Scalars: load + store
+// - String: retain/clone handle
+// - DynamicArray: clone container
+// - Queue: clone container
+// - UnpackedStruct: recurse field-by-field
+// - UnpackedArray: recurse element-by-element
+// - Void: InternalError
+void CopyInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
+// Copy-assign src_ptr to dst_ptr (dst may hold a live value).
+// Equivalent to: Destroy(dst) + CopyInit(dst, src)
+void CopyAssign(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
+// Move-initialize dst_ptr from src_ptr (dst is uninitialized).
+// Transfers ownership: loads from src, stores to dst, nulls out src.
+// More efficient than CopyInit (no retain/clone).
+void MoveInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
+// Move-assign src_ptr to dst_ptr (dst may hold a live value).
+// Equivalent to: Destroy(dst) + MoveInit(dst, src)
+void MoveAssign(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
 // Clone/retain a value, returning new owned value.
 //
 // Per-TypeKind semantics:
 // - Scalars: return value unchanged
 // - String: retain the handle
 // - DynamicArray, Queue: clone the handle
-// - Aggregates (struct, union, array): InternalError (must use field-by-field)
+// - Aggregates (struct, union, array): InternalError (must use CopyInit)
 // - Void: InternalError
+//
+// Note: For new code, prefer CopyInit/CopyAssign which work with pointers
+// and support aggregates. CloneValue is retained for leaf-value paths.
 [[nodiscard]] auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
     -> llvm::Value*;
-
-// Null out managed fields after move from src_ptr.
-//
-// Per-TypeKind semantics:
-// - Scalars: no-op
-// - String, DynamicArray, Queue: store nullptr
-// - UnpackedStruct: recurse for managed fields
-// - UnpackedUnion: no-op (2-state only)
-// - UnpackedArray: recurse for managed elements
-// - Void: InternalError
-void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id);
-
-// Move-initialize dst_ptr from src_ptr.
-// Transfers ownership: loads from src, stores to dst, nulls out src.
-// More efficient than CloneValue (no retain/release).
-//
-// CONTRACT:
-// - Pre-condition: dst_ptr is UNINITIALIZED (no live value to destroy).
-//   Caller must Destroy() any previous value before calling this.
-// - Post-condition: dst_ptr holds the value, src_ptr is nulled out.
-//
-// This is NOT MoveAssign (which would destroy dst internally). The caller
-// is responsible for ensuring dst is clean before the move.
-void MoveInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
 
 }  // namespace lyra::lowering::mir_to_llvm

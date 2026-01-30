@@ -30,6 +30,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/statement.hpp"
+#include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
@@ -1256,17 +1257,24 @@ auto DefineUserFunction(
     llvm::Type* ret_llvm_type = uses_sret ? ptr_ty : llvm_func->getReturnType();
     return_value_ptr = builder.CreateAlloca(ret_llvm_type, nullptr, "retval");
 
-    // Initialize return slot to nullptr for managed types (ensures clean state)
-    if (uses_sret) {
-      auto* null_val =
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-      builder.CreateStore(null_val, return_value_ptr);
-    }
+    // Default-initialize the return slot (part of the storage invariant).
+    // For managed types: handle becomes nullptr so MoveInit from this slot
+    // at function exit transfers a valid (empty) value to the caller.
+    // This maintains the invariant that all storage is initialized.
+    EmitSVDefaultInit(context, return_value_ptr, func.signature.return_type);
   }
 
   // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
   // entry. This matches MIR interpreter semantics and ensures deterministic
   // behavior. Order: 1) allocate all, 2) initialize all, 3) store parameters
+  //
+  // CONTRACT: All function-local storage is default-initialized at function
+  // entry, including: kLocal, kTemp, and return slots.
+  // - Managed handles become nullptr (Destroy is a no-op on empty).
+  // - 4-state values become X per SV default init rules.
+  //
+  // Therefore: commit/assign paths may safely destroy old values even on first
+  // write, because Destroy(nullptr) is a no-op for managed types.
   std::vector<std::pair<llvm::AllocaInst*, TypeId>> all_allocas;
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
@@ -1382,9 +1390,15 @@ auto DefineUserFunction(
   if (ret_type.Kind() == TypeKind::kVoid) {
     builder.CreateRetVoid();
   } else if (uses_sret) {
-    // Out-param return: move from local slot to caller's out pointer.
-    // CONTRACT: Caller has already Destroy()'d the out slot, so we use
-    // MoveInit (dst is uninitialized). See LowerSretUserCall for caller side.
+    // CONTRACT: Out-param return convention (callee side).
+    //
+    // Caller has already Destroy()'d the out slot (see LowerCall), so dst
+    // is uninitialized. We use MoveInit (not MoveAssign) because:
+    // - dst is known-uninitialized at this ABI boundary
+    // - MoveAssign would redundantly Destroy an already-empty slot
+    //
+    // The return_value_ptr local was default-initialized at function entry,
+    // and holds the value computed during function execution.
     MoveInit(context, sret_ptr, return_value_ptr, func.signature.return_type);
     builder.CreateRetVoid();
   } else {

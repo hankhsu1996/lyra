@@ -6,6 +6,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
@@ -14,7 +15,9 @@
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -36,13 +39,16 @@ auto AssignField(
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-
-    // Load source string handle and store with ownership policy.
-    // Source null-out (for move) is handled at struct level, not here.
-    llvm::Value* new_val =
-        builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-    detail::CommitStringField(context, target_field_ptr, new_val, policy);
+    // Use symmetric lifecycle API for string field assignment.
+    // CopyAssign: Destroy(dst) + CopyInit(dst, src) - src unchanged
+    // MoveAssign: Destroy(dst) + MoveInit(dst, src) - src nulled per-field
+    if (policy == OwnershipPolicy::kClone) {
+      CopyAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+    } else {
+      // kMove: MoveAssign handles destroy old dst, transfer value, null out
+      // src. Source null-out is per-field (not deferred to struct level).
+      MoveAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+    }
     return {};
   }
 
@@ -69,6 +75,12 @@ auto AssignField(
 }
 
 // Assign struct field-by-field for structs containing string fields.
+//
+// CONTRACT: No rollback on failure. Field assignments proceed in order; if
+// field N fails, fields 0..N-1 have already been committed. Since we only
+// throw InternalError (not recoverable user errors) from lifecycle ops,
+// partial assignment state is acceptable - the process would abort anyway.
+// This matches SV semantics where assignment is atomic at the language level.
 auto AssignStructFieldByField(
     Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
@@ -108,6 +120,18 @@ auto AssignStructFieldByField(
 auto CommitStructFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+  // CONTRACT: kMove is only valid from temps (no aliasing possible).
+  // MoveAssign nulls the source per-field, so kMove from a non-temp would
+  // corrupt shared state.
+  if (policy == OwnershipPolicy::kMove) {
+    const auto& arena = ctx.GetMirArena();
+    const auto& src_place = arena[source];
+    if (src_place.root.kind != mir::PlaceRoot::Kind::kTemp) {
+      throw common::InternalError(
+          "CommitStructFieldByField", "kMove from non-temp source");
+    }
+  }
+
   // Get target pointer
   auto target_ptr_or_err = ctx.GetPlacePointer(target);
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
@@ -122,12 +146,11 @@ auto CommitStructFieldByField(
       ctx, source_ptr, target_ptr, struct_type_id, policy);
   if (!result) return result;
 
-  // Notify if design slot (after stores complete, before source cleanup)
+  // Notify if design slot (after stores complete)
   CommitNotifyAggregateIfDesignSlot(ctx, target);
 
-  // After move: null out source managed fields to prevent double-release.
-  // CommitMoveCleanupIfTemp handles gating (only kMove from temps).
-  CommitMoveCleanupIfTemp(ctx, source, policy, struct_type_id);
+  // Note: Source cleanup for kMove is handled per-field via MoveAssign.
+  // No CommitMoveCleanupIfTemp needed here - MoveAssign nulls src per-field.
 
   return {};
 }

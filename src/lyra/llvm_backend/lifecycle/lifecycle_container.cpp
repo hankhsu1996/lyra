@@ -3,6 +3,8 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 
+#include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
@@ -32,6 +34,34 @@ void MoveCleanupContainer(Context& ctx, llvm::Value* ptr) {
   auto* null_val =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(handle_ty));
   ctx.GetBuilder().CreateStore(null_val, ptr);
+}
+
+void CopyInitContainer(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = ctx.GetTypeArena();
+  const Type& type = types[type_id];
+
+  auto& builder = ctx.GetBuilder();
+  auto* handle_ty = GetContainerHandleType(ctx);
+  auto* src_handle = builder.CreateLoad(handle_ty, src_ptr, "copy.ctr.src");
+
+  // Type-directed dispatch: each container type has its own clone function.
+  // No assumptions about representation equality between types.
+  llvm::Value* cloned = nullptr;
+  switch (type.Kind()) {
+    case TypeKind::kDynamicArray:
+      cloned = builder.CreateCall(ctx.GetLyraDynArrayClone(), {src_handle});
+      break;
+    case TypeKind::kQueue:
+      // Queue clone is not yet implemented.
+      throw common::InternalError(
+          "CopyInitContainer", "queue clone is not implemented");
+    default:
+      throw common::InternalError(
+          "CopyInitContainer", "unexpected type kind for container");
+  }
+
+  builder.CreateStore(cloned, dst_ptr);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm::detail

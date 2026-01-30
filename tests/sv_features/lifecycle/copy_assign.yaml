@@ -1,0 +1,214 @@
+feature: lifecycle_copy_assign
+description: Lifecycle copy and assign semantics for managed types (strings, structs)
+
+cases:
+  - name: string_copy_independence
+    description: String copy creates independent value - modifying original doesn't affect copy
+    sv: |
+      module Test;
+        initial begin
+          automatic string a = "original";
+          automatic string b;
+          b = a;  // Copy
+          a = "modified";
+          $display("a=%s b=%s", a, b);
+        end
+      endmodule
+    expect:
+      stdout: "a=modified b=original\n"
+
+  - name: string_overwrite_releases_old
+    description: Assigning to a string releases the old value
+    sv: |
+      module Test;
+        initial begin
+          automatic string b = "first";
+          automatic string a = "second";
+          b = a;  // Should release "first", copy "second"
+          $display("b=%s", b);
+        end
+      endmodule
+    expect:
+      stdout: "b=second\n"
+
+  - name: string_multiple_assigns
+    description: Multiple assigns to same variable
+    sv: |
+      module Test;
+        initial begin
+          automatic string s;
+          s = "one";
+          s = "two";
+          s = "three";
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout: "three\n"
+
+  - name: struct_with_string_copy_independence
+    description: Struct containing string - copy creates independent values
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int value;
+        } data_t;
+
+        initial begin
+          automatic data_t a;
+          automatic data_t b;
+          a.name = "original";
+          a.value = 42;
+          b = a;  // Copy struct
+          a.name = "modified";
+          a.value = 99;
+          $display("a.name=%s a.value=%0d", a.name, a.value);
+          $display("b.name=%s b.value=%0d", b.name, b.value);
+        end
+      endmodule
+    expect:
+      stdout: |
+        a.name=modified a.value=99
+        b.name=original b.value=42
+
+  - name: struct_with_string_overwrite
+    description: Struct assign to initialized destination releases old string
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        initial begin
+          automatic wrapper_t a;
+          automatic wrapper_t b;
+          a.s = "first";
+          b.s = "second";
+          a = b;  // Should release a.s="first", copy b.s="second"
+          $display("a.s=%s", a.s);
+        end
+      endmodule
+    expect:
+      stdout: "a.s=second\n"
+
+  - name: nested_struct_with_string
+    description: Nested struct containing string - deep copy
+    sv: |
+      module Test;
+        typedef struct {
+          string inner;
+        } inner_t;
+        typedef struct {
+          inner_t nested;
+          int x;
+        } outer_t;
+
+        initial begin
+          automatic outer_t a;
+          automatic outer_t b;
+          a.nested.inner = "hello";
+          a.x = 10;
+          b = a;  // Deep copy
+          a.nested.inner = "goodbye";
+          a.x = 20;
+          $display("a=%s,%0d b=%s,%0d", a.nested.inner, a.x, b.nested.inner, b.x);
+        end
+      endmodule
+    expect:
+      stdout: "a=goodbye,20 b=hello,10\n"
+
+  - name: array_of_strings_copy
+    description: Fixed unpacked array of strings - copy creates independent values
+    sv: |
+      module Test;
+        initial begin
+          automatic string a[2];
+          automatic string b[2];
+          a[0] = "foo";
+          a[1] = "bar";
+          b = a;  // Copy array
+          a[0] = "changed";
+          $display("a[0]=%s a[1]=%s", a[0], a[1]);
+          $display("b[0]=%s b[1]=%s", b[0], b[1]);
+        end
+      endmodule
+    expect:
+      stdout: |
+        a[0]=changed a[1]=bar
+        b[0]=foo b[1]=bar
+
+  - name: struct_repeated_assigns
+    description: Multiple assigns to same struct - no double-free or leak
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        initial begin
+          automatic wrapper_t a;
+          automatic wrapper_t b;
+          automatic wrapper_t c;
+          a.s = "first";
+          b.s = "second";
+          c.s = "third";
+          // Repeated assignments to a
+          a = b;  // first -> second
+          a = c;  // second -> third
+          a = b;  // third -> second
+          $display("a.s=%s", a.s);
+        end
+      endmodule
+    expect:
+      stdout: "a.s=second\n"
+
+  - name: array_repeated_assigns
+    description: Multiple assigns to same array - no double-free or leak
+    sv: |
+      module Test;
+        initial begin
+          automatic string a[2];
+          automatic string b[2];
+          automatic string c[2];
+          a[0] = "a0"; a[1] = "a1";
+          b[0] = "b0"; b[1] = "b1";
+          c[0] = "c0"; c[1] = "c1";
+          // Repeated assignments
+          a = b;
+          a = c;
+          a = b;
+          $display("a[0]=%s a[1]=%s", a[0], a[1]);
+        end
+      endmodule
+    expect:
+      stdout: "a[0]=b0 a[1]=b1\n"
+
+  - name: function_return_string_to_struct
+    description: Function return value (move path) assigned to struct field
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int id;
+        } record_t;
+
+        function string make_name(int id);
+          automatic string prefix = "item_";
+          return {prefix, $sformatf("%0d", id)};
+        endfunction
+
+        initial begin
+          automatic record_t r;
+          r.id = 42;
+          r.name = make_name(r.id);  // Move from function return
+          $display("r.name=%s r.id=%0d", r.name, r.id);
+          // Overwrite to verify no leak
+          r.name = make_name(99);
+          $display("r.name=%s", r.name);
+        end
+      endmodule
+    expect:
+      stdout: |
+        r.name=item_42 r.id=42
+        r.name=item_99
