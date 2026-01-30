@@ -175,6 +175,34 @@ auto Context::GetLyraStringConcat() -> llvm::Function* {
   return lyra_string_concat_;
 }
 
+auto Context::GetLyraStringFromPacked() -> llvm::Function* {
+  if (lyra_string_from_packed_ == nullptr) {
+    // ptr LyraStringFromPacked(ptr data, i32 bit_width)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false);
+    lyra_string_from_packed_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFromPacked",
+        llvm_module_.get());
+  }
+  return lyra_string_from_packed_;
+}
+
+auto Context::GetLyraPackedFromString() -> llvm::Function* {
+  if (lyra_packed_from_string_ == nullptr) {
+    // void LyraPackedFromString(ptr handle, ptr out_data, i32 bit_width)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, i32_ty}, false);
+    lyra_packed_from_string_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPackedFromString",
+        llvm_module_.get());
+  }
+  return lyra_packed_from_string_;
+}
+
 auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
     // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,

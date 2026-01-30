@@ -23,6 +23,21 @@ auto LyraStringRetain(LyraStringHandle handle) -> LyraStringHandle;
 auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
     -> LyraStringHandle;
 
+// Convert packed bits to string (bytes from MSB to LSB, skip leading zeros).
+// data: pointer to packed bits (little-endian bytes)
+// bit_width: number of bits in packed value
+// Returns owned handle (+1 refcount).
+auto LyraStringFromPacked(const void* data, int32_t bit_width)
+    -> LyraStringHandle;
+
+// Convert string to packed bits (bytes packed MSB first).
+// handle: input string
+// out_data: output buffer for packed bits (little-endian bytes)
+// bit_width: target bit width (determines output size)
+// Pads with zeros on left if string is shorter, truncates rightmost if longer.
+void LyraPackedFromString(
+    LyraStringHandle handle, void* out_data, int32_t bit_width);
+
 // Decrement refcount, free if 0. No-op for null.
 void LyraStringRelease(LyraStringHandle handle);
 

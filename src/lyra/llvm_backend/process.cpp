@@ -608,6 +608,7 @@ struct PlaceCollector {
               std::is_same_v<T, mir::AggregateRvalueInfo> ||
               std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
               std::is_same_v<T, mir::ConcatRvalueInfo> ||
+              std::is_same_v<T, mir::ReplicateRvalueInfo> ||
               std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
               std::is_same_v<T, mir::MathCallRvalueInfo> ||
               std::is_same_v<T, mir::SystemTfRvalueInfo>) {

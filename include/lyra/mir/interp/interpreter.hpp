@@ -169,6 +169,8 @@ class Interpreter {
       -> Result<RuntimeValue>;
   auto EvalConcat(ProcessState& state, const Rvalue& rv)
       -> Result<RuntimeValue>;
+  auto EvalReplicate(ProcessState& state, const Rvalue& rv)
+      -> Result<RuntimeValue>;
   auto EvalIndexValidity(ProcessState& state, const Rvalue& rv)
       -> Result<RuntimeValue>;
   auto EvalSFormat(ProcessState& state, const Rvalue& rv)

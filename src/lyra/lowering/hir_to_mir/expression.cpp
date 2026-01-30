@@ -1531,6 +1531,35 @@ auto LowerPackedFieldAccess(
 auto LowerConcat(
     const hir::ConcatExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> Result<mir::Operand> {
+  const Context& ctx = builder.GetContext();
+  const auto& types = *ctx.type_arena;
+
+  // Single-operand concat with packed result and non-packed operand is actually
+  // a type conversion (e.g., string → packed). Slang uses concat for implicit
+  // conversions, but backends expect packed concat operands to be packed.
+  // Emit Cast to make the conversion explicit. We use Cast (not BitCast)
+  // because string↔packed is a semantic conversion with padding/truncation
+  // rules, not a bit-level reinterpretation.
+  if (data.operands.size() == 1) {
+    const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operands[0]];
+    bool result_is_packed = IsPacked(types[expr.type]);
+    bool operand_is_packed = IsPacked(types[operand_expr.type]);
+
+    if (result_is_packed && !operand_is_packed) {
+      Result<mir::Operand> op_result =
+          LowerExpression(data.operands[0], builder);
+      if (!op_result) return std::unexpected(op_result.error());
+
+      mir::Rvalue rvalue{
+          .operands = {*op_result},
+          .info =
+              mir::CastRvalueInfo{
+                  .source_type = operand_expr.type, .target_type = expr.type},
+      };
+      return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+    }
+  }
+
   std::vector<mir::Operand> operands;
   operands.reserve(data.operands.size());
   for (hir::ExpressionId op_id : data.operands) {
@@ -1543,6 +1572,19 @@ auto LowerConcat(
       .operands = std::move(operands),
       .info = mir::ConcatRvalueInfo{.result_type = expr.type},
   };
+  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+}
+
+auto LowerReplicate(
+    const hir::ReplicateExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> Result<mir::Operand> {
+  Result<mir::Operand> elem_result = LowerExpression(data.element, builder);
+  if (!elem_result) return std::unexpected(elem_result.error());
+
+  mir::Rvalue rvalue{
+      .operands = {*elem_result},
+      .info = mir::ReplicateRvalueInfo{
+          .result_type = expr.type, .count = data.count}};
   return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
 }
 
@@ -1722,6 +1764,8 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerPackedFieldAccess(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::ConcatExpressionData>) {
           return LowerConcat(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::ReplicateExpressionData>) {
+          return LowerReplicate(data, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           mir::PlaceId place_id = builder.GetContext().LookupPlace(data.target);

@@ -989,6 +989,14 @@ void Dumper::Dump(ExpressionId id) {
       break;
     }
 
+    case ExpressionKind::kReplicate: {
+      const auto& data = std::get<ReplicateExpressionData>(expr.data);
+      *out_ << "{" << data.count << "{";
+      Dump(data.element);
+      *out_ << "}}";
+      break;
+    }
+
     case ExpressionKind::kHierarchicalRef: {
       const auto& data = std::get<HierarchicalRefExpressionData>(expr.data);
       *out_ << SymbolName(data.target);

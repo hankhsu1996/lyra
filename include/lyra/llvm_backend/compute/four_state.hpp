@@ -31,6 +31,12 @@ auto LowerConcatRvalue4State(
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
+// Lower 4-state packed replication rvalue.
+auto LowerReplicateRvalue4State(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
 // Lower 4-state guarded use (bounds-checked array read).
 auto LowerGuardedUse4State(
     Context& context, const mir::GuardedUseRvalueInfo& info,

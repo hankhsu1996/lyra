@@ -542,6 +542,11 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [this](const ConcatRvalueInfo& info) {
             return std::format("concat<{}>", FormatType(info.result_type));
           },
+          [this](const ReplicateRvalueInfo& info) {
+            return std::format(
+                "replicate<{}, count={}>", FormatType(info.result_type),
+                info.count);
+          },
           [](const SFormatRvalueInfo& info) {
             return std::format(
                 "sformat(fmt='{}', runtime={})",

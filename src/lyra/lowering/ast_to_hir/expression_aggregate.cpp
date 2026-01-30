@@ -399,9 +399,6 @@ auto LowerReplicationExpression(
     return hir::kInvalidExpressionId;
   }
 
-  std::vector<hir::ExpressionId> operands(
-      static_cast<size_t>(*count), inner_id);
-
   TypeId type = LowerType(*expr.type, span, ctx);
   if (!type) {
     return hir::kInvalidExpressionId;
@@ -409,10 +406,11 @@ auto LowerReplicationExpression(
 
   return ctx->hir_arena->AddExpression(
       hir::Expression{
-          .kind = hir::ExpressionKind::kConcat,
+          .kind = hir::ExpressionKind::kReplicate,
           .type = type,
           .span = span,
-          .data = hir::ConcatExpressionData{.operands = std::move(operands)}});
+          .data = hir::ReplicateExpressionData{
+              .element = inner_id, .count = static_cast<uint32_t>(*count)}});
 }
 
 auto LowerConcatenationExpression(

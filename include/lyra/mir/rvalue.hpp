@@ -82,6 +82,14 @@ struct ConcatRvalueInfo {
   TypeId result_type;
 };
 
+// Replication: replicate single operand N times.
+// operands[0] = element to replicate
+// Result type determines width and 2-state vs 4-state.
+struct ReplicateRvalueInfo {
+  TypeId result_type;
+  uint32_t count;
+};
+
 // SFormat: produces a RuntimeString from format ops or runtime args.
 // Operand layout:
 // - Compile-time path (ops non-empty): FormatOp.value has embedded Operands.
@@ -126,9 +134,9 @@ struct MathCallRvalueInfo {
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
-    GuardedUseRvalueInfo, ConcatRvalueInfo, SFormatRvalueInfo,
-    TestPlusargsRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
-    SystemTfRvalueInfo>;
+    GuardedUseRvalueInfo, ConcatRvalueInfo, ReplicateRvalueInfo,
+    SFormatRvalueInfo, TestPlusargsRvalueInfo, RuntimeQueryRvalueInfo,
+    MathCallRvalueInfo, SystemTfRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -158,6 +166,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "guarded_use";
         } else if constexpr (std::is_same_v<T, ConcatRvalueInfo>) {
           return "concat";
+        } else if constexpr (std::is_same_v<T, ReplicateRvalueInfo>) {
+          return "replicate";
         } else if constexpr (std::is_same_v<T, SFormatRvalueInfo>) {
           return "sformat";
         } else if constexpr (std::is_same_v<T, TestPlusargsRvalueInfo>) {

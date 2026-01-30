@@ -267,6 +267,9 @@ auto Interpreter::EvalRvalue(
           [&](const ConcatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalConcat(state, rv);
           },
+          [&](const ReplicateRvalueInfo&) -> Result<RuntimeValue> {
+            return EvalReplicate(state, rv);
+          },
           [&](const SFormatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalSFormat(state, rv);
           },
@@ -726,6 +729,51 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
   for (const auto& val : values) {
     bit_pos -= val.bit_width;
     result = IntegralInsertSlice4State(result, val, bit_pos, val.bit_width);
+  }
+  return result;
+}
+
+auto Interpreter::EvalReplicate(ProcessState& state, const Rvalue& rv)
+    -> Result<RuntimeValue> {
+  const auto& info = std::get<ReplicateRvalueInfo>(rv.info);
+  const Type& result_type = (*types_)[info.result_type];
+
+  if (rv.operands.size() != 1) {
+    throw common::InternalError(
+        "EvalReplicate", "replicate requires exactly 1 operand");
+  }
+
+  auto elem_result = EvalOperand(state, rv.operands[0]);
+  if (!elem_result) {
+    return std::unexpected(std::move(elem_result).error());
+  }
+
+  // String replication: concatenate string N times
+  if (result_type.Kind() == TypeKind::kString) {
+    if (!IsString(*elem_result)) {
+      throw common::InternalError(
+          "EvalReplicate", "string result type but operand is not string");
+    }
+    const std::string& elem_str = AsString(*elem_result).value;
+    std::string result;
+    result.reserve(elem_str.size() * info.count);
+    for (uint32_t i = 0; i < info.count; ++i) {
+      result += elem_str;
+    }
+    return MakeString(std::move(result));
+  }
+
+  // Packed replication: bit-replicate element N times
+  uint32_t result_width = PackedBitWidth(result_type, *types_);
+  const auto& elem = AsIntegral(*elem_result);
+  uint32_t elem_width = elem.bit_width;
+
+  // Build result from MSB to LSB: insert element at (count - 1 - i) *
+  // elem_width
+  auto result = MakeKnownIntegral(result_width);
+  for (uint32_t i = 0; i < info.count; ++i) {
+    uint32_t bit_pos = (info.count - 1 - i) * elem_width;
+    result = IntegralInsertSlice4State(result, elem, bit_pos, elem_width);
   }
   return result;
 }

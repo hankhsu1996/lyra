@@ -133,13 +133,78 @@ auto LowerCastRvalue(
   const Type& src_type = types[info.source_type];
   const Type& tgt_type = types[destination_type];
 
-  if (tgt_type.Kind() == TypeKind::kString ||
-      src_type.Kind() == TypeKind::kString) {
-    throw common::InternalError(
-        "LowerCastRvalue",
-        std::format(
-            "string casts not supported: {} -> {}", ToString(src_type.Kind()),
-            ToString(tgt_type.Kind())));
+  // Packed -> String conversion: call runtime to extract bytes
+  if (IsPacked(src_type) && tgt_type.Kind() == TypeKind::kString) {
+    auto source_or_err = LowerOperandRaw(context, source_operand);
+    if (!source_or_err) return std::unexpected(source_or_err.error());
+    llvm::Value* source = *source_or_err;
+
+    uint32_t bit_width = PackedBitWidth(src_type, types);
+
+    // Allocate stack space for the packed value
+    llvm::Type* storage_type = source->getType();
+    if (storage_type->isStructTy()) {
+      // 4-state: extract value plane (ignore unknown bits for string)
+      source = builder.CreateExtractValue(source, 0, "cast.val");
+      storage_type = source->getType();
+    }
+    auto* alloca = builder.CreateAlloca(storage_type);
+    builder.CreateStore(source, alloca);
+
+    // Call LyraStringFromPacked(ptr data, i32 bit_width)
+    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+    llvm::Value* result = builder.CreateCall(
+        context.GetLyraStringFromPacked(),
+        {alloca, llvm::ConstantInt::get(i32_ty, bit_width)}, "packed.tostr");
+
+    return RvalueValue::TwoState(result);
+  }
+
+  // String -> Packed conversion: pack string bytes into integral
+  if (src_type.Kind() == TypeKind::kString && IsPacked(tgt_type)) {
+    uint32_t bit_width = PackedBitWidth(tgt_type, types);
+    llvm::Type* result_type =
+        llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+
+    // Try constant-folding for compile-time strings
+    const auto* constant = std::get_if<Constant>(&source_operand.payload);
+    if (constant != nullptr) {
+      const auto* str_const = std::get_if<StringConstant>(&constant->value);
+      if (str_const != nullptr) {
+        size_t num_bytes = (bit_width + 7) / 8;
+
+        // Pack bytes from string into integral, MSB first
+        llvm::APInt packed_val(bit_width, 0);
+        const std::string& str = str_const->value;
+        for (size_t i = 0; i < str.size() && i < num_bytes; ++i) {
+          size_t byte_idx = num_bytes - 1 - i;
+          size_t bit_offset = byte_idx * 8;
+          auto byte_val = static_cast<uint8_t>(str[i]);
+          packed_val |= llvm::APInt(bit_width, byte_val) << bit_offset;
+        }
+        return RvalueValue::TwoState(
+            llvm::ConstantInt::get(context.GetLlvmContext(), packed_val));
+      }
+    }
+
+    // Runtime string: call LyraPackedFromString(handle, out_data, bit_width)
+    auto source_or_err = LowerOperand(context, source_operand);
+    if (!source_or_err) return std::unexpected(source_or_err.error());
+    llvm::Value* source = *source_or_err;
+
+    // Allocate stack space for the packed result
+    auto* alloca = builder.CreateAlloca(result_type);
+
+    // Call LyraPackedFromString(handle, out_data, bit_width)
+    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+    builder.CreateCall(
+        context.GetLyraPackedFromString(),
+        {source, alloca, llvm::ConstantInt::get(i32_ty, bit_width)});
+
+    // Load the result
+    llvm::Value* result =
+        builder.CreateLoad(result_type, alloca, "str.topacked");
+    return RvalueValue::TwoState(result);
   }
 
   bool src_is_float = IsRealKind(src_type.Kind());
@@ -246,14 +311,9 @@ auto LowerCastRvalue(
 auto LowerBitCastRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
     -> Result<RvalueValue> {
-  auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
   const auto& info = std::get<mir::BitCastRvalueInfo>(rvalue.info);
-
-  auto src_or_err = LowerOperand(context, rvalue.operands[0]);
-  if (!src_or_err) return std::unexpected(src_or_err.error());
-  llvm::Value* src = *src_or_err;
 
   const Type& src_type = types[info.source_type];
   const Type& tgt_type = types[destination_type];
@@ -262,6 +322,19 @@ auto LowerBitCastRvalue(
     return type.Kind() == TypeKind::kIntegral ||
            type.Kind() == TypeKind::kPackedArray;
   };
+
+  // String → packed is handled by Cast (semantic conversion with
+  // padding/truncation), not BitCast (bit-level reinterpretation).
+  // If we get here with string source, it's a bug in lowering.
+  if (src_type.Kind() == TypeKind::kString) {
+    throw common::InternalError(
+        "LowerBitCastRvalue", "string->packed should use Cast, not BitCast");
+  }
+
+  auto& builder = context.GetBuilder();
+  auto src_or_err = LowerOperand(context, rvalue.operands[0]);
+  if (!src_or_err) return std::unexpected(src_or_err.error());
+  llvm::Value* src = *src_or_err;
 
   llvm::Value* result = nullptr;
 

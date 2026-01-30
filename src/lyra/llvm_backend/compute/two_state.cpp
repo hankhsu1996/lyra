@@ -230,6 +230,39 @@ auto LowerConcatRvalue2State(
   return ComputeResult::TwoState(acc);
 }
 
+auto LowerReplicateRvalue2State(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+
+  auto& builder = context.GetBuilder();
+
+  if (operands.size() != 1) {
+    throw common::InternalError(
+        "LowerReplicateRvalue2State", "replicate requires exactly 1 operand");
+  }
+
+  uint32_t elem_width = GetOperandPackedWidth(context, operands[0]);
+  auto elem_or_err = LowerOperand(context, operands[0]);
+  if (!elem_or_err) return std::unexpected(elem_or_err.error());
+  llvm::Value* elem = *elem_or_err;
+
+  auto* elem_ty = llvm::Type::getIntNTy(builder.getContext(), elem_width);
+  elem = builder.CreateZExtOrTrunc(elem, elem_ty, "repeat.trunc");
+  elem = builder.CreateZExt(elem, storage_type, "repeat.ext");
+
+  // Start with first copy, then shift-left and OR for remaining copies
+  llvm::Value* acc = elem;
+  auto* shift_amount = llvm::ConstantInt::get(storage_type, elem_width);
+  for (uint32_t i = 1; i < info.count; ++i) {
+    acc = builder.CreateShl(acc, shift_amount, "repeat.shl");
+    acc = builder.CreateOr(acc, elem, "repeat.or");
+  }
+
+  return ComputeResult::TwoState(acc);
+}
+
 auto LowerIndexValidity2State(
     Context& context, const mir::IndexValidityRvalueInfo& info,
     const std::vector<mir::Operand>& operands,

@@ -78,6 +78,8 @@ class Context {
   [[nodiscard]] auto GetLyraStringRetain() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringConcat() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringFromPacked() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPackedFromString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsTest() -> llvm::Function*;
@@ -381,6 +383,8 @@ class Context {
   llvm::Function* lyra_string_retain_ = nullptr;
   llvm::Function* lyra_string_release_ = nullptr;
   llvm::Function* lyra_string_concat_ = nullptr;
+  llvm::Function* lyra_string_from_packed_ = nullptr;
+  llvm::Function* lyra_packed_from_string_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
   llvm::Function* lyra_run_process_sync_ = nullptr;
   llvm::Function* lyra_plusargs_test_ = nullptr;

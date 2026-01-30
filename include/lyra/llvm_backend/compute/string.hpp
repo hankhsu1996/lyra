@@ -25,6 +25,12 @@ auto LowerStringConcatValue(
     Context& context, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
+// Evaluate string replication and return the new string handle.
+// Does NOT store to any place - caller must handle storage.
+auto LowerStringReplicateValue(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
+
 // Evaluate $sformatf/$sformat/$swrite and return the new string handle.
 // Does NOT store to any place - caller must handle storage.
 auto LowerSFormatRvalueValue(
