@@ -32,39 +32,11 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-namespace {
-
-struct QueueTypeInfo {
-  TypeId elem_type_id{};
-  uint32_t max_bound = 0;
-  Context::ElemOpsInfo elem_ops{};
-};
-
-auto GetQueueTypeInfo(Context& context, mir::PlaceId receiver)
-    -> Result<QueueTypeInfo> {
-  const auto& types = context.GetTypeArena();
-  const auto& arena = context.GetMirArena();
-  const auto& recv_place = arena[receiver];
-  TypeId recv_type_id = mir::TypeOfPlace(types, recv_place);
-  const auto& queue_type = types[recv_type_id];
-  TypeId elem_type_id = queue_type.AsQueue().element_type;
-  auto elem_ops = context.GetElemOpsForType(elem_type_id);
-  if (!elem_ops) return std::unexpected(elem_ops.error());
-  return QueueTypeInfo{
-      .elem_type_id = elem_type_id,
-      .max_bound = queue_type.AsQueue().max_bound,
-      .elem_ops = *elem_ops,
-  };
-}
-
-}  // namespace
-
 auto LowerDynArrayBuiltin(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
 
   switch (info.method) {
     case mir::BuiltinMethod::kNewArray: {
@@ -145,21 +117,11 @@ auto LowerDynArrayBuiltin(
       return {};
     }
 
-    case mir::BuiltinMethod::kArrayDelete: {
-      // Load handle from receiver
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "da.del.h");
-
-      // Delete: clear contents, handle stays valid
-      builder.CreateCall(context.GetLyraDynArrayDelete(), {handle});
-
-      // Notify if design slot (handle unchanged, content cleared)
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
+    case mir::BuiltinMethod::kArrayDelete:
+      // Container-mutating builtins are handled via BuiltinCall instruction
+      throw common::InternalError(
+          "LowerDynArrayBuiltin",
+          "kArrayDelete must use BuiltinCall instruction");
 
     default:
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
@@ -174,9 +136,6 @@ auto LowerQueueBuiltin(
     Context& context, const mir::Compute& compute,
     const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
   auto& builder = context.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-  auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
 
   switch (info.method) {
     case mir::BuiltinMethod::kQueueSize: {
@@ -201,184 +160,17 @@ auto LowerQueueBuiltin(
       return {};
     }
 
-    case mir::BuiltinMethod::kQueueDelete: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      // Get receiver TypeId for typed teardown
-      const auto& arena = context.GetMirArena();
-      const auto& recv_place = arena[*info.receiver];
-      TypeId recv_type_id =
-          mir::TypeOfPlace(context.GetTypeArena(), recv_place);
-
-      // Typed teardown via lifecycle (loads handle, calls release)
-      Destroy(context, recv_ptr, recv_type_id);
-
-      // Store null handle
-      builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueueDeleteAt: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.delat.h");
-
-      auto index_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!index_or_err) return std::unexpected(index_or_err.error());
-      llvm::Value* index = *index_or_err;
-
-      index = builder.CreateSExtOrTrunc(index, i64_ty, "q.delat.idx");
-      builder.CreateCall(context.GetLyraQueueDeleteAt(), {handle, index});
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueuePushBack: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) return std::unexpected(qi_result.error());
-      auto qi = *qi_result;
-
-      auto val_or_err = LowerOperandAsStorage(
-          context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) return std::unexpected(val_or_err.error());
-      llvm::Value* val = *val_or_err;
-
-      auto* temp =
-          builder.CreateAlloca(qi.elem_ops.elem_llvm_type, nullptr, "q.pb.tmp");
-      builder.CreateStore(val, temp);
-
-      builder.CreateCall(
-          context.GetLyraQueuePushBack(),
-          {recv_ptr, temp,
-           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
-           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
-           qi.elem_ops.destroy_fn});
-
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueuePushFront: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) return std::unexpected(qi_result.error());
-      auto qi = *qi_result;
-
-      auto val_or_err = LowerOperandAsStorage(
-          context, compute.value.operands[0], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) return std::unexpected(val_or_err.error());
-      llvm::Value* val = *val_or_err;
-
-      auto* temp =
-          builder.CreateAlloca(qi.elem_ops.elem_llvm_type, nullptr, "q.pf.tmp");
-      builder.CreateStore(val, temp);
-
-      builder.CreateCall(
-          context.GetLyraQueuePushFront(),
-          {recv_ptr, temp,
-           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
-           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
-           qi.elem_ops.destroy_fn});
-
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueuePopBack: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popb.h");
-
-      // Zero-init target (default if queue is empty)
-      auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-
-      auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err)
-        return std::unexpected(target_type_or_err.error());
-      llvm::Type* target_type = *target_type_or_err;
-
-      builder.CreateStore(
-          llvm::Constant::getNullValue(target_type), target_ptr);
-
-      builder.CreateCall(context.GetLyraQueuePopBack(), {handle, target_ptr});
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueuePopFront: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.popf.h");
-
-      auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-
-      auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-      if (!target_type_or_err)
-        return std::unexpected(target_type_or_err.error());
-      llvm::Type* target_type = *target_type_or_err;
-
-      builder.CreateStore(
-          llvm::Constant::getNullValue(target_type), target_ptr);
-
-      builder.CreateCall(context.GetLyraQueuePopFront(), {handle, target_ptr});
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
-
-    case mir::BuiltinMethod::kQueueInsert: {
-      auto recv_ptr_or_err = context.GetPlacePointer(*info.receiver);
-      if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
-      llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-      auto qi_result = GetQueueTypeInfo(context, *info.receiver);
-      if (!qi_result) return std::unexpected(qi_result.error());
-      auto qi = *qi_result;
-
-      // operand[0] = index, operand[1] = value
-      auto index_or_err = LowerOperand(context, compute.value.operands[0]);
-      if (!index_or_err) return std::unexpected(index_or_err.error());
-      llvm::Value* index = *index_or_err;
-      index = builder.CreateSExtOrTrunc(index, i64_ty, "q.ins.idx");
-
-      auto val_or_err = LowerOperandAsStorage(
-          context, compute.value.operands[1], qi.elem_ops.elem_llvm_type);
-      if (!val_or_err) return std::unexpected(val_or_err.error());
-      llvm::Value* val = *val_or_err;
-
-      auto* temp = builder.CreateAlloca(
-          qi.elem_ops.elem_llvm_type, nullptr, "q.ins.tmp");
-      builder.CreateStore(val, temp);
-
-      builder.CreateCall(
-          context.GetLyraQueueInsert(),
-          {recv_ptr, index, temp,
-           llvm::ConstantInt::get(i32_ty, qi.elem_ops.elem_size),
-           llvm::ConstantInt::get(i32_ty, qi.max_bound), qi.elem_ops.clone_fn,
-           qi.elem_ops.destroy_fn});
-
-      CommitNotifyMutationIfDesignSlot(context, *info.receiver);
-      return {};
-    }
+    case mir::BuiltinMethod::kQueueDelete:
+    case mir::BuiltinMethod::kQueueDeleteAt:
+    case mir::BuiltinMethod::kQueuePushBack:
+    case mir::BuiltinMethod::kQueuePushFront:
+    case mir::BuiltinMethod::kQueuePopBack:
+    case mir::BuiltinMethod::kQueuePopFront:
+    case mir::BuiltinMethod::kQueueInsert:
+      // Container-mutating builtins are handled via BuiltinCall instruction
+      throw common::InternalError(
+          "LowerQueueBuiltin",
+          "container-mutating builtins must use BuiltinCall instruction");
 
     default:
       throw common::InternalError(

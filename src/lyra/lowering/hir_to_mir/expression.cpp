@@ -948,17 +948,7 @@ auto LowerBuiltinMethodCall(
                                       ? mir::BuiltinMethod::kQueuePopBack
                                       : mir::BuiltinMethod::kQueuePopFront;
 
-      mir::Rvalue rvalue{
-          .operands = {},
-          .info =
-              mir::BuiltinCallRvalueInfo{
-                  .method = method,
-                  .result_type = expr.type,
-                  .receiver = lv.place,
-                  .enum_type = std::nullopt},
-      };
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-      return mir::Operand::Use(temp);
+      return builder.EmitBuiltinCall(method, lv.place, {}, expr.type);
     }
 
     case hir::BuiltinMethod::kPushBack:
@@ -977,18 +967,8 @@ auto LowerBuiltinMethodCall(
                                       ? mir::BuiltinMethod::kQueuePushBack
                                       : mir::BuiltinMethod::kQueuePushFront;
 
-      mir::Rvalue rvalue{
-          .operands = std::move(operands),
-          .info =
-              mir::BuiltinCallRvalueInfo{
-                  .method = method,
-                  .result_type = expr.type,
-                  .receiver = lv.place,
-                  .enum_type = std::nullopt},
-      };
-
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-      return mir::Operand::Use(temp);
+      return builder.EmitBuiltinCall(
+          method, lv.place, std::move(operands), expr.type);
     }
 
     case hir::BuiltinMethod::kInsert: {
@@ -1002,18 +982,9 @@ auto LowerBuiltinMethodCall(
         operands.push_back(*arg_result);
       }
 
-      mir::Rvalue rvalue{
-          .operands = std::move(operands),
-          .info =
-              mir::BuiltinCallRvalueInfo{
-                  .method = mir::BuiltinMethod::kQueueInsert,
-                  .result_type = expr.type,
-                  .receiver = lv.place,
-                  .enum_type = std::nullopt},
-      };
-
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-      return mir::Operand::Use(temp);
+      return builder.EmitBuiltinCall(
+          mir::BuiltinMethod::kQueueInsert, lv.place, std::move(operands),
+          expr.type);
     }
 
     case hir::BuiltinMethod::kDelete: {
@@ -1038,18 +1009,8 @@ auto LowerBuiltinMethodCall(
         method = mir::BuiltinMethod::kQueueDeleteAt;
       }
 
-      mir::Rvalue rvalue{
-          .operands = std::move(operands),
-          .info =
-              mir::BuiltinCallRvalueInfo{
-                  .method = method,
-                  .result_type = expr.type,
-                  .receiver = lv.place,
-                  .enum_type = std::nullopt},
-      };
-
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-      return mir::Operand::Use(temp);
+      return builder.EmitBuiltinCall(
+          method, lv.place, std::move(operands), expr.type);
     }
 
     case hir::BuiltinMethod::kEnumNext:

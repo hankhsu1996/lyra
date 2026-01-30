@@ -51,38 +51,6 @@ void TruncateToBound(std::vector<RuntimeValue>& elements, uint32_t max_bound) {
   }
 }
 
-// Helper: safely extract index from operand, return nullopt if X/Z
-// Per IEEE 1800-2023, invalid index means no-op (not an error)
-auto TryGetIndex(
-    const RuntimeValue& val, const TypeArena& types, TypeId type_id)
-    -> std::optional<int64_t> {
-  if (!IsIntegral(val)) {
-    return std::nullopt;
-  }
-  const auto& integral = AsIntegral(val);
-  if (!integral.IsKnown()) {
-    return std::nullopt;  // X/Z -> invalid
-  }
-
-  // Extract raw bits
-  uint64_t raw_bits = integral.value.empty() ? 0 : integral.value[0];
-
-  // Sign-extend if operand type is signed
-  const auto& type_info = types[type_id];
-  if (type_info.Kind() == TypeKind::kIntegral) {
-    const auto& info = type_info.AsIntegral();
-    if (info.is_signed && info.bit_width < 64) {
-      uint64_t sign_bit = 1ULL << (info.bit_width - 1);
-      if ((raw_bits & sign_bit) != 0) {
-        uint64_t mask = ~((1ULL << info.bit_width) - 1);
-        raw_bits |= mask;
-      }
-    }
-  }
-
-  return static_cast<int64_t>(raw_bits);
-}
-
 }  // namespace
 
 auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
@@ -607,163 +575,18 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
       return MakeIntegral(size, 32);
     }
 
-    case BuiltinMethod::kQueuePopBack: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "pop_back() requires receiver");
-      }
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      if (elements.empty()) {
-        return CreateDefaultValue(*types_, info.result_type);
-      }
-      RuntimeValue result = std::move(elements.back());
-      elements.pop_back();
-      return result;
-    }
-
-    case BuiltinMethod::kQueuePopFront: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "pop_front() requires receiver");
-      }
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      if (elements.empty()) {
-        return CreateDefaultValue(*types_, info.result_type);
-      }
-      RuntimeValue result = std::move(elements.front());
-      elements.erase(elements.begin());
-      return result;
-    }
-
-    case BuiltinMethod::kQueuePushBack: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "push_back() requires receiver");
-      }
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto operand_result = EvalOperand(state, rv.operands[0]);
-      if (!operand_result) {
-        return std::unexpected(std::move(operand_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      elements.push_back(std::move(*operand_result));
-      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      return std::monostate{};
-    }
-
-    case BuiltinMethod::kQueuePushFront: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "push_front() requires receiver");
-      }
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto operand_result = EvalOperand(state, rv.operands[0]);
-      if (!operand_result) {
-        return std::unexpected(std::move(operand_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      elements.insert(elements.begin(), std::move(*operand_result));
-      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      return std::monostate{};
-    }
-
-    case BuiltinMethod::kQueueInsert: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "insert() requires receiver");
-      }
-      TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
-      auto idx_val_result = EvalOperand(state, rv.operands[0]);
-      if (!idx_val_result) {
-        return std::unexpected(std::move(idx_val_result).error());
-      }
-      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
-      if (!idx_opt) {
-        return std::monostate{};  // X/Z -> no-op
-      }
-      auto idx = *idx_opt;
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      if (idx < 0 || std::cmp_greater(idx, elements.size())) {
-        return std::monostate{};  // Invalid index -> no-op
-      }
-      auto val_result = EvalOperand(state, rv.operands[1]);
-      if (!val_result) {
-        return std::unexpected(std::move(val_result).error());
-      }
-      elements.insert(elements.begin() + idx, std::move(*val_result));
-      TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[*info.receiver]);
-      const auto& type = (*types_)[receiver_type];
-      if (type.Kind() == TypeKind::kQueue) {
-        TruncateToBound(elements, type.AsQueue().max_bound);
-      }
-      return std::monostate{};
-    }
-
+    case BuiltinMethod::kQueuePopBack:
+    case BuiltinMethod::kQueuePopFront:
+    case BuiltinMethod::kQueuePushBack:
+    case BuiltinMethod::kQueuePushFront:
+    case BuiltinMethod::kQueueInsert:
     case BuiltinMethod::kArrayDelete:
-    case BuiltinMethod::kQueueDelete: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "delete() requires receiver");
-      }
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      AsArray(write_result->get()).elements.clear();
-      return std::monostate{};
-    }
-
-    case BuiltinMethod::kQueueDeleteAt: {
-      if (!info.receiver) {
-        throw common::InternalError(
-            "EvalBuiltinCall", "delete(idx) requires receiver");
-      }
-      TypeId idx_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
-      auto idx_val_result = EvalOperand(state, rv.operands[0]);
-      if (!idx_val_result) {
-        return std::unexpected(std::move(idx_val_result).error());
-      }
-      auto idx_opt = TryGetIndex(*idx_val_result, *types_, idx_type);
-      if (!idx_opt) {
-        return std::monostate{};  // X/Z -> no-op
-      }
-      auto idx = *idx_opt;
-      auto write_result = WritePlace(state, *info.receiver);
-      if (!write_result) {
-        return std::unexpected(std::move(write_result).error());
-      }
-      auto& elements = AsArray(write_result->get()).elements;
-      if (idx >= 0 && std::cmp_less(idx, elements.size())) {
-        elements.erase(elements.begin() + idx);
-      }
-      return std::monostate{};
-    }
+    case BuiltinMethod::kQueueDelete:
+    case BuiltinMethod::kQueueDeleteAt:
+      // Container-mutating builtins are now handled via BuiltinCall instruction
+      throw common::InternalError(
+          "EvalBuiltinCall",
+          "container-mutating builtins must use BuiltinCall instruction");
 
     case BuiltinMethod::kEnumNext:
     case BuiltinMethod::kEnumPrev:

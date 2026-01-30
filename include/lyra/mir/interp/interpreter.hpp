@@ -229,6 +229,10 @@ class Interpreter {
   // Execute Call instruction (user function call)
   auto ExecCall(ProcessState& state, const Call& call) -> Result<void>;
 
+  // Execute BuiltinCall instruction (container-mutating builtins)
+  auto ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
+      -> Result<void>;
+
   // Format display ops to string (no newline appended).
   auto FormatDisplayOps(
       const ProcessState& state, std::span<const FormatOp> ops)
