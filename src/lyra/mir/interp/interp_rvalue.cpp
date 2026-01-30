@@ -271,18 +271,6 @@ auto Interpreter::EvalRvalue(
             return EvalBitCast(
                 *operand_result, info.source_type, info.target_type, *types_);
           },
-          [&](const UserCallRvalueInfo& info) -> Result<RuntimeValue> {
-            std::vector<RuntimeValue> args;
-            args.reserve(rv.operands.size());
-            for (const auto& operand : rv.operands) {
-              auto arg_result = EvalOperand(state, operand);
-              if (!arg_result) {
-                return std::unexpected(std::move(arg_result).error());
-              }
-              args.push_back(std::move(*arg_result));
-            }
-            return RunFunction(info.callee, args, state.design_state);
-          },
           [&](const AggregateRvalueInfo&) -> Result<RuntimeValue> {
             return EvalAggregate(state, rv);
           },

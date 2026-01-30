@@ -3,10 +3,12 @@
 #include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/assign.hpp"
+#include "lyra/llvm_backend/instruction/call.hpp"
 #include "lyra/llvm_backend/instruction/effect.hpp"
 #include "lyra/mir/instruction.hpp"
 
@@ -37,6 +39,14 @@ auto LowerInstruction(Context& context, const mir::Instruction& instruction)
           },
           [&context](const mir::NonBlockingAssign& nba) -> Result<void> {
             return LowerNonBlockingAssign(context, nba);
+          },
+          [&context](const mir::Call& call) -> Result<void> {
+            return LowerCall(context, call);
+          },
+          [&context](const mir::BuiltinCall&) -> Result<void> {
+            (void)context;
+            throw common::InternalError(
+                "LowerInstruction", "mir::BuiltinCall not yet implemented");
           },
       },
       instruction.data);

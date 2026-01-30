@@ -350,7 +350,6 @@ void CollectPlacesFromRvalue(
             std::is_same_v<T, mir::BinaryRvalueInfo> ||
             std::is_same_v<T, mir::CastRvalueInfo> ||
             std::is_same_v<T, mir::BitCastRvalueInfo> ||
-            std::is_same_v<T, mir::UserCallRvalueInfo> ||
             std::is_same_v<T, mir::AggregateRvalueInfo> ||
             std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
             std::is_same_v<T, mir::ConcatRvalueInfo> ||
@@ -455,6 +454,23 @@ auto CollectProcessPlaces(const mir::Process& process)
               [&](const mir::NonBlockingAssign& nba) {
                 places.insert(nba.target);
                 CollectPlaceFromOperand(nba.source, places);
+              },
+              [&](const mir::Call& call) {
+                if (call.dest) {
+                  places.insert(*call.dest);
+                }
+                for (const auto& arg : call.args) {
+                  CollectPlaceFromOperand(arg, places);
+                }
+              },
+              [&](const mir::BuiltinCall& bcall) {
+                if (bcall.dest) {
+                  places.insert(*bcall.dest);
+                }
+                places.insert(bcall.receiver);
+                for (const auto& arg : bcall.args) {
+                  CollectPlaceFromOperand(arg, places);
+                }
               },
           },
           instr.data);

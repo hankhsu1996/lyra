@@ -80,7 +80,6 @@ void CollectFromRvalue(
           [](const BinaryRvalueInfo&) {},
           [](const CastRvalueInfo&) {},
           [](const BitCastRvalueInfo&) {},
-          [](const UserCallRvalueInfo&) {},
           [](const AggregateRvalueInfo&) {},
           [](const IndexValidityRvalueInfo&) {},
           [](const ConcatRvalueInfo&) {},
@@ -111,6 +110,16 @@ void CollectFromInstruction(
           [](const Effect&) {},
           [&](const NonBlockingAssign& nba) {
             CollectFromOperand(nba.source, arena, seen);
+          },
+          [&](const Call& call) {
+            for (const auto& arg : call.args) {
+              CollectFromOperand(arg, arena, seen);
+            }
+          },
+          [&](const BuiltinCall& bcall) {
+            for (const auto& arg : bcall.args) {
+              CollectFromOperand(arg, arena, seen);
+            }
           },
       },
       instr.data);

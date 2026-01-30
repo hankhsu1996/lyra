@@ -38,10 +38,6 @@ struct BitCastRvalueInfo {
   TypeId target_type;
 };
 
-struct UserCallRvalueInfo {
-  FunctionId callee;  // mir::FunctionId - MIR is self-contained
-};
-
 struct AggregateRvalueInfo {
   TypeId result_type;  // The aggregate type being constructed (struct or array)
 };
@@ -131,10 +127,10 @@ struct MathCallRvalueInfo {
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
-    UserCallRvalueInfo, AggregateRvalueInfo, BuiltinCallRvalueInfo,
-    IndexValidityRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo,
-    SFormatRvalueInfo, PlusargsRvalueInfo, RuntimeQueryRvalueInfo,
-    MathCallRvalueInfo, SystemTfRvalueInfo>;
+    AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
+    GuardedUseRvalueInfo, ConcatRvalueInfo, SFormatRvalueInfo,
+    PlusargsRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
+    SystemTfRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -154,8 +150,6 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "cast";
         } else if constexpr (std::is_same_v<T, BitCastRvalueInfo>) {
           return "bitcast";
-        } else if constexpr (std::is_same_v<T, UserCallRvalueInfo>) {
-          return "call";
         } else if constexpr (std::is_same_v<T, AggregateRvalueInfo>) {
           return "aggregate";
         } else if constexpr (std::is_same_v<T, BuiltinCallRvalueInfo>) {

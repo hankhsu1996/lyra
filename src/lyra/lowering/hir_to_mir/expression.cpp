@@ -856,13 +856,8 @@ auto LowerCall(
     args.push_back(*arg_result);
   }
 
-  mir::Rvalue rvalue{
-      .operands = std::move(args),
-      .info = mir::UserCallRvalueInfo{.callee = callee},
-  };
-
-  mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp);
+  // Emit Call instruction (returns Use of result or Poison for void)
+  return builder.EmitCall(callee, std::move(args), expr.type);
 }
 
 auto LowerNewArray(

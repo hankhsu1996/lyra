@@ -247,6 +247,34 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           } else if constexpr (std::is_same_v<T, NonBlockingAssign>) {
             *out_ << std::format(
                 "{} <= {}\n", FormatPlace(i.target), FormatOperand(i.source));
+          } else if constexpr (std::is_same_v<T, Call>) {
+            std::string args;
+            for (size_t idx = 0; idx < i.args.size(); ++idx) {
+              if (idx > 0) args += ", ";
+              args += FormatOperand(i.args[idx]);
+            }
+            if (i.dest) {
+              *out_ << std::format(
+                  "{} = call @fn{}({})\n", FormatPlace(*i.dest), i.callee.value,
+                  args);
+            } else {
+              *out_ << std::format("call @fn{}({})\n", i.callee.value, args);
+            }
+          } else if constexpr (std::is_same_v<T, BuiltinCall>) {
+            std::string args;
+            for (size_t idx = 0; idx < i.args.size(); ++idx) {
+              if (idx > 0) args += ", ";
+              args += FormatOperand(i.args[idx]);
+            }
+            if (i.dest) {
+              *out_ << std::format(
+                  "{} = builtin_call {}({}, {})\n", FormatPlace(*i.dest),
+                  static_cast<int>(i.method), FormatPlace(i.receiver), args);
+            } else {
+              *out_ << std::format(
+                  "builtin_call {}({}, {})\n", static_cast<int>(i.method),
+                  FormatPlace(i.receiver), args);
+            }
           }
         },
         instr.data);
@@ -415,9 +443,6 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             return std::format(
                 "bitcast({} -> {})", FormatType(info.source_type),
                 FormatType(info.target_type));
-          },
-          [](const UserCallRvalueInfo& info) {
-            return std::format("call(func[{}])", info.callee.value);
           },
           [this](const AggregateRvalueInfo& info) {
             return std::format("aggregate<{}>", FormatType(info.result_type));

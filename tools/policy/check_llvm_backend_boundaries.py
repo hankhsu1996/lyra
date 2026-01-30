@@ -265,6 +265,7 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
     allowed_exceptions = {
         "src/lyra/llvm_backend/compute/builtin.cpp",
         "src/lyra/llvm_backend/compute/aggregate.cpp",
+        "src/lyra/llvm_backend/compute/compute.cpp",  # Out-param calls need Destroy
     }
 
     for cpp in compute_dir.rglob("*.cpp"):

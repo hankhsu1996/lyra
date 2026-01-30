@@ -203,6 +203,23 @@ struct StorageCollector {
               Visit(arena[i.target], arena);
               Visit(i.source, arena);
             },
+            [&](const Call& i) {
+              if (i.dest) {
+                Visit(arena[*i.dest], arena);
+              }
+              for (const auto& arg : i.args) {
+                Visit(arg, arena);
+              }
+            },
+            [&](const BuiltinCall& i) {
+              if (i.dest) {
+                Visit(arena[*i.dest], arena);
+              }
+              Visit(arena[i.receiver], arena);
+              for (const auto& arg : i.args) {
+                Visit(arg, arena);
+              }
+            },
         },
         inst.data);
   }

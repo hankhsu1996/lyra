@@ -186,6 +186,50 @@ auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
   return temp;
 }
 
+auto MirBuilder::EmitCall(
+    mir::FunctionId callee, std::vector<mir::Operand> args, TypeId return_type)
+    -> mir::Operand {
+  const auto& types = *ctx_->type_arena;
+  bool is_void = types[return_type].Kind() == TypeKind::kVoid;
+
+  if (is_void) {
+    EmitInst(
+        mir::Call{
+            .dest = std::nullopt, .callee = callee, .args = std::move(args)});
+    return mir::Operand::Poison();
+  }
+
+  mir::PlaceId temp = ctx_->AllocTemp(return_type);
+  EmitInst(mir::Call{.dest = temp, .callee = callee, .args = std::move(args)});
+  return mir::Operand::Use(temp);
+}
+
+auto MirBuilder::EmitBuiltinCall(
+    mir::BuiltinMethod method, mir::PlaceId receiver,
+    std::vector<mir::Operand> args, TypeId return_type) -> mir::Operand {
+  const auto& types = *ctx_->type_arena;
+  bool is_void = types[return_type].Kind() == TypeKind::kVoid;
+
+  if (is_void) {
+    EmitInst(
+        mir::BuiltinCall{
+            .dest = std::nullopt,
+            .method = method,
+            .receiver = receiver,
+            .args = std::move(args)});
+    return mir::Operand::Poison();
+  }
+
+  mir::PlaceId temp = ctx_->AllocTemp(return_type);
+  EmitInst(
+      mir::BuiltinCall{
+          .dest = temp,
+          .method = method,
+          .receiver = receiver,
+          .args = std::move(args)});
+  return mir::Operand::Use(temp);
+}
+
 auto MirBuilder::EmitUnary(
     mir::UnaryOp op, mir::Operand operand, TypeId result_type) -> mir::Operand {
   mir::Rvalue rvalue{

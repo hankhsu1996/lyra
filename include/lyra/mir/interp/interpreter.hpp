@@ -226,6 +226,9 @@ class Interpreter {
   // Execute Effect instruction
   auto ExecEffect(ProcessState& state, const Effect& effect) -> Result<void>;
 
+  // Execute Call instruction (user function call)
+  auto ExecCall(ProcessState& state, const Call& call) -> Result<void>;
+
   // Format display ops to string (no newline appended).
   auto FormatDisplayOps(
       const ProcessState& state, std::span<const FormatOp> ops)

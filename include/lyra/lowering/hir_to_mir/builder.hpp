@@ -49,6 +49,20 @@ class MirBuilder {
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
   auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
 
+  // Emit a Call instruction for user function invocation.
+  // If return_type is void, dest is nullopt. Otherwise allocates temp.
+  // Returns Use of result place, or Poison for void calls.
+  auto EmitCall(
+      mir::FunctionId callee, std::vector<mir::Operand> args,
+      TypeId return_type) -> mir::Operand;
+
+  // Emit a BuiltinCall instruction for container-mutating builtins.
+  // For pop methods that return a value, returns Use of result place.
+  // For void methods (push/delete/insert), returns Poison operand.
+  auto EmitBuiltinCall(
+      mir::BuiltinMethod method, mir::PlaceId receiver,
+      std::vector<mir::Operand> args, TypeId return_type) -> mir::Operand;
+
   // Emit a unary operation and materialize to temp.
   auto EmitUnary(mir::UnaryOp op, mir::Operand operand, TypeId result_type)
       -> mir::Operand;

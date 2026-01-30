@@ -87,16 +87,6 @@ auto LowerRuntimeQuery(
   return LowerRuntimeQuery2State(context, info, packed_context);
 }
 
-auto LowerUserCall(
-    Context& context, const mir::UserCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
-    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  if (packed_context.is_four_state) {
-    return LowerUserCall4State(context, info, operands, packed_context);
-  }
-  return LowerUserCall2State(context, info, operands, packed_context);
-}
-
 }  // namespace
 
 auto ApplyWidthMaskToResult(
@@ -180,10 +170,6 @@ auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
           [&](const mir::RuntimeQueryRvalueInfo& info)
               -> Result<ComputeResult> {
             return LowerRuntimeQuery(context, info, packed_context);
-          },
-          [&](const mir::UserCallRvalueInfo& info) -> Result<ComputeResult> {
-            return LowerUserCall(
-                context, info, compute.value.operands, packed_context);
           },
           [&](const auto& /*info*/) -> Result<ComputeResult> {
             return std::unexpected(

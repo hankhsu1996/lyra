@@ -724,6 +724,33 @@ auto Interpreter::ExecGuardedAssign(
   return StoreToPlace(state, guarded.target, std::move(*value_result));
 }
 
+auto Interpreter::ExecCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Evaluate arguments
+  std::vector<RuntimeValue> args;
+  args.reserve(call.args.size());
+  for (const auto& operand : call.args) {
+    auto arg_result = EvalOperand(state, operand);
+    if (!arg_result) {
+      return std::unexpected(std::move(arg_result).error());
+    }
+    args.push_back(std::move(*arg_result));
+  }
+
+  // Call the function
+  auto result = RunFunction(call.callee, args, state.design_state);
+  if (!result) {
+    return std::unexpected(std::move(result).error());
+  }
+
+  // Store result if dest exists
+  if (call.dest.has_value()) {
+    return StoreToPlace(state, *call.dest, std::move(*result));
+  }
+
+  return {};
+}
+
 auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
     -> Result<void> {
   std::optional<Diagnostic> error;
@@ -754,6 +781,14 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           if (!result) {
             error = std::move(result).error();
           }
+        } else if constexpr (std::is_same_v<T, Call>) {
+          auto result = ExecCall(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
+        } else if constexpr (std::is_same_v<T, BuiltinCall>) {
+          throw common::InternalError(
+              "ExecInstruction", "mir::BuiltinCall not yet implemented");
         } else {
           // Non-blocking assignments require the LLVM backend runtime
           if (diag_ctx_ != nullptr) {
