@@ -200,14 +200,30 @@ auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
     // Expression form: Use(ret.tmp) handled by outer Assign
   }
 
-  // Commit writeback (parsed value): tmp already written by helper, now commit
-  // to dest
+  // Commit writeback ONLY if success (helper only writes to tmp on match)
+  // This preserves $value$plusargs semantics: no match = no modification
+  auto* func = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* commit_bb =
+      llvm::BasicBlock::Create(builder.getContext(), "vp_commit", func);
+  llvm::BasicBlock* merge_bb =
+      llvm::BasicBlock::Create(builder.getContext(), "vp_merge", func);
+
+  llvm::Value* is_match = builder.CreateICmpNE(
+      success, llvm::ConstantInt::get(success->getType(), 0));
+  builder.CreateCondBr(is_match, commit_bb, merge_bb);
+
+  builder.SetInsertPoint(commit_bb);
   auto output_llvm_type = context.GetPlaceLlvmType(wb.tmp);
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
-  return CommitValue(
+  auto commit_result = CommitValue(
       context, wb.dest, output_val, output_type, OwnershipPolicy::kMove);
+  if (!commit_result) return commit_result;
+  builder.CreateBr(merge_bb);
+
+  builder.SetInsertPoint(merge_bb);
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

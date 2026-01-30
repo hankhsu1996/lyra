@@ -7,10 +7,12 @@
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -96,12 +98,14 @@ class MirBuilder {
   // Emit DeferredAssign instruction: schedule dest := rhs for NBA region.
   void EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs);
 
-  // Emit ValuePlusargs instruction: $value$plusargs with side effects.
-  // Writes parsed value to output, stores success (1/0) to dest.
-  // Returns Use of dest place (success boolean).
-  auto EmitValuePlusargs(
-      mir::Operand query, mir::PlaceId output, TypeId output_type,
-      TypeId result_type) -> mir::Operand;
+  // Emit unified Call for system TF (expression form).
+  // Allocates staging temps for return and writebacks.
+  // Returns Use(ret.tmp) for caller to assign to real dest.
+  auto EmitSystemTfCallExpr(
+      SystemTfOpcode opcode, std::vector<mir::Operand> in_args,
+      TypeId return_type,
+      std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks)
+      -> mir::Operand;
 
   // High-level control flow primitives.
   // These own all CFG mechanics: block creation, branches, reachability joins.
