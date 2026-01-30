@@ -37,14 +37,11 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id)
   if (!br_result) return std::unexpected(br_result.error());
   auto [offset, width] = *br_result;
 
-  // Load the full base value
-  auto ptr_result = context.GetPlacePointer(place_id);
-  if (!ptr_result) return std::unexpected(ptr_result.error());
-  llvm::Value* ptr = *ptr_result;
-  auto base_type_result = context.GetPlaceBaseType(place_id);
-  if (!base_type_result) return std::unexpected(base_type_result.error());
-  llvm::Type* base_type = *base_type_result;
-  llvm::Value* base = builder.CreateLoad(base_type, ptr, "base");
+  // Load the full base value (via read-only API)
+  auto base_result = context.LoadPlaceBaseValue(place_id);
+  if (!base_result) return std::unexpected(base_result.error());
+  llvm::Value* base = *base_result;
+  llvm::Type* base_type = base->getType();
 
   // Get the element LLVM type for the result
   auto elem_type_result = context.GetPlaceLlvmType(place_id);
@@ -129,12 +126,7 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
             if (context.HasBitRangeProjection(place_id)) {
               return LoadBitRange(context, place_id);
             }
-            auto ptr_result = context.GetPlacePointer(place_id);
-            if (!ptr_result) return std::unexpected(ptr_result.error());
-            auto type_result = context.GetPlaceLlvmType(place_id);
-            if (!type_result) return std::unexpected(type_result.error());
-            return context.GetBuilder().CreateLoad(
-                *type_result, *ptr_result, "load");
+            return context.LoadPlaceValue(place_id);
           },
       },
       operand.payload);

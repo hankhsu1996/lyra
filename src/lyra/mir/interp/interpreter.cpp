@@ -28,6 +28,7 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -119,12 +120,16 @@ struct StorageCollector {
         Visit(arena[*info->receiver], arena);
       }
     }
-    // Visit output place for $value$plusargs
-    if (const auto* info = std::get_if<PlusargsRvalueInfo>(&rv.info)) {
-      if (info->output) {
-        Visit(arena[*info->output], arena);
-      }
-    }
+    // TestPlusargsRvalueInfo has no places - nothing to visit
+  }
+
+  void Visit(const RightHandSide& rhs, const Arena& arena) {
+    std::visit(
+        common::Overloaded{
+            [&](const Operand& op) { Visit(op, arena); },
+            [&](const Rvalue& rv) { Visit(rv, arena); },
+        },
+        rhs);
   }
 
   // Uses exhaustive Overloaded pattern - adding a new Instruction or EffectOp
@@ -136,11 +141,7 @@ struct StorageCollector {
               Visit(arena[i.target], arena);
               Visit(i.source, arena);
             },
-            [&](const Compute& i) {
-              Visit(arena[i.target], arena);
-              Visit(i.value, arena);
-            },
-            [&](const GuardedAssign& i) {
+            [&](const GuardedStore& i) {
               Visit(arena[i.target], arena);
               Visit(i.source, arena);
               Visit(i.validity, arena);
@@ -219,6 +220,11 @@ struct StorageCollector {
               for (const auto& arg : i.args) {
                 Visit(arg, arena);
               }
+            },
+            [&](const ValuePlusargs& i) {
+              Visit(arena[i.dest], arena);
+              Visit(arena[i.output], arena);
+              Visit(i.query, arena);
             },
         },
         inst.data);

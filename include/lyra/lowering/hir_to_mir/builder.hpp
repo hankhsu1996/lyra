@@ -44,7 +44,7 @@ class MirBuilder {
 
   // Instruction emission.
   void EmitAssign(mir::PlaceId target, mir::Operand source);
-  void EmitCompute(mir::PlaceId target, mir::Rvalue value);
+  void EmitAssign(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
   auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
@@ -88,13 +88,20 @@ class MirBuilder {
       mir::Operand validity, mir::PlaceId place, TypeId result_type)
       -> mir::Operand;
 
-  // Emit GuardedAssign instruction: conditionally write to place.
+  // Emit GuardedStore instruction: conditionally write to place.
   // Semantics: if (validity) Assign(target, source); else no-op
-  void EmitGuardedAssign(
+  void EmitGuardedStore(
       mir::PlaceId target, mir::Operand source, mir::Operand validity);
 
   // Emit NonBlockingAssign instruction: schedule target <= source for NBA.
   void EmitNonBlockingAssign(mir::PlaceId target, mir::Operand source);
+
+  // Emit ValuePlusargs instruction: $value$plusargs with side effects.
+  // Writes parsed value to output, stores success (1/0) to dest.
+  // Returns Use of dest place (success boolean).
+  auto EmitValuePlusargs(
+      mir::Operand query, mir::PlaceId output, TypeId output_type,
+      TypeId result_type) -> mir::Operand;
 
   // High-level control flow primitives.
   // These own all CFG mechanics: block creation, branches, reachability joins.

@@ -7,13 +7,15 @@
 namespace lyra::lowering::mir_to_llvm {
 
 // Lower regular assignment (blocking).
+// Handles both Operand and Rvalue sources via RightHandSide dispatch.
 // Delegates to TypeOps for semantic assignment, or uses read-modify-write for
 // bit-range projections.
 auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void>;
 
-// Lower guarded assignment (conditional write based on validity check).
+// Lower guarded store (conditional write based on validity check).
 // Source is evaluated BEFORE the validity check (per SystemVerilog spec).
-auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
+// Handles both Operand and Rvalue sources via RightHandSide dispatch.
+auto LowerGuardedStore(Context& context, const mir::GuardedStore& guarded)
     -> Result<void>;
 
 // Lower non-blocking assignment (NBA).

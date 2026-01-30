@@ -591,10 +591,8 @@ struct PlaceCollector {
             if (info.receiver) {
               CollectFromPlace(*info.receiver, arena);
             }
-          } else if constexpr (std::is_same_v<T, mir::PlusargsRvalueInfo>) {
-            if (info.output) {
-              CollectFromPlace(*info.output, arena);
-            }
+          } else if constexpr (std::is_same_v<T, mir::TestPlusargsRvalueInfo>) {
+            // Test plusargs is pure - no output place
           } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
             for (const auto& fop : info.ops) {
               if (fop.value) {
@@ -622,6 +620,15 @@ struct PlaceCollector {
           }
         },
         rvalue.info);
+  }
+
+  void CollectFromRhs(const mir::RightHandSide& rhs, const mir::Arena& arena) {
+    std::visit(
+        common::Overloaded{
+            [&](const mir::Operand& op) { CollectFromOperand(op, arena); },
+            [&](const mir::Rvalue& rv) { CollectFromRvalue(rv, arena); },
+        },
+        rhs);
   }
 
   // Collect places from an effect operation.
@@ -681,13 +688,10 @@ struct PlaceCollector {
               using T = std::decay_t<decltype(data)>;
               if constexpr (std::is_same_v<T, mir::Assign>) {
                 CollectFromPlace(data.target, arena);
-                CollectFromOperand(data.source, arena);
-              } else if constexpr (std::is_same_v<T, mir::Compute>) {
+                CollectFromRhs(data.source, arena);
+              } else if constexpr (std::is_same_v<T, mir::GuardedStore>) {
                 CollectFromPlace(data.target, arena);
-                CollectFromRvalue(data.value, arena);
-              } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
-                CollectFromPlace(data.target, arena);
-                CollectFromOperand(data.source, arena);
+                CollectFromRhs(data.source, arena);
                 CollectFromOperand(data.validity, arena);
               } else if constexpr (std::is_same_v<T, mir::Effect>) {
                 CollectFromEffect(data.op, arena);
@@ -709,6 +713,10 @@ struct PlaceCollector {
                 for (const auto& arg : data.args) {
                   CollectFromOperand(arg, arena);
                 }
+              } else if constexpr (std::is_same_v<T, mir::ValuePlusargs>) {
+                CollectFromPlace(data.dest, arena);
+                CollectFromPlace(data.output, arena);
+                CollectFromOperand(data.query, arena);
               }
             },
             inst.data);

@@ -165,8 +165,8 @@ void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
   EmitInst(mir::Assign{.target = target, .source = std::move(source)});
 }
 
-void MirBuilder::EmitCompute(mir::PlaceId target, mir::Rvalue value) {
-  EmitInst(mir::Compute{.target = target, .value = std::move(value)});
+void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
+  EmitInst(mir::Assign{.target = target, .source = std::move(value)});
 }
 
 void MirBuilder::EmitEffect(mir::EffectOp op) {
@@ -175,7 +175,7 @@ void MirBuilder::EmitEffect(mir::EffectOp op) {
 
 auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   mir::PlaceId temp = ctx_->AllocTemp(type);
-  EmitCompute(temp, std::move(value));
+  EmitAssign(temp, std::move(value));
   return temp;
 }
 
@@ -228,6 +228,19 @@ auto MirBuilder::EmitBuiltinCall(
           .receiver = receiver,
           .args = std::move(args)});
   return mir::Operand::Use(temp);
+}
+
+auto MirBuilder::EmitValuePlusargs(
+    mir::Operand query, mir::PlaceId output, TypeId output_type,
+    TypeId result_type) -> mir::Operand {
+  mir::PlaceId dest = ctx_->AllocTemp(result_type);
+  EmitInst(
+      mir::ValuePlusargs{
+          .dest = dest,
+          .output = output,
+          .output_type = output_type,
+          .query = std::move(query)});
+  return mir::Operand::Use(dest);
 }
 
 auto MirBuilder::EmitUnary(
@@ -289,10 +302,10 @@ auto MirBuilder::EmitGuardedUse(
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
-void MirBuilder::EmitGuardedAssign(
+void MirBuilder::EmitGuardedStore(
     mir::PlaceId target, mir::Operand source, mir::Operand validity) {
   EmitInst(
-      mir::GuardedAssign{
+      mir::GuardedStore{
           .target = target,
           .source = std::move(source),
           .validity = std::move(validity)});

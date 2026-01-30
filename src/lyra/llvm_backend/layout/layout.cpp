@@ -26,6 +26,7 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -315,6 +316,23 @@ void CollectPlaceFromOperand(
   }
 }
 
+// Forward declarations for mutual recursion
+void CollectPlacesFromRvalue(
+    const mir::Rvalue& rvalue,
+    std::unordered_set<mir::PlaceId, PlaceIdHash>& places);
+
+// Collect PlaceIds from a RightHandSide
+void CollectPlacesFromRhs(
+    const mir::RightHandSide& rhs,
+    std::unordered_set<mir::PlaceId, PlaceIdHash>& places) {
+  std::visit(
+      common::Overloaded{
+          [&](const mir::Operand& op) { CollectPlaceFromOperand(op, places); },
+          [&](const mir::Rvalue& rv) { CollectPlacesFromRvalue(rv, places); },
+      },
+      rhs);
+}
+
 // Collect PlaceIds from an Rvalue (operands + RvalueInfo).
 // Uses exhaustive std::visit to ensure new RvalueInfo types with embedded
 // PlaceIds cause compilation errors until handled.
@@ -335,10 +353,8 @@ void CollectPlacesFromRvalue(
           if (info.receiver) {
             places.insert(*info.receiver);
           }
-        } else if constexpr (std::is_same_v<T, mir::PlusargsRvalueInfo>) {
-          if (info.output) {
-            places.insert(*info.output);
-          }
+        } else if constexpr (std::is_same_v<T, mir::TestPlusargsRvalueInfo>) {
+          // Test plusargs is pure - no output place
         } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
           for (const auto& fop : info.ops) {
             if (fop.value) {
@@ -437,15 +453,11 @@ auto CollectProcessPlaces(const mir::Process& process)
           common::Overloaded{
               [&](const mir::Assign& a) {
                 places.insert(a.target);
-                CollectPlaceFromOperand(a.source, places);
+                CollectPlacesFromRhs(a.source, places);
               },
-              [&](const mir::Compute& c) {
-                places.insert(c.target);
-                CollectPlacesFromRvalue(c.value, places);
-              },
-              [&](const mir::GuardedAssign& g) {
+              [&](const mir::GuardedStore& g) {
                 places.insert(g.target);
-                CollectPlaceFromOperand(g.source, places);
+                CollectPlacesFromRhs(g.source, places);
                 CollectPlaceFromOperand(g.validity, places);
               },
               [&](const mir::Effect& e) {
@@ -471,6 +483,11 @@ auto CollectProcessPlaces(const mir::Process& process)
                 for (const auto& arg : bcall.args) {
                   CollectPlaceFromOperand(arg, places);
                 }
+              },
+              [&](const mir::ValuePlusargs& vp) {
+                places.insert(vp.dest);
+                places.insert(vp.output);
+                CollectPlaceFromOperand(vp.query, places);
               },
           },
           instr.data);

@@ -23,7 +23,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -101,9 +100,10 @@ auto MapToFcmpPredicate(mir::BinaryOp op) -> llvm::CmpInst::Predicate {
 
 auto LowerRealUnaryValue(
     Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target)
+    const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
   auto operand_or_err = LowerOperand(context, operands[0]);
@@ -120,9 +120,10 @@ auto LowerRealUnaryValue(
     auto* zero = llvm::ConstantFP::get(float_ty, 0.0);
     auto* nonzero = builder.CreateFCmpUNE(operand, zero, "nonzero");
     auto* not_val = builder.CreateNot(nonzero, "lnot");
-    auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
-    llvm::Type* target_type = *target_type_or_err;
+    const Type& type = types[result_type];
+    uint32_t bit_width = IsPacked(type) ? PackedBitWidth(type, types) : 1;
+    auto* target_type =
+        llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
     result = builder.CreateZExtOrTrunc(not_val, target_type, "lnot.ext");
   } else {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
@@ -136,9 +137,10 @@ auto LowerRealUnaryValue(
 
 auto LowerRealBinaryValue(
     Context& context, const mir::BinaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target)
+    const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
   auto lhs_or_err = LowerOperand(context, operands[0]);
@@ -166,15 +168,19 @@ auto LowerRealBinaryValue(
     float_ty = double_ty;
   }
 
+  // Helper to get target LLVM type for integral results
+  auto get_target_type = [&]() -> llvm::Type* {
+    const Type& type = types[result_type];
+    uint32_t bit_width = IsPacked(type) ? PackedBitWidth(type, types) : 1;
+    return llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+  };
+
   llvm::Value* result = nullptr;
 
   if (IsRealComparisonOp(info.op)) {
     auto pred = MapToFcmpPredicate(info.op);
     auto* cmp = builder.CreateFCmp(pred, lhs, rhs, "fcmp");
-    auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
-    llvm::Type* target_type = *target_type_or_err;
-    return builder.CreateZExtOrTrunc(cmp, target_type, "fcmp.ext");
+    return builder.CreateZExtOrTrunc(cmp, get_target_type(), "fcmp.ext");
   }
 
   if (info.op == mir::BinaryOp::kLogicalAnd ||
@@ -189,10 +195,8 @@ auto LowerRealBinaryValue(
     } else {
       logic_result = builder.CreateOr(lhs_true, rhs_true, "flor");
     }
-    auto target_type_or_err = context.GetPlaceLlvmType(target);
-    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
-    llvm::Type* target_type = *target_type_or_err;
-    return builder.CreateZExtOrTrunc(logic_result, target_type, "flog.ext");
+    return builder.CreateZExtOrTrunc(
+        logic_result, get_target_type(), "flog.ext");
   }
 
   // Arithmetic operations
@@ -229,36 +233,37 @@ auto LowerRealBinaryValue(
 
 }  // namespace
 
-auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
+auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
       common::Overloaded{
           [&](const mir::UnaryRvalueInfo&) {
-            TypeId tid = GetOperandTypeId(context, compute.value.operands[0]);
+            TypeId tid = GetOperandTypeId(context, rvalue.operands[0]);
             return IsRealKind(types[tid].Kind());
           },
           [&](const mir::BinaryRvalueInfo&) {
-            TypeId tid = GetOperandTypeId(context, compute.value.operands[0]);
+            TypeId tid = GetOperandTypeId(context, rvalue.operands[0]);
             return IsRealKind(types[tid].Kind());
           },
           // Casts are handled by LowerCastUnified, not here
           [](const auto&) { return false; },
       },
-      compute.value.info);
+      rvalue.info);
 }
 
-auto LowerRealRvalue(Context& context, const mir::Compute& compute)
-    -> Result<llvm::Value*> {
-  return std::visit(
+auto LowerRealRvalue(
+    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
+    -> Result<RvalueValue> {
+  auto result_or_err = std::visit(
       common::Overloaded{
           [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealUnaryValue(
-                context, info, compute.value.operands, compute.target);
+                context, info, rvalue.operands, result_type);
           },
           [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealBinaryValue(
-                context, info, compute.value.operands, compute.target);
+                context, info, rvalue.operands, result_type);
           },
           [&](const mir::CastRvalueInfo&) -> Result<llvm::Value*> {
             throw common::InternalError(
@@ -270,11 +275,14 @@ auto LowerRealRvalue(Context& context, const mir::Compute& compute)
                     context.GetCurrentOrigin(),
                     std::format(
                         "unsupported real rvalue kind: {}",
-                        mir::GetRvalueKind(compute.value.info)),
+                        mir::GetRvalueKind(rvalue.info)),
                     UnsupportedCategory::kFeature));
           },
       },
-      compute.value.info);
+      rvalue.info);
+
+  if (!result_or_err) return std::unexpected(result_or_err.error());
+  return RvalueValue::TwoState(*result_or_err);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

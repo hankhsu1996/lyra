@@ -272,8 +272,8 @@ auto Interpreter::EvalRvalue(
           [&](const SFormatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalSFormat(state, rv);
           },
-          [&](const PlusargsRvalueInfo&) -> Result<RuntimeValue> {
-            return EvalPlusargs(state, rv);
+          [&](const TestPlusargsRvalueInfo&) -> Result<RuntimeValue> {
+            return EvalTestPlusargs(state, rv);
           },
           [&](const SystemTfRvalueInfo& info) -> Result<RuntimeValue> {
             switch (info.opcode) {
@@ -789,11 +789,9 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
   return MakeString(std::move(result));
 }
 
-auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
+auto Interpreter::EvalTestPlusargs(ProcessState& state, const Rvalue& rv)
     -> Result<RuntimeValue> {
-  const auto& info = std::get<PlusargsRvalueInfo>(rv.info);
-
-  // Evaluate query/format operand (always a string)
+  // Evaluate query operand (always a string)
   auto query_val_result = EvalOperand(state, rv.operands[0]);
   if (!query_val_result) {
     return std::unexpected(std::move(query_val_result).error());
@@ -801,7 +799,7 @@ auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
   auto& query_val = *query_val_result;
   if (!IsString(query_val)) {
     throw common::InternalError(
-        "EvalPlusargs", "query operand is not a string");
+        "EvalTestPlusargs", "query operand is not a string");
   }
   std::string_view query = AsString(query_val).value;
 
@@ -813,82 +811,13 @@ auto Interpreter::EvalPlusargs(ProcessState& state, const Rvalue& rv)
     return arg;
   };
 
-  if (info.kind == PlusargsKind::kTest) {
-    // $test$plusargs: prefix match
-    for (const auto& arg : plusargs_) {
-      std::string_view content = get_content(arg);
-      if (content.starts_with(query)) {
-        return MakeIntegralSigned(1, 32);
-      }
-    }
-    return MakeIntegralSigned(0, 32);
-  }
-
-  // $value$plusargs: parse format and extract value
-  // Parse format string: "PREFIX%<spec>" → prefix + spec char
-  auto percent_pos = query.find('%');
-  if (percent_pos == std::string_view::npos) {
-    // No format specifier, treat as test
-    for (const auto& arg : plusargs_) {
-      std::string_view content = get_content(arg);
-      if (content.starts_with(query)) {
-        return MakeIntegralSigned(1, 32);
-      }
-    }
-    return MakeIntegralSigned(0, 32);
-  }
-
-  std::string_view prefix = query.substr(0, percent_pos);
-  char spec = '\0';
-  size_t spec_pos = percent_pos + 1;
-  if (spec_pos < query.size()) {
-    spec = query[spec_pos];
-    // Skip leading '0' in format specifier (e.g., %0d → %d)
-    if (spec == '0' && spec_pos + 1 < query.size()) {
-      spec = query[spec_pos + 1];
-    }
-  }
-
+  // $test$plusargs: prefix match
   for (const auto& arg : plusargs_) {
     std::string_view content = get_content(arg);
-    if (!content.starts_with(prefix)) {
-      continue;
-    }
-    std::string_view remainder = content.substr(prefix.size());
-
-    // Parse based on format specifier
-    if (spec == 'd' || spec == 'D') {
-      int32_t parsed_value = 0;
-      auto [ptr, ec] = std::from_chars(
-          remainder.data(), remainder.data() + remainder.size(), parsed_value);
-      if (ec != std::errc{}) {
-        parsed_value = 0;  // Conversion failed
-      }
-      if (info.output.has_value()) {
-        auto store_result = StoreToPlace(
-            state, *info.output, MakeIntegralSigned(parsed_value, 32));
-        if (!store_result) {
-          return std::unexpected(std::move(store_result).error());
-        }
-      }
+    if (content.starts_with(query)) {
       return MakeIntegralSigned(1, 32);
     }
-    if (spec == 's' || spec == 'S') {
-      if (info.output.has_value()) {
-        auto store_result = StoreToPlace(
-            state, *info.output, MakeString(std::string(remainder)));
-        if (!store_result) {
-          return std::unexpected(std::move(store_result).error());
-        }
-      }
-      return MakeIntegralSigned(1, 32);
-    }
-
-    // Unsupported format spec - match but don't write
-    return MakeIntegralSigned(1, 32);
   }
-
-  // No match found
   return MakeIntegralSigned(0, 32);
 }
 

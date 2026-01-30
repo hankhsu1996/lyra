@@ -96,13 +96,11 @@ struct SFormatRvalueInfo {
   bool has_runtime_format = false;
 };
 
-enum class PlusargsKind : uint8_t { kTest, kValue };
-
-struct PlusargsRvalueInfo {
-  PlusargsKind kind;
-  std::optional<PlaceId> output;  // kValue only: place to write parsed value
-  TypeId output_type;             // kValue only: type of output variable
-  // operands[0] = query/format string (always a string operand)
+// TestPlusargsRvalueInfo: $test$plusargs system function (pure, no side
+// effects) Returns 1 if a plusarg matching the query prefix exists, 0
+// otherwise. operands[0] = query string
+struct TestPlusargsRvalueInfo {
+  // No fields needed - query comes from operands[0]
 };
 
 // SystemTfRvalueInfo: Generic rvalue-producing system TFs.
@@ -129,7 +127,7 @@ using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
     GuardedUseRvalueInfo, ConcatRvalueInfo, SFormatRvalueInfo,
-    PlusargsRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
+    TestPlusargsRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
     SystemTfRvalueInfo>;
 
 struct Rvalue {
@@ -162,8 +160,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "concat";
         } else if constexpr (std::is_same_v<T, SFormatRvalueInfo>) {
           return "sformat";
-        } else if constexpr (std::is_same_v<T, PlusargsRvalueInfo>) {
-          return "plusargs";
+        } else if constexpr (std::is_same_v<T, TestPlusargsRvalueInfo>) {
+          return "test_plusargs";
         } else if constexpr (std::is_same_v<T, RuntimeQueryRvalueInfo>) {
           return "runtime_query";
         } else if constexpr (std::is_same_v<T, MathCallRvalueInfo>) {

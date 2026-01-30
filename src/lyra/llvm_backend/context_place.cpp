@@ -378,6 +378,27 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   return BuildLlvmTypeForTypeId(*this, base_type_id);
 }
 
+auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
+  auto ptr_result = GetPlacePointer(place_id);
+  if (!ptr_result) return std::unexpected(ptr_result.error());
+
+  auto type_result = GetPlaceLlvmType(place_id);
+  if (!type_result) return std::unexpected(type_result.error());
+
+  return builder_.CreateLoad(*type_result, *ptr_result, "load");
+}
+
+auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
+    -> Result<llvm::Value*> {
+  auto ptr_result = GetPlacePointer(place_id);
+  if (!ptr_result) return std::unexpected(ptr_result.error());
+
+  auto type_result = GetPlaceBaseType(place_id);
+  if (!type_result) return std::unexpected(type_result.error());
+
+  return builder_.CreateLoad(*type_result, *ptr_result, "base");
+}
+
 auto Context::ComposeBitRange(mir::PlaceId place_id)
     -> Result<ComposedBitRange> {
   const auto& place = arena_[place_id];

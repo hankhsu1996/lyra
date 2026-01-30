@@ -176,7 +176,9 @@ auto LowerUnaryRvalue2State(
   llvm::Value* operand = *operand_or_err;
 
   Result<llvm::Value*> result;
-  if (IsReductionOp(info.op)) {
+  // LogicalNot is like reduction ops: it needs the operand at its original
+  // width to compare against zero (not truncated to storage width)
+  if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
     uint32_t operand_semantic_width =
         GetOperandPackedWidth(context, operands[0]);
     result = LowerReduction2State(

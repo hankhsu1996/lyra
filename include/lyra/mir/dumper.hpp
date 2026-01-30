@@ -9,6 +9,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::mir {
@@ -35,6 +36,7 @@ class Dumper {
   [[nodiscard]] auto FormatPlace(PlaceId id) const -> std::string;
   [[nodiscard]] auto FormatOperand(const Operand& op) const -> std::string;
   [[nodiscard]] auto FormatRvalue(const Rvalue& rv) const -> std::string;
+  [[nodiscard]] auto FormatRhs(const RightHandSide& rhs) const -> std::string;
   [[nodiscard]] auto FormatEffect(const EffectOp& op) const -> std::string;
   [[nodiscard]] auto FormatType(TypeId id) const -> std::string;
 

@@ -6,9 +6,11 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/result.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -27,10 +29,9 @@ auto FinalizeCompute(
     llvm::StructType* struct_type) -> llvm::Value*;
 
 // Lower packed core rvalues (binary, unary, concat) with unified dispatch.
-// Routes to 2-state or 4-state implementations based on target stateness.
-// Returns the computed value (width-masked) and sets *unknown_out for 4-state.
-auto LowerPackedCoreRvalueValue(
-    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
-    -> Result<llvm::Value*>;
+// Routes to 2-state or 4-state implementations based on result type stateness.
+auto LowerPackedCoreRvalue(
+    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
+    -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -22,7 +22,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -116,16 +115,16 @@ auto FinalizeCompute(
   return masked.value;
 }
 
-auto LowerPackedCoreRvalueValue(
-    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
-    -> Result<llvm::Value*> {
-  // Validate and get type info
-  auto type_info_or_err = ValidateAndGetTypeInfo(context, compute.target);
+auto LowerPackedCoreRvalue(
+    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
+    -> Result<RvalueValue> {
+  // Validate and get type info from result_type
+  auto type_info_or_err = GetTypeInfoFromType(context, result_type);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;
 
   // Get storage type and element type
-  auto storage_type_or_err = context.GetPlaceLlvmType(compute.target);
+  auto storage_type_or_err = GetLlvmTypeForType(context, result_type);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
@@ -148,24 +147,24 @@ auto LowerPackedCoreRvalueValue(
       common::Overloaded{
           [&](const mir::BinaryRvalueInfo& info) -> Result<ComputeResult> {
             return LowerBinaryRvalue(
-                context, info, compute.value.operands, packed_context);
+                context, info, rvalue.operands, packed_context);
           },
           [&](const mir::UnaryRvalueInfo& info) -> Result<ComputeResult> {
             return LowerUnaryRvalue(
-                context, info, compute.value.operands, packed_context);
+                context, info, rvalue.operands, packed_context);
           },
           [&](const mir::ConcatRvalueInfo& info) -> Result<ComputeResult> {
             return LowerConcatRvalue(
-                context, info, compute.value.operands, packed_context);
+                context, info, rvalue.operands, packed_context);
           },
           [&](const mir::IndexValidityRvalueInfo& info)
               -> Result<ComputeResult> {
             return LowerIndexValidity(
-                context, info, compute.value.operands, packed_context);
+                context, info, rvalue.operands, packed_context);
           },
           [&](const mir::GuardedUseRvalueInfo& info) -> Result<ComputeResult> {
             return LowerGuardedUse(
-                context, info, compute.value.operands, packed_context);
+                context, info, rvalue.operands, packed_context);
           },
           [&](const mir::RuntimeQueryRvalueInfo& info)
               -> Result<ComputeResult> {
@@ -177,11 +176,11 @@ auto LowerPackedCoreRvalueValue(
                     context.GetCurrentOrigin(),
                     std::format(
                         "unsupported rvalue kind in packed core path: {}",
-                        mir::GetRvalueKind(compute.value.info)),
+                        mir::GetRvalueKind(rvalue.info)),
                     UnsupportedCategory::kFeature));
           },
       },
-      compute.value.info);
+      rvalue.info);
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
@@ -189,12 +188,11 @@ auto LowerPackedCoreRvalueValue(
   auto masked =
       ApplyWidthMaskToResult(context, *result_or_err, type_info.bit_width);
 
-  // Return unknown plane via out parameter
-  if (unknown_out != nullptr) {
-    *unknown_out = masked.IsFourState() ? masked.unknown : nullptr;
+  // Return as RvalueValue
+  if (masked.IsFourState()) {
+    return RvalueValue::FourState(masked.value, masked.unknown);
   }
-
-  return masked.value;
+  return RvalueValue::TwoState(masked.value);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
