@@ -88,6 +88,7 @@ void CollectFromRvalue(
           [](const AggregateRvalueInfo&) {},
           [](const IndexValidityRvalueInfo&) {},
           [](const ConcatRvalueInfo&) {},
+          [](const ReplicateRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
           [](const TestPlusargsRvalueInfo&) {},
           [](const RuntimeQueryRvalueInfo&) {},

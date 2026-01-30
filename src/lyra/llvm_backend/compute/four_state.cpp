@@ -128,6 +128,46 @@ auto LowerConcatRvalue4State(
   return ComputeResult::FourState(acc_val, acc_unk);
 }
 
+auto LowerReplicateRvalue4State(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* elem_type = packed_context.element_type;
+
+  auto& builder = context.GetBuilder();
+
+  if (operands.size() != 1) {
+    throw common::InternalError(
+        "LowerReplicateRvalue4State", "replicate requires exactly 1 operand");
+  }
+
+  uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
+  auto elem_or_err = LowerOperandFourState(context, operands[0], elem_type);
+  if (!elem_or_err) return std::unexpected(elem_or_err.error());
+  auto elem = *elem_or_err;
+
+  auto* op_ty = llvm::Type::getIntNTy(builder.getContext(), op_width);
+  auto* val_elem =
+      builder.CreateZExtOrTrunc(elem.value, op_ty, "rep4.val.trunc");
+  auto* unk_elem =
+      builder.CreateZExtOrTrunc(elem.unknown, op_ty, "rep4.unk.trunc");
+  auto* acc_val = builder.CreateZExt(val_elem, elem_type, "rep4.val.ext");
+  auto* acc_unk = builder.CreateZExt(unk_elem, elem_type, "rep4.unk.ext");
+
+  auto* shift_amount = llvm::ConstantInt::get(elem_type, op_width);
+  auto* val_op = builder.CreateZExt(val_elem, elem_type, "rep4.val.ext2");
+  auto* unk_op = builder.CreateZExt(unk_elem, elem_type, "rep4.unk.ext2");
+
+  for (uint32_t i = 1; i < info.count; ++i) {
+    acc_val = builder.CreateShl(acc_val, shift_amount, "rep4.val.shl");
+    acc_val = builder.CreateOr(acc_val, val_op, "rep4.val.or");
+    acc_unk = builder.CreateShl(acc_unk, shift_amount, "rep4.unk.shl");
+    acc_unk = builder.CreateOr(acc_unk, unk_op, "rep4.unk.or");
+  }
+
+  return ComputeResult::FourState(acc_val, acc_unk);
+}
+
 // Lower regular (non-reduction) unary ops at carrier width.
 //
 // Contract:

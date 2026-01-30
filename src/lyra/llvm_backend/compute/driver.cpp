@@ -59,6 +59,16 @@ auto LowerConcatRvalue(
   return LowerConcatRvalue2State(context, info, operands, packed_context);
 }
 
+auto LowerReplicateRvalue(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  if (packed_context.is_four_state) {
+    return LowerReplicateRvalue4State(context, info, operands, packed_context);
+  }
+  return LowerReplicateRvalue2State(context, info, operands, packed_context);
+}
+
 auto LowerIndexValidity(
     Context& context, const mir::IndexValidityRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
@@ -155,6 +165,10 @@ auto LowerPackedCoreRvalue(
           },
           [&](const mir::ConcatRvalueInfo& info) -> Result<ComputeResult> {
             return LowerConcatRvalue(
+                context, info, rvalue.operands, packed_context);
+          },
+          [&](const mir::ReplicateRvalueInfo& info) -> Result<ComputeResult> {
+            return LowerReplicateRvalue(
                 context, info, rvalue.operands, packed_context);
           },
           [&](const mir::IndexValidityRvalueInfo& info)

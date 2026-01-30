@@ -137,6 +137,68 @@ extern "C" void LyraStringRelease(LyraStringHandle handle) {
   }
 }
 
+extern "C" auto LyraStringFromPacked(const void* data, int32_t bit_width)
+    -> LyraStringHandle {
+  // Convert packed bits to string bytes (MSB to LSB, skip leading zeros)
+  size_t num_bytes = (static_cast<size_t>(bit_width) + 7) / 8;
+  const auto* bytes = static_cast<const uint8_t*>(data);
+
+  // Find first non-zero byte (skip leading zeros)
+  size_t start = 0;
+  for (size_t i = 0; i < num_bytes; ++i) {
+    // Bytes are stored little-endian, so MSB is at highest index
+    size_t byte_idx = num_bytes - 1 - i;
+    if (bytes[byte_idx] != 0) {
+      start = i;
+      break;
+    }
+    if (i == num_bytes - 1) {
+      // All zeros - return empty string
+      return LyraStringFromLiteral("", 0);
+    }
+  }
+
+  // Build result string from MSB to LSB
+  std::string result;
+  for (size_t i = start; i < num_bytes; ++i) {
+    size_t byte_idx = num_bytes - 1 - i;
+    result.push_back(static_cast<char>(bytes[byte_idx]));
+  }
+
+  return LyraStringFromLiteral(
+      result.data(), static_cast<int64_t>(result.size()));
+}
+
+extern "C" void LyraPackedFromString(
+    LyraStringHandle handle, void* out_data, int32_t bit_width) {
+  size_t num_bytes = (static_cast<size_t>(bit_width) + 7) / 8;
+  auto* bytes = static_cast<uint8_t*>(out_data);
+
+  // Zero-initialize output
+  std::memset(bytes, 0, num_bytes);
+
+  if (handle == nullptr) {
+    return;
+  }
+
+  auto* str = static_cast<LyraStringData*>(handle);
+
+  // Pack string bytes into output, MSB first.
+  // String characters go into highest byte positions.
+  // If string is longer than target width, rightmost chars are kept.
+  // If string is shorter, left-padded with zeros.
+  size_t str_len = str->len;
+  size_t chars_to_copy = std::min(str_len, num_bytes);
+  size_t start_in_str = (str_len > num_bytes) ? (str_len - num_bytes) : 0;
+
+  for (size_t i = 0; i < chars_to_copy; ++i) {
+    // String index: start_in_str + i
+    // Output is little-endian, MSB is at highest index
+    size_t byte_idx = num_bytes - 1 - i;
+    bytes[byte_idx] = static_cast<uint8_t>(str->data[start_in_str + i]);
+  }
+}
+
 extern "C" void LyraStringGetView(
     LyraStringHandle handle, const char** out_ptr, uint64_t* out_len) {
   if (handle == nullptr) {

@@ -179,6 +179,43 @@ auto LowerStringConcatValue(
   return result;
 }
 
+auto LowerStringReplicateValue(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+  auto count = static_cast<int64_t>(info.count);
+
+  // Lower the single operand → string handle
+  auto handle_or_err = LowerOperand(context, operands[0]);
+  if (!handle_or_err) return std::unexpected(handle_or_err.error());
+  llvm::Value* handle = *handle_or_err;
+
+  // Register constant operands for release at statement end
+  if (std::holds_alternative<Constant>(operands[0].payload)) {
+    context.RegisterOwnedTemp(handle);
+  }
+
+  // Build array on stack with count copies of the same handle
+  auto* array_alloca =
+      builder.CreateAlloca(ptr_ty, llvm::ConstantInt::get(i64_ty, count));
+  for (int64_t i = 0; i < count; ++i) {
+    auto* slot = builder.CreateGEP(
+        ptr_ty, array_alloca, {llvm::ConstantInt::get(i64_ty, i)});
+    builder.CreateStore(handle, slot);
+  }
+
+  // Call LyraStringConcat
+  llvm::Value* result = builder.CreateCall(
+      context.GetLyraStringConcat(),
+      {array_alloca, llvm::ConstantInt::get(i64_ty, count)}, "str.repeat");
+
+  return result;
+}
+
 auto LowerSFormatRvalueValue(
     Context& context, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {

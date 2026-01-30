@@ -29,6 +29,12 @@ auto LowerConcatRvalue2State(
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
+// Lower 2-state packed replication rvalue.
+auto LowerReplicateRvalue2State(
+    Context& context, const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
 // Lower 2-state index validity check (bounds checking).
 auto LowerIndexValidity2State(
     Context& context, const mir::IndexValidityRvalueInfo& info,

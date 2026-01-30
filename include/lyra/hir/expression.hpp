@@ -40,6 +40,7 @@ enum class ExpressionKind {
   kRangeSelect,        // x[a:b] constant range
   kIndexedPartSelect,  // x[i +: w] or x[i -: w]
   kConcat,             // {a, b, c} packed concatenation
+  kReplicate,          // {N{expr}} replication (compact form)
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
   kMathCall,         // IEEE 1800 §20.8 math function call
   kMaterializeInitializer,  // Initializer pattern materialized as expression
@@ -248,6 +249,13 @@ struct ConcatExpressionData {
   auto operator==(const ConcatExpressionData&) const -> bool = default;
 };
 
+struct ReplicateExpressionData {
+  ExpressionId element;
+  uint32_t count;
+
+  auto operator==(const ReplicateExpressionData&) const -> bool = default;
+};
+
 struct HierarchicalRefExpressionData {
   SymbolId target;  // Resolved variable in elaborated instance body
 
@@ -283,7 +291,8 @@ using ExpressionData = std::variant<
     BuiltinMethodCallExpressionData, PackedElementSelectExpressionData,
     PackedFieldAccessExpressionData, BitSelectExpressionData,
     RangeSelectExpressionData, IndexedPartSelectExpressionData,
-    ConcatExpressionData, HierarchicalRefExpressionData, MathCallExpressionData,
+    ConcatExpressionData, ReplicateExpressionData,
+    HierarchicalRefExpressionData, MathCallExpressionData,
     MaterializeInitializerExpressionData>;
 
 struct Expression {

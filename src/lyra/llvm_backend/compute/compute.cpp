@@ -99,6 +99,15 @@ auto LowerRvalue(
             }
             return LowerPackedCoreRvalue(context, rvalue, result_type);
           },
+          [&](const mir::ReplicateRvalueInfo& info) -> Result<RvalueValue> {
+            if (types[info.result_type].Kind() == TypeKind::kString) {
+              auto val_or_err =
+                  LowerStringReplicateValue(context, info, rvalue.operands);
+              if (!val_or_err) return std::unexpected(val_or_err.error());
+              return RvalueValue::TwoState(*val_or_err);
+            }
+            return LowerPackedCoreRvalue(context, rvalue, result_type);
+          },
           [&](const mir::RuntimeQueryRvalueInfo&) -> Result<RvalueValue> {
             return LowerPackedCoreRvalue(context, rvalue, result_type);
           },

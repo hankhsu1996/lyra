@@ -191,3 +191,61 @@ cases:
     expect:
       variables:
         result: "24'hAAAAAA"
+
+  - name: replicate_string_constant
+    description: String replication with constant string
+    sv: |
+      module Test;
+        string result;
+        initial begin
+          result = {3{"ab"}};
+          $display("%s", result);
+        end
+      endmodule
+    expect:
+      stdout: "ababab\n"
+
+  - name: replicate_string_runtime
+    description: String replication with runtime string
+    sv: |
+      module Test;
+        string s;
+        string result;
+        initial begin
+          s = "xy";
+          result = {4{s}};
+          $display("%s", result);
+        end
+      endmodule
+    expect:
+      stdout: "xyxyxyxy\n"
+
+  - name: replicate_string_single_char
+    description: Single character string replication
+    sv: |
+      module Test;
+        string s;
+        string result;
+        initial begin
+          s = "Z";
+          result = {5{s}};
+          $display("%s", result);
+        end
+      endmodule
+    expect:
+      stdout: "ZZZZZ\n"
+
+  - name: replicate_string_empty
+    description: Empty string replication
+    sv: |
+      module Test;
+        string s;
+        string result;
+        initial begin
+          s = "";
+          result = {10{s}};
+          $display("[%s]", result);
+        end
+      endmodule
+    expect:
+      stdout: "[]\n"
