@@ -88,13 +88,13 @@ class MirBuilder {
       mir::Operand validity, mir::PlaceId place, TypeId result_type)
       -> mir::Operand;
 
-  // Emit GuardedStore instruction: conditionally write to place.
-  // Semantics: if (validity) Assign(target, source); else no-op
-  void EmitGuardedStore(
-      mir::PlaceId target, mir::Operand source, mir::Operand validity);
+  // Emit GuardedAssign instruction: conditionally write to place.
+  // Semantics: if (guard) dest := rhs; else no-op
+  void EmitGuardedAssign(
+      mir::PlaceId dest, mir::RightHandSide rhs, mir::Operand guard);
 
-  // Emit NonBlockingAssign instruction: schedule target <= source for NBA.
-  void EmitNonBlockingAssign(mir::PlaceId target, mir::Operand source);
+  // Emit DeferredAssign instruction: schedule dest := rhs for NBA region.
+  void EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs);
 
   // Emit ValuePlusargs instruction: $value$plusargs with side effects.
   // Writes parsed value to output, stores success (1/0) to dest.

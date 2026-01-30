@@ -309,11 +309,11 @@ auto LowerIncrementDecrement(
   mir::PlaceId new_value =
       builder.EmitTemp(expr.type, std::move(compute_rvalue));
 
-  // 5. Write back to target with guarded store for OOB safety
+  // 5. Write back to target with guarded assign for OOB safety
   if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
-    builder.EmitGuardedStore(
+    builder.EmitGuardedAssign(
         target.place, mir::Operand::Use(new_value), target.validity);
   }
 
@@ -382,11 +382,11 @@ auto LowerCompoundAssignment(
   mir::PlaceId new_value =
       builder.EmitTemp(expr.type, std::move(compute_rvalue));
 
-  // 6. Write back to target with guarded store for OOB safety
+  // 6. Write back to target with guarded assign for OOB safety
   if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
-    builder.EmitGuardedStore(
+    builder.EmitGuardedAssign(
         target.place, mir::Operand::Use(new_value), target.validity);
   }
 
@@ -716,12 +716,12 @@ auto LowerAssignment(
 
   if (data.is_non_blocking) {
     // Non-blocking: schedule for NBA region (validity handled in LLVM backend)
-    builder.EmitNonBlockingAssign(target.place, value);
+    builder.EmitDeferredAssign(target.place, value);
   } else if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, value);
   } else {
-    // Guarded store: only write if validity is true (OOB/X/Z = no-op)
-    builder.EmitGuardedStore(target.place, value, target.validity);
+    // Guarded assign: only write if guard is true (OOB/X/Z = no-op)
+    builder.EmitGuardedAssign(target.place, value, target.validity);
   }
 
   // Return the value (assignment expression yields the assigned value)

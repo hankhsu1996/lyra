@@ -138,13 +138,13 @@ struct StorageCollector {
     std::visit(
         common::Overloaded{
             [&](const Assign& i) {
-              Visit(arena[i.target], arena);
-              Visit(i.source, arena);
+              Visit(arena[i.dest], arena);
+              Visit(i.rhs, arena);
             },
-            [&](const GuardedStore& i) {
-              Visit(arena[i.target], arena);
-              Visit(i.source, arena);
-              Visit(i.validity, arena);
+            [&](const GuardedAssign& i) {
+              Visit(arena[i.dest], arena);
+              Visit(i.rhs, arena);
+              Visit(i.guard, arena);
             },
             [&](const Effect& i) {
               std::visit(
@@ -200,9 +200,9 @@ struct StorageCollector {
                   },
                   i.op);
             },
-            [&](const NonBlockingAssign& i) {
-              Visit(arena[i.target], arena);
-              Visit(i.source, arena);
+            [&](const DeferredAssign& i) {
+              Visit(arena[i.dest], arena);
+              Visit(i.rhs, arena);
             },
             [&](const Call& i) {
               if (i.dest) {

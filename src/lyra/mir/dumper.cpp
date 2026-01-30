@@ -234,16 +234,16 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           using T = std::decay_t<decltype(i)>;
           if constexpr (std::is_same_v<T, Assign>) {
             *out_ << std::format(
-                "{} = {}\n", FormatPlace(i.target), FormatRhs(i.source));
-          } else if constexpr (std::is_same_v<T, GuardedStore>) {
+                "{} = {}\n", FormatPlace(i.dest), FormatRhs(i.rhs));
+          } else if constexpr (std::is_same_v<T, GuardedAssign>) {
             *out_ << std::format(
-                "guarded_store {} = {} if {}\n", FormatPlace(i.target),
-                FormatRhs(i.source), FormatOperand(i.validity));
+                "guarded_assign {} = {} if {}\n", FormatPlace(i.dest),
+                FormatRhs(i.rhs), FormatOperand(i.guard));
           } else if constexpr (std::is_same_v<T, Effect>) {
             *out_ << FormatEffect(i.op) << "\n";
-          } else if constexpr (std::is_same_v<T, NonBlockingAssign>) {
+          } else if constexpr (std::is_same_v<T, DeferredAssign>) {
             *out_ << std::format(
-                "{} <= {}\n", FormatPlace(i.target), FormatOperand(i.source));
+                "{} <= {}\n", FormatPlace(i.dest), FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, Call>) {
             std::string args;
             for (size_t idx = 0; idx < i.args.size(); ++idx) {

@@ -12,16 +12,16 @@ namespace lyra::lowering::mir_to_llvm {
 // bit-range projections.
 auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void>;
 
-// Lower guarded store (conditional write based on validity check).
-// Source is evaluated BEFORE the validity check (per SystemVerilog spec).
+// Lower guarded assignment (conditional write based on guard).
+// rhs is evaluated BEFORE the guard check (per SystemVerilog spec).
 // Handles both Operand and Rvalue sources via RightHandSide dispatch.
-auto LowerGuardedStore(Context& context, const mir::GuardedStore& guarded)
+auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     -> Result<void>;
 
-// Lower non-blocking assignment (NBA).
+// Lower deferred assignment (NBA region).
 // Schedules the write for the NBA region and handles notification.
 // Supports bit-range, index projection, and simple full-width writes.
-auto LowerNonBlockingAssign(Context& context, const mir::NonBlockingAssign& nba)
+auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

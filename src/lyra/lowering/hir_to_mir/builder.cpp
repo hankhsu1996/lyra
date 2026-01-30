@@ -162,11 +162,11 @@ auto MirBuilder::CurrentBlock() const -> BlockIndex {
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
-  EmitInst(mir::Assign{.target = target, .source = std::move(source)});
+  EmitInst(mir::Assign{.dest = target, .rhs = std::move(source)});
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
-  EmitInst(mir::Assign{.target = target, .source = std::move(value)});
+  EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
 }
 
 void MirBuilder::EmitEffect(mir::EffectOp op) {
@@ -302,19 +302,15 @@ auto MirBuilder::EmitGuardedUse(
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
-void MirBuilder::EmitGuardedStore(
-    mir::PlaceId target, mir::Operand source, mir::Operand validity) {
+void MirBuilder::EmitGuardedAssign(
+    mir::PlaceId dest, mir::RightHandSide rhs, mir::Operand guard) {
   EmitInst(
-      mir::GuardedStore{
-          .target = target,
-          .source = std::move(source),
-          .validity = std::move(validity)});
+      mir::GuardedAssign{
+          .dest = dest, .rhs = std::move(rhs), .guard = std::move(guard)});
 }
 
-void MirBuilder::EmitNonBlockingAssign(
-    mir::PlaceId target, mir::Operand source) {
-  EmitInst(
-      mir::NonBlockingAssign{.target = target, .source = std::move(source)});
+void MirBuilder::EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs) {
+  EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
 }
 
 void MirBuilder::EmitIf(

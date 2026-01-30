@@ -166,18 +166,18 @@ auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
             if (!value_result) {
               return std::unexpected(std::move(value_result).error());
             }
-            return StoreToPlace(state, assign.target, std::move(*value_result));
+            return StoreToPlace(state, assign.dest, std::move(*value_result));
           },
           [&](const Rvalue& rvalue) -> Result<void> {
-            TypeId result_type = TypeOfPlace(*types_, (*arena_)[assign.target]);
+            TypeId result_type = TypeOfPlace(*types_, (*arena_)[assign.dest]);
             auto value_result = EvalRvalue(state, rvalue, result_type);
             if (!value_result) {
               return std::unexpected(std::move(value_result).error());
             }
-            return StoreToPlace(state, assign.target, std::move(*value_result));
+            return StoreToPlace(state, assign.dest, std::move(*value_result));
           },
       },
-      assign.source);
+      assign.rhs);
 }
 
 auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
@@ -700,9 +700,9 @@ auto Interpreter::ExecFillPackedEffect(
   return StoreToPlace(state, fill.target, std::move(filled_value));
 }
 
-auto Interpreter::ExecGuardedStore(
-    ProcessState& state, const GuardedStore& guarded) -> Result<void> {
-  // Always evaluate source unconditionally (per spec: only the write is
+auto Interpreter::ExecGuardedAssign(
+    ProcessState& state, const GuardedAssign& guarded) -> Result<void> {
+  // Always evaluate rhs unconditionally (per spec: only the write is
   // guarded). Dispatch on RightHandSide: Operand or Rvalue.
   auto value_result = std::visit(
       common::Overloaded{
@@ -710,35 +710,33 @@ auto Interpreter::ExecGuardedStore(
             return EvalOperand(state, operand);
           },
           [&](const Rvalue& rvalue) -> Result<RuntimeValue> {
-            TypeId result_type =
-                TypeOfPlace(*types_, (*arena_)[guarded.target]);
+            TypeId result_type = TypeOfPlace(*types_, (*arena_)[guarded.dest]);
             return EvalRvalue(state, rvalue, result_type);
           },
       },
-      guarded.source);
+      guarded.rhs);
   if (!value_result) {
     return std::unexpected(std::move(value_result).error());
   }
 
-  // Evaluate validity predicate
-  auto validity_result = EvalOperand(state, guarded.validity);
-  if (!validity_result) {
-    return std::unexpected(std::move(validity_result).error());
+  // Evaluate guard predicate
+  auto guard_result = EvalOperand(state, guarded.guard);
+  if (!guard_result) {
+    return std::unexpected(std::move(guard_result).error());
   }
-  auto& validity = *validity_result;
-  if (!IsIntegral(validity)) {
-    throw common::InternalError(
-        "ExecGuardedStore", "validity must be integral");
+  auto& guard = *guard_result;
+  if (!IsIntegral(guard)) {
+    throw common::InternalError("ExecGuardedAssign", "guard must be integral");
   }
-  const auto& valid_int = AsIntegral(validity);
+  const auto& guard_int = AsIntegral(guard);
 
-  // If invalid (OOB/X/Z), the write is a no-op
-  if (valid_int.IsZero()) {
+  // If guard is false (OOB/X/Z), the write is a no-op
+  if (guard_int.IsZero()) {
     return {};
   }
 
-  // Valid: perform the assignment
-  return StoreToPlace(state, guarded.target, std::move(*value_result));
+  // Guard is true: perform the assignment
+  return StoreToPlace(state, guarded.dest, std::move(*value_result));
 }
 
 auto Interpreter::ExecCall(ProcessState& state, const Call& call)
@@ -1042,8 +1040,8 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           if (!result) {
             error = std::move(result).error();
           }
-        } else if constexpr (std::is_same_v<T, GuardedStore>) {
-          auto result = ExecGuardedStore(state, i);
+        } else if constexpr (std::is_same_v<T, GuardedAssign>) {
+          auto result = ExecGuardedAssign(state, i);
           if (!result) {
             error = std::move(result).error();
           }

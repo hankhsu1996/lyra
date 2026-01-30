@@ -28,14 +28,14 @@ auto LowerInstruction(Context& context, const mir::Instruction& instruction)
           [&context](const mir::Assign& assign) -> Result<void> {
             return LowerAssign(context, assign);
           },
-          [&context](const mir::GuardedStore& guarded) -> Result<void> {
-            return LowerGuardedStore(context, guarded);
+          [&context](const mir::GuardedAssign& guarded) -> Result<void> {
+            return LowerGuardedAssign(context, guarded);
           },
           [&context](const mir::Effect& effect) -> Result<void> {
             return LowerEffectOp(context, effect.op);
           },
-          [&context](const mir::NonBlockingAssign& nba) -> Result<void> {
-            return LowerNonBlockingAssign(context, nba);
+          [&context](const mir::DeferredAssign& deferred) -> Result<void> {
+            return LowerDeferredAssign(context, deferred);
           },
           [&context](const mir::Call& call) -> Result<void> {
             return LowerCall(context, call);

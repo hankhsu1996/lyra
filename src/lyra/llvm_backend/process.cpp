@@ -687,17 +687,17 @@ struct PlaceCollector {
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
               if constexpr (std::is_same_v<T, mir::Assign>) {
-                CollectFromPlace(data.target, arena);
-                CollectFromRhs(data.source, arena);
-              } else if constexpr (std::is_same_v<T, mir::GuardedStore>) {
-                CollectFromPlace(data.target, arena);
-                CollectFromRhs(data.source, arena);
-                CollectFromOperand(data.validity, arena);
+                CollectFromPlace(data.dest, arena);
+                CollectFromRhs(data.rhs, arena);
+              } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
+                CollectFromPlace(data.dest, arena);
+                CollectFromRhs(data.rhs, arena);
+                CollectFromOperand(data.guard, arena);
               } else if constexpr (std::is_same_v<T, mir::Effect>) {
                 CollectFromEffect(data.op, arena);
-              } else if constexpr (std::is_same_v<T, mir::NonBlockingAssign>) {
-                CollectFromPlace(data.target, arena);
-                CollectFromOperand(data.source, arena);
+              } else if constexpr (std::is_same_v<T, mir::DeferredAssign>) {
+                CollectFromPlace(data.dest, arena);
+                CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::Call>) {
                 if (data.dest) {
                   CollectFromPlace(*data.dest, arena);
