@@ -29,6 +29,8 @@
 #include "lyra/llvm_backend/instruction.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -521,6 +523,7 @@ auto DeclareUserFunction(
     }
     default: {
       // All other thunks use standard signature: (design*, engine*)
+      // or with out-param: (out_ptr*, design*, engine*)
       auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
       if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
       fn_type = *fn_type_or_err;
@@ -531,6 +534,10 @@ auto DeclareUserFunction(
   // Create function declaration
   auto* llvm_func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
+
+  // Note: We use out-param calling convention for managed returns, but do NOT
+  // add LLVM's sret attribute. The sret attribute is for aggregate types, not
+  // pointer handles. Our "sret" is just a regular pointer parameter.
 
   // Register in context for call resolution
   context.RegisterUserFunction(func_id, llvm_func);
@@ -1172,6 +1179,9 @@ auto DefineUserFunction(
   // If func.origin is Invalid, this is a no-op.
   OriginScope func_scope(context, func.origin);
 
+  // Check if this function uses sret calling convention
+  bool uses_sret = RequiresSret(func.signature.return_type, types);
+
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", llvm_func);
@@ -1189,12 +1199,22 @@ auto DefineUserFunction(
   builder.SetInsertPoint(entry_block);
   context.BeginFunction(*llvm_func);
 
-  // First argument is DesignState*, second is Engine*
-  auto* design_arg = llvm_func->getArg(0);
+  // Argument offset: sret pointer comes first if present
+  unsigned arg_offset = uses_sret ? 1 : 0;
+
+  // Extract sret pointer if present (for use in exit block)
+  llvm::Value* sret_ptr = nullptr;
+  if (uses_sret) {
+    sret_ptr = llvm_func->getArg(0);
+    sret_ptr->setName("sret");
+  }
+
+  // DesignState* and Engine* follow sret (if present)
+  auto* design_arg = llvm_func->getArg(arg_offset);
   design_arg->setName("design");
   context.SetDesignPointer(design_arg);
 
-  auto* engine_arg = llvm_func->getArg(1);
+  auto* engine_arg = llvm_func->getArg(arg_offset + 1);
   engine_arg->setName("engine");
   context.SetEnginePointer(engine_arg);
 
@@ -1204,11 +1224,22 @@ auto DefineUserFunction(
 
   // Variable to hold return value (for non-void functions)
   // Must be allocated before any branches
+  // For sret: still allocate local return_slot (don't alias sret during exec)
   llvm::Value* return_value_ptr = nullptr;
   const Type& ret_type = types[func.signature.return_type];
   if (ret_type.Kind() != TypeKind::kVoid) {
-    llvm::Type* ret_llvm_type = llvm_func->getReturnType();
+    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+    // For sret, use ptr type (managed types are pointer handles)
+    // For non-sret, use the function's return type
+    llvm::Type* ret_llvm_type = uses_sret ? ptr_ty : llvm_func->getReturnType();
     return_value_ptr = builder.CreateAlloca(ret_llvm_type, nullptr, "retval");
+
+    // Initialize return slot to nullptr for managed types (ensures clean state)
+    if (uses_sret) {
+      auto* null_val =
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+      builder.CreateStore(null_val, return_value_ptr);
+    }
   }
 
   // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
@@ -1228,7 +1259,7 @@ auto DefineUserFunction(
 
   // Store argument values into parameter locals (overwriting default init).
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
-  // Arguments start at index 2 (after design and engine pointers).
+  // Arguments start at index arg_offset + 2 (after sret/design/engine).
   for (size_t i = 0; i < func.signature.params.size(); ++i) {
     common::OriginId param_origin = (i < func.param_origins.size())
                                         ? func.param_origins[i]
@@ -1245,7 +1276,8 @@ auto DefineUserFunction(
       if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
       llvm::AllocaInst* alloca = *alloca_or_err;
 
-      llvm::Value* arg_val = llvm_func->getArg(static_cast<unsigned>(i + 2));
+      llvm::Value* arg_val =
+          llvm_func->getArg(static_cast<unsigned>(i + arg_offset + 2));
       arg_val->setName(std::format("arg{}", i));
       builder.CreateStore(arg_val, alloca);
     }
@@ -1326,6 +1358,12 @@ auto DefineUserFunction(
   }
 
   if (ret_type.Kind() == TypeKind::kVoid) {
+    builder.CreateRetVoid();
+  } else if (uses_sret) {
+    // Out-param return: move from local slot to caller's out pointer.
+    // CONTRACT: Caller has already Destroy()'d the out slot, so we use
+    // MoveInit (dst is uninitialized). See LowerSretUserCall for caller side.
+    MoveInit(context, sret_ptr, return_value_ptr, func.signature.return_type);
     builder.CreateRetVoid();
   } else {
     llvm::Value* ret_val =

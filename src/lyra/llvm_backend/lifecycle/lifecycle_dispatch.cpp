@@ -142,4 +142,17 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
   }
 }
 
+void MoveInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  auto& builder = ctx.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+
+  // Move-initialize: load from src, store to dst, null out src.
+  // CONTRACT: dst must be uninitialized (caller responsible for Destroy).
+  // For managed types (string, dynarray, queue), the value is a pointer handle.
+  llvm::Value* value = builder.CreateLoad(ptr_ty, src_ptr, "move.val");
+  builder.CreateStore(value, dst_ptr);
+  MoveCleanup(ctx, src_ptr, type_id);
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

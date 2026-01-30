@@ -314,8 +314,14 @@ class Context {
 
   // Build LLVM function type from MIR function signature.
   // All user functions receive (DesignState*, Engine*, args...).
+  // For managed returns: (out_ptr*, DesignState*, Engine*, args...) -> void
+  // Note: We use out-param convention but NOT LLVM's sret attribute (which is
+  // for aggregates, not pointer handles).
   [[nodiscard]] auto BuildUserFunctionType(const mir::FunctionSignature& sig)
       -> Result<llvm::FunctionType*>;
+
+  // Check if a function uses out-param calling convention (managed return).
+  [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
  private:
   // Commit-module-only methods (accessed via friend class commit::Access)

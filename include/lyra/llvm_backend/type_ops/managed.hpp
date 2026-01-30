@@ -26,4 +26,9 @@ auto NeedsFieldByField(TypeId type_id, const TypeArena& types) -> bool;
 // Check if type needs Destroy() to be called (contains any managed type)
 auto NeedsDestroy(TypeId type_id, const TypeArena& types) -> bool;
 
+// Check if a return type requires sret calling convention.
+// Uses NeedsDestroy as source of truth - all managed types (string, dynarray,
+// queue, aggregates with managed fields) require sret.
+auto RequiresSret(TypeId type_id, const TypeArena& types) -> bool;
+
 }  // namespace lyra::lowering::mir_to_llvm

@@ -1,0 +1,73 @@
+cases:
+  - name: return_string_literal
+    sv: |
+      module Test;
+        function string get_hello();
+          return "Hello";
+        endfunction
+        initial $display("%s", get_hello());
+      endmodule
+    expect:
+      stdout: "Hello\n"
+
+  - name: return_string_concat
+    sv: |
+      module Test;
+        function string greet(string name);
+          return {"Hello, ", name, "!"};
+        endfunction
+        initial $display("%s", greet("World"));
+      endmodule
+    expect:
+      stdout: "Hello, World!\n"
+
+  - name: nested_string_return
+    sv: |
+      module Test;
+        function string inner();
+          return "Inner";
+        endfunction
+        function string outer();
+          return inner();
+        endfunction
+        initial $display("%s", outer());
+      endmodule
+    expect:
+      stdout: "Inner\n"
+
+  - name: chained_string_calls
+    sv: |
+      module Test;
+        function string wrap(string s);
+          return {"[", s, "]"};
+        endfunction
+        initial $display("%s", wrap(wrap("x")));
+      endmodule
+    expect:
+      stdout: "[[x]]\n"
+
+  - name: string_return_stored_in_variable
+    sv: |
+      module Test;
+        function string make_msg();
+          return "stored";
+        endfunction
+        initial begin
+          string s;
+          s = make_msg();
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout: "stored\n"
+
+  - name: string_return_with_param_modification
+    sv: |
+      module Test;
+        function string suffix(string base, string sfx);
+          return {base, sfx};
+        endfunction
+        initial $display("%s", suffix("foo", "bar"));
+      endmodule
+    expect:
+      stdout: "foobar\n"

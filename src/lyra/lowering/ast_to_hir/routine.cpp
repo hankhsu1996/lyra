@@ -117,10 +117,11 @@ auto LowerFunction(
     return hir::kInvalidFunctionId;
   }
 
-  // Reject non-integral/void return types (for functions not pre-registered)
+  // Reject unsupported return types (for functions not pre-registered)
   const auto& ret_type = func.getReturnType();
-  if (!ret_type.isIntegral() && !ret_type.isVoid()) {
-    ctx->sink->Error(span, "only integral or void return types supported");
+  if (!ret_type.isIntegral() && !ret_type.isVoid() && !ret_type.isString()) {
+    ctx->sink->Error(
+        span, "only integral, void, or string return types supported");
     return hir::kInvalidFunctionId;
   }
 
