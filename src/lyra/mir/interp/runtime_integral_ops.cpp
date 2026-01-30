@@ -1017,6 +1017,69 @@ auto IntegralExtractSlice(
   return result;
 }
 
+auto IntegralExtractSlice4State(
+    const RuntimeIntegral& src, uint32_t bit_offset, uint32_t width)
+    -> RuntimeIntegral {
+  // Handle edge cases
+  if (width == 0) {
+    RuntimeIntegral result;
+    result.bit_width = 0;
+    return result;
+  }
+
+  RuntimeIntegral result;
+  result.bit_width = width;
+  size_t result_words = WordsNeeded(width);
+  result.value.resize(result_words, 0);
+
+  // Copy unknown plane structure from source if present
+  bool has_unknown = !src.unknown.empty();
+  if (has_unknown) {
+    result.unknown.resize(result_words, 0);
+  }
+
+  // Out-of-range semantics: if offset is entirely beyond source, return zero.
+  if (bit_offset >= src.bit_width) {
+    return result;
+  }
+
+  size_t word_offset = bit_offset / kBitsPerWord;
+  size_t bit_shift = bit_offset % kBitsPerWord;
+
+  for (size_t i = 0; i < result_words; ++i) {
+    size_t src_word_idx = word_offset + i;
+    if (src_word_idx >= src.value.size()) {
+      // Beyond source - leave as zero
+      break;
+    }
+
+    // Extract value plane
+    uint64_t low_part = src.value[src_word_idx] >> bit_shift;
+    uint64_t high_part = 0;
+    if (bit_shift != 0 && src_word_idx + 1 < src.value.size()) {
+      high_part = src.value[src_word_idx + 1] << (kBitsPerWord - bit_shift);
+    }
+    result.value[i] = low_part | high_part;
+
+    // Extract unknown plane
+    if (has_unknown) {
+      uint64_t unk_low_part = src.unknown[src_word_idx] >> bit_shift;
+      uint64_t unk_high_part = 0;
+      if (bit_shift != 0 && src_word_idx + 1 < src.unknown.size()) {
+        unk_high_part = src.unknown[src_word_idx + 1]
+                        << (kBitsPerWord - bit_shift);
+      }
+      result.unknown[i] = unk_low_part | unk_high_part;
+    }
+  }
+
+  MaskTopWord(result.value, width);
+  if (has_unknown) {
+    MaskTopWord(result.unknown, width);
+  }
+  return result;
+}
+
 auto IntegralInsertSlice(
     const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
     uint32_t width) -> RuntimeIntegral {
@@ -1172,6 +1235,75 @@ auto IntegralInsertSlice4State(
   MaskTopWord(result.value, dst.bit_width);
   MaskTopWord(result.unknown, dst.bit_width);
   return result;
+}
+
+void IntegralInsertSlice4StateInPlace(
+    RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width) {
+  if (width == 0 || bit_offset >= dst.bit_width) {
+    return;
+  }
+
+  size_t dst_words = WordsNeeded(dst.bit_width);
+  dst.value.resize(dst_words, 0);
+  dst.unknown.resize(dst_words, 0);
+
+  uint32_t effective_width = width;
+  if (bit_offset + width > dst.bit_width) {
+    effective_width = dst.bit_width - bit_offset;
+  }
+
+  size_t src_words = WordsNeeded(width);
+  std::vector<uint64_t> src_a = src.value;
+  std::vector<uint64_t> src_b = src.unknown;
+  src_a.resize(src_words, 0);
+  src_b.resize(src_words, 0);
+
+  size_t first_dst_word = bit_offset / kBitsPerWord;
+  size_t last_dst_word = (bit_offset + effective_width - 1) / kBitsPerWord;
+
+  for (size_t dst_idx = first_dst_word;
+       dst_idx <= last_dst_word && dst_idx < dst_words; ++dst_idx) {
+    auto word_start_bit = static_cast<uint32_t>(dst_idx * kBitsPerWord);
+    uint32_t word_end_bit = word_start_bit + kBitsPerWord;
+
+    uint32_t slice_start = std::max(word_start_bit, bit_offset);
+    uint32_t slice_end = std::min(word_end_bit, bit_offset + effective_width);
+
+    if (slice_start >= slice_end) {
+      continue;
+    }
+
+    uint32_t bits_to_write = slice_end - slice_start;
+    uint32_t dst_bit_pos = slice_start - word_start_bit;
+    uint32_t src_bit_pos = slice_start - bit_offset;
+
+    size_t src_word_idx = src_bit_pos / kBitsPerWord;
+    size_t src_bit_in_word = src_bit_pos % kBitsPerWord;
+
+    auto extract_bits = [&](const std::vector<uint64_t>& vec) -> uint64_t {
+      uint64_t bits = 0;
+      if (src_word_idx < vec.size()) {
+        bits = vec[src_word_idx] >> src_bit_in_word;
+      }
+      if (src_bit_in_word != 0 && src_word_idx + 1 < vec.size()) {
+        bits |= vec[src_word_idx + 1] << (kBitsPerWord - src_bit_in_word);
+      }
+      return bits & GetMask(bits_to_write);
+    };
+
+    uint64_t a_bits = extract_bits(src_a);
+    uint64_t b_bits = extract_bits(src_b);
+
+    uint64_t dst_mask = GetMask(bits_to_write) << dst_bit_pos;
+    dst.value[dst_idx] &= ~dst_mask;
+    dst.value[dst_idx] |= a_bits << dst_bit_pos;
+    dst.unknown[dst_idx] &= ~dst_mask;
+    dst.unknown[dst_idx] |= b_bits << dst_bit_pos;
+  }
+
+  MaskTopWord(dst.value, dst.bit_width);
+  MaskTopWord(dst.unknown, dst.bit_width);
 }
 
 }  // namespace lyra::mir::interp

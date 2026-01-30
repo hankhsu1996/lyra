@@ -529,7 +529,7 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
       return std::unexpected(
           Diagnostic::HostError("bit slice exceeds container width"));
     }
-    return IntegralExtractSlice(
+    return IntegralExtractSlice4State(
         container, static_cast<uint32_t>(bs.total_offset), bs.width);
   }
   if (loc.blob_view) {

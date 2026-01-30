@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include <llvm/IR/Value.h>
 
@@ -13,6 +14,16 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 struct WriteTarget;
+
+// Pointers to packed storage planes for direct word-level access.
+// Used for runtime helpers that write directly to storage.
+struct PackedPlanesPtr {
+  llvm::Value* root_ptr = nullptr;  // Original storage pointer (for notify)
+  llvm::Value* val_ptr = nullptr;   // Pointer to value plane (opaque ptr)
+  llvm::Value* unk_ptr =
+      nullptr;  // Pointer to unknown plane (null for 2-state)
+  std::optional<uint32_t> signal_id;  // For design-slot notification
+};
 
 // Store raw value to target place with type-appropriate handling.
 // Handles: WriteTarget resolution, ownership (retain/clone), stateness
@@ -28,6 +39,13 @@ auto CommitValue(
 // Resolves WriteTarget internally, stores, notifies if design slot.
 void CommitPackedValueRaw(
     Context& ctx, mir::PlaceId target, llvm::Value* value);
+
+// Get pointers to packed storage planes for direct write access.
+// For 4-state {iN, iN}: GEPs to field 0 (val) and field 1 (unk).
+// For 2-state iN: val_ptr is storage pointer, unk_ptr is null.
+// Pointers are bitcast to i64* for word-level runtime access.
+auto GetPackedPlanesPtr(Context& ctx, mir::PlaceId target, TypeId type_id)
+    -> Result<PackedPlanesPtr>;
 
 // Notify after union byte-copy (memcpy already done by caller).
 // Invariant: caller has performed memcpy to target.

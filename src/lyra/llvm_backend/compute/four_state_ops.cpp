@@ -26,6 +26,15 @@ auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
   return {.value = val, .unknown = unk};
 }
 
+auto ExtractFourStateOrZero(llvm::IRBuilderBase& builder, llvm::Value* val)
+    -> FourStateValue {
+  if (val->getType()->isStructTy()) {
+    return ExtractFourState(builder, val);
+  }
+  auto* zero = llvm::ConstantInt::get(val->getType(), 0);
+  return {.value = val, .unknown = zero};
+}
+
 auto PackFourState(
     llvm::IRBuilderBase& builder, llvm::StructType* struct_type,
     llvm::Value* val, llvm::Value* unk) -> llvm::Value* {

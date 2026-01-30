@@ -32,6 +32,7 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
+#include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -668,7 +669,6 @@ auto Interpreter::ExecFillPackedEffect(
     }
 
     case FillKind::kElementFill: {
-      // Fill outer elements with element-typed value
       if (target_type.Kind() != TypeKind::kPackedArray) {
         throw common::InternalError(
             "ExecFillPackedEffect",
@@ -679,40 +679,11 @@ auto Interpreter::ExecFillPackedEffect(
       uint32_t elem_width =
           PackedBitWidth((*types_)[arr_info.element_type], *types_);
 
-      uint32_t word_count = (total_width + 63) / 64;
-      RuntimeIntegral target_int;
-      target_int.bit_width = total_width;
-      target_int.value.resize(word_count, 0);
-      target_int.unknown.resize(word_count, 0);
-
-      // Copy fill value to each element position
+      RuntimeIntegral target_int = MakeKnownIntegral(total_width);
       for (uint32_t i = 0; i < elem_count; ++i) {
         uint32_t bit_offset = i * elem_width;
-
-        for (uint32_t bit = 0; bit < elem_width; ++bit) {
-          uint32_t target_bit = bit_offset + bit;
-          uint32_t target_word = target_bit / 64;
-          uint32_t target_bit_in_word = target_bit % 64;
-
-          uint32_t fill_word = bit / 64;
-          uint32_t fill_bit_in_word = bit % 64;
-
-          uint64_t fill_value_bit =
-              (fill_word < fill_int.value.size())
-                  ? ((fill_int.value[fill_word] >> fill_bit_in_word) & 1)
-                  : 0;
-          uint64_t fill_unknown_bit =
-              (fill_word < fill_int.unknown.size())
-                  ? ((fill_int.unknown[fill_word] >> fill_bit_in_word) & 1)
-                  : 0;
-
-          if (fill_value_bit != 0) {
-            target_int.value[target_word] |= (1ULL << target_bit_in_word);
-          }
-          if (fill_unknown_bit != 0) {
-            target_int.unknown[target_word] |= (1ULL << target_bit_in_word);
-          }
-        }
+        IntegralInsertSlice4StateInPlace(
+            target_int, fill_int, bit_offset, elem_width);
       }
       filled_value = std::move(target_int);
       break;

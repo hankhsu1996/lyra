@@ -21,6 +21,12 @@ auto IsTypeFourState(const TypeArena& types, TypeId type_id) -> bool;
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)
     -> FourStateValue;
 
+// Extract FourStateValue from any packed LLVM value.
+// For 4-state structs {iN, iN}: extracts both planes.
+// For 2-state integers iN: returns {value, zero} (unknown plane is zero).
+auto ExtractFourStateOrZero(llvm::IRBuilderBase& builder, llvm::Value* val)
+    -> FourStateValue;
+
 // Pack value and unknown planes into a 4-state struct {iN, iN}
 auto PackFourState(
     llvm::IRBuilderBase& builder, llvm::StructType* struct_type,
