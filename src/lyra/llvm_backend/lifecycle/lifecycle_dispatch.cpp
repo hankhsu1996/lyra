@@ -1,28 +1,60 @@
 #include <format>
 
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/lifecycle/lifecycle_array.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace detail {
+
+// Destroy helpers (defined in lifecycle_*.cpp files)
 void DestroyString(Context& ctx, llvm::Value* ptr);
 void DestroyContainer(Context& ctx, llvm::Value* ptr);
 void DestroyStruct(Context& ctx, llvm::Value* ptr, TypeId type_id);
 
+// Clone helpers (defined in lifecycle_*.cpp files)
 auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value*;
 auto CloneContainer(Context& ctx, llvm::Value* handle) -> llvm::Value*;
 
+// MoveCleanup leaf helpers (defined in lifecycle_*.cpp files)
 void MoveCleanupString(Context& ctx, llvm::Value* ptr);
 void MoveCleanupContainer(Context& ctx, llvm::Value* ptr);
 void MoveCleanupStruct(Context& ctx, llvm::Value* ptr, TypeId type_id);
+
+// CopyInit helpers (defined in lifecycle_*.cpp files)
+void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
+void CopyInitContainer(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+void CopyInitStruct(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
 }  // namespace detail
+
+namespace {
+
+// Copy POD type (load + store).
+void CopyInitPod(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+  if (!llvm_type_result) {
+    throw common::InternalError(
+        "CopyInitPod", "failed to build LLVM type for POD type");
+  }
+  auto& builder = ctx.GetBuilder();
+  llvm::Value* val = builder.CreateLoad(*llvm_type_result, src_ptr, "copy.val");
+  builder.CreateStore(val, dst_ptr);
+}
+
+}  // namespace
 
 void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   const auto& types = ctx.GetTypeArena();
@@ -87,12 +119,12 @@ auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
     case TypeKind::kUnpackedStruct:
       throw common::InternalError(
           "CloneValue",
-          "struct types must be cloned via field-by-field assignment");
+          "struct types must be cloned via CopyInit (field-by-field)");
 
     case TypeKind::kUnpackedArray:
       throw common::InternalError(
           "CloneValue",
-          "unpacked arrays must be cloned via element-by-element assignment");
+          "unpacked arrays must be cloned via CopyInit (element-by-element)");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
@@ -102,6 +134,80 @@ auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
               "unhandled managed TypeKind in lifecycle dispatch: {}",
               ToString(type.Kind())));
   }
+}
+
+void CopyInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = ctx.GetTypeArena();
+
+  // POD types: simple load + store
+  if (!TypeContainsManaged(type_id, types)) {
+    CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    return;
+  }
+
+  // Past the guard: type contains managed content. Switch must handle all
+  // managed-bearing cases.
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kString:
+      detail::CopyInitString(ctx, dst_ptr, src_ptr);
+      return;
+
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      detail::CopyInitContainer(ctx, dst_ptr, src_ptr, type_id);
+      return;
+
+    case TypeKind::kUnpackedStruct:
+      detail::CopyInitStruct(ctx, dst_ptr, src_ptr, type_id);
+      return;
+
+    case TypeKind::kUnpackedArray:
+      detail::CopyInitArray(ctx, dst_ptr, src_ptr, type_id);
+      return;
+
+    default:
+      throw common::InternalError(
+          "CopyInit", std::format(
+                          "unhandled TypeKind in lifecycle dispatch: {}",
+                          ToString(type.Kind())));
+  }
+}
+
+void CopyAssign(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  // CopyAssign = Destroy(dst) + CopyInit(dst, src)
+  Destroy(ctx, dst_ptr, type_id);
+  CopyInit(ctx, dst_ptr, src_ptr, type_id);
+}
+
+void MoveInit(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = ctx.GetTypeArena();
+
+  // POD types: simple load + store (no cleanup needed)
+  if (!TypeContainsManaged(type_id, types)) {
+    CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    return;
+  }
+
+  auto& builder = ctx.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+
+  // Move-initialize: load from src, store to dst, null out src.
+  // CONTRACT: dst must be uninitialized (caller responsible for Destroy).
+  // For managed types (string, dynarray, queue), the value is a pointer handle.
+  llvm::Value* value = builder.CreateLoad(ptr_ty, src_ptr, "move.val");
+  builder.CreateStore(value, dst_ptr);
+  MoveCleanup(ctx, src_ptr, type_id);
+}
+
+void MoveAssign(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  // MoveAssign = Destroy(dst) + MoveInit(dst, src)
+  Destroy(ctx, dst_ptr, type_id);
+  MoveInit(ctx, dst_ptr, src_ptr, type_id);
 }
 
 void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
@@ -140,19 +246,6 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
                              "unhandled TypeKind in lifecycle dispatch: {}",
                              ToString(type.Kind())));
   }
-}
-
-void MoveInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
-
-  // Move-initialize: load from src, store to dst, null out src.
-  // CONTRACT: dst must be uninitialized (caller responsible for Destroy).
-  // For managed types (string, dynarray, queue), the value is a pointer handle.
-  llvm::Value* value = builder.CreateLoad(ptr_ty, src_ptr, "move.val");
-  builder.CreateStore(value, dst_ptr);
-  MoveCleanup(ctx, src_ptr, type_id);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

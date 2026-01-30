@@ -9,6 +9,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
@@ -17,7 +18,9 @@
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -40,10 +43,12 @@ auto AssignElement(
   const Type& elem_type = types[elem_type_id];
 
   if (elem_type.Kind() == TypeKind::kString) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-    llvm::Value* new_val =
-        builder.CreateLoad(ptr_ty, source_elem_ptr, "ae.src");
-    detail::CommitStringField(context, target_elem_ptr, new_val, policy);
+    // Use symmetric lifecycle API for string element assignment.
+    if (policy == OwnershipPolicy::kClone) {
+      CopyAssign(context, target_elem_ptr, source_elem_ptr, elem_type_id);
+    } else {
+      MoveAssign(context, target_elem_ptr, source_elem_ptr, elem_type_id);
+    }
     return {};
   }
 
@@ -84,10 +89,12 @@ auto AssignStructField(
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-    llvm::Value* new_val =
-        builder.CreateLoad(ptr_ty, source_field_ptr, "sf.src");
-    detail::CommitStringField(context, target_field_ptr, new_val, policy);
+    // Use symmetric lifecycle API for string field assignment.
+    if (policy == OwnershipPolicy::kClone) {
+      CopyAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+    } else {
+      MoveAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+    }
     return {};
   }
 
@@ -188,10 +195,13 @@ auto AssignArrayFieldByFieldInternal(
   builder.CreateCondBr(cond, loop_body, loop_exit);
 
   builder.SetInsertPoint(loop_body);
-  auto* src_elem_ptr =
-      builder.CreateGEP(elem_llvm_type, source_ptr, {phi}, "arr.asgn.src");
-  auto* tgt_elem_ptr =
-      builder.CreateGEP(elem_llvm_type, target_ptr, {phi}, "arr.asgn.tgt");
+  // GEP pattern for LLVM ArrayType: {0, idx} where 0 dereferences the array
+  // pointer and idx indexes into the elements.
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  auto* src_elem_ptr = builder.CreateGEP(
+      llvm_array_type, source_ptr, {zero, phi}, "arr.asgn.src");
+  auto* tgt_elem_ptr = builder.CreateGEP(
+      llvm_array_type, target_ptr, {zero, phi}, "arr.asgn.tgt");
 
   auto result = AssignElement(
       context, src_elem_ptr, tgt_elem_ptr, elem_llvm_type, elem_type_id,
@@ -215,6 +225,18 @@ auto AssignArrayFieldByFieldInternal(
 auto CommitArrayFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void> {
+  // CONTRACT: kMove is only valid from temps (no aliasing possible).
+  // MoveAssign nulls the source per-element, so kMove from a non-temp would
+  // corrupt shared state.
+  if (policy == OwnershipPolicy::kMove) {
+    const auto& arena = ctx.GetMirArena();
+    const auto& src_place = arena[source];
+    if (src_place.root.kind != mir::PlaceRoot::Kind::kTemp) {
+      throw common::InternalError(
+          "CommitArrayFieldByField", "kMove from non-temp source");
+    }
+  }
+
   auto target_ptr_or_err = ctx.GetPlacePointer(target);
   if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
   llvm::Value* target_ptr = *target_ptr_or_err;
@@ -227,10 +249,11 @@ auto CommitArrayFieldByField(
       ctx, source_ptr, target_ptr, array_type_id, policy);
   if (!result) return result;
 
-  // Notify if design slot (after stores complete, before source cleanup)
+  // Notify if design slot (after stores complete)
   CommitNotifyAggregateIfDesignSlot(ctx, target);
 
-  CommitMoveCleanupIfTemp(ctx, source, policy, array_type_id);
+  // Note: Source cleanup for kMove is handled per-element via MoveAssign.
+  // No CommitMoveCleanupIfTemp needed here.
 
   return {};
 }
