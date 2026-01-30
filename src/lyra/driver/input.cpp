@@ -122,6 +122,10 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
 }
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
+  cmd.add_argument("--no-project")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Run without a project (ad-hoc mode)");
   cmd.add_argument("--top").help("Top module name");
   cmd.add_argument("-I", "--include-directory")
       .append()

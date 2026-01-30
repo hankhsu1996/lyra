@@ -54,10 +54,6 @@ auto main(int argc, char* argv[]) -> int {
   argparse::ArgumentParser program("lyra", "0.1.0");
   program.add_description("A modern SystemVerilog simulation toolchain");
   program.add_argument("-C").help("Run as if started in <dir>").metavar("dir");
-  program.add_argument("--no-project")
-      .default_value(false)
-      .implicit_value(true)
-      .help("Run without a project (ad-hoc mode, CWD-relative paths)");
 
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Run simulation");
@@ -113,11 +109,9 @@ auto main(int argc, char* argv[]) -> int {
     }
   }
 
-  // Capture --no-project flag (global, affects compilation commands)
-  bool no_project = program.get<bool>("--no-project");
-
   // Helper: prepare input for compilation commands
   auto prepare = [&](const argparse::ArgumentParser& cmd) {
+    bool no_project = cmd.get<bool>("--no-project");
     auto input = lyra::driver::PrepareInput(cmd, no_project);
     if (!input) {
       lyra::driver::PrintDiagnostic(input.error());
