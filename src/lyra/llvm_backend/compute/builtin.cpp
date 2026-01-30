@@ -21,11 +21,9 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {

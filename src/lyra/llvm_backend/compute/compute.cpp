@@ -42,8 +42,9 @@ auto GetPlusargsOutputKind(const TypeArena& types, TypeId output_type)
 }
 
 auto LowerPlusargsRvalue(
-    Context& context, const mir::Rvalue& rvalue, mir::PlaceId target,
-    const mir::PlusargsRvalueInfo& info) -> Result<llvm::Value*> {
+    Context& context, const mir::Rvalue& rvalue,
+    [[maybe_unused]] mir::PlaceId target, const mir::PlusargsRvalueInfo& info)
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -85,7 +86,8 @@ auto LowerPlusargsRvalue(
 
 auto LowerRvalue(
     Context& context, const mir::Rvalue& rvalue, mir::PlaceId target,
-    TypeId result_type, llvm::Value** unknown_out) -> Result<llvm::Value*> {
+    [[maybe_unused]] TypeId result_type, llvm::Value** unknown_out)
+    -> Result<llvm::Value*> {
   const auto& types = context.GetTypeArena();
 
   // Initialize unknown_out to nullptr (will be set for 4-state packed)

@@ -67,18 +67,6 @@ auto ExtOrTrunc(
   return builder.CreateZExtOrTrunc(val, dst_type, "cast.zext");
 }
 
-auto ExtOrTruncSemantic(
-    llvm::IRBuilderBase& builder, llvm::Value* val, llvm::Type* dst_type,
-    bool is_signed, uint32_t semantic_bits) -> llvm::Value* {
-  if (is_signed && semantic_bits > 0) {
-    return SignExtendFromSemanticWidth(builder, val, dst_type, semantic_bits);
-  }
-  if (is_signed) {
-    return builder.CreateSExtOrTrunc(val, dst_type, "cast.sext");
-  }
-  return builder.CreateZExtOrTrunc(val, dst_type, "cast.zext");
-}
-
 auto ResizeFourStatePlanes(
     llvm::IRBuilderBase& builder, FourStateValue fs, llvm::Type* dst_type,
     bool is_signed, uint32_t source_semantic_bits) -> FourStateValue {
