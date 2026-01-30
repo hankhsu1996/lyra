@@ -21,6 +21,10 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
           TypeKind::kIntegral,
           IntegralInfo{
               .bit_width = 1, .is_signed = false, .is_four_state = false}),
+      .logic_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 1, .is_signed = false, .is_four_state = true}),
       .offset_type = arena.Intern(
           TypeKind::kIntegral,
           IntegralInfo{

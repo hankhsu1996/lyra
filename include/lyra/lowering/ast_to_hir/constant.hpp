@@ -8,12 +8,15 @@ namespace lyra::lowering::ast_to_hir {
 
 struct Context;
 
-// Convert slang SVInt to IntegralConstant (pure value, no arena)
 auto LowerSVIntToIntegralConstant(const slang::SVInt& sv_int)
     -> IntegralConstant;
 
-// Intern a slang SVInt as a constant with the given type
 auto LowerIntegralConstant(
     const slang::SVInt& sv_int, TypeId type, Context* ctx) -> ConstId;
+
+// Create filled constant from tick literal ('0, '1, 'x, 'z).
+auto CreateFilledConstant(
+    const slang::SVInt& tick_value, TypeId target_type, Context* ctx)
+    -> ConstId;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -1052,4 +1052,26 @@ auto LowerScopedExpression(
   return LowerExpression(expr, view);
 }
 
+auto LowerAndCoerce(
+    const slang::ast::Expression& expr, TypeId target_type,
+    ExpressionLoweringView view) -> hir::ExpressionId {
+  auto* ctx = view.context;
+  SourceSpan span = ctx->SpanOf(expr.sourceRange);
+
+  // Handle unbased-unsized tick literals with fill-to-width semantics
+  if (expr.kind == slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral) {
+    const auto& lit = expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>();
+    ConstId filled = CreateFilledConstant(lit.getValue(), target_type, ctx);
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kConstant,
+            .type = target_type,
+            .span = span,
+            .data = hir::ConstantExpressionData{.constant = filled}});
+  }
+
+  // Normal expression: lower as-is (type checking/casting happens at HIR->MIR)
+  return LowerExpression(expr, view);
+}
+
 }  // namespace lyra::lowering::ast_to_hir

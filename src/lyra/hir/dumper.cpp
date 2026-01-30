@@ -1009,6 +1009,11 @@ void Dumper::Dump(ExpressionId id) {
       *out_ << ")";
       break;
     }
+
+    case ExpressionKind::kMaterializeInitializer: {
+      *out_ << "<materialize>";
+      break;
+    }
   }
 }
 
