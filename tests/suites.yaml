@@ -37,6 +37,3 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
-    exclude_regex:
-      # Output/inout params not supported in MIR interpreter
-      - functions/container_outparams\.yaml

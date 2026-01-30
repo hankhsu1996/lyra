@@ -142,11 +142,19 @@ class Interpreter {
   // Returns the suspension reason for the engine to handle scheduling.
   auto RunUntilSuspend(ProcessState& state) -> Result<SuspendReason>;
 
-  // Execute a function call. Returns the return value (void for void
-  // functions).
+  // Result of executing a function call.
+  // Contains return value and output parameter values (for kOut/kInOut params).
+  struct FunctionCallResult {
+    RuntimeValue return_value;
+    // Output values indexed by parameter position (only kOut/kInOut params).
+    // Key is the parameter index in signature.params.
+    std::vector<std::pair<size_t, RuntimeValue>> outputs;
+  };
+
+  // Execute a function call. Returns return value and output param values.
   auto RunFunction(
       FunctionId func_id, const std::vector<RuntimeValue>& args,
-      DesignState* design_state) -> Result<RuntimeValue>;
+      DesignState* design_state) -> Result<FunctionCallResult>;
 
  private:
   // Evaluate Operand to RuntimeValue (always deep copy)

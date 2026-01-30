@@ -78,7 +78,7 @@ auto Interpreter::Run(ProcessState& state) -> Result<ProcessStatus> {
 
 auto Interpreter::RunFunction(
     FunctionId func_id, const std::vector<RuntimeValue>& args,
-    DesignState* design_state) -> Result<RuntimeValue> {
+    DesignState* design_state) -> Result<FunctionCallResult> {
   const auto& func = (*arena_)[func_id];
 
   // Use function's metadata for storage allocation
@@ -147,13 +147,27 @@ auto Interpreter::RunFunction(
     func_state.instruction_index = 0;
   }
 
-  // Return value comes from the Return terminator
-  if (func_state.function_return_value.has_value()) {
-    return std::move(*func_state.function_return_value);
+  // Collect output values for kOut/kInOut parameters
+  std::vector<std::pair<size_t, RuntimeValue>> outputs;
+  for (size_t i = 0; i < func.signature.params.size(); ++i) {
+    if (func.signature.params[i].kind != PassingKind::kValue) {
+      uint32_t local_slot = func.param_local_slots[i];
+      outputs.emplace_back(
+          i, Clone(func_state.frame.GetLocal(static_cast<int>(local_slot))));
+    }
   }
 
-  // Void function or process - return monostate
-  return std::monostate{};
+  // Build result
+  FunctionCallResult result;
+  result.outputs = std::move(outputs);
+
+  if (func_state.function_return_value.has_value()) {
+    result.return_value = std::move(*func_state.function_return_value);
+  } else {
+    result.return_value = std::monostate{};
+  }
+
+  return result;
 }
 
 auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
@@ -746,22 +760,58 @@ auto Interpreter::ExecCall(ProcessState& state, const Call& call)
 
 auto Interpreter::ExecUserCall(
     ProcessState& state, const Call& call, FunctionId func_id) -> Result<void> {
-  // User function writebacks not yet supported - fail loud to match LLVM
-  // backend
-  if (!call.writebacks.empty()) {
-    throw common::InternalError(
-        "ExecUserCall", "User function writebacks not yet supported");
-  }
+  const auto& func = (*arena_)[func_id];
+  const auto& sig = func.signature;
 
-  // Evaluate input arguments
+  // Build full args vector in parameter order:
+  // - kValue: from in_args
+  // - kOut: default value (callee will write new value)
+  // - kInOut: current value from destination (callee reads and may modify)
   std::vector<RuntimeValue> args;
-  args.reserve(call.in_args.size());
-  for (const auto& operand : call.in_args) {
-    auto arg_result = EvalOperand(state, operand);
-    if (!arg_result) {
-      return std::unexpected(std::move(arg_result).error());
+  args.reserve(sig.params.size());
+  size_t in_arg_idx = 0;
+
+  for (size_t param_idx = 0; param_idx < sig.params.size(); ++param_idx) {
+    const auto& param = sig.params[param_idx];
+
+    if (param.kind == PassingKind::kValue) {
+      // Input param: evaluate from in_args
+      if (in_arg_idx >= call.in_args.size()) {
+        throw common::InternalError("ExecUserCall", "in_args underflow");
+      }
+      auto arg_result = EvalOperand(state, call.in_args[in_arg_idx]);
+      if (!arg_result) {
+        return std::unexpected(std::move(arg_result).error());
+      }
+      args.push_back(std::move(*arg_result));
+      ++in_arg_idx;
+    } else {
+      // Output/inout param: find writeback entry
+      const mir::CallWriteback* wb = nullptr;
+      for (const auto& w : call.writebacks) {
+        if (static_cast<size_t>(w.arg_index) == param_idx) {
+          wb = &w;
+          break;
+        }
+      }
+      if (wb == nullptr) {
+        throw common::InternalError(
+            "ExecUserCall",
+            std::format("missing writeback for param {}", param_idx));
+      }
+
+      if (param.kind == PassingKind::kInOut) {
+        // Inout: load current value from destination
+        auto val_result = ReadPlace(state, wb->dest);
+        if (!val_result) {
+          return std::unexpected(std::move(val_result).error());
+        }
+        args.push_back(std::move(*val_result));
+      } else {
+        // Output: default value (callee will overwrite)
+        args.push_back(CreateDefaultValue(*types_, param.type));
+      }
     }
-    args.push_back(std::move(*arg_result));
   }
 
   // Call the function
@@ -770,17 +820,46 @@ auto Interpreter::ExecUserCall(
     return std::unexpected(std::move(result).error());
   }
 
+  // Commit output values to destinations
+  for (auto& [param_idx, output_val] : result->outputs) {
+    // Find writeback for this param
+    const mir::CallWriteback* wb = nullptr;
+    for (const auto& w : call.writebacks) {
+      if (static_cast<size_t>(w.arg_index) == param_idx) {
+        wb = &w;
+        break;
+      }
+    }
+    if (wb == nullptr) {
+      throw common::InternalError(
+          "ExecUserCall",
+          std::format("missing writeback for output param {}", param_idx));
+    }
+
+    // Stage to tmp first, then commit to dest
+    auto store_tmp = StoreToPlace(state, wb->tmp, Clone(output_val));
+    if (!store_tmp) {
+      return std::unexpected(std::move(store_tmp).error());
+    }
+    auto store_dest = StoreToPlace(state, wb->dest, std::move(output_val));
+    if (!store_dest) {
+      return std::unexpected(std::move(store_dest).error());
+    }
+  }
+
   // Stage return to tmp, then commit to dest (if statement form)
   if (call.ret) {
     // Store to tmp first (staging parity requirement)
-    auto store_result = StoreToPlace(state, call.ret->tmp, Clone(*result));
+    auto store_result =
+        StoreToPlace(state, call.ret->tmp, Clone(result->return_value));
     if (!store_result) {
       return std::unexpected(std::move(store_result).error());
     }
 
     // Commit to dest if statement form - reuse same value
     if (call.ret->dest.has_value()) {
-      return StoreToPlace(state, *call.ret->dest, std::move(*result));
+      return StoreToPlace(
+          state, *call.ret->dest, std::move(result->return_value));
     }
     // Expression form: outer Assign reads from tmp (which now holds the value)
   }
