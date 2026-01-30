@@ -13,6 +13,7 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -59,6 +60,10 @@ void CollectFromOperand(
   CollectFromPlace(arena[place_id], arena, seen);
 }
 
+void CollectFromRhs(
+    const RightHandSide& rhs, const Arena& arena,
+    std::unordered_set<uint32_t>& seen);
+
 void CollectFromRvalue(
     const Rvalue& rvalue, const Arena& arena,
     std::unordered_set<uint32_t>& seen) {
@@ -84,12 +89,23 @@ void CollectFromRvalue(
           [](const IndexValidityRvalueInfo&) {},
           [](const ConcatRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
-          [](const PlusargsRvalueInfo&) {},
+          [](const TestPlusargsRvalueInfo&) {},
           [](const RuntimeQueryRvalueInfo&) {},
           [](const MathCallRvalueInfo&) {},
           [](const SystemTfRvalueInfo&) {},
       },
       rvalue.info);
+}
+
+void CollectFromRhs(
+    const RightHandSide& rhs, const Arena& arena,
+    std::unordered_set<uint32_t>& seen) {
+  std::visit(
+      common::Overloaded{
+          [&](const Operand& op) { CollectFromOperand(op, arena, seen); },
+          [&](const Rvalue& rv) { CollectFromRvalue(rv, arena, seen); },
+      },
+      rhs);
 }
 
 void CollectFromInstruction(
@@ -98,14 +114,11 @@ void CollectFromInstruction(
   std::visit(
       common::Overloaded{
           [&](const Assign& assign) {
-            CollectFromOperand(assign.source, arena, seen);
+            CollectFromRhs(assign.source, arena, seen);
           },
-          [&](const Compute& compute) {
-            CollectFromRvalue(compute.value, arena, seen);
-          },
-          [&](const GuardedAssign& ga) {
-            CollectFromOperand(ga.source, arena, seen);
-            CollectFromOperand(ga.validity, arena, seen);
+          [&](const GuardedStore& gs) {
+            CollectFromRhs(gs.source, arena, seen);
+            CollectFromOperand(gs.validity, arena, seen);
           },
           [](const Effect&) {},
           [&](const NonBlockingAssign& nba) {
@@ -120,6 +133,9 @@ void CollectFromInstruction(
             for (const auto& arg : bcall.args) {
               CollectFromOperand(arg, arena, seen);
             }
+          },
+          [&](const ValuePlusargs& vp) {
+            CollectFromOperand(vp.query, arena, seen);
           },
       },
       instr.data);

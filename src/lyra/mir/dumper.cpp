@@ -234,14 +234,11 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           using T = std::decay_t<decltype(i)>;
           if constexpr (std::is_same_v<T, Assign>) {
             *out_ << std::format(
-                "{} = {}\n", FormatPlace(i.target), FormatOperand(i.source));
-          } else if constexpr (std::is_same_v<T, Compute>) {
+                "{} = {}\n", FormatPlace(i.target), FormatRhs(i.source));
+          } else if constexpr (std::is_same_v<T, GuardedStore>) {
             *out_ << std::format(
-                "{} = {}\n", FormatPlace(i.target), FormatRvalue(i.value));
-          } else if constexpr (std::is_same_v<T, GuardedAssign>) {
-            *out_ << std::format(
-                "guarded_assign {} = {} if {}\n", FormatPlace(i.target),
-                FormatOperand(i.source), FormatOperand(i.validity));
+                "guarded_store {} = {} if {}\n", FormatPlace(i.target),
+                FormatRhs(i.source), FormatOperand(i.validity));
           } else if constexpr (std::is_same_v<T, Effect>) {
             *out_ << FormatEffect(i.op) << "\n";
           } else if constexpr (std::is_same_v<T, NonBlockingAssign>) {
@@ -275,6 +272,10 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                   "builtin_call {}({}, {})\n", static_cast<int>(i.method),
                   FormatPlace(i.receiver), args);
             }
+          } else if constexpr (std::is_same_v<T, ValuePlusargs>) {
+            *out_ << std::format(
+                "{} = value_plusargs({}, {})\n", FormatPlace(i.dest),
+                FormatOperand(i.query), FormatPlace(i.output));
           }
         },
         instr.data);
@@ -514,15 +515,8 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 FormatKindToSpecChar(info.default_format),
                 info.has_runtime_format);
           },
-          [this](const PlusargsRvalueInfo& info) {
-            const char* kind_str =
-                info.kind == PlusargsKind::kTest ? "test" : "value";
-            if (info.output.has_value()) {
-              return std::format(
-                  "plusargs.{}(output={})", kind_str,
-                  FormatPlace(*info.output));
-            }
-            return std::format("plusargs.{}", kind_str);
+          [](const TestPlusargsRvalueInfo&) {
+            return std::string("test_plusargs");
           },
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
@@ -721,6 +715,15 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
         }
       },
       op);
+}
+
+auto Dumper::FormatRhs(const RightHandSide& rhs) const -> std::string {
+  return std::visit(
+      common::Overloaded{
+          [this](const Operand& op) { return FormatOperand(op); },
+          [this](const Rvalue& rv) { return FormatRvalue(rv); },
+      },
+      rhs);
 }
 
 auto Dumper::FormatType(TypeId id) const -> std::string {

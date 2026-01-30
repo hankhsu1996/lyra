@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/instruction/assign.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <variant>
@@ -10,17 +11,23 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/compute/compute.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
+#include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -165,29 +172,234 @@ void EmitScheduleNbaCall(
        llvm::ConstantInt::get(i32_ty, signal_id)});
 }
 
+// Forward declaration for mutual recursion
+auto StoreManagedStructLiteralToPtr(
+    Context& context, llvm::Value* target_ptr, TypeId struct_type_id,
+    const std::vector<mir::Operand>& operands) -> Result<void>;
+
+// Store a single field from an operand, handling managed types recursively.
+auto StoreFieldFromOperand(
+    Context& context, llvm::Value* field_ptr, TypeId field_type_id,
+    const mir::Operand& operand) -> Result<void> {
+  const auto& types = context.GetTypeArena();
+  const Type& field_type = types[field_type_id];
+
+  if (field_type.Kind() == TypeKind::kString) {
+    // String field: compute operand -> store with lifecycle (no notify)
+    auto val_or_err = LowerOperand(context, operand);
+    if (!val_or_err) return std::unexpected(val_or_err.error());
+
+    // For constants, the operand produces a freshly-owned handle (from
+    // LyraStringFromLiteral). For places, we need to determine ownership.
+    OwnershipPolicy policy = std::holds_alternative<Constant>(operand.payload)
+                                 ? OwnershipPolicy::kMove
+                                 : OwnershipPolicy::kClone;
+    detail::CommitStringField(context, field_ptr, *val_or_err, policy);
+    return {};
+  }
+
+  if (field_type.Kind() == TypeKind::kUnpackedStruct &&
+      NeedsFieldByField(field_type_id, types)) {
+    // Nested managed struct: currently not supported
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(),
+        "nested struct with managed fields in aggregate literal",
+        UnsupportedCategory::kType));
+  }
+
+  // Plain field: compute operand -> store (no notify)
+  auto val_or_err = LowerOperand(context, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  detail::CommitPlainField(context, field_ptr, *val_or_err);
+  return {};
+}
+
+// Store struct literal fields to target pointer.
+auto StoreManagedStructLiteralToPtr(
+    Context& context, llvm::Value* target_ptr, TypeId struct_type_id,
+    const std::vector<mir::Operand>& operands) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+  const Type& struct_type = types[struct_type_id];
+  const auto& struct_info = struct_type.AsUnpackedStruct();
+
+  auto llvm_struct_type_result =
+      BuildLlvmTypeForTypeId(context, struct_type_id);
+  if (!llvm_struct_type_result)
+    return std::unexpected(llvm_struct_type_result.error());
+  auto* llvm_struct = llvm::cast<llvm::StructType>(*llvm_struct_type_result);
+
+  for (size_t i = 0; i < struct_info.fields.size(); ++i) {
+    const auto& field = struct_info.fields[i];
+    const auto& operand = operands[i];
+    auto field_idx = static_cast<unsigned>(i);
+
+    llvm::Value* field_ptr =
+        builder.CreateStructGEP(llvm_struct, target_ptr, field_idx);
+
+    auto result =
+        StoreFieldFromOperand(context, field_ptr, field.type, operand);
+    if (!result) return result;
+  }
+
+  return {};
+}
+
+// Lower a managed struct literal aggregate assignment.
+auto LowerManagedStructLiteral(
+    Context& context, mir::PlaceId target, const mir::Rvalue& rvalue,
+    TypeId struct_type_id) -> Result<void> {
+  auto target_ptr_result = context.GetPlacePointer(target);
+  if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+  llvm::Value* target_ptr = *target_ptr_result;
+
+  auto result = StoreManagedStructLiteralToPtr(
+      context, target_ptr, struct_type_id, rvalue.operands);
+  if (!result) return result;
+
+  CommitNotifyAggregateIfDesignSlot(context, target);
+  return {};
+}
+
+// Lower an Rvalue source assignment.
+auto LowerRvalueAssign(
+    Context& context, mir::PlaceId target, const mir::Rvalue& rvalue)
+    -> Result<void> {
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  TypeId result_type = mir::TypeOfPlace(types, arena[target]);
+  const Type& type = types[result_type];
+
+  // Check for managed aggregate literal: handle field-by-field
+  if (std::holds_alternative<mir::AggregateRvalueInfo>(rvalue.info) &&
+      NeedsFieldByField(result_type, types)) {
+    if (type.Kind() == TypeKind::kUnpackedStruct) {
+      return LowerManagedStructLiteral(context, target, rvalue, result_type);
+    }
+    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+        context.GetCurrentOrigin(), "managed array literal not yet supported",
+        UnsupportedCategory::kType));
+  }
+
+  // Standard path: evaluate rvalue, store via commit
+  auto rv_result = LowerRvalue(context, rvalue, result_type);
+  if (!rv_result) return std::unexpected(rv_result.error());
+  llvm::Value* value = rv_result->value;
+  llvm::Value* unknown = rv_result->unknown;
+
+  // For packed 4-state, pack value + unknown into struct before storing
+  if (IsPacked(type) && IsPackedFourState(type, types)) {
+    auto storage_type_or_err = context.GetPlaceLlvmType(target);
+    if (!storage_type_or_err)
+      return std::unexpected(storage_type_or_err.error());
+    auto* struct_type = llvm::cast<llvm::StructType>(*storage_type_or_err);
+    auto* elem_type = struct_type->getElementType(0);
+    // Coerce value and unknown to struct element type
+    auto& builder = context.GetBuilder();
+    value = builder.CreateZExtOrTrunc(value, elem_type, "rv.val.fit");
+    if (unknown == nullptr) {
+      unknown = llvm::ConstantInt::get(elem_type, 0);
+    } else {
+      unknown = builder.CreateZExtOrTrunc(unknown, elem_type, "rv.unk.fit");
+    }
+    value = PackFourState(builder, struct_type, value, unknown);
+  }
+
+  // For packed types, use raw store (no ownership semantics)
+  if (IsPacked(type)) {
+    CommitPackedValueRaw(context, target, value);
+    return {};
+  }
+
+  // For POD unpacked aggregates (no managed fields), use simple store.
+  if ((type.Kind() == TypeKind::kUnpackedStruct ||
+       type.Kind() == TypeKind::kUnpackedArray) &&
+      !NeedsFieldByField(result_type, types)) {
+    auto target_ptr_result = context.GetPlacePointer(target);
+    if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
+    context.GetBuilder().CreateStore(value, *target_ptr_result);
+    CommitNotifyAggregateIfDesignSlot(context, target);
+    return {};
+  }
+
+  // For managed types, use CommitValue which handles Destroy internally
+  return CommitValue(
+      context, target, value, result_type, OwnershipPolicy::kMove);
+}
+
+// Evaluate RightHandSide to a raw LLVM value (for bit-range RMW).
+auto LowerRhsRaw(
+    Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
+    -> Result<llvm::Value*> {
+  return std::visit(
+      common::Overloaded{
+          [&](const mir::Operand& operand) -> Result<llvm::Value*> {
+            return LowerOperandRaw(context, operand);
+          },
+          [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
+            const auto& arena = context.GetMirArena();
+            const auto& types = context.GetTypeArena();
+            TypeId result_type = mir::TypeOfPlace(types, arena[target]);
+            auto rv_result = LowerRvalue(context, rvalue, result_type);
+            if (!rv_result) return std::unexpected(rv_result.error());
+            // For 4-state, pack into struct
+            if (IsPacked(types[result_type]) &&
+                IsPackedFourState(types[result_type], types)) {
+              auto storage_type_or_err = context.GetPlaceLlvmType(target);
+              if (!storage_type_or_err)
+                return std::unexpected(storage_type_or_err.error());
+              auto* struct_type =
+                  llvm::cast<llvm::StructType>(*storage_type_or_err);
+              auto* elem_type = struct_type->getElementType(0);
+              auto& builder = context.GetBuilder();
+              llvm::Value* value =
+                  builder.CreateZExtOrTrunc(rv_result->value, elem_type);
+              llvm::Value* unknown = rv_result->unknown;
+              if (unknown == nullptr) {
+                unknown = llvm::ConstantInt::get(elem_type, 0);
+              } else {
+                unknown = builder.CreateZExtOrTrunc(unknown, elem_type);
+              }
+              return PackFourState(builder, struct_type, value, unknown);
+            }
+            return rv_result->value;
+          },
+      },
+      rhs);
+}
+
 }  // namespace
 
 auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
   // BitRangeProjection targets use read-modify-write
   if (context.HasBitRangeProjection(assign.target)) {
-    auto source_raw_or_err = LowerOperandRaw(context, assign.source);
+    auto source_raw_or_err = LowerRhsRaw(context, assign.source, assign.target);
     if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
     return StoreBitRange(context, assign.target, *source_raw_or_err);
   }
 
-  // Delegate all value semantics (ownership, refcounting, field recursion)
-  // to the TypeOps layer
-  return AssignPlace(context, assign.target, assign.source);
+  // Dispatch on RightHandSide: Operand or Rvalue
+  return std::visit(
+      common::Overloaded{
+          [&](const mir::Operand& operand) -> Result<void> {
+            // Delegate all value semantics to the TypeOps layer
+            return AssignPlace(context, assign.target, operand);
+          },
+          [&](const mir::Rvalue& rvalue) -> Result<void> {
+            return LowerRvalueAssign(context, assign.target, rvalue);
+          },
+      },
+      assign.source);
 }
 
-auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
+auto LowerGuardedStore(Context& context, const mir::GuardedStore& guarded)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
   // Source evaluated BEFORE branch (per SystemVerilog spec)
-  auto source_raw_or_err = LowerOperandRaw(context, guarded.source);
+  auto source_raw_or_err = LowerRhsRaw(context, guarded.source, guarded.target);
   if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
   llvm::Value* source_raw = *source_raw_or_err;
 
@@ -197,21 +409,21 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
   llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
     auto* zero = llvm::ConstantInt::get(valid->getType(), 0);
-    valid = builder.CreateICmpNE(valid, zero, "ga.tobool");
+    valid = builder.CreateICmpNE(valid, zero, "gs.tobool");
   }
 
   // Branch
   auto* func = builder.GetInsertBlock()->getParent();
   auto* do_write_bb =
-      llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.write", func);
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gs.write", func);
   auto* skip_bb =
-      llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
+      llvm::BasicBlock::Create(context.GetLlvmContext(), "gs.skip", func);
   builder.CreateCondBr(valid, do_write_bb, skip_bb);
 
   // Write path
   builder.SetInsertPoint(do_write_bb);
 
-  // BitRangeProjection: intentional bypass (see invariant in plan)
+  // BitRangeProjection: intentional bypass
   if (context.HasBitRangeProjection(guarded.target)) {
     auto result = StoreBitRange(context, guarded.target, source_raw);
     if (!result) return result;
@@ -219,7 +431,7 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     const auto& place = arena[guarded.target];
     TypeId type_id = mir::TypeOfPlace(types, place);
 
-    // INVARIANT: GuardedAssign always uses kClone, never kMove.
+    // INVARIANT: GuardedStore always uses kClone, never kMove.
     // Reason: We must not mutate/clear the source *place* when the assign is
     // conditional. The source was evaluated BEFORE the validity check (per SV
     // spec), and the source place may still be observable by other code.

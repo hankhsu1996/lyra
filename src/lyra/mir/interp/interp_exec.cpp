@@ -158,21 +158,26 @@ auto Interpreter::RunFunction(
 
 auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
     -> Result<void> {
-  auto value_result = EvalOperand(state, assign.source);
-  if (!value_result) {
-    return std::unexpected(std::move(value_result).error());
-  }
-  return StoreToPlace(state, assign.target, std::move(*value_result));
-}
-
-auto Interpreter::ExecCompute(ProcessState& state, const Compute& compute)
-    -> Result<void> {
-  TypeId result_type = TypeOfPlace(*types_, (*arena_)[compute.target]);
-  auto value_result = EvalRvalue(state, compute.value, result_type);
-  if (!value_result) {
-    return std::unexpected(std::move(value_result).error());
-  }
-  return StoreToPlace(state, compute.target, std::move(*value_result));
+  // Dispatch on RightHandSide: Operand or Rvalue
+  return std::visit(
+      common::Overloaded{
+          [&](const Operand& operand) -> Result<void> {
+            auto value_result = EvalOperand(state, operand);
+            if (!value_result) {
+              return std::unexpected(std::move(value_result).error());
+            }
+            return StoreToPlace(state, assign.target, std::move(*value_result));
+          },
+          [&](const Rvalue& rvalue) -> Result<void> {
+            TypeId result_type = TypeOfPlace(*types_, (*arena_)[assign.target]);
+            auto value_result = EvalRvalue(state, rvalue, result_type);
+            if (!value_result) {
+              return std::unexpected(std::move(value_result).error());
+            }
+            return StoreToPlace(state, assign.target, std::move(*value_result));
+          },
+      },
+      assign.source);
 }
 
 auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
@@ -695,11 +700,22 @@ auto Interpreter::ExecFillPackedEffect(
   return StoreToPlace(state, fill.target, std::move(filled_value));
 }
 
-auto Interpreter::ExecGuardedAssign(
-    ProcessState& state, const GuardedAssign& guarded) -> Result<void> {
+auto Interpreter::ExecGuardedStore(
+    ProcessState& state, const GuardedStore& guarded) -> Result<void> {
   // Always evaluate source unconditionally (per spec: only the write is
-  // guarded)
-  auto value_result = EvalOperand(state, guarded.source);
+  // guarded). Dispatch on RightHandSide: Operand or Rvalue.
+  auto value_result = std::visit(
+      common::Overloaded{
+          [&](const Operand& operand) -> Result<RuntimeValue> {
+            return EvalOperand(state, operand);
+          },
+          [&](const Rvalue& rvalue) -> Result<RuntimeValue> {
+            TypeId result_type =
+                TypeOfPlace(*types_, (*arena_)[guarded.target]);
+            return EvalRvalue(state, rvalue, result_type);
+          },
+      },
+      guarded.source);
   if (!value_result) {
     return std::unexpected(std::move(value_result).error());
   }
@@ -712,7 +728,7 @@ auto Interpreter::ExecGuardedAssign(
   auto& validity = *validity_result;
   if (!IsIntegral(validity)) {
     throw common::InternalError(
-        "ExecGuardedAssign", "validity must be integral");
+        "ExecGuardedStore", "validity must be integral");
   }
   const auto& valid_int = AsIntegral(validity);
 
@@ -926,6 +942,91 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
   }
 }
 
+auto Interpreter::ExecValuePlusargs(
+    ProcessState& state, const ValuePlusargs& vp) -> Result<void> {
+  // Evaluate query operand (always a string)
+  auto query_val_result = EvalOperand(state, vp.query);
+  if (!query_val_result) {
+    return std::unexpected(std::move(query_val_result).error());
+  }
+  auto& query_val = *query_val_result;
+  if (!IsString(query_val)) {
+    throw common::InternalError(
+        "ExecValuePlusargs", "query operand is not a string");
+  }
+  std::string_view query = AsString(query_val).value;
+
+  // Helper: strip '+' prefix from a plusarg
+  auto get_content = [](std::string_view arg) -> std::string_view {
+    if (arg.starts_with('+')) {
+      return arg.substr(1);
+    }
+    return arg;
+  };
+
+  // Parse format string: "PREFIX%<spec>" -> prefix + spec char
+  auto percent_pos = query.find('%');
+  if (percent_pos == std::string_view::npos) {
+    // No format specifier, treat as test (no match)
+    for (const auto& arg : plusargs_) {
+      std::string_view content = get_content(arg);
+      if (content.starts_with(query)) {
+        return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
+      }
+    }
+    return StoreToPlace(state, vp.dest, MakeIntegralSigned(0, 32));
+  }
+
+  std::string_view prefix = query.substr(0, percent_pos);
+  char spec = '\0';
+  size_t spec_pos = percent_pos + 1;
+  if (spec_pos < query.size()) {
+    spec = query[spec_pos];
+    // Skip leading '0' in format specifier (e.g., %0d -> %d)
+    if (spec == '0' && spec_pos + 1 < query.size()) {
+      spec = query[spec_pos + 1];
+    }
+  }
+
+  for (const auto& arg : plusargs_) {
+    std::string_view content = get_content(arg);
+    if (!content.starts_with(prefix)) {
+      continue;
+    }
+    std::string_view remainder = content.substr(prefix.size());
+
+    // Parse based on format specifier
+    if (spec == 'd' || spec == 'D') {
+      int32_t parsed_value = 0;
+      auto [ptr, ec] = std::from_chars(
+          remainder.data(), remainder.data() + remainder.size(), parsed_value);
+      if (ec != std::errc{}) {
+        parsed_value = 0;  // Conversion failed
+      }
+      auto store_result =
+          StoreToPlace(state, vp.output, MakeIntegralSigned(parsed_value, 32));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+      return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
+    }
+    if (spec == 's' || spec == 'S') {
+      auto store_result =
+          StoreToPlace(state, vp.output, MakeString(std::string(remainder)));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+      return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
+    }
+
+    // Unsupported format spec - match but don't write
+    return StoreToPlace(state, vp.dest, MakeIntegralSigned(1, 32));
+  }
+
+  // No match found
+  return StoreToPlace(state, vp.dest, MakeIntegralSigned(0, 32));
+}
+
 auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
     -> Result<void> {
   std::optional<Diagnostic> error;
@@ -941,13 +1042,8 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           if (!result) {
             error = std::move(result).error();
           }
-        } else if constexpr (std::is_same_v<T, Compute>) {
-          auto result = ExecCompute(state, i);
-          if (!result) {
-            error = std::move(result).error();
-          }
-        } else if constexpr (std::is_same_v<T, GuardedAssign>) {
-          auto result = ExecGuardedAssign(state, i);
+        } else if constexpr (std::is_same_v<T, GuardedStore>) {
+          auto result = ExecGuardedStore(state, i);
           if (!result) {
             error = std::move(result).error();
           }
@@ -963,6 +1059,11 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           }
         } else if constexpr (std::is_same_v<T, BuiltinCall>) {
           auto result = ExecBuiltinCall(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
+        } else if constexpr (std::is_same_v<T, ValuePlusargs>) {
+          auto result = ExecValuePlusargs(state, i);
           if (!result) {
             error = std::move(result).error();
           }

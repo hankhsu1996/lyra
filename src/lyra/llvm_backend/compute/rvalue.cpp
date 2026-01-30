@@ -3,6 +3,8 @@
 #include <expected>
 #include <format>
 
+#include <llvm/IR/DerivedTypes.h>
+
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -13,12 +15,10 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
+auto GetTypeInfoFromType(Context& context, TypeId type_id)
     -> Result<PlaceTypeInfo> {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  const auto& place = arena[place_id];
-  const Type& type = types[mir::TypeOfPlace(types, place)];
+  const Type& type = types[type_id];
 
   if (type.Kind() == TypeKind::kString) {
     return PlaceTypeInfo{
@@ -39,6 +39,32 @@ auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
       .bit_width = PackedBitWidth(type, types),
       .is_four_state = IsPackedFourState(type, types),
   };
+}
+
+auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
+    -> Result<PlaceTypeInfo> {
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  const auto& place = arena[place_id];
+  TypeId type_id = mir::TypeOfPlace(types, place);
+  return GetTypeInfoFromType(context, type_id);
+}
+
+auto GetLlvmTypeForType(Context& context, TypeId type_id)
+    -> Result<llvm::Type*> {
+  auto type_info_or_err = GetTypeInfoFromType(context, type_id);
+  if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
+  const auto& info = *type_info_or_err;
+
+  if (info.kind == PlaceKind::kString) {
+    return llvm::PointerType::getUnqual(context.GetLlvmContext());
+  }
+
+  // Packed integral type
+  if (info.is_four_state) {
+    return context.GetPlaceLlvmType4State(info.bit_width);
+  }
+  return llvm::Type::getIntNTy(context.GetLlvmContext(), info.bit_width);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -243,6 +243,10 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
 
     compute/ is pure expression evaluation and must not depend on commit or lifecycle.
     All storage and lifecycle operations belong in instruction/ layer.
+
+    Additionally, compute/ must not call GetPlacePointer() directly - all place
+    reads must go through LoadPlaceValue() or LoadPlaceBaseValue() to enforce
+    the rvalue purity boundary (no pointer exposure that could enable writes).
     """
     compute_dir = repo_root / "src/lyra/llvm_backend/compute"
     if not compute_dir.exists():
@@ -253,6 +257,9 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
         '#include "lyra/llvm_backend/commit.hpp"',
         '#include "lyra/llvm_backend/lifecycle.hpp"',
     ]
+    forbidden_calls = [
+        '.GetPlacePointer(',
+    ]
 
     for cpp in compute_dir.rglob("*.cpp"):
         rel_path = cpp.relative_to(repo_root).as_posix()
@@ -260,9 +267,13 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
         lines = content.split('\n')
 
         for lineno, line in enumerate(lines, 1):
+            code = strip_comment(line)
             for forbidden in forbidden_includes:
-                if forbidden in line:
+                if forbidden in code:
                     errors.append(f"  {rel_path}:{lineno}: {forbidden}")
+            for forbidden in forbidden_calls:
+                if forbidden in code:
+                    errors.append(f"  {rel_path}:{lineno}: {forbidden} (use LoadPlaceValue/LoadPlaceBaseValue instead)")
 
     # Also check compute headers
     compute_include_dir = repo_root / "include/lyra/llvm_backend/compute"
@@ -273,9 +284,13 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
             lines = content.split('\n')
 
             for lineno, line in enumerate(lines, 1):
+                code = strip_comment(line)
                 for forbidden in forbidden_includes:
-                    if forbidden in line:
+                    if forbidden in code:
                         errors.append(f"  {rel_path}:{lineno}: {forbidden}")
+                for forbidden in forbidden_calls:
+                    if forbidden in code:
+                        errors.append(f"  {rel_path}:{lineno}: {forbidden} (use LoadPlaceValue/LoadPlaceBaseValue instead)")
 
     return errors
 
@@ -430,6 +445,12 @@ def run_self_tests() -> bool:
         print("SELF-TEST FAILED: Forward declaration incorrectly flagged as definition")
         return False
 
+    # Test 5: GetPlacePointer pattern detection (compute/ boundary)
+    test_code3 = "auto ptr = context.GetPlacePointer(place_id);"
+    if ".GetPlacePointer(" not in test_code3:
+        print("SELF-TEST FAILED: GetPlacePointer pattern doesn't match expected code")
+        return False
+
     return True
 
 
@@ -479,7 +500,7 @@ def main() -> int:
                 print(e)
             print()
         if compute_errors:
-            print("ERROR: compute/ module includes forbidden headers (commit/lifecycle):")
+            print("ERROR: compute/ module boundary violations (rvalue purity):")
             print()
             for e in compute_errors:
                 print(e)

@@ -22,8 +22,6 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -86,12 +84,9 @@ auto GetSemanticBitWidth(const TypeArena& types, TypeId type_id) -> uint32_t {
   return PackedBitWidth(type, types);
 }
 
-auto GetTargetBitWidth(Context& context, mir::PlaceId target) -> uint32_t {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-  const auto& place = arena[target];
-  TypeId type_id = mir::TypeOfPlace(types, place);
-  return GetSemanticBitWidth(types, type_id);
+auto GetTargetBitWidth(const TypeArena& types, TypeId destination_type)
+    -> uint32_t {
+  return GetSemanticBitWidth(types, destination_type);
 }
 
 auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
@@ -128,15 +123,15 @@ auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
 }  // namespace
 
 auto LowerCastRvalue(
-    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
-    -> Result<llvm::Value*> {
+    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
+    -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
-  const auto& info = std::get<mir::CastRvalueInfo>(compute.value.info);
-  const mir::Operand& source_operand = compute.value.operands[0];
+  const auto& info = std::get<mir::CastRvalueInfo>(rvalue.info);
+  const mir::Operand& source_operand = rvalue.operands[0];
 
   const Type& src_type = types[info.source_type];
-  const Type& tgt_type = types[info.target_type];
+  const Type& tgt_type = types[destination_type];
 
   if (tgt_type.Kind() == TypeKind::kString ||
       src_type.Kind() == TypeKind::kString) {
@@ -152,28 +147,24 @@ auto LowerCastRvalue(
   bool src_is_4s = IsPacked(src_type) && IsPackedFourState(src_type, types);
   bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(tgt_type, types);
 
-  // Initialize unknown_out
-  if (unknown_out != nullptr) {
-    *unknown_out = nullptr;
-  }
-
   // Float -> Float
   if (src_is_float && tgt_is_float) {
     auto source_or_err = LowerOperand(context, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
 
+    llvm::Value* result = source;
     if (src_type.Kind() == TypeKind::kReal &&
         tgt_type.Kind() == TypeKind::kShortReal) {
-      return builder.CreateFPTrunc(
+      result = builder.CreateFPTrunc(
           source, llvm::Type::getFloatTy(context.GetLlvmContext()), "fptrunc");
-    }
-    if (src_type.Kind() == TypeKind::kShortReal &&
+    } else if (
+        src_type.Kind() == TypeKind::kShortReal &&
         tgt_type.Kind() == TypeKind::kReal) {
-      return builder.CreateFPExt(
+      result = builder.CreateFPExt(
           source, llvm::Type::getDoubleTy(context.GetLlvmContext()), "fpext");
     }
-    return source;
+    return RvalueValue::TwoState(result);
   }
 
   // Int -> Float
@@ -188,10 +179,13 @@ auto LowerCastRvalue(
             : llvm::Type::getFloatTy(context.GetLlvmContext());
 
     bool is_signed = IsSignedIntegral(types, info.source_type);
+    llvm::Value* result = nullptr;
     if (is_signed) {
-      return builder.CreateSIToFP(source, float_ty, "sitofp");
+      result = builder.CreateSIToFP(source, float_ty, "sitofp");
+    } else {
+      result = builder.CreateUIToFP(source, float_ty, "uitofp");
     }
-    return builder.CreateUIToFP(source, float_ty, "uitofp");
+    return RvalueValue::TwoState(result);
   }
 
   // Float -> Int
@@ -200,17 +194,11 @@ auto LowerCastRvalue(
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
 
-    auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-    if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
-    llvm::Type* target_llvm_type = *target_type_or_err;
+    uint32_t bit_width = GetTargetBitWidth(types, destination_type);
+    llvm::Type* elem_type =
+        llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
 
-    llvm::Type* elem_type = target_llvm_type;
-    if (tgt_is_4s) {
-      auto* struct_type = llvm::cast<llvm::StructType>(target_llvm_type);
-      elem_type = GetFourStateElemIntType(struct_type);
-    }
-
-    bool is_signed = IsSignedIntegral(types, info.target_type);
+    bool is_signed = IsSignedIntegral(types, destination_type);
     llvm::Value* result = nullptr;
     if (is_signed) {
       result = builder.CreateFPToSI(source, elem_type, "fptosi");
@@ -218,25 +206,17 @@ auto LowerCastRvalue(
       result = builder.CreateFPToUI(source, elem_type, "fptoui");
     }
 
-    uint32_t bit_width = GetTargetBitWidth(context, compute.target);
     result = ApplyWidthMask(context, result, bit_width);
-    return result;
+    return RvalueValue::TwoState(result);
   }
 
   // Int -> Int
-  auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
-  if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
-  llvm::Type* target_llvm_type = *target_type_or_err;
-
-  llvm::Type* elem_type = target_llvm_type;
-  if (tgt_is_4s) {
-    auto* struct_type = llvm::cast<llvm::StructType>(target_llvm_type);
-    elem_type = GetFourStateElemIntType(struct_type);
-  }
+  uint32_t bit_width = GetTargetBitWidth(types, destination_type);
+  llvm::Type* elem_type =
+      llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
 
   bool is_signed = IsSignedIntegral(types, info.source_type);
   uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
-  uint32_t bit_width = GetTargetBitWidth(context, compute.target);
 
   if (src_is_4s) {
     auto fs_or_err = LoadFourStateOperand(context, source_operand);
@@ -247,10 +227,10 @@ auto LowerCastRvalue(
     fs.value = ApplyWidthMask(context, fs.value, bit_width);
     fs.unknown = ApplyWidthMask(context, fs.unknown, bit_width);
 
-    if (tgt_is_4s && unknown_out != nullptr) {
-      *unknown_out = fs.unknown;
+    if (tgt_is_4s) {
+      return RvalueValue::FourState(fs.value, fs.unknown);
     }
-    return fs.value;
+    return RvalueValue::TwoState(fs.value);
   }
 
   // 2s source
@@ -260,27 +240,23 @@ auto LowerCastRvalue(
 
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
   result = ApplyWidthMask(context, result, bit_width);
-  return result;
+  return RvalueValue::TwoState(result);
 }
 
 auto LowerBitCastRvalue(
-    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
-    -> Result<llvm::Value*> {
+    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
+    -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
-  const auto& info = std::get<mir::BitCastRvalueInfo>(compute.value.info);
+  const auto& info = std::get<mir::BitCastRvalueInfo>(rvalue.info);
 
-  auto src_or_err = LowerOperand(context, compute.value.operands[0]);
+  auto src_or_err = LowerOperand(context, rvalue.operands[0]);
   if (!src_or_err) return std::unexpected(src_or_err.error());
   llvm::Value* src = *src_or_err;
 
   const Type& src_type = types[info.source_type];
-  const Type& tgt_type = types[info.target_type];
-
-  if (unknown_out != nullptr) {
-    *unknown_out = nullptr;
-  }
+  const Type& tgt_type = types[destination_type];
 
   auto is_packed_integral = [](const Type& type) {
     return type.Kind() == TypeKind::kIntegral ||
@@ -308,7 +284,7 @@ auto LowerBitCastRvalue(
     llvm_unreachable("invalid bitcast types");
   }
 
-  return result;
+  return RvalueValue::TwoState(result);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

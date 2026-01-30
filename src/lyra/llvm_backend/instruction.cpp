@@ -8,8 +8,8 @@
 #include "lyra/llvm_backend/instruction/assign.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
-#include "lyra/llvm_backend/instruction/compute.hpp"
 #include "lyra/llvm_backend/instruction/effect.hpp"
+#include "lyra/llvm_backend/instruction/value_plusargs.hpp"
 #include "lyra/mir/instruction.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -28,11 +28,8 @@ auto LowerInstruction(Context& context, const mir::Instruction& instruction)
           [&context](const mir::Assign& assign) -> Result<void> {
             return LowerAssign(context, assign);
           },
-          [&context](const mir::Compute& compute) -> Result<void> {
-            return LowerComputeInstruction(context, compute);
-          },
-          [&context](const mir::GuardedAssign& guarded) -> Result<void> {
-            return LowerGuardedAssign(context, guarded);
+          [&context](const mir::GuardedStore& guarded) -> Result<void> {
+            return LowerGuardedStore(context, guarded);
           },
           [&context](const mir::Effect& effect) -> Result<void> {
             return LowerEffectOp(context, effect.op);
@@ -45,6 +42,9 @@ auto LowerInstruction(Context& context, const mir::Instruction& instruction)
           },
           [&context](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, call);
+          },
+          [&context](const mir::ValuePlusargs& vp) -> Result<void> {
+            return LowerValuePlusargs(context, vp);
           },
       },
       instruction.data);

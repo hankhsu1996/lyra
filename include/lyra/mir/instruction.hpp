@@ -9,29 +9,24 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
-#include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/rhs.hpp"
 
 namespace lyra::mir {
 
-// Assign: data movement (Place <- Operand)
+// Assign: unified data movement and computation (Place <- RightHandSide).
+// RightHandSide can be either Operand (simple value) or Rvalue (computation).
 struct Assign {
   PlaceId target;
-  Operand source;
+  RightHandSide source;
 };
 
-// Compute: computation (Place <- Rvalue)
-struct Compute {
-  PlaceId target;
-  Rvalue value;
-};
-
-// GuardedAssign: conditional write with OOB safety.
+// GuardedStore: conditional write with OOB safety.
 // Semantics: if (validity) Assign(target, source); else no-op
 // The source is always evaluated; only the write is guarded.
 // For short-circuit semantics (source has side effects), use control flow.
-struct GuardedAssign {
+struct GuardedStore {
   PlaceId target;
-  Operand source;
+  RightHandSide source;
   Operand validity;  // 1-bit 2-state bool
 };
 
@@ -78,13 +73,26 @@ struct BuiltinCall {
   std::vector<Operand> args;
 };
 
+// ValuePlusargs: $value$plusargs system function (has side effects + result)
+//
+// Semantics: parse format string from plusargs, write parsed value to output,
+// store success (1/0) to dest.
+// Unlike $test$plusargs (pure rvalue), this has side effects (writes to
+// output).
+struct ValuePlusargs {
+  PlaceId dest;        // Where to store success boolean (1 or 0)
+  PlaceId output;      // Place to write parsed value
+  TypeId output_type;  // Type of output for runtime dispatch (string/int)
+  Operand query;       // Format string operand
+};
+
 // Instruction data variant.
 using InstructionData = std::variant<
-    Assign, Compute, GuardedAssign, Effect, NonBlockingAssign, Call,
-    BuiltinCall>;
+    Assign, GuardedStore, Effect, NonBlockingAssign, Call, BuiltinCall,
+    ValuePlusargs>;
 
 // An instruction that does not affect control flow.
-// - Assign, Compute, and GuardedAssign write to a Place
+// - Assign and GuardedStore write to a Place
 // - Effect produces side effects but no value
 struct Instruction {
   InstructionData data;

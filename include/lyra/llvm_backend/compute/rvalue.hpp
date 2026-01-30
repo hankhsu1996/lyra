@@ -5,6 +5,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -21,10 +22,21 @@ struct PlaceTypeInfo {
   bool is_four_state;
 };
 
-// Validate target place type and return info for dispatch.
+// Get type info from PlaceId (validates and extracts TypeId internally).
 // Returns error for non-packed, non-string types.
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
     -> Result<PlaceTypeInfo>;
+
+// Get type info directly from TypeId.
+// Returns error for non-packed, non-string types.
+auto GetTypeInfoFromType(Context& context, TypeId type_id)
+    -> Result<PlaceTypeInfo>;
+
+// Get LLVM type for a packed or string type.
+// For packed types: returns iN (2-state) or {iN, iN} struct (4-state).
+// For string types: returns ptr type.
+auto GetLlvmTypeForType(Context& context, TypeId type_id)
+    -> Result<llvm::Type*>;
 
 // Context for lowering packed (integral) compute operations.
 // Contains all type information needed by both 2-state and 4-state lowering.

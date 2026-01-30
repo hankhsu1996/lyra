@@ -258,7 +258,9 @@ auto LowerUnaryRvalue4State(
   auto src_or_err = LowerOperandFourState(context, operands[0], carrier_type);
   if (!src_or_err) return std::unexpected(src_or_err.error());
 
-  if (IsReductionOp(info.op)) {
+  // LogicalNot is like reduction ops: it needs the operand at its original
+  // width to compare against zero
+  if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
     uint32_t operand_semantic_width =
         GetOperandPackedWidth(context, operands[0]);
     return LowerReduction4State(

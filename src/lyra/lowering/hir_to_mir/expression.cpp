@@ -313,7 +313,7 @@ auto LowerIncrementDecrement(
   if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
-    builder.EmitGuardedAssign(
+    builder.EmitGuardedStore(
         target.place, mir::Operand::Use(new_value), target.validity);
   }
 
@@ -386,7 +386,7 @@ auto LowerCompoundAssignment(
   if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, mir::Operand::Use(new_value));
   } else {
-    builder.EmitGuardedAssign(
+    builder.EmitGuardedStore(
         target.place, mir::Operand::Use(new_value), target.validity);
   }
 
@@ -631,7 +631,7 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
-  // $test$plusargs → PlusargsRvalueInfo{kTest}
+  // $test$plusargs → TestPlusargsRvalueInfo (pure, no side effects)
   if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
     Result<mir::Operand> query_result =
         LowerExpression(test_pa->query, builder);
@@ -639,17 +639,13 @@ auto LowerSystemCall(
     mir::Operand query_op = *query_result;
     mir::Rvalue rvalue{
         .operands = {query_op},
-        .info =
-            mir::PlusargsRvalueInfo{
-                .kind = mir::PlusargsKind::kTest,
-                .output = std::nullopt,
-                .output_type = {}},
+        .info = mir::TestPlusargsRvalueInfo{},
     };
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
-  // $value$plusargs → PlusargsRvalueInfo{kValue, output_place, output_type}
+  // $value$plusargs → ValuePlusargs statement (has side effects)
   if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
     Result<mir::Operand> format_result =
         LowerExpression(val_pa->format, builder);
@@ -664,16 +660,9 @@ auto LowerSystemCall(
     const hir::Expression& out_expr = (*ctx.hir_arena)[val_pa->output];
     TypeId output_type = out_expr.type;
 
-    mir::Rvalue rvalue{
-        .operands = {format_op},
-        .info =
-            mir::PlusargsRvalueInfo{
-                .kind = mir::PlusargsKind::kValue,
-                .output = output_lv.place,
-                .output_type = output_type},
-    };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    // Emit ValuePlusargs statement - returns success boolean
+    return builder.EmitValuePlusargs(
+        format_op, output_lv.place, output_type, expr.type);
   }
 
   // $fopen → SystemTfRvalueInfo
@@ -732,7 +721,7 @@ auto LowerAssignment(
     builder.EmitAssign(target.place, value);
   } else {
     // Guarded store: only write if validity is true (OOB/X/Z = no-op)
-    builder.EmitGuardedAssign(target.place, value, target.validity);
+    builder.EmitGuardedStore(target.place, value, target.validity);
   }
 
   // Return the value (assignment expression yields the assigned value)

@@ -172,7 +172,7 @@ class Interpreter {
       -> Result<RuntimeValue>;
   auto EvalSFormat(ProcessState& state, const Rvalue& rv)
       -> Result<RuntimeValue>;
-  auto EvalPlusargs(ProcessState& state, const Rvalue& rv)
+  auto EvalTestPlusargs(ProcessState& state, const Rvalue& rv)
       -> Result<RuntimeValue>;
   auto EvalFopen(ProcessState& state, const Rvalue& rv) -> Result<RuntimeValue>;
   auto EvalMathCall(
@@ -213,14 +213,11 @@ class Interpreter {
       ProcessState& state, const Place& place, RuntimeValue& root)
       -> Result<Location>;
 
-  // Execute Assign instruction
+  // Execute Assign instruction (handles both Operand and Rvalue sources)
   auto ExecAssign(ProcessState& state, const Assign& assign) -> Result<void>;
 
-  // Execute Compute instruction
-  auto ExecCompute(ProcessState& state, const Compute& compute) -> Result<void>;
-
-  // Execute GuardedAssign instruction
-  auto ExecGuardedAssign(ProcessState& state, const GuardedAssign& guarded)
+  // Execute GuardedStore instruction (handles both Operand and Rvalue sources)
+  auto ExecGuardedStore(ProcessState& state, const GuardedStore& guarded)
       -> Result<void>;
 
   // Execute Effect instruction
@@ -231,6 +228,10 @@ class Interpreter {
 
   // Execute BuiltinCall instruction (container-mutating builtins)
   auto ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
+      -> Result<void>;
+
+  // Execute ValuePlusargs instruction ($value$plusargs with side effects)
+  auto ExecValuePlusargs(ProcessState& state, const ValuePlusargs& vp)
       -> Result<void>;
 
   // Format display ops to string (no newline appended).

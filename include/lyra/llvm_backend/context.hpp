@@ -243,6 +243,17 @@ class Context {
   [[nodiscard]] auto GetPlaceBaseType(mir::PlaceId place_id)
       -> Result<llvm::Type*>;
 
+  // Load a place's value (for rvalue evaluation in compute/).
+  // This is the read-only API for place access - use this instead of
+  // GetPlacePointer() in compute/ to enforce the rvalue purity boundary.
+  [[nodiscard]] auto LoadPlaceValue(mir::PlaceId place_id)
+      -> Result<llvm::Value*>;
+
+  // Load a place's base value before BitRange projection (for bit
+  // manipulation). Returns the full base word that contains the bit range.
+  [[nodiscard]] auto LoadPlaceBaseValue(mir::PlaceId place_id)
+      -> Result<llvm::Value*>;
+
   struct ComposedBitRange {
     llvm::Value* offset;
     uint32_t width;
