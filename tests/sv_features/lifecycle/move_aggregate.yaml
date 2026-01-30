@@ -1,0 +1,241 @@
+# Tests for MoveInit on aggregate types (struct, array).
+# BLOCKED: Requires aggregate function return types (not yet implemented).
+# Excluded from suites.yaml until feature lands.
+
+feature: lifecycle_move_aggregate
+description: Move semantics for aggregate types (structs, arrays) containing managed fields
+
+cases:
+  - name: struct_move_from_function_return
+    description: Function returns struct with string - move into local variable
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int value;
+        } data_t;
+
+        function data_t make_data(string n, int v);
+          automatic data_t d;
+          d.name = n;
+          d.value = v;
+          return d;
+        endfunction
+
+        initial begin
+          automatic data_t x;
+          x = make_data("hello", 42);
+          $display("x.name=%s x.value=%0d", x.name, x.value);
+        end
+      endmodule
+    expect:
+      stdout: "x.name=hello x.value=42\n"
+
+  - name: struct_move_overwrite_existing
+    description: Function return struct moves into already-initialized variable
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        function wrapper_t make_wrapper(string val);
+          automatic wrapper_t w;
+          w.s = val;
+          return w;
+        endfunction
+
+        initial begin
+          automatic wrapper_t a;
+          a.s = "first";
+          a = make_wrapper("second");  // Move-assign: destroy "first", move "second"
+          $display("a.s=%s", a.s);
+          a = make_wrapper("third");   // Another move-assign
+          $display("a.s=%s", a.s);
+        end
+      endmodule
+    expect:
+      stdout: |
+        a.s=second
+        a.s=third
+
+  - name: array_of_strings_from_function
+    description: Function returns unpacked array of strings - move into local
+    sv: |
+      module Test;
+        typedef string string_pair_t[2];
+
+        function string_pair_t make_pair(string a, string b);
+          automatic string_pair_t result;
+          result[0] = a;
+          result[1] = b;
+          return result;
+        endfunction
+
+        initial begin
+          automatic string arr[2];
+          arr = make_pair("foo", "bar");
+          $display("arr[0]=%s arr[1]=%s", arr[0], arr[1]);
+        end
+      endmodule
+    expect:
+      stdout: "arr[0]=foo arr[1]=bar\n"
+
+  - name: array_move_overwrite_existing
+    description: Array move-assign into already-initialized array
+    sv: |
+      module Test;
+        typedef string string_pair_t[2];
+
+        function string_pair_t make_pair(string a, string b);
+          automatic string_pair_t result;
+          result[0] = a;
+          result[1] = b;
+          return result;
+        endfunction
+
+        initial begin
+          automatic string arr[2];
+          arr[0] = "old0";
+          arr[1] = "old1";
+          arr = make_pair("new0", "new1");  // Move-assign: destroy old, move new
+          $display("arr[0]=%s arr[1]=%s", arr[0], arr[1]);
+        end
+      endmodule
+    expect:
+      stdout: "arr[0]=new0 arr[1]=new1\n"
+
+  - name: nested_struct_move
+    description: Nested struct with string - move from function return
+    sv: |
+      module Test;
+        typedef struct {
+          string inner;
+        } inner_t;
+        typedef struct {
+          inner_t nested;
+          int x;
+        } outer_t;
+
+        function outer_t make_outer(string s, int v);
+          automatic outer_t o;
+          o.nested.inner = s;
+          o.x = v;
+          return o;
+        endfunction
+
+        initial begin
+          automatic outer_t data;
+          data = make_outer("test", 100);
+          $display("data.nested.inner=%s data.x=%0d", data.nested.inner, data.x);
+        end
+      endmodule
+    expect:
+      stdout: "data.nested.inner=test data.x=100\n"
+
+  - name: struct_with_array_of_strings_move
+    description: Struct containing unpacked array of strings - move semantics
+    sv: |
+      module Test;
+        typedef struct {
+          string items[2];
+          int count;
+        } container_t;
+
+        function container_t make_container(string a, string b);
+          automatic container_t c;
+          c.items[0] = a;
+          c.items[1] = b;
+          c.count = 2;
+          return c;
+        endfunction
+
+        initial begin
+          automatic container_t box;
+          box = make_container("alpha", "beta");
+          $display("box.items[0]=%s box.items[1]=%s box.count=%0d",
+                   box.items[0], box.items[1], box.count);
+        end
+      endmodule
+    expect:
+      stdout: "box.items[0]=alpha box.items[1]=beta box.count=2\n"
+
+  - name: array_of_structs_move
+    description: Unpacked array of structs containing strings - move semantics
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int id;
+        } entry_t;
+        typedef entry_t entry_pair_t[2];
+
+        function entry_pair_t make_entries();
+          automatic entry_pair_t result;
+          result[0].name = "first";
+          result[0].id = 1;
+          result[1].name = "second";
+          result[1].id = 2;
+          return result;
+        endfunction
+
+        initial begin
+          automatic entry_t arr[2];
+          arr = make_entries();
+          $display("arr[0].name=%s arr[0].id=%0d", arr[0].name, arr[0].id);
+          $display("arr[1].name=%s arr[1].id=%0d", arr[1].name, arr[1].id);
+        end
+      endmodule
+    expect:
+      stdout: |
+        arr[0].name=first arr[0].id=1
+        arr[1].name=second arr[1].id=2
+
+  - name: repeated_struct_moves
+    description: Multiple move-assigns to same struct - no double-free or leak
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        function wrapper_t wrap(string val);
+          automatic wrapper_t w;
+          w.s = val;
+          return w;
+        endfunction
+
+        initial begin
+          automatic wrapper_t x;
+          x = wrap("one");
+          x = wrap("two");
+          x = wrap("three");
+          $display("x.s=%s", x.s);
+        end
+      endmodule
+    expect:
+      stdout: "x.s=three\n"
+
+  - name: repeated_array_moves
+    description: Multiple move-assigns to same array - no double-free or leak
+    sv: |
+      module Test;
+        typedef string string_pair_t[2];
+
+        function string_pair_t make_pair(string a, string b);
+          automatic string_pair_t result;
+          result[0] = a;
+          result[1] = b;
+          return result;
+        endfunction
+
+        initial begin
+          automatic string arr[2];
+          arr = make_pair("a1", "a2");
+          arr = make_pair("b1", "b2");
+          arr = make_pair("c1", "c2");
+          $display("arr[0]=%s arr[1]=%s", arr[0], arr[1]);
+        end
+      endmodule
+    expect:
+      stdout: "arr[0]=c1 arr[1]=c2\n"

@@ -38,5 +38,12 @@ void CopyInitArray(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr,
     TypeId array_type_id);
 
+// Move-initialize dst array from src array (element-by-element).
+// Transfers ownership element-by-element, nulling out source managed slots.
+// Recursively calls top-level MoveInit() for each element.
+void MoveInitArray(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr,
+    TypeId array_type_id);
+
 }  // namespace detail
 }  // namespace lyra::lowering::mir_to_llvm

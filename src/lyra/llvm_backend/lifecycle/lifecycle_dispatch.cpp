@@ -1,15 +1,14 @@
 #include <format>
 
-#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/lifecycle/lifecycle_array.hpp"
+#include "lyra/llvm_backend/lifecycle/lifecycle_pod.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -37,24 +36,14 @@ void CopyInitContainer(
 void CopyInitStruct(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
 
+// MoveInit helpers (defined in lifecycle_*.cpp files)
+void MoveInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
+void MoveInitContainer(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
+void MoveInitStruct(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+
 }  // namespace detail
-
-namespace {
-
-// Copy POD type (load + store).
-void CopyInitPod(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
-  if (!llvm_type_result) {
-    throw common::InternalError(
-        "CopyInitPod", "failed to build LLVM type for POD type");
-  }
-  auto& builder = ctx.GetBuilder();
-  llvm::Value* val = builder.CreateLoad(*llvm_type_result, src_ptr, "copy.val");
-  builder.CreateStore(val, dst_ptr);
-}
-
-}  // namespace
 
 void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   const auto& types = ctx.GetTypeArena();
@@ -97,7 +86,7 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   }
 }
 
-auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
+auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
     -> llvm::Value* {
   const auto& types = ctx.GetTypeArena();
 
@@ -118,18 +107,18 @@ auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
 
     case TypeKind::kUnpackedStruct:
       throw common::InternalError(
-          "CloneValue",
+          "CloneLeafValue",
           "struct types must be cloned via CopyInit (field-by-field)");
 
     case TypeKind::kUnpackedArray:
       throw common::InternalError(
-          "CloneValue",
+          "CloneLeafValue",
           "unpacked arrays must be cloned via CopyInit (element-by-element)");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
       throw common::InternalError(
-          "CloneValue",
+          "CloneLeafValue",
           std::format(
               "unhandled managed TypeKind in lifecycle dispatch: {}",
               ToString(type.Kind())));
@@ -142,7 +131,7 @@ void CopyInit(
 
   // POD types: simple load + store
   if (!TypeContainsManaged(type_id, types)) {
-    CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
     return;
   }
 
@@ -184,27 +173,54 @@ void CopyAssign(
 
 void MoveInit(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  // Self-move is a no-op (avoids nulling out dst when dst == src)
+  if (dst_ptr == src_ptr) {
+    return;
+  }
+
   const auto& types = ctx.GetTypeArena();
 
   // POD types: simple load + store (no cleanup needed)
   if (!TypeContainsManaged(type_id, types)) {
-    CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
     return;
   }
 
-  auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+  // Past the guard: type contains managed content. Switch must handle all
+  // managed-bearing cases.
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kString:
+      detail::MoveInitString(ctx, dst_ptr, src_ptr);
+      return;
 
-  // Move-initialize: load from src, store to dst, null out src.
-  // CONTRACT: dst must be uninitialized (caller responsible for Destroy).
-  // For managed types (string, dynarray, queue), the value is a pointer handle.
-  llvm::Value* value = builder.CreateLoad(ptr_ty, src_ptr, "move.val");
-  builder.CreateStore(value, dst_ptr);
-  MoveCleanup(ctx, src_ptr, type_id);
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      detail::MoveInitContainer(ctx, dst_ptr, src_ptr);
+      return;
+
+    case TypeKind::kUnpackedStruct:
+      detail::MoveInitStruct(ctx, dst_ptr, src_ptr, type_id);
+      return;
+
+    case TypeKind::kUnpackedArray:
+      detail::MoveInitArray(ctx, dst_ptr, src_ptr, type_id);
+      return;
+
+    default:
+      throw common::InternalError(
+          "MoveInit", std::format(
+                          "unhandled TypeKind in lifecycle dispatch: {}",
+                          ToString(type.Kind())));
+  }
 }
 
 void MoveAssign(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+  // Self-assign is a no-op (avoids destroy + null-out when dst == src)
+  if (dst_ptr == src_ptr) {
+    return;
+  }
   // MoveAssign = Destroy(dst) + MoveInit(dst, src)
   Destroy(ctx, dst_ptr, type_id);
   MoveInit(ctx, dst_ptr, src_ptr, type_id);
