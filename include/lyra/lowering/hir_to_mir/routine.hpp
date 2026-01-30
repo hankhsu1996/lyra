@@ -2,6 +2,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -14,8 +15,8 @@ namespace lyra::lowering::hir_to_mir {
 // Build a frozen FunctionSignature from HIR function metadata.
 // Must be called at pre-allocation time (Phase 1).
 auto BuildFunctionSignature(
-    const hir::Function& function, const SymbolTable& symbol_table)
-    -> mir::FunctionSignature;
+    const hir::Function& function, const SymbolTable& symbol_table,
+    const TypeArena& type_arena) -> mir::FunctionSignature;
 
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,

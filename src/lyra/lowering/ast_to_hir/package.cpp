@@ -67,12 +67,23 @@ auto LowerPackage(
         const auto& ret_type = sub.getReturnType();
         SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
 
-        // Check for unsupported return types
-        if (!ret_type.isIntegral() && !ret_type.isVoid() &&
-            !ret_type.isString()) {
+        // Check for unsupported return types.
+        // Supported: void, integral, string, unpacked struct, fixed-element-
+        // count unpacked array. Use canonical type's kind for array check
+        // (isFixedSize checks element types recursively, but we want any
+        // unpacked array with fixed element count, even if elements are
+        // strings).
+        const auto& canonical_ret = ret_type.getCanonicalType();
+        bool is_fixed_count_unpacked_array =
+            canonical_ret.kind ==
+            slang::ast::SymbolKind::FixedSizeUnpackedArrayType;
+        bool is_supported_return_type =
+            canonical_ret.isIntegral() || canonical_ret.isVoid() ||
+            canonical_ret.isString() || canonical_ret.isUnpackedStruct() ||
+            is_fixed_count_unpacked_array;
+        if (!is_supported_return_type) {
           std::string reason = std::format(
-              "function return type '{}' is not supported (only integral, "
-              "void, or string return types are supported)",
+              "function return type '{}' is not supported",
               std::string(ret_type.toString()));
           ctx->sink->Error(func_span, reason);
           // Register as unsupported so call sites get clear errors
