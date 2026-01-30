@@ -137,10 +137,9 @@ auto LowerStringBinaryOp(
   return builder.CreateZExt(bool_result, result_type, "str.cmp.ext");
 }
 
-auto LowerStringConcat(
+auto LowerStringConcatValue(
     Context& context, const mir::ConcatRvalueInfo& /*info*/,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
-    -> Result<void> {
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
@@ -177,18 +176,12 @@ auto LowerStringConcat(
       context.GetLyraStringConcat(),
       {array_alloca, llvm::ConstantInt::get(i64_ty, count)}, "str.concat");
 
-  // Store result into target place (NOT registered as owned temp)
-  auto target_ptr_or_err = context.GetPlacePointer(target_place);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-  builder.CreateStore(result, target_ptr);
-  return {};
+  return result;
 }
 
-auto LowerSFormatRvalue(
+auto LowerSFormatRvalueValue(
     Context& context, const mir::SFormatRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target_place)
-    -> Result<void> {
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   // Runtime format path: operands[0] is format string, operands[1..] are args
   if (info.has_runtime_format) {
     auto& builder = context.GetBuilder();
@@ -318,11 +311,7 @@ auto LowerSFormatRvalue(
          count_val},
         "sformat.runtime");
 
-    // Store result
-    auto target_ptr_or_err = context.GetPlacePointer(target_place);
-    if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-    builder.CreateStore(result, *target_ptr_or_err);
-    return {};
+    return result;
   }
 
   if (info.ops.empty()) {
@@ -330,12 +319,7 @@ auto LowerSFormatRvalue(
     // string
     if (operands.empty()) {
       // No values to format - return empty string constant
-      llvm::Value* result = CreateEmptyString(context);
-      auto target_ptr_or_err = context.GetPlacePointer(target_place);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-      context.GetBuilder().CreateStore(result, target_ptr);
-      return {};
+      return CreateEmptyString(context);
     }
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
@@ -348,7 +332,7 @@ auto LowerSFormatRvalue(
 
   // PHASE 1: Validate all ops BEFORE calling Start() (exception safety)
   auto validate_result = ValidateFormatOps(context, info.ops);
-  if (!validate_result) return validate_result;
+  if (!validate_result) return std::unexpected(validate_result.error());
 
   // PHASE 2: Emit code (no exceptions expected from here)
   llvm::Value* buf =
@@ -356,18 +340,14 @@ auto LowerSFormatRvalue(
 
   for (const auto& op : info.ops) {
     auto result = LowerFormatOpToBuffer(context, buf, op);
-    if (!result) return result;
+    if (!result) return std::unexpected(result.error());
   }
 
-  // Finish and store result
+  // Finish and return result
   llvm::Value* result_handle = builder.CreateCall(
       context.GetLyraStringFormatFinish(), {buf}, "sformat.result");
 
-  auto target_ptr_or_err = context.GetPlacePointer(target_place);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-  builder.CreateStore(result_handle, target_ptr);
-  return {};
+  return result_handle;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

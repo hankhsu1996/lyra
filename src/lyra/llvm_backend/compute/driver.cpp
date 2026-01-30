@@ -116,8 +116,9 @@ auto FinalizeCompute(
   return masked.value;
 }
 
-auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
-    -> Result<void> {
+auto LowerPackedCoreRvalueValue(
+    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
+    -> Result<llvm::Value*> {
   // Validate and get type info
   auto type_info_or_err = ValidateAndGetTypeInfo(context, compute.target);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
@@ -128,10 +129,9 @@ auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
-  llvm::StructType* struct_type = nullptr;
   llvm::Type* elem_type = storage_type;
   if (type_info.is_four_state) {
-    struct_type = llvm::cast<llvm::StructType>(storage_type);
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
     elem_type = struct_type->getElementType(0);
   }
 
@@ -185,16 +185,16 @@ auto LowerPackedCoreRvalue(Context& context, const mir::Compute& compute)
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
-  // Finalize the compute result (mask and pack)
-  llvm::Value* final_value = FinalizeCompute(
-      context, *result_or_err, type_info.bit_width, struct_type);
+  // Apply width mask to result
+  auto masked =
+      ApplyWidthMaskToResult(context, *result_or_err, type_info.bit_width);
 
-  // Get target pointer and store
-  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
+  // Return unknown plane via out parameter
+  if (unknown_out != nullptr) {
+    *unknown_out = masked.IsFourState() ? masked.unknown : nullptr;
+  }
 
-  context.GetBuilder().CreateStore(final_value, *target_ptr_or_err);
-  return {};
+  return masked.value;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

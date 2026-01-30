@@ -18,9 +18,9 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerSystemTfRvalue(
+auto LowerSystemTfRvalueValue(
     Context& context, const mir::Compute& compute,
-    const mir::SystemTfRvalueInfo& info) -> Result<void> {
+    const mir::SystemTfRvalueInfo& info) -> Result<llvm::Value*> {
   switch (info.opcode) {
     case SystemTfOpcode::kFopen: {
       auto& builder = context.GetBuilder();
@@ -28,7 +28,7 @@ auto LowerSystemTfRvalue(
 
       if (rv.operands.size() != 1 && rv.operands.size() != 2) {
         throw common::InternalError(
-            "LowerSystemTfRvalue:kFopen",
+            "LowerSystemTfRvalueValue:kFopen",
             std::format(
                 "expected 1 or 2 operands, got {}", rv.operands.size()));
       }
@@ -50,20 +50,17 @@ auto LowerSystemTfRvalue(
             {context.GetEnginePointer(), *filename_or_err}, "fopen.mcd");
       }
 
-      auto target_ptr = context.GetPlacePointer(compute.target);
-      if (!target_ptr) return std::unexpected(target_ptr.error());
-      builder.CreateStore(result, *target_ptr);
-      return {};
+      return result;
     }
     case SystemTfOpcode::kFclose:
       throw common::InternalError(
-          "LowerSystemTfRvalue", "$fclose is an effect, not an rvalue");
+          "LowerSystemTfRvalueValue", "$fclose is an effect, not an rvalue");
     case SystemTfOpcode::kFflush:
       throw common::InternalError(
-          "LowerSystemTfRvalue", "$fflush is an effect, not an rvalue");
+          "LowerSystemTfRvalueValue", "$fflush is an effect, not an rvalue");
   }
   throw common::InternalError(
-      "LowerSystemTfRvalue", "unhandled SystemTfOpcode");
+      "LowerSystemTfRvalueValue", "unhandled SystemTfOpcode");
 }
 
 auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)

@@ -18,10 +18,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -32,9 +30,9 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerDynArrayBuiltin(
+auto LowerDynArrayBuiltinValue(
     Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -44,7 +42,7 @@ auto LowerDynArrayBuiltin(
       const Type& da_type = types[info.result_type];
       if (da_type.Kind() != TypeKind::kDynamicArray) {
         throw common::InternalError(
-            "LowerDynArrayBuiltin",
+            "LowerDynArrayBuiltinValue",
             "kNewArray result_type is not a dynamic array");
       }
       TypeId elem_type_id = da_type.AsDynamicArray().element_type;
@@ -80,17 +78,7 @@ auto LowerDynArrayBuiltin(
             "da.new");
       }
 
-      // Release old handle at target before storing new (prevents leak on
-      // reassignment or loop iteration)
-      auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-
-      const auto& arena = context.GetMirArena();
-      TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
-      Destroy(context, target_ptr, target_type_id);
-      builder.CreateStore(handle, target_ptr);
-      return {};
+      return handle;
     }
 
     case mir::BuiltinMethod::kArraySize: {
@@ -103,24 +91,18 @@ auto LowerDynArrayBuiltin(
           context.GetLyraDynArraySize(), {handle}, "da.size");
 
       // Fit i64 result to target storage type
-      auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
 
-      size = builder.CreateZExtOrTrunc(size, target_type, "da.size.fit");
-      builder.CreateStore(size, target_ptr);
-      return {};
+      return builder.CreateZExtOrTrunc(size, target_type, "da.size.fit");
     }
 
     case mir::BuiltinMethod::kArrayDelete:
       // Container-mutating builtins are handled via BuiltinCall instruction
       throw common::InternalError(
-          "LowerDynArrayBuiltin",
+          "LowerDynArrayBuiltinValue",
           "kArrayDelete must use BuiltinCall instruction");
 
     default:
@@ -132,9 +114,9 @@ auto LowerDynArrayBuiltin(
   }
 }
 
-auto LowerQueueBuiltin(
+auto LowerQueueBuiltinValue(
     Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (info.method) {
@@ -146,18 +128,12 @@ auto LowerQueueBuiltin(
       llvm::Value* size =
           builder.CreateCall(context.GetLyraDynArraySize(), {handle}, "q.size");
 
-      auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-      if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-      llvm::Value* target_ptr = *target_ptr_or_err;
-
       auto target_type_or_err = context.GetPlaceLlvmType(compute.target);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
 
-      size = builder.CreateZExtOrTrunc(size, target_type, "q.size.fit");
-      builder.CreateStore(size, target_ptr);
-      return {};
+      return builder.CreateZExtOrTrunc(size, target_type, "q.size.fit");
     }
 
     case mir::BuiltinMethod::kQueueDelete:
@@ -169,12 +145,12 @@ auto LowerQueueBuiltin(
     case mir::BuiltinMethod::kQueueInsert:
       // Container-mutating builtins are handled via BuiltinCall instruction
       throw common::InternalError(
-          "LowerQueueBuiltin",
+          "LowerQueueBuiltinValue",
           "container-mutating builtins must use BuiltinCall instruction");
 
     default:
       throw common::InternalError(
-          "LowerQueueBuiltin",
+          "LowerQueueBuiltinValue",
           std::format(
               "unexpected queue builtin: {}", static_cast<int>(info.method)));
   }
@@ -182,9 +158,9 @@ auto LowerQueueBuiltin(
 
 namespace {
 
-auto LowerEnumNextPrev(
+auto LowerEnumNextPrevValue(
     Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumNextPrev", "enum_type must be set for enum builtin");
@@ -287,18 +263,12 @@ auto LowerEnumNextPrev(
         result, llvm::ConstantInt::get(value_type, mask), "enum.masked");
   }
 
-  // Store to target
-  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-
-  builder.CreateStore(result, target_ptr);
-  return {};
+  return result;
 }
 
-auto LowerEnumName(
+auto LowerEnumNameValue(
     Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumName", "enum_type must be set for enum builtin");
@@ -411,38 +381,29 @@ auto LowerEnumName(
   }
   phi->addIncoming(empty_handle, no_match_end);
 
-  // String ownership: release old, store new (Pattern B)
-  auto target_ptr_or_err = context.GetPlacePointer(compute.target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
+  return phi;
+}
 
-  const auto& arena = context.GetMirArena();
-  TypeId target_type_id = mir::TypeOfPlace(types, arena[compute.target]);
-  Destroy(context, target_ptr, target_type_id);
-  builder.CreateStore(phi, target_ptr);
-  return {};
+auto LowerEnumBuiltinValue(
+    Context& context, const mir::Compute& compute,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
+  if (info.method == mir::BuiltinMethod::kEnumNext ||
+      info.method == mir::BuiltinMethod::kEnumPrev) {
+    return LowerEnumNextPrevValue(context, compute, info);
+  }
+  return LowerEnumNameValue(context, compute, info);
 }
 
 }  // namespace
 
-auto LowerEnumBuiltin(
+auto LowerBuiltinRvalue(
     Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
-  if (info.method == mir::BuiltinMethod::kEnumNext ||
-      info.method == mir::BuiltinMethod::kEnumPrev) {
-    return LowerEnumNextPrev(context, compute, info);
-  }
-  return LowerEnumName(context, compute, info);
-}
-
-auto LowerBuiltin(
-    Context& context, const mir::Compute& compute,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<void> {
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   switch (info.method) {
     case mir::BuiltinMethod::kNewArray:
     case mir::BuiltinMethod::kArraySize:
     case mir::BuiltinMethod::kArrayDelete:
-      return LowerDynArrayBuiltin(context, compute, info);
+      return LowerDynArrayBuiltinValue(context, compute, info);
     case mir::BuiltinMethod::kQueueSize:
     case mir::BuiltinMethod::kQueueDelete:
     case mir::BuiltinMethod::kQueueDeleteAt:
@@ -451,11 +412,11 @@ auto LowerBuiltin(
     case mir::BuiltinMethod::kQueuePopBack:
     case mir::BuiltinMethod::kQueuePopFront:
     case mir::BuiltinMethod::kQueueInsert:
-      return LowerQueueBuiltin(context, compute, info);
+      return LowerQueueBuiltinValue(context, compute, info);
     case mir::BuiltinMethod::kEnumNext:
     case mir::BuiltinMethod::kEnumPrev:
     case mir::BuiltinMethod::kEnumName:
-      return LowerEnumBuiltin(context, compute, info);
+      return LowerEnumBuiltinValue(context, compute, info);
   }
   return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
       context.GetCurrentOrigin(),

@@ -87,9 +87,14 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
       operand.payload);
 }
 
+struct Clog2Result {
+  llvm::Value* value;
+  llvm::Value* unknown;  // nullptr for 2-state
+};
+
 auto LowerMathIntegralClog2(
     Context& context, const std::vector<mir::Operand>& operands,
-    mir::PlaceId target) -> Result<void> {
+    mir::PlaceId target) -> Result<Clog2Result> {
   auto& builder = context.GetBuilder();
   auto& module = context.GetModule();
   const auto& arena = context.GetMirArena();
@@ -161,11 +166,6 @@ auto LowerMathIntegralClog2(
   auto* known_result =
       builder.CreateSelect(is_le_one, zero, raw_result, "clog2.known");
 
-  // Store result
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-
   if (target_is_four_state) {
     // 4-state target: if operand has unknown bits, result is all-X
     // result_val = has_unknown ? 0 : known_result (value is 0 for X
@@ -174,17 +174,11 @@ auto LowerMathIntegralClog2(
         builder.CreateSelect(has_unknown, zero, known_result, "clog2.res.val");
     auto* result_unk =
         builder.CreateSelect(has_unknown, all_ones, zero, "clog2.res.unk");
-
-    auto* struct_type = context.GetPlaceLlvmType4State(target_width);
-    llvm::Value* val_struct = llvm::UndefValue::get(struct_type);
-    val_struct = builder.CreateInsertValue(val_struct, result_val, 0, "4s.v");
-    val_struct = builder.CreateInsertValue(val_struct, result_unk, 1, "4s.u");
-    builder.CreateStore(val_struct, target_ptr);
-  } else {
-    // 2-state target: just store the result (unknown bits become 0 implicitly)
-    builder.CreateStore(known_result, target_ptr);
+    return Clog2Result{.value = result_val, .unknown = result_unk};
   }
-  return {};
+
+  // 2-state target: just return the result (unknown bits become 0 implicitly)
+  return Clog2Result{.value = known_result, .unknown = nullptr};
 }
 
 auto LowerRealMathFnUnary(
@@ -315,16 +309,14 @@ auto LowerRealMathFnBinary(
   return builder.CreateCall(func, {lhs, rhs}, "math");
 }
 
-auto LowerMathCall(
+auto LowerMathCallValue(
     Context& context, const mir::MathCallRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, mir::PlaceId target)
-    -> Result<void> {
-  auto& builder = context.GetBuilder();
-
+    const std::vector<mir::Operand>& operands, mir::PlaceId target,
+    llvm::Value** unknown_out) -> Result<llvm::Value*> {
   int expected_arity = GetMathFnArity(info.fn);
   if (std::cmp_not_equal(operands.size(), expected_arity)) {
     throw common::InternalError(
-        "LowerMathCall",
+        "LowerMathCallValue",
         std::format(
             "arity mismatch for {}: expected {}, got {}", ToString(info.fn),
             expected_arity, operands.size()));
@@ -332,35 +324,33 @@ auto LowerMathCall(
 
   // Handle $clog2 specially (integral operand)
   if (info.fn == MathFn::kClog2) {
-    return LowerMathIntegralClog2(context, operands, target);
+    auto result_or_err = LowerMathIntegralClog2(context, operands, target);
+    if (!result_or_err) return std::unexpected(result_or_err.error());
+    if (unknown_out != nullptr) {
+      *unknown_out = result_or_err->unknown;
+    }
+    return result_or_err->value;
   }
 
-  // All other math functions are real-typed
+  // All other math functions are real-typed (no unknown plane)
+  if (unknown_out != nullptr) {
+    *unknown_out = nullptr;
+  }
+
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
-  Result<llvm::Value*> result_or_err;
 
   if (expected_arity == 1) {
     auto operand_or_err = LowerOperand(context, operands[0]);
     if (!operand_or_err) return std::unexpected(operand_or_err.error());
-    result_or_err =
-        LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
-  } else {
-    auto lhs_or_err = LowerOperand(context, operands[0]);
-    if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
-    auto rhs_or_err = LowerOperand(context, operands[1]);
-    if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
-    result_or_err = LowerRealMathFnBinary(
-        context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
+    return LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
   }
 
-  if (!result_or_err) return std::unexpected(result_or_err.error());
-
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-
-  builder.CreateStore(*result_or_err, target_ptr);
-  return {};
+  auto lhs_or_err = LowerOperand(context, operands[0]);
+  if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
+  auto rhs_or_err = LowerOperand(context, operands[1]);
+  if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
+  return LowerRealMathFnBinary(
+      context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
 }
 
 }  // namespace
@@ -370,14 +360,20 @@ auto IsMathCompute(
   return std::holds_alternative<mir::MathCallRvalueInfo>(compute.value.info);
 }
 
-auto LowerMathCompute(Context& context, const mir::Compute& compute)
-    -> Result<void> {
+auto LowerMathRvalue(
+    Context& context, const mir::Compute& compute, llvm::Value** unknown_out)
+    -> Result<llvm::Value*> {
+  if (unknown_out != nullptr) {
+    *unknown_out = nullptr;
+  }
+
   const auto* info = std::get_if<mir::MathCallRvalueInfo>(&compute.value.info);
   if (info == nullptr) {
     throw common::InternalError(
-        "LowerMathCompute", "expected MathCallRvalueInfo");
+        "LowerMathRvalue", "expected MathCallRvalueInfo");
   }
-  return LowerMathCall(context, *info, compute.value.operands, compute.target);
+  return LowerMathCallValue(
+      context, *info, compute.value.operands, compute.target, unknown_out);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

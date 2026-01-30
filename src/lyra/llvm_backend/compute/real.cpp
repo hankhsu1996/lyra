@@ -99,10 +99,10 @@ auto MapToFcmpPredicate(mir::BinaryOp op) -> llvm::CmpInst::Predicate {
   }
 }
 
-auto LowerRealUnary(
+auto LowerRealUnaryValue(
     Context& context, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, mir::PlaceId target)
-    -> Result<void> {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
@@ -131,17 +131,13 @@ auto LowerRealUnary(
         UnsupportedCategory::kOperation));
   }
 
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
-  builder.CreateStore(result, target_ptr);
-  return {};
+  return result;
 }
 
-auto LowerRealBinary(
+auto LowerRealBinaryValue(
     Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, mir::PlaceId target)
-    -> Result<void> {
+    -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
@@ -155,7 +151,7 @@ auto LowerRealBinary(
   if (!lhs->getType()->isFloatingPointTy() ||
       !rhs->getType()->isFloatingPointTy()) {
     throw common::InternalError(
-        "LowerRealBinary", "real binary operands must be floating-point");
+        "LowerRealBinaryValue", "real binary operands must be floating-point");
   }
 
   // Defensive: if mixed types (float vs double), promote to double
@@ -171,9 +167,6 @@ auto LowerRealBinary(
   }
 
   llvm::Value* result = nullptr;
-  auto target_ptr_or_err = context.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
 
   if (IsRealComparisonOp(info.op)) {
     auto pred = MapToFcmpPredicate(info.op);
@@ -181,9 +174,7 @@ auto LowerRealBinary(
     auto target_type_or_err = context.GetPlaceLlvmType(target);
     if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
     llvm::Type* target_type = *target_type_or_err;
-    result = builder.CreateZExtOrTrunc(cmp, target_type, "fcmp.ext");
-    builder.CreateStore(result, target_ptr);
-    return {};
+    return builder.CreateZExtOrTrunc(cmp, target_type, "fcmp.ext");
   }
 
   if (info.op == mir::BinaryOp::kLogicalAnd ||
@@ -201,9 +192,7 @@ auto LowerRealBinary(
     auto target_type_or_err = context.GetPlaceLlvmType(target);
     if (!target_type_or_err) return std::unexpected(target_type_or_err.error());
     llvm::Type* target_type = *target_type_or_err;
-    result = builder.CreateZExtOrTrunc(logic_result, target_type, "flog.ext");
-    builder.CreateStore(result, target_ptr);
-    return {};
+    return builder.CreateZExtOrTrunc(logic_result, target_type, "flog.ext");
   }
 
   // Arithmetic operations
@@ -235,8 +224,7 @@ auto LowerRealBinary(
           UnsupportedCategory::kOperation));
   }
 
-  builder.CreateStore(result, target_ptr);
-  return {};
+  return result;
 }
 
 }  // namespace
@@ -260,23 +248,23 @@ auto IsRealMathCompute(Context& context, const mir::Compute& compute) -> bool {
       compute.value.info);
 }
 
-auto LowerRealCompute(Context& context, const mir::Compute& compute)
-    -> Result<void> {
+auto LowerRealRvalue(Context& context, const mir::Compute& compute)
+    -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
-          [&](const mir::UnaryRvalueInfo& info) -> Result<void> {
-            return LowerRealUnary(
+          [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerRealUnaryValue(
                 context, info, compute.value.operands, compute.target);
           },
-          [&](const mir::BinaryRvalueInfo& info) -> Result<void> {
-            return LowerRealBinary(
+          [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
+            return LowerRealBinaryValue(
                 context, info, compute.value.operands, compute.target);
           },
-          [&](const mir::CastRvalueInfo&) -> Result<void> {
+          [&](const mir::CastRvalueInfo&) -> Result<llvm::Value*> {
             throw common::InternalError(
-                "LowerRealCompute", "casts use LowerCastUnified");
+                "LowerRealRvalue", "casts use LowerCastUnified");
           },
-          [&](const auto&) -> Result<void> {
+          [&](const auto&) -> Result<llvm::Value*> {
             return std::unexpected(
                 context.GetDiagnosticContext().MakeUnsupported(
                     context.GetCurrentOrigin(),
