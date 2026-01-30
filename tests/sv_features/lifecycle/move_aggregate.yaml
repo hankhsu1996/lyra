@@ -280,7 +280,7 @@ cases:
         sel=0: from_b
 
   - name: struct_copy_then_move
-    description: Return → copy assign → move assign → destroy sequence
+    description: Return, copy assign, move assign, destroy sequence
     sv: |
       module Test;
         typedef struct {

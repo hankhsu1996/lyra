@@ -28,9 +28,9 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Determine return policy based on return type.
-// - void → kVoid
-// - scalar/integral/packed/enum → kDirect
-// - string/unpacked struct/unpacked array → kSretOutParam
+// - void: kVoid
+// - scalar/integral/packed/enum: kDirect
+// - string/unpacked struct/unpacked array: kSretOutParam
 auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     -> mir::ReturnPolicy {
   const Type& type = types[return_type];
