@@ -10,7 +10,7 @@
 
 namespace lyra::lowering {
 
-// Bundled output from HIR→MIR lowering.
+// Bundled output from HIR->MIR lowering.
 // Owns the MIR artifacts and origin map; holds non-owning references
 // to HIR/type arena (caller must guarantee lifetime).
 struct LoweringArtifacts {

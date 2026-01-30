@@ -47,7 +47,7 @@ enum class TimeScaleSysFnKind {
   kTimeprecision,
 };
 
-// Category 4: Math functions (IEEE 1800 §20.8)
+// Category 4: Math functions (IEEE 1800 20.8)
 struct MathSysFn {
   MathFn fn;
 };

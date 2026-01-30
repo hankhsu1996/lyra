@@ -8,7 +8,7 @@
 
 namespace lyra::common {
 
-// State set by $timeformat system task (IEEE 1800-2017 §21.3).
+// State set by $timeformat system task (IEEE 1800-2017 21.3).
 // Controls how %t format specifier displays simulation time values.
 struct TimeFormatState {
   int8_t units = kUnitsUnset;  // Power of 10 (-9 for ns, -12 for ps)

@@ -64,11 +64,11 @@ A symbol is a named language entity: variable, net, parameter, function, event. 
 
 ### ScopeId / Scope
 
-Represents semantic visibility. Module, function, and block each introduce a new scope. ScopeId and SymbolId are independent—a symbol exists in a scope, but the ID spaces don't overlap.
+Represents semantic visibility. Module, function, and block each introduce a new scope. ScopeId and SymbolId are independent - a symbol exists in a scope, but the ID spaces don't overlap.
 
 ### ConstId / ConstantPool
 
-Constants are frontend-known, deduplicable entities—first-class citizens like TypeId. The ConstantPool interns constants for deduplication and consistent identity.
+Constants are frontend-known, deduplicable entities - first-class citizens like TypeId. The ConstantPool interns constants for deduplication and consistent identity.
 
 Supported payload kinds:
 
@@ -91,7 +91,7 @@ HIR must represent all SystemVerilog type semantics:
 | Aggregate | struct, union (with packed qualifier)               |
 | Other     | string, event, real, time                           |
 
-**Qualifiers** (signed, unsigned, packed, const) are canonical type attributes, part of the TypeArena interning key. This is distinct from "mode flags"—qualifiers don't represent semantic variants; they define distinct types.
+**Qualifiers** (signed, unsigned, packed, const) are canonical type attributes, part of the TypeArena interning key. This is distinct from "mode flags" - qualifiers don't represent semantic variants; they define distinct types.
 
 ## Constant vs Expression
 
@@ -104,7 +104,7 @@ This distinction is fundamental:
 
 Rule: _A value is a Constant; any construction process is an Expression._
 
-Struct initialization and array initialization are expressions, not constants—even if all elements are constant. The construction process is semantic information.
+Struct initialization and array initialization are expressions, not constants - even if all elements are constant. The construction process is semantic information.
 
 ## Statement Model
 
@@ -146,7 +146,7 @@ HIR must classify system subroutines into exactly three semantic roles:
 
 This classification is fixed and does not grow with the number of system APIs. MIR mirrors these roles as distinct statement categories.
 
-**Unknown syscalls**: Unrecognized system subroutines are rejected at AST->HIR with a user-facing diagnostic. This is not a runtime error—it's a compile-time "unsupported" error.
+**Unknown syscalls**: Unrecognized system subroutines are rejected at AST->HIR with a user-facing diagnostic. This is not a runtime error - it's a compile-time "unsupported" error.
 
 Rule: Classify by _what the subroutine does semantically_, not by its name or argument count.
 
@@ -154,8 +154,8 @@ Rule: Classify by _what the subroutine does semantically_, not by its name or ar
 
 All timing constructs unify as "wait for something":
 
-- **Delay**: `wait(duration_expr)` — pause for a time value
-- **Event wait**: `wait(trigger_spec)` — pause until condition occurs
+- **Delay**: `wait(duration_expr)` - pause for a time value
+- **Event wait**: `wait(trigger_spec)` - pause until condition occurs
 
 Trigger specifications include: posedge, negedge, level, named event, OR-list.
 
@@ -174,7 +174,7 @@ HIR does **not** express scheduling, queues, or execution order. Those are MIR c
 | LLVM intrinsics    | LLVM lowering |
 | Execution flags    | MIR           |
 
-If you find yourself adding any of these to HIR, step back—you're modeling execution, not semantics.
+If you find yourself adding any of these to HIR, step back - you're modeling execution, not semantics.
 
 ## Source Information
 

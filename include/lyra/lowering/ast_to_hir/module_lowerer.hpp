@@ -10,14 +10,14 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-/// Per-scope state for AST→HIR lowering.
+/// Per-scope state for AST->HIR lowering.
 /// Immutable after construction; safe for parallel lowering.
 struct LoweringFrame {
   int unit_power;  // Scope's timeunit as power of 10 (e.g., -9 for 1ns)
   int global_precision_power;  // Compilation-wide finest precision
 };
 
-/// Drives AST→HIR lowering for a single module or package.
+/// Drives AST->HIR lowering for a single module or package.
 /// Each scope gets its own ScopeLowerer; no shared mutable state.
 class ScopeLowerer {
  public:

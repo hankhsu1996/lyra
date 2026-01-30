@@ -42,8 +42,8 @@ struct ProcessState {
 struct EdgeRecord {
   bool initialized = false;    // First update sets prev_lsb
   bool prev_lsb = false;       // LSB after last update in this delta
-  bool saw_posedge = false;    // Any 0→1 transition occurred
-  bool saw_negedge = false;    // Any 1→0 transition occurred
+  bool saw_posedge = false;    // Any 0->1 transition occurred
+  bool saw_negedge = false;    // Any 1->0 transition occurred
   bool value_changed = false;  // Any full-value change occurred
 };
 

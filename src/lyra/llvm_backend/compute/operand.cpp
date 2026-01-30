@@ -162,7 +162,7 @@ auto LowerOperandAsStorage(
 
   auto& builder = context.GetBuilder();
 
-  // 2-state integer → 4-state struct: wrap as {zext(value), 0}
+  // 2-state integer -> 4-state struct: wrap as {zext(value), 0}
   if (target_type->isStructTy() && val->getType()->isIntegerTy()) {
     auto* struct_type = llvm::cast<llvm::StructType>(target_type);
     auto* elem_type = struct_type->getElementType(0);
@@ -175,7 +175,7 @@ auto LowerOperandAsStorage(
     return packed;
   }
 
-  // 4-state struct → 4-state struct (different storage width): widen/narrow
+  // 4-state struct -> 4-state struct (different storage width): widen/narrow
   // both planes
   if (target_type->isStructTy() && val->getType()->isStructTy()) {
     auto* target_struct = llvm::cast<llvm::StructType>(target_type);
@@ -190,7 +190,7 @@ auto LowerOperandAsStorage(
     return packed;
   }
 
-  // 2-state integer width coercion (storage rounding: e.g. i4 → i8)
+  // 2-state integer width coercion (storage rounding: e.g. i4 -> i8)
   if (val->getType()->isIntegerTy() && target_type->isIntegerTy()) {
     return builder.CreateZExtOrTrunc(val, target_type, "stor.ext");
   }

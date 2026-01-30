@@ -37,7 +37,7 @@ struct ResumePoint {
   uint32_t instruction_index = 0;
 };
 
-// Waitable signal identifier. This IS the design storage slot ID —
+// Waitable signal identifier. This IS the design storage slot ID -
 // NotifyChange, Subscribe, and NBA commit all use the same ID space.
 using SignalId = uint32_t;
 

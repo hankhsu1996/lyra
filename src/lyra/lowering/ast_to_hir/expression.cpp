@@ -890,7 +890,7 @@ auto LowerExpression(
             "LowerExpression",
             std::format(
                 "hierarchical ref target '{}' (path: {}) not "
-                "pre-registered — either unsupported symbol kind or "
+                "pre-registered - either unsupported symbol kind or "
                 "symbol registration gap",
                 hier.symbol.name, hier.symbol.getHierarchicalPath()));
       }

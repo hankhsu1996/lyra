@@ -18,7 +18,7 @@ namespace lyra::semantic {
 // 3. Signedness on integral side: allowed (ignored)
 //
 // This is the single source of truth for BitCast legality - used by:
-// - AST→HIR: to emit diagnostics at lowering time
+// - AST->HIR: to emit diagnostics at lowering time
 // - MIR interpreter: to assert invariants in debug builds
 // - LLVM backend: to assert invariants in debug builds
 auto ValidateBitCast(const Type& src, const Type& dst, const TypeArena& arena)

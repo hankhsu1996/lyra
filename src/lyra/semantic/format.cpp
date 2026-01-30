@@ -36,14 +36,14 @@ auto ParseFormatSpec(std::string_view str) -> std::pair<FormatSpec, size_t> {
   }
 
   // Parse optional '0' prefix and width
-  // "%0h" → width=0 (minimal)
-  // "%08h" → zero_pad + width=8
-  // "%8h" → width=8
+  // "%0h" -> width=0 (minimal)
+  // "%08h" -> zero_pad + width=8
+  // "%8h" -> width=8
   if (pos < str.size() && std::isdigit(str[pos]) != 0) {
     if (str[pos] == '0') {
       ++pos;
       if (pos < str.size() && std::isdigit(str[pos]) != 0) {
-        // "0N..." where N is a digit → zero_pad + width=N...
+        // "0N..." where N is a digit -> zero_pad + width=N...
         spec.zero_pad = true;
         int width = 0;
         while (pos < str.size() && std::isdigit(str[pos]) != 0) {
@@ -52,11 +52,11 @@ auto ParseFormatSpec(std::string_view str) -> std::pair<FormatSpec, size_t> {
         }
         spec.width = width;
       } else {
-        // Just "0" followed by specifier → width=0 (minimal)
+        // Just "0" followed by specifier -> width=0 (minimal)
         spec.width = 0;
       }
     } else {
-      // Non-zero digit → width
+      // Non-zero digit -> width
       int width = 0;
       while (pos < str.size() && std::isdigit(str[pos]) != 0) {
         width = width * 10 + (str[pos] - '0');

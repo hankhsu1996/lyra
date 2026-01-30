@@ -30,8 +30,8 @@ Early-stage C++ compiler project. Primary goal: keep architecture clean and exte
 
 Check `docs/error-handling.md` for correct error type usage:
 
-- `DiagnosticException` only in AST→HIR (with source location)
-- `InternalError` for compiler bugs (HIR→MIR, LLVM lowering, unreachable code)
+- `DiagnosticException` only in AST->HIR (with source location)
+- `InternalError` for compiler bugs (HIR->MIR, LLVM lowering, unreachable code)
 - `std::runtime_error` for runtime failures
 - Never use `std::unreachable()` or `DiagnosticException({})`
 

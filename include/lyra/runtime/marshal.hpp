@@ -18,7 +18,7 @@ enum class RuntimeValueKind : int32_t {
   kReal64 = 1,    // double (64-bit IEEE 754)
   kReal32 = 2,    // float (32-bit IEEE 754, shortreal)
   kWideIntegral =
-      3,  // width > 64, data → uint64_t[n] (little-endian), 8-byte aligned
+      3,  // width > 64, data -> uint64_t[n] (little-endian), 8-byte aligned
   // Future: kIntegral4State, kWideIntegral4State, kStringHandle, ...
 };
 
@@ -85,7 +85,7 @@ inline auto FormatRuntimeValue(
 
   // Marshal data to RuntimeValue based on value_kind (byte interpretation),
   // not format specifier (kind). This allows real values to be formatted
-  // with integer specifiers (%d with real → convert to int first).
+  // with integer specifiers (%d with real -> convert to int first).
   semantic::RuntimeValue value;
   switch (value_kind) {
     case RuntimeValueKind::kReal64:

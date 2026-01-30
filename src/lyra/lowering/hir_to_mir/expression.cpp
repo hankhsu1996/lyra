@@ -456,7 +456,7 @@ auto LowerCast(
     throw common::InternalError("LowerCast", "expected kCast expression kind");
   }
 
-  // Pattern-match: Cast(string ← bit[N]){ Concat{ all string literals } }
+  // Pattern-match: Cast(string <- bit[N]){ Concat{ all string literals } }
   // Slang types all-literal string concat as bit[N], wraps in Conversion.
   // Rewrite directly to Concat(string) to avoid the LLVM backend's packed path.
   // Handles both direct string constants and single-element concats wrapping
@@ -633,7 +633,7 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
-  // $test$plusargs → TestPlusargsRvalueInfo (pure, no side effects)
+  // $test$plusargs -> TestPlusargsRvalueInfo (pure, no side effects)
   if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
     Result<mir::Operand> query_result =
         LowerExpression(test_pa->query, builder);
@@ -647,7 +647,7 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
-  // $value$plusargs → unified Call with SystemTfOpcode
+  // $value$plusargs -> unified Call with SystemTfOpcode
   if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
     Result<mir::Operand> format_result =
         LowerExpression(val_pa->format, builder);
@@ -668,7 +668,7 @@ auto LowerSystemCall(
         {{output_lv.place, output_type, mir::PassMode::kOut}});
   }
 
-  // $fopen → SystemTfRvalueInfo
+  // $fopen -> SystemTfRvalueInfo
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
     Result<mir::Operand> filename_result =
         LowerExpression(fopen_data->filename, builder);
@@ -1670,7 +1670,7 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
           const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
           if (const auto* lit = std::get_if<hir::StructLiteralExpressionData>(
                   &base_expr.data)) {
-            // Struct literal field access — extract directly without lvalue.
+            // Struct literal field access - extract directly without lvalue.
             // field_index and field_values are both in declaration order.
             if (data.field_index < 0 || static_cast<size_t>(data.field_index) >=
                                             lit->field_values.size()) {
@@ -1681,7 +1681,7 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
             return LowerExpression(
                 lit->field_values[data.field_index], builder);
           }
-          // Addressable base — use existing lvalue+load path
+          // Addressable base - use existing lvalue+load path
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
           LvalueResult lv = *lv_result;

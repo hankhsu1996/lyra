@@ -38,7 +38,7 @@ Nested type references (e.g., array element type) use raw pointers to interned t
 
 ### Pointer Types
 
-Pointer types (`Pointer<T>`) represent addresses of storage locations. In MIR, these correspond to Place with Projection—see [mir-design.md](mir-design.md).
+Pointer types (`Pointer<T>`) represent addresses of storage locations. In MIR, these correspond to Place with Projection - see [mir-design.md](mir-design.md).
 
 ### Enum as First-Class Type
 

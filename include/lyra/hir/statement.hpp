@@ -170,7 +170,7 @@ struct DelayStatementData {
 
 // Edge kind for event triggers (LRM 9.4.2)
 enum class EventEdgeKind : uint8_t {
-  kNone,       // @(signal) — any change
+  kNone,       // @(signal) - any change
   kPosedge,    // @(posedge signal)
   kNegedge,    // @(negedge signal)
   kBothEdges,  // @(edge signal)

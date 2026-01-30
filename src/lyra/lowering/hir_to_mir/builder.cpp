@@ -71,8 +71,8 @@ void MirBuilder::ClearInsertionPoint() {
 }
 
 // Instruction emission: permissive for dead code.
-// - No insertion point → no-op (after ClearInsertionPoint from control flow)
-// - Block sealed → no-op (dead code after terminator, frontend should catch)
+// - No insertion point -> no-op (after ClearInsertionPoint from control flow)
+// - Block sealed -> no-op (dead code after terminator, frontend should catch)
 template <class InstT>
 void MirBuilder::EmitInst(InstT inst) {
   if (finished_) {
@@ -105,8 +105,8 @@ void MirBuilder::EmitInst(InstT inst) {
 }
 
 // Terminator emission: strict for CFG correctness.
-// - No insertion point → no-op (after ClearInsertionPoint from control flow)
-// - Block already sealed → THROW (double-terminator is a CFG bug)
+// - No insertion point -> no-op (after ClearInsertionPoint from control flow)
+// - Block already sealed -> THROW (double-terminator is a CFG bug)
 // Use EmitProcessEpilogue/EmitImplicitReturn for conditional termination.
 template <class TermT>
 void MirBuilder::EmitTerm(TermT term) {

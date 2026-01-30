@@ -9,8 +9,8 @@
 namespace lyra::test {
 
 // Integral value with 4-state support.
-// Encoding per bit: unknown=0,value=0→0; unknown=0,value=1→1;
-//                   unknown=1,value=0→X; unknown=1,value=1→Z
+// Encoding per bit: unknown=0,value=0->0; unknown=0,value=1->1;
+//                   unknown=1,value=0->X; unknown=1,value=1->Z
 // Word ordering: word[0] = least significant 64 bits (LSB-first).
 // Within a word: bit 0 = LSB.
 struct IntegralValue {

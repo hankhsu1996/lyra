@@ -18,7 +18,8 @@ enum class DumpFormat { kHir, kMir, kLlvm };
 auto ParseBackend(const std::string& s) -> lyra::Result<Backend>;
 auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat>;
 
-// Split attached flag forms: -DFOO → -D FOO, -Ipath → -I path, -Wfoo → -W foo
+// Split attached flag forms: -DFOO -> -D FOO, -Ipath -> -I path, -Wfoo -> -W
+// foo
 auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string>;
 
 // Add --top, -I, -D, -W, -f, -F flags to a subcommand.

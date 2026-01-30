@@ -21,8 +21,8 @@ lyra run
 
 ```
 my_project/
-├── lyra.toml       # Project configuration
-└── my_project.sv   # SystemVerilog source
++-- lyra.toml       # Project configuration
++-- my_project.sv   # SystemVerilog source
 ```
 
 ## Configuration (`lyra.toml`)

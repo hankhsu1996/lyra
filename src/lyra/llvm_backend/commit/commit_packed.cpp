@@ -150,7 +150,7 @@ auto StoreTwoStateRaw(
 
   llvm::Value* value = raw;
   if (raw->getType()->isStructTy()) {
-    // 4-state source → 2-state target: coerce (val & ~unk) at SOURCE width
+    // 4-state source -> 2-state target: coerce (val & ~unk) at SOURCE width
     // This matches LowerOperand's behavior exactly - no resize before and/not
     auto* v = builder.CreateExtractValue(raw, 0, "coerce.val");
     auto* u = builder.CreateExtractValue(raw, 1, "coerce.unk");

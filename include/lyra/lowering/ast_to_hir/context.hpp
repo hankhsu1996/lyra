@@ -18,7 +18,7 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-/// Canonical types used across AST→HIR lowering.
+/// Canonical types used across AST->HIR lowering.
 /// Initialized once per compilation via InternBuiltinTypes().
 struct BuiltinTypes {
   /// Internal simulation ticks (uint64, two-state).

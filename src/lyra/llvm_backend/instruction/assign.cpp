@@ -459,7 +459,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   // NBA is only valid for design places (GetSignalIdForNba throws if not)
   uint32_t signal_id = GetSignalIdForNba(context, deferred.dest);
 
-  // Case 1: BitRangeProjection — shifted value and mask
+  // Case 1: BitRangeProjection - shifted value and mask
   if (context.HasBitRangeProjection(deferred.dest)) {
     auto br_result = context.ComposeBitRange(deferred.dest);
     if (!br_result) return std::unexpected(br_result.error());
@@ -548,7 +548,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     return {};
   }
 
-  // Case 2: IndexProjection — array element write with OOB guard
+  // Case 2: IndexProjection - array element write with OOB guard
   bool has_index_projection = false;
   for (const auto& proj : place.projections) {
     if (std::holds_alternative<mir::IndexProjection>(proj.info)) {

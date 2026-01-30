@@ -1,6 +1,6 @@
 #pragma once
 
-// Math function identity for IEEE 1800-2023 §20.8 functions.
+// Math function identity for IEEE 1800-2023 20.8 functions.
 //
 // CONTRACT: This file contains ONLY:
 //   - Function identity (enum values)
@@ -13,7 +13,7 @@
 namespace lyra {
 
 enum class MathFn {
-  // Real unary (IEEE 1800 §20.8.1)
+  // Real unary (IEEE 1800 20.8.1)
   kLn,
   kLog10,
   kExp,
@@ -36,7 +36,7 @@ enum class MathFn {
   // Integral unary
   kClog2,
 
-  // Real binary (IEEE 1800 §20.8.2)
+  // Real binary (IEEE 1800 20.8.2)
   kPow,
   kAtan2,
   kHypot,

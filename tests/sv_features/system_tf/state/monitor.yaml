@@ -189,7 +189,7 @@ cases:
 
   - name: monitor_single_var
     # Explicit test for single variable monitoring.
-    # Note: %b displays with full width including leading zeros (IEEE 1800 §21.2.1.2)
+    # Note: %b displays with full width including leading zeros (IEEE 1800 21.2.1.2)
     sv: |
       module Test;
         logic [3:0] x;
@@ -415,5 +415,5 @@ cases:
   # that need investigation.
 
   # NOTE: Unsupported types (string, dynamic array, unpacked array/struct,
-  # queue) are rejected at AST→HIR lowering with diagnostic:
+  # queue) are rejected at AST->HIR lowering with diagnostic:
   # "unsupported operand type '<type>' for $monitor at argument <N>"

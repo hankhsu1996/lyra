@@ -1,5 +1,5 @@
 feature: timeunit
-description: Tests for $timeunit and $timeprecision system functions (IEEE 1800-2023 §20.4.1)
+description: Tests for $timeunit and $timeprecision system functions (IEEE 1800-2023 20.4.1)
 
 cases:
   # Basic $timeunit tests - returns module's time unit as power of 10
@@ -212,7 +212,7 @@ cases:
   # $unit argument tests - returns compilation unit's timescale.
   # NOTE: Must use explicit timeunit/timeprecision declarations (not `timescale
   # directive). The `timescale directive only sets MODULE definitions' timescale,
-  # not the CompilationUnitSymbol::timeScale member (IEEE 1800-2023 §3.14.2.3).
+  # not the CompilationUnitSymbol::timeScale member (IEEE 1800-2023 3.14.2.3).
 
   - name: timeunit_unit
     description: $timeunit($unit) returns compilation unit's time unit

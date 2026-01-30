@@ -42,7 +42,7 @@ enum class SymbolKind {
 // Set during Phase 0 registration to determine runtime storage requirements.
 enum class StorageClass {
   // Design-level storage: module/package variables, ports.
-  // These get design slots allocated during HIR→MIR lowering.
+  // These get design slots allocated during HIR->MIR lowering.
   kDesignStorage,
   // Compile-time only: parameters, localparams, enum members, genvars.
   // No runtime storage - values are elaboration-time constants.

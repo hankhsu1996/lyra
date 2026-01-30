@@ -26,7 +26,7 @@ jobs:
         run: |
           # Check formatting only
           if ! buildifier -mode=check -r .; then
-            echo "### ❌ Formatting issues detected" >> $GITHUB_STEP_SUMMARY
+            echo "### [FAIL] Formatting issues detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Run the following command locally to fix formatting:" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
@@ -34,7 +34,7 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             exit 1
           else
-            echo "### ✅ Formatting check passed" >> $GITHUB_STEP_SUMMARY
+            echo "### [OK] Formatting check passed" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Check lint warnings
@@ -43,7 +43,7 @@ jobs:
           # Run buildifier with lint warnings and store output in a file
           buildifier -mode=check -lint=warn -r . > lint_output.txt 2>&1 || {
             # Write to GitHub Summary if there are warnings
-            echo "### ❌ Lint warnings detected" >> $GITHUB_STEP_SUMMARY
+            echo "### [FAIL] Lint warnings detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             cat lint_output.txt >> $GITHUB_STEP_SUMMARY
@@ -55,4 +55,4 @@ jobs:
           }
 
           # No warnings found
-          echo "### ✅ Lint check passed" >> $GITHUB_STEP_SUMMARY
+          echo "### [OK] Lint check passed" >> $GITHUB_STEP_SUMMARY

@@ -33,7 +33,7 @@ auto RealLogicalNot(const RuntimeReal& op) -> RuntimeIntegral;
 // Power operation (uses std::pow, IEEE 754 semantics)
 auto RealPower(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal;
 
-// Math system functions (IEEE 1800-2023 §20.8)
+// Math system functions (IEEE 1800-2023 20.8)
 auto RealLn(const RuntimeReal& op) -> RuntimeReal;
 auto RealLog10(const RuntimeReal& op) -> RuntimeReal;
 auto RealExp(const RuntimeReal& op) -> RuntimeReal;
@@ -117,7 +117,7 @@ auto ShortRealToIntegral(
 auto IntegralToShortReal(const RuntimeIntegral& src, bool src_is_signed)
     -> RuntimeShortReal;
 
-// Real ↔ ShortReal conversions
+// Real <-> ShortReal conversions
 auto ShortRealToReal(const RuntimeShortReal& src) -> RuntimeReal;
 auto RealToShortReal(const RuntimeReal& src) -> RuntimeShortReal;
 

@@ -4,11 +4,11 @@ description: Tests sibling module connections via parent wires
 # Sibling connections occur when one child module's output is connected to
 # another child module's input through a wire in the parent module. This is
 # a common pattern in hardware design (e.g., connecting pipeline stages,
-# CPU components like instruction memory → decoder → ALU → register file).
+# CPU components like instruction memory -> decoder -> ALU -> register file).
 #
 # Pattern:
 #   Parent has: wire w; Child1 c1(.out(w)); Child2 c2(.in(w));
-#   Data flow: Child1.out → w → Child2.in
+#   Data flow: Child1.out -> w -> Child2.in
 
 cases:
   - name: simple_sibling_connection

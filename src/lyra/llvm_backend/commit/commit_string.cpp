@@ -18,7 +18,7 @@ namespace detail {
 // Unlike WriteTarget-based stores, this takes a raw pointer (not WriteTarget)
 // because field-by-field assignment doesn't have WriteTarget per field.
 //
-// Order: Load(old) → Retain(new if clone) → Store(new) → Release(old)
+// Order: Load(old) -> Retain(new if clone) -> Store(new) -> Release(old)
 // This order is safe for aliasing: if new == old, we've retained before
 // release.
 //
@@ -49,14 +49,14 @@ void CommitStringField(
 namespace {
 
 // Store a string handle to a WriteTarget.
-// Order: Load(old) → Store(new) → Release(old)
+// Order: Load(old) -> Store(new) -> Release(old)
 // The new_val must already have the correct ownership (retained if needed).
 void StoreStringToWriteTarget(
     Context& ctx, llvm::Value* new_val, const WriteTarget& wt) {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
 
-  // Order: Load(old) → Store(new) → Release(old)
+  // Order: Load(old) -> Store(new) -> Release(old)
   // Safe for aliasing: if new == old, store completes before release.
   auto* old_val = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
 

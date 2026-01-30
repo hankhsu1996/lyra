@@ -310,7 +310,7 @@ auto CreateDesignState(
     -> DesignState;
 
 // Create a default RuntimeValue for a given type.
-// 2-state integral → 0, 4-state integral → X, string → empty, etc.
+// 2-state integral -> 0, 4-state integral -> X, string -> empty, etc.
 auto CreateDefaultValue(const TypeArena& types, TypeId type_id) -> RuntimeValue;
 
 // Collect all kOnce processes (initial blocks) from all modules.

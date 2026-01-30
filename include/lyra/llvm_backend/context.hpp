@@ -31,7 +31,7 @@ class Access;
 // Forward declaration for WriteTarget (defined in commit/access.hpp)
 struct WriteTarget;
 
-// Shared context for MIR → LLVM lowering
+// Shared context for MIR -> LLVM lowering
 class Context {
   friend class commit::Access;
 
@@ -462,7 +462,7 @@ class Context {
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
 
-  // Diagnostic context for error reporting (resolves OriginId → SourceSpan)
+  // Diagnostic context for error reporting (resolves OriginId -> SourceSpan)
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
 
   // Owned string temps that need release at end of current statement

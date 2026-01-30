@@ -55,7 +55,7 @@ auto LyraPlusargsValueString(
     void* engine_ptr, LyraStringHandle format, LyraStringHandle* output)
     -> int32_t;
 
-// Suspend helpers — own the SuspendRecord layout, called by LLVM-generated
+// Suspend helpers - own the SuspendRecord layout, called by LLVM-generated
 // code. state: pointer to ProcessState (SuspendRecord is at offset 0).
 void LyraSuspendDelay(void* state, uint64_t ticks, uint32_t resume_block);
 void LyraSuspendWait(

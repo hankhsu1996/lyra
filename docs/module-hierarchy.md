@@ -15,7 +15,7 @@ Both backends use **driver processes** for input port connections.
 1. Creates `AssignmentStatement` with hierarchical target: `child.a = x`
 2. Wraps it in an implicit `always_comb` process with sensitivity to `x`
 
-No binding is stored in MIR—input ports are handled purely through driver processes.
+No binding is stored in MIR - input ports are handled purely through driver processes.
 
 **Codegen**:
 
@@ -92,11 +92,11 @@ Child writes to `out_` -> goes directly to `Parent::result` (C++ reference seman
      -> parent_instance->Write(result_symbol, value)
    ```
 
-**Why the difference?** C++ reference semantics bind at compile time. The interpreter cannot replicate this—it must resolve bindings at runtime. This is a platform constraint, not an optimization choice.
+**Why the difference?** C++ reference semantics bind at compile time. The interpreter cannot replicate this - it must resolve bindings at runtime. This is a platform constraint, not an optimization choice.
 
 ### Inout Ports
 
-Same as output ports—reference member in codegen, port binding in interpreter.
+Same as output ports - reference member in codegen, port binding in interpreter.
 
 ## Hierarchical Variable Access
 
@@ -139,7 +139,7 @@ void EmitHierarchicalPath(
 **Read**: `result = u_child_.value;`
 **Write**: `u_child_.port = expr;`
 
-Both compile to direct C++ member access—no runtime lookup needed.
+Both compile to direct C++ member access - no runtime lookup needed.
 
 ### Interpreter: Hierarchical Access
 
@@ -164,7 +164,7 @@ target_instance->Write(target_symbol, value);
 effect.RecordVariableModification(target_symbol, target_instance);
 ```
 
-**Key insight**: Uses symbol pointers for O(1) lookup. Slang symbols are globally unique—the instance path provides navigation, the symbol provides identity.
+**Key insight**: Uses symbol pointers for O(1) lookup. Slang symbols are globally unique - the instance path provides navigation, the symbol provides identity.
 
 ## Sensitivity and Triggers
 
@@ -262,7 +262,7 @@ At elaboration:
 - Middle's binding: `out -> (result, Top)`
 - Inner's binding: `out -> (result, Top)` (flattened, not `out -> Middle`)
 
-This avoids chained lookups—Inner writes directly to Top's storage.
+This avoids chained lookups - Inner writes directly to Top's storage.
 
 ## Summary
 

@@ -1224,8 +1224,8 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
         if (dim.range.has_value()) {
           // Fixed-size dimension: iterate based on range direction
-          // [3:0] → left=3, right=0, descending (iterate 3,2,1,0)
-          // [0:3] → left=0, right=3, ascending (iterate 0,1,2,3)
+          // [3:0] -> left=3, right=0, descending (iterate 3,2,1,0)
+          // [0:3] -> left=0, right=3, ascending (iterate 0,1,2,3)
           const auto& range = *dim.range;
           bool descending = range.left > range.right;
 
