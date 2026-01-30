@@ -8,6 +8,7 @@
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -82,7 +83,7 @@ auto CommitStringValue(
     Context& ctx, const WriteTarget& wt, llvm::Value* handle,
     OwnershipPolicy policy, TypeId type_id) -> Result<void> {
   if (policy == OwnershipPolicy::kClone) {
-    handle = CloneValue(ctx, handle, type_id);
+    handle = CloneLeafValue(ctx, handle, type_id);
   }
   // kMove: handle already has ownership, no retain needed
   StoreStringToWriteTarget(ctx, handle, wt);

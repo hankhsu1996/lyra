@@ -191,4 +191,15 @@ void CopyInitArray(
       });
 }
 
+void MoveInitArray(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr,
+    TypeId array_type_id) {
+  // Element-by-element move, recursively calling MoveInit.
+  ForEachArrayElementPtrPaired(
+      ctx, dst_ptr, src_ptr, array_type_id,
+      [&](llvm::Value* dst_elem, llvm::Value* src_elem, TypeId elem_type) {
+        MoveInit(ctx, dst_elem, src_elem, elem_type);
+      });
+}
+
 }  // namespace lyra::lowering::mir_to_llvm::detail

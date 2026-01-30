@@ -44,4 +44,18 @@ void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
   builder.CreateStore(cloned, dst_ptr);
 }
 
+void MoveInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
+  auto& builder = ctx.GetBuilder();
+  auto* handle_ty = GetStringHandleType(ctx);
+
+  // Move: load handle from src, store to dst, null out src
+  auto* handle = builder.CreateLoad(handle_ty, src_ptr, "move.str");
+  builder.CreateStore(handle, dst_ptr);
+
+  // Null out source (inline, not via MoveCleanup)
+  auto* null_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(handle_ty));
+  builder.CreateStore(null_val, src_ptr);
+}
+
 }  // namespace lyra::lowering::mir_to_llvm::detail

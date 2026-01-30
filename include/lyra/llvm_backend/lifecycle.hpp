@@ -85,18 +85,4 @@ void MoveInit(
 void MoveAssign(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
 
-// Clone/retain a value, returning new owned value.
-//
-// Per-TypeKind semantics:
-// - Scalars: return value unchanged
-// - String: retain the handle
-// - DynamicArray, Queue: clone the handle
-// - Aggregates (struct, union, array): InternalError (must use CopyInit)
-// - Void: InternalError
-//
-// Note: For new code, prefer CopyInit/CopyAssign which work with pointers
-// and support aggregates. CloneValue is retained for leaf-value paths.
-[[nodiscard]] auto CloneValue(Context& ctx, llvm::Value* value, TypeId type_id)
-    -> llvm::Value*;
-
 }  // namespace lyra::lowering::mir_to_llvm

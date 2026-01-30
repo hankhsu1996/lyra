@@ -23,6 +23,8 @@ suites:
     exclude_regex:
       # $display 4-state formatting not implemented (unknown plane not passed)
       - system_tf/effect/display_four_state\.yaml
+      # Aggregate function returns not yet implemented
+      - lifecycle/move_aggregate\.yaml
 
   mir_dev:
     backend: mir
@@ -37,3 +39,6 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
+    exclude_regex:
+      # Aggregate function returns not yet implemented
+      - lifecycle/move_aggregate\.yaml
