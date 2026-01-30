@@ -22,13 +22,13 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
@@ -448,7 +448,7 @@ auto CollectProcessPlaces(const mir::Process& process)
   std::unordered_set<mir::PlaceId, PlaceIdHash> places;
 
   for (const auto& block : process.blocks) {
-    for (const auto& instr : block.instructions) {
+    for (const auto& instr : block.statements) {
       std::visit(
           common::Overloaded{
               [&](const mir::Assign& a) {

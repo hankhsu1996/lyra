@@ -256,8 +256,8 @@ class Interpreter {
   auto ExecFillPackedEffect(ProcessState& state, const FillPackedEffect& fill)
       -> Result<void>;
 
-  // Execute instruction
-  auto ExecInstruction(ProcessState& state, const Instruction& inst)
+  // Execute statement
+  auto ExecStatement(ProcessState& state, const Statement& stmt)
       -> Result<void>;
 
   // Execute terminator, return next block or nullopt for completion.

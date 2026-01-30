@@ -13,10 +13,10 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -236,7 +236,7 @@ class MirBuilder {
   void ClearInsertionPoint();
 
   struct BlockBuilder {
-    std::vector<mir::Instruction> instructions;
+    std::vector<mir::Statement> statements;
     std::optional<mir::Terminator> terminator;
   };
 

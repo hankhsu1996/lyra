@@ -44,8 +44,8 @@ These are hard rules, not guidelines:
 | --------------------------------------- | ------------------------------------------------------- |
 | Place and Operand are strictly separate | Computation uses Operand; writes occur through Place    |
 | Every basic block has one terminator    | Control flow is explicit and complete                   |
-| Suspension operations are terminators   | Delay/Wait yield control; they cannot be instructions   |
-| System subroutines classified by role   | Three semantic categories, not per-API instructions     |
+| Suspension operations are terminators   | Delay/Wait yield control; they cannot be statements     |
+| System subroutines classified by role   | Three semantic categories, not per-API statements       |
 | TypeId shared with type arena           | MIR annotates Operands with types; does not create them |
 | No frontend object dependencies         | No AST pointers; no slang lifetime leakage              |
 | No LLVM/ABI details                     | Platform-independent; backends handle lowering          |
@@ -59,7 +59,7 @@ Design
   -> DesignElement* (Module | Package)
        -> Process* / Function*
             -> BasicBlock*
-                 -> Instruction*
+                 -> Statement*
                  -> Terminator (exactly one)
 ```
 
@@ -96,7 +96,7 @@ Functions and Processes have different termination rules:
 
 Each basic block consists of:
 
-- **Instructions**: ordered list, compute values and write to Places
+- **Statements**: ordered list, compute values and write to Places
 - **Terminator**: exactly one, always last, determines next control state
 
 ## Design Heritage
@@ -130,24 +130,28 @@ A readable operand. Three kinds only:
 - **Use**: read from a Place (implicit load)
 - **Poison**: invalid / unreachable value (trap policy: any use is an internal error)
 
-Place-read is implicit—there is no explicit Load instruction. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
+Place-read is implicit—there is no explicit Load statement. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
 
 All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
-## Instructions
+## Statements
 
-Instructions do not affect control flow. Four variants:
+Statements do not affect control flow. Variants:
 
-| Variant       | Structure                   | Purpose                           |
-| ------------- | --------------------------- | --------------------------------- |
-| Assign        | Place = Operand             | Data movement                     |
-| Compute       | Place = Rvalue              | Computation with result           |
-| GuardedAssign | Place = Operand if validity | Conditional write (OOB safety)    |
-| Effect        | EffectOp                    | Side effect only, no result value |
+| Variant        | Structure                      | Purpose                           |
+| -------------- | ------------------------------ | --------------------------------- |
+| Assign         | Place = RightHandSide          | Data movement or computation      |
+| GuardedAssign  | Place = RightHandSide if guard | Conditional write (OOB safety)    |
+| DeferredAssign | Place <= RightHandSide         | Non-blocking assignment (NBA)     |
+| Effect         | EffectOp                       | Side effect only, no result value |
+| Call           | Place = callee(args)           | User function invocation          |
+| BuiltinCall    | Place = receiver.method(args)  | Container-mutating builtins       |
 
-**Rvalue kinds:** Unary, Binary, Cast, Call (pure system functions only), Select, IndexValidity, GuardedUse.
+**RightHandSide** can be either an Operand (simple value) or an Rvalue (computation).
 
-**No Load instruction.** Reading a Place is implicit in Operand (Use kind). This keeps the operand model simple: Operands are inputs, Places are outputs.
+**Rvalue kinds:** Unary, Binary, Cast, Aggregate, Concat, IndexValidity, GuardedUse, etc.
+
+**No Load statement.** Reading a Place is implicit in Operand (Use kind). This keeps the operand model simple: Operands are inputs, Places are outputs.
 
 ### Guarded Access Operations
 
@@ -158,17 +162,17 @@ SystemVerilog specifies that out-of-bounds (OOB) or unknown (X/Z) indexing is no
 
 MIR represents these semantics explicitly rather than synthesizing them with generic control flow:
 
-| Operation     | Type        | Semantics                                           |
-| ------------- | ----------- | --------------------------------------------------- |
-| IndexValidity | Rvalue      | Computes validity predicate: in_bounds AND is_known |
-| GuardedUse    | Rvalue      | `validity ? Use(place) : oob_default`               |
-| GuardedAssign | Instruction | `if (validity) Assign(target, source); else no-op`  |
+| Operation     | Type      | Semantics                                           |
+| ------------- | --------- | --------------------------------------------------- |
+| IndexValidity | Rvalue    | Computes validity predicate: in_bounds AND is_known |
+| GuardedUse    | Rvalue    | `validity ? Use(place) : oob_default`               |
+| GuardedAssign | Statement | `if (guard) Assign(dest, rhs); else no-op`          |
 
 **IndexValidity** takes an index operand and bounds, returning a 1-bit 2-state bool. Bounds are stored as logical bounds (always `lower <= upper`); direction handling happens during lowering when computing bit offsets.
 
 **GuardedUse** is the one Rvalue that explicitly names a Place rather than taking it as an Operand. This is necessary because we cannot express "conditionally read" with `Use(place)` alone. The Place is the "where," the predicate is the "whether." OOB default is determined by the result type (X for 4-state, 0 for 2-state).
 
-**GuardedAssign** evaluates its source operand unconditionally; only the write is guarded. For short-circuit semantics (source has side effects), the lowering should emit explicit control flow instead.
+**GuardedAssign** evaluates its rhs unconditionally; only the write is guarded. For short-circuit semantics (rhs has side effects), the lowering should emit explicit control flow instead.
 
 This design ensures backends do not need to understand SystemVerilog OOB rules; they are explicit in the MIR.
 
@@ -179,10 +183,10 @@ Three semantic roles only (fixed classification, does not grow with API count):
 | Role   | Description                    | MIR Representation | Examples                         |
 | ------ | ------------------------------ | ------------------ | -------------------------------- |
 | Pure   | No side effects                | Rvalue (kCall)     | `$clog2`, `$bits`                |
-| Effect | Immediate observable effect    | Effect instruction | `$display`, `$write`, `$monitor` |
+| Effect | Immediate observable effect    | Effect statement   | `$display`, `$write`, `$monitor` |
 | State  | Terminates or suspends process | Terminator         | `$finish`, `$stop`, `$fatal`     |
 
-Hard rule: if a syscall changes control state (terminate/suspend), it must be a Terminator. Otherwise it must be an Effect. No system task is represented as a value-producing Rvalue.
+Hard rule: if a syscall changes control state (terminate/suspend), it must be a Terminator. Otherwise it must be an Effect statement. No system task is represented as a value-producing Rvalue.
 
 ## Terminator Categories
 
@@ -268,7 +272,7 @@ These must hold for well-formed MIR:
 **System Subroutines:**
 
 - Classified only by semantic role (Pure/Effect/State)
-- No system task produces a value (Effect instruction only)
+- No system task produces a value (Effect statement only)
 
 **Process Semantics:**
 
@@ -290,15 +294,15 @@ These must hold for well-formed MIR:
 
 ## Summary
 
-**MIR structure:** Design -> DesignElement (Module|Package) -> Process/Function -> BasicBlock -> Instruction + Terminator
+**MIR structure:** Design -> DesignElement (Module|Package) -> Process/Function -> BasicBlock -> Statement + Terminator
 
 **Operand model:** Place (writable location) and Operand (readable: Const/Use/Poison)
 
-**Instruction model:** Assign, Compute, GuardedAssign, Effect
+**Statement model:** Assign, GuardedAssign, DeferredAssign, Effect, Call, BuiltinCall
 
 **Core fixed semantics:**
 
-- Instruction writes Rvalue to Place (no explicit Load — Use is implicit)
+- Statement writes RightHandSide to Place (no explicit Load — Use is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition

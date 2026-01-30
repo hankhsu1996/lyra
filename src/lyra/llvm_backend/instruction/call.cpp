@@ -14,7 +14,7 @@
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/instruction.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

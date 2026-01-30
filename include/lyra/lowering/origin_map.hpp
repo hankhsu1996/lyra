@@ -11,14 +11,14 @@
 
 namespace lyra::lowering {
 
-// Reference to a MIR instruction (block + index within block).
+// Reference to a MIR statement (block + index within block).
 // Uses BasicBlockId for structural typing rather than raw indices.
-struct InstructionRef {
+struct StatementRef {
   mir::BasicBlockId block;
-  uint32_t instruction_index;  // Index within block (unavoidable, no
-                               // InstructionId exists)
+  uint32_t statement_index;  // Index within block (unavoidable, no
+                             // StatementId exists)
 
-  auto operator==(const InstructionRef&) const -> bool = default;
+  auto operator==(const StatementRef&) const -> bool = default;
 };
 
 // Reference to a MIR terminator (one per block).
@@ -42,7 +42,7 @@ struct PrologueParamRef {
 // construct exists to reference - these origins are purely for error reporting.
 // Extensible: can add BasicBlockId later for block-level origins.
 using MirNode = std::variant<
-    std::monostate, mir::FunctionId, mir::ProcessId, InstructionRef,
+    std::monostate, mir::FunctionId, mir::ProcessId, StatementRef,
     TerminatorRef, PrologueParamRef>;
 
 // Reference to a function parameter in HIR (for prologue errors).
@@ -90,10 +90,10 @@ class OriginMap {
   auto Record(mir::ProcessId mir, hir::ProcessId hir) -> common::OriginId {
     return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(InstructionRef mir, hir::StatementId hir) -> common::OriginId {
+  auto Record(StatementRef mir, hir::StatementId hir) -> common::OriginId {
     return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(InstructionRef mir, hir::ExpressionId hir) -> common::OriginId {
+  auto Record(StatementRef mir, hir::ExpressionId hir) -> common::OriginId {
     return Record(MirNode{mir}, HirSource{hir});
   }
   auto Record(TerminatorRef mir, hir::StatementId hir) -> common::OriginId {

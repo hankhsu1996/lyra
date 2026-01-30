@@ -19,11 +19,11 @@
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -90,18 +90,18 @@ void MirBuilder::EmitInst(InstT inst) {
   // Uses current_hir_source_ (deferred recording) if set.
   common::OriginId origin = current_origin_;
   if (origin_map_ != nullptr && current_hir_source_.has_value()) {
-    auto inst_index = static_cast<uint32_t>(block.instructions.size());
-    InstructionRef ref{
+    auto stmt_index = static_cast<uint32_t>(block.statements.size());
+    StatementRef ref{
         .block = mir::BasicBlockId{current_block_.value},
-        .instruction_index = inst_index,
+        .statement_index = stmt_index,
     };
     origin = std::visit(
         [&](auto id) { return origin_map_->Record(ref, id); },
         *current_hir_source_);
   }
 
-  block.instructions.push_back(
-      mir::Instruction{.data = std::move(inst), .origin = origin});
+  block.statements.push_back(
+      mir::Statement{.data = std::move(inst), .origin = origin});
 }
 
 // Terminator emission: strict for CFG correctness.
@@ -722,7 +722,7 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
   for (size_t i = 0; i < blocks_.size(); ++i) {
     auto& bb = blocks_[i];
     if (!bb.terminator.has_value()) {
-      if (!bb.instructions.empty()) {
+      if (!bb.statements.empty()) {
         throw common::InternalError(
             "MirBuilder", "block has instructions but no terminator");
       }
@@ -732,7 +732,7 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
     block_map[i] = static_cast<int>(result.size());
     result.push_back(
         mir::BasicBlock{
-            .instructions = std::move(bb.instructions),
+            .statements = std::move(bb.statements),
             .terminator = std::move(*bb.terminator),
         });
   }

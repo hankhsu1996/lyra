@@ -28,8 +28,8 @@
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -193,7 +193,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto register_monitor_info = [&](mir::ProcessId proc_id) {
     const auto& process = (*input.mir_arena)[proc_id];
     for (const auto& block : process.blocks) {
-      for (const auto& instr : block.instructions) {
+      for (const auto& instr : block.statements) {
         const auto* effect = std::get_if<mir::Effect>(&instr.data);
         if (effect == nullptr) continue;
         const auto* monitor = std::get_if<mir::MonitorEffect>(&effect->op);

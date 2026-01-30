@@ -10,12 +10,12 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {
@@ -108,8 +108,8 @@ void CollectFromRhs(
       rhs);
 }
 
-void CollectFromInstruction(
-    const Instruction& instr, const Arena& arena,
+void CollectFromStatement(
+    const Statement& stmt, const Arena& arena,
     std::unordered_set<uint32_t>& seen) {
   std::visit(
       common::Overloaded{
@@ -138,7 +138,7 @@ void CollectFromInstruction(
             CollectFromOperand(vp.query, arena, seen);
           },
       },
-      instr.data);
+      stmt.data);
 }
 
 void CollectFromTerminator(
@@ -168,8 +168,8 @@ auto CollectSensitivity(const Process& process, const Arena& arena)
   std::unordered_set<uint32_t> seen;
 
   for (const auto& block : process.blocks) {
-    for (const auto& instr : block.instructions) {
-      CollectFromInstruction(instr, arena, seen);
+    for (const auto& stmt : block.statements) {
+      CollectFromStatement(stmt, arena, seen);
     }
     CollectFromTerminator(block.terminator, arena, seen);
   }

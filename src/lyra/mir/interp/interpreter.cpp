@@ -23,7 +23,6 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -31,6 +30,7 @@
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/simulation.hpp"
@@ -132,9 +132,9 @@ struct StorageCollector {
         rhs);
   }
 
-  // Uses exhaustive Overloaded pattern - adding a new Instruction or EffectOp
+  // Uses exhaustive Overloaded pattern - adding a new Statement or EffectOp
   // type will cause a compile error until handled here.
-  void Visit(const Instruction& inst, const Arena& arena) {
+  void Visit(const Statement& stmt, const Arena& arena) {
     std::visit(
         common::Overloaded{
             [&](const Assign& i) {
@@ -227,7 +227,7 @@ struct StorageCollector {
               Visit(i.query, arena);
             },
         },
-        inst.data);
+        stmt.data);
   }
 };
 
@@ -241,8 +241,8 @@ auto CreateProcessState(
   // Scan all blocks to collect local/temp storage requirements and types
   StorageCollector collector;
   for (const BasicBlock& block : process.blocks) {
-    for (const auto& inst : block.instructions) {
-      collector.Visit(inst, arena);
+    for (const auto& stmt : block.statements) {
+      collector.Visit(stmt, arena);
     }
   }
 
@@ -285,8 +285,8 @@ auto CreateDesignState(
       for (ProcessId process_id : module->processes) {
         const auto& process = arena[process_id];
         for (const BasicBlock& block : process.blocks) {
-          for (const auto& inst : block.instructions) {
-            collector.Visit(inst, arena);
+          for (const auto& stmt : block.statements) {
+            collector.Visit(stmt, arena);
           }
         }
       }
@@ -295,7 +295,7 @@ auto CreateDesignState(
   for (ProcessId process_id : design.init_processes) {
     const auto& process = arena[process_id];
     for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.instructions) {
+      for (const auto& inst : block.statements) {
         collector.Visit(inst, arena);
       }
     }
@@ -303,7 +303,7 @@ auto CreateDesignState(
   for (ProcessId process_id : design.connection_processes) {
     const auto& process = arena[process_id];
     for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.instructions) {
+      for (const auto& inst : block.statements) {
         collector.Visit(inst, arena);
       }
     }

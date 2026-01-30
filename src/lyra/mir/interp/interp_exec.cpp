@@ -29,7 +29,6 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
@@ -38,6 +37,7 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/file_manager.hpp"
 
@@ -49,9 +49,9 @@ auto Interpreter::Run(ProcessState& state) -> Result<ProcessStatus> {
     const auto& block = process.blocks[state.current_block.value];
 
     // Execute all instructions in block
-    while (state.instruction_index < block.instructions.size()) {
+    while (state.instruction_index < block.statements.size()) {
       auto result =
-          ExecInstruction(state, block.instructions[state.instruction_index]);
+          ExecStatement(state, block.statements[state.instruction_index]);
       if (!result) {
         return std::unexpected(std::move(result).error());
       }
@@ -125,9 +125,9 @@ auto Interpreter::RunFunction(
   while (func_state.status == ProcessStatus::kRunning) {
     const auto& block = func.blocks[func_state.current_block.value];
 
-    while (func_state.instruction_index < block.instructions.size()) {
-      auto result = ExecInstruction(
-          func_state, block.instructions[func_state.instruction_index]);
+    while (func_state.instruction_index < block.statements.size()) {
+      auto result = ExecStatement(
+          func_state, block.statements[func_state.instruction_index]);
       if (!result) {
         return std::unexpected(std::move(result).error());
       }
@@ -1025,7 +1025,7 @@ auto Interpreter::ExecValuePlusargs(
   return StoreToPlace(state, vp.dest, MakeIntegralSigned(0, 32));
 }
 
-auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
+auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
     -> Result<void> {
   std::optional<Diagnostic> error;
 
@@ -1069,7 +1069,7 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           // Non-blocking assignments require the LLVM backend runtime
           if (diag_ctx_ != nullptr) {
             error = diag_ctx_->MakeUnsupported(
-                inst.origin,
+                stmt.origin,
                 "non-blocking assignments require the LLVM backend "
                 "(use --backend=llvm)",
                 UnsupportedCategory::kFeature);
@@ -1087,7 +1087,7 @@ auto Interpreter::ExecInstruction(ProcessState& state, const Instruction& inst)
           }
         }
       },
-      inst.data);
+      stmt.data);
 
   if (error) {
     return std::unexpected(std::move(*error));
@@ -1312,9 +1312,9 @@ auto Interpreter::RunUntilSuspend(ProcessState& state)
     const auto& block = process.blocks[state.current_block.value];
 
     // Execute all instructions in block
-    while (state.instruction_index < block.instructions.size()) {
+    while (state.instruction_index < block.statements.size()) {
       auto result =
-          ExecInstruction(state, block.instructions[state.instruction_index]);
+          ExecStatement(state, block.statements[state.instruction_index]);
       if (!result) {
         return std::unexpected(std::move(result).error());
       }

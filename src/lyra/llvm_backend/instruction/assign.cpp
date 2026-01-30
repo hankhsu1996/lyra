@@ -24,10 +24,10 @@
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instruction.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
