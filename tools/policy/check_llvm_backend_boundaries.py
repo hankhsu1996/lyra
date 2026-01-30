@@ -242,14 +242,7 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
     """Check that compute/ module doesn't include commit or lifecycle headers.
 
     compute/ is pure expression evaluation and must not depend on commit or lifecycle.
-
-    Exceptions:
-    - compute/builtin.cpp implements system tasks ($push, $pop, etc.) with side
-      effects that need commit notification
-    - compute/aggregate.cpp uses lifecycle::Destroy for aggregate initialization
-
-    These should eventually be refactored to separate pure compute from effectful
-    operations.
+    All storage and lifecycle operations belong in instruction/ layer.
     """
     compute_dir = repo_root / "src/lyra/llvm_backend/compute"
     if not compute_dir.exists():
@@ -261,20 +254,8 @@ def check_compute_boundaries(repo_root: Path) -> list[str]:
         '#include "lyra/llvm_backend/lifecycle.hpp"',
     ]
 
-    # Exceptions: files that legitimately need commit/lifecycle for now
-    allowed_exceptions = {
-        "src/lyra/llvm_backend/compute/builtin.cpp",
-        "src/lyra/llvm_backend/compute/aggregate.cpp",
-        "src/lyra/llvm_backend/compute/compute.cpp",  # Out-param calls need Destroy
-    }
-
     for cpp in compute_dir.rglob("*.cpp"):
         rel_path = cpp.relative_to(repo_root).as_posix()
-
-        # Skip allowed exceptions
-        if rel_path in allowed_exceptions:
-            continue
-
         content = cpp.read_text()
         lines = content.split('\n')
 
